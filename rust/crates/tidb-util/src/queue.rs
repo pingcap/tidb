@@ -45,7 +45,6 @@ impl<T> Default for Queue<T> {
 
 impl<T> Queue<T> {
     /// Creates a new queue with the given capacity.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Queue {
             elements: none_vec(capacity),
@@ -95,13 +94,11 @@ impl<T> Queue<T> {
     }
 
     /// Returns the number of elements in the queue.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.size
     }
 
     /// Returns true if the queue is empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
@@ -123,7 +120,6 @@ impl<T> Queue<T> {
     }
 
     /// Returns the capacity of the queue.
-    #[must_use]
     pub fn cap(&self) -> usize {
         self.elements.len()
     }
@@ -142,6 +138,18 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    // Go permits callers to discard constructor and query return values; Rust
+    // must not add a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        Queue::<i32>::new(1);
+        let queue = Queue::<i32>::default();
+        queue.len();
+        queue.is_empty();
+        queue.cap();
+    }
 
     struct DropProbe(Arc<AtomicUsize>);
 

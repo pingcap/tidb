@@ -158,7 +158,6 @@ pub struct RewriteRules {
 
 impl RewriteRules {
     /// Go `(*RewriteRules).HasSetTs`.
-    #[must_use]
     pub const fn has_set_ts(&self) -> bool {
         self.start_ts != 0 && self.restored_ts != 0
     }
@@ -190,7 +189,6 @@ impl RewriteRules {
     ///
     /// Note that Go deliberately drops the three timestamp fields here; the
     /// clone is only ever used where a fresh time range is about to be set.
-    #[must_use]
     pub fn go_clone(&self) -> Self {
         Self {
             data: self.data.clone(),
@@ -205,7 +203,6 @@ impl RewriteRules {
     }
 
     /// Go `(*RewriteRules).Equal`.
-    #[must_use]
     pub fn equal(&self, rhs: &Self) -> bool {
         if self.new_keyspace != rhs.new_keyspace
             || self.old_keyspace != rhs.old_keyspace
@@ -296,13 +293,11 @@ pub fn set_time_range_filter(
 }
 
 /// Go `EmptyRewriteRulesMap`.
-#[must_use]
 pub fn empty_rewrite_rules_map() -> BTreeMap<i64, RewriteRules> {
     BTreeMap::new()
 }
 
 /// Go `EmptyRewriteRule`.
-#[must_use]
 pub fn empty_rewrite_rule() -> RewriteRules {
     RewriteRules::default()
 }
@@ -347,7 +342,6 @@ fn table_rules(
 /// `get_detail_rule == true` collects the `tXXX_r` / `tYYY_i` rules used by
 /// normal backup and restore; `false` collects only the `tXXX` / `tYYY` table
 /// prefixes.
-#[must_use]
 pub fn get_rewrite_rules(
     new_table: &TableInfo,
     old_table: &TableInfo,
@@ -381,7 +375,6 @@ pub fn get_rewrite_rules(
 }
 
 /// Go `GetRewriteRulesMap`.
-#[must_use]
 pub fn get_rewrite_rules_map(
     new_table: &TableInfo,
     old_table: &TableInfo,
@@ -422,7 +415,6 @@ pub fn get_rewrite_rules_map(
 
 /// Go `GetRewriteRuleOfTable`: a rewrite rule from `t_{old_id}` to
 /// `t_{new_id}`.
-#[must_use]
 pub fn get_rewrite_rule_of_table(
     old_table_id: i64,
     new_table_id: i64,
@@ -528,7 +520,6 @@ fn rewrite_raw_key(
 }
 
 /// Go `RewriteAndEncodeRawKey`.
-#[must_use]
 pub fn rewrite_and_encode_raw_key(key: &[u8], rule: Option<&RewriteRule>) -> Vec<u8> {
     let old = RewriteRule::get_old_key_prefix(rule);
     let new = RewriteRule::get_new_key_prefix(rule);
@@ -566,7 +557,6 @@ fn match_old_prefix<'a>(key: &[u8], rewrite_rules: &'a RewriteRules) -> Option<&
 }
 
 /// Go `GetRewriteTableID`: the rewritten table ID for an original one.
-#[must_use]
 pub fn get_rewrite_table_id(table_id: i64, rewrite_rules: &RewriteRules) -> i64 {
     let table_key = gen_table_record_prefix(table_id);
     match_old_prefix(&table_key, rewrite_rules)

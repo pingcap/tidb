@@ -16,6 +16,8 @@ use std::fmt;
 use tidb_ast::{LoadDataFields, LoadDataLines};
 use tidb_util::texttree::{indent_4_child, pretty_identifier};
 
+use crate::access::AccessObject;
+
 /// `LineFieldsInfo` defaults and overrides shared by LOAD DATA/SELECT INTO.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineFieldsInfo {
@@ -199,10 +201,12 @@ pub struct ExplainOperator {
     pub label: String,
     /// Optimizer-estimated output row count.
     pub estimated_rows: Option<f64>,
+    /// Rows produced by this physical operator during `EXPLAIN ANALYZE`.
+    pub actual_rows: Option<u64>,
     /// Task in which the operator executes.
     pub task: ExplainTask,
-    /// Table, index, partition, or other accessed object description.
-    pub access_object: String,
+    /// Table, index, partition, or other accessed object.
+    pub access_object: Option<AccessObject>,
     /// Operator-specific planning details.
     pub operator_info: String,
     /// Child operators in display order.
@@ -218,8 +222,9 @@ impl ExplainOperator {
             id,
             label: String::new(),
             estimated_rows: None,
+            actual_rows: None,
             task: ExplainTask::Root,
-            access_object: String::new(),
+            access_object: None,
             operator_info: String::new(),
             children: Vec::new(),
         }
@@ -232,6 +237,13 @@ impl ExplainOperator {
         self
     }
 
+    /// Sets the rows produced by this operator during `EXPLAIN ANALYZE`.
+    #[must_use]
+    pub const fn with_actual_rows(mut self, rows: u64) -> Self {
+        self.actual_rows = Some(rows);
+        self
+    }
+
     /// Sets the operator's execution task.
     #[must_use]
     pub fn with_task(mut self, task: ExplainTask) -> Self {
@@ -241,8 +253,8 @@ impl ExplainOperator {
 
     /// Sets the accessed-object description.
     #[must_use]
-    pub fn with_access_object(mut self, value: impl Into<String>) -> Self {
-        self.access_object = value.into();
+    pub fn with_access_object(mut self, value: AccessObject) -> Self {
+        self.access_object = Some(value);
         self
     }
 
@@ -401,15 +413,12 @@ impl Explain {
         Ok(ExplainSchema { field_names: names })
     }
 
-    /// Renders the non-analyze ROW/BRIEF/PLAN_CACHE/PLAN_TREE source surface.
+    /// Renders ROW/BRIEF/PLAN_CACHE/PLAN_TREE from the retained physical tree.
     pub fn render_result(
         &mut self,
         context: &mut ExplainContext,
     ) -> Result<&[Vec<String>], ExplainError> {
         self.prepare_schema(context)?;
-        if self.analyze || self.runtime_stats {
-            return Err(ExplainError::RuntimeStatsUnavailable);
-        }
         if !matches!(
             self.format,
             ExplainFormat::Row
@@ -420,7 +429,14 @@ impl Explain {
             return Err(ExplainError::RendererUnavailable(self.format));
         }
         self.rows.clear();
-        render_operator(&self.target, self.format, "", true, &mut self.rows);
+        render_operator(
+            &self.target,
+            self.format,
+            self.analyze || self.runtime_stats,
+            "",
+            true,
+            &mut self.rows,
+        );
         Ok(&self.rows)
     }
 }
@@ -428,12 +444,16 @@ impl Explain {
 fn render_operator(
     operator: &ExplainOperator,
     format: ExplainFormat,
+    runtime: bool,
     indent: &str,
     is_last: bool,
     rows: &mut Vec<Vec<String>>,
 ) {
     let brief = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
-    let id = pretty_identifier(&operator.explain_id(brief), indent, is_last);
+    let id = pretty_identifier(&operator.explain_id(brief), indent, is_last)
+        .as_utf8()
+        .expect("EXPLAIN identifiers are valid UTF-8")
+        .to_owned();
 
     let mut row = vec![id];
     if format != ExplainFormat::PlanTree {
@@ -442,18 +462,43 @@ fn render_operator(
             |estimated_rows| format!("{estimated_rows:.2}"),
         ));
     }
-    row.extend([
-        operator.task.to_string(),
-        operator.access_object.clone(),
-        operator.operator_info.clone(),
-    ]);
+    if runtime {
+        row.push(
+            operator
+                .actual_rows
+                .map_or_else(|| "N/A".to_owned(), |rows| rows.to_string()),
+        );
+        row.extend([
+            operator.task.to_string(),
+            operator
+                .access_object
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
+            "N/A".to_owned(),
+            operator.operator_info.clone(),
+            "N/A".to_owned(),
+            "N/A".to_owned(),
+        ]);
+    } else {
+        row.extend([
+            operator.task.to_string(),
+            operator
+                .access_object
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
+            operator.operator_info.clone(),
+        ]);
+    }
     rows.push(row);
 
     let child_count = operator.children.len();
-    let child_indent = indent_4_child(indent, is_last);
+    let child_indent = indent_4_child(indent, is_last)
+        .as_utf8()
+        .expect("EXPLAIN indentation is valid UTF-8")
+        .to_owned();
     for (index, child) in operator.children.iter().enumerate() {
         let child_is_last = index + 1 == child_count;
-        render_operator(child, format, &child_indent, child_is_last, rows);
+        render_operator(child, format, runtime, &child_indent, child_is_last, rows);
     }
 }
 

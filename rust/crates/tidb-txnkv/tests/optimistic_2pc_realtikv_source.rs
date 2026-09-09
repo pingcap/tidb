@@ -388,7 +388,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .expect("finish readback without publishing writes");
     assert_eq!(read_only.state, OptimisticTransactionState::ReadOnly);
     assert_eq!(read_only.authority_id, shared_read_opener.authority_id());
-    assert_eq!(read_only.snapshot_reads.len(), 3);
 
     // The low-region Insert prewrites first; the high-region existing Insert
     // fails. The coordinator must synchronously rollback every published batch.

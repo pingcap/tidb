@@ -75,3 +75,35 @@ pub use rewrite_rule::{
     set_time_range_filter, validate_file_rewrite_rule, AppliedFile, RestoreError, RestoreErrorKind,
     RewriteRules, RewrittenKeys, TableIdRemap,
 };
+
+#[cfg(test)]
+mod return_contract_tests {
+    use std::collections::BTreeMap;
+
+    use tidb_model::TableInfo;
+
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn direct_source_returns_may_be_ignored_like_go() {
+        let table = TableInfo::default();
+        let rules = RewriteRules::default();
+
+        get_partition_id_map(&table, &table);
+        get_table_id_map(&table, &table);
+        get_index_id_map(&table, &table);
+        truncate_ts(b"12345678");
+        encode_key_prefix(b"12345678");
+        rules.has_set_ts();
+        rules.go_clone();
+        rules.equal(&rules);
+        empty_rewrite_rules_map();
+        empty_rewrite_rule();
+        get_rewrite_rules(&table, &table, 0, false);
+        get_rewrite_rules_map(&table, &table, 0, false);
+        get_rewrite_rule_of_table(1, 2, &BTreeMap::new(), false);
+        rewrite_and_encode_raw_key(b"key", None);
+        get_rewrite_table_id(1, &rules);
+    }
+}

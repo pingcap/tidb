@@ -31,11 +31,17 @@ fn alternative_plan_signal_marks_match_source_transitions() {
     assert!(signals.prefer_correlate);
     signals.mark_semi_join_rewrite();
     assert!(signals.semi_join_rewrite);
+    signals.mark_mixed_storage_engines();
+    assert!(signals.mixed_storage_engines);
+    signals.mark_missing_tiflash_path();
+    assert!(signals.missing_tiflash_path);
+    signals.mark_store_type_hint();
+    assert!(signals.has_store_type_hint);
 }
 
 #[test]
-fn alternative_plan_signal_reset_clears_all_eight_source_fields() {
-    // Source: pkg/sessionctx/stmtctx/stmtctx.go:475-516,684-695.
+fn alternative_plan_signal_reset_clears_all_eleven_source_fields() {
+    // Source: pkg/sessionctx/stmtctx/stmtctx.go:475-535,701-730.
     let mut signals = AlternativePlanSignals {
         decorrelated_apply: true,
         same_order_index_join: true,
@@ -45,6 +51,9 @@ fn alternative_plan_signal_reset_clears_all_eight_source_fields() {
         prefer_correlate: true,
         semi_join_rewrite: true,
         fts_function_is_used: true,
+        mixed_storage_engines: true,
+        missing_tiflash_path: true,
+        has_store_type_hint: true,
     };
     signals.reset();
     assert_eq!(signals, AlternativePlanSignals::default());

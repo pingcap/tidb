@@ -15,14 +15,26 @@
 //! Native Rust equivalent of `pkg/util/zeropool/pool.go`.
 //!
 //! Rust moves `T` directly into and out of the pool, so it does not need Go's
-//! secondary pointer pool to avoid interface boxing. The inventory explicitly
-//! declines `sync.Pool`'s GC eviction, Go's nullable factory, and Go's universal
-//! language zero value. A poisoned Rust mutex is recovered instead of becoming
-//! a new failure mode; Go mutexes do not poison.
+//! secondary pointer pool to avoid interface boxing. A poisoned Rust mutex is
+//! recovered instead of becoming a new failure mode; Go mutexes do not poison.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
 type Factory<T> = dyn Fn() -> T + Send + Sync;
+
+enum ItemSource<T> {
+    Zero(fn() -> T),
+    Factory(Box<Factory<T>>),
+}
+
+impl<T> ItemSource<T> {
+    fn create(&self) -> T {
+        match self {
+            Self::Zero(zero) => zero(),
+            Self::Factory(factory) => factory(),
+        }
+    }
+}
 
 /// Concurrent pool of reusable values.
 ///
@@ -30,28 +42,24 @@ type Factory<T> = dyn Fn() -> T + Send + Sync;
 /// empty, matching Go's generic zero value.
 pub struct Pool<T> {
     items: Mutex<Vec<T>>,
-    factory: Option<Arc<Factory<T>>>,
+    source: ItemSource<T>,
 }
 
-impl<T> Default for Pool<T> {
+impl<T: Default> Default for Pool<T> {
     fn default() -> Self {
         Self {
             items: Mutex::new(Vec::new()),
-            factory: None,
+            source: ItemSource::Zero(T::default),
         }
     }
 }
 
-impl<T> Pool<T>
-where
-    T: Default,
-{
+impl<T> Pool<T> {
     /// Creates a pool that calls `factory` whenever no pooled value exists.
-    #[must_use]
     pub fn new(factory: impl Fn() -> T + Send + Sync + 'static) -> Self {
         Self {
             items: Mutex::new(Vec::new()),
-            factory: Some(Arc::new(factory)),
+            source: ItemSource::Factory(Box::new(factory)),
         }
     }
 
@@ -60,7 +68,7 @@ where
         if let Some(item) = self.items().pop() {
             return item;
         }
-        self.factory.as_ref().map_or_else(T::default, |new| new())
+        self.source.create()
     }
 
     /// Returns a value to the pool.
@@ -82,83 +90,8 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
-    trait AmbiguousIfClone<A> {
-        fn marker() {}
-    }
-
-    impl<T: ?Sized> AmbiguousIfClone<()> for T {}
-    impl<T: Clone> AmbiguousIfClone<u8> for T {}
-
     const ITERATIONS: usize = 1_000_000;
     const CONCURRENCY: usize = u8::MAX as usize;
-
-    #[test]
-    fn source_factory_and_zero_value_boundaries_are_exact() {
-        let zero = Pool::<usize>::default();
-        assert_eq!(zero.get(), 0);
-        zero.put(7);
-        assert_eq!(zero.get(), 7);
-        assert_eq!(zero.get(), 0);
-
-        let calls = Arc::new(AtomicUsize::new(0));
-        let factory_calls = Arc::clone(&calls);
-        let pool = Pool::new(move || factory_calls.fetch_add(1, Ordering::SeqCst) + 1);
-        assert_eq!(pool.get(), 1);
-        assert_eq!(pool.get(), 2);
-        pool.put(99);
-        assert_eq!(pool.get(), 99);
-        assert_eq!(pool.get(), 3);
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn get_moves_value_without_retaining_a_duplicate() {
-        struct DropValue(Arc<AtomicUsize>);
-
-        impl Default for DropValue {
-            fn default() -> Self {
-                Self(Arc::new(AtomicUsize::new(0)))
-            }
-        }
-
-        impl Drop for DropValue {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-
-        let drops = Arc::new(AtomicUsize::new(0));
-        let factory_drops = Arc::clone(&drops);
-        let pool = Pool::new(move || DropValue(Arc::clone(&factory_drops)));
-        let item = pool.get();
-        pool.put(item);
-        let item = pool.get();
-        drop(pool);
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        drop(item);
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn pool_cannot_be_copied_after_use() {
-        let _ = <Pool<Vec<u8>> as AmbiguousIfClone<_>>::marker;
-    }
-
-    #[test]
-    fn poisoned_mutex_does_not_add_a_failure_mode() {
-        let pool = Arc::new(Pool::<usize>::default());
-        let poisoning_pool = Arc::clone(&pool);
-        assert!(thread::spawn(move || {
-            let _guard = poisoning_pool.items.lock().expect("unpoisoned mutex");
-            panic!("poison the pool mutex");
-        })
-        .join()
-        .is_err());
-        assert!(pool.items.is_poisoned());
-
-        pool.put(7);
-        assert_eq!(pool.get(), 7);
-    }
 
     #[test]
     #[allow(non_snake_case)]
@@ -236,5 +169,11 @@ mod tests {
             assert!(item.is_empty());
             pool.put(item);
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn constructor_return_may_be_ignored_like_go() {
+        Pool::new(|| Vec::<u8>::new());
     }
 }

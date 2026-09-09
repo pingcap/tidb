@@ -411,7 +411,10 @@ impl ColumnResolver for SchemaNameResolver<'_> {
         self.base.fold_constant(expression, mode);
     }
 
-    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, crate::EvalError> {
+    fn eval_constant(
+        &self,
+        expression: &Expression,
+    ) -> Result<tidb_datatype::Datum, crate::EvalError> {
         self.base.eval_constant(expression)
     }
 }
@@ -511,32 +514,201 @@ pub fn build_simple_expr(
 
     let expr = rewrite_expr_resolved(node, &resolver)?;
     match &options.target_field_type {
-        Some(target) => Ok(build_cast_function(expr, target.clone())?),
+        Some(target) => Ok(build_cast_function(expr, target.clone(), false)?),
         None => Ok(expr),
     }
 }
 
-/// Go `BuildCastFunction(ctx, expr, tp)` restricted to what
-/// `WithCastExprTo` needs: wrap `expr` in the cast signature that produces
-/// `target`.
-///
-/// Go picks the signature from `tp.EvalType()`; this port switches on the
-/// type CODE first so that `YEAR`, `DATE`, `TIME` and `JSON` -- which share an
-/// eval type with a wider class -- keep their own cast, exactly as Go's
-/// per-type `castAs*` selection does. The result type is the caller's own
-/// `target`, so its flen/decimal/charset drive evaluation.
-pub(crate) fn build_cast_function(
+/// Go `WrapWithCastAsInt`/`WrapWithCastAsReal` as the hybrid push uses them
+/// (`builtin_cast.go:2909-2923`): the wrapped branch becomes
+/// ETInt/ETReal-typed so the rebuilt control function infers a numeric
+/// result. The enum `ENUM_SET_AS_INT` stamp is unnecessary in this shape:
+/// the built cast node evaluates the ordinal through `cast_arg_as_int`'s
+/// hybrid short-circuit.
+fn wrap_cast_for_hybrid_push(
     expr: Expression,
-    target: FieldType,
+    real: bool,
+    target_unsigned: bool,
 ) -> Result<Expression, EvalError> {
+    if let Some(ft) = expr.static_type() {
+        let wanted = if real {
+            tidb_datatype::EvalType::Real
+        } else {
+            tidb_datatype::EvalType::Int
+        };
+        if ft.eval_type() == wanted {
+            return Ok(expr);
+        }
+    }
+    let source_flen = expr.static_type().map_or(0, FieldType::flen);
+    let not_null = expr
+        .static_type()
+        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL));
+    let source_unsigned = expr
+        .static_type()
+        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::UNSIGNED));
+    let mut tp = if real {
+        // Go WrapWithCastAsReal: Double + MaxRealWidth + unspecified decimal,
+        // flags inheriting UnsignedFlag|NotNullFlag from the source.
+        let mut tp = FieldType::new(FieldTypeCode::Double);
+        tp.set_flen(22);
+        tp.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        tp
+    } else {
+        // Go WrapWithCastAsInt: LongLong + source flen + decimal 0, flags
+        // inheriting NotNullFlag from the source and UnsignedFlag from the
+        // TARGET.
+        let mut tp = FieldType::new(FieldTypeCode::LongLong);
+        tp.set_flen(source_flen);
+        tp.set_decimal(0);
+        tp
+    };
+    tp.set_charset_name("binary");
+    tp.set_collation_name("binary");
+    tp.add_flags(FieldTypeFlags::BINARY);
+    let mut inherited = if not_null {
+        FieldTypeFlags::NOT_NULL
+    } else {
+        0
+    };
+    if real {
+        if source_unsigned {
+            inherited |= FieldTypeFlags::UNSIGNED;
+        }
+    } else if target_unsigned {
+        inherited |= FieldTypeFlags::UNSIGNED;
+    }
+    tp.add_flags(inherited);
+    build_cast_function(expr, tp, false)
+}
+
+pub(crate) fn build_cast_function(
+    mut expr: Expression,
+    mut target: FieldType,
+    in_union: bool,
+) -> Result<Expression, EvalError> {
+    // Go's BuildCastFunctionWithCheck mutates only its DeepCopy of the target:
+    // a nullable source makes the cast result nullable even when the caller's
+    // requested target carries NotNullFlag. Keep the option-owned target
+    // untouched while matching the source nullability in the built node.
+    if expr
+        .static_type()
+        .is_some_and(|source| !source.has_flag(FieldTypeFlags::NOT_NULL))
+    {
+        target.del_flags(FieldTypeFlags::NOT_NULL);
+    }
+    // Go `castAsStringFunctionClass.getFunction` → `adjustRetFtForCastString`:
+    // an unspecified-width CHAR target takes the produced value's width (and
+    // a JSON source widens the code to LongBlob).
+    if target.code() == FieldTypeCode::VarString {
+        if let Some(arg_ft) = expr.static_type() {
+            crate::rewriter::adjust_ret_ft_for_cast_string(&mut target, arg_ft);
+        }
+    }
+    // Go `TryPushCastIntoControlFunctionForHybridType` (builtin_cast.go:2898):
+    // a numeric-target cast over IF/CASE/ELT pushes INTO the branches when a
+    // branch is a hybrid type (Enum/Set — Bit excluded, issue 24725): the
+    // control function rebuilds over cast-wrapped branches so a branch's enum
+    // ORDINAL flows forward, where the unpushed shape would route the enum
+    // NAME through the string result and answer 0 for arithmetic.
+    if matches!(
+        target.eval_type(),
+        tidb_datatype::EvalType::Int | tidb_datatype::EvalType::Real
+    ) {
+        if let Expression::ScalarFunction(control) = &expr {
+            let name = control.func_name.lowercase();
+            if matches!(name, "if" | "case" | "elt") {
+                let is_hybrid = |e: &Expression| {
+                    e.static_type()
+                        .is_some_and(|ft| ft.is_hybrid() && ft.code() != FieldTypeCode::Bit)
+                };
+                let len = control.args.len();
+                let branch_indexes: Vec<usize> = match name {
+                    "if" => vec![1, 2],
+                    "case" => {
+                        let mut indexes: Vec<usize> = (1..len).step_by(2).collect();
+                        if len % 2 == 1 {
+                            indexes.push(len - 1);
+                        }
+                        indexes
+                    }
+                    _ => (1..len).collect(),
+                };
+                if branch_indexes.iter().any(|&i| is_hybrid(&control.args[i])) {
+                    let unsigned_flag = target.flags() & FieldTypeFlags::UNSIGNED != 0;
+                    let real = target.eval_type() == tidb_datatype::EvalType::Real;
+                    let mut args = control.args.clone();
+                    let mut pushed = true;
+                    for &i in &branch_indexes {
+                        match wrap_cast_for_hybrid_push(args[i].clone(), real, unsigned_flag) {
+                            Ok(wrapped) => args[i] = wrapped,
+                            Err(_) => {
+                                pushed = false;
+                                break;
+                            }
+                        }
+                    }
+                    if pushed {
+                        // Go rebuilds the control function over the wrapped
+                        // args and adopts the rebuilt signature's ret type;
+                        // the OUTER cast still wraps the rebuilt node.
+                        let inferred = if name == "case" {
+                            let branches: Vec<Expression> = args
+                                .iter()
+                                .skip(1)
+                                .step_by(2)
+                                .chain((args.len() % 2 == 1).then(|| args.last()).flatten())
+                                .cloned()
+                                .collect();
+                            crate::rewriter::builtin_return_type("case", &branches)
+                        } else if name == "elt" {
+                            crate::rewriter::builtin_return_type("elt", &args)
+                        } else {
+                            crate::rewriter::infer_type4_control_funcs("if", &args)
+                        };
+                        if let Some(ret_type) = inferred {
+                            expr = Expression::ScalarFunction(ScalarFunction::new(
+                                control.func_name.clone(),
+                                ret_type,
+                                args,
+                            ));
+                        }
+                        // Inference failure keeps the unpushed node, which is
+                        // Go's own `return expr` on error.
+                    }
+                }
+            }
+        }
+    }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
+    let source_eval_type = expr.static_type().map(FieldType::eval_type);
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",
         FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",
         FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "cast_datetime",
         FieldTypeCode::Duration => "cast_time",
+        FieldTypeCode::NewDecimal if in_union => match source_eval_type {
+            // Go's decimal target has source-specific inUnion signatures.
+            // REAL and integer sources clamp a negative signed value before
+            // ProduceDecWithSpecifiedTp; string/decimal sources take that
+            // branch only when the merged target is UNSIGNED.
+            Some(tidb_datatype::EvalType::Real) => "cast_real_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::Int) if unsigned => "cast_int_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::String) if unsigned => "cast_string_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::Decimal) if unsigned => "cast_decimal_in_union",
+            _ => "cast_decimal",
+        },
         FieldTypeCode::NewDecimal => "cast_decimal",
-        FieldTypeCode::Float | FieldTypeCode::Double => "cast_double",
+        FieldTypeCode::Float | FieldTypeCode::Double => {
+            if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
+                // Go `builtinCastRealAsRealSig.evalReal`
+                // (`builtin_cast.go:1346-1352`): an in-union unsigned-target
+                // cast clamps a negative to 0.
+                "cast_real_in_union"
+            } else {
+                "cast_double"
+            }
+        }
         FieldTypeCode::Json => "cast_json",
         FieldTypeCode::VectorFloat32 => "cast_vector",
         FieldTypeCode::Tiny
@@ -546,7 +718,11 @@ pub(crate) fn build_cast_function(
         | FieldTypeCode::LongLong
         | FieldTypeCode::Bit => {
             if unsigned {
-                "cast_unsigned"
+                if in_union {
+                    "cast_unsigned_in_union"
+                } else {
+                    "cast_unsigned"
+                }
             } else {
                 "cast_signed"
             }
@@ -790,9 +966,10 @@ pub fn column_infos_to_columns_and_names_with_collate<C: ColumnInfoSource>(
         };
         // boundary: Go wraps `ctx` with `CtxWithHandleTruncateErrLevel(
         // errctx.LevelIgnore)` on the first virtual column so a generated
-        // expression's truncation does not warn twice. This crate's
-        // `ColumnResolver` has no truncate-level knob, so the warning
-        // suppression has no counterpart; the built expression is the same.
+        // expression's truncation does not warn twice. The static expression
+        // context now carries that wrapper; this live `ColumnResolver` path
+        // still has no truncate-level knob, so its warning suppression remains
+        // a higher-layer boundary while the built expression is the same.
         let node = parse_select_field_expr(generated)?;
         let options = BuildOptions::new()
             .with_input_schema_and_names(mock_schema.clone(), names.clone())
@@ -810,6 +987,7 @@ mod tests {
     use super::*;
     use crate::context::NoColumns;
     use crate::exprctx::SimplePlanColumnIdAllocator;
+    use crate::expression::Constant;
     use crate::rewriter::NoResolver;
     use tidb_chunk::chunk::Chunk;
     use tidb_datatype::Datum;
@@ -952,15 +1130,16 @@ mod tests {
     /// columns" leg.
     ///
     /// Go reports `[planner:1054]Unknown column 'a' in 'expression'`. The
-    /// rewriter now carries the unresolved NAME ([`EvalError::UnknownColumn`])
-    /// and the driver's renderer supplies Go's `expression` clause, so both
-    /// halves of that message are pinned.
+    /// rewriter carries both the unresolved name and Go's `expression` clause.
     #[test]
     fn build_expression_without_enough_columns() {
         let options = BuildOptions::new();
         assert_eq!(
             parse_simple_expr(&NoResolver, "1+a", &options).unwrap_err(),
-            SimpleExprError::Build(EvalError::UnknownColumn("a".to_owned()))
+            SimpleExprError::Build(EvalError::UnknownColumnInClause(
+                "a".to_owned(),
+                "expression"
+            ))
         );
 
         let table = test_table();
@@ -970,7 +1149,10 @@ mod tests {
             .expect("options");
         assert_eq!(
             parse_simple_expr(&NoResolver, "(1+a)*(3+b+c)", &options).unwrap_err(),
-            SimpleExprError::Build(EvalError::UnknownColumn("c".to_owned()))
+            SimpleExprError::Build(EvalError::UnknownColumnInClause(
+                "c".to_owned(),
+                "expression"
+            ))
         );
     }
 
@@ -1000,6 +1182,526 @@ mod tests {
             expr.eval(&NoColumns, chunk.get_row(0)).expect("eval"),
             Datum::new_string(*b"6")
         );
+    }
+
+    #[test]
+    fn cast_target_not_null_follows_source_nullability_without_mutating_target() {
+        let nullable_source = TestColumnInfo::new("a", 0, FieldTypeCode::LongLong);
+        let mut nonnull_source = TestColumnInfo::new("b", 1, FieldTypeCode::LongLong);
+        nonnull_source
+            .field_type
+            .add_flags(FieldTypeFlags::NOT_NULL);
+        let table = vec![nullable_source, nonnull_source];
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let mut target = FieldType::new(FieldTypeCode::LongLong);
+        target.add_flags(FieldTypeFlags::NOT_NULL);
+
+        let nullable_options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to(target.clone());
+        let nullable =
+            parse_simple_expr(&NoResolver, "a", &nullable_options).expect("nullable cast builds");
+        let Expression::ScalarFunction(nullable_cast) = nullable else {
+            panic!("nullable source should build a cast function")
+        };
+        let nullable_type = nullable_cast.ret_type.as_ref().expect("cast type");
+        assert_eq!(nullable_type.code(), FieldTypeCode::LongLong);
+        assert!(!nullable_type.has_flag(FieldTypeFlags::NOT_NULL));
+
+        let nonnull_options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to(target.clone());
+        let nonnull =
+            parse_simple_expr(&NoResolver, "b", &nonnull_options).expect("non-null cast builds");
+        let Expression::ScalarFunction(nonnull_cast) = nonnull else {
+            panic!("non-null source should build a cast function")
+        };
+        let nonnull_type = nonnull_cast.ret_type.as_ref().expect("cast type");
+        assert!(nonnull_type.has_flag(FieldTypeFlags::NOT_NULL));
+        assert!(target.has_flag(FieldTypeFlags::NOT_NULL));
+    }
+
+    /// Go `adjustRetFtForCastString` (`builtin_cast.go`): an
+    /// unspecified-width `CAST(... AS CHAR)` target takes the width of the
+    /// value the cast produces, per the argument's family; a JSON source
+    /// also widens the code to LongBlob.
+    #[test]
+    fn cast_as_char_estimates_unspecified_widths_like_go() {
+        let cases: Vec<(&str, FieldType, i64, FieldTypeCode)> = vec![
+            (
+                "a_int",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::LongLong);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                20,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_uint24",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Int24);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED);
+                    ft
+                },
+                8,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_short",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Short);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                6,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_year",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Year);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                4,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_double",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Double);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                370,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_float",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Float);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                87,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_decimal",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+                    ft.set_flen(10);
+                    ft.set_decimal(2);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                12,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_datetime",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Datetime);
+                    ft.set_decimal(3);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                23,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_date",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Date);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                10,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_duration",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Duration);
+                    ft.set_decimal(2);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                13,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_json",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Json);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                4_294_967_295,
+                FieldTypeCode::LongBlob,
+            ),
+            (
+                "a_varchar",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::VarString);
+                    ft.set_flen(7);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                7,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_tinyblob",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::TinyBlob);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                255,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_blob",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Blob);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                262_140,
+                FieldTypeCode::VarString,
+            ),
+        ];
+
+        for (name, field_type, want_flen, want_code) in cases {
+            let table = vec![TestColumnInfo {
+                name: CiString::new(name),
+                id: 1,
+                offset: 0,
+                field_type,
+                hidden: false,
+                virtual_generated: None,
+            }];
+            let ids = SimplePlanColumnIdAllocator::new(0);
+            // `CAST(x AS CHAR)` with no length: TypeVarString, unspecified
+            // flen — exactly what Go's CastType rule builds.
+            let char_target = FieldType::new(FieldTypeCode::VarString);
+            let options = BuildOptions::new()
+                .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+                .expect("table options")
+                .with_cast_expr_to(char_target);
+            let built = parse_simple_expr(&NoResolver, name, &options)
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            let Expression::ScalarFunction(cast) = built else {
+                panic!("{name}: expected a cast function")
+            };
+            let ret_type = cast.ret_type.as_ref().expect("cast type");
+            assert_eq!(ret_type.flen(), want_flen, "{name}");
+            assert_eq!(ret_type.code(), want_code, "{name}");
+        }
+    }
+
+    /// Go `TryPushCastIntoControlFunctionForHybridType`
+    /// (builtin_cast.go:2898): `CAST(IF(1, e, 'a') AS SIGNED)` over
+    /// `e enum('x','y','z')` pushes the cast INTO the branches, so the
+    /// rebuilt IF carries cast-wrapped branches and the enum's ORDINAL (2)
+    /// is the answer instead of the enum NAME flowing through the string
+    /// result. The chunk row must carry the enum datum: the built column
+    /// node reads its cell from the ROW by offset.
+    #[test]
+    fn cast_over_if_pushes_into_hybrid_branches_like_go() {
+        let enum_field = {
+            let mut ft = FieldType::new(FieldTypeCode::Enum);
+            ft.set_collation_name("utf8mb4_bin");
+            ft
+        };
+        let table = vec![TestColumnInfo {
+            name: CiString::new("e"),
+            id: 1,
+            offset: 0,
+            field_type: enum_field.clone(),
+            hidden: false,
+            virtual_generated: None,
+        }];
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to({
+                let mut target = FieldType::new(FieldTypeCode::LongLong);
+                target.add_flags(FieldTypeFlags::NOT_NULL);
+                target
+            });
+        let built = parse_simple_expr(&NoResolver, "if(1, e, 'a')", &options).expect("builds");
+
+        // Shape: the outer cast wraps a REBUILT IF whose hybrid branch is a
+        // cast node (LongLong) rather than the raw leaf.
+        let Expression::ScalarFunction(outer) = &built else {
+            panic!("expected a cast function")
+        };
+        assert_eq!(outer.func_name.lowercase(), "cast_signed");
+        let Expression::ScalarFunction(inner_if) = &outer.args[0] else {
+            panic!("expected the IF inside the cast")
+        };
+        assert_eq!(inner_if.func_name.lowercase(), "if");
+        assert!(
+            inner_if.args[1]
+                .static_type()
+                .is_some_and(|ft| ft.code() == FieldTypeCode::LongLong),
+            "the hybrid branch is cast-wrapped: {:?}",
+            inner_if.args[1]
+        );
+
+        // Value: the chunk row carries the enum cell; the ordinal 2 of 'y'
+        // is the answer.
+        let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&enum_field), 1, 1);
+        chunk.append_datum(
+            0,
+            &crate::Datum::Enum(
+                tidb_datatype::MysqlEnum::new("y", 2),
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            ),
+        );
+        let row = chunk.get_row(0);
+        let value = built
+            .eval(&NoColumns, row)
+            .expect("the pushed shape evaluates");
+        assert_eq!(value, crate::Datum::Int(2));
+    }
+
+    /// Go `builtinRowCountSig`/`builtinLastInsertIDSig`/
+    /// `builtinLastInsertIDWithIDSig` (builtin_info.go:913/482/508):
+    /// ROW_COUNT() answers the preceding statement's affected-row count
+    /// (never NULL; the default context counts 0), LAST_INSERT_ID() answers
+    /// the previous statement's generated id (NULL when the context has
+    /// none), and LAST_INSERT_ID(expr) records the integer and returns it.
+    #[test]
+    fn info_functions_read_and_record_session_counts() {
+        use crate::context::Columns;
+        use crate::expression::Constant;
+
+        struct CountingContext {
+            row_count: Option<i64>,
+            last_insert_id: Option<u64>,
+            recorded: std::cell::RefCell<Vec<u64>>,
+        }
+        impl Default for CountingContext {
+            fn default() -> Self {
+                Self {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                }
+            }
+        }
+        impl Columns for CountingContext {
+            fn get(&self, _path: &[String]) -> Option<crate::Datum> {
+                None
+            }
+            fn row_count(&self) -> Option<i64> {
+                self.row_count
+            }
+            fn last_insert_id(&self) -> Option<u64> {
+                self.last_insert_id
+            }
+            fn set_last_insert_id(&self, value: u64) {
+                self.recorded.borrow_mut().push(value);
+            }
+        }
+
+        let row_count_type = FieldType::new(FieldTypeCode::LongLong);
+        let empty_args: Vec<Expression> = Vec::new();
+
+        // ROW_COUNT(): the context's count, or NULL when the context has
+        // none (the trait default).
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("row_count"),
+            row_count_type.clone(),
+            empty_args.clone(),
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let row = chunk.get_row(0);
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: Some(7),
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Int(7));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Null);
+
+        // LAST_INSERT_ID(): the context's generated id, or NULL when unset.
+        let last_insert_id_type = FieldType::new(FieldTypeCode::LongLong);
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            last_insert_id_type.clone(),
+            empty_args,
+        ));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: Some(5),
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::UInt(5));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Null);
+
+        // LAST_INSERT_ID(expr): records the integer for the next statement
+        // boundary and returns it.
+        let argument = Expression::Constant(Constant::new(
+            crate::Datum::Int(42),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            last_insert_id_type,
+            vec![argument],
+        ));
+        let context = CountingContext {
+            row_count: None,
+            last_insert_id: None,
+            recorded: std::cell::RefCell::new(Vec::new()),
+        };
+        let value = node.eval(&context, row).unwrap();
+        assert_eq!(value, crate::Datum::Int(42));
+        assert_eq!(context.recorded.borrow().as_slice(), &[42]);
+    }
+
+    /// Go `builtinFormatBytesSig`/`builtinFormatNanoTimeSig`
+    /// (builtin_info.go:1743/1785) with `GetFormatBytes`
+    /// (`pkg/expression/util.go:1804`) and `GetFormatNanoTime`
+    /// (`:1843`): IEC byte units and the ns/d time ladder, 2-decimal
+    /// rendering above the first unit, scientific form at 100000+.
+    #[test]
+    fn format_bytes_and_nano_time_follow_the_go_unit_tables() {
+        // Go `pkg/expression/builtin_info_test.go` TestFormatBytes /
+        // TestFormatNanoTime vectors, byte-for-byte.
+        let cases: &[(&str, crate::Datum, &str)] = &[
+            ("format_bytes", crate::Datum::Int(0), "0 bytes"),
+            ("format_bytes", crate::Datum::Int(2048), "2.00 KiB"),
+            ("format_bytes", crate::Datum::Int(75295729), "71.81 MiB"),
+            ("format_bytes", crate::Datum::Int(5287242702), "4.92 GiB"),
+            ("format_bytes", crate::Datum::Int(5039757204245), "4.58 TiB"),
+            (
+                "format_bytes",
+                crate::Datum::Int(890250274520475525),
+                "790.70 PiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(18446644073709551615.0),
+                "16.00 EiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(-18446644073709551615.0),
+                "-16.00 EiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(287952852482075252752429875.0),
+                "2.50e+08 EiB",
+            ),
+            ("format_nano_time", crate::Datum::Int(0), "0 ns"),
+            ("format_nano_time", crate::Datum::Int(2000), "2.00 us"),
+            (
+                "format_nano_time",
+                crate::Datum::Int(898787877),
+                "898.79 ms",
+            ),
+            ("format_nano_time", crate::Datum::Int(9999999991), "10.00 s"),
+            (
+                "format_nano_time",
+                crate::Datum::Int(898787877424),
+                "14.98 min",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(5827527520021),
+                "1.62 h",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(42566623663736353),
+                "492.67 d",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Real(4827524825702572425242552.0),
+                "5.59e+10 d",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(-9999999991),
+                "-10.00 s",
+            ),
+        ];
+        let text_type = FieldType::new(FieldTypeCode::VarString);
+        for (name, argument, expected) in cases {
+            let node = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(*name),
+                text_type.clone(),
+                vec![Expression::Constant(Constant::new(
+                    argument.clone(),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ))],
+            ));
+            let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+            let row = chunk.get_row(0);
+            let value = node
+                .eval(&crate::context::NoColumns, row)
+                .unwrap_or_else(|error| panic!("{name}({argument:?}): {error:?}"));
+            let text = value.sql_string().expect("string result");
+            assert_eq!(text, *expected, "{name}({argument:?})");
+        }
+
+        // NULL propagates.
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("format_bytes"),
+            text_type,
+            vec![Expression::Constant(Constant::new(
+                crate::Datum::Null,
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let row = chunk.get_row(0);
+        assert!(node
+            .eval(&crate::context::NoColumns, row)
+            .unwrap()
+            .is_null());
     }
 
     /// Go `ParseSimpleExpr`'s empty-string guard.

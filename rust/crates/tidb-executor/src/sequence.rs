@@ -76,9 +76,9 @@ pub enum SequenceError {
 
 /// Go `model.SequenceInfo`, reduced to the fields that decide values.
 ///
-/// NOT MODELLED (documented): `Comment`, and the `Charset`/`Collate` a
-/// sequence carries as a `TableInfo` -- neither reaches a value or the
-/// `SHOW CREATE SEQUENCE` text this tier prints.
+/// The non-value `Comment` is retained by [`crate::driver::SequenceDef`],
+/// because the allocator is copied into session snapshots and therefore must
+/// remain `Copy` for the value path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SequenceInfo {
     /// `START WITH`.
@@ -207,31 +207,37 @@ pub fn calc_sequence_batch_size(
     minv: i64,
     maxv: i64,
 ) -> Option<i64> {
+    // Go evaluates these signed expressions with two's-complement wraparound;
+    // keep that contract explicit instead of inheriting Rust's debug panics.
     if increment > 0 {
         if increment == 1 {
             if base >= maxv {
                 return None;
             }
             // The rest of the sequence is shorter than one cache batch.
-            return Some((maxv - base).min(size));
+            return Some(maxv.wrapping_sub(base).min(size));
         }
         let nr = seek_to_first_sequence_value(base, increment, offset, minv, maxv)?;
-        if maxv - nr < (size - 1) * increment {
-            return Some(maxv - base);
+        let remaining = maxv.wrapping_sub(nr);
+        let requested = size.wrapping_sub(1).wrapping_mul(increment);
+        if remaining < requested {
+            return Some(maxv.wrapping_sub(base));
         }
-        return Some((nr - base) + (size - 1) * increment);
+        return Some(nr.wrapping_sub(base).wrapping_add(requested));
     }
     if increment == -1 {
         if base <= minv {
             return None;
         }
-        return Some((base - minv).min(size));
+        return Some(base.wrapping_sub(minv).min(size));
     }
     let nr = seek_to_first_sequence_value(base, increment, offset, minv, maxv)?;
-    if nr - minv < (size - 1) * -increment {
-        return Some(base - minv);
+    let remaining = nr.wrapping_sub(minv);
+    let requested = size.wrapping_sub(1).wrapping_mul(increment.wrapping_neg());
+    if remaining < requested {
+        return Some(base.wrapping_sub(minv));
     }
-    Some((base - nr) + (size - 1) * -increment)
+    Some(base.wrapping_sub(nr).wrapping_add(requested))
 }
 
 /// Go's meta-store half of a sequence. Every allocator for the same sequence
@@ -256,19 +262,12 @@ struct SequenceStoreState {
 pub trait SequenceCounter: std::fmt::Debug + Send + Sync {
     /// Go `Allocator.AllocSeqCache`: atomically reserve one batch from the
     /// shared counter, returning `(base, end, round)` of the reserved window.
-    fn alloc_seq_cache(
-        &self,
-        info: &SequenceInfo,
-    ) -> Result<(i64, i64, i64), SequenceError>;
+    fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError>;
 
     /// Go `Allocator.RebaseSeq`: move the shared counter forward to
     /// `required`. `(0, true)` is Go's `alreadySatisfied`, meaning the counter
     /// was already at or past it and nothing was written.
-    fn rebase_seq(
-        &self,
-        info: &SequenceInfo,
-        required: i64,
-    ) -> Result<(i64, bool), SequenceError>;
+    fn rebase_seq(&self, info: &SequenceInfo, required: i64) -> Result<(i64, bool), SequenceError>;
 
     /// Go `AlterSequence` with `RESTART`: the stored counter goes one integer
     /// outside `with`, so the next congruence seek returns `with` itself.
@@ -283,18 +282,12 @@ pub struct LocalSequenceCounter(Mutex<SequenceStoreState>);
 impl LocalSequenceCounter {
     #[must_use]
     pub fn new(stored: i64) -> Self {
-        LocalSequenceCounter(Mutex::new(SequenceStoreState {
-            stored,
-            round: 0,
-        }))
+        LocalSequenceCounter(Mutex::new(SequenceStoreState { stored, round: 0 }))
     }
 }
 
 impl SequenceCounter for LocalSequenceCounter {
-    fn alloc_seq_cache(
-        &self,
-        info: &SequenceInfo,
-    ) -> Result<(i64, i64, i64), SequenceError> {
+    fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError> {
         let size = if info.cache { info.cache_value } else { 1 };
         let mut store = self.0.lock().expect("sequence store state");
         let mut base = store.stored;
@@ -315,13 +308,13 @@ impl SequenceCounter for LocalSequenceCounter {
                 // Go resets the counter one step OUTSIDE the wrapped-to bound
                 // so the first seek after the wrap lands on the bound itself.
                 if info.increment > 0 {
-                    base = info.min_value - 1;
+                    base = info.min_value.wrapping_sub(1);
                     offset = info.min_value;
                 } else {
-                    base = info.max_value + 1;
+                    base = info.max_value.wrapping_add(1);
                     offset = info.max_value;
                 }
-                store.round += 1;
+                store.round = store.round.wrapping_add(1);
                 store.stored = base;
                 calc_sequence_batch_size(
                     base,
@@ -334,16 +327,16 @@ impl SequenceCounter for LocalSequenceCounter {
                 .ok_or(SequenceError::RunOut)?
             }
         };
-        let delta = if info.increment > 0 { step } else { -step };
-        store.stored = base + delta;
+        let delta = if info.increment > 0 {
+            step
+        } else {
+            step.wrapping_neg()
+        };
+        store.stored = base.wrapping_add(delta);
         Ok((base, store.stored, store.round))
     }
 
-    fn rebase_seq(
-        &self,
-        info: &SequenceInfo,
-        required: i64,
-    ) -> Result<(i64, bool), SequenceError> {
+    fn rebase_seq(&self, info: &SequenceInfo, required: i64) -> Result<(i64, bool), SequenceError> {
         let mut store = self.0.lock().expect("sequence store state");
         let already_satisfied = if info.increment > 0 {
             store.stored >= required
@@ -358,7 +351,11 @@ impl SequenceCounter for LocalSequenceCounter {
 
     fn restart(&self, info: &SequenceInfo, with: i64) {
         let mut store = self.0.lock().expect("sequence store state");
-        store.stored = if info.increment > 0 { with - 1 } else { with + 1 };
+        store.stored = if info.increment > 0 {
+            with.wrapping_sub(1)
+        } else {
+            with.wrapping_add(1)
+        };
         store.round = 0;
     }
 }
@@ -398,9 +395,9 @@ impl SequenceAllocator {
     #[must_use]
     pub fn new(info: SequenceInfo) -> Self {
         let stored = if info.increment > 0 {
-            info.start - 1
+            info.start.wrapping_sub(1)
         } else {
-            info.start + 1
+            info.start.wrapping_add(1)
         };
         SequenceAllocator::over_counter(info, Arc::new(LocalSequenceCounter::new(stored)))
     }
@@ -463,9 +460,9 @@ impl SequenceAllocator {
         // The stored counter now sits exactly one integer outside
         // `restart_with`; the cache collapses onto it either way.
         let stored = if self.info.increment > 0 {
-            restart_with - 1
+            restart_with.wrapping_sub(1)
         } else {
-            restart_with + 1
+            restart_with.wrapping_add(1)
         };
         state.base = stored;
         state.end = stored;

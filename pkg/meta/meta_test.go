@@ -486,6 +486,22 @@ func TestMeta(t *testing.T) {
 
 	require.Equal(t, int64(10), bootstrapVer)
 
+	starterBootstrapVer, err := m.GetStarterBootstrapVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), starterBootstrapVer)
+
+	err = m.FinishStarterBootstrap(int64(1))
+	require.NoError(t, err)
+	starterBootstrapVer, err = m.GetStarterBootstrapVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), starterBootstrapVer)
+
+	err = m.FinishStarterBootstrap(int64(10))
+	require.NoError(t, err)
+	starterBootstrapVer, err = m.GetStarterBootstrapVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(10), starterBootstrapVer)
+
 	// Test case for SchemaDiff.
 	schemaDiff := &model.SchemaDiff{
 		Version:    100,
@@ -1394,6 +1410,7 @@ func TestBootTableVersion(t *testing.T) {
 		ver, err = m.GetNextGenBootTableVersion()
 		require.NoError(t, err)
 		require.EqualValues(t, meta.BaseNextGenBootTableVersion, ver)
+		require.EqualValues(t, 3, meta.MaterializedViewNextGenBootTableVersion)
 		// make sure we use correct key
 		ddlVer, err := m.GetDDLTableVersion()
 		require.NoError(t, err)

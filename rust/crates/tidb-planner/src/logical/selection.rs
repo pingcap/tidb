@@ -29,9 +29,7 @@ use tidb_expr::simple_expr::{extract_columns_from_expressions, extract_cor_colum
 use crate::logical::BaseLogicalPlan;
 use crate::stats_info::StatsInfo;
 
-/// Go `cost.SelectionFactor` (`pkg/planner/core/cost/cost.go`): the fraction
-/// of rows a filter with no better estimate is assumed to keep.
-pub const SELECTION_FACTOR: f64 = 0.8;
+pub use crate::cost_factors::SELECTION_FACTOR;
 
 /// Go `logicalop.LogicalSelection` (`logical_selection.go:38`).
 #[derive(Clone, Debug, Default)]
@@ -46,6 +44,20 @@ pub struct LogicalSelection {
 }
 
 impl LogicalSelection {
+    /// Go `LogicalSelection.PreparePossibleProperties`: a filter preserves
+    /// every order its child can provide.
+    pub fn prepare_possible_properties(
+        &mut self,
+        child: Option<&crate::plan_base::PossiblePropertiesInfo>,
+    ) -> crate::plan_base::PossiblePropertiesInfo {
+        let Some(child) = child else {
+            self.base.set_has_tiflash(false);
+            return crate::plan_base::PossiblePropertiesInfo::default();
+        };
+        self.base.set_has_tiflash(child.has_tiflash);
+        child.clone()
+    }
+
     /// Go `LogicalSelection.Init(ctx, qbOffset)` (`logical_selection.go:48`),
     /// whose plan-codec type is `plancodec.TypeSel`.
     #[must_use]
@@ -121,9 +133,8 @@ impl LogicalSelection {
     /// column of some child key is pinned to a constant by an `=` condition.
     ///
     /// Go delegates the final test to `ruleutil.CheckMaxOneRowCond(eqCols,
-    /// childSchema[0])`, which asks whether the equal-constant column set
-    /// contains a whole `PKOrUK`. That is `Schema::is_unique`, so the body is
-    /// dependency-closed and ported whole.
+    /// childSchema[0])`, which checks both `PKOrUK` and `NullableUK` because
+    /// ordinary `=` rejects NULL duplicates.
     pub fn build_key_info(&mut self, child_schema: &[Schema]) {
         if self.base.max_one_row() {
             return;
@@ -132,7 +143,12 @@ impl LogicalSelection {
             return;
         };
         let eq_cols = self.equal_constant_columns();
-        self.base.set_max_one_row(child.is_unique(true, &eq_cols));
+        let eq_col_ids = eq_cols
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        self.base
+            .set_max_one_row(super::rule_util::check_max_one_row_cond(&eq_col_ids, child));
     }
 
     /// The columns this filter equates to a constant or a correlated column,
@@ -191,7 +207,7 @@ impl LogicalSelection {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let scaled = StatsInfo::new(
             child.row_count() * SELECTION_FACTOR,
             child

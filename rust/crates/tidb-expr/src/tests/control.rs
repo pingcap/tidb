@@ -132,6 +132,11 @@ fn case_when_source_vectors_preserve_lazy_truthiness() {
     // Only the taken branch is evaluated: an unreachable error-producing
     // expression must not affect the scalar result.
     assert_eq!(e("case when false then 1 / 0 else 3 end"), "INT:3");
+
+    // Go `newBaseBuiltinFuncWithFieldTypes` wraps every THEN/ELSE argument in
+    // the merged control type, so the integer else-branch is promoted to the
+    // decimal the CASE returns.
+    assert_eq!(chunk_e("case when false then 1.5 else 0 end"), "DEC:0.0");
 }
 
 /// Scalar rows from `pkg/expression/builtin_compare_test.go:174`

@@ -1239,7 +1239,6 @@ mod tests {
 
     #[test]
     fn source_test_encoded_batch_cmd_size_and_marshal_to() {
-        batch_command_encoding_retains_source_oneof_and_identity();
         let request = BatchCommandRequest::Empty(tikvpb::BatchCommandsEmptyRequest {
             test_id: 7,
             delay_time: 11,
@@ -1252,7 +1251,6 @@ mod tests {
 
     #[test]
     fn source_test_encode_request_cmd_basic() {
-        batch_command_bridge_accepts_only_source_batchable_requests();
         let first = BatchCommandRequest::Get(kvrpcpb::GetRequest {
             key: b"test-key".to_vec(),
             ..Default::default()

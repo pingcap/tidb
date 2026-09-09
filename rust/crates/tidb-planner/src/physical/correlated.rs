@@ -16,7 +16,6 @@
 //! Access conditions participate even when the correlated column occurs only
 //! in a reader-owned scan, not in a Selection above it.
 use super::*;
-use tidb_expr::column::CorrelatedDatum;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_cor_columns;
 
@@ -269,10 +268,7 @@ impl PhysicalPlan {
             let slot = slots[index].get_or_insert_with(|| {
                 let mut column = schema.columns[index].clone();
                 column.index = index as i64;
-                CorrelatedColumn {
-                    column,
-                    data: CorrelatedDatum::default(),
-                }
+                CorrelatedColumn::new(column)
             });
             cor.data = slot.data.clone();
         });

@@ -199,7 +199,7 @@ fn try_to_fix_flen_of_datetime(ft: &mut FieldType) {
 fn add_result_flags(name: &str, result: &mut FieldType, args: &[&FieldType]) {
     let any_not_null = args.iter().any(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL));
     match name {
-        "case_when" => result.del_flags(FieldTypeFlags::NOT_NULL),
+        "case" => result.del_flags(FieldTypeFlags::NOT_NULL),
         "ifnull" | "coalesce" if any_not_null => result.add_flags(FieldTypeFlags::NOT_NULL),
         "if" if result.eval_type() != EvalType::String => {
             result.add_flags(FieldTypeFlags::BINARY);
@@ -419,7 +419,7 @@ mod tests {
         let ft = infer_type4_control_funcs("ifnull", &with_null).expect("typed");
         assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
         // CASE WHEN clears it unconditionally (`:330-333`).
-        let ft = infer_type4_control_funcs("case_when", &branches).expect("typed");
+        let ft = infer_type4_control_funcs("case", &branches).expect("typed");
         assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
     }
 

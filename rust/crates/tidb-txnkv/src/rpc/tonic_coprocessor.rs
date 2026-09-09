@@ -19,15 +19,20 @@ use tidb_proto::{
     KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse, KvrpcCheckTxnStatusRequest,
     KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcResolveLockRequest, KvrpcResolveLockResponse,
 };
+use tikv_client::proto::kvrpcpb::{GetLockWaitInfoRequest, GetLockWaitInfoResponse};
 
 use crate::region::StoreLiveness;
-use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
+use crate::{
+    DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse, LockWaitInfoClient,
+    SynchronousBatchRequestDispatcher,
+};
 
 use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationReceipt};
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::{
-    AsyncRequestDispatcher, DirectUnaryClientError, PendingRequest, TransportShutdownCancellation,
+    AsyncRequestDispatcher, CompletionError, CompletionRunLoop, DirectUnaryClientError,
+    DirectUnaryConnectionError, PendingRequest, TransportShutdownCancellation,
 };
 
 pub(super) use super::unary::RawProtobufCodec;
@@ -37,6 +42,7 @@ const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
 const CHECK_TXN_STATUS_PATH: &str = "/tikvpb.Tikv/KvCheckTxnStatus";
 const RESOLVE_LOCK_PATH: &str = "/tikvpb.Tikv/KvResolveLock";
 const CHECK_SECONDARY_LOCKS_PATH: &str = "/tikvpb.Tikv/KvCheckSecondaryLocks";
+const GET_LOCK_WAIT_INFO_PATH: &str = "/tikvpb.Tikv/GetLockWaitInfo";
 
 /// Synchronous client-go-shaped TiKV transport capability backed by tonic.
 ///
@@ -46,6 +52,44 @@ const CHECK_SECONDARY_LOCKS_PATH: &str = "/tikvpb.Tikv/KvCheckSecondaryLocks";
 /// are created lazily, reused by address, and versioned on recreation.
 pub struct TonicCoprocessorClient {
     transport: RawTransportClient,
+}
+
+impl LockWaitInfoClient for TonicCoprocessorClient {
+    fn get_lock_wait_info(
+        &mut self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, DirectUnaryClientError> {
+        let response = self.transport.send(
+            address,
+            RawUnaryRequest {
+                path: GET_LOCK_WAIT_INFO_PATH,
+                encoded_request: GetLockWaitInfoRequest::default().encode_to_vec(),
+                forwarded_host: None,
+            },
+            &UnaryCallContext::with_timeout(timeout),
+        )?;
+        GetLockWaitInfoResponse::decode(response.encoded_response.as_slice())
+            .map(|response| {
+                response
+                    .entries
+                    .into_iter()
+                    .map(|entry| tidb_proto::KvrpcWaitForEntry {
+                        txn: entry.txn,
+                        wait_for_txn: entry.wait_for_txn,
+                        key_hash: entry.key_hash,
+                        key: entry.key,
+                        resource_group_tag: entry.resource_group_tag,
+                        wait_time: entry.wait_time,
+                    })
+                    .collect()
+            })
+            .map_err(|error| {
+                DirectUnaryClientError::InvalidRequest(format!(
+                    "invalid GetLockWaitInfo response: {error}"
+                ))
+            })
+    }
 }
 
 impl Clone for TonicCoprocessorClient {
@@ -103,7 +147,8 @@ impl TonicCoprocessorClient {
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
     ) -> Result<super::transport_runtime::PublicationBarrier, DirectUnaryClientError> {
-        self.transport.submit_batch_with_call(address, entries, call)
+        self.transport
+            .submit_batch_with_call(address, entries, call)
     }
 
     /// Returns the highest active stream generation for an address/forwarding target.
@@ -327,21 +372,25 @@ impl DirectUnaryClient for TonicCoprocessorClient {
     }
 }
 
-impl AsyncRequestDispatcher for TonicCoprocessorClient {
-    type Pending = BatchCoprocessorPending;
-
-    fn begin(
+impl TonicCoprocessorClient {
+    fn begin_batch_request(
         &mut self,
         physical_address: &str,
         forwarded_host: Option<&str>,
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
-    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        run_loop: Option<CompletionRunLoop>,
+    ) -> Result<BatchCoprocessorPending, DirectUnaryClientError> {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
-        let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
+        let (entry, mut pending) = match run_loop {
+            Some(run_loop) => {
+                BatchCoprocessorPending::entry_with_run_loop(body, forwarded_host, run_loop)
+            }
+            None => BatchCoprocessorPending::entry(body, forwarded_host),
+        };
         let barrier =
             match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
                 Ok(barrier) => barrier,
@@ -356,6 +405,63 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
         Ok(pending)
+    }
+}
+
+impl SynchronousBatchRequestDispatcher for TonicCoprocessorClient {
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let mut pending =
+            self.begin_batch_request(physical_address, forwarded_host, request, call, None)?;
+        match pending.complete(call) {
+            Ok(result) => result,
+            Err(CompletionError::Cancelled) => Err(DirectUnaryClientError::CallerCancelled),
+            Err(CompletionError::DeadlineExceeded) => Err(DirectUnaryClientError::Timeout {
+                connection: DirectUnaryConnectionError::local_deadline(
+                    physical_address,
+                    0,
+                    "BatchCommands response deadline elapsed".to_owned(),
+                ),
+                timeout_ms: 0,
+            }),
+            Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
+        }
+    }
+}
+
+impl AsyncRequestDispatcher for TonicCoprocessorClient {
+    type Pending = BatchCoprocessorPending;
+
+    fn begin(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin_batch_request(physical_address, forwarded_host, request, call, None)
+    }
+
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+        run_loop: CompletionRunLoop,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin_batch_request(
+            physical_address,
+            forwarded_host,
+            request,
+            call,
+            Some(run_loop),
+        )
     }
 }
 

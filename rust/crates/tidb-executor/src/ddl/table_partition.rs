@@ -235,6 +235,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: method.columns.is_empty(),
             kind: PartitionKind::Key,
             expr_text: dependencies
@@ -280,6 +281,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind,
             expr_text: method
@@ -334,6 +336,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
         return Ok(Some(PartitionSpec {
+            overlapping_dropping_partition_indices: Vec::new(),
             is_empty_columns: false,
             kind: PartitionKind::RangeColumns {
                 less_than,
@@ -373,11 +376,6 @@ fn build_table_partitioning_inner(
         ctx.like_default_escape(),
         PartitionBuildMode::Create,
     )?;
-    // Go `checkPartitionFuncType`: the partition expression must evaluate to
-    // an integer -- asked of the BUILT expression, not re-derived from the
-    // AST (`ddl/partition.go:1895`).
-    check_partition_expression_type(expr, &built)?;
-
     // `deferred` carries the LIST duplicate-constant refusal (1495) that Go
     // raises from `checkPartitionByList`, i.e. after 1517 and 1499.
     let mut written = Vec::with_capacity(partitioning.definitions.len());
@@ -418,6 +416,11 @@ fn build_table_partitioning_inner(
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(DriverError::PartitionTooMany);
     }
+    // Go checks the partition definition constraints before
+    // `checkPartitionFuncType` (`create_table.go:517-533`).  Keep the same
+    // order: malformed VALUES (including an early MAXVALUE or a non-integer
+    // LIST bound) must win over a non-integral partition expression.
+    check_partition_expression_type(expr, &built)?;
     // Go's type-specific branch of `checkPartitionDefinitionConstraints`,
     // which runs AFTER 1517 and 1499: `checkPartitionByRange` is where 1493
     // lives, so a duplicate partition name beside a non-increasing bound
@@ -441,6 +444,7 @@ fn build_table_partitioning_inner(
     check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
 
     Ok(Some(PartitionSpec {
+        overlapping_dropping_partition_indices: Vec::new(),
         is_empty_columns: false,
         kind,
         expr_text,
@@ -590,7 +594,6 @@ fn key_partition_type_allowed(field_type: &FieldType) -> bool {
             | FieldTypeCode::VectorFloat32
     )
 }
-
 
 /// The warning a `LINEAR HASH`/`LINEAR KEY` clause earns, or `None`.
 ///
@@ -845,7 +848,9 @@ fn check_partition_expression_type(
     // why `unwrap_parentheses` has no place here.
     if let Expr::Column(path) = expr {
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
-        return Err(DriverError::PartitionFieldTypeNotAllowed(go_to_lower(&name)));
+        return Err(DriverError::PartitionFieldTypeNotAllowed(go_to_lower(
+            &name,
+        )));
     }
     // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
     // as the source spelled it -- which is what a parenthesised column
@@ -857,7 +862,6 @@ fn check_partition_expression_type(
     Err(DriverError::PartitionFuncWrongType)
 }
 
-
 /// The parenthesised expression's subject, since `(a)` partitions on `a`.
 fn unwrap_parentheses(expr: &Expr) -> &Expr {
     match expr {
@@ -865,7 +869,6 @@ fn unwrap_parentheses(expr: &Expr) -> &Expr {
         other => other,
     }
 }
-
 
 /// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
 /// unless the statement named them itself.
@@ -900,8 +903,8 @@ fn build_hash_partition_definitions(
     let mut definitions = Vec::with_capacity(count as usize);
     for index in 0..count {
         let written_definition = written.get(index as usize);
-        let name = written_definition
-            .map_or_else(|| format!("p{index}"), |written| written.name.clone());
+        let name =
+            written_definition.map_or_else(|| format!("p{index}"), |written| written.name.clone());
         let comment = match written_definition {
             Some(definition) => partition_definition_comment(definition, ctx, false)?,
             None => String::new(),
@@ -1229,8 +1232,9 @@ fn check_partition_call_args(
             "YEAR" | "YEAR_MONTH" | "QUARTER" | "MONTH" | "DAY" => ok(has_date),
             "DAY_MICROSECOND" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" => ok(has_datetime),
             "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "MINUTE" | "MINUTE_SECOND" | "SECOND"
-            | "MICROSECOND" | "HOUR_MICROSECOND" | "MINUTE_MICROSECOND"
-            | "SECOND_MICROSECOND" => ok(has_time),
+            | "MICROSECOND" | "HOUR_MICROSECOND" | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => {
+                ok(has_time)
+            }
             _ => Err(DriverError::PartitionWrongExprInFunc),
         },
         // Go raises 1486 for a TIMESTAMP argument to these, because their
@@ -1477,7 +1481,9 @@ pub fn append_partition_defs(definitions: &[PartitionDef], kind: &PartitionKind)
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
         }
         out.push_str(&partition_comment_text(&definition.comment));
-        out.push_str(&partition_placement_text(definition.placement_policy.as_ref()));
+        out.push_str(&partition_placement_text(
+            definition.placement_policy.as_ref(),
+        ));
     }
     out.push(')');
     out
@@ -1602,23 +1608,7 @@ fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), Drive
 /// `ß` stays `ß` under the simple map -- it does NOT expand to `ss` -- so `ß`
 /// and `SS` remain distinct partition names.
 pub(super) fn go_to_lower(name: &str) -> String {
-    name.chars()
-        .map(|source| {
-            // The one rune where Rust's full mapping differs from Go's simple
-            // one: U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE lowercases to
-            // `i` + U+0307 in full mapping, and to a bare `i` in Go.
-            if source == '\u{130}' {
-                return 'i';
-            }
-            let mut mapped = source.to_lowercase();
-            match (mapped.next(), mapped.next()) {
-                (Some(single), None) => single,
-                // A multi-rune expansion has no simple-mapping equivalent, so
-                // Go would have left the rune alone.
-                _ => source,
-            }
-        })
-        .collect()
+    tidb_mysql::to_lowercase(name)
 }
 
 /// Go `checkTooLongTable` (`ddl/executor.go:864`), applied to a partition
@@ -1676,23 +1666,10 @@ fn check_unique_keys_include_partition_columns(
                 "CLUSTERED INDEX".to_owned(),
             ));
         }
-        // Go `ddl/partition.go:703` guards the 8264 refusal with
-        // `if !index.Global`: a GLOBAL index is EXEMPT from the covering
-        // rule, because its entries span every partition and so can enforce
-        // a constraint across them.
-        //
-        // This node writes only per-partition LOCAL entries. Accepting the
-        // exemption would enforce the unique constraint within each
-        // partition and let the same value repeat across them, so the index
-        // is refused -- but for the reason it is actually refused. Raising
-        // 8264 here told the user GLOBAL was not given when it was.
+        // Go `ddl/partition.go:703`: a GLOBAL index is exempt because its
+        // entries share the logical table's index keyspace.
         if index.global {
-            let name = &index.name;
-            return Err(DriverError::unsupported(format!(
-                "a GLOBAL index ({name}) is not supported by this node: it maintains only \
-                 per-partition index entries, so a unique constraint spanning the \
-                 partitions would not be enforced"
-            )));
+            continue;
         }
         return Err(DriverError::PartitionGlobalIndexNeeded(index.name.clone()));
     }
@@ -1787,15 +1764,18 @@ fn stored_clause(
         for tuple in &definition.in_values {
             // Go `buildListPartitionValueMap`: `DEFAULT` is recognised on the
             // FIRST component only, and the rest of the tuple is not read.
-            if tuple.first().is_some_and(|first| first.eq_ignore_ascii_case("DEFAULT")) {
+            if tuple
+                .first()
+                .is_some_and(|first| first.eq_ignore_ascii_case("DEFAULT"))
+            {
                 values.push(PartitionValue::Default);
                 continue;
             }
             values.push(match tuple.as_slice() {
                 [single] => PartitionValue::Expr(parse(single)?),
-                many => PartitionValue::Tuple(
-                    many.iter().map(parse).collect::<Result<Vec<_>, _>>()?,
-                ),
+                many => {
+                    PartitionValue::Tuple(many.iter().map(parse).collect::<Result<Vec<_>, _>>()?)
+                }
             });
         }
         return Ok(PartitionDefinitionClause::In(values));
@@ -1839,6 +1819,10 @@ fn stored_definitions_as_ast(
 /// KEY and the `COLUMNS` variants carry instead of an expression; Go
 /// dispatches on it the same way (`len(partCols) < 1` chooses RANGE over
 /// RANGE COLUMNS in `generateRangePartitionExpr`).
+/// `overlapping_dropping_partition_indices` is the caller's direct snapshot
+/// of `PartitionInfo.GetOverlappingDroppingPartitionIdx` while the complete
+/// model metadata is available; the rebuilt spec retains it for static
+/// partition pruning during online DROP PARTITION.
 ///
 /// # Errors
 ///
@@ -1851,6 +1835,7 @@ pub fn partition_spec_from_metadata(
     columns: &[String],
     is_empty_columns: bool,
     definitions: &[StoredPartitionDefinition],
+    overlapping_dropping_partition_indices: &[Option<usize>],
     names: &[String],
     types: &[FieldType],
 ) -> Result<PartitionSpec, DriverError> {
@@ -1919,6 +1904,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies: columns.to_vec(),
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // Go `generateRangePartitionExpr` / `generateListPartitionExpr` with
@@ -1934,9 +1921,9 @@ pub fn partition_spec_from_metadata(
                     ctx,
                     PartitionBuildMode::Load,
                     // Go's loader runs no per-definition name or comment
-                // check: `newPartitionExpr` re-judges nothing the DDL
-                // already accepted.
-                &mut |_| Ok(()),
+                    // check: `newPartitionExpr` re-judges nothing the DDL
+                    // already accepted.
+                    &mut |_| Ok(()),
                 )?;
             Ok(PartitionSpec {
                 is_empty_columns,
@@ -1948,6 +1935,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         PartitionType::LIST if !columns.is_empty() => {
@@ -1970,6 +1959,8 @@ pub fn partition_spec_from_metadata(
                 expr: placeholder(),
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // The expression forms: Go parses the stored `PartitionInfo.Expr` and
@@ -2051,6 +2042,8 @@ pub fn partition_spec_from_metadata(
                 expr: built,
                 dependencies,
                 definitions: physical,
+                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
+                    .to_vec(),
             })
         }
         // Go `newPartitionExpr` returns `nil, nil` for NONE
@@ -2066,6 +2059,7 @@ pub fn partition_spec_from_metadata(
             expr: placeholder(),
             dependencies: Vec::new(),
             definitions: physical,
+            overlapping_dropping_partition_indices: overlapping_dropping_partition_indices.to_vec(),
         }),
         other => {
             let name = other.sql();
@@ -2214,9 +2208,15 @@ fn stored_definitions_for(
         match &spec.kind {
             // HASH, KEY and NONE definitions carry a name and nothing else.
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
-            PartitionKind::Range { less_than, unsigned } => {
+            PartitionKind::Range {
+                less_than,
+                unsigned,
+            } => {
                 entry.less_than = vec![stored_range_bound_text(
-                    less_than.get(ordinal).copied().unwrap_or(RangeBound::MaxValue),
+                    less_than
+                        .get(ordinal)
+                        .copied()
+                        .unwrap_or(RangeBound::MaxValue),
                     *unsigned,
                 )];
             }
@@ -2283,8 +2283,8 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
     match field_type.map(FieldType::eval_type) {
         Some(EvalType::Int) => rendered(),
         Some(EvalType::String) => {
-            let binary = field_type
-                .is_some_and(|ft| ft.charset() == tidb_datatype::Charset::Binary);
+            let binary =
+                field_type.is_some_and(|ft| ft.charset() == tidb_datatype::Charset::Binary);
             let bytes = match datum {
                 Datum::Bytes(value) => Some(value.as_slice()),
                 Datum::String(value) => Some(value.bytes()),
@@ -2345,16 +2345,18 @@ pub(super) fn stored_in_values(
             // Go stores the catch-all as the literal word `DEFAULT`, which
             // `buildListPartitionValueMap` matches with `strings.EqualFold`.
             PartitionValue::Default => tuples.push(vec!["DEFAULT".to_owned()]),
-            PartitionValue::MaxValue => {
-                return Err(DriverError::PartitionColumnValueWrongType)
-            }
+            PartitionValue::MaxValue => return Err(DriverError::PartitionColumnValueWrongType),
             PartitionValue::Expr(expr) => {
                 tuples.push(vec![stored_list_component(expr, field_types.first(), ctx)?]);
             }
             PartitionValue::Tuple(components) => {
                 let mut tuple = Vec::with_capacity(components.len());
                 for (position, component) in components.iter().enumerate() {
-                    tuple.push(stored_list_component(component, field_types.get(position), ctx)?);
+                    tuple.push(stored_list_component(
+                        component,
+                        field_types.get(position),
+                        ctx,
+                    )?);
                 }
                 tuples.push(tuple);
             }
@@ -2475,6 +2477,7 @@ mod round_trip_tests {
             &stored.columns,
             stored.is_empty_columns,
             &definitions,
+            &[],
             &names,
             &types,
         )
@@ -2504,18 +2507,10 @@ mod round_trip_tests {
         );
     }
 
-    /// Go EXEMPTS a GLOBAL unique index from the covering rule: at
-    /// `ddl/partition.go:703` the 8264 refusal is guarded by `if
-    /// !index.Global`, because a global index spans every partition and so
-    /// can enforce uniqueness across them.
-    ///
-    /// This node maintains only per-partition local index entries, so it must
-    /// not accept one -- accepting it would enforce the unique constraint
-    /// WITHIN each partition and let the same value repeat across them. But
-    /// the refusal has to name that, rather than telling the user GLOBAL was
-    /// not given when it was.
+    /// Go exempts a GLOBAL unique index from the covering rule because its
+    /// logical-table keyspace enforces the constraint across partitions.
     #[test]
-    fn a_global_unique_index_is_refused_for_the_reason_it_is_refused() {
+    fn a_global_unique_index_is_exempt_from_the_partition_covering_rule() {
         let sql = "CREATE TABLE t (id BIGINT, v BIGINT, UNIQUE KEY uv (v) GLOBAL) \
                    PARTITION BY HASH (id) PARTITIONS 2";
         let statement = tidb_parser::parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
@@ -2541,9 +2536,10 @@ mod round_trip_tests {
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
             global: true,
+            global_index_version: 0,
             clustered_primary: false,
         }];
-        let error = build_table_partitioning(
+        build_table_partitioning(
             create,
             &names,
             &types,
@@ -2552,16 +2548,7 @@ mod round_trip_tests {
             &mut || 1,
             &crate::StmtContext::for_query(),
         )
-        .expect_err("this node cannot serve a GLOBAL index");
-        let message = error.to_mysql_error().message;
-        assert!(
-            !message.contains("GLOBAL is not given"),
-            "GLOBAL WAS given; the refusal must not claim otherwise: {message}"
-        );
-        assert!(
-            message.contains("GLOBAL"),
-            "the refusal must name the global index as the reason: {message}"
-        );
+        .expect("Go accepts a GLOBAL key that does not cover the partition column");
     }
 
     /// Go's own golden matrix for `PARTITION BY KEY ()`
@@ -2590,6 +2577,7 @@ mod round_trip_tests {
             column_offsets: offsets,
             visible: true,
             global: false,
+            global_index_version: 0,
             clustered_primary: false,
         };
 
@@ -2601,12 +2589,8 @@ mod round_trip_tests {
         // k2: no handle; the implicit primary key is the first UNIQUE key
         // whose columns are all NOT NULL.
         assert_eq!(
-            key_clause_dependencies(
-                &[not_null(), long()],
-                &[],
-                &[index("id", true, vec![0])]
-            )
-            .expect("k2 is legal"),
+            key_clause_dependencies(&[not_null(), long()], &[], &[index("id", true, vec![0])])
+                .expect("k2 is legal"),
             vec!["id".to_owned()]
         );
         // k3: an explicit PRIMARY index wins even when it is NONCLUSTERED,
@@ -2678,8 +2662,16 @@ mod round_trip_tests {
     fn a_partition_function_is_admitted_on_its_result_type_not_its_name() {
         // Go asserts both halves of the FLOOR split itself, at
         // `ddl/tests/partition/db_partition_test.go:241-242`.
-        assert_eq!(partition_clause_error("FLOOR(c2)"), Some(1491), "FLOOR over a float is a REAL");
-        assert_eq!(partition_clause_error("FLOOR(c1)"), None, "FLOOR over an int is an int");
+        assert_eq!(
+            partition_clause_error("FLOOR(c2)"),
+            Some(1491),
+            "FLOOR over a float is a REAL"
+        );
+        assert_eq!(
+            partition_clause_error("FLOOR(c1)"),
+            None,
+            "FLOOR over an int is an int"
+        );
         assert_eq!(partition_clause_error("ABS(c2)"), Some(1491));
         assert_eq!(partition_clause_error("CEILING(c2)"), Some(1491));
         // FROM_DAYS returns a DATE whatever it is given -- but WHICH error
@@ -2737,8 +2729,12 @@ mod round_trip_tests {
              PARTITION BY RANGE ({expr}) (PARTITION p0 VALUES LESS THAN (100))"
         );
         let statement = tidb_parser::parse(&sql).expect("the fixture parses");
-        let tidb_ast::Stmt::Ddl(ddl) = statement else { panic!("not DDL") };
-        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else { panic!("not CREATE TABLE") };
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            panic!("not DDL")
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
+            panic!("not CREATE TABLE")
+        };
         // Derive the column types the way the DDL path does, so the fixture
         // cannot drift from what a real CREATE TABLE produces -- a plain
         // TIMESTAMP is fsp 0, and hand-building the FieldType left it
@@ -2816,7 +2812,12 @@ mod load_permissiveness_tests {
     /// must open here even when this node's CREATE would refuse the same
     /// shape. Round-trip tests cannot cover it, because they start from a
     /// CREATE and so only ever produce metadata CREATE accepts.
-    fn definition(id: i64, name: &str, less_than: &[&str], in_values: &[&[&str]]) -> StoredPartitionDefinition {
+    fn definition(
+        id: i64,
+        name: &str,
+        less_than: &[&str],
+        in_values: &[&[&str]],
+    ) -> StoredPartitionDefinition {
         StoredPartitionDefinition {
             id,
             name: name.to_owned(),
@@ -2853,6 +2854,7 @@ mod load_permissiveness_tests {
                 definition(1, "p0", &[], &[&["1"], &["2"]]),
                 definition(2, "p1", &[], &[&["2"], &["3"]]),
             ],
+            &[],
             &names,
             &types,
         )
@@ -2881,6 +2883,7 @@ mod load_permissiveness_tests {
                 definition(1, "p0", &["10"], &[]),
                 definition(2, "p1", &["5"], &[]),
             ],
+            &[],
             &names,
             &types,
         )
@@ -2901,10 +2904,33 @@ mod load_permissiveness_tests {
             &[],
             false,
             &[definition(1, "p0", &[], &[])],
+            &[],
             &names,
             &types,
         )
         .expect("a table mid-repartition opens");
         assert!(matches!(spec.kind, PartitionKind::None));
+    }
+
+    #[test]
+    fn online_drop_overlap_mapping_survives_metadata_rebuild() {
+        let (names, types) = int_column();
+        let spec = partition_spec_from_metadata(
+            PartitionType::RANGE,
+            "`a`",
+            &[],
+            false,
+            &[
+                definition(1, "p0", &["10"], &[]),
+                definition(2, "p1", &["MAXVALUE"], &[]),
+            ],
+            &[Some(1), Some(1)],
+            &names,
+            &types,
+        )
+        .expect("online DROP PARTITION metadata rebuilds");
+
+        assert_eq!(spec.overlapping_dropping_partition_index(0), Some(1));
+        assert_eq!(spec.overlapping_dropping_partition_index(1), Some(1));
     }
 }

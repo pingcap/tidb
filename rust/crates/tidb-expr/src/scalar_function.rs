@@ -21,21 +21,25 @@
 //! dispatch (the `builtinFunc` `eval*` methods, keyed by `tipb.ScalarFuncSig`)
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
-//! Ported: the struct and its argument-structural methods, const-level rules,
-//! the common `ReHashCode` path, and evaluation for operators plus the builtin
-//! families owned by the shared dispatch modules. Unknown builtin names fail
-//! explicitly. Remaining structural gaps are `Equal` (Go's
-//! compares through the function's `equal(ctx, ...)`); the `Grouping`
-//! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); `CanonicalHashCode`;
-//! per-signature collation; and `MemoryUsage`.
+//! Ported: the struct and its argument-structural methods, recursive
+//! `Decorrelate`, const-level rules, the common `ReHashCode` path (including
+//! `Grouping` metadata), structural `Hash64`/`Equals`, and evaluation for
+//! operators plus the builtin families owned by the shared dispatch modules.
+//! Unknown builtin names fail explicitly. Remaining structural gaps are
+//! per-signature collation and `MemoryUsage`.
+
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
+use crate::grouping::{GroupingMetadata, GroupingMetadataError, GroupingMode};
+use crate::schema::Schema;
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
-use tidb_codec::encode_compact_bytes;
-use tidb_datatype::{Datum, EvalType, FieldType};
+use tidb_codec::{encode_compact_bytes, encode_int};
+use tidb_datatype::{Datum, EvalType, FieldType, UNSPECIFIED_LENGTH};
 
 const MAX_ADVISORY_LOCK_TIMEOUT_SECS: i64 = 1_073_741_824;
 
@@ -186,6 +190,23 @@ pub fn is_unfoldable_function(name: &str) -> bool {
                 | "getparam"
                 | "benchmark"
                 | "dayname"
+                // These information functions read session properties in
+                // Go (`CurrentDB`, `CurrentUserPropReader`, or
+                // `SessionVarsPropReader`). Rust's planner fold has only
+                // `NoColumns`, so keep them runtime-bound instead of
+                // replacing a missing property with a frozen NULL.
+                | "database"
+                | "schema"
+                | "current_user"
+                | "current_role"
+                | "current_resource_group"
+                | "user"
+                | "session_user"
+                | "system_user"
+                | "connection_id"
+                | "row_count"
+                | "version"
+                | "tidb_version"
                 | "nextval"
                 | "lastval"
                 | "setval"
@@ -213,6 +234,22 @@ pub fn unary_op_name(op: UnaryOp) -> &'static str {
     }
 }
 
+fn append_canonical_name(output: &mut Vec<u8>, name: &str) {
+    encode_compact_bytes(output, name.as_bytes());
+}
+
+fn append_canonical_args(output: &mut Vec<u8>, args: &[Vec<u8>]) {
+    for code in args {
+        output.extend_from_slice(code);
+    }
+}
+
+fn append_canonical_args_reversed(output: &mut Vec<u8>, args: &[Vec<u8>]) {
+    for code in args.iter().rev() {
+        output.extend_from_slice(code);
+    }
+}
+
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
 #[derive(Clone, Debug, Default)]
 pub struct ScalarFunction {
@@ -222,9 +259,19 @@ pub struct ScalarFunction {
     pub ret_type: Option<FieldType>,
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
-    /// Lazily-filled `HashCode` cache (Go `hashcode`). Go also caches a
-    /// `canonicalhashcode`; that field lands with `CanonicalHashCode`.
+    /// Go `builtinValues*Sig.offset`, carried by `NewValuesFunc`. `VALUES()`
+    /// has no runtime argument: its column position is fixed when the
+    /// expression is built and the value is read from the statement's
+    /// current-insert row at evaluation time.
+    values_offset: Option<usize>,
+    /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
+    /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
+    ///
+    /// Grouping is built through `NewFunctionWithInit`, so carrying the
+    /// validated metadata on the node is what lets clones and substitution
+    /// preserve the function's grouping-id semantics and hash identity.
+    grouping_metadata: Option<GroupingMetadata>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -238,53 +285,92 @@ pub struct ScalarFunction {
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
 }
 
-/// Go's 1690 text for one binary arithmetic overflow: the result type's
-/// integer class (`BIGINT` / `BIGINT UNSIGNED`, from the function's own
-/// declared result type) and the operand list rendered as Go's
-/// `StringWithCtx(errors.RedactLogDisable)` renders constants.
-fn arithmetic_overflow_error(
-    function: &ScalarFunction,
-    op: tidb_ast::BinaryOp,
-    ctx: &impl Columns,
-) -> EvalError {
-    let symbol = match op {
+fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
+    Some(match op {
         tidb_ast::BinaryOp::Plus => "+",
         tidb_ast::BinaryOp::Minus => "-",
         tidb_ast::BinaryOp::Mul => "*",
         tidb_ast::BinaryOp::Div => "/",
         tidb_ast::BinaryOp::IntDiv => "DIV",
         tidb_ast::BinaryOp::Mod => "%",
-        _ => return EvalError::IntOverflow,
-    };
-    // A faithful operand list needs each argument rendered the way Go's
-    // `StringWithCtx` renders it. Constants carry everything needed; a COLUMN
-    // would print its qualified SQL name (`test.y.a`), which this layer does
-    // not know, so a non-constant operand keeps the bare overflow error
-    // rather than emitting a wrong message.
-    fn render(expression: &Expression, ctx: &impl Columns) -> Option<String> {
+        _ => return None,
+    })
+}
+
+/// Renders the operand list Go's `StringWithCtx(errors.RedactLogDisable)` uses
+/// in an arithmetic overflow. Resolved columns and nested arithmetic
+/// functions retain their source names and shape; unknown expression kinds
+/// keep the caller's safe fallback instead of inventing a display string.
+fn arithmetic_overflow_expression(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    go_float_format: bool,
+    ctx: &dyn Columns,
+) -> Option<String> {
+    let symbol = arithmetic_symbol(op)?;
+    fn render(expression: &Expression, go_float_format: bool, ctx: &dyn Columns) -> Option<String> {
         match expression {
             Expression::Constant(constant) => match constant.eval_in(ctx).ok()? {
                 Datum::Int(value) => Some(value.to_string()),
                 Datum::UInt(value) => Some(value.to_string()),
+                Datum::Float32(value) => {
+                    if go_float_format {
+                        Some(tidb_datatype::format_float_g_shortest(value))
+                    } else {
+                        Some(value.to_string())
+                    }
+                }
                 Datum::Real(value) => {
-                    // Go strconv.FormatFloat(v, 'f', -1, 64).
-                    Some(format!("{value}"))
+                    if go_float_format {
+                        Some(tidb_datatype::format_float_g_shortest(value))
+                    } else {
+                        Some(value.to_string())
+                    }
                 }
                 Datum::Decimal(value) => Some(value.to_string()),
                 Datum::Null => Some("NULL".to_owned()),
                 _ => None,
             },
+            Expression::Column(column) if !column.orig_name.is_empty() => {
+                Some(column.orig_name.clone())
+            }
+            Expression::CorrelatedColumn(column) if !column.column.orig_name.is_empty() => {
+                Some(column.column.orig_name.clone())
+            }
+            Expression::ScalarFunction(function) => {
+                let op = arithmetic_symbol(binary_op_for_name(function.func_name.lowercase())?)?;
+                let [left, right] = function.args.as_slice() else {
+                    return None;
+                };
+                Some(format!(
+                    "({} {op} {})",
+                    render(left, go_float_format, ctx)?,
+                    render(right, go_float_format, ctx)?
+                ))
+            }
             _ => None,
         }
     }
-    let operands = match function.get_args() {
-        [left, right] => match (render(left, ctx), render(right, ctx)) {
-            (Some(left), Some(right)) => {
-                format!("({left} {symbol} {right})")
-            }
-            _ => return EvalError::IntOverflow,
-        },
-        _ => return EvalError::IntOverflow,
+    let [left, right] = function.get_args() else {
+        return None;
+    };
+    Some(format!(
+        "({} {symbol} {})",
+        render(left, go_float_format, ctx)?,
+        render(right, go_float_format, ctx)?
+    ))
+}
+
+/// Go's 1690 text for one binary integer overflow: the result type's integer
+/// class (`BIGINT` / `BIGINT UNSIGNED`, from the function's declared result
+/// type) and the rendered operand list.
+fn arithmetic_overflow_error(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    ctx: &dyn Columns,
+) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, false, ctx) else {
+        return EvalError::IntOverflow;
     };
     let class = match function.get_static_type() {
         Some(field_type) if field_type.is_unsigned() => "BIGINT UNSIGNED",
@@ -292,8 +378,121 @@ fn arithmetic_overflow_error(
     };
     EvalError::DataOutOfRange {
         value: class,
-        expression: Box::leak(operands.into_boxed_str()),
+        expression: operands,
     }
+}
+
+/// Go's 1690 text for one binary REAL overflow. The real signatures use the
+/// same operand rendering as integer signatures, but always name `DOUBLE`.
+fn real_arithmetic_overflow_error(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    ctx: &dyn Columns,
+) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, true, ctx) else {
+        return EvalError::FloatOverflow;
+    };
+    EvalError::DataOutOfRange {
+        value: "DOUBLE",
+        expression: operands,
+    }
+}
+
+/// Go's 1690 text for one binary DECIMAL overflow. The decimal signatures
+/// carry the same source-shaped operand expression and name their domain.
+fn decimal_arithmetic_overflow_error(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    ctx: &dyn Columns,
+) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, false, ctx) else {
+        return EvalError::DecimalOverflow;
+    };
+    EvalError::DataOutOfRange {
+        value: "DECIMAL",
+        expression: operands,
+    }
+}
+
+/// Renders the argument expression used by Go's math overflow signatures.
+/// These signatures report their function name and source-shaped arguments,
+/// rather than the datum-only `FloatOverflow` carrier returned by the shared
+/// math implementation.
+fn math_overflow_expression(function: &ScalarFunction, ctx: &dyn Columns) -> Option<String> {
+    fn render(expression: &Expression, ctx: &dyn Columns) -> Option<String> {
+        match expression {
+            Expression::Constant(constant) => match constant.eval_in(ctx).ok()? {
+                Datum::Int(value) => Some(value.to_string()),
+                Datum::UInt(value) => Some(value.to_string()),
+                Datum::Float32(value) => Some(tidb_datatype::format_float_g_shortest(value)),
+                Datum::Real(value) => Some(tidb_datatype::format_float_g_shortest(value)),
+                Datum::Decimal(value) => Some(value.to_string()),
+                Datum::Null => Some("NULL".to_owned()),
+                _ => None,
+            },
+            Expression::Column(column) if !column.orig_name.is_empty() => {
+                Some(column.orig_name.clone())
+            }
+            Expression::CorrelatedColumn(column) if !column.column.orig_name.is_empty() => {
+                Some(column.column.orig_name.clone())
+            }
+            Expression::ScalarFunction(function) => {
+                if let Some(op) = binary_op_for_name(function.func_name.lowercase()) {
+                    let symbol = arithmetic_symbol(op)?;
+                    let [left, right] = function.args.as_slice() else {
+                        return None;
+                    };
+                    return Some(format!(
+                        "({} {symbol} {})",
+                        render(left, ctx)?,
+                        render(right, ctx)?
+                    ));
+                }
+                let args = function
+                    .args
+                    .iter()
+                    .map(|expression| render(expression, ctx))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!(
+                    "{}({})",
+                    function.func_name.lowercase(),
+                    args.join(", ")
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    let args = function
+        .args
+        .iter()
+        .map(|expression| render(expression, ctx))
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!(
+        "{}({})",
+        function.func_name.lowercase(),
+        args.join(", ")
+    ))
+}
+
+/// Converts the datum-only overflow carriers from math builtins into Go's
+/// function-specific 1690 diagnostics while the argument expressions remain
+/// available on the scalar-function node.
+fn math_overflow_error(
+    function: &ScalarFunction,
+    error: EvalError,
+    ctx: &dyn Columns,
+) -> EvalError {
+    let name = function.func_name.lowercase();
+    let value = match (name, &error) {
+        ("abs", EvalError::IntOverflow) => "BIGINT",
+        ("cot" | "exp" | "pow" | "power", EvalError::FloatOverflow) => "DOUBLE",
+        _ => return error,
+    };
+    let Some(expression) = math_overflow_expression(function, ctx) else {
+        return error;
+    };
+    EvalError::DataOutOfRange { value, expression }
 }
 
 impl ScalarFunction {
@@ -306,6 +505,79 @@ impl ScalarFunction {
             args,
             ..Default::default()
         }
+    }
+
+    /// Builds Go's `NewValuesFunc(ctx, offset, retTp)` node. The offset is
+    /// immutable build-time state, while the current insert row is supplied
+    /// by [`Columns::current_insert_value`] for each evaluation.
+    #[must_use]
+    pub fn new_values(offset: usize, ret_type: FieldType) -> Self {
+        Self {
+            func_name: CiString::new("values"),
+            ret_type: Some(ret_type),
+            values_offset: Some(offset),
+            ..Default::default()
+        }
+    }
+
+    /// Invalidates memoized state derived from this function's arguments.
+    ///
+    /// Cached physical-plan rebuild replaces parameter constants inside the
+    /// argument tree.  The expression node itself is retained, so every
+    /// argument-derived cache must be discarded before the rebound tree is
+    /// used by ranger or executor code.
+    pub fn invalidate_cached_arguments(&mut self) {
+        self.hashcode.clear();
+        self.in_string_hash_set = None;
+        self.in_string_non_const_args.clear();
+        self.in_string_has_null = false;
+        self.json_schema_cache = Default::default();
+    }
+
+    /// Go `BuiltinGroupingImplSig.SetMetadata`: install validated grouping
+    /// mode/mark metadata on a `grouping` scalar function and invalidate its
+    /// cached hash code. A failed replacement leaves the metadata
+    /// uninitialized, matching the source signature's `isMetaInited` flag.
+    pub fn set_grouping_metadata(
+        &mut self,
+        mode: GroupingMode,
+        grouping_marks: Vec<BTreeSet<u64>>,
+    ) -> Result<(), GroupingMetadataError> {
+        self.clean_hash_code();
+        self.grouping_metadata = None;
+        let metadata = GroupingMetadata::new(mode, grouping_marks)?;
+        self.grouping_metadata = Some(metadata);
+        Ok(())
+    }
+
+    /// Returns the validated grouping metadata installed on this function.
+    pub fn grouping_metadata(&self) -> Result<&GroupingMetadata, GroupingMetadataError> {
+        self.grouping_metadata
+            .as_ref()
+            .ok_or(GroupingMetadataError::Uninitialized)
+    }
+
+    /// Whether this function has completed the source `SetMetadata` step.
+    #[must_use]
+    pub fn has_grouping_metadata(&self) -> bool {
+        self.grouping_metadata.is_some()
+    }
+
+    /// Go `ScalarFunction.Decorrelate`: recursively decorrelate every
+    /// argument and invalidate hashes/caches derived from the old tree.
+    ///
+    /// Expressions are owned values in Rust, so this method rebuilds a clone
+    /// rather than mutating an aliased node as Go does.
+    #[must_use]
+    pub fn decorrelate(&self, schema: Option<&Schema>) -> Self {
+        let mut decorrelated = self.clone();
+        decorrelated.args = self
+            .args
+            .iter()
+            .map(|argument| argument.decorrelate(schema))
+            .collect();
+        decorrelated.invalidate_cached_arguments();
+        decorrelated
     }
 
     /// Go `GetStaticType` / `GetType` (which ignores its `EvalContext`).
@@ -328,11 +600,8 @@ impl ScalarFunction {
 
     /// Go `HashCode` (`ReHashCode`), cached on first call:
     /// `[scalarFunctionFlag, EncodeCompactBytes(FuncName.L), arg.HashCode()...]`,
-    /// plus, for `cast`, a trailing byte for the target `EvalType`.
-    ///
-    /// DEFERRED: the `grouping` special case (needs `BuiltinGroupingImplSig`).
-    /// A `grouping(...)` node therefore hashes without its grouping-mode/marks;
-    /// no consumer relies on this yet, but it must be completed with that sig.
+    /// plus, for `cast`, a trailing byte for the target `EvalType`, or, for
+    /// `grouping`, the mode, mark count, each mark's size, and sorted keys.
     pub fn hash_code(&mut self) -> &[u8] {
         if !self.hashcode.is_empty() {
             return &self.hashcode;
@@ -348,13 +617,175 @@ impl ScalarFunction {
         for code in arg_codes {
             self.hashcode.extend_from_slice(&code);
         }
+        let name = self.func_name.lowercase();
+        if name == "values" {
+            encode_int(
+                &mut self.hashcode,
+                self.values_offset
+                    .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
+            );
+        }
         // Cast is special: its result type is effectively an argument.
-        if self.func_name.lowercase() == "cast" {
+        if name == "cast" {
             if let Some(rt) = &self.ret_type {
                 self.hashcode.push(rt.eval_type() as u8);
             }
         }
+        if name == "grouping" {
+            let metadata = self
+                .grouping_metadata
+                .as_ref()
+                .expect("grouping metadata is not initialized");
+            encode_int(&mut self.hashcode, metadata.mode() as u8 as i64);
+            encode_int(
+                &mut self.hashcode,
+                i64::try_from(metadata.grouping_marks().len()).expect("grouping mark count fits"),
+            );
+            for mark in metadata.grouping_marks() {
+                encode_int(
+                    &mut self.hashcode,
+                    i64::try_from(mark.len()).expect("grouping mark size fits"),
+                );
+                for key in mark {
+                    // Go casts the uint64 key to int64 before EncodeInt;
+                    // preserve the same two's-complement bit pattern.
+                    encode_int(&mut self.hashcode, *key as i64);
+                }
+            }
+        }
         &self.hashcode
+    }
+
+    /// Go `ScalarFunction.CanonicalHashCode` and
+    /// `simpleCanonicalizedHashCode`: normalize commutative operators and
+    /// equivalent directed comparisons before concatenating child hashes.
+    /// The bytes are freshly owned so a rewrite cannot mutate a returned
+    /// canonical key through an alias.
+    #[must_use]
+    pub fn canonical_hash_code(&self) -> Vec<u8> {
+        let arg_codes: Vec<Vec<u8>> = self
+            .args
+            .iter()
+            .map(Expression::canonical_hash_code)
+            .collect();
+        let name = self.func_name.lowercase();
+        let mut canonical = vec![SCALAR_FUNCTION_FLAG];
+
+        match name {
+            "plus" | "mul" | "eq" | "in" | "or" | "and" => {
+                append_canonical_name(&mut canonical, name);
+                let mut sorted = arg_codes;
+                sorted.sort();
+                append_canonical_args(&mut canonical, &sorted);
+            }
+            "ge" | "le" => {
+                append_canonical_name(&mut canonical, "ge");
+                if name == "ge" {
+                    append_canonical_args(&mut canonical, &arg_codes);
+                } else {
+                    append_canonical_args_reversed(&mut canonical, &arg_codes);
+                }
+            }
+            "gt" | "lt" => {
+                append_canonical_name(&mut canonical, "gt");
+                if name == "gt" {
+                    append_canonical_args(&mut canonical, &arg_codes);
+                } else {
+                    append_canonical_args_reversed(&mut canonical, &arg_codes);
+                }
+            }
+            "not" => {
+                if let Some(Expression::ScalarFunction(child)) = self.args.first() {
+                    let child_args: Vec<Vec<u8>> = child
+                        .args
+                        .iter()
+                        .map(Expression::canonical_hash_code)
+                        .collect();
+                    match child.func_name.lowercase() {
+                        "gt" => {
+                            append_canonical_name(&mut canonical, "ge");
+                            append_canonical_args_reversed(&mut canonical, &child_args);
+                        }
+                        "lt" => {
+                            append_canonical_name(&mut canonical, "ge");
+                            append_canonical_args(&mut canonical, &child_args);
+                        }
+                        "ge" => {
+                            append_canonical_name(&mut canonical, "gt");
+                            append_canonical_args_reversed(&mut canonical, &child_args);
+                        }
+                        "le" => {
+                            append_canonical_name(&mut canonical, "gt");
+                            append_canonical_args(&mut canonical, &child_args);
+                        }
+                        // Go's inner switch has no default arm. Preserve its
+                        // exact canonical bytes for a scalar child whose
+                        // name is not one of the four comparison operators.
+                        _ => {}
+                    }
+                } else {
+                    append_canonical_name(&mut canonical, name);
+                    append_canonical_args(&mut canonical, &arg_codes);
+                }
+            }
+            _ => {
+                append_canonical_name(&mut canonical, name);
+                append_canonical_args(&mut canonical, &arg_codes);
+                if name == "values" {
+                    encode_int(
+                        &mut canonical,
+                        self.values_offset
+                            .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
+                    );
+                }
+                if name == "cast" {
+                    if let Some(ret_type) = &self.ret_type {
+                        canonical.push(ret_type.eval_type() as u8);
+                    }
+                }
+            }
+        }
+        canonical
+    }
+
+    /// Go `ScalarFunction.Hash64`: hash the function tag, lower-case name,
+    /// nullable return type, argument count, and each argument recursively.
+    /// This is the structural plan-key hash and intentionally differs from
+    /// [`Self::canonical_hash_code`], which normalizes commutative operators.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        let mut hasher = crate::column::Fnv64::default();
+        SCALAR_FUNCTION_FLAG.hash(&mut hasher);
+        self.func_name.lowercase().hash(&mut hasher);
+        self.values_offset.hash(&mut hasher);
+        match &self.ret_type {
+            Some(ret_type) => {
+                1_u8.hash(&mut hasher);
+                ret_type.hash(&mut hasher);
+            }
+            None => 0_u8.hash(&mut hasher),
+        }
+        self.args.len().hash(&mut hasher);
+        for argument in &self.args {
+            crate::column::expression_hash64(argument).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Go `ScalarFunction.Equals`: structural equality over name, nullable
+    /// return type, and ordered argument trees. Hash caches and collation
+    /// metadata are not part of the source method's contract.
+    #[must_use]
+    pub fn equals(&self, other: &Self) -> bool {
+        self.func_name.lowercase() == other.func_name.lowercase()
+            && self.values_offset == other.values_offset
+            && self.ret_type == other.ret_type
+            && self.args.len() == other.args.len()
+            && self
+                .args
+                .iter()
+                .zip(&other.args)
+                .all(|(left, right)| crate::column::expression_equals(left, right))
     }
 
     /// Go `ScalarFunction.CleanHashCode` (`scalar_function.go:604`): drops the
@@ -362,8 +793,8 @@ impl ScalarFunction {
     ///
     /// Required by every rewrite that mutates [`Self::args`] in place --
     /// `SetExprColumnInOperand` and `ColumnSubstituteImpl`'s grouping arm both
-    /// call it in Go. Go also clears `canonicalhashcode`; this crate does not
-    /// cache one yet, so there is nothing else to drop.
+    /// call it in Go. Canonical bytes are derived on demand, so there is no
+    /// second cache to clear here.
     pub fn clean_hash_code(&mut self) {
         self.hashcode.clear();
     }
@@ -409,7 +840,68 @@ impl ScalarFunction {
         let Some(ret_type) = self.get_static_type() else {
             return Ok(value);
         };
+        // Go's `builtinCoalesceTimeSig`/`builtinCoalesceDurationSig` stamps
+        // every selected temporal value with the merged result FSP after
+        // evaluating it. `newBaseBuiltinFuncWithTp` does not wrap temporal
+        // arguments, so the selected value can still carry the first
+        // argument's original precision. Preserve the value's instant and
+        // update only that metadata here; a general `ConvertTo` would also
+        // round the instant, which is not what Coalesce's `SetFsp` does.
+        if self.func_name.lowercase() == "coalesce" {
+            let target_fsp = if ret_type.decimal() == tidb_datatype::UNSPECIFIED_LENGTH {
+                0
+            } else {
+                ret_type.decimal()
+            };
+            match (&value, ret_type.code()) {
+                (
+                    Datum::Time(time),
+                    tidb_datatype::FieldTypeCode::Date
+                    | tidb_datatype::FieldTypeCode::Datetime
+                    | tidb_datatype::FieldTypeCode::Timestamp,
+                ) => {
+                    let mut time = *time;
+                    let _ = time.set_fsp(target_fsp);
+                    return Ok(Datum::Time(time));
+                }
+                (Datum::Duration(duration), tidb_datatype::FieldTypeCode::Duration) => {
+                    return Ok(Datum::Duration(
+                        tidb_datatype::MySqlDuration::from_raw_parts(
+                            duration.nanoseconds(),
+                            target_fsp,
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
         if same_eval_family(&value, ret_type) {
+            // `mysql.TypeBit`'s eval type is `ETInt`, so the family check
+            // would keep an integer here. A BIT value's canonical carrier is
+            // instead the zero-padded byte string (`Datum::Bit`), which is
+            // what Go's `chunk.AppendDatum` stores for `KindMysqlBit` and
+            // what a var-length BIT chunk column can hold. A cast to BIT is
+            // the scalar function that produces such an integer, so convert
+            // it here; a value already carrying the bytes is left alone.
+            if ret_type.code() == tidb_datatype::FieldTypeCode::Bit {
+                let width = (ret_type.flen() > 0)
+                    .then(|| u8::try_from((ret_type.flen() + 7) / 8).ok())
+                    .flatten()
+                    .and_then(|bytes| tidb_datatype::BinaryLiteralWidth::try_from(bytes).ok());
+                match value {
+                    Datum::Int(v) => {
+                        return Ok(Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+                            v as u64, width,
+                        )));
+                    }
+                    Datum::UInt(v) => {
+                        return Ok(Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+                            v, width,
+                        )));
+                    }
+                    _ => {}
+                }
+            }
             return Ok(value);
         }
         // COALESCE is built with `newBaseBuiltinFuncWithTp`, so its ARGUMENTS
@@ -461,9 +953,8 @@ impl ScalarFunction {
         // literal-list capacity up front, matching the source map's intended
         // read-mostly shape without changing its collision-resistant hasher or
         // any membership/collation semantics.
-        let mut hash_set = std::collections::HashSet::with_capacity(
-            self.args.len().saturating_sub(1),
-        );
+        let mut hash_set =
+            std::collections::HashSet::with_capacity(self.args.len().saturating_sub(1));
         let mut non_const_args = Vec::new();
         let mut has_null = false;
         for (index, argument) in self.args.iter().enumerate().skip(1) {
@@ -505,7 +996,7 @@ impl ScalarFunction {
     /// return a value in the eval-type family of the function's own result
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
-    pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    pub fn eval(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         if let Some(value) = self.eval_fast_integer_binary(ctx, row)? {
             return self.coerce_to_ret_type(value);
         }
@@ -532,7 +1023,7 @@ impl ScalarFunction {
     /// ladder as their behavior contract.
     fn eval_fast_integer_binary(
         &self,
-        ctx: &impl Columns,
+        ctx: &dyn Columns,
         row: Row<'_>,
     ) -> Result<Option<Datum>, EvalError> {
         if self.args.len() != 2 {
@@ -587,10 +1078,45 @@ impl ScalarFunction {
     /// Datum-level implementations. Each returns whatever its operand kinds
     /// produced; reconciling that with the declared result type is
     /// [`Self::eval`]'s job, done once for all of them.
-    fn eval_by_signature(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    fn eval_by_signature(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
+        // Go `builtinValues*Sig` reads the statement's current insert row,
+        // not its (zero) expression arguments. The offset is immutable build
+        // state from `NewValuesFunc`; an empty/no-session row is SQL NULL,
+        // while a non-empty row with no matching field is the source's
+        // session-current-values length error.
+        if name == "values" {
+            if !self.args.is_empty() {
+                return Err(EvalError::WrongParameterCount("values"));
+            }
+            let offset = self
+                .values_offset
+                .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
+            return ctx
+                .current_insert_value(offset)?
+                .map_or(Ok(Datum::Null), Ok);
+        }
         if name == "json_schema_valid" {
             return self.json_schema_cache.eval(&self.args, ctx, row);
+        }
+        // Go `BuiltinGroupingImplSig.evalInt`: the planner installs grouping
+        // metadata before execution, the grouping-id argument is evaluated
+        // as an int64 carrier, and NULL propagates without invoking the
+        // grouping algorithm.
+        if name == "grouping" {
+            let [argument] = self.args.as_slice() else {
+                return Err(EvalError::WrongParameterCount("grouping"));
+            };
+            let grouping_id = crate::arg_eval_type::eval_int(&argument.eval(ctx, row)?)?;
+            let Some(grouping_id) = grouping_id else {
+                return Ok(Datum::Null);
+            };
+            let metadata = self
+                .grouping_metadata
+                .as_ref()
+                .ok_or(EvalError::Unsupported("Meta data is not initialized"))?;
+            let result = metadata.eval(grouping_id as u64);
+            return Ok(Datum::UInt(result));
         }
         if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
@@ -647,9 +1173,9 @@ impl ScalarFunction {
                     // (`builtin_arithmetic.go:700,716`). The bare datum-level
                     // overflow becomes the source-shaped message here, where
                     // the argument expressions are still at hand.
-                    EvalError::IntOverflow => {
-                        arithmetic_overflow_error(self, op, ctx)
-                    }
+                    EvalError::IntOverflow => arithmetic_overflow_error(self, op, ctx),
+                    EvalError::FloatOverflow => real_arithmetic_overflow_error(self, op, ctx),
+                    EvalError::DecimalOverflow => decimal_arithmetic_overflow_error(self, op, ctx),
                     other => other,
                 });
             }
@@ -669,15 +1195,27 @@ impl ScalarFunction {
         // IS FALSE / IS UNKNOWN never answer NULL -- NULL tests FALSE for
         // TRUE/FALSE and TRUE for UNKNOWN.
         if matches!(
-            &*name,
-            "istrue" | "isnottrue" | "isfalse" | "isnotfalse" | "isunknown" | "isnotunknown"
+            name,
+            "istrue"
+                | "istrue_with_null"
+                | "isnottrue"
+                | "isfalse"
+                | "isnotfalse"
+                | "isunknown"
+                | "isnotunknown"
         ) {
             if self.args.len() != 1 {
                 return Err(EvalError::WrongParameterCount("is true or false"));
             }
             let operand = self.args[0].eval(ctx, row)?;
             let truthy = crate::truthy_of(&operand)?;
-            let result = match &*name {
+            if name == "istrue_with_null" {
+                return Ok(match truthy {
+                    Some(value) => Datum::Int(i64::from(value)),
+                    None => Datum::Null,
+                });
+            }
+            let result = match name {
                 "istrue" => truthy == Some(true),
                 "isnottrue" => truthy != Some(true),
                 "isfalse" => truthy == Some(false),
@@ -801,9 +1339,9 @@ impl ScalarFunction {
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
         // `cond, result, ..., else` list, and only the selected branch is
         // evaluated -- so an error in an unreachable branch never surfaces.
-        if name == "case_when" {
-            let mut pairs = self.args.chunks_exact(2);
-            for pair in pairs.by_ref() {
+        if name == "case" {
+            let (pairs, remainder) = self.args.as_chunks::<2>();
+            for pair in pairs {
                 let condition = pair[0].eval(ctx, row)?;
                 // A NULL condition is not a match, the same as false.
                 if crate::truthy_of(&condition)? == Some(true) {
@@ -811,7 +1349,7 @@ impl ScalarFunction {
                 }
             }
             // An odd argument count means a trailing ELSE.
-            return match pairs.remainder().first() {
+            return match remainder.first() {
                 Some(else_branch) => else_branch.eval(ctx, row),
                 None => Ok(Datum::Null),
             };
@@ -936,11 +1474,8 @@ impl ScalarFunction {
                 .sql_bytes()
                 .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
             let raw_escape = self.args[2].eval(ctx, row)?;
-            let int_escape = crate::cast::cast_arg_as_int(
-                &raw_escape,
-                self.args[2].static_type(),
-                ctx,
-            )?;
+            let int_escape =
+                crate::cast::cast_arg_as_int(&raw_escape, self.args[2].static_type(), ctx)?;
             let Some(escape) = crate::arg_eval_type::eval_int(&int_escape)? else {
                 return Ok(Datum::Null);
             };
@@ -953,7 +1488,12 @@ impl ScalarFunction {
                     self.derived_collation(),
                 )
             } else {
-                crate::like_match_with_collation(text, pattern, Some(escape), self.derived_collation())
+                crate::like_match_with_collation(
+                    text,
+                    pattern,
+                    Some(escape),
+                    self.derived_collation(),
+                )
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
@@ -979,7 +1519,7 @@ impl ScalarFunction {
                     // (Go has the same build-time/run-time seam), so the value
                     // is converted onto the declared type rather than trusted
                     // to match it.
-                    return uservar_as_kind(kind, value);
+                    return uservar_as_kind(kind, value, ctx);
                 }
             }
             if name == "setvar" && self.args.len() == 2 {
@@ -1097,6 +1637,50 @@ impl ScalarFunction {
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
         // BINARY and DECIMAL casts need come from the result type.
+        // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
+        // negative result to 0 instead of the unsigned wrap
+        // (`builtin_cast.go:998`).
+        if name == "cast_unsigned_in_union" {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let res = crate::cast::to_i64_signed_with_warnings(&value, ctx)?;
+            return Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 }));
+        }
+        // Source-specific UNION cast signatures carry behavior that cannot be
+        // recovered from the target type alone (notably negative
+        // string/REAL/DECIMAL-to-DECIMAL conversions).  Route their names
+        // through the shared values dispatcher before the generic `cast_*`
+        // target parser, which intentionally knows only ordinary AST casts.
+        if name.ends_with("_in_union") && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            if let Some(result) = crate::func::eval_func_values_in(name, &[value], ctx) {
+                let result = result?;
+                // The values dispatcher models only the source-specific
+                // inUnion decision.  Apply the merged target's DECIMAL
+                // precision/scale afterward, exactly as Go's signature calls
+                // `ProduceDecWithSpecifiedTp` after choosing its source
+                // branch.
+                if self.get_static_type().is_some_and(|field_type| {
+                    field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
+                }) {
+                    let ret_type = self
+                        .get_static_type()
+                        .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+                    return crate::cast::eval_cast(
+                        &cast_type_of("decimal", ret_type)?,
+                        result,
+                        self.args[0].static_type(),
+                        ctx,
+                    );
+                }
+                return Ok(result);
+            }
+        }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
                 let value = self.args[0].eval(ctx, row)?;
@@ -1237,6 +1821,16 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                // Go `builtinCurrentResourceGroupSig` reports the effective
+                // statement resource group (the hint-selected name when a
+                // resource-group hint is active, otherwise
+                // `StmtCtx.ResourceGroupName`).
+                "current_resource_group" => {
+                    return Ok(match ctx.current_resource_group() {
+                        Some(group) => Datum::new_string(group.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
                 "user" | "session_user" | "system_user" => {
                     return Ok(match ctx.login_user() {
                         Some(user) => Datum::new_string(user.into_bytes()),
@@ -1255,8 +1849,42 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                "row_count" => {
+                    return Ok(match ctx.row_count() {
+                        Some(rows) => Datum::Int(rows),
+                        None => Datum::Null,
+                    })
+                }
+                "last_insert_id" => {
+                    // LAST_INSERT_ID is an unsigned domain (Go
+                    // `builtinLastInsertIDSig.evalInt` returns the
+                    // PrevLastInsertID through an ETInt result the vectorized
+                    // source pins as UInt).
+                    return Ok(match ctx.last_insert_id() {
+                        Some(id) => Datum::UInt(id),
+                        None => Datum::Null,
+                    });
+                }
                 _ => {}
             }
+        }
+        // Go `builtinLastInsertIDWithIDSig.evalInt`: LAST_INSERT_ID(expr)
+        // evaluates the integer expression, records it as the session's
+        // last insert id, and returns the same value (NULL for a NULL
+        // argument).
+        if name == "last_insert_id" && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let cast = crate::cast::cast_arg_as_int(&value, self.args[0].static_type(), ctx)?;
+            let recorded = match cast {
+                crate::Datum::Int(i) => i as u64,
+                crate::Datum::UInt(u) => u,
+                _ => return Err(EvalError::Unsupported("LAST_INSERT_ID argument")),
+            };
+            ctx.set_last_insert_id(recorded);
+            return Ok(Datum::Int(recorded as i64));
         }
         // Go `builtinTrim*Sig`: the name carries the direction and the second
         // argument is the string to remove.
@@ -1337,8 +1965,88 @@ impl ScalarFunction {
         // its loop, but that is the non-vectorized fallback; the warnings a
         // client sees are the vectorized path's.
         if name == "in" && self.args.len() >= 2 {
-            let collation = self.derived_collation();
             let first_eval_type = self.args[0].static_type().map(FieldType::eval_type);
+            // Go's inFunctionClass gives EVERY argument the first argument's
+            // eval type before selecting a signature. The temporal and JSON
+            // signatures compare their typed values directly; sending two
+            // duration values through the generic comparison ladder would
+            // instead reinterpret them in numeric context. Keep these typed
+            // families on their own path and preserve Go's three-valued
+            // membership result.
+            if matches!(
+                first_eval_type,
+                Some(
+                    EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Json
+                )
+            ) {
+                let mut values: Vec<Datum> = self
+                    .args
+                    .iter()
+                    .map(|argument| argument.eval(ctx, row))
+                    .collect::<Result<_, _>>()?;
+                for (index, value) in values.iter_mut().enumerate() {
+                    let source = self.args[index].static_type();
+                    *value = match first_eval_type.expect("matched above") {
+                        EvalType::Datetime | EvalType::Timestamp => {
+                            crate::cast::cast_arg_as_datetime(value, source, ctx)?
+                        }
+                        EvalType::Duration => {
+                            crate::cast::cast_arg_as_duration(value, source, ctx)?
+                        }
+                        // Go leaves the first JSON argument's parse flag
+                        // intact, but calls DisableParseJSONFlag4Expr on
+                        // every list member. Keep those two cast modes
+                        // distinct: the first is a JSON document, while a
+                        // string list member is a JSON string value (`'1'`
+                        // becomes `"1"`, not the number 1).
+                        EvalType::Json if index == 0 => {
+                            crate::builtin_ext::cast_as_json_typed(value, source)?
+                        }
+                        EvalType::Json => {
+                            crate::builtin_ext::cast_as_json_value_typed(value, source)?
+                        }
+                        _ => unreachable!("typed IN family was matched above"),
+                    };
+                }
+                let first = &values[0];
+                if first.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let mut found_null = false;
+                for candidate in &values[1..] {
+                    if candidate.is_null() {
+                        found_null = true;
+                        continue;
+                    }
+                    let equal = match first_eval_type.expect("matched above") {
+                        EvalType::Datetime | EvalType::Timestamp => matches!(
+                            (first, candidate),
+                            (Datum::Time(left), Datum::Time(right))
+                                if left.compare(*right).is_eq()
+                        ),
+                        EvalType::Duration => matches!(
+                            (first, candidate),
+                            (Datum::Duration(left), Datum::Duration(right))
+                                if left.compare(*right).is_eq()
+                        ),
+                        EvalType::Json => matches!(
+                            (first, candidate),
+                            (Datum::Json(left), Datum::Json(right))
+                                if tidb_datatype::compare_binary_json(left, right).is_eq()
+                        ),
+                        _ => unreachable!("typed IN family was matched above"),
+                    };
+                    if equal {
+                        return Ok(Datum::Int(1));
+                    }
+                }
+                return Ok(if found_null {
+                    Datum::Null
+                } else {
+                    Datum::Int(0)
+                });
+            }
+            let collation = self.derived_collation();
             let cast_candidate =
                 |value: Datum, expression: &Expression| -> Result<Datum, EvalError> {
                     match first_eval_type {
@@ -1412,6 +2120,17 @@ impl ScalarFunction {
                 Datum::Int(0)
             });
         }
+        // Go `builtinTiDBIsDDLOwnerSig.evalInt` (`builtin_info.go:627`):
+        // reads the `DDLOwnerInfo` optional eval prop and answers 1/0, never
+        // NULL. A context without the provider fails exactly as Go's
+        // `getPropProvider` does.
+        if name == "tidb_is_ddl_owner" {
+            if !self.args.is_empty() {
+                return Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"));
+            }
+            let is_owner = ctx.ddl_owner_info()?;
+            return Ok(Datum::Int(i64::from(is_owner)));
+        }
         // The collation-aware string builtins. Go gives each of these a
         // `baseBuiltinFunc.collator` taken from the derived result collation
         // (`builtinLocate2ArgsUTF8Sig`, `builtinInstrUTF8Sig`,
@@ -1422,12 +2141,38 @@ impl ScalarFunction {
         {
             let collation = self.derived_collation();
             match name {
-                // `LOCATE(substr, str)` / `INSTR(str, substr)`: the same
-                // 1-indexed position with the arguments swapped.
-                "locate" | "instr" if self.args.len() == 2 => {
-                    let (a, b) = (self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?);
-                    let (haystack, needle) = if name == "locate" { (&b, &a) } else { (&a, &b) };
-                    return crate::string_fn::locate(needle, haystack, collation);
+                // `LOCATE(substr, str[, pos])` / `INSTR(str, substr)`: the
+                // same 1-indexed position; INSTR swaps its arguments
+                // internally. The three-argument form is LOCATE-only (Go has
+                // no position signature for INSTR) and takes its arguments
+                // UNSWAPPED, starting the search at `pos`
+                // (`builtinLocate3Args{,UTF8}Sig`).
+                "locate" if matches!(self.args.len(), 2 | 3) => {
+                    let substr = self.args[0].eval(ctx, row)?;
+                    let str = self.args[1].eval(ctx, row)?;
+                    if self.args.len() == 3 {
+                        // Go declares the position `types.ETInt`, so
+                        // `newBaseBuiltinFuncWithTp` wraps it in
+                        // `WrapWithCastAsInt` — the same boundary the wrap
+                        // layer applies (`cast_arg_as_int`), applied here
+                        // because this arm returns before that pass.
+                        let position = self.args[2].eval(ctx, row)?;
+                        let position = crate::cast::cast_arg_as_int(
+                            &position,
+                            self.args[2].static_type(),
+                            ctx,
+                        )?;
+                        return crate::string_fn::locate_with_position(
+                            &[substr, str, position],
+                            collation,
+                        );
+                    }
+                    return crate::string_fn::locate(&substr, &str, collation);
+                }
+                "instr" if self.args.len() == 2 => {
+                    let a = self.args[0].eval(ctx, row)?;
+                    let b = self.args[1].eval(ctx, row)?;
+                    return crate::string_fn::locate(&b, &a, collation);
                 }
                 "strcmp" if self.args.len() == 2 => {
                     let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
@@ -1453,10 +2198,39 @@ impl ScalarFunction {
                     } else {
                         std::cmp::Ordering::Less
                     };
+                    // Go casts every argument to DECIMAL at that argument's
+                    // OWN decimal (integers at 0), returns the winner raw,
+                    // and folds a fully-constant call to the return type's
+                    // max-argument scale. The per-argument decimals and the
+                    // constness are what the chunk evaluator knows that the
+                    // values alone cannot say.
+                    let arg_decimals: Vec<i64> = self
+                        .args
+                        .iter()
+                        .map(|a| {
+                            a.static_type()
+                                .map_or(tidb_datatype::UNSPECIFIED_LENGTH, |ft| {
+                                    // Go `WrapWithCastAsDecimal` pins integer
+                                    // arguments to scale 0 regardless of the
+                                    // field type's own (often unspecified) value.
+                                    if ft.eval_type() == tidb_datatype::EvalType::Int {
+                                        0
+                                    } else {
+                                        ft.decimal()
+                                    }
+                                })
+                        })
+                        .collect();
+                    let all_constant = self
+                        .args
+                        .iter()
+                        .all(|a| a.const_level() == crate::expression::ConstLevel::STRICT);
                     return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
                         crate::rewriter::result_type::gl_signature(&self.args),
+                        &arg_decimals,
+                        all_constant,
                         collation,
                         ctx,
                     );
@@ -1538,6 +2312,24 @@ impl ScalarFunction {
             .map(|a| a.eval(ctx, row))
             .collect::<Result<_, _>>()?;
         let upper = name.to_ascii_uppercase();
+        // Go `builtinExtractDatetimeSig`/`builtinExtractDurationSig`: the
+        // first argument is the unit keyword the parser stored as a VARCHAR
+        // constant and the signature dispatches on it. The port's shared
+        // unit functions (`time_fn::dispatch`, including
+        // `calendar::extract_composite` for `DAY_SECOND`/`YEAR_MONTH`/...)
+        // are that dispatch, so the value is handed to the unit named by the
+        // first argument exactly as the AST tier does.
+        if upper == "EXTRACT" && vals.len() == 2 {
+            let unit = crate::coerce::coerce_str_bytes(&vals[0])?
+                .map(|bytes| String::from_utf8_lossy(&bytes).to_ascii_uppercase());
+            let Some(unit) = unit else {
+                return Ok(Datum::Null);
+            };
+            return match crate::time_fn::dispatch(&unit, &vals[1..], ctx) {
+                Some(result) => result,
+                None => Err(EvalError::FunctionNotExists(format!("extract({unit})"))),
+            };
+        }
         // `JSON_ARRAY`/`JSON_OBJECT`/`JSON_{SET,INSERT,REPLACE}`/
         // `JSON_ARRAY_{APPEND,INSERT}`: Go builds each value argument through
         // an implicit `CAST(... AS JSON)`, so a genuine BINARY-charset
@@ -1704,6 +2496,9 @@ impl ScalarFunction {
                 ctx,
             );
         }
+        if let Some(result) = crate::math_fn::dispatch_values(&upper, &vals, ctx) {
+            return result.map_err(|error| math_overflow_error(self, error, ctx));
+        }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }
@@ -1725,7 +2520,7 @@ impl ScalarFunction {
 /// call declared. NULL stays NULL, and a value already of that kind passes
 /// through untouched -- the conversion only matters when an assignment made
 /// during this same statement changed the kind out from under the plan.
-fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
+fn uservar_as_kind(kind: &str, value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use tidb_ast::CastType;
     if value.is_null() {
         return Ok(Datum::Null);
@@ -1735,11 +2530,13 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
             return Ok(value)
         }
         ("decimal", Datum::Decimal(_)) => return Ok(value),
+        ("time", Datum::Time(_)) => return Ok(value),
         ("string", Datum::String(_) | Datum::Bytes(_)) => return Ok(value),
         ("int", _) => CastType::Signed,
         ("uint", _) => CastType::Unsigned,
         ("real", _) => CastType::Double,
         ("decimal", _) => CastType::Decimal { flen: 0, scale: 0 },
+        ("time", _) => return crate::cast::cast_arg_as_datetime(&value, None, ctx),
         ("string", _) => CastType::Char {
             len: None,
             charset: None,
@@ -1750,7 +2547,7 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
     // numeric or string, so no arm reads the date modes or raises a warning.
     // Every target above is numeric or string, so no arm reads the
     // source type.
-    crate::cast::eval_cast(&target, value, None, &crate::NoColumns)
+    crate::cast::eval_cast(&target, value, None, ctx)
 }
 
 fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {
@@ -1759,14 +2556,46 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
     Ok(match target {
         "signed" => CastType::Signed,
         "unsigned" => CastType::Unsigned,
+        "unsigned_in_union" => CastType::UnsignedInUnion,
         "char" => CastType::Char {
             len: len(),
-            charset: None,
+            // A binary-charset CHAR target truncates in BYTES
+            // (`ProduceStrWithSpecifiedTp`'s `chs == CharsetBin` branch);
+            // carry that through the reconstructed cast type.
+            // For character targets retain the resolved target charset too:
+            // a BINARY source must pass through Go's `from_binary` decoder
+            // before `CAST AS CHAR`, and an explicit `CHARACTER SET` target
+            // must not silently fall back to the session default.
+            charset: Some(if ret_type.is_binary_string() {
+                "BINARY".to_owned()
+            } else {
+                ret_type.charset_name().to_owned()
+            }),
         },
-        "binary" => CastType::Binary { len: len() },
+        "binary" => {
+            // Go pads NUL bytes only the FIXED TypeString target
+            // (`padZeroForBinaryType`'s `TypeString` gate,
+            // `builtin_cast.go:2251`): a lengthless `BINARY` keeps
+            // TypeVarString, so its adjusted result flen (e.g. 20 for an
+            // integer source) must not turn into BINARY(N) padding here.
+            if ret_type.code() == tidb_datatype::FieldTypeCode::String {
+                CastType::Binary { len: len() }
+            } else {
+                CastType::Binary { len: None }
+            }
+        }
         "decimal" => CastType::Decimal {
             flen: u32::try_from(ret_type.flen()).unwrap_or(0),
-            scale: u32::try_from(ret_type.decimal()).unwrap_or(0),
+            // `WrapWithCastAsDecimal` preserves Go's `UnspecifiedLength`
+            // scale on non-decimal sources.  The AST cast fields are unsigned,
+            // so carry that state through the internal dispatch with the
+            // sentinel understood by `cast::eval_cast` instead of silently
+            // turning it into scale 0 (which rounds REAL 123.555 to 124).
+            scale: if ret_type.decimal() == UNSPECIFIED_LENGTH {
+                crate::cast::UNSPECIFIED_CAST_SCALE
+            } else {
+                u32::try_from(ret_type.decimal()).unwrap_or(0)
+            },
         },
         "date" => CastType::Date,
         "datetime" => CastType::DateTime {
@@ -1865,11 +2694,9 @@ mod tests {
         }
 
         fn tidb_info(&self) -> String {
-            self.tidb_info.clone().unwrap_or_else(|| {
-                tidb_util::printer::get_tidb_info(
-                    &tidb_util::versioninfo::VersionInfo::build_default(),
-                )
-            })
+            self.tidb_info
+                .clone()
+                .unwrap_or_else(|| tidb_util::printer::get_tidb_info())
         }
     }
 
@@ -2486,9 +3313,8 @@ mod tests {
         use tidb_chunk::chunk::Chunk;
         use tidb_datatype::Collation;
 
-        let string = |value: &str| {
-            Expression::Constant(Constant::new(Datum::new_string(value), text_ft()))
-        };
+        let string =
+            |value: &str| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
         let chunk = Chunk::new_with_capacity(&[], 1);
 
         // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
@@ -2558,8 +3384,11 @@ mod tests {
         // Joined row: ol_o_id = 100, d_next_o_id = 105 -> minus(...) = 85 ->
         // 100 >= 85 is true. One below the join boundary: ol_o_id = 84 ->
         // 84 >= 85 is false.
-        let inner =
-            ScalarFunction::new(CiString::new("minus"), ft(), vec![build_col(), konst(Datum::Int(20))]);
+        let inner = ScalarFunction::new(
+            CiString::new("minus"),
+            ft(),
+            vec![build_col(), konst(Datum::Int(20))],
+        );
         let ge = ScalarFunction::new(
             CiString::new("ge"),
             ft(),
@@ -2569,7 +3398,10 @@ mod tests {
         let mut above = Chunk::new_with_capacity(&[ft(), ft()], 1);
         above.append_int64(0, 100);
         above.append_int64(1, 105);
-        assert_eq!(ge.eval(&NoColumns, above.get_row(0)).unwrap(), Datum::Int(1));
+        assert_eq!(
+            ge.eval(&NoColumns, above.get_row(0)).unwrap(),
+            Datum::Int(1)
+        );
 
         let mut below = Chunk::new_with_capacity(&[ft(), ft()], 1);
         below.append_int64(0, 84);
@@ -2700,7 +3532,10 @@ mod tests {
         let function = ScalarFunction::new(
             CiString::new("minus"),
             unsigned_type.clone(),
-            vec![Expression::Column(col), konst(Datum::Int(2), &unsigned_type)],
+            vec![
+                Expression::Column(col),
+                konst(Datum::Int(2), &unsigned_type),
+            ],
         );
         let error = function
             .eval(&NoColumns, row)
@@ -2731,5 +3566,123 @@ mod tests {
             vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
         );
         assert_eq!(function.eval(&NoColumns, row).unwrap(), Datum::Int(0));
+    }
+
+    /// TiDB capture over `create table g (i int, d decimal(10,3))` holding
+    /// `(-5, 2.500)`: `select least(i, d)` is `-5` with datum frac 0 -- the
+    /// winner keeps the winning ARGUMENT's own decimal (Go casts integers to
+    /// `SetDecimal(0)`), not the aggregated max (3), and `select least(1, d)`
+    /// is `1` the same way. A fully-constant call is the one exception: the
+    /// planner folds it to the RETURN type's scale, so `select least(1, 2.5)`
+    /// is `1.0` (max argument decimal).
+    #[test]
+    fn extremum_over_typed_columns_keeps_the_winner_own_scale() {
+        let int_ft = FieldType::new(FieldTypeCode::LongLong);
+        let mut dec_ft = FieldType::new(FieldTypeCode::NewDecimal);
+        dec_ft.set_flen(10);
+        dec_ft.set_decimal(3);
+        let mut ret_ft = FieldType::new(FieldTypeCode::NewDecimal);
+        ret_ft.set_flen(11);
+        ret_ft.set_decimal(3);
+
+        let mut col_i = crate::column::Column::new(1, int_ft.clone());
+        col_i.index = 0;
+        let mut col_d = crate::column::Column::new(2, dec_ft.clone());
+        col_d.index = 1;
+        let least = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("least"),
+            ret_ft.clone(),
+            vec![Expression::Column(col_i), Expression::Column(col_d)],
+        ));
+
+        let mut chunk =
+            tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft.clone(), dec_ft.clone()], 1);
+        chunk.append_datum(0, &Datum::Int(-5));
+        chunk.append_datum(
+            1,
+            &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
+        );
+        let datum = least
+            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .unwrap();
+        let Datum::Decimal(dec) = &datum else {
+            panic!("least over a decimal aggregate answers a decimal");
+        };
+        assert_eq!(dec.scale(), 0, "the integer winner keeps its own scale 0");
+        assert_eq!(dec.to_string(), "-5");
+
+        // Mixed constant + column: `least(1, d)` is `1` (frac 0), not `1.000`.
+        let mut col_d = crate::column::Column::new(2, dec_ft.clone());
+        col_d.index = 0;
+        let least_mixed = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("least"),
+            ret_ft,
+            vec![
+                Expression::Constant(Constant::new(Datum::Int(1), int_ft.clone())),
+                Expression::Column(col_d),
+            ],
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[dec_ft], 1);
+        chunk.append_datum(
+            0,
+            &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
+        );
+        let datum = least_mixed
+            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .unwrap();
+        let Datum::Decimal(dec) = &datum else {
+            panic!("least over a decimal aggregate answers a decimal");
+        };
+        assert_eq!(
+            dec.scale(),
+            0,
+            "the constant winner keeps its own scale 0 too"
+        );
+        assert_eq!(dec.to_string(), "1");
+    }
+
+    fn empty_row() -> tidb_chunk::row::Row<'static> {
+        let chunk = Box::leak(Box::new(tidb_chunk::chunk::Chunk::new_empty(&[])));
+        chunk.get_row(0)
+    }
+
+    /// Go `builtinTiDBIsDDLOwnerSig.evalInt` (`builtin_info.go:627`) reads
+    /// the `DDLOwnerInfo` optional eval prop and answers 1/0, never NULL.
+    /// A context without the provider fails with Go's `getPropProvider`
+    /// error -- NOT the generic not-yet-ported fallback -- and an extra
+    /// argument is 1582, the same refusal the other zero-arg builtins raise.
+    #[test]
+    fn tidb_is_ddl_owner_reports_the_missing_provider_like_go() {
+        let function = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("tidb_is_ddl_owner"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![],
+        ));
+        let error = function
+            .eval(&crate::context::NoColumns, empty_row())
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                EvalError::Unsupported(message)
+                    if message.contains(
+                        "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext"
+                    )
+            ),
+            "{error:?}"
+        );
+
+        let function = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("tidb_is_ddl_owner"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Constant(Constant::new(
+                Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
+        ));
+        assert_eq!(
+            function.eval(&crate::context::NoColumns, empty_row()),
+            Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
+        );
     }
 }

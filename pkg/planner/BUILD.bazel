@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "planner",
@@ -13,6 +13,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
         "//pkg/planner/indexadvisor",
@@ -35,5 +36,17 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "planner_test",
+    timeout = "short",
+    srcs = ["optimize_engine_rounds_test.go"],
+    embed = [":planner"],
+    flaky = True,
+    deps = [
+        "//pkg/kv",
+        "//pkg/sessionctx/variable",
     ],
 )

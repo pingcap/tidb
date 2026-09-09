@@ -31,8 +31,7 @@
 //! charset half is in the sibling `column_types` module.
 
 use super::{
-    index_part_names, is_visible, Catalog, ColumnInfo, DriverError, FkAction, KvForeignKey,
-    KvIndex, SchemaErrorKind,
+    index_part_names, is_visible, Catalog, ColumnInfo, DriverError, FkAction, KvForeignKey, KvIndex,
 };
 use crate::expression_index::HiddenIndexColumn;
 use tidb_datatype::FieldTypeCode;
@@ -70,8 +69,17 @@ pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
     clustered: bool,
+    common_handle: bool,
     ctx: &crate::StmtContext,
-) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
+    max_index_length: i64,
+) -> Result<
+    (
+        Vec<KvIndex>,
+        Vec<HiddenIndexColumn>,
+        Vec<(i64, String, tidb_ast::Expr)>,
+    ),
+    DriverError,
+> {
     let zone = &ctx.session_zone();
     // Go `buildIndexColumns` reads the SESSION's `sql_mode` here: outside
     // strict mode a single non-unique key part that runs past the 3072-byte
@@ -84,6 +92,7 @@ pub(crate) fn table_indexes(
     let column_types: Vec<tidb_datatype::FieldType> =
         columns.iter().map(|c| c.field_type.clone()).collect();
     let mut hidden: Vec<HiddenIndexColumn> = Vec::new();
+    let mut partial_conditions = Vec::new();
     // Go `checkIndexColumn`: a JSON column can never be an index column, in
     // any position of any index kind -- checked here, where every index part
     // resolves its column, so the rule has exactly one home.
@@ -166,9 +175,20 @@ pub(crate) fn table_indexes(
                 "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
             ));
         }
+        if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
+            && index.options.condition.is_some()
+        {
+            return Err(crate::ddl::indexes::unsupported_partial_index(
+                "partial index is not supported on a primary key",
+            ));
+        }
         crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
         match index.kind {
-            tidb_ast::IndexConstraintKind::PrimaryKey if clustered => continue,
+            // Go omits the physical PRIMARY index only for PKIsHandle.  A
+            // common handle stores no separate index entries either, but its
+            // PRIMARY metadata remains in TableInfo.Indices so the planner
+            // can range and order the table path through that key.
+            tidb_ast::IndexConstraintKind::PrimaryKey if clustered && !common_handle => continue,
             tidb_ast::IndexConstraintKind::PrimaryKey
             | tidb_ast::IndexConstraintKind::Unique
             | tidb_ast::IndexConstraintKind::UniqueKey
@@ -181,7 +201,6 @@ pub(crate) fn table_indexes(
                 ))
             }
         }
-        crate::ddl::indexes::reject_partial_index(&index.options)?;
         let unique = matches!(
             index.kind,
             tidb_ast::IndexConstraintKind::Unique
@@ -230,11 +249,12 @@ pub(crate) fn table_indexes(
                     name, prefix_len, ..
                 } => {
                     let offset = offset_of(name)?;
-                    prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
+                    prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
                         &column_types[offset],
                         crate::ddl::index_prefix::IndexedColumn::Named(name),
                         *prefix_len,
                         strict,
+                        max_index_length,
                     )?);
                     part_types.push(column_types[offset].clone());
                     offsets.push(offset);
@@ -258,11 +278,12 @@ pub(crate) fn table_indexes(
         // Go `buildIndexColumns`: the sum of every key part's stored bytes
         // must stay within `config.MaxIndexLength`, checked in declaration
         // order so the reported number is the running sum that crossed it.
-        let outcome = crate::ddl::index_prefix::check_index_key_length(
+        let outcome = crate::ddl::index_prefix::check_index_key_length_with_max(
             part_types.iter().zip(prefix_lengths.iter().copied()),
             index.parts.len(),
             unique,
             strict,
+            max_index_length,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
         if let crate::ddl::index_prefix::KeyLengthOutcome::Truncated {
@@ -272,7 +293,7 @@ pub(crate) fn table_indexes(
         {
             let reported = DriverError::TooLongKey {
                 length,
-                max: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
+                max: max_index_length,
             }
             .to_mysql_error();
             ctx.append_warning_parts(reported.code, &reported.message);
@@ -281,8 +302,12 @@ pub(crate) fn table_indexes(
             prefix_lengths[0] = stored_length;
         }
         hidden.extend(built.into_iter().map(|(_, column)| column));
+        let id = (indexes.len() + 1) as i64;
+        if let Some(condition) = index.options.condition.clone() {
+            partial_conditions.push((id, name.clone(), condition));
+        }
         indexes.push(KvIndex {
-            id: (indexes.len() + 1) as i64,
+            id,
             name,
             comment: index.options.comment.clone().unwrap_or_default(),
             unique,
@@ -290,7 +315,9 @@ pub(crate) fn table_indexes(
             prefix_lengths,
             visible: is_visible(&index.options),
             global: index.options.global,
-            clustered_primary: false,
+            global_index_version: 0,
+            clustered_primary: common_handle
+                && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });
     }
     for def in &create.columns {
@@ -315,6 +342,7 @@ pub(crate) fn table_indexes(
                             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                             visible: true,
                             global: false,
+                            global_index_version: 0,
                             clustered_primary: false,
                         });
                     }
@@ -327,7 +355,7 @@ pub(crate) fn table_indexes(
                     tidb_ast::InlineKeyKind::Primary { .. } => {
                         let offset = offset_of(&def.name)?;
                         reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
-                        if !clustered {
+                        if !clustered || common_handle {
                             indexes.push(KvIndex {
                                 id: (indexes.len() + 1) as i64,
                                 name: "PRIMARY".to_owned(),
@@ -337,7 +365,8 @@ pub(crate) fn table_indexes(
                                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                                 visible: true,
                                 global: false,
-                                clustered_primary: false,
+                                global_index_version: 0,
+                                clustered_primary: common_handle,
                             });
                         }
                     }
@@ -346,7 +375,7 @@ pub(crate) fn table_indexes(
         }
     }
 
-    Ok((indexes, hidden))
+    Ok((indexes, hidden, partial_conditions))
 }
 
 /// Go `ddl.buildFKInfo`: the `FOREIGN KEY` table constraints, resolved
@@ -364,9 +393,11 @@ pub(crate) fn table_indexes(
 pub(crate) fn table_foreign_keys(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
+    current_table: &crate::kv_table::KvTable,
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
+    child_partitioned: bool,
 ) -> Result<Vec<KvForeignKey>, DriverError> {
     // The generated-ness of each column, read off the written definitions;
     // the `ColumnInfo` vector carries the resolved names and is in the same
@@ -380,6 +411,7 @@ pub(crate) fn table_foreign_keys(
                 tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
                 _ => None,
             }),
+            field_type: info.field_type.clone(),
         })
         .collect();
     let mut keys = Vec::new();
@@ -387,6 +419,14 @@ pub(crate) fn table_foreign_keys(
         let tidb_ast::TableConstraint::ForeignKey(definition) = constraint else {
             continue;
         };
+        if let Some(name) = definition.name.as_deref() {
+            if name.is_empty() {
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrWrongNameForIndex,
+                    message: "Incorrect index name ''".to_owned(),
+                });
+            }
+        }
         let fk_name = definition
             .name
             .clone()
@@ -395,9 +435,11 @@ pub(crate) fn table_foreign_keys(
             definition,
             fk_name,
             &fk_columns,
+            Some(current_table),
             catalog,
             database,
             foreign_key_checks,
+            child_partitioned,
         )?);
     }
     Ok(keys)
@@ -415,6 +457,101 @@ pub(crate) struct FkColumn {
     /// `Some(stored)` when the table computes the column's value, `None` when
     /// the column is written.
     pub(crate) generated_stored: Option<bool>,
+    /// The resolved type and flags used by CREATE-time FK compatibility
+    /// checks (Go `ColumnInfo.GetType`/`GetFlag`/charset/collation).
+    pub(crate) field_type: tidb_datatype::FieldType,
+}
+
+/// Validates a resolved foreign key against a parent table.
+///
+/// This is the shared parent-side half of Go's `checkTableForeignKeyValid`.
+/// CREATE normally calls it while the parent is already in the catalog; the
+/// deferred-parent path calls it with the just-built table before publishing
+/// that table. Keeping the child columns as [`FkColumn`]s lets both paths use
+/// the same type, generated-column, SET NULL, partition, and index rules.
+pub(crate) fn validate_foreign_key_parent(
+    foreign_key: &KvForeignKey,
+    child_columns: &[FkColumn],
+    child_partitioned: bool,
+    parent: &crate::kv_table::KvTable,
+) -> Result<(), DriverError> {
+    if child_partitioned || parent.partition().is_some() {
+        return Err(DriverError::ForeignKeyOnPartitioned);
+    }
+    let mut parent_offsets = Vec::with_capacity(foreign_key.ref_cols.len());
+    for (child_name, parent_name) in foreign_key.cols.iter().zip(&foreign_key.ref_cols) {
+        let child_offset = child_columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(child_name))
+            .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(child_name.clone()))?;
+        let Some(parent_offset) = parent
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(parent_name))
+        else {
+            return Err(DriverError::ForeignKeyReferencedColumnMissing {
+                column: parent_name.clone(),
+                constraint: foreign_key.name.clone(),
+                table: foreign_key.ref_table.clone(),
+            });
+        };
+        parent_offsets.push(parent_offset);
+        let virtual_generated = parent.columns[parent_offset]
+            .generated
+            .as_ref()
+            .is_some_and(|generated| !generated.stored);
+        if virtual_generated {
+            return Err(DriverError::ForeignKeyUsesVirtualColumn {
+                foreign_key: foreign_key.name.clone(),
+                column: parent_name.clone(),
+            });
+        }
+        let child_column = &child_columns[child_offset];
+        if (foreign_key.on_delete == FkAction::SetNull
+            || foreign_key.on_update == FkAction::SetNull)
+            && child_column
+                .field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+        {
+            return Err(DriverError::ForeignKeyColumnNotNull {
+                column: child_column.name.clone(),
+                constraint: foreign_key.name.clone(),
+            });
+        }
+        let parent_column = &parent.columns[parent_offset];
+        let child_type = &child_column.field_type;
+        let parent_type = &parent_column.field_type;
+        if child_type.code() != parent_type.code()
+            || child_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                != parent_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+            || child_type.charset() != parent_type.charset()
+            || child_type.collation() != parent_type.collation()
+        {
+            return Err(DriverError::FkIncompatibleColumns {
+                referencing: child_column.name.clone(),
+                referenced: parent_column.name.clone(),
+                constraint: foreign_key.name.clone(),
+            });
+        }
+    }
+    let single_clustered_handle =
+        parent_offsets.len() == 1 && parent.is_clustered_handle_column(parent_offsets[0]);
+    let parent_index_covers = parent.indexes().iter().any(|index| {
+        index.column_offsets.len() >= parent_offsets.len()
+            && index.column_offsets[..parent_offsets.len()] == parent_offsets[..]
+            && parent_offsets.iter().enumerate().all(|(position, offset)| {
+                let length = index.prefix_length(position);
+                length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                    || length == parent.columns[*offset].field_type.flen()
+            })
+    });
+    if !single_clustered_handle && !parent_index_covers {
+        return Err(DriverError::ForeignKeyNoIndexInParent {
+            constraint: foreign_key.name.clone(),
+            table: foreign_key.ref_table.clone(),
+        });
+    }
+    Ok(())
 }
 
 /// Go `ddl.buildFKInfo` for ONE `FOREIGN KEY` clause, resolved against the
@@ -429,9 +566,11 @@ pub(crate) fn build_foreign_key(
     definition: &tidb_ast::ForeignKeyConstraintDefinition,
     fk_name: String,
     columns: &[FkColumn],
+    current_table: Option<&crate::kv_table::KvTable>,
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
+    child_partitioned: bool,
 ) -> Result<KvForeignKey, DriverError> {
     {
         if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
@@ -444,9 +583,10 @@ pub(crate) fn build_foreign_key(
             let offset = columns
                 .iter()
                 .position(|column| column.name.eq_ignore_ascii_case(&name))
-                .ok_or(DriverError::unsupported(
-                    "a foreign key names a column the table does not define",
-                ))?;
+                .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?;
+            if cols.contains(&offset) {
+                return Err(DriverError::DuplicateColumnName(name));
+            }
             cols.push(offset);
         }
         let Some(path) = &definition.reference.table else {
@@ -459,10 +599,20 @@ pub(crate) fn build_foreign_key(
             [schema, name] => (schema.clone(), name.clone()),
             _ => return Err(DriverError::unsupported("empty referenced table name")),
         };
+        for identifier in [&fk_name, &ref_schema, &ref_table] {
+            if identifier.len() > 64 {
+                return Err(DriverError::TooLongIdent((*identifier).clone()));
+            }
+        }
         let ref_cols = match &definition.reference.parts {
             Some(parts) => index_part_names(parts)?,
             None => Vec::new(),
         };
+        for identifier in &ref_cols {
+            if identifier.len() > 64 {
+                return Err(DriverError::TooLongIdent(identifier.clone()));
+            }
+        }
         if ref_cols.len() != cols.len() {
             return Err(DriverError::WrongFkDef {
                 name: definition.name.clone().unwrap_or_default(),
@@ -470,41 +620,49 @@ pub(crate) fn build_foreign_key(
             });
         }
         child_generated_column_rules(columns, &cols, definition, &fk_name)?;
-        if foreign_key_checks {
-            // Go `checkTableInfoValid`: an unresolvable reference is
-            // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
-            let parent = catalog.get_in(&ref_schema, &ref_table).ok_or_else(|| {
-                DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{ref_schema}.{ref_table}"
-                )))
-            })?;
-            let parent_columns = parent.column_names();
-            for name in &ref_cols {
-                if !parent_columns
-                    .iter()
-                    .any(|column| column.eq_ignore_ascii_case(name))
-                {
-                    return Err(DriverError::UnknownColumnInTable {
-                        column: name.clone(),
-                        table: ref_table.clone(),
-                    });
-                }
+        let self_reference = current_table.is_some_and(|table| {
+            ref_schema.eq_ignore_ascii_case(database) && ref_table.eq_ignore_ascii_case(&table.name)
+        });
+        let same_self_columns = self_reference
+            && cols.len() == ref_cols.len()
+            && cols
+                .iter()
+                .zip(&ref_cols)
+                .all(|(child_offset, parent_name)| {
+                    columns[*child_offset]
+                        .name
+                        .eq_ignore_ascii_case(parent_name)
+                });
+        if same_self_columns {
+            // Go resolves a self-reference against the table's in-flight
+            // `TableInfo`, then rejects a constraint that writes back to the
+            // same columns with ErrCannotAddForeign (1215).
+            return Err(DriverError::DdlCoded {
+                errno: 1215,
+                message: "Cannot add foreign key constraint".to_owned(),
+            });
+        }
+        let validate_parent = |parent: &crate::kv_table::KvTable| -> Result<(), DriverError> {
+            if child_partitioned || parent.partition().is_some() {
+                return Err(DriverError::ForeignKeyOnPartitioned);
             }
-            // Go `checkTableForeignKey`: the REFERENCED column may not be
-            // virtual either. Unlike the child-side rule above this one sits
-            // behind the switch, because it is the parent lookup that reaches
-            // it at all.
-            let crate::TableEntry::Kv(parent) = parent else {
-                return Err(DriverError::unsupported(
-                    "a foreign key may not reference a view",
-                ));
-            };
-            for name in &ref_cols {
-                let virtual_generated = parent
+            let mut parent_offsets = Vec::with_capacity(ref_cols.len());
+            for (child_offset, name) in cols.iter().zip(&ref_cols) {
+                let Some(parent_offset) = parent
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(name))
-                    .and_then(|column| column.generated.as_ref())
+                    .position(|column| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Err(DriverError::ForeignKeyReferencedColumnMissing {
+                        column: name.clone(),
+                        constraint: fk_name.clone(),
+                        table: ref_table.clone(),
+                    });
+                };
+                parent_offsets.push(parent_offset);
+                let virtual_generated = parent.columns[parent_offset]
+                    .generated
+                    .as_ref()
                     .is_some_and(|generated| !generated.stored);
                 if virtual_generated {
                     return Err(DriverError::ForeignKeyUsesVirtualColumn {
@@ -512,6 +670,102 @@ pub(crate) fn build_foreign_key(
                         column: name.clone(),
                     });
                 }
+                let child_column = &columns[*child_offset];
+                if (matches!(
+                    definition.reference.on_delete,
+                    Some(tidb_ast::ReferentialAction::SetNull)
+                ) || matches!(
+                    definition.reference.on_update,
+                    Some(tidb_ast::ReferentialAction::SetNull)
+                )) && child_column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                {
+                    return Err(DriverError::ForeignKeyColumnNotNull {
+                        column: child_column.name.clone(),
+                        constraint: fk_name.clone(),
+                    });
+                }
+                let parent_column = &parent.columns[parent_offset];
+                let child_type = &child_column.field_type;
+                let parent_type = &parent_column.field_type;
+                if child_type.code() != parent_type.code()
+                    || child_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                        != parent_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                    || child_type.charset() != parent_type.charset()
+                    || child_type.collation() != parent_type.collation()
+                {
+                    return Err(DriverError::FkIncompatibleColumns {
+                        referencing: child_column.name.clone(),
+                        referenced: parent_column.name.clone(),
+                        constraint: fk_name.clone(),
+                    });
+                }
+            }
+            let single_clustered_handle =
+                parent_offsets.len() == 1 && parent.is_clustered_handle_column(parent_offsets[0]);
+            let parent_index_covers = parent.indexes().iter().any(|index| {
+                index.column_offsets.len() >= parent_offsets.len()
+                    && index.column_offsets[..parent_offsets.len()] == parent_offsets[..]
+                    && parent_offsets.iter().enumerate().all(|(position, offset)| {
+                        let length = index.prefix_length(position);
+                        length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                            || length == parent.columns[*offset].field_type.flen()
+                    })
+            });
+            if !single_clustered_handle && !parent_index_covers {
+                return Err(DriverError::ForeignKeyNoIndexInParent {
+                    constraint: fk_name.clone(),
+                    table: ref_table.clone(),
+                });
+            }
+            Ok(())
+        };
+        if self_reference {
+            // The CREATE path has not published its table yet; use the
+            // in-flight metadata snapshot as Go does for self-reference.
+            validate_parent(current_table.expect("self-reference has current table"))?;
+        } else {
+            // Go's owner check still rejects a partitioned relationship when
+            // the parent exists even if `foreign_key_checks=0`; only an
+            // unresolved parent is deferred by that switch.
+            let existing_parent = catalog.get_in(&ref_schema, &ref_table);
+            match existing_parent {
+                Some(crate::TableEntry::Kv(parent))
+                    if parent.temp_table_type() == tidb_model::TempTableType::LOCAL =>
+                {
+                    // LOCAL temporary tables live only in the session
+                    // overlay and are invisible to the shared infoschema.
+                    // A normal child therefore sees the same missing-parent
+                    // 1824 that Go reports, even though this catalog slot is
+                    // temporarily occupied by the local table.
+                    return Err(DriverError::ForeignKeyReferencedTableMissing(
+                        ref_table.clone(),
+                    ));
+                }
+                Some(crate::TableEntry::Kv(parent))
+                    if parent.temp_table_type() == tidb_model::TempTableType::GLOBAL =>
+                {
+                    // GLOBAL temporary metadata is shared, but Go refuses a
+                    // foreign-key relationship to it outright (1215).
+                    return Err(DriverError::DdlCoded {
+                        errno: 1215,
+                        message: "Cannot add foreign key constraint".to_owned(),
+                    });
+                }
+                Some(crate::TableEntry::Kv(parent)) => validate_parent(parent)?,
+                Some(_) if foreign_key_checks => {
+                    return Err(DriverError::unsupported(
+                        "a foreign key may not reference a view",
+                    ));
+                }
+                Some(_) => {}
+                None if foreign_key_checks => {
+                    return Err(DriverError::ForeignKeyReferencedTableMissing(
+                        ref_table.clone(),
+                    ));
+                }
+                None => {}
             }
         }
         Ok(KvForeignKey {
@@ -606,6 +860,7 @@ fn fk_action(action: Option<tidb_ast::ReferentialAction>) -> FkAction {
         tidb_ast::ReferentialAction::SetNull => FkAction::SetNull,
         tidb_ast::ReferentialAction::NoAction => FkAction::NoAction,
         tidb_ast::ReferentialAction::SetDefault => FkAction::SetDefault,
+        tidb_ast::ReferentialAction::Unknown(_) => FkAction::NoOption,
     }
 }
 
@@ -637,6 +892,7 @@ pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
 pub(crate) fn primary_key_column(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
+    max_index_length: i64,
 ) -> Result<Option<PrimaryKeyDecl>, DriverError> {
     let mut found: Option<PrimaryKeyDecl> = None;
     for def in &create.columns {
@@ -706,11 +962,12 @@ pub(crate) fn primary_key_column(
             // different problem from a cut secondary-index entry: there is no
             // row to go back to for the whole value. See
             // `index_prefix::clustered_prefix_unsupported`.
-            if crate::ddl::index_prefix::key_part_length(
+            if crate::ddl::index_prefix::key_part_length_with_max(
                 field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(name),
                 *prefix_len,
                 true,
+                max_index_length,
             )? != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
             {
                 return Err(DriverError::unsupported(
@@ -726,11 +983,12 @@ pub(crate) fn primary_key_column(
         // `PRIMARY KEY (c01,c02,c03,c04)` is
         // "[ddl:1071]Specified key was too long (4080 bytes); max key length
         // is 3072 bytes".
-        crate::ddl::index_prefix::check_index_key_length(
+        crate::ddl::index_prefix::check_index_key_length_with_max(
             part_lengths,
             index.parts.len(),
             true,
             true,
+            max_index_length,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
         found = Some(PrimaryKeyDecl {

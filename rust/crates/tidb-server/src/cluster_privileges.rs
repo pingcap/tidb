@@ -43,6 +43,7 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_session::privilege::{is_dynamic_privilege, Account, GlobalPriv, PrivilegeRegistry};
 
 use crate::auth_identity::DEFAULT_AUTH_PLUGIN;
+use tidb_hack::GoToUpper;
 
 /// One privilege a cluster row granted that this node does not model.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -429,7 +430,7 @@ fn set_mask(
 /// but one: the element is spelled `Grant`, while the privilege it names is
 /// `GRANT OPTION`.
 fn set_element_grant_name(element: &str) -> String {
-    let upper = element.to_uppercase();
+    let upper = element.go_to_upper();
     if upper == "GRANT" {
         return "GRANT OPTION".to_owned();
     }

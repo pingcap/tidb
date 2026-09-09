@@ -29,18 +29,15 @@
 //! and the heap is never larger than `offset + count`. A TopN that spills
 //! writes `runs * (offset + count)` rows, not the whole input.
 //!
-//! # Single-threaded adaptation, and where it differs
+//! # Parallel spill adaptation
 //!
-//! Go runs the post-spill phase on a pool of `topNWorker`s, each with its own
-//! heap, all fed from one chunk channel; this tier has one thread, so it has
-//! one heap and the "workers" phase is the same loop the pre-spill phase runs.
-//! Two consequences, both named:
+//! Like Go, the post-spill phase runs a pool of workers, each with its own
+//! bounded heap, fed through bounded chunk channels. Every shared spill
+//! request drains each worker heap into an intermediate sorted run; each final
+//! worker heap is written as another run and all run heads are merged through
+//! Go-compatible heap operations. One remaining execution-shape difference is
+//! named:
 //!
-//! * Go's worker heap accumulates whole chunks until it holds at least
-//!   `offset + count` rows and then never pops down to that bound, so a Go run
-//!   can hold up to a chunk more than this port's does. Both are SUPERSETS of
-//!   the segment's true top-N and the merge cuts both at `offset + count`, so
-//!   the answer is the same.
 //! * Go also re-checks for a spill WHILE EMITTING results
 //!   (`generateTopNResultsWhenNoSpillTriggered` polls every 10 rows, and
 //!   `inMemoryThenSpillFlag` marks that case). That trigger exists because
@@ -53,19 +50,21 @@
 //! loader to call that container's process-wide config seam, so its startup
 //! remains plaintext and rejects unsupported command-line options loudly.
 
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
-use tidb_util::disk::{self, SpillStorage};
+use tidb_util::disk;
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
+use crate::mem_quota::StatementMemory;
 use crate::sort::{eval_sort_key, SortByItem};
 
 /// Go `spillChunkSize` for the TopN's `tmpSpillChunk`: rows per chunk written
@@ -86,6 +85,10 @@ pub struct TopNSpillAction {
     need_spill: Arc<AtomicBool>,
     /// The TopN's own tracker, which `hasEnoughDataToSpill` reads.
     topn_tracker: Arc<Tracker>,
+    /// Monotonic spill request generation observed by every post-spill worker.
+    /// A generation lets all workers drain once per shared request while the
+    /// flag remains raised until the last worker has acknowledged it.
+    spill_generation: Arc<AtomicUsize>,
 }
 
 impl TopNSpillAction {
@@ -97,14 +100,22 @@ impl TopNSpillAction {
             base: BaseOomAction::default(),
             need_spill: Arc::clone(&need_spill),
             topn_tracker: Arc::clone(topn_tracker),
+            spill_generation: Arc::new(AtomicUsize::new(0)),
         });
         (action, need_spill)
     }
 
-    /// Go `hasEnoughDataToSpill`, shared with the aggregation: a fifth of the
-    /// quota, read off the operator's own tracker.
+    /// The generation shared with post-spill workers.
+    #[must_use]
+    pub(crate) fn spill_generation(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.spill_generation)
+    }
+
+    /// Go `sortexec.hasEnoughDataToSpill`: a tenth of the quota, read off the
+    /// operator's own tracker. The aggregation's similarly named helper uses
+    /// a fifth, but TopN resolves the sortexec package helper instead.
     fn has_enough_data_to_spill(&self, t: &Arc<Tracker>) -> bool {
-        crate::agg_spill::has_enough_data_to_spill(&self.topn_tracker, t)
+        self.topn_tracker.bytes_consumed() >= t.get_bytes_limit() / 10
     }
 }
 
@@ -125,6 +136,7 @@ impl ActionOnExceed for TopNSpillAction {
                 quota = t.get_bytes_limit(),
                 "memory exceeds quota, spill to disk now."
             );
+            self.spill_generation.fetch_add(1, SeqCst);
             self.need_spill.store(true, SeqCst);
             return;
         }
@@ -184,16 +196,25 @@ impl SpilledRun {
         field_types: &[FieldType],
         chunks: &[Chunk],
         row_ptrs: &[(usize, usize)],
+        row_index_start: usize,
         spill_chunk_size: usize,
         parent: &Arc<disk::Tracker>,
         spill_storage: Arc<SpillStorage>,
+        memory: &StatementMemory,
     ) -> Result<SpilledRun, ExecError> {
         let disk_tracker = disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1);
         disk_tracker.attach_to(parent);
         let mut in_disk = DataInDiskByChunks::new(field_types.to_vec(), "", spill_storage);
         in_disk.disk_tracker().attach_to(&disk_tracker);
         let mut tmp = Chunk::new_with_capacity(field_types, spill_chunk_size);
-        for &(chunk_index, row_index) in row_ptrs {
+        for (relative_index, &(chunk_index, row_index)) in row_ptrs.iter().enumerate() {
+            // Go's `topNSpillHelper.spillHeap` polls `SQLKiller` every 100
+            // heap positions, before appending that position's row. Keep the
+            // original heap index for the output-time suffix path, whose
+            // slice starts after rows already emitted to the caller.
+            if (row_index_start + relative_index) % 100 == 0 {
+                memory.check()?;
+            }
             tmp.append_row(chunks[chunk_index].get_row(row_index));
             if tmp.num_rows() >= spill_chunk_size {
                 in_disk.add(&tmp).map_err(spill_error)?;
@@ -243,10 +264,11 @@ impl SpilledRun {
         self.head_key.as_deref()
     }
 
-    /// Appends the cursor's row to `req` and advances past it.
-    pub fn take_head_into(&mut self, req: &mut Chunk, columns: Option<&[usize]>) {
+    /// Appends the cursor's row to `req` and advances past it, applying Go's
+    /// TopN inline projection only at the output boundary.
+    pub fn take_head_into(&mut self, req: &mut Chunk, column_idxs: Option<&[usize]>) {
         let chunk = self.chunk.as_ref().expect("positioned chunk");
-        req.append_row_by_col_idxs(chunk.get_row(self.row), columns);
+        req.append_row_by_col_idxs(chunk.get_row(self.row), column_idxs);
         self.row += 1;
         self.head_key = None;
     }
@@ -296,4 +318,29 @@ impl SpilledRun {
 
 fn spill_error(error: tidb_chunk::chunk_in_disk::DiskError) -> ExecError {
     ExecError::SpillFailed(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go's `sortexec.hasEnoughDataToSpill` allows a TopN spill at exactly a
+    /// tenth of the triggering quota. This is distinct from aggregation's
+    /// one-fifth threshold despite the shared helper name in the Go codebase.
+    #[test]
+    fn topn_requests_spill_at_exact_tenth_of_quota() {
+        let quota = 100_i64;
+        let topn_tracker = Tracker::new(1, -1);
+        topn_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota);
+        let (action, need_spill) = TopNSpillAction::new(&topn_tracker);
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            need_spill.load(SeqCst),
+            "TopN must request a spill at the inclusive tenth-of-quota boundary"
+        );
+    }
 }

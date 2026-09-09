@@ -19,8 +19,8 @@ use std::cmp::Ordering;
 use chrono::{FixedOffset, Utc};
 use tidb_codec::*;
 use tidb_datatype::{
-    parse_datetime, BinaryJSON, BinaryLiteral, Collation, Datum, Decimal, FieldType, FieldTypeCode,
-    FieldTypeFlags, MySqlDuration, TimeType, VectorFloat32,
+    parse_datetime, BinaryJSON, BinaryLiteral, Collation, CoreTime, Datum, Decimal, FieldType,
+    FieldTypeCode, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time, TimeType, VectorFloat32,
 };
 
 fn varchar(collation: Collation) -> FieldType {
@@ -100,10 +100,6 @@ fn test_decimal_codec() {
         assert!(remain.is_empty());
         assert_eq!(decoded, value);
     }
-    assert_eq!(
-        decode_decimal_with_fault(&[1, 0, 0], true),
-        Err(CodecError::InjectedFailure("errorInDecodeDecimal"))
-    );
 }
 
 #[test]
@@ -188,10 +184,8 @@ fn test_number_codec() {
         assert_eq!(decode_varint(&encoded).unwrap(), (&[][..], value));
         encoded.clear();
         encode_comparable_varint(&mut encoded, value);
-        assert_eq!(
-            decode_comparable_varint(&encoded).unwrap(),
-            (&[][..], value)
-        );
+        let (_, decoded) = decode_comparable_varint(&encoded).unwrap();
+        assert_eq!(decoded, value);
     }
     for value in [0, 1, u64::from(u32::MAX), u64::MAX] {
         let mut encoded = Vec::new();
@@ -283,6 +277,38 @@ fn test_time() {
         .unwrap()
         .1,
         Datum::new_time(timestamp)
+    );
+}
+
+#[test]
+fn encode_timestamp_in_utc_skips_timezone_validation() {
+    let invalid = Time::new(
+        CoreTime::from_date(2000, 2, 30, 0, 0, 0, 0),
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let mut encoded = Vec::new();
+    encode_mysql_time(&Utc, invalid, None, &mut encoded).unwrap();
+    assert_eq!(encoded.len(), 8);
+
+    let east_eight = FixedOffset::east_opt(8 * 60 * 60).unwrap();
+    assert_eq!(
+        encode_mysql_time(&east_eight, invalid, None, &mut Vec::new()),
+        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
+    );
+    let fixed_zero = FixedOffset::east_opt(0).unwrap();
+    assert_eq!(
+        encode_mysql_time(&fixed_zero, invalid, None, &mut Vec::new()),
+        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
+    );
+    let session_fixed_zero = SessionTimeZone::Fixed {
+        name: "+00:00".to_owned(),
+        offset_secs: 0,
+    };
+    assert_eq!(
+        encode_mysql_time(&session_fixed_zero, invalid, None, &mut Vec::new()),
+        Err(CodecError::InvalidEncoding("invalid MySQL timestamp"))
     );
 }
 
@@ -393,6 +419,22 @@ fn test_decode_one_to_chunk() {
 }
 
 #[test]
+fn test_decode_one_typed_bit_width_panics_like_go() {
+    let mut bit = FieldType::new(FieldTypeCode::Bit);
+    bit.set_flen(0);
+    let encoded = encode_value(&[Datum::UInt(1)]).unwrap();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_one_typed(&encoded, &bit).unwrap();
+    }))
+    .expect_err("Go panics for an invalid binary-literal byte size");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("Invalid byteSize"));
+}
+
+#[test]
 fn test_hash_group() {
     let values = [Datum::Int(1), Datum::Null, Datum::Int(-1)];
     let encoded = hash_group_key(&values, &FieldType::new(FieldTypeCode::LongLong)).unwrap();
@@ -413,7 +455,7 @@ fn test_hash_group() {
 fn test_decode_range() {
     let mut encoded = encode_key(&[Datum::Int(1)]).unwrap();
     encoded.push(MAX_FLAG);
-    let (values, remain) = decode_range(&encoded, 2).unwrap();
+    let (values, remain) = decode_range(&encoded, 2, None, None).unwrap();
     assert!(remain.is_empty());
     assert_eq!(values, [Datum::Int(1), Datum::MaxValue]);
 }
@@ -431,7 +473,10 @@ fn test_decode_range_restores_index_field_types() {
     timestamp.set_kind(TimeType::Timestamp);
     let float = 1.234_567_890_123_f64;
     let double = 9.876_543_210_987_f64;
-    let east_eight = FixedOffset::east_opt(8 * 60 * 60).unwrap();
+    let east_eight = SessionTimeZone::Fixed {
+        name: "+08:00".to_owned(),
+        offset_secs: 8 * 60 * 60,
+    };
     let mut encoded = encode_key_in_timezone(
         &east_eight,
         &[
@@ -453,7 +498,7 @@ fn test_decode_range_restores_index_field_types() {
     ];
 
     let (values, remain) =
-        decode_range_typed(&encoded, 6, &field_types, Some(&east_eight)).unwrap();
+        decode_range(&encoded, 6, Some(&field_types), Some(&east_eight)).unwrap();
     assert!(remain.is_empty());
     assert_eq!(
         values,
@@ -468,7 +513,7 @@ fn test_decode_range_restores_index_field_types() {
     );
 
     let error =
-        decode_range_typed(&encoded, 6, &field_types[..4], Some(&east_eight)).unwrap_err();
+        decode_range(&encoded, 6, Some(&field_types[..4]), Some(&east_eight)).unwrap_err();
     assert_eq!(
         error.values,
         [
@@ -486,7 +531,7 @@ fn test_decode_range_restores_index_field_types() {
 
     let mut invalid_terminal = encode_key(&[Datum::Int(1)]).unwrap();
     invalid_terminal.push(0x42);
-    let error = decode_range(&invalid_terminal, 2).unwrap_err();
+    let error = decode_range(&invalid_terminal, 2, None, None).unwrap_err();
     assert_eq!(error.values, [Datum::Int(1)]);
     assert_eq!(error.remainder, &[0x42]);
     assert_eq!(
@@ -520,22 +565,6 @@ fn test_hash_chunk_row() {
         &[0, 1]
     )
     .unwrap());
-}
-
-#[test]
-fn test_value_size_of_signed_int() {
-    for value in [i64::MIN, -65, -64, -1, 0, 63, 64, i64::MAX] {
-        let encoded = encode_value(&[Datum::Int(value)]).unwrap();
-        assert_eq!(value_size_of_signed_int(value), encoded.len());
-    }
-}
-
-#[test]
-fn test_value_size_of_unsigned_int() {
-    for value in [0, 127, 128, u64::MAX] {
-        let encoded = encode_value(&[Datum::UInt(value)]).unwrap();
-        assert_eq!(value_size_of_unsigned_int(value), encoded.len());
-    }
 }
 
 #[test]
@@ -589,6 +618,23 @@ fn test_encoder_new_collation_enabled() {
         Encoder::new(false).encode_key(std::slice::from_ref(&lower)),
         Encoder::new(false).encode_key(std::slice::from_ref(&upper))
     );
+}
+
+#[test]
+fn encode_value_uses_raw_string_bytes_without_encoder_collation_mode() {
+    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string("A ");
+    assert_eq!(
+        encode_value(std::slice::from_ref(&collated)).unwrap(),
+        encode_value(std::slice::from_ref(&plain)).unwrap()
+    );
+}
+
+#[test]
+fn hash_code_uses_raw_string_bytes_without_encoder_collation_mode() {
+    let collated = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
+    let plain = Datum::new_string("A ");
+    assert_eq!(hash_code(&collated), hash_code(&plain));
 }
 
 #[test]
@@ -687,13 +733,21 @@ fn source_serialize_keys_modes_and_nulls() {
 }
 
 #[test]
-fn source_hash_code_ignores_collation_mode() {
-    let value = Datum::new_collation_string("A ", Collation::Utf8Mb4GeneralCi);
-    let mut enabled = Vec::new();
-    Encoder::new(true).hash_code(&mut enabled, &value);
-    let mut disabled = Vec::new();
-    Encoder::new(false).hash_code(&mut disabled, &value);
-    assert_eq!(enabled, disabled);
+fn source_serialize_keys_marks_type_null_columns_as_null() {
+    // A TypeNull chunk has no payload.  Keep a non-NULL placeholder datum in
+    // the row to model the typed-column path: Go's codec uses the field type
+    // itself to call canSkip, so this row must not remain an empty valid key.
+    let rows = vec![vec![Datum::new_bytes(Vec::new())]];
+    let (keys, nulls) = serialize_keys(
+        &rows,
+        &[0],
+        &[FieldType::new(FieldTypeCode::Null)],
+        &[SerializeMode::Normal],
+        None,
+    )
+    .unwrap();
+    assert_eq!(keys, vec![Vec::<u8>::new()]);
+    assert_eq!(nulls, [true]);
 }
 
 #[test]

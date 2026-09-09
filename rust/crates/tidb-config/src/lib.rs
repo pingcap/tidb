@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/config`'s leaf packages: `configtypes`
-//! (TOML/JSON byte-size and duration wrappers), `deploymode` (process-wide
-//! deployment mode), and `kerneltype` (compile-time kernel selection).
-//!
-//! The top-level `pkg/config` package (the `Config` struct tree) lands on
-//! top of these as its own unit.
+//! Transcreation of Go `pkg/config` and its leaf packages.
 
 #![warn(missing_docs)]
 

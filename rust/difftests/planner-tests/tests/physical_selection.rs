@@ -12,33 +12,63 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalSelection metadata.
-//!
-//! The Go anchor is `TestPushDownSelectionForMPP` at
-//! `pkg/planner/core/casetest/mpp/mpp_test.go:673`.
+//! Dependency-closed vectors for Go's logical-to-physical Selection
+//! enumeration.
 
-use tidb_planner::physical_selection::PhysicalSelectionPlan;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::{constant::Constant, expression::Expression};
+use tidb_planner::{
+    logical::{BaseLogicalPlan, LogicalSelection},
+    physical::{exhaust_physical_plans_4_logical_selection, PhysicalPlan},
+    physical_property::PhysicalProperty,
+    plan_base::PlanIdAllocator,
+};
 
 #[test]
-fn mpp_selection_explain_preserves_condition_and_stream_count() {
-    let plan = PhysicalSelectionPlan::init("gt(test.t.a, 1)", 4, 8);
-    assert_eq!(plan.plan_type(), "Selection");
-    assert_eq!(plan.query_block_offset(), 4);
-    assert_eq!(plan.explain_info(), "gt(test.t.a, 1), stream_count: 8");
+fn logical_selection_enumerates_the_wired_physical_operator() {
+    let allocator = PlanIdAllocator::new();
+    let condition = Expression::Constant(Constant::new(
+        Datum::Int(1),
+        FieldType::new(FieldTypeCode::LongLong),
+    ));
+    let logical = LogicalSelection::new(
+        BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 4),
+        vec![condition.clone()],
+    );
+    let property = PhysicalProperty {
+        expected_cnt: 8.0,
+        ..PhysicalProperty::default()
+    };
+
+    let candidates =
+        exhaust_physical_plans_4_logical_selection(&logical, &property, &allocator, 1.0);
+    let [PhysicalPlan::Selection(selection)] = candidates.as_slice() else {
+        panic!("Go's Selection enumeration must return one wired Selection")
+    };
+    assert_eq!(selection.base.base.tp(), "Selection");
+    assert_eq!(selection.base.base.query_block_offset(), 4);
+    assert_eq!(selection.conditions.len(), 1);
+    assert!(selection.conditions[0].equal(&condition));
+    assert!(!selection.from_data_source);
+    assert_eq!(selection.base.child_req_prop(0).unwrap().expected_cnt, 8.0);
 }
 
 #[test]
-fn non_mpp_selection_explain_has_no_stream_suffix() {
-    assert_eq!(
-        PhysicalSelectionPlan::init("eq(test.t.a, 1)", 0, 0).explain_info(),
-        "eq(test.t.a, 1)"
+fn physical_selection_carries_go_fine_grained_shuffle_metadata_directly() {
+    let allocator = PlanIdAllocator::new();
+    let logical = LogicalSelection::new(
+        BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0),
+        Vec::new(),
     );
-}
-
-#[test]
-fn empty_condition_text_keeps_positive_stream_separator() {
-    assert_eq!(
-        PhysicalSelectionPlan::init("", 0, 1).explain_info(),
-        ", stream_count: 1"
+    let mut candidates = exhaust_physical_plans_4_logical_selection(
+        &logical,
+        &PhysicalProperty::default(),
+        &allocator,
+        1.0,
     );
+    let PhysicalPlan::Selection(selection) = &mut candidates[0] else {
+        unreachable!()
+    };
+    selection.base.tiflash_fine_grained_shuffle_stream_count = 8;
+    assert_eq!(selection.base.tiflash_fine_grained_shuffle_stream_count, 8);
 }

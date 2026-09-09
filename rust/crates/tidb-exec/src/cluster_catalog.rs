@@ -28,6 +28,7 @@
 use std::fmt;
 
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 use tidb_meta::{key, value};
 use tidb_model::column::ColumnInfo;
 use tidb_model::db::DBInfo;
@@ -70,6 +71,24 @@ pub trait MetaSnapshot {
 
     /// Reads every key/value pair under `prefix`, in key order.
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
+
+    /// Reads every key/value pair in `[start, end)`, in key order.
+    ///
+    /// Recorded in-memory snapshots can implement only [`Self::scan_prefix`]:
+    /// the default finds their shared prefix and trims the returned pairs.
+    /// Live snapshots override this method so TiKV seeks directly to `start`.
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let common_len = start
+            .iter()
+            .zip(end)
+            .take_while(|(left, right)| left == right)
+            .count();
+        Ok(self
+            .scan_prefix(&start[..common_len])?
+            .into_iter()
+            .filter(|(key, _)| key.as_slice() >= start && key.as_slice() < end)
+            .collect())
+    }
 }
 
 /// A [`MetaSnapshot`] that can also read one record range in bounded pages.
@@ -93,6 +112,17 @@ pub trait PagedMetaSnapshot: MetaSnapshot {
         end: &[u8],
         limit: usize,
     ) -> Result<MetaPairs, ClusterCatalogError>;
+}
+
+/// A snapshot that preserves the serving-region boundary of a full range.
+pub trait RegionPagedMetaSnapshot: PagedMetaSnapshot {
+    /// Reads every pair in `[start, end)`, grouped like successful TiKV
+    /// coprocessor responses.
+    fn scan_regions(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError>;
 }
 
 /// The stored JSON of one `DBInfo`, as the catalog itself writes it.
@@ -131,8 +161,8 @@ impl ClusterCatalog {
     /// Finds one table by case-insensitive schema and table name.
     #[must_use]
     pub fn find_table(&self, schema: &str, table: &str) -> Option<(&DBInfo, &TableInfo)> {
-        let schema = schema.to_lowercase();
-        let table = table.to_lowercase();
+        let schema = schema.go_to_lower();
+        let table = table.go_to_lower();
         self.databases
             .iter()
             .filter(|database| database.info.name.lowercase() == schema)

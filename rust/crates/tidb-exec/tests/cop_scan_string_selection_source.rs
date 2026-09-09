@@ -109,6 +109,13 @@ struct Observation {
     /// fields Go's `SetFromSessionVars` fills on every read.
     concurrency: isize,
     resource_group_name: String,
+    /// `DAGRequest.div_precision_increment`, Go `builder_utils.go:73-76`: the
+    /// statement's division scale, omitted from the wire at its default.
+    div_precision_increment: Option<u32>,
+    /// `kv.Request.Priority`, Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`.
+    priority: tidb_txnkv::Priority,
+    /// `kv.Request.NotFillCache`, Go `StmtCtx.NotFillCache` (`SQL_NO_CACHE`).
+    not_fill_cache: bool,
 }
 
 #[derive(Debug, Default)]
@@ -248,6 +255,9 @@ impl QueryTransport for FakeTransport {
             ),
             concurrency: request.metadata().concurrency,
             resource_group_name: request.metadata().resource_group_name.clone(),
+            div_precision_increment: dag.div_precision_increment,
+            priority: request.metadata().priority,
+            not_fill_cache: request.metadata().not_fill_cache,
         });
 
         let response = SelectResponse {
@@ -514,7 +524,78 @@ fn each_request_carries_the_issuing_statements_time_zone() {
 /// and resource group `default`, which is what `RequestContext::default()`
 /// holds and what the resource-control context on the wire is keyed by.
 #[test]
-fn the_request_carries_the_stock_session_concurrency_and_resource_group() {
+fn the_request_carries_the_statement_concurrency_and_resource_group() {
+    let (catalog, region) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_resource_group_name("analytics");
+    run_select_on(
+        "SELECT id, s FROM t WHERE s = 'a'",
+        &catalog,
+        &context,
+    )
+    .expect("the scan is served by the coprocessor");
+    let observation = sole_observation(&region);
+    assert_eq!(observation.concurrency, 15);
+    assert_eq!(observation.resource_group_name, "analytics");
+}
+
+/// Go `builder_utils.go:73-76`: `dagReq.DivPrecisionIncrement` is sent from
+/// the statement's `div_precision_increment` whenever it differs from the
+/// default, and omitted from the wire at the default.
+#[test]
+fn each_request_carries_the_statements_division_scale() {
+    let default_observation = {
+        let (catalog, region) = fixture("utf8mb4_bin");
+        run_select_on(
+            "SELECT id, s FROM t WHERE s = 'a'",
+            &catalog,
+            &StmtContext::for_query(),
+        )
+        .expect("the scan is served by the coprocessor");
+        sole_observation(&region).div_precision_increment
+    };
+    assert_eq!(
+        default_observation, None,
+        "the default division scale is omitted from the wire"
+    );
+
+    let (catalog, region) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_week_and_division_scale(0, 5);
+    run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
+        .expect("the scan is served by the coprocessor");
+    assert_eq!(
+        sole_observation(&region).div_precision_increment,
+        Some(5),
+        "a non-default division scale travels on the DAG"
+    );
+}
+
+/// Go `ResetContextOfStmt`'s `sc.Priority`/`sc.NotFillCache` and
+/// `RequestBuilder.getKVPriority`: a SELECT's `HIGH_PRIORITY SQL_NO_CACHE`
+/// reaches the KV request as `PriorityHigh` with the storage cache bypass
+/// set, while a bare SELECT leaves KV's normal priority and fills the cache.
+///
+/// The two halves are one assertion because they are one `kv.Request`: Go
+/// fills both from the SAME statement context, so a plumbing change that
+/// carried one and dropped the other would still compile.
+#[test]
+fn each_request_carries_the_statements_priority_and_cache_policy() {
+    let (catalog, region) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query()
+        .with_statement_priority(tidb_ast::StatementPriority::High)
+        .with_not_fill_cache(true);
+    run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
+        .expect("the scan is served by the coprocessor");
+    let observation = sole_observation(&region);
+    assert_eq!(
+        observation.priority,
+        tidb_txnkv::Priority::High,
+        "HIGH_PRIORITY travels as kv.PriorityHigh"
+    );
+    assert!(
+        observation.not_fill_cache,
+        "SQL_NO_CACHE travels as kv.Request.NotFillCache"
+    );
+
     let (catalog, region) = fixture("utf8mb4_bin");
     run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
@@ -523,6 +604,6 @@ fn the_request_carries_the_stock_session_concurrency_and_resource_group() {
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
-    assert_eq!(observation.concurrency, 15);
-    assert_eq!(observation.resource_group_name, "default");
+    assert_eq!(observation.priority, tidb_txnkv::Priority::Normal);
+    assert!(!observation.not_fill_cache);
 }

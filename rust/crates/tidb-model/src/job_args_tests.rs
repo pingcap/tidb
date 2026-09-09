@@ -1351,6 +1351,48 @@ pub(crate) fn go_test_drop_schema_args() {
 }
 
 #[test]
+pub(crate) fn go_test_add_check_constraint_args() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(AddCheckConstraintArgs {
+            constraint: GoField::new(Some(GoShared::new(ConstraintInfo {
+                name: CiString::new("t3_c1"),
+                table: CiString::new("t3"),
+                expr_string: "id<10".to_owned(),
+                state: crate::SchemaState::DELETE_ONLY,
+                ..Default::default()
+            }))),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_ADD_CHECK_CONSTRAINT, args);
+        let decoded = get_add_check_constraint_args(&mut job)
+            .unwrap()
+            .unwrap()
+            .read()
+            .constraint
+            .get()
+            .unwrap();
+        let decoded = decoded.read();
+        assert_eq!(decoded.name.original(), "t3_c1");
+        assert_eq!(decoded.table.original(), "t3");
+        assert_eq!(decoded.expr_string, "id<10");
+        assert_eq!(decoded.state, crate::SchemaState::DELETE_ONLY);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_check_constraint_args() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(CheckConstraintArgs {
+            constraint_name: GoField::new(CiString::new("c1")),
+            enforced: GoField::new(true),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_DROP_CHECK_CONSTRAINT, args);
+        let decoded = get_check_constraint_args(&mut job).unwrap().unwrap();
+        assert_eq!(decoded.read().constraint_name.get().original(), "c1");
+        assert!(decoded.read().enforced.get());
+    }
+}
+
+#[test]
 pub(crate) fn go_test_modify_schema_args() {
     // Go: ToCharset "aa" / ToCollate "bb" over ActionModifySchemaCharsetAndCollate.
     for version in [JobVersion::V1, JobVersion::V2] {
@@ -1374,9 +1416,12 @@ pub(crate) fn go_test_modify_schema_args() {
     for in_policy_id in [Some(123i64), None] {
         for version in [JobVersion::V1, JobVersion::V2] {
             let args = GoShared::new(ModifySchemaArgs {
-                policy_ref: GoField::new(
-                    in_policy_id.map(|id| GoShared::new(PolicyRefInfo { id, ..Default::default() })),
-                ),
+                policy_ref: GoField::new(in_policy_id.map(|id| {
+                    GoShared::new(PolicyRefInfo {
+                        id,
+                        ..Default::default()
+                    })
+                })),
                 ..Default::default()
             });
             let mut job = encoded_job(
@@ -1408,10 +1453,7 @@ pub(crate) fn go_test_create_table_args() {
         let mut job = encoded_job(version, ActionType::ACTION_CREATE_TABLE, args);
         let decoded = get_create_table_args(&mut job).unwrap().unwrap();
         let decoded = decoded.read();
-        assert_eq!(
-            decoded.table_info.get().map(|t| t.read().id),
-            Some(100)
-        );
+        assert_eq!(decoded.table_info.get().map(|t| t.read().id), Some(100));
         assert!(decoded.fk_check.get());
     }
     // Subtest "create view": ID 122, OnExistReplace, OldViewTblID 123.
@@ -1479,5 +1521,200 @@ pub(crate) fn go_test_truncate_table_args() {
             }
             assert_eq!(decoded.new_partition_ids.get().snapshot(), [2, 3]);
         }
+    }
+}
+
+#[test]
+pub(crate) fn go_test_add_index_args() {
+    let index = IndexArg {
+        unique: true,
+        index_name: tidb_ast::CiString::new("idx1"),
+        index_part_specifications: vec![tidb_ast::IndexPartSpecification {
+            length: 2,
+            ..Default::default()
+        }]
+        .into(),
+        index_option: Some(GoShared::new(tidb_ast::IndexOption::default())),
+        hidden_cols: vec![ColumnInfo::default(), ColumnInfo::default()].into(),
+        sql_mode: 1,
+        index_id: 1,
+        func_expr: "test_string".to_owned(),
+        ..Default::default()
+    };
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![index.clone()].into(),
+                partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102]),
+                op_type: IndexOp::ADD_INDEX,
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.unique);
+        assert_eq!(decoded.index_name, index.index_name);
+        assert_eq!(
+            decoded
+                .index_part_specifications
+                .get(0)
+                .unwrap()
+                .read()
+                .length,
+            2
+        );
+        assert!(decoded.index_option.is_some());
+        assert_eq!(decoded.hidden_cols.len(), 2);
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut primary = index.clone();
+        primary.is_pk = true;
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_PRIMARY_KEY,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![primary].into(),
+                ..Default::default()
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.unique);
+        assert!(decoded.is_pk);
+        assert_eq!(decoded.sql_mode, 1);
+        assert!(decoded.index_option.is_some());
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut columnar = index.clone();
+        columnar.is_columnar = true;
+        columnar.columnar_index_type = ColumnarIndexType::INVERTED;
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ADD_COLUMNAR_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![columnar].into(),
+                ..Default::default()
+            }),
+        );
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read().index_args.get(0).unwrap();
+        let decoded = decoded.read();
+        assert!(decoded.is_columnar);
+        assert_eq!(decoded.columnar_index_type, ColumnarIndexType::INVERTED);
+        assert_eq!(decoded.func_expr, "test_string");
+    }
+
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut finished = index.clone();
+        finished.is_global = false;
+        let mut job = encoded_finished_job(
+            version,
+            ActionType::ACTION_ADD_INDEX,
+            GoShared::new(ModifyIndexArgs {
+                index_args: vec![finished].into(),
+                partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102]),
+                op_type: IndexOp::ADD_INDEX,
+            }),
+        );
+        let decoded = get_finished_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded_read = decoded.read();
+        let decoded_index = decoded_read.index_args.get(0).unwrap();
+        assert_eq!(decoded_index.read().index_id, 1);
+        assert_eq!(decoded_read.partition_ids.snapshot(), [100, 101, 102]);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_auto_pre_split_index_arg_json_is_separate_from_manual_split() {
+    let auto = IndexArg {
+        auto_pre_split: true,
+        ..Default::default()
+    };
+    let encoded = serde_json::to_value(&auto).expect("AUTO index arg serializes");
+    assert_eq!(encoded["auto_presplit"], true);
+    assert!(encoded.get("split_opt").is_none());
+
+    let decoded: IndexArg = serde_json::from_value(serde_json::json!({
+        "auto_presplit": true,
+    }))
+    .expect("AUTO index arg decodes");
+    assert!(decoded.auto_pre_split);
+    assert!(decoded.split_opt.is_none());
+
+    let manual: IndexArg = serde_json::from_value(serde_json::json!({
+        "auto_presplit": true,
+        "split_opt": {"num": 4},
+    }))
+    .expect("manual split payload decodes");
+    // The persisted shape can contain both fields after a mixed-version
+    // handoff; the executor's manual path decides precedence.
+    assert!(manual.auto_pre_split);
+    assert_eq!(manual.split_opt.unwrap().read().num, 4);
+}
+
+#[test]
+pub(crate) fn go_test_drop_index_arguments() {
+    let args = GoShared::new(ModifyIndexArgs {
+        index_args: vec![IndexArg {
+            index_name: tidb_ast::CiString::new("i2"),
+            if_exist: true,
+            is_columnar: true,
+            index_id: 1,
+            ..Default::default()
+        }]
+        .into(),
+        partition_ids: GoSharedSlice::from_vec(vec![100, 101, 102, 103]),
+        op_type: IndexOp::DROP_INDEX,
+    });
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(version, ActionType::ACTION_DROP_INDEX, args.clone());
+        let decoded = get_drop_index_args(&mut job).unwrap().unwrap();
+        let index = decoded.read().index_args.get(0).unwrap();
+        assert_eq!(index.read().index_name, tidb_ast::CiString::new("i2"));
+        assert!(index.read().if_exist);
+
+        let mut job = encoded_finished_job(version, ActionType::ACTION_DROP_INDEX, args.clone());
+        let decoded = get_finished_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded_read = decoded.read();
+        let index = decoded_read.index_args.get(0).unwrap();
+        assert_eq!(index.read().index_id, 1);
+        assert_eq!(decoded_read.partition_ids.snapshot(), [100, 101, 102, 103]);
+    }
+}
+
+#[test]
+pub(crate) fn go_test_get_rename_index_args() {
+    let args = GoShared::new(ModifyIndexArgs {
+        index_args: vec![
+            IndexArg {
+                index_name: tidb_ast::CiString::new("old"),
+                ..Default::default()
+            },
+            IndexArg {
+                index_name: tidb_ast::CiString::new("new"),
+                ..Default::default()
+            },
+        ]
+        .into(),
+        ..Default::default()
+    });
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(version, ActionType::ACTION_RENAME_INDEX, args.clone());
+        let decoded = get_modify_index_args(&mut job).unwrap().unwrap();
+        let decoded = decoded.read();
+        assert_eq!(
+            decoded.index_args.get(0).unwrap().read().index_name,
+            tidb_ast::CiString::new("old")
+        );
+        assert_eq!(
+            decoded.index_args.get(1).unwrap().read().index_name,
+            tidb_ast::CiString::new("new")
+        );
     }
 }

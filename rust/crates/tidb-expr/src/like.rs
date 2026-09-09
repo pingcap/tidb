@@ -19,8 +19,7 @@ use std::cmp::Ordering;
 
 use tidb_datatype::Collation;
 use tidb_util::stringutil::{
-    compile_pattern_with_escape, do_match_customized, lower_one_string,
-    lower_one_string_excluding_escape_char,
+    compile_pattern, do_match_customized, lower_one_string, lower_one_string_excluding_escape_char,
 };
 
 /// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
@@ -67,7 +66,7 @@ pub fn like_match_with_collation(
     {
         return do_match_binary_pattern(text, pattern, escape);
     }
-    let (weights, types) = compile_pattern_with_escape(pattern, Some(char::from(escape)));
+    let (weights, types) = compile_pattern(pattern, escape);
     do_match_customized(text, &weights, &types, |left, right| {
         collation_char_equal(left, right, collation)
     })

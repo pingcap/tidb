@@ -57,7 +57,9 @@ impl Parser {
             self.bump();
             let raw = self.parse_using_charset_name()?;
             let charset = canonical_charset(&raw)
-                .ok_or_else(|| self.err_here("unknown character set"))?
+                .ok_or_else(|| {
+                    self.err_here(&format!("[parser:1115]Unknown character set: '{raw}'"))
+                })?
                 .to_string();
             self.expect_op(")")?;
             return Ok(Expr::ConvertUsing {
@@ -154,7 +156,18 @@ impl Parser {
                 self.bump();
                 Some("BINARY".to_string())
             } else {
-                self.parse_optional_charset_clause()?
+                let charset = self.parse_optional_charset_clause()?;
+                // Go's Char rule resolves the charset's default collation at
+                // parse time (`charset.GetDefaultCollation`, parser.y:9971):
+                // an unknown name refuses the statement.
+                if let Some(name) = &charset {
+                    if canonical_charset(name).is_none() {
+                        return Err(
+                            self.err_here(&format!("Get collation error for charset: {name}"))
+                        );
+                    }
+                }
+                charset
             };
             // `len` and `charset` are independent — both may be given
             // together (see `tidb_ast::CastType::Char`'s own doc for why
@@ -255,7 +268,15 @@ impl Parser {
         }
         self.expect_op(")")?;
         if m > 53 {
-            return Err(self.err_here("FLOAT precision out of range"));
+            // Go `FLOAT FloatOpt` (parser.y:10078): `ErrTooBigPrecision`
+            // is `terror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)`
+            // — `[expression:1426]`, the name argument `CAST`.
+            return Err(self.err_coded(
+                1426,
+                &format!(
+                    "[expression:1426]Too-big precision {m} specified for 'CAST'. Maximum is 53."
+                ),
+            ));
         }
         Ok(if m > 24 {
             CastType::Double

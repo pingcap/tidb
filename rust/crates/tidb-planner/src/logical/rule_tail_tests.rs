@@ -42,22 +42,33 @@ use crate::plan_base::PlanIdAllocator;
 
 use crate::find_best_task::LogicalJoinType;
 
+use super::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
 use super::cte::{CteClass, LogicalCTE};
 use super::data_source::DataSource;
 use super::expand::{LogicalExpand, RollupGroupingSet};
 use super::join::LogicalJoin;
+use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
+use super::rewrite::{prune_columns, push_down_topn};
+use super::rule::LogicalOptRule;
+use super::rule::RuleContext;
+use super::rule_aggregation_elimination::AggregationEliminator;
 use super::rule_derive_topn_from_window::derive_topn;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
 use super::rule_eliminate_unionall_dual_item::union_all_eliminate_dual_item;
+use super::rule_join_elimination::OuterJoinEliminator;
+use super::rule_max_min_elimination::MaxMinEliminator;
+use super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin;
 use super::rule_push_down_sequence::push_down_sequence;
 use super::rule_resolve_expand::gen_expand;
 use super::rule_result_reorder::result_reorder;
+use super::rule_semi_join_rewrite::SemiJoinRewriter;
 use super::rule_tests::test_context;
 use super::selection::LogicalSelection;
 use super::sequence::LogicalSequence;
 use super::sort::LogicalSort;
 use super::table_dual::LogicalTableDual;
+use super::topn::LogicalTopN;
 use super::union_all::LogicalUnionAll;
 use super::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
 use super::{BaseLogicalPlan, LogicalPlan};
@@ -842,4 +853,337 @@ fn the_derivation_walks_past_a_deep_chain_and_respects_allow_derive_topn() {
     }
     assert_eq!(kind(&node.children()[0].children()[0]), "DataSource");
     untouched.dismantle();
+}
+
+// ***************************************************************************
+// Child-access panic boundaries — these Go rule bodies index children (or the
+// single agg function/argument) directly, so a malformed tree panics instead
+// of taking a Rust-only `None`/error refusal.
+// ***************************************************************************
+
+#[test]
+fn a_projection_branch_without_children_panics_like_gos_direct_index() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = with_children(
+        LogicalPlan::UnionAll(LogicalUnionAll::new(base(
+            &allocator,
+            "UnionAll",
+            Some(schema_of(&[1])),
+        ))),
+        vec![LogicalPlan::Projection(LogicalProjection::new(
+            base(&allocator, "Projection", Some(schema_of(&[1]))),
+            Vec::new(),
+        ))],
+    );
+
+    // Go: `proj.Children()[0].(*logicalop.LogicalTableDual)`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        union_all_eliminate_dual_item(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_selection_panics_when_derive_topn_probes_it_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", None),
+        vec![le_const(2, 5)],
+    ));
+
+    // Go `windowIsTopN` reads `p.Children()[0]` unconditionally.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_window_without_children_panics_at_the_grandchild_probe_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let mut window = row_number_window(&allocator, "row_number", data_source(&allocator, &[1]));
+    drop(window.base_mut().take_children());
+    let plan = selection(&allocator, vec![le_const(2, 5)], window);
+
+    // Go: `grandChild := child.Children()[0]` before the type assertion.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_max_min_aggregation_without_a_child_panics_like_gos_direct_index() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let max = tidb_expr::aggregation::AggFuncDesc {
+        base: BaseFuncDesc {
+            name: AGG_FUNC_MAX.to_owned(),
+            args: vec![Expression::Column(column(1))],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![max],
+        Vec::new(),
+    ));
+
+    // Go: `f := agg.AggFuncs[0]`, `f.Args[0]`, `child := agg.Children()[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        MaxMinEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+// ***************************************************************************
+// Join-family rule boundaries — Go's join elimination, outer-join-to-semi,
+// and semi-join-rewrite bodies index children and deref their schemas.
+// ***************************************************************************
+
+fn is_null_const(id: i64) -> Expression {
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("isnull"),
+        int_type(),
+        vec![Expression::Column(column(id))],
+    ))
+}
+
+fn bare_dual(allocator: &PlanIdAllocator, row_count: usize) -> LogicalPlan {
+    LogicalPlan::TableDual(LogicalTableDual {
+        base: base(allocator, "TableDual", None),
+        row_count,
+    })
+}
+
+#[test]
+fn a_childless_join_panics_when_eliminating_outer_joins_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1]))),
+        LogicalJoinType::LeftOuter,
+    ));
+
+    // Go `tryToEliminateOuterJoin` indexes `Children()[1^innerChildIdx]` and
+    // `Children()[innerChildIdx]` (`rule_join_elimination.go:99-100`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        OuterJoinEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_selection_panics_in_outer_join_to_semi_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", None),
+        vec![is_null_const(1)],
+    ));
+
+    // Go `sel.Schema()`/`sel.OutputNames()` index `children[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        OuterJoinToSemiJoin.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_selection_over_a_childless_outer_join_panics_when_converting_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    // Go's early gate requires a non-empty condition set before it indexes
+    // the join children.
+    join.equal_conditions = vec![ScalarFunction::new(
+        CiString::new("eq"),
+        int_type(),
+        vec![Expression::Column(column(1)), Expression::Column(column(2))],
+    )];
+    let plan = selection(&allocator, vec![is_null_const(1)], LogicalPlan::Join(join));
+
+    // Go `canConvertAntiJoin` indexes `p.Children()[outerChildIdx]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        OuterJoinToSemiJoin.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_schemaless_left_child_panics_when_rewriting_semi_join_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = RuleContext {
+        enable_semi_join_rewrite: true,
+        ..test_context(&allocator)
+    };
+    let plan = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", None),
+        LogicalJoinType::Semi,
+    ));
+    let join = with_children(
+        plan,
+        vec![bare_dual(&allocator, 0), data_source(&allocator, &[1])],
+    );
+
+    // Go `p.Children()[0].Schema().Clone()` nil-derefs on a schema-less child.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        SemiJoinRewriter.optimize(&ctx, join)
+    }))
+    .is_err());
+}
+
+// ***************************************************************************
+// Column-pruning / TopN-pushdown schema boundaries.
+// ***************************************************************************
+
+#[test]
+fn a_childless_limit_panics_when_pruning_columns_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Limit(LogicalLimit::new(
+        base(&allocator, "Limit", Some(schema_of(&[9]))),
+        0,
+        1,
+    ));
+
+    // Go `LogicalLimit.PruneColumns` indexes `p.Children()[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prune_columns(&ctx, plan, vec![column(9)])
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_topn_over_a_schemaless_projection_panics_when_pushing_down_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", None),
+        Vec::new(),
+    ));
+    let topn = LogicalTopN::new(
+        base(&allocator, "TopN", Some(schema_of(&[1]))),
+        vec![ByItems::new(Expression::Column(column(1)), false)],
+        0,
+        1,
+    );
+
+    // Go passes the projection's own `p.Schema()` to `ColumnSubstitute`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        push_down_topn(projection, Some(topn))
+    }))
+    .is_err());
+}
+
+// ***************************************************************************
+// Aggregation-elimination child/argument boundaries.
+// ***************************************************************************
+
+fn distinct_count_column(id: i64) -> tidb_expr::aggregation::AggFuncDesc {
+    tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: "count".to_owned(),
+            args: vec![Expression::Column(column(id))],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: true,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    }
+}
+
+#[test]
+fn a_childless_distinct_aggregation_panics_when_eliminating_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![distinct_count_column(1)],
+        Vec::new(),
+    ));
+
+    // Go `tryToEliminateDistinct` indexes `agg.Children()[0].Schema()` inside
+    // the all-column-args branch (`rule_aggregation_elimination.go:111`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        AggregationEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_grouped_aggregation_panics_at_the_covered_check_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![tidb_expr::aggregation::AggFuncDesc {
+            base: tidb_expr::aggregation::BaseFuncDesc {
+                name: "count".to_owned(),
+                args: vec![Expression::Column(column(1))],
+                ret_type: int_type(),
+            },
+            mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+            has_distinct: false,
+            order_by_items: Vec::new(),
+            grouping_id: 0,
+        }],
+        vec![Expression::Column(column(2))],
+    ));
+
+    // Go `tryToEliminateAggregation` indexes `agg.Children()[0].Schema()`
+    // for the PKOrUK coverage check (`rule_aggregation_elimination.go:69`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        AggregationEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_tested_childless_empty_selection_panics_when_eliminated_like_go() {
+    let allocator = PlanIdAllocator::default();
+    // Go only tests selections reached as CHILDREN; plant this one under a
+    // projection so the walk marks it tested.
+    let selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", None),
+        Vec::new(),
+    ));
+    let projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", None),
+        Vec::new(),
+    ));
+    let plan = with_children(projection, vec![selection]);
+
+    // Go `p.SetChild(idx, sel.Children()[0])` indexes directly.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eliminate_empty_selection(plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_sequence_panics_when_collapsing_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Sequence(LogicalSequence::new(base(
+        &allocator,
+        LogicalSequence::TYPE,
+        None,
+    )));
+
+    // Go reads the sequence's LAST child — `Children()[ChildLen()-1]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        push_down_sequence(&ctx, plan)
+    }))
+    .is_err());
 }

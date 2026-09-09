@@ -22,7 +22,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use crate::{DistSqlContext, ReadRequestMetadata, TiFlashReplicaRead};
+use crate::{DistSqlContext, ReadRequestMetadata, ReplicaRead};
 pub use tidb_txnkv::{
     KeyRange as RequestKeyRange, PartitionIdAndRanges, PartitionedKeyRanges as RequestKeyRanges,
 };
@@ -41,7 +41,7 @@ pub const DC_LABEL_KEY: &str = "zone";
 pub struct KvRequestMetadata {
     request: tidb_txnkv::Request,
     /// TiFlash node-selection policy projected into client-send metadata.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
 }
 
 impl Default for KvRequestMetadata {
@@ -56,7 +56,7 @@ impl Default for KvRequestMetadata {
         };
         Self {
             request,
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
         }
     }
 }
@@ -67,7 +67,7 @@ impl KvRequestMetadata {
     pub fn from_request(request: tidb_txnkv::Request) -> Self {
         Self {
             request,
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
         }
     }
 
@@ -103,6 +103,8 @@ impl KvRequestMetadata {
         };
         self.request_source = session.request_source;
         self.store_batch_size = session.store_batch_size as isize;
+        self.allow_batch_task_data_merge = session.allow_batch_task_data_merge;
+        self.execute_batch_tasks_serially = session.execute_batch_tasks_serially;
         self.resource_group_name = session.resource_group_name;
         self.store_busy_threshold_ns =
             (session.store_busy_threshold_ms as i64).wrapping_mul(1_000_000);
@@ -110,6 +112,7 @@ impl KvRequestMetadata {
         self.max_execution_time_ms = session.max_execution_time_ms;
         self.max_keys_read = session.max_keys_read;
         self.max_keys_read_counter = session.max_keys_read_counter;
+        self.query_cop_store_limiter = session.query_cop_store_limiter;
     }
 }
 

@@ -63,9 +63,11 @@ impl Level {
         }
     }
 
-    /// Parses zap's lowercase level spelling.
+    /// Parses zap's level spelling. zapcore's `UnmarshalText` accepts the
+    /// empty string as info and is case-insensitive.
     pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
+        match value.to_ascii_lowercase().as_str() {
+            "" => Ok(Self::Info),
             "debug" => Ok(Self::Debug),
             "info" => Ok(Self::Info),
             "warn" => Ok(Self::Warn),
@@ -340,7 +342,9 @@ fn append_value(out: &mut String, v: &Value) {
             add_element_separator(out);
             append_string_with_quote(
                 out,
-                tidb_config::configtypes::format_go_duration(*ns).as_bytes(),
+                tidb_config::configtypes::Duration(*ns)
+                    .to_string()
+                    .as_bytes(),
             );
         }
         Value::Binary(bytes) => {
@@ -669,7 +673,9 @@ fn append_json_value(out: &mut String, value: &Value) {
         }
         Value::Duration(value) => append_json_string(
             out,
-            tidb_config::configtypes::format_go_duration(*value).as_bytes(),
+            tidb_config::configtypes::Duration(*value)
+                .to_string()
+                .as_bytes(),
         ),
         Value::Binary(value) => append_json_string(out, base64_std(value).as_bytes()),
         Value::ByteString(value) => append_json_string(out, value),

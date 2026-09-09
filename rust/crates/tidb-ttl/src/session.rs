@@ -25,8 +25,8 @@
 //!
 //! - [`SessionContext`] `// boundary:` `pkg/sessionctx.Context` plus
 //!   `pkg/sessiontxn.GetTxnManager(...).GetTxnInfoSchema()`. Neither package is
-//!   transcreated, and `session.go` calls exactly nine things through them, so
-//!   the trait carries exactly those nine.
+//!   transcreated, so the context operations are represented by narrow traits
+//!   and opaque handles, including Go's session-vars and SQL-executor accessors.
 //! - [`SessionContext::execute_internal`] `// boundary:`
 //!   `pkg/util/sqlexec.{SQLExecutor,RecordSet}` and `sqlexec.DrainRecordSet`.
 //!   `pkg/util/sqlexec` is unported; `ExecuteSQL`'s open/drain-8/close triple
@@ -176,6 +176,10 @@ pub trait SessionContext {
     type Store: Clone;
     /// `// boundary:` `pkg/infoschema/context.MetaOnlyInfoSchema`. Passed through.
     type InfoSchema: Clone;
+    /// `// boundary:` `sqlexec.SQLExecutor`, retained as an opaque handle.
+    type SqlExecutor: ?Sized;
+    /// `// boundary:` `variable.SessionVars`, retained as an opaque handle.
+    type SessionVars: ?Sized;
 
     /// Go `sessionctx.Context.GetStore`.
     fn get_store(&self) -> Self::Store;
@@ -185,6 +189,12 @@ pub trait SessionContext {
 
     /// Go `sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()`.
     fn get_txn_info_schema(&self) -> Self::InfoSchema;
+
+    /// Go `sessionctx.Context.GetSQLExecutor`.
+    fn get_sql_executor(&self) -> &Self::SqlExecutor;
+
+    /// Go `variable.SessionVarsProvider.GetSessionVars`.
+    fn get_session_vars(&self) -> &Self::SessionVars;
 
     /// Go `sqlexec.SQLExecutor.ExecuteInternal` followed by
     /// `sqlexec.DrainRecordSet(ctx, rs, 8)` and `rs.Close()`.
@@ -232,13 +242,21 @@ pub trait Session {
     type Store: Clone;
     /// `// boundary:` `pkg/infoschema/context.MetaOnlyInfoSchema`.
     type InfoSchema: Clone;
+    /// `// boundary:` `sqlexec.SQLExecutor`, retained as an opaque handle.
+    type SqlExecutor: ?Sized;
+    /// `// boundary:` `variable.SessionVars`, retained as an opaque handle.
+    type SessionVars: ?Sized;
 
     /// Go `Session.GetStore`.
     fn get_store(&self) -> Self::Store;
+    /// Go `Session.GetSessionVars` (from the embedded provider).
+    fn get_session_vars(&self) -> &Self::SessionVars;
     /// Go `Session.GetLatestInfoSchema`.
     fn get_latest_info_schema(&self) -> Self::InfoSchema;
     /// Go `Session.SessionInfoSchema`.
     fn session_info_schema(&self) -> Self::InfoSchema;
+    /// Go `Session.GetSQLExecutor`.
+    fn get_sql_executor(&self) -> &Self::SqlExecutor;
     /// Go `Session.ExecuteSQL`.
     fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>>;
     /// Go `Session.RunInTxn`.
@@ -265,11 +283,11 @@ pub trait Session {
 /// Go's unexported `session` struct.
 ///
 /// Go caches `sctx.GetSQLExecutor()` in a field so `GetSQLExecutor` can hand it
-/// back; the executor lives behind [`SessionContext::execute_internal`] here, so
-/// there is nothing to cache and `GetSQLExecutor` has no separate accessor.
+/// back. The executor remains an opaque boundary handle here and is forwarded
+/// by reference from the context.
 pub struct TtlSession<C: SessionContext> {
     sctx: C,
-    avoid_reuse: Option<Box<dyn Fn() + Send + Sync>>,
+    avoid_reuse: Box<dyn Fn()>,
 }
 
 impl<C: SessionContext> TtlSession<C> {
@@ -278,20 +296,8 @@ impl<C: SessionContext> TtlSession<C> {
     /// Go's `intest.AssertNotNil` on both arguments is a debug assertion; a
     /// non-optional `sctx` and an explicit `avoid_reuse` carry the same
     /// requirement in the type system.
-    pub fn new(sctx: C, avoid_reuse: Box<dyn Fn() + Send + Sync>) -> Self {
-        Self {
-            sctx,
-            avoid_reuse: Some(avoid_reuse),
-        }
-    }
-
-    /// Go's `session{sctx: ..., avoidReuse: nil}`, the shape `AvoidReuse`'s
-    /// `nil` check exists for.
-    pub fn without_avoid_reuse(sctx: C) -> Self {
-        Self {
-            sctx,
-            avoid_reuse: None,
-        }
+    pub fn new(sctx: C, avoid_reuse: Box<dyn Fn()>) -> Self {
+        Self { sctx, avoid_reuse }
     }
 
     /// The wrapped context, for callers that hold the concrete type.
@@ -304,9 +310,15 @@ impl<C: SessionContext> Session for TtlSession<C> {
     type Row = C::Row;
     type Store = C::Store;
     type InfoSchema = C::InfoSchema;
+    type SqlExecutor = C::SqlExecutor;
+    type SessionVars = C::SessionVars;
 
     fn get_store(&self) -> Self::Store {
         self.sctx.get_store()
+    }
+
+    fn get_session_vars(&self) -> &Self::SessionVars {
+        self.sctx.get_session_vars()
     }
 
     fn get_latest_info_schema(&self) -> Self::InfoSchema {
@@ -315,6 +327,10 @@ impl<C: SessionContext> Session for TtlSession<C> {
 
     fn session_info_schema(&self) -> Self::InfoSchema {
         self.sctx.get_txn_info_schema()
+    }
+
+    fn get_sql_executor(&self) -> &Self::SqlExecutor {
+        self.sctx.get_sql_executor()
     }
 
     fn execute_sql(&self, sql: &str, args: &[Datum]) -> Result<Vec<Self::Row>> {
@@ -380,9 +396,7 @@ impl<C: SessionContext> Session for TtlSession<C> {
     }
 
     fn avoid_reuse(&self) {
-        if let Some(avoid_reuse) = self.avoid_reuse.as_ref() {
-            avoid_reuse();
-        }
+        (self.avoid_reuse)();
     }
 
     fn location(&self) -> TimeZone {

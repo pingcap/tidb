@@ -16,11 +16,15 @@ workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 encoding_rs.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 smallvec.workspace = true
 tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
+tidb-mysql = { path = "../tidb-mysql" }
+unicode-general-category.workspace = true
 
 [dev-dependencies]
 sha2 = { workspace = true }
@@ -47,6 +51,10 @@ harness = false
 
 [[bench]]
 name = "datum"
+harness = false
+
+[[bench]]
+name = "parser_charset"
 harness = false
 
 [[bin]]

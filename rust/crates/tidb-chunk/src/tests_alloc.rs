@@ -24,8 +24,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::alloc::{
-    init_chunk_alloc_size, new_allocator, new_reuse_hook_allocator, new_sync_allocator,
-    Allocator, ChunkAllocator, DefaultColumnAllocator,
+    init_chunk_alloc_size, new_allocator, new_reuse_hook_allocator, new_sync_allocator, Allocator,
+    ChunkAllocator, DefaultColumnAllocator,
 };
 use crate::chunk::Chunk;
 use crate::column::get_fixed_len;
@@ -94,7 +94,9 @@ fn column_allocator_variants_agree() {
     for ft in &field_types {
         let v0 = crate::column::Column::new_column(ft, init_cap);
         let v2 = <DefaultColumnAllocator as crate::alloc::ColumnAllocator>::new_column(
-            &mut alloc2, ft, init_cap,
+            &mut alloc2,
+            ft,
+            init_cap,
         );
         assert_eq!(v0, v2);
     }

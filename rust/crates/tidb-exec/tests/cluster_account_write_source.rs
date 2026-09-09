@@ -96,12 +96,15 @@ impl MetaStore {
                     assert!(present, "a Delete named a row that is not stored");
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexDelete | OptimisticMutationKind::MetaDelete => {
+                OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::SystemRowDelete => {
                     self.pairs.remove(mutation.key());
                 }
                 OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut => {
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::SystemRowPut => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }
@@ -373,6 +376,26 @@ fn a_table_and_column_scoped_grant_round_trip_through_their_set_columns() {
         "re-writing the scoped grants planned {} mutations",
         again.mutations.len()
     );
+}
+
+#[test]
+fn operate_view_table_grant_round_trips_through_the_table_priv_set() {
+    let mut store = bootstrapped();
+    let root = root(&mut store);
+    let desired = ClusterPrivileges {
+        users: vec![root, user("bob", "%", &[])],
+        table_grants: vec![LoadedTableGrant {
+            host: "%".to_owned(),
+            user: "bob".to_owned(),
+            database: "app".to_owned(),
+            table: "v".to_owned(),
+            privileges: vec!["Operate View".to_owned()],
+        }],
+        ..ClusterPrivileges::default()
+    };
+
+    let read_back = store.write(&desired);
+    assert_eq!(read_back.table_grants, desired.table_grants);
 }
 
 #[test]

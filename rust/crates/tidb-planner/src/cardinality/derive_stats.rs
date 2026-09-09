@@ -45,8 +45,6 @@
 //!   takes `EstimateFullJoinRowCount` for an inner join and clamps every
 //!   inherited column NDV to the join's own row count.
 
-use crate::cost_factors::SELECTION_FACTOR;
-
 /// Go `cardinality.distinctFactor` (`cardinality/ndv.go:35`), the NDV a column
 /// with no loaded histogram is assumed to have, as a fraction of the table's
 /// realtime row count (`EstimateColumnNDV`, `cardinality/ndv.go:39-53`).

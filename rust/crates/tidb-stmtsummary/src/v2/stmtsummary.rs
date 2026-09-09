@@ -75,22 +75,19 @@
 //! - `stmtWindow.clear` resets the contents of the shared `evicted` cell
 //!   instead of replacing the pointer, because the eviction closure holds the
 //!   same cell; the two are observationally identical.
-//! - `newStmtLogStorage` lives in Go `v2/logger.go`, which is NOT ported. The
-//!   rotating-file sink is isolated behind the [`StmtLogWriter`] trait, and
-//!   [`FileStmtLogWriter`] is a lazily-opened append-only writer: it performs
-//!   **no** size/age/backup rotation, so `Config`'s `file_max_size`,
-//!   `file_max_days` and `file_max_backups` are carried but unused. Tests never
-//!   touch the filesystem; they pass their own [`StmtStorage`].
-//!   [`StmtLogStorage`] and [`FileStmtLogWriter`] are SEED evidence for
-//!   `logger.go`, not a port of it.
+//! - `newStmtLogStorage` lives in Go `v2/logger.go`, whose zap plumbing is
+//!   narrowed to the [`StmtLogWriter`] boundary. [`RotatingFileLogWriter`]
+//!   mirrors the lumberjack sink pingcap/log wires behind it: size-based
+//!   rotation with `<base>-<local timestamp><ext>` backups, pruned by
+//!   `Config`'s `file_max_backups` count and `file_max_days` age. The no-op
+//!   `stmtLogEncoder` and zap-core wrapping are ecosystem machinery the
+//!   boundary absorbs. Tests may pass their own [`StmtStorage`].
 //! - `logutil.BgLogger()` has no boundary here: the sync failure and the
 //!   dropped-record report Go logs are surfaced through
 //!   [`StmtSummary::evicted_dropped`] instead of a logger.
 
 use std::collections::HashSet;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock};
@@ -105,9 +102,11 @@ use crate::statement_summary::{
     StmtDigestKey, StmtExecInfo, WindowMetricsSink, STMT_SUMMARY_BY_DIGEST_MAP,
 };
 use crate::v2::column::timestamp_datum;
+use crate::v2::reader::LOG_FILE_TIME_FORMAT;
 use crate::v2::record::{
     marshal_evicted_stmt_record, marshal_stmt_record, new_stmt_record, StmtRecord,
 };
+use chrono::NaiveDateTime;
 
 /// Go `defaultEnabled`.
 pub const DEFAULT_ENABLED: bool = true;
@@ -145,7 +144,6 @@ type TimeNowFn = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
 static TIME_NOW: RwLock<Option<TimeNowFn>> = RwLock::new(None);
 
 /// Go `timeNow()`.
-#[must_use]
 pub fn time_now() -> DateTime<Utc> {
     let hook = TIME_NOW.read().expect("time_now lock poisoned").clone();
     hook.map_or_else(Utc::now, |hook| hook())
@@ -218,14 +216,11 @@ pub fn close() {
 pub struct Config {
     /// Go `Filename`.
     pub filename: String,
-    /// Go `FileMaxSize`. Carried for parity; [`FileStmtLogWriter`] does not
-    /// rotate.
+    /// Go `FileMaxSize` (MB): the active file rotates past it.
     pub file_max_size: i64,
-    /// Go `FileMaxDays`. Carried for parity; [`FileStmtLogWriter`] does not
-    /// rotate.
+    /// Go `FileMaxDays`: backups older than this are removed (0 = never).
     pub file_max_days: i64,
-    /// Go `FileMaxBackups`. Carried for parity; [`FileStmtLogWriter`] does not
-    /// rotate.
+    /// Go `FileMaxBackups`: only this many backups are kept (0 = all).
     pub file_max_backups: i64,
 }
 
@@ -415,7 +410,6 @@ impl StmtSummary {
 
     /// Go `NewStmtSummary4Test`: creates a new `StmtSummary` for testing
     /// purposes.
-    #[must_use]
     pub fn new_for_test(max_stmt_count: usize) -> Arc<Self> {
         let (summary, rx) = Self::with_options(
             DEFAULT_MAX_STMT_COUNT,
@@ -431,7 +425,6 @@ impl StmtSummary {
 
     /// Builds a test summary over caller-supplied sinks, so the upstream tests
     /// that read Go's process-global Prometheus metrics can read them here.
-    #[must_use]
     pub fn new_for_test_with_sinks(
         max_stmt_count: usize,
         storage: Arc<dyn StmtStorage>,
@@ -456,25 +449,21 @@ impl StmtSummary {
     }
 
     /// The storage this summary persists through.
-    #[must_use]
     pub fn storage(&self) -> Arc<dyn StmtStorage> {
         Arc::clone(&self.storage.read().expect("storage lock poisoned"))
     }
 
     /// Go's `s.window`, which the upstream tests read directly.
-    #[must_use]
     pub fn window(&self) -> Arc<Mutex<StmtWindow>> {
         Arc::clone(&self.window.lock().expect("window lock poisoned"))
     }
 
     /// Go `evictedDropped`.
-    #[must_use]
     pub fn evicted_dropped(&self) -> u64 {
         self.evict.evicted_dropped.load(Ordering::SeqCst)
     }
 
     /// Go `(*StmtSummary).Enabled`.
-    #[must_use]
     pub fn enabled(&self) -> bool {
         self.opt_enabled.load(Ordering::SeqCst)
     }
@@ -490,7 +479,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).EnableInternalQuery`.
-    #[must_use]
     pub fn enable_internal_query(&self) -> bool {
         self.opt_enable_internal_query.load(Ordering::SeqCst)
     }
@@ -506,7 +494,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).MaxStmtCount`.
-    #[must_use]
     pub fn max_stmt_count(&self) -> u32 {
         self.opt_max_stmt_count.load(Ordering::SeqCst)
     }
@@ -524,7 +511,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).MaxSQLLength`.
-    #[must_use]
     pub fn max_sql_length(&self) -> u32 {
         self.opt_max_sql_length.load(Ordering::SeqCst)
     }
@@ -536,7 +522,6 @@ impl StmtSummary {
 
     /// Go `(*StmtSummary).RefreshInterval`: the period (in seconds) at which
     /// the statistics window is refreshed (persisted).
-    #[must_use]
     pub fn refresh_interval(&self) -> u32 {
         self.opt_refresh_interval.load(Ordering::SeqCst)
     }
@@ -549,7 +534,6 @@ impl StmtSummary {
 
     /// Go `(*StmtSummary).PersistEvicted`: reports whether per-record evictions
     /// are persisted.
-    #[must_use]
     pub fn persist_evicted(&self) -> bool {
         self.evict.opt_persist_evicted.load(Ordering::SeqCst)
     }
@@ -562,7 +546,6 @@ impl StmtSummary {
     /// Go `(*StmtSummary).GroupByUser`: reports whether statement summaries are
     /// grouped by the executing user in addition to the usual
     /// digest/schema/plan tuple.
-    #[must_use]
     pub fn group_by_user(&self) -> bool {
         self.opt_group_by_user.load(Ordering::SeqCst)
     }
@@ -638,7 +621,6 @@ impl StmtSummary {
     ///
     /// Go reads `s.window.begin` after releasing `windowLock`; the port reads it
     /// under the same lock as the count.
-    #[must_use]
     pub fn evicted(&self) -> Vec<Datum> {
         let (count, begin) = {
             let guard = self.window.lock().expect("window lock poisoned");
@@ -904,7 +886,7 @@ pub fn new_stmt_summary(cfg: &Config) -> Result<Arc<StmtSummary>, EmptyFilename>
     // here are just placeholders, and the real values in
     // sessionctx/variables/tidb_vars.go will overwrite them after TiDB starts.
     let storage: Arc<dyn StmtStorage> = Arc::new(StmtLogStorage::new(Arc::new(
-        FileStmtLogWriter::new(&cfg.filename),
+        RotatingFileLogWriter::from_config(cfg),
     )));
     let (summary, rx) = StmtSummary::with_options(
         DEFAULT_MAX_STMT_COUNT,
@@ -979,19 +961,16 @@ impl std::fmt::Debug for StmtWindow {
 
 impl StmtWindow {
     /// Go `w.evictedCount.Load()`.
-    #[must_use]
     pub fn evicted_count(&self) -> i64 {
         self.evicted_count.load(Ordering::SeqCst)
     }
 
     /// Go `w.evicted.count()`: the number of distinct evicted digests.
-    #[must_use]
     pub fn evicted_count_distinct(&self) -> usize {
         self.evicted.lock().expect("evicted lock poisoned").count()
     }
 
     /// Go `w.evicted.other`, cloned out from under its lock.
-    #[must_use]
     pub fn evicted_other(&self) -> StmtRecord {
         self.evicted
             .lock()
@@ -1013,7 +992,6 @@ impl StmtWindow {
 /// # Panics
 ///
 /// Panics when `capacity` is zero, matching Go's `NewSimpleLRUCache`.
-#[must_use]
 pub fn new_stmt_window(
     begin: DateTime<Utc>,
     capacity: usize,
@@ -1083,7 +1061,6 @@ impl Default for StmtEvicted {
 
 impl StmtEvicted {
     /// Go `newStmtEvicted`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             keys: HashSet::new(),
@@ -1103,14 +1080,12 @@ impl StmtEvicted {
     }
 
     /// Go `(*stmtEvicted).count`.
-    #[must_use]
     pub fn count(&self) -> usize {
         self.keys.len()
     }
 }
 
 /// Go `newEvictedAggregateRecord`.
-#[must_use]
 pub fn new_evicted_aggregate_record() -> StmtRecord {
     let now = Utc::now();
     StmtRecord {
@@ -1126,7 +1101,6 @@ pub fn new_evicted_aggregate_record() -> StmtRecord {
 /// marshal the snapshot without racing with further updates on the retained
 /// `StmtRecord`. Rust's `Clone` is already deep, so Go's explicit map copies
 /// are implicit here.
-#[must_use]
 pub fn clone_record_for_log(r: &StmtRecord) -> StmtRecord {
     r.clone()
 }
@@ -1146,7 +1120,6 @@ struct MockStmtStorageInner {
 
 impl MockStmtStorage {
     /// Go `s.windows`.
-    #[must_use]
     pub fn windows(&self) -> Vec<Arc<Mutex<StmtWindow>>> {
         self.inner
             .lock()
@@ -1156,7 +1129,6 @@ impl MockStmtStorage {
     }
 
     /// Go `s.evicted`.
-    #[must_use]
     pub fn evicted(&self) -> Vec<StmtRecord> {
         self.inner
             .lock()
@@ -1202,36 +1174,183 @@ pub trait StmtLogWriter: Send + Sync {
 }
 
 /// A [`StmtLogWriter`] that appends lines to a file, opening it lazily on the
-/// first write. It performs **no** rotation: Go's size/age/backup limits are
-/// lumberjack's, and `v2/logger.go` is not ported.
-#[derive(Debug)]
-pub struct FileStmtLogWriter {
+/// The rotating file sink behind `newStmtLogStorage`: `github.com/pingcap/log`
+/// hands zap a lumberjack writer sized by `Config`, which rotates when the
+/// active file exceeds the size limit, names backups
+/// `<base>-<local timestamp><ext>` and prunes them by `MaxBackups` count and
+/// `MaxDays` age (zero disables each dimension).
+pub struct RotatingFileLogWriter {
     path: PathBuf,
+    /// Active-file rotation threshold in bytes (Go `MaxSize` MB).
+    max_size_bytes: u64,
+    max_days: i64,
+    max_backups: i64,
+    state: Mutex<WriterState>,
 }
 
-impl FileStmtLogWriter {
-    /// Records the path; the file is created on the first [`write_line`].
-    ///
-    /// [`write_line`]: StmtLogWriter::write_line
-    #[must_use]
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+#[derive(Default)]
+struct WriterState {
+    file: Option<std::fs::File>,
+    size: u64,
+}
+
+impl RotatingFileLogWriter {
+    /// Go `newStmtLogStorage(cfg)`: sizes the sink from the static config.
+    /// `file_max_size` is in megabytes, exactly like Go's `MaxSize`.
+    pub fn from_config(cfg: &Config) -> Self {
+        let max_size_bytes = if cfg.file_max_size <= 0 {
+            0
+        } else {
+            #[allow(clippy::cast_sign_loss)]
+            (cfg.file_max_size as u64).saturating_mul(1024 * 1024)
+        };
+        Self {
+            path: PathBuf::from(&cfg.filename),
+            max_size_bytes,
+            max_days: cfg.file_max_days,
+            max_backups: cfg.file_max_backups,
+            state: Mutex::new(WriterState::default()),
+        }
     }
-}
 
-impl StmtLogWriter for FileStmtLogWriter {
-    fn write_line(&self, line: &str) {
-        if let Ok(mut file) = OpenOptions::new()
+    #[cfg(test)]
+    fn for_test(
+        path: impl Into<PathBuf>,
+        max_size_bytes: u64,
+        max_days: i64,
+        max_backups: i64,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            max_size_bytes,
+            max_days,
+            max_backups,
+            state: Mutex::new(WriterState::default()),
+        }
+    }
+
+    fn open_state(&self, state: &mut WriterState) {
+        if state.file.is_some() {
+            return;
+        }
+        state.file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
-        {
-            let _ = writeln!(file, "{line}");
+            .ok();
+        state.size = state
+            .file
+            .as_ref()
+            .and_then(|file| file.metadata().ok())
+            .map_or(0, |meta| meta.len());
+    }
+
+    /// lumberjack's `rotate`: swap the active file to
+    /// `<base>-<timestamp><ext>` and prune old backups.
+    fn rotate(&self, state: &mut WriterState) {
+        state.file = None;
+        let Some(ext) = filepath_ext_of(&self.path) else {
+            return;
+        };
+        let Some(stem) = self.path.file_stem().and_then(|stem| stem.to_str()) else {
+            return;
+        };
+        let timestamp = chrono::Local::now().format(LOG_FILE_TIME_FORMAT);
+        let backup = self.path.with_file_name(format!("{stem}-{timestamp}{ext}"));
+        let _ = std::fs::rename(&self.path, &backup);
+        self.prune_backups(stem, &ext);
+        state.size = 0;
+    }
+
+    /// lumberjack's `removeOldBackups`: drop backups beyond `max_backups` and
+    /// those older than `max_days` (zero disables either dimension).
+    /// `stem`/`ext` are the active file's parts, so the backup prefix is
+    /// `<stem>-`.
+    fn prune_backups(&self, stem: &str, ext: &str) {
+        let Some(dir) = self.path.parent() else {
+            return;
+        };
+        let prefix = format!("{stem}-");
+        let mut backups: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(&prefix) || !name.ends_with(ext) {
+                continue;
+            }
+            // Sort by the parsed timestamp, unparsable names first (oldest),
+            // exactly like lumberjack's `sortByFormatDesc`.
+            let stamp = NaiveDateTime::parse_from_str(
+                &name[prefix.len()..name.len() - ext.len()],
+                "%Y-%m-%dT%H-%M-%S%.f",
+            )
+            .map_or(chrono::DateTime::<chrono::Utc>::MIN_UTC, |naive| {
+                use chrono::TimeZone as _;
+                chrono::Local
+                    .from_local_datetime(&naive)
+                    .single()
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Utc)
+            });
+            backups.push((name.to_owned(), stamp));
+        }
+        backups.sort_by_key(|(_, stamp)| *stamp);
+
+        let cutoff = if self.max_days > 0 {
+            chrono::Local::now()
+                .with_timezone(&chrono::Utc)
+                .checked_sub_signed(chrono::Duration::days(self.max_days))
+        } else {
+            None
+        };
+        for (index, (name, stamp)) in backups.iter().enumerate() {
+            // `backups` is oldest first, so the kept newest `max_backups` sit
+            // at the tail.
+            let by_count =
+                self.max_backups > 0 && (backups.len() as i64 - index as i64) > self.max_backups;
+            let by_age = cutoff.is_some_and(|cutoff| *stamp < cutoff);
+            if by_count || by_age {
+                let _ = std::fs::remove_file(dir.join(name));
+            }
+        }
+    }
+}
+
+/// Go `filepath.Ext` including the dot, for a `Path`.
+fn filepath_ext_of(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let index = name.rfind('.')?;
+    Some(name[index..].to_owned())
+}
+
+impl StmtLogWriter for RotatingFileLogWriter {
+    fn write_line(&self, line: &str) {
+        let mut state = self.state.lock().expect("rotating writer poisoned");
+        self.open_state(&mut state);
+        // lumberjack rotates BEFORE the write when the limit would be crossed.
+        if self.max_size_bytes > 0 && state.size + line.len() as u64 + 1 > self.max_size_bytes {
+            self.rotate(&mut state);
+            self.open_state(&mut state);
+        }
+        if let Some(file) = state.file.as_mut() {
+            use std::io::Write;
+            if writeln!(file, "{line}").is_ok() {
+                state.size += line.len() as u64 + 1;
+            }
         }
     }
 
     fn sync(&self) -> std::io::Result<()> {
-        Ok(())
+        let state = self.state.lock().expect("rotating writer poisoned");
+        match state.file.as_ref() {
+            Some(file) => file.sync_all(),
+            None => Ok(()),
+        }
     }
 }
 
@@ -1250,7 +1369,6 @@ impl std::fmt::Debug for StmtLogStorage {
 
 impl StmtLogStorage {
     /// Builds a storage over `writer` with no metrics sink.
-    #[must_use]
     pub fn new(writer: Arc<dyn StmtLogWriter>) -> Self {
         Self {
             writer,
@@ -1259,7 +1377,6 @@ impl StmtLogStorage {
     }
 
     /// Builds a storage over `writer` publishing to `metrics`.
-    #[must_use]
     pub fn with_metrics(
         writer: Arc<dyn StmtLogWriter>,
         metrics: Arc<dyn EvictedLogMetricsSink>,
@@ -1342,7 +1459,6 @@ pub fn add(stmt_exec_info: &StmtExecInfo) {
 }
 
 /// Go `Enabled`.
-#[must_use]
 pub fn enabled() -> bool {
     if enable_persistent() {
         return require_global().enabled();
@@ -1351,7 +1467,6 @@ pub fn enabled() -> bool {
 }
 
 /// Go `EnabledInternal`.
-#[must_use]
 pub fn enabled_internal() -> bool {
     if enable_persistent() {
         return require_global().enable_internal_query();
@@ -1819,21 +1934,138 @@ mod tests {
         assert_eq!(storage.windows().len(), 3);
     }
 
-    /// Go `TestDefaultConfig`.
-    ///
-    /// Go points `Filename` at `t.TempDir()`; the ported
-    /// [`FileStmtLogWriter`] opens lazily, so this test creates no file.
+    /// lumberjack size rotation: crossing the limit swaps the active file to
+    /// a timestamped backup and every written line survives across
+    /// current + backups.
     #[test]
-    fn test_default_config() {
-        let cfg = Config {
-            filename: "/nonexistent-by-design/tidb-stmtsummary-test.log".to_owned(),
-            ..Config::default()
-        };
-        let ss = new_stmt_summary(&cfg).unwrap();
+    fn test_rotating_writer_rotates_on_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(&path, 64, 0, 0);
 
-        // Verify RefreshInterval (should be 1800 = 30 min).
-        assert_eq!(ss.refresh_interval(), 1800);
-        ss.close();
+        for i in 0..20 {
+            writer.write_line(&format!("line-{i}-0123456789abcdef"));
+            // Backup names carry millisecond timestamps (lumberjack would
+            // overwrite same-millisecond backups); pace the writes so each
+            // rotation lands in its own millisecond.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let backups = backup_paths(&path);
+        assert!(!backups.is_empty(), "the size limit must have rotated");
+        let mut recovered = String::new();
+        for backup in &backups {
+            recovered.push_str(&std::fs::read_to_string(backup).unwrap());
+        }
+        recovered.push_str(&std::fs::read_to_string(&path).unwrap());
+        for i in 0..20 {
+            assert!(recovered.contains(&format!("line-{i}-0123456789abcdef")));
+        }
+        for backup in &backups {
+            assert_ne!(path.canonicalize().unwrap(), backup.canonicalize().unwrap());
+        }
+    }
+
+    /// The backup naming must interoperate with the v2 reader: a produced
+    /// backup's timestamp suffix parses back through `openStmtFile`.
+    #[test]
+    fn test_rotating_writer_backup_name_parses_like_reader() {
+        // `parseEndTs` reads the process-global config filename; hold the
+        // reader-side lock and pin the default relative filename for it.
+        let _guard = crate::v2::reader::tests::CONFIG_TEST_LOCK.lock().unwrap();
+        tidb_config::config_tree::config::update_global(|conf| {
+            conf.instance.stmt_summary_filename = "tidb-statements.log".to_owned();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(&path, 64, 0, 0);
+        for i in 0..20 {
+            writer.write_line(&format!("line-{i}-0123456789abcdef"));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let backups = backup_paths(&path);
+        assert!(!backups.is_empty());
+        let (opened, end) = crate::v2::reader::tests_support::open_stmt_file_for_test(&backups[0]);
+        opened.unwrap_or_else(|error| {
+            panic!(
+                "reader must parse the backup {:?}: {error}",
+                backups[0].display().to_string()
+            )
+        });
+        assert_ne!(
+            0,
+            end.expect("end parsed"),
+            "the rotated timestamp must parse"
+        );
+    }
+
+    /// lumberjack count pruning: with `max_backups = 2` only the two newest
+    /// backups survive repeated rotations.
+    #[test]
+    fn test_rotating_writer_prunes_by_backup_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(&path, 64, 0, 2);
+
+        for i in 0..60 {
+            writer.write_line(&format!("line-{i}-0123456789abcdef"));
+        }
+
+        assert_eq!(2, backup_paths(&path).len());
+    }
+
+    /// lumberjack age pruning: a backup older than `max_days` is removed on
+    /// the next rotation even when the backup count is unlimited.
+    #[test]
+    fn test_rotating_writer_prunes_by_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(&path, 64, 30, 0);
+
+        // An aged backup, named in the lumberjack backup format.
+        let old_stamp = chrono::Local::now()
+            .checked_sub_signed(chrono::Duration::days(40))
+            .unwrap()
+            .format(crate::v2::reader::LOG_FILE_TIME_FORMAT);
+        let old_backup = path.with_file_name(format!("tidb-statements-{old_stamp}.log"));
+        std::fs::write(
+            &old_backup,
+            "old
+",
+        )
+        .unwrap();
+
+        // First line creates the active file; the second crosses the limit
+        // and rotates.
+        writer.write_line("seed");
+        writer.write_line(&"x".repeat(80));
+
+        assert!(!old_backup.exists(), "the aged backup must be pruned");
+        assert_eq!(1, backup_paths(&path).len());
+    }
+
+    /// Collect the rotation backups of `path`, oldest first.
+    fn backup_paths(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let dir = path.parent().unwrap();
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let ext = path.extension().map_or("", |ext| ext.to_str().unwrap());
+        let ext = if ext.is_empty() {
+            String::new()
+        } else {
+            format!(".{ext}")
+        };
+        let mut backups: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|candidate| {
+                let name = candidate.file_name().unwrap().to_str().unwrap();
+                name.starts_with(&format!("{stem}-")) && name.ends_with(&ext)
+            })
+            .collect();
+        backups.sort();
+        backups
     }
 
     /// Go's `NewStmtSummary` error path, which `TestDefaultConfig`'s
@@ -1841,5 +2073,94 @@ mod tests {
     #[test]
     fn test_new_stmt_summary_rejects_empty_filename() {
         assert!(new_stmt_summary(&Config::default()).is_err());
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_summary_returns_can_be_ignored() {
+        time_now();
+        let _ = global_stmt_summary();
+
+        if std::hint::black_box(false) {
+            StmtSummary::new_for_test(1);
+            StmtSummary::new_for_test_with_sinks(
+                1,
+                Arc::new(MockStmtStorage::default()),
+                Arc::new(crate::statement_summary::NoopWindowMetricsSink),
+                Arc::new(NoopEvictedLogMetricsSink),
+            );
+            enabled();
+            enabled_internal();
+        }
+
+        let summary = StmtSummary::new_for_test(1);
+        summary.storage();
+        summary.window();
+        summary.evicted_dropped();
+        summary.enabled();
+        summary.enable_internal_query();
+        summary.max_stmt_count();
+        summary.max_sql_length();
+        summary.refresh_interval();
+        summary.persist_evicted();
+        summary.group_by_user();
+        summary.evicted();
+
+        let window = summary.window();
+        let window = window.lock().unwrap();
+        window.evicted_count();
+        window.evicted_count_distinct();
+        window.evicted_other();
+        drop(window);
+
+        new_stmt_window(time_now(), 1, None);
+        StmtEvicted::new();
+        let evicted = StmtEvicted::new();
+        evicted.count();
+        new_evicted_aggregate_record();
+        let record = new_evicted_aggregate_record();
+        clone_record_for_log(&record);
+
+        let storage = MockStmtStorage::default();
+        storage.windows();
+        storage.evicted();
+
+        RotatingFileLogWriter::from_config(&Config {
+            filename: "unused.log".to_owned(),
+            ..Config::default()
+        });
+        let writer: Arc<dyn StmtLogWriter> = Arc::new(BufferWriter::default());
+        StmtLogStorage::new(Arc::clone(&writer));
+        StmtLogStorage::with_metrics(writer, Arc::new(NoopEvictedLogMetricsSink));
+
+        summary.close();
+    }
+
+    #[test]
+    fn go_v2_alignment_rotating_writer_is_silent() {
+        const CHILD_ENV: &str = "TIDB_STMTSUMMARY_SILENT_WRITER_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("v2::stmtsummary::tests::go_v2_alignment_rotating_writer_is_silent")
+                .arg("--exact")
+                .arg("--nocapture")
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(
+                output.stderr.is_empty(),
+                "rotating writer leaked stderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(path, 8, 0, 1);
+        writer.write_line("seed");
+        writer.write_line("cross-the-limit");
     }
 }

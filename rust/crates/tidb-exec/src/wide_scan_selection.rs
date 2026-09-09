@@ -46,6 +46,15 @@
 //! against non-NULL string constants, deriving its collator from that tested
 //! scalar exactly as Go does.
 //!
+//! Builtin predicates use the same catalog as the expression pushdown split.
+//! Numeric functions and the Go TiKV-whitelisted DATE/JSON families
+//! (including `DATE_FORMAT`, `DATE_ADD`/`DATE_SUB`, `FROM_UNIXTIME`,
+//! `TIMESTAMPDIFF`, `UNIX_TIMESTAMP`, and JSON modification calls) are
+//! lowered with their resolved `ScalarFuncSig` and implicit cast field
+//! metadata. A builtin is refused only when one of its leaves cannot be
+//! represented faithfully on this wire (for example an unresolved collation),
+//! in which case the local Selection still evaluates it.
+//!
 //! Two refusals are deliberate and are not "not implemented yet":
 //!
 //! * **A negative or zero constant against an unsigned column.** Go does not
@@ -89,12 +98,10 @@ use tidb_executor::predicate_pushdown::{
 };
 use tidb_expr::pb_predicate::{
     decimal_comparison_to_pb, int_comparison_to_pb, int_field_type, int_in_to_pb,
-    is_int_family_type, is_null_to_pb, is_string_family_type, is_unsigned,
-    logical_and_to_pb, logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb,
-    string_in_to_pb,
-    string_like_to_pb,
-    time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError, StringPbOperand,
-    TimePbOperand,
+    is_int_family_type, is_null_to_pb, is_string_family_type, is_unsigned, logical_and_to_pb,
+    logical_not_to_pb, logical_or_to_pb, string_comparison_to_pb, string_in_to_pb,
+    string_like_to_pb, time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError,
+    StringPbOperand, TimePbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::{Expr, ScalarFuncSig};
@@ -228,13 +235,12 @@ fn predicate_to_pb(
                     offset: *column_offset,
                 },
             )?;
-            let code = FieldTypeCode::from_mysql_type(
-                u8::try_from(descriptor.tp).map_err(|_| {
+            let code =
+                FieldTypeCode::from_mysql_type(u8::try_from(descriptor.tp).map_err(|_| {
                     WideScanSelectionError::UnsupportedColumnType {
                         offset: *column_offset,
                     }
-                })?,
-            );
+                })?);
             let described = FieldType::new(code)
                 .with_flags(descriptor.flag)
                 .with_flen(i64::from(descriptor.flen))
@@ -379,6 +385,8 @@ fn scan_column_descriptor(
         decimal: column.decimal,
         charset,
         collation,
+        elems: column.elems.clone(),
+        array: column.array,
     })
 }
 

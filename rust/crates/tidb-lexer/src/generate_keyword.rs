@@ -86,7 +86,10 @@ fn parse_line(line: &str) -> Option<&str> {
 fn parse_catalog(parser_y: &str) -> Vec<Keyword<'_>> {
     let mut section = Section::None;
     let mut keywords = Vec::new();
-    for line in parser_y.lines() {
+    // Go uses strings.Split(parserData, "\\n"), so a CRLF source retains the
+    // carriage return and fails parseLine's end-of-input anchor. Keep that
+    // byte-level behavior instead of Rust's `lines()`, which strips `\\r`.
+    for line in parser_y.split('\n') {
         if line.is_empty() {
             section = Section::None;
         } else if line.contains(RESERVED_KEYWORD_START) {
@@ -192,5 +195,20 @@ mod tests {
             parse_line("\ttidbCurrentTSO    \"TIDB_CURRENT_TSO\""),
             Some("TIDB_CURRENT_TSO")
         );
+    }
+
+    #[test]
+    fn test_parse_line_uses_go_regexp_ascii_whitespace() {
+        assert_eq!(parse_line("\x0cadd\t\"ADD\""), Some("ADD"));
+        assert_eq!(parse_line("\tadd\x0c\"ADD\""), Some("ADD"));
+        assert_eq!(parse_line("\x0badd\t\"ADD\""), None);
+        assert_eq!(parse_line("\tadd\x0b\"ADD\""), None);
+        assert_eq!(parse_line("\u{00a0}add\t\"ADD\""), None);
+    }
+
+    #[test]
+    fn test_parse_catalog_preserves_carriage_returns() {
+        let parser_y = format!("// {RESERVED_KEYWORD_START}\r\n\tadd \"ADD\"\r\n\r\n");
+        assert!(parse_catalog(&parser_y).is_empty());
     }
 }

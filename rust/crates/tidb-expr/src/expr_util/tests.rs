@@ -53,7 +53,11 @@ fn col(id: i64) -> Expression {
 fn cor_col(id: i64, data: Option<Datum>) -> Expression {
     let mut column = Column::new(id, int_type());
     column.index = id;
-    Expression::CorrelatedColumn(CorrelatedColumn { column, data: data.into() })
+    let correlated = match data {
+        Some(value) => CorrelatedColumn::with_value(column, value),
+        None => CorrelatedColumn { column, data: None },
+    };
+    Expression::CorrelatedColumn(correlated)
 }
 
 /// Go `newLonglong(v)`.
@@ -270,7 +274,10 @@ fn go_disable_parse_json_flag_4_expr() {
         .as_mut()
         .expect("a typed column")
         .add_flags(FieldTypeFlags::PARSE_TO_JSON);
-    let mut expr = Expression::CorrelatedColumn(CorrelatedColumn { column, data: Default::default() });
+    let mut expr = Expression::CorrelatedColumn(CorrelatedColumn {
+        column,
+        data: Default::default(),
+    });
     disable_parse_json_flag_4_expr(&mut expr);
     assert!(expr.static_type().expect("a type").flags() & FieldTypeFlags::PARSE_TO_JSON != 0);
 
@@ -386,4 +393,64 @@ fn go_projection_benefits_from_pushed_down() {
         )],
     )];
     assert!(projection_benefits_from_pushed_down(&arrow, 3));
+}
+
+/// NEW COVERAGE: `IsColOpCol` needs both sides to be columns.
+#[test]
+fn is_col_op_col_needs_two_columns() {
+    let Expression::ScalarFunction(both) = func("eq", vec![col(1), col(2)]) else {
+        panic!("expected a scalar function")
+    };
+    assert!(is_col_op_col(&both).is_some());
+    assert!(extract_columns_from_col_op_col(&both).is_some());
+
+    let Expression::ScalarFunction(mixed) = func("eq", vec![col(1), int_const(2)]) else {
+        panic!("expected a scalar function")
+    };
+    assert!(is_col_op_col(&mixed).is_none());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        extract_columns_from_col_op_col(&mixed)
+    }))
+    .is_err());
+
+    let Expression::ScalarFunction(one) = func("eq", vec![col(1)]) else {
+        panic!("expected a scalar function")
+    };
+    assert!(extract_columns_from_col_op_col(&one).is_none());
+}
+
+/// NEW COVERAGE: `GetFuncArg` returns nil only for a non-function; Go's
+/// direct argument indexing panics when a function index is out of range.
+#[test]
+fn get_func_arg_panics_on_an_out_of_range_function_index_like_go() {
+    let row = func("row", vec![col(1), col(2)]);
+    let Expression::Column(first) = get_func_arg(&row, 0).expect("function argument") else {
+        panic!("expected a column")
+    };
+    assert_eq!(first.unique_id, 1);
+    assert!(get_func_arg(&int_const(1), 0).is_none());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| get_func_arg(&row, 2))).is_err()
+    );
+}
+
+/// Go `compareFunctionClass.generateCmpSigs` declares both arguments in the
+/// comparison domain. INT against VARCHAR is ETReal, so rebuilding an EQ must
+/// produce the same pair of implicit DOUBLE casts as initial AST rewriting.
+#[test]
+fn real_function_builder_casts_comparison_arguments() {
+    use super::builder::FunctionBuilder;
+    let real = super::builder::RealFunctionBuilder::new(&NoColumns);
+    let mut string_column = Column::new(2, string_type());
+    string_column.index = 2;
+    let built = real
+        .new_function("eq", None, vec![col(1), Expression::Column(string_column)])
+        .unwrap();
+    let Expression::ScalarFunction(equality) = built else {
+        panic!("EQ must remain a scalar function")
+    };
+    assert!(equality.args.iter().all(|argument| matches!(
+        argument,
+        Expression::ScalarFunction(cast) if cast.func_name.lowercase() == "cast_double"
+    )));
 }

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-errmsg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Transcreation of TiDB pkg/util/errmsg."
+
+[dependencies]
+tidb-config = { path = "../tidb-config" }
+tidb-error = { path = "../tidb-error" }
+
+[lints]
+workspace = true

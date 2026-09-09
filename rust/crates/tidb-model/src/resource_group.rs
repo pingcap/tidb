@@ -72,6 +72,7 @@ impl From<RunawayActionType> for ResourceGroupRunawayAction {
             RunawayActionType::Cooldown => Self::COOLDOWN,
             RunawayActionType::Kill => Self::KILL,
             RunawayActionType::SwitchGroup => Self::SWITCH_GROUP,
+            RunawayActionType::Unknown(raw) => Self(raw as i32),
         }
     }
 }
@@ -108,6 +109,7 @@ impl From<RunawayWatchType> for ResourceGroupRunawayWatch {
             RunawayWatchType::Exact => Self::EXACT,
             RunawayWatchType::Similar => Self::SIMILAR,
             RunawayWatchType::Plan => Self::PLAN,
+            RunawayWatchType::Unknown(raw) => Self(raw as i32),
         }
     }
 }

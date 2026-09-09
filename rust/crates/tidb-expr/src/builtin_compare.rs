@@ -32,6 +32,11 @@
 //! JSON comparisons also clear `ParseToJSONFlag` on every non-column operand,
 //! matching `generateCmpSigs`.
 
+use crate::aggregation::wrap_cast::{
+    wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
+    wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
+};
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
 use crate::context::{Columns, EvalError};
@@ -120,7 +125,7 @@ fn note_string_truncation(ctx: &dyn Columns, datum: &Datum) -> Result<(), ()> {
         }
     };
     let text = String::from_utf8_lossy(bytes);
-    let text = text.trim();
+    let text = tidb_datatype::float_warning_input(&text);
     if tidb_datatype::str_to_float(text, false).event.is_none() {
         return Ok(());
     }
@@ -128,10 +133,9 @@ fn note_string_truncation(ctx: &dyn Columns, datum: &Datum) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
-/// Go `Datum.compareString`'s default arm (`pkg/types/datum.go:887-892`) for
-/// an INT receiver: the string operand is read as a double -- raising the
-/// truncation a SECOND time -- and the two are compared as doubles
-/// (`compareFloat64`, which widens the int the same way).
+/// Go compares the converted datum with the original through Datum.Compare.
+/// Its NULL and decimal ordering must not be replaced by a float conversion.
+/// String operands additionally report the comparison's truncation warning.
 ///
 /// This is where the reported statement's second warning comes from, NOT
 /// from the `Floor` fold: for `'10ab'` the converted int (10) and the string
@@ -146,9 +150,9 @@ fn compare_int_with_constant(
     original: &Datum,
 ) -> Result<std::cmp::Ordering, ()> {
     note_string_truncation(ctx, original)?;
-    let left = int_datum.to_f64().map_err(|_| ())?.value;
-    let right = original.to_f64().map_err(|_| ())?.value;
-    left.partial_cmp(&right).ok_or(())
+    int_datum
+        .compare(original, tidb_datatype::Collation::Binary)
+        .map_err(|_| ())
 }
 
 /// Go `RefineComparedConstant` (`pkg/expression/builtin_compare.go:1574`):
@@ -169,9 +173,6 @@ fn refine_compared_constant(
     con: &Constant,
     op: &str,
 ) -> Option<Constant> {
-    if con.value.is_null() {
-        return None;
-    }
     // `:1580-1582`: a BIT column is refined against LONGLONG instead.
     let target = if matches!(target.code(), FieldTypeCode::Bit) {
         &FieldType::new(FieldTypeCode::LongLong)
@@ -517,11 +518,11 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// to every comparison in an already-built expression tree.
 ///
 /// Go runs this inside `getFunction` (`:1984`), where the comparison is
-/// constructed. This tier builds comparisons in several places (binary
-/// operators, `BETWEEN`, the simple `CASE`), none of which holds an
-/// evaluation context, so the refinement runs as one pass over the finished
-/// tree instead. It reads only the two arguments -- exactly what `refineArgs`
-/// reads -- so the placement changes nothing about the result.
+/// constructed. This tier also retains a tree walk for comparisons assembled
+/// before a real function builder is available. That compatibility walk keeps
+/// its context-free structural casts; the real builder uses
+/// [`refine_comparison`] so generated casts can follow Go's
+/// `BuildCastFunction` constant-folding boundary.
 ///
 /// Ported: the `int non-constant [cmp] non-int constant` arm (`:1811-1833`)
 /// and its mirror through `symmetricOp` (`:1836-1854`), and the
@@ -532,21 +533,115 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
 /// refined plans are cached across parameter values.
 pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
-    let Expression::ScalarFunction(function) = expr else {
-        return Ok(());
-    };
-    for arg in &mut function.args {
-        refine_comparisons(arg, ctx)?;
+    if let Expression::ScalarFunction(function) = expr {
+        for arg in &mut function.args {
+            refine_comparisons(arg, ctx)?;
+        }
     }
+    if refine_comparison_core(expr, ctx)? {
+        if let Expression::ScalarFunction(function) = expr {
+            wrap_comparison_arguments_with_context(
+                &mut function.args,
+                ctx.connection_charset_info(),
+                ctx,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Applies the comparison refinement that does not require a statement
+/// context while an AST binary expression is being built.
+///
+/// Go's `compareFunctionClass.getFunction` runs `refineArgs` before
+/// `generateCmpSigs`, but the context-free Rust rewriter cannot call the full
+/// refinement pass: temporal conversion needs the session timezone and string
+/// conversion may need to report warnings.  The integer/non-integer constant
+/// rule is independent of both.  Running that rule here preserves Go's
+/// rounded integer constants (for example `a < '1.0'` -> `a < 1`) before
+/// comparison signature casts are selected.  A later context-aware
+/// [`refine_comparisons`] pass remains responsible for the session-sensitive
+/// rules and warning policy.
+pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut [Expression]) {
+    refine_integer_comparison_for_rewrite_with_context(name, arguments, &crate::context::NoColumns);
+}
+
+/// The same context-free integer comparison rewrite, but with the live
+/// statement context Go's `compareFunctionClass.getFunction` owns. This keeps
+/// the refined integer constant while retaining the two 1292 diagnostics
+/// raised by `RefineComparedConstant` during construction.
+pub(crate) fn refine_integer_comparison_for_rewrite_with_context(
+    name: &str,
+    arguments: &mut [Expression],
+    ctx: &dyn Columns,
+) {
+    let Some(mirrored) = symmetric_op(name) else {
+        return;
+    };
+    let [left, right] = arguments else {
+        return;
+    };
+    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
+    let left_is_int = eval_type(left) == Some(EvalType::Int);
+    let right_is_int = eval_type(right) == Some(EvalType::Int);
+    refine_int_operand_constant(left, right, left_is_int, right_is_int, name, mirrored, ctx);
+}
+
+/// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement
+/// for the expression at `expr`, without rebuilding already-constructed
+/// descendants. `NewFunction` calls this root form for the one function it is
+/// constructing; [`refine_comparisons`] remains the compatibility walk for an
+/// AST tree whose nodes were built before a real function builder was wired.
+pub(crate) fn refine_comparison<C: Columns>(
+    expr: &mut Expression,
+    ctx: &C,
+) -> Result<(), EvalError> {
+    if refine_comparison_core(expr, ctx)? {
+        if let Expression::ScalarFunction(function) = expr {
+            wrap_comparison_arguments_with_context(
+                &mut function.args,
+                ctx.connection_charset_info(),
+                ctx,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Context-erased comparison refinement used by plan rewriters whose resolver
+/// exposes a live statement context as a trait object.
+pub(crate) fn refine_comparison_dyn(
+    expr: &mut Expression,
+    ctx_dyn: &dyn Columns,
+) -> Result<(), EvalError> {
+    if refine_comparison_core(expr, ctx_dyn)? {
+        if let Expression::ScalarFunction(function) = expr {
+            wrap_comparison_arguments_with_context(
+                &mut function.args,
+                ctx_dyn.connection_charset_info(),
+                ctx_dyn,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Applies Go's comparison argument refinement before either wrapper chooses
+/// the comparison signature. The caller decides whether the generated casts
+/// have a real construction context and therefore can be folded immediately.
+fn refine_comparison_core(expr: &mut Expression, ctx: &dyn Columns) -> Result<bool, EvalError> {
+    let Expression::ScalarFunction(function) = expr else {
+        return Ok(false);
+    };
     let name = function.func_name.lowercase();
     let Some(mirrored) = symmetric_op(name) else {
-        return Ok(());
+        return Ok(false);
     };
     let [left, right] = function.args.as_mut_slice() else {
-        return Ok(());
+        return Ok(false);
     };
     if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
-        return Ok(());
+        return Ok(false);
     }
     refine_args(left, right, name, mirrored, ctx);
     fold_temporal_comparison_string_constant(left, right, ctx)?;
@@ -556,6 +651,97 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
     wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
+    Ok(true)
+}
+
+/// Go `compareFunctionClass.generateCmpSigs`: cast both operands to the
+/// comparison domain chosen by `GetAccurateCmpType`.
+pub(crate) fn wrap_comparison_arguments(
+    arguments: &mut Vec<Expression>,
+    connection: (&str, &str),
+) -> Result<(), EvalError> {
+    let [left, right] = arguments.as_slice() else {
+        return Ok(());
+    };
+    fn operand(expression: &Expression) -> Option<CmpOperand<'_>> {
+        expression.static_type().map(move |field_type| CmpOperand {
+            field_type,
+            // Go's `NewFunction` folds a wholly-constant subtree before
+            // `GetAccurateCmpType` sees it. The Rust rewriter keeps that
+            // subtree as a scalar node, so use the same foldability gate
+            // instead of testing only the node variant.
+            is_constant: crate::constant_fold::folds_to_constant(expression),
+            is_column: matches!(expression, Expression::Column(_)),
+        })
+    }
+    let (Some(left), Some(right)) = (operand(left), operand(right)) else {
+        return Ok(());
+    };
+    let comparison_type = get_accurate_cmp_type(left, right);
+    let wrap = |expression: Expression| match comparison_type {
+        EvalType::Int => wrap_with_cast_as_int(expression, None),
+        EvalType::Real => wrap_with_cast_as_real(expression),
+        EvalType::Decimal => wrap_with_cast_as_decimal(expression),
+        EvalType::String => wrap_with_cast_as_string(expression, connection),
+        EvalType::Datetime => {
+            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Datetime))
+        }
+        EvalType::Timestamp => {
+            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Timestamp))
+        }
+        EvalType::Duration => wrap_with_cast_as_duration(expression),
+        EvalType::Json => wrap_with_cast_as_json(expression),
+        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
+    };
+    *arguments = arguments
+        .iter()
+        .cloned()
+        .map(wrap)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(())
+}
+
+/// Comparison signature generation's context-aware wrapper.
+///
+/// Go's `generateCmpSigs` calls `WrapWithCastAs*`, which delegates to
+/// `BuildCastFunction`; that builder folds every wholly-constant cast except
+/// JSON before the comparison signature is returned. Concrete and erased
+/// contexts use the same construction boundary; AST resolvers supply their
+/// own folding callback through wrap_comparison_arguments_with_fold.
+fn wrap_comparison_arguments_with_context(
+    arguments: &mut Vec<Expression>,
+    connection: (&str, &str),
+    ctx: &dyn Columns,
+) -> Result<(), EvalError> {
+    wrap_comparison_arguments_with_fold(arguments, connection, |argument| {
+        crate::constant_fold::fold_constant_in_mode(
+            argument,
+            ctx,
+            crate::constant_fold::ConstantFoldMode::Normal,
+        );
+    })
+}
+
+/// Fold generated casts at Go's BuildCastFunction construction boundary.
+/// JSON stays mutable until its evaluation flags have been installed.
+pub(crate) fn wrap_comparison_arguments_with_fold(
+    arguments: &mut Vec<Expression>,
+    connection: (&str, &str),
+    mut fold: impl FnMut(&mut Expression),
+) -> Result<(), EvalError> {
+    wrap_comparison_arguments(arguments, connection)?;
+    // `BuildCastFunction` folds its newly-built cast in the statement
+    // context. This is observable for temporal and numeric constants: the
+    // comparison receives a `Constant`, not a Rust-only cast node, and
+    // conversion warnings are raised once during construction.
+    for argument in arguments {
+        if matches!(argument, Expression::ScalarFunction(function)
+            if function.func_name.lowercase().starts_with("cast_")
+                && function.ret_type.as_ref().is_some_and(|tp| tp.eval_type() != EvalType::Json))
+        {
+            fold(argument);
+        }
+    }
     Ok(())
 }
 
@@ -922,7 +1108,7 @@ mod tests {
             infer_compare_type(op).unwrap(),
             vec![left, right],
         ));
-        refine_comparisons(&mut expr, &sink).unwrap();
+        refine_comparison(&mut expr, &sink).unwrap();
         (expr, sink.warnings.into_inner())
     }
 
@@ -949,7 +1135,13 @@ mod tests {
         }
 
         let (valid, warnings) = refine("nulleq", duration_column(), string_constant("10:00:00"));
-        assert_eq!(constant_of(&valid, 1), Datum::new_string("10:00:00"));
+        assert_eq!(
+            constant_of(&valid, 1),
+            Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(
+                10 * 3_600 * 1_000_000_000,
+                6,
+            ))
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let null = Expression::Constant(Constant::new_null());
@@ -982,18 +1174,13 @@ mod tests {
             assert_eq!(target.decimal(), 6);
         }
 
-        // An UNPARSEABLE constant is left in place: folding it to NULL would
-        // silence the per-row 1292 `Incorrect datetime value` warnings the
-        // evaluated comparison raises (`ops::time_compare_ordering`), which
-        // is the warning surface a live session observes.
+        // Go's BuildCastFunction folds this invalid non-JSON cast while the
+        // comparison signature is built. The folded NULL keeps the source's
+        // one 1292 warning, but moves it to construction time rather than
+        // leaving a Rust-only cast node for per-row evaluation.
         let (invalid, warnings) = refine("lt", date_column(), string_constant("not-a-datetime"));
-        assert!(
-            constant_of(&invalid, 1)
-                .sql_string()
-                .is_ok_and(|text| text == "not-a-datetime"),
-            "an unparseable constant must stay unfolded"
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(constant_of(&invalid, 1), Datum::Null);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[test]
@@ -1014,7 +1201,7 @@ mod tests {
             vec![duration_column(), string_constant("not-a-time")],
         ));
         assert!(matches!(
-            refine_comparisons(&mut expr, &StrictSink),
+            refine_comparison(&mut expr, &StrictSink),
             Err(EvalError::TruncatedWrongValue(_))
         ));
     }
@@ -1108,7 +1295,8 @@ mod tests {
             }
         }
         for deferred in [false, true] {
-            let mut parameter = Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong));
+            let mut parameter =
+                Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong));
             parameter.param_marker = Some(crate::constant::ParamMarker { order: 0 });
             if deferred {
                 let child = Expression::Constant(parameter.clone());
@@ -1207,9 +1395,9 @@ mod tests {
     /// computes the right (empty) answer -- captured: `a = '3.5'` returns no
     /// row and warns zero times.
     #[test]
-    fn an_inexact_equality_is_left_unrefined() {
+    fn an_inexact_equality_casts_the_unrefined_constant_like_go() {
         let (expr, _) = refine("eq", int_column(), string_constant("3.5"));
-        assert_eq!(constant_of(&expr, 1), Datum::new_string("3.5"));
+        assert_eq!(constant_of(&expr, 1), Datum::Real(3.5));
     }
 
     /// An overflowing constant is Go's other `isExceptional`; left unrefined

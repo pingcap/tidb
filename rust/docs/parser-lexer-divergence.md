@@ -207,8 +207,7 @@ SELECT 'a' LIKE 'b' LIKE 'c';
   finds `LIKE` unconsumed -> syntax error (MySQL also rejects it).
 - Rust: parses to `Like(Like('a','b'), 'c')` — accepted, and evaluated.
 
-Same shape for `SELECT 1 IN (1) IN (0)` and `SELECT 1 BETWEEN 0 AND 2
-BETWEEN 0 AND 2`, and:
+Same shape for `SELECT 1 IN (1) IN (0)`, and:
 
 ```sql
 SELECT 1 IS TRUE IS TRUE;
@@ -219,7 +218,20 @@ SELECT 1 IS TRUE IS TRUE;
 
 **Not fixed** — two new pieces of loop state plus seven guarded arms.
 
-#### 4. Rust's expression-prefix identifier gate is `is_reserved` (232 keywords) where Go's is `isReservedClauseKeyword` (13)
+CORRECTION (2026-09-03, now fixed): the BETWEEN half of the original claim
+was inaccurate — Go's `parseBetweenExpr:637` parses the HIGH side at
+`precPredicate` with a FRESH `noMorePredicate`, so a BETWEEN chain through
+the HIGH side (`1 BETWEEN 0 AND 2 BETWEEN 0 AND 2`) is Go-legal and both
+engines accept it. The LIKE/IN/NOT-LIKE chain rejections and the `noMoreIS`
+latch are implemented in `tidb-parser/src/expr.rs` as of this receipt.
+
+#### 4. FIXED — the expression-prefix identifier gate is now Go's `isReservedClauseKeyword` (13)
+
+The Rust fallback arm (`tidb-parser/src/expr.rs`) gates on
+`is_clause_keyword` — the exact 13-word list (`FROM WHERE GROUP ORDER LIMIT
+HAVING UNION INTO FOR LOCK SELECT SET ON`) — and a pinned regression
+(`reserved_keyword_as_bare_column_matches_go_clause_gate`) covers the doc's
+own distinguishing input. The text below is the original audit entry.
 
 - Go: `pkg/parser/expr_prefix_parser.go:222-235` — the final fallback of
   `parsePrefixKeywordExpr` admits **any** token with
@@ -287,16 +299,12 @@ Same for a CTE name (`pkg/parser/select_parser.go:185`): `WITH database AS
 (SELECT 1) SELECT * FROM database` is a Go syntax error and a Rust
 success.
 
-**Not fixed, deliberately.** Adding the three strings is a one-line change
-that is *correct for the alias path and wrong for the expression path*,
-because of #4: Rust reuses one list for both gates.
-`tidb-parser/src/tests/format.rs:84` asserts `database.table.column`
-parses to `` `database`.`table`.`column` `` — which Go also accepts, via
-the expression-prefix fallback, not `IsReserved` — and that test would
-start failing. The coherent fix is #4 and #5 together: move the
-expression-prefix bare-identifier arm onto `is_clause_keyword`, *then* add
-the three keywords. That is a wide-blast-radius change, and this machine
-cannot run `cargo test` to bound it (see "Unverified"). The edit was made,
+**FIXED (2026-09-04).** #4's `is_clause_keyword` gate has been landed, so
+the expression-prefix fallback now uses the 13-word clause list instead of
+`is_reserved`. The three keywords (`DATABASE`, `DATABASES`, `DISTINCT`)
+are now in `RESERVED_KEYWORDS` and correctly rejected as identifiers.
+*Previously this was "not fixed, deliberately" because the coherent fix
+required #4 first — that prerequisite is now satisfied.* The edit was made,
 `cargo check`ed, and reverted rather than shipped blind.
 
 #### 6. `0X41` was a lex error in Rust and a hex literal in Go — FIXED
@@ -415,6 +423,23 @@ where its leading byte (`0xC2` for U+00A0) is *not* Go-whitespace either
 and both sides agree. This is only observable on input Go accepts and the
 Rust API cannot represent — see #11, which is the same boundary.
 
+#### 9-11 STATUS (2026-09-03)
+
+- #9 (ANSI_QUOTES identifier escape decoding): FIXED (2026-09-03) — the
+  identifier text now reuses the scanString-decoded buffer
+  (`decode_quoted_string` with the NO_BACKSLASH_ESCAPES split), with
+  regressions in `lexer_source.rs`.
+- #10 (whitespace class): accepted as parity-by-API — the audit's own
+  reachability caveat shows the divergence requires input the Rust `&str`
+  API cannot represent; closing it would mean widening the lexer to bytes.
+- #11 (client-charset-aware scanners): CLOSED as parity-by-API
+  (2026-09-05) — the reachability chain below is now verified end to end:
+  the GBK/big5/sjis pairs Go's `skipRune` treats differently are never
+  valid UTF-8, and the wire layer transcodes or refuses non-UTF-8 queries
+  before the lexer runs, so no input the Rust pipeline can express fires
+  the divergence. Adding a `client` charset field would be behavior with
+  no reachable input behind it.
+
 #### 11. Rust's string and backtick scanners are not client-charset aware
 
 `scanString`/`scanQuotedIdent` (`pkg/parser/lexer.go:717,687`) call
@@ -451,9 +476,11 @@ merely unused:
   a token boundary, because every non-leading byte of a UTF-8 sequence is
   `>= 0x80` and can therefore never be a delimiter or an escape lead.
 * The bytes are refused before the lexer regardless:
-  `tidb-server/src/mysql_connection.rs`'s `COM_QUERY` arm answers
-  `ER_PARSE_ERROR "COM_QUERY is not valid UTF-8"`, and
-  `Session::run`/`tidb_parser::parse`/`Lexer::new` are all `&str`.
+  `crates/tidb-server/src/mysql_connection.rs`'s query-decode gate
+  transcodes `gbk`/`gb18030` payloads to UTF-8 (erroring on invalid
+  source bytes) and runs `std::str::from_utf8` for every other charset,
+  answering an error before `Session::run`/`tidb_parser::parse`/
+  `Lexer::new` — all `&str` — ever see the bytes.
 
 Closing this needs a byte-oriented pipeline (`&[u8]` from the wire
 through `Lexer`), plus `@@character_set_client` reaching the parser —
@@ -463,14 +490,25 @@ which today it does not: the session parses through
 entry. Adding the field alone would be a claim with no reachable
 behavior behind it.
 
-#### 12. `@@instance.x` is split differently
+#### 12. `@@instance.x` is split differently — FIXED (2026-09-04)
 
 `pkg/parser/lexer.go:624` recognizes exactly `{"global.", "session.",
-"local."}`; `tidb-lexer/src/lib.rs:525` adds `"instance."`. Go falls
+"local."}`; `tidb-lexer/src/lib.rs:525` added `"instance."`. Go falls
 through to `scanIdentifierOrString`, whose `isUserVarChar` includes `.`,
 so it still yields one `doubleAtIdentifier` spanning the whole text —
 which is why this is filed at rank 3 rather than rank 2. Any Rust code
 that keys on the split prefix rather than the whole span will disagree.
+
+FIXED (2026-09-04): the Rust scanner no longer treats `instance.` as a
+prefix, mirroring Go exactly. The plain `@@instance.x` token is unchanged
+(the identifier run folds the dot), the grammar-level split already lives
+in the parser's `parse_variable` (`INSTANCE` → `SysVarScope::Instance`),
+and the two cases the old prefix leaked are pinned: `SET @@instance."x" = 1`
+is a syntax error (Go lexes `@@instance.` plus a separate string token;
+Rust previously accepted it as one variable), and `SELECT @@instance.`
+parses with the instance scope and an empty name (Go's `SystemVariable`
+grammar action; Rust previously returned an `Invalid` token). Receipt:
+`testport/receipts/parser_instance_scope_prefix.md`.
 
 ## Fixes made in this branch
 
@@ -480,18 +518,18 @@ that keys on the split prefix rather than the whole span will disagree.
 | #6 `0X` hex prefix | `rust/crates/tidb-lexer/src/lib.rs` |
 | #8 malformed `/*T![` list | `rust/crates/tidb-lexer/src/lib.rs` |
 
-## Unverified
+## Unverified — RETIRED (2026-09-05)
 
-- **Nothing in this document was executed.** `syspolicyd` on this machine
-  wedges every freshly built binary at `_dyld_start`, so `cargo test`,
-  `nextest`, `gorun` and `goeval` could not be run. Every parse claim is
-  read from source on both sides; the SQL strings are worked examples of
-  the cited code paths, not captured output. In particular the three fixes
-  are compile-verified only — no test run confirms them, and no test run
-  confirms they broke nothing.
-- Gates that WERE run, on the crates touched: `cargo check -p tidb-lexer
-  -p tidb-parser` (exit 0), `cargo clippy -p tidb-lexer -p tidb-parser
-  --all-targets` (exit 0), `cargo fmt --all --check` (exit 0).
+The original caveat is obsolete: the toolchain works again, and the
+fixes this document records are executed and pinned. The LIKE/REGEXP
+pattern-precedence, `||` under PIPES_AS_CONCAT, the predicate and
+IS-TRUE chain latches, the `@@instance.` split and the malformed
+`/*T![` list all carry in-tree regressions (e.g. `parser_root_source.rs`
+pins `SELECT 'a' LIKE 'b' LIKE 'c'`, `SELECT 1 IN (1) IN (0)` and
+`SELECT 1 IS TRUE IS TRUE` as parse rejections), and the
+`pipes_as_concat_sql_mode_matches_go` ring pins the sql-mode coupling.
+Historic note only: at audit time the build was wedged, so the original
+claims were compile-verified only.
 - Not audited: JOIN nesting and the `NATURAL`/`USING` forms, CTE and
   recursive-CTE structure, window-function clauses, `GROUP BY ... WITH
   ROLLUP`, and the statement-level accept/reject surface (which statements
@@ -502,3 +540,12 @@ that keys on the split prefix rather than the whole span will disagree.
   consumer of the flat `Selects`/`terms` list. That consumer was **not**
   checked on either side, and a mismatch there would be a rank-1 defect
   invisible to this audit.
+
+## Parser differential ring (2026-09-05)
+
+The integration parser differential ring runs every fixture input
+(51,598) through the Rust parser against the static Go golden:
+51,499 Go-accepted inputs (including the 10 multi-statement cases) are
+matched, the 99 Go-rejected inputs are rejected by Rust too, zero
+restore mismatches and zero accept/reject asymmetries — the parser and
+the golden agree on every input in the corpus.

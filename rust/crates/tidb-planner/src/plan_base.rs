@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use tidb_datatype::FieldName;
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
+use tidb_expr::EvalError;
 
 use crate::stats_info::StatsInfo;
 
@@ -268,22 +269,243 @@ impl BasePlan {
 
 /// The `error` half of every fallible plan-interface method.
 ///
-/// Go raises these through `plannererrors.ErrInternal.GenWithStack` and
-/// `errors.Errorf`; both are message-only at the interface boundary, and the
-/// code mapping belongs to the `plannererrors` catalogue rather than to the
-/// plan tree.
+/// Go raises most of these through `plannererrors.ErrInternal.GenWithStack`
+/// and `errors.Errorf`; those remain message-only at the interface boundary.
+/// Expression errors are the deliberate exception: their typed variant is
+/// retained so the executor can map client-visible MySQL codes (for example
+/// `charset.ErrCollationCharsetMismatch`) after planning.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanError {
+    kind: PlanErrorKind,
     message: String,
 }
 
+/// The planner error classes whose MySQL identity survives the plan boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlanErrorKind {
+    /// An expression error whose MySQL identity must survive the planner
+    /// boundary (for example Go's 1253 collation/charset mismatch). Keeping
+    /// the typed error avoids turning it into generic 1105 merely because
+    /// plan construction crossed crates.
+    Eval(EvalError),
+    /// Go `plannererrors.ErrInternal` and message-only planner failures.
+    Internal,
+    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
+    UnknownDatabase(String),
+    /// Go `infoschema.ErrTableNotExists`.
+    UnknownTable(String),
+    /// Go `table.ErrUnknownPartition` (1735).
+    UnknownPartition {
+        /// The lower-cased partition name, matching `FindPartitionByName`.
+        partition: String,
+        /// The table name from `TableInfo.Name.O`.
+        table: String,
+    },
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
+    PartitionClauseOnNonpartitioned,
+    /// Go `infoschema.ErrKeyNotExists` (1176).
+    KeyNotExists {
+        /// The index name as written.
+        key: String,
+        /// The table name from `TableInfo.Name.O`.
+        table: String,
+    },
+    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
+    UnknownColumnInClause {
+        /// The name as written, including any qualifier.
+        column: String,
+        /// Go's `clauseMsg` spelling, for example `having clause`.
+        clause: String,
+    },
+    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
+    WrongNumberOfColumnsInSelect,
+    /// Go `dbterror.ErrViewWrongList` (1353).
+    ViewWrongList,
+    /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
+    CteRecursiveRequiresUnion(String),
+    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (3574).
+    CteRecursiveRequiresNonRecursiveFirst(String),
+    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation` (3575).
+    CteRecursiveForbidsAggregation(String),
+    /// Go `plannererrors.ErrInvalidRequiresSingleReference` (3577).
+    CteRecursiveForbiddenJoinOrder(String),
+    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242), raised when a
+    /// separately evaluated scalar child produced more than one row. The
+    /// executor's `MaxOneRowExec` detects it; this variant carries the typed
+    /// identity back across the planner boundary.
+    SubqueryReturnsMoreThanOneRow,
+    /// Go `plannererrors.ErrNotSupportedYet` (1235).
+    NotSupportedYet(String),
+}
+
 impl PlanError {
+    /// An expression error that must retain its typed client-facing identity.
+    #[must_use]
+    pub fn eval(error: EvalError) -> Self {
+        Self {
+            message: format!("{error:?}"),
+            kind: PlanErrorKind::Eval(error),
+        }
+    }
+
     /// Go `plannererrors.ErrInternal.GenWithStack(msg)`.
     #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
+            kind: PlanErrorKind::Internal,
             message: message.into(),
         }
+    }
+
+    /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
+    #[must_use]
+    pub fn unknown_database(database: impl Into<String>) -> Self {
+        let database = database.into();
+        Self {
+            message: format!("Unknown database '{database}'"),
+            kind: PlanErrorKind::UnknownDatabase(database),
+        }
+    }
+
+    /// Go `infoschema.ErrTableNotExists`.
+    #[must_use]
+    pub fn unknown_table(table: impl Into<String>) -> Self {
+        let table = table.into();
+        Self {
+            message: format!("Table '{table}' doesn't exist"),
+            kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// Go `table.ErrUnknownPartition.GenWithStackByArgs(partition, table)`.
+    #[must_use]
+    pub fn unknown_partition(partition: impl Into<String>, table: impl Into<String>) -> Self {
+        let partition = partition.into().to_ascii_lowercase();
+        let table = table.into();
+        Self {
+            message: format!("Unknown partition '{partition}' in table '{table}'"),
+            kind: PlanErrorKind::UnknownPartition { partition, table },
+        }
+    }
+
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned`.
+    #[must_use]
+    pub fn partition_clause_on_nonpartitioned() -> Self {
+        Self {
+            kind: PlanErrorKind::PartitionClauseOnNonpartitioned,
+            message: "PARTITION () clause on non partitioned table".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrKeyDoesNotExist.FastGenByArgs(key, table)`.
+    #[must_use]
+    pub fn key_not_exists(key: impl Into<String>, table: impl Into<String>) -> Self {
+        let key = key.into();
+        let table = table.into();
+        Self {
+            message: format!("Key '{key}' doesn't exist in table '{table}'"),
+            kind: PlanErrorKind::KeyNotExists { key, table },
+        }
+    }
+
+    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
+    #[must_use]
+    pub fn unknown_column_in_clause(column: impl Into<String>, clause: impl Into<String>) -> Self {
+        let column = column.into();
+        let clause = clause.into();
+        Self {
+            message: format!("Unknown column '{column}' in '{clause}'"),
+            kind: PlanErrorKind::UnknownColumnInClause { column, clause },
+        }
+    }
+
+    /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect`.
+    #[must_use]
+    pub fn wrong_number_of_columns_in_select() -> Self {
+        Self {
+            kind: PlanErrorKind::WrongNumberOfColumnsInSelect,
+            message: "The used SELECT statements have a different number of columns".to_owned(),
+        }
+    }
+
+    /// Go `dbterror.ErrViewWrongList`.
+    #[must_use]
+    pub fn view_wrong_list() -> Self {
+        Self {
+            kind: PlanErrorKind::ViewWrongList,
+            message: "View's SELECT and view's field list have different column counts".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveRequiresUnion`.
+    #[must_use]
+    pub fn cte_recursive_requires_union(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!("Recursive Common Table Expression '{name}' should contain a UNION"),
+            kind: PlanErrorKind::CteRecursiveRequiresUnion(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst`.
+    #[must_use]
+    pub fn cte_recursive_requires_non_recursive_first(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "Recursive Common Table Expression '{name}' should have one or more non-recursive query blocks followed by one or more recursive ones"
+            ),
+            kind: PlanErrorKind::CteRecursiveRequiresNonRecursiveFirst(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation`.
+    #[must_use]
+    pub fn cte_recursive_forbids_aggregation(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "Recursive Common Table Expression '{name}' can contain neither aggregation nor window functions in recursive query block"
+            ),
+            kind: PlanErrorKind::CteRecursiveForbidsAggregation(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrInvalidRequiresSingleReference`.
+    #[must_use]
+    pub fn cte_recursive_forbidden_join_order(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
+            ),
+            kind: PlanErrorKind::CteRecursiveForbiddenJoinOrder(name),
+        }
+    }
+
+    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242).
+    #[must_use]
+    pub fn subquery_returns_more_than_one_row() -> Self {
+        Self {
+            message: "Subquery returns more than 1 row".to_owned(),
+            kind: PlanErrorKind::SubqueryReturnsMoreThanOneRow,
+        }
+    }
+
+    /// Go `plannererrors.ErrNotSupportedYet`.
+    #[must_use]
+    pub fn not_supported_yet(feature: impl Into<String>) -> Self {
+        let feature = feature.into();
+        Self {
+            message: format!("This version of TiDB doesn't yet support '{feature}'"),
+            kind: PlanErrorKind::NotSupportedYet(feature),
+        }
+    }
+
+    /// The stable error class used by the statement layer.
+    #[must_use]
+    pub const fn kind(&self) -> &PlanErrorKind {
+        &self.kind
     }
 
     /// The diagnostic text.
@@ -314,6 +536,48 @@ pub struct PossiblePropertiesInfo {
     /// Go `HasTiFlash`: a runtime pruning signal, deliberately excluded from
     /// Go's `Hash64`/`Equals`.
     pub has_tiflash: bool,
+}
+
+/// Hash the identity portion of Go `PossiblePropertiesInfo`.
+///
+/// `HasTiFlash` is deliberately runtime-only and is excluded from Go's
+/// generated `Hash64`/`Equals`; only the nested order lists participate. Rust
+/// cannot represent Go's nil-vs-empty slice distinction, so the owned vector
+/// is encoded as a present list and each column uses the same identity triple
+/// used by the planner schema hash.
+pub(crate) fn hash_possible_properties(
+    hasher: &mut impl crate::hash_equaler::Hasher,
+    properties: &PossiblePropertiesInfo,
+) {
+    use crate::hash_equaler::NOT_NIL_FLAG;
+
+    hasher.hash_byte(NOT_NIL_FLAG);
+    hasher.hash_int(properties.orders.len() as i64);
+    for order in &properties.orders {
+        hasher.hash_int(order.len() as i64);
+        for column in order {
+            hasher.hash_int64(column.id);
+            hasher.hash_int64(column.unique_id);
+            hasher.hash_int64(column.index);
+        }
+    }
+}
+
+/// Go `PossiblePropertiesInfo.Equals` over the representable Rust shape.
+/// `HasTiFlash` is intentionally ignored because it is not plan identity.
+#[must_use]
+pub(crate) fn possible_properties_equal(
+    left: &PossiblePropertiesInfo,
+    right: &PossiblePropertiesInfo,
+) -> bool {
+    left.orders.len() == right.orders.len()
+        && left.orders.iter().zip(&right.orders).all(|(left, right)| {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| left.equals(right))
+        })
 }
 
 #[cfg(test)]

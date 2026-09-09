@@ -16,10 +16,9 @@
 //!
 //! Go's atomics are all sequentially consistent, so every atomic here uses
 //! `SeqCst`; `runtime.Gosched()` maps to [`std::thread::yield_now`]. The
-//! manual padding fields Go inserts against false sharing become
-//! `#[repr(align(64))]` wrappers. Slot values are `AtomicU32` (relaxed data
-//! guarded by the `seq` protocol) because Rust forbids the plain racing store
-//! Go performs under the same protocol.
+//! The source's explicit layout padding is retained. Slot values are
+//! `AtomicU32` because Rust forbids the plain racing store Go performs under
+//! the same sequence protocol.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -113,11 +112,6 @@ impl fmt::Display for AutoIncPool {
     }
 }
 
-/// A cache-line-aligned atomic, standing in for Go's manual padding fields.
-#[repr(align(64))]
-#[derive(Default)]
-struct PaddedAtomicU32(AtomicU32);
-
 struct LockFreePoolItem {
     value: AtomicU32,
     // seq indicates read/write status.
@@ -132,8 +126,11 @@ struct LockFreePoolItem {
 /// IDs only (Go `LockFreeCircularPool`).
 #[derive(Default)]
 pub struct LockFreeCircularPool {
-    head: PaddedAtomicU32, // first available slot
-    tail: PaddedAtomicU32, // first empty slot; head==tail means empty
+    _alignment: u64,
+    head: AtomicU32, // first available slot
+    _head_padding: u32,
+    tail: AtomicU32, // first empty slot; head==tail means empty
+    _tail_padding: u32,
     cap: u32,
     slots: Vec<LockFreePoolItem>,
 }
@@ -163,8 +160,8 @@ impl LockFreeCircularPool {
             });
         }
 
-        self.head.0.store(0, SeqCst);
-        self.tail.0.store(fill_count, SeqCst);
+        self.head.store(0, SeqCst);
+        self.tail.store(fill_count, SeqCst);
     }
 
     /// Re-bases the ring at `head` to unit-test head/tail overflow (Go
@@ -182,8 +179,8 @@ impl LockFreeCircularPool {
             slot.seq.store(head.wrapping_add(i), SeqCst);
         }
 
-        self.head.0.store(head, SeqCst);
-        self.tail.0.store(head.wrapping_add(fill_count), SeqCst);
+        self.head.store(head, SeqCst);
+        self.tail.store(head.wrapping_add(fill_count), SeqCst);
     }
 }
 
@@ -193,12 +190,7 @@ impl IdPool for LockFreeCircularPool {
     }
 
     fn len(&self) -> i64 {
-        i64::from(
-            self.tail
-                .0
-                .load(SeqCst)
-                .wrapping_sub(self.head.0.load(SeqCst)),
-        )
+        i64::from(self.tail.load(SeqCst).wrapping_sub(self.head.load(SeqCst)))
     }
 
     fn cap(&self) -> i64 {
@@ -208,8 +200,8 @@ impl IdPool for LockFreeCircularPool {
     fn put(&self, val: u64) -> bool {
         loop {
             // `tail` must load before `head` to avoid "false full".
-            let tail = self.tail.0.load(SeqCst);
-            let head = self.head.0.load(SeqCst);
+            let tail = self.tail.load(SeqCst);
+            let head = self.head.load(SeqCst);
 
             if tail.wrapping_sub(head) == self.ring_mask() {
                 return false; // full
@@ -217,7 +209,6 @@ impl IdPool for LockFreeCircularPool {
 
             if self
                 .tail
-                .0
                 .compare_exchange(tail, tail.wrapping_add(1), SeqCst, SeqCst)
                 .is_err()
             {
@@ -240,15 +231,14 @@ impl IdPool for LockFreeCircularPool {
 
     fn get(&self) -> (u64, bool) {
         loop {
-            let head = self.head.0.load(SeqCst);
-            let tail = self.tail.0.load(SeqCst);
+            let head = self.head.load(SeqCst);
+            let tail = self.tail.load(SeqCst);
             if head == tail {
                 return (ID_POOL_INVALID_VALUE, false); // empty
             }
 
             if self
                 .head
-                .0
                 .compare_exchange(head, head.wrapping_add(1), SeqCst, SeqCst)
                 .is_err()
             {
@@ -274,8 +264,8 @@ impl IdPool for LockFreeCircularPool {
 impl fmt::Display for LockFreeCircularPool {
     // Not thread safe, mirroring the source's notice.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let head = self.head.0.load(SeqCst);
-        let tail = self.tail.0.load(SeqCst);
+        let head = self.head.load(SeqCst);
+        let tail = self.tail.load(SeqCst);
         let head_slot = &self.slots[(head & self.ring_mask()) as usize];
         let tail_slot = &self.slots[(tail & self.ring_mask()) as usize];
         let length = tail.wrapping_sub(head);

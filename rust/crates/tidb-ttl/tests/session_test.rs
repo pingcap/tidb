@@ -82,7 +82,12 @@ struct MockContext {
     global_time_zone_var: String,
     session_time_zone_var: String,
     killer: SqlKiller,
+    sql_executor: SessionHandle,
+    session_vars: SessionHandle,
 }
+
+#[derive(Debug)]
+struct SessionHandle;
 
 impl MockContext {
     fn new() -> Self {
@@ -93,6 +98,8 @@ impl MockContext {
             global_time_zone_var: "UTC".to_owned(),
             session_time_zone_var: "Asia/Shanghai".to_owned(),
             killer: SqlKiller::default(),
+            sql_executor: SessionHandle,
+            session_vars: SessionHandle,
         }
     }
 
@@ -110,10 +117,18 @@ impl SessionContext for MockContext {
     type Row = NoRow;
     type Store = ();
     type InfoSchema = ();
+    type SqlExecutor = SessionHandle;
+    type SessionVars = SessionHandle;
 
     fn get_store(&self) {}
     fn get_latest_info_schema(&self) {}
     fn get_txn_info_schema(&self) {}
+    fn get_sql_executor(&self) -> &Self::SqlExecutor {
+        &self.sql_executor
+    }
+    fn get_session_vars(&self) -> &Self::SessionVars {
+        &self.session_vars
+    }
 
     fn execute_internal(
         &self,
@@ -364,16 +379,18 @@ fn test_session_global_time_zone() {
 #[test]
 fn test_session_kill() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
-    assert!(se.context().sql_killer().get_kill_signal().is_none());
+    assert_eq!(
+        se.context().sql_killer().get_kill_signal(),
+        KillSignal::UnspecifiedKillSignal
+    );
     se.kill_stmt();
     assert_eq!(
         se.context().sql_killer().get_kill_signal(),
-        Some(KillSignal::QueryInterrupted)
+        KillSignal::QueryInterrupted
     );
 }
 
-/// `AvoidReuse` calls the hook `NewSession` was given, and tolerates its
-/// absence — the `nil` check Go's method opens with.
+/// `AvoidReuse` calls the hook `NewSession` was given.
 #[test]
 fn test_session_avoid_reuse() {
     let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -384,9 +401,21 @@ fn test_session_avoid_reuse() {
     );
     se.avoid_reuse();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+}
 
-    let se = TtlSession::without_avoid_reuse(MockContext::new());
-    se.avoid_reuse();
+/// `GetSessionVars` and `GetSQLExecutor` are forwarded as stable opaque
+/// handles, matching the identity-preserving Go accessors.
+#[test]
+fn test_session_forwards_session_handles() {
+    let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
+    assert!(std::ptr::eq(
+        se.get_session_vars(),
+        se.context().get_session_vars()
+    ));
+    assert!(std::ptr::eq(
+        se.get_sql_executor(),
+        se.context().get_sql_executor()
+    ));
 }
 
 /// `ExecuteSQL` turns Go's `nil` record set into no rows.

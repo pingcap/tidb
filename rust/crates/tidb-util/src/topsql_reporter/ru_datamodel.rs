@@ -105,7 +105,6 @@ pub struct RuItem {
 
 impl RuItem {
     /// Go `ruItem.toProto`.
-    #[must_use]
     pub fn to_proto(&self) -> TopRuRecordItem {
         TopRuRecordItem {
             timestamp_sec: self.timestamp,
@@ -121,7 +120,6 @@ pub type RuItems = Vec<RuItem>;
 
 /// Go `ruItems.toProto`. Go returns nil for an empty list, which is the empty
 /// slice either way.
-#[must_use]
 pub fn ru_items_to_proto(items: &[RuItem]) -> Vec<TopRuRecordItem> {
     items.iter().map(RuItem::to_proto).collect()
 }
@@ -143,13 +141,11 @@ pub struct SqlPlanKey {
 /// Go `othersKey`: the sentinel key of the aggregated "others SQL" bucket,
 /// the zero value (empty sql + plan digest), matching legacy
 /// `encodeKey(nil, nil)`.
-#[must_use]
 pub fn others_key() -> SqlPlanKey {
     SqlPlanKey::default()
 }
 
 /// Go `makeKey`.
-#[must_use]
 pub fn make_key(sql_digest: BinaryDigest, plan_digest: BinaryDigest) -> SqlPlanKey {
     SqlPlanKey {
         sql_digest,
@@ -158,7 +154,6 @@ pub fn make_key(sql_digest: BinaryDigest, plan_digest: BinaryDigest) -> SqlPlanK
 }
 
 /// Go `isOthersKey`.
-#[must_use]
 pub fn is_others_key(key: &SqlPlanKey) -> bool {
     key.sql_digest.0.is_empty() && key.plan_digest.0.is_empty()
 }
@@ -178,7 +173,6 @@ pub struct RuRecord {
 
 impl RuRecord {
     /// Go `newRURecord`.
-    #[must_use]
     pub fn new(sql_digest: BinaryDigest, plan_digest: BinaryDigest) -> Self {
         Self {
             sql_digest,
@@ -189,7 +183,6 @@ impl RuRecord {
     }
 
     /// Go `newOthersRURecord`.
-    #[must_use]
     pub fn new_others() -> Self {
         Self::new(BinaryDigest::default(), BinaryDigest::default())
     }
@@ -258,7 +251,6 @@ impl RuRecord {
 /// same contract and makes the order deterministic. Go's error branch (log
 /// and return everything unsorted) has no counterpart because sorting cannot
 /// fail.
-#[must_use]
 pub fn ru_records_top_n(mut rs: Vec<RuRecord>, n: usize) -> (Vec<RuRecord>, Vec<RuRecord>) {
     if rs.len() <= n {
         return (rs, Vec::new());
@@ -289,14 +281,12 @@ pub struct UserRuCollecting {
 
 impl UserRuCollecting {
     /// Go `newUserRUCollecting`.
-    #[must_use]
     pub fn new(user: &str) -> Self {
         Self::with_cap(user, MAX_PRE_TOP_N_SQLS_PER_USER)
     }
 
     /// Go `newUserRUCollectingWithCap`. Go's `<= 0` guard becomes a zero
     /// guard, `usize` having no negatives.
-    #[must_use]
     pub fn with_cap(user: &str, pre_top_n_sqls_per_user: usize) -> Self {
         let pre_top_n_sqls_per_user = if pre_top_n_sqls_per_user == 0 {
             MAX_PRE_TOP_N_SQLS_PER_USER
@@ -313,7 +303,6 @@ impl UserRuCollecting {
     }
 
     /// Go `newOthersUserRUCollectingWithCap`.
-    #[must_use]
     pub fn new_others_user(pre_top_n_sqls_per_user: usize) -> Self {
         Self::with_cap("", pre_top_n_sqls_per_user)
     }
@@ -375,7 +364,6 @@ impl UserRuCollecting {
     ///
     /// Go hands out the receiver's `*ruRecord` pointers; here the records are
     /// moved out, which is the same transfer without the aliasing.
-    #[must_use]
     pub fn into_report_records_with_limit(mut self, top_n_sqls_per_user: usize) -> Vec<RuRecord> {
         let top_n_sqls_per_user = if top_n_sqls_per_user == 0 {
             MAX_TOP_SQLS_PER_USER
@@ -472,7 +460,6 @@ impl UserRuCollecting {
 
 /// Go `userRUCollectings.topN`: the top `n` users by `total_ru`, plus the
 /// evicted rest. Same quickselect narrowing as [`ru_records_top_n`].
-#[must_use]
 pub fn user_ru_collectings_top_n(
     mut us: Vec<UserRuCollecting>,
     n: usize,
@@ -486,7 +473,6 @@ pub fn user_ru_collectings_top_n(
 }
 
 /// Go `normalizeTopNLimits`.
-#[must_use]
 pub fn normalize_top_n_limits(max_users: usize, max_sqls_per_user: usize) -> (usize, usize) {
     let normalized_max_users = if max_users == 0 {
         MAX_TOP_USERS
@@ -535,13 +521,11 @@ pub struct RuCollecting {
 
 impl RuCollecting {
     /// Go `newRUCollecting`.
-    #[must_use]
     pub fn new() -> Self {
         Self::with_caps(MAX_PRE_TOP_N_USERS, MAX_PRE_TOP_N_SQLS_PER_USER)
     }
 
     /// Go `newRUCollectingWithCaps`.
-    #[must_use]
     pub fn with_caps(pre_top_n_users: usize, pre_top_n_sqls_per_user: usize) -> Self {
         let pre_top_n_users = if pre_top_n_users == 0 {
             MAX_PRE_TOP_N_USERS
@@ -612,7 +596,6 @@ impl RuCollecting {
     /// Go sorts each record's items in place before encoding; the items are
     /// copied into the proto anyway, so the copy is sorted instead and the
     /// receiver stays untouched.
-    #[must_use]
     pub fn to_top_ru_records(&self, keyspace_name: &[u8]) -> Vec<TopRuRecord> {
         if self.users.is_empty() && self.others_user.is_none() {
             return Vec::new();
@@ -684,7 +667,6 @@ impl RuCollecting {
     /// Go's fast path returns the receiver itself and documents the result as
     /// read-only or ownership-transferred; consuming `self` makes that
     /// literal.
-    #[must_use]
     pub fn compact_with_limits(
         mut self,
         max_users: usize,

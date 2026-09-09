@@ -211,6 +211,45 @@ fn an_inserted_timestamp_is_range_checked_in_the_session_zone() {
     }
 }
 
+/// Go's insert error handler retitles a DST-gap conversion from the internal
+/// 8179 transition diagnostic to 1292, in both strict and warning modes. The
+/// adjusted value is still stored when strict mode is disabled.
+#[test]
+fn a_dst_gap_insert_uses_the_insert_truncation_error_class() {
+    let mut session = session();
+    session
+        .run("CREATE TABLE dst_error (ts TIMESTAMP)")
+        .expect("create");
+    set_zone(&mut session, "America/Los_Angeles");
+
+    let strict = session
+        .run("INSERT INTO dst_error VALUES ('2024-03-10 02:30:00')")
+        .expect_err("strict INSERT must reject a DST-gap timestamp");
+    let strict_error = strict.to_mysql_error();
+    assert_eq!(strict_error.code, 1292);
+    assert_eq!(
+        strict_error.message,
+        "Incorrect timestamp value: '2024-03-10 02:30:00' for column 'ts' at row 1"
+    );
+
+    session.run("SET sql_mode = ''").expect("non-strict mode");
+    session
+        .run("INSERT INTO dst_error VALUES ('2024-03-10 02:30:00')")
+        .expect("non-strict INSERT stores the adjusted value");
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Incorrect timestamp value: '2024-03-10 02:30:00' for column 'ts' at row 1".to_owned(),
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT ts FROM dst_error")),
+        [vec!["2024-03-10 03:00:00".to_owned()]]
+    );
+}
+
 /// The read-side asymmetry, pinned so a later tightening cannot take it: the
 /// EPOCH itself renders as a 1969 date west of Greenwich, which is outside
 /// the window a write in that zone would admit, and TiDB still returns it.

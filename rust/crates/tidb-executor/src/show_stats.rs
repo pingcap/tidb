@@ -35,11 +35,9 @@
 //!
 //! # Reused rather than restated
 //!
-//! * [`tidb_stats::Table`] IS Go `statistics.Table`, including
-//!   `Pseudo`, `IsAnalyzed`, `RealtimeCount`/`ModifyCount` and
-//!   `GetStatsHealthy` -- the last as
-//!   [`tidb_stats::Table::stats_healthy`], whose `(healthy, ok)` pair is
-//!   Go's exactly, so [`healthy_row`] only has to honour the `ok` skip.
+//! * [`TableStatistics`] is the shared production statistics object used by
+//!   the SHOW paths. Its `stats_healthy` method owns Go's
+//!   `GetStatsHealthy` calculation for the wired [`healthy_row`].
 //! * [`tidb_stats::Histogram`] and [`tidb_stats::Bucket`] ARE Go
 //!   `statistics.Histogram` / `Bucket`, so [`histogram_row`] and
 //!   [`buckets_to_rows`] read the same fields Go's do.
@@ -72,9 +70,9 @@
 //!   cache-mutating counter read. Only its row shape is ported
 //!   ([`histograms_in_flight_row`]); the counter itself is a handle call.
 //! * `fetchShowAnalyzeStatus` (:540) delegates wholesale to
-//!   `dataForAnalyzeStatusHelper`, which reads `mysql.analyze_jobs` through a
-//!   restricted SQL executor. Not ported; it is a different file's function
-//!   appended verbatim.
+//!   `dataForAnalyzeStatusHelper`. The session owns that persisted-row and
+//!   privilege traversal; [`analyze_progress`] below owns the helper's pure
+//!   remaining-duration calculation.
 //! * The `SHOW STATS_META` extractor filters (:41-58) -- `Field()`,
 //!   `FieldPatternLike()` and the `StatsMetaDBFilters`/`StatsMetaTableFilters`
 //!   duck-typed pair -- are ported as [`MetaFilters`], but the LIKE pattern
@@ -86,9 +84,11 @@
 //! concurrent: every fetcher is a plain nested loop appending to
 //! `e.result`. There is nothing to narrow.
 
-use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_datatype::{core_time_from_datetime, Datum, FieldTypeCode, Time, TimeType};
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
-use tidb_stats::{Histogram, Table, TopN};
+use tidb_stats::{Histogram, TopN};
+
+use crate::access_cost::TableStatistics;
 
 /// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
 /// counter, so the physical half is milliseconds since the Unix epoch.
@@ -265,17 +265,17 @@ impl MetaFilters {
 /// the delta-tracking path maintains without any `ANALYZE`), but reports NULL
 /// rather than a fabricated `last_analyze_time`.
 #[must_use]
-pub fn stats_meta_row<TZ: chrono::TimeZone>(
+pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &Table,
+    stats: &TableStatistics,
     zone: &TZ,
 ) -> Option<Vec<Datum>> {
-    if stats.hist_coll.pseudo {
+    if stats.is_synthetic_pseudo() {
         return None;
     }
-    let last_analyze = if stats.is_analyzed() {
+    let last_analyze = if stats.last_analyze_version > 0 {
         version_to_time(stats.last_analyze_version, zone).map_or(Datum::Null, Datum::Time)
     } else {
         Datum::Null
@@ -285,8 +285,8 @@ pub fn stats_meta_row<TZ: chrono::TimeZone>(
         Datum::new_string(table_name.as_bytes().to_vec()),
         Datum::new_string(partition.as_str().as_bytes().to_vec()),
         version_to_time(stats.version, zone).map_or(Datum::Null, Datum::Time),
-        Datum::Int(stats.hist_coll.modify_count),
-        Datum::Int(stats.hist_coll.realtime_count),
+        Datum::Int(stats.modify_count),
+        Datum::Int(stats.row_count),
         last_analyze,
     ])
 }
@@ -392,13 +392,13 @@ pub fn histogram_row<TZ: chrono::TimeZone>(
 /// Renders one encoded statistics value, Go `statistics.ValueToString`.
 ///
 /// `num_of_cols` is 0 for a column value and the index's column count for an
-/// index value; `column_types` carries the index key parts' MySQL type bytes
-/// so a composite index key can be split back into its parts. Both are Go's
-/// parameters unchanged.
+/// index value; `column_types` carries the index key parts' MySQL types so a
+/// composite index key can be split back into its parts.
 ///
 /// boundary: Go `pkg/statistics/histogram.go` `ValueToString`, which needs the
 /// session's time zone and `tablecodec.DecodeValuesBytesToStrings`.
-pub type ValueRenderer<'a, E> = &'a mut dyn FnMut(&Datum, usize, &[u8]) -> Result<String, E>;
+pub type ValueRenderer<'a, E> =
+    &'a mut dyn FnMut(&Datum, usize, &[FieldTypeCode]) -> Result<String, E>;
 
 /// Go `bucketsToRows` (:437): the `SHOW STATS_BUCKETS` rows for one histogram.
 ///
@@ -420,7 +420,7 @@ pub fn buckets_to_rows<E>(
     column_name: &str,
     num_of_cols: usize,
     histogram: &Histogram,
-    index_column_types: &[u8],
+    index_column_types: &[FieldTypeCode],
     render: ValueRenderer<'_, E>,
 ) -> Result<Vec<Vec<Datum>>, E> {
     let is_index = i64::from(num_of_cols > 0);
@@ -467,7 +467,7 @@ pub fn topn_to_rows<E>(
     num_of_cols: usize,
     is_index: bool,
     topn: Option<&TopN>,
-    column_types: &[u8],
+    column_types: &[FieldTypeCode],
     render: ValueRenderer<'_, E>,
 ) -> Result<Vec<Vec<Datum>>, E> {
     let Some(topn) = topn else {
@@ -493,7 +493,7 @@ pub fn topn_to_rows<E>(
 
 /// Go `appendTableForStatsHealthy` (:522): one `SHOW STATS_HEALTHY` row.
 ///
-/// `None` is Go's `if !ok { return }`. [`tidb_stats::Table::stats_healthy`]
+/// `None` is Go's `if !ok { return }`. [`TableStatistics::stats_healthy`]
 /// returns `ok == false` for a PSEUDO table only; an analyzed-but-unmodified
 /// table returns `(100, true)` and an un-analyzed non-pseudo table returns
 /// `(0, true)`. So a missing row means "no statistics object at all", while a
@@ -504,7 +504,7 @@ pub fn healthy_row(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &Table,
+    stats: &TableStatistics,
 ) -> Option<Vec<Datum>> {
     let (healthy, ok) = stats.stats_healthy();
     if !ok {
@@ -528,6 +528,54 @@ pub fn healthy_row(
 #[must_use]
 pub fn histograms_in_flight_row(in_flight: i64) -> Vec<Datum> {
     vec![Datum::Int(in_flight)]
+}
+
+/// Go `calRemainInfoForAnalyzeStatus`: remaining whole seconds and progress
+/// ratio for one running analyze job.
+#[must_use]
+pub fn analyze_progress(total_rows: i64, processed_rows: i64, elapsed_seconds: f64) -> (i64, f64) {
+    if total_rows == 0 {
+        return (0, 100.0);
+    }
+    let remaining_rows = total_rows - processed_rows;
+    let divisor = if processed_rows == 0 {
+        1
+    } else {
+        processed_rows
+    };
+    let elapsed_seconds = if elapsed_seconds == 0.0 {
+        1.0
+    } else {
+        elapsed_seconds
+    };
+    let remaining_seconds = (remaining_rows as f64 * elapsed_seconds / divisor as f64) as i64;
+    (remaining_seconds, processed_rows as f64 / total_rows as f64)
+}
+
+/// Go `time.Duration.String` for the whole-second durations produced by
+/// `calRemainInfoForAnalyzeStatus`.
+#[must_use]
+pub fn format_analyze_remaining_seconds(seconds: i64) -> String {
+    if seconds == 0 {
+        return "0s".to_owned();
+    }
+    let negative = seconds.is_negative();
+    let absolute = seconds.unsigned_abs();
+    let hours = absolute / 3_600;
+    let minutes = (absolute % 3_600) / 60;
+    let seconds = absolute % 60;
+    let body = if hours > 0 {
+        format!("{hours}h{minutes}m{seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds}s")
+    } else {
+        format!("{seconds}s")
+    };
+    if negative {
+        format!("-{body}")
+    } else {
+        body
+    }
 }
 
 /// Go `fetchShowColumnStatsUsage` :571-587: one `SHOW COLUMN_STATS_USAGE` row.
@@ -582,19 +630,6 @@ pub fn column_stats_usage_label(global: bool, definition_name: Option<&str>) -> 
 mod tests {
     use super::*;
     use tidb_stats::histogram::Bucket;
-    use tidb_stats::table::HistColl;
-
-    fn empty_stats_table() -> Table {
-        Table {
-            existence_map: None,
-            hist_coll: HistColl::new(1, 0, 0, 0, 0),
-            version: 0,
-            last_analyze_version: 0,
-            last_stats_hist_version: 0,
-            table_info_update_ts: 0,
-            is_pk_handle: false,
-        }
-    }
 
     fn label_names(targets: &[PhysicalTarget]) -> Vec<(i64, String)> {
         targets
@@ -679,18 +714,28 @@ mod tests {
         assert!(version_to_time(0, &chrono::Utc).is_some());
     }
 
+    #[test]
+    fn analyze_status_progress_matches_go_calculation() {
+        assert_eq!(analyze_progress(100, 10, 60.0), (540, 0.1));
+        assert_eq!(analyze_progress(0, 10, 60.0), (0, 100.0));
+        assert_eq!(analyze_progress(100, 0, 0.0), (100, 0.0));
+        assert_eq!(format_analyze_remaining_seconds(0), "0s");
+        assert_eq!(format_analyze_remaining_seconds(65), "1m5s");
+        assert_eq!(format_analyze_remaining_seconds(3_661), "1h1m1s");
+        assert_eq!(format_analyze_remaining_seconds(-2), "-2s");
+    }
+
     // WRITTEN test for :108-133: the pseudo skip and the IsAnalyzed branch.
     #[test]
     fn stats_meta_row_nulls_the_analyze_time_when_never_analyzed() {
         let version = 1_700_000_000_000u64 << PHYSICAL_SHIFT_BITS;
-        let mut stats = empty_stats_table();
+        let mut stats = TableStatistics::default();
         stats.version = version;
-        stats.hist_coll.modify_count = 5;
-        stats.hist_coll.realtime_count = 100;
+        stats.modify_count = 5;
+        stats.row_count = 100;
         stats.last_analyze_version = 0;
-        assert!(!stats.is_analyzed());
 
-        let row = stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
             .expect("a non-pseudo table produces a row");
         assert_eq!(row.len(), 7);
         assert_eq!(row[4], Datum::Int(5));
@@ -699,13 +744,16 @@ mod tests {
         assert_eq!(row[6], Datum::Null);
 
         stats.last_analyze_version = version;
-        assert!(stats.is_analyzed());
-        let row = stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc).unwrap();
+        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+            .unwrap();
         assert!(matches!(row[6], Datum::Time(_)));
 
         // A pseudo table produces no row at all.
-        stats.hist_coll.pseudo = true;
-        assert!(stats_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc).is_none());
+        stats.cache_pseudo = true;
+        assert!(
+            table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+                .is_none()
+        );
     }
 
     // WRITTEN test for :135-142.
@@ -779,7 +827,7 @@ mod tests {
             ],
             ..Histogram::default()
         };
-        let mut render = |value: &Datum, _: usize, _: &[u8]| {
+        let mut render = |value: &Datum, _: usize, _: &[FieldTypeCode]| {
             Ok::<_, std::convert::Infallible>(format!("{value:?}"))
         };
         let rows = buckets_to_rows(
@@ -811,7 +859,7 @@ mod tests {
             "i",
             2,
             &histogram,
-            &[3, 3],
+            &[FieldTypeCode::LongLong, FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
@@ -821,8 +869,9 @@ mod tests {
     // WRITTEN test for :411-435: a nil TopN produces no rows.
     #[test]
     fn topn_rows_are_absent_rather_than_empty_without_a_topn() {
-        let mut render =
-            |_: &Datum, _: usize, _: &[u8]| Ok::<_, std::convert::Infallible>("v".to_owned());
+        let mut render = |_: &Datum, _: usize, _: &[FieldTypeCode]| {
+            Ok::<_, std::convert::Infallible>("v".to_owned())
+        };
         let rows = topn_to_rows(
             "d",
             "t",
@@ -831,7 +880,7 @@ mod tests {
             1,
             false,
             None,
-            &[3],
+            &[FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
@@ -848,7 +897,7 @@ mod tests {
             1,
             false,
             Some(&topn),
-            &[3],
+            &[FieldTypeCode::LongLong],
             &mut render,
         )
         .unwrap();
@@ -862,12 +911,14 @@ mod tests {
     // WRITTEN test for :522-534: the pseudo skip versus a zero health.
     #[test]
     fn healthy_row_distinguishes_absent_from_zero() {
-        let mut stats = empty_stats_table();
-        stats.hist_coll.pseudo = true;
+        let mut stats = TableStatistics {
+            pseudo: true,
+            ..TableStatistics::default()
+        };
         assert!(healthy_row("d", "t", &PartitionLabel::None, &stats).is_none());
 
         // Non-pseudo and never analyzed: a real row holding 0.
-        stats.hist_coll.pseudo = false;
+        stats.pseudo = false;
         let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row.len(), 4);
         assert_eq!(row[3], Datum::Int(0));

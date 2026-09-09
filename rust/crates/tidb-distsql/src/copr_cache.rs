@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
+use crate::copr_cache_metrics::{record_evict, record_hit, record_miss};
 use crate::CoprocessorRequestEnvelope;
 
 const MEBIBYTE: f64 = 1024.0 * 1024.0;
@@ -418,6 +419,7 @@ impl CoprCache {
             };
             if let Some(evicted) = state.values.remove(evicted_key.as_slice()) {
                 state.cost_bytes -= evicted.len();
+                record_evict();
             }
         }
         state.cost_bytes += cost;
@@ -480,8 +482,11 @@ impl CoprCache {
                     None
                 };
             }
+            record_hit();
             return Ok(CoprCacheResponseOutcome::Hit);
         }
+
+        record_miss();
 
         let Some(lookup) = lookup else {
             return Ok(CoprCacheResponseOutcome::Miss);

@@ -14,7 +14,7 @@
 
 //! Statement summary, Top SQL, metrics and plan-replayer capture.
 //!
-//! `tidb_enable_plan_replayer_capture` .. `tidb_top_sql_max_time_series_count` -- 23 entries, name-ordered.
+//! `tidb_enable_plan_replayer_capture` .. `tidb_workload_repository_snapshot_interval` -- 27 entries, name-ordered.
 //!
 //! Captured from Go `pkg/sessionctx/variable/sysvar.go`'s `sysVars`. The
 //! registry is one flat name-ordered slice because lookup binary-searches
@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 23] = [
+pub(super) static ENTRIES: [SysVarDef; 27] = [
     SysVarDef {
         name: "tidb_enable_plan_replayer_capture",
         scope: 3,
@@ -297,6 +297,54 @@ pub(super) static ENTRIES: [SysVarDef; 23] = [
         allow_auto_value: false,
         min_value: 1,
         max_value: 5000,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_workload_repository_active_sampling_interval",
+        scope: 1,
+        value: "5",
+        var_type: VarType::Int,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 600,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_workload_repository_dest",
+        scope: 1,
+        value: "",
+        var_type: VarType::Str,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_workload_repository_retention_days",
+        scope: 1,
+        value: "7",
+        var_type: VarType::Int,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 365,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_workload_repository_snapshot_interval",
+        scope: 1,
+        value: "3600",
+        var_type: VarType::Int,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 900,
+        max_value: 7200,
         possible_values: &[],
         auto_convert_negative_bool: false,
     },

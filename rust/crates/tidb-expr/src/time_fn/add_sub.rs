@@ -95,7 +95,13 @@ pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> Temporal
 }
 
 fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
-    cols.append_warning(1292, &format!("Truncated incorrect time value: '{value}'"));
+    cols.append_warning(
+        1292,
+        &format!(
+            "Truncated incorrect time value: '{}'",
+            tidb_datatype::warning_subject_byte_cap(value)
+        ),
+    );
     Datum::Null
 }
 
@@ -226,20 +232,30 @@ pub(crate) fn add_sub_time(
         return Ok(Datum::Null);
     };
     match kinds[0] {
-        // `...DatetimeAnd*`: the result is a DATETIME whose fsp is the FIRST
-        // argument's. The vectorized arm hands `Time.Add` a
-        // `Duration{Fsp: -1}`, so the duration never raises it.
+        // `...DatetimeAnd*`: Go's row body passes the parsed duration fsp to
+        // `Time.Add`. The vectorized DATETIME+TIME arm instead constructs
+        // `Duration{Fsp: -1}` and therefore keeps the first argument's fsp;
+        // the DATETIME+STRING vector arm keeps the parsed string fsp. Constant
+        // folding takes the row body, so preserve the right-side fractional
+        // digits there and retain that one vectorized distinction.
         TemporalKind::Datetime => {
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, false)? else {
                 return Ok(Datum::Null);
             };
-            datetime_result(&left, GoDuration { fsp: -1, ..delta }, sign)
+            let delta = if !row_path && kinds[1] == TemporalKind::Duration {
+                GoDuration { fsp: -1, ..delta }
+            } else {
+                delta
+            };
+            datetime_result(&left, delta, sign)
         }
         // `...DateAnd*`: `arg0.SetType(TypeDatetime)` first, so a DATE reads
         // as midnight; the result is a STRING and the DATE's own fsp is 0,
-        // which leaves the duration's fsp deciding.
+        // which leaves the duration's fsp deciding. The DATE+STRING row and
+        // vector bodies use `getFsp4TimeAddSub` (non-zero fraction => 6),
+        // unlike the DATETIME+STRING bodies' `GetFsp`.
         TemporalKind::Date => {
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, true)? else {
                 return Ok(Datum::Null);
             };
             datetime_result(&left, delta, sign)
@@ -253,7 +269,7 @@ pub(crate) fn add_sub_time(
             let Ok(first) = parse_duration(&left, get_fsp(&left)) else {
                 return Ok(truncated_time_warning(cols, &left));
             };
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, false)? else {
                 return Ok(Datum::Null);
             };
             Ok(Datum::new_string(first.combine(delta, sign).format()))
@@ -311,13 +327,19 @@ fn second_as_duration(
     text: &str,
     kind: TemporalKind,
     cols: &dyn Columns,
+    date_string_fsp: bool,
 ) -> Result<Option<GoDuration>, EvalError> {
     if kind != TemporalKind::Duration && !is_duration(text) {
         // `builtin...AndStringSig`: a second argument that is not
         // duration-shaped is NULL without a warning.
         return Ok(None);
     }
-    match parse_duration(text, get_fsp(text)) {
+    let fsp = if date_string_fsp && kind != TemporalKind::Duration {
+        fsp_for_time_add_sub(text)
+    } else {
+        get_fsp(text)
+    };
+    match parse_duration(text, fsp) {
         Ok(duration) => Ok(Some(duration)),
         Err(Truncated) => {
             truncated_time_warning(cols, text);
@@ -401,13 +423,40 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
     let Some(text) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let Some(base) = parse_datetime(&text) else {
+    // Go selects `ParseTimeFromFloatString` for numeric and DECIMAL
+    // signatures, even though all signatures first call EvalString.  That
+    // parser treats a suffix after a packed date as a fractional second and
+    // preserves zero-date DECIMAL values (for example `0.123`).  String and
+    // temporal signatures use `ParseTime`; retaining the source-kind bit here
+    // keeps the date-only compact suffix (`20240315.5`) as an hour for STRING
+    // but as a fractional second for numeric values.
+    let is_float = matches!(
+        vals[0],
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)
+    );
+    let parsed = tidb_datatype::parse_time(
+        &text,
+        tidb_datatype::TimeType::DateTime,
+        i64::from(get_fsp(&text)),
+        is_float,
+        true,
+        false,
+        &cols.time_zone(),
+    );
+    let Ok(parsed) = parsed else {
         cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
         return Ok(Datum::Null);
     };
+    let core = parsed.time.core_time();
     let base = GoDateTime {
-        fsp: get_fsp(&text),
-        ..base
+        year: i64::from(core.year()),
+        month: u32::from(core.month()),
+        day: u32::from(core.day()),
+        hour: u32::from(core.hour()),
+        minute: u32::from(core.minute()),
+        second: u32::from(core.second()),
+        micros: core.microsecond(),
+        fsp: parsed.time.fsp().into(),
     };
     if vals.len() == 1 {
         return Ok(Datum::new_string(base.format()));
@@ -452,6 +501,15 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
         cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
         return Ok(Datum::Null);
     };
+    // Go converts the third argument through `Time.GoTime` before calling
+    // `addUnitToTime`. Zero dates and month/day-zero values therefore fail
+    // before arithmetic (for example `TIMESTAMPADD(DAY, 28768, 0)` is NULL),
+    // even though the signed day-number helper could otherwise produce a
+    // seemingly valid year-78 result.
+    if !base.in_range() {
+        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        return Ok(Datum::Null);
+    }
     let unit = unit.to_ascii_uppercase();
     let Some(result) = add_unit_to_time(&unit, base, amount) else {
         return Err(EvalError::Unsupported("TIMESTAMPADD unit"));

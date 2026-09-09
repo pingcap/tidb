@@ -38,9 +38,9 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_exec::cluster_sequence::ClusterSequenceCounter;
+use tidb_executor::driver::SequenceDef;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
 use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
-use tidb_executor::driver::SequenceDef;
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
@@ -132,14 +132,13 @@ where
             ClusterSequenceCounter::new(self.opener.clone(), db_id, table.id, self.timeout);
         let def = SequenceDef {
             name: table.name.original().to_owned(),
+            comment: stored_sequence.comment,
             allocator: SequenceAllocator::over_counter(info, counter.shared()),
         };
         sequences.insert(table.id, def.clone());
         def
     }
 }
-
-
 
 impl<C, L, P> TableAutoIds for ClusterTableAutoIds<C, L, P>
 where

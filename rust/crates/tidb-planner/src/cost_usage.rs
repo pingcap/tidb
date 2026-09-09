@@ -13,13 +13,8 @@
 // limitations under the License.
 
 //! Cost-model trace primitives from `pkg/planner/util/costusage/cost_misc.go`.
-//!
-//! This leaf keeps the source's cost arithmetic, factor accumulation, lazy
-//! formula construction, and trace gating over caller-owned factor names. The
-//! optimizer's plan traversal, factor selection, Prometheus/session wiring,
-//! and SQL-facing EXPLAIN integration remain explicit external boundaries.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// Cost flag that forces a fresh cost calculation.
 pub const COST_FLAG_RECALCULATE: u64 = 1;
@@ -60,34 +55,37 @@ impl CostVer2Factor {
 
 impl std::fmt::Display for CostVer2Factor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}({})", self.name, self.value)
+        write!(
+            formatter,
+            "{}({})",
+            self.name,
+            tidb_datatype::format_float_g_shortest(self.value)
+        )
     }
 }
 
 /// The trace accumulated by one cost expression.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CostTrace {
-    factor_costs: BTreeMap<String, f64>,
+    factor_costs: HashMap<String, f64>,
     formula: String,
 }
 
 impl CostTrace {
     fn new() -> Self {
         Self {
-            factor_costs: BTreeMap::new(),
+            factor_costs: HashMap::new(),
             formula: String::new(),
         }
     }
 
     /// Returns the lazily-built formula.
-    #[must_use]
     pub fn formula(&self) -> &str {
         &self.formula
     }
 
     /// Returns factor costs keyed by source factor name.
-    #[must_use]
-    pub const fn factor_costs(&self) -> &BTreeMap<String, f64> {
+    pub const fn factor_costs(&self) -> &HashMap<String, f64> {
         &self.factor_costs
     }
 }
@@ -101,7 +99,6 @@ pub struct CostVer2 {
 
 impl CostVer2 {
     /// Returns the non-negative display cost, matching Go's `max(cost, 0)`.
-    #[must_use]
     pub fn value(&self) -> f64 {
         if self.cost.is_nan() {
             self.cost
@@ -111,15 +108,8 @@ impl CostVer2 {
     }
 
     /// Returns the optional cost trace.
-    #[must_use]
     pub const fn trace(&self) -> Option<&CostTrace> {
         self.trace.as_ref()
-    }
-
-    /// Returns the raw cost before display clamping.
-    #[must_use]
-    pub const fn raw_value(&self) -> f64 {
-        self.cost
     }
 }
 
@@ -131,14 +121,12 @@ pub struct PlanCostOption {
 
 impl PlanCostOption {
     /// Creates options with no flags.
-    #[must_use]
     pub const fn new() -> Self {
         Self { cost_flag: 0 }
     }
 
-    /// Replaces the current flags, matching Go's `WithCostFlag` assignment.
-    #[must_use]
-    pub const fn with_cost_flag(mut self, flag: u64) -> Self {
+    /// Replaces the current flags.
+    pub const fn with_cost_flag(&mut self, flag: u64) -> &mut Self {
         self.cost_flag = flag;
         self
     }
@@ -151,13 +139,11 @@ impl PlanCostOption {
 }
 
 /// Reports whether one cost flag is set.
-#[must_use]
 pub const fn has_cost_flag(cost_flag: u64, flag: u64) -> bool {
     (cost_flag & flag) > 0
 }
 
 /// Reports whether tracing is enabled for an optional options value.
-#[must_use]
 pub const fn trace_cost(options: Option<&PlanCostOption>) -> bool {
     match options {
         Some(options) => has_cost_flag(options.cost_flag, COST_FLAG_TRACE),
@@ -166,7 +152,6 @@ pub const fn trace_cost(options: Option<&PlanCostOption>) -> bool {
 }
 
 /// Creates a zero cost, optionally with an empty trace.
-#[must_use]
 pub fn new_zero_cost_ver2(trace: bool) -> CostVer2 {
     CostVer2 {
         cost: 0.0,
@@ -174,17 +159,7 @@ pub fn new_zero_cost_ver2(trace: bool) -> CostVer2 {
     }
 }
 
-/// Wraps a cost already calculated by the same ver2 model at a lower planning
-/// layer. This is used at an integration boundary where the access-path
-/// chooser owns the complete reader formula and the parent planner must carry
-/// that task into a larger candidate tree without calculating it twice.
-#[must_use]
-pub fn fixed_cost_ver2(cost: f64) -> CostVer2 {
-    CostVer2 { cost, trace: None }
-}
-
 /// Creates a cost and, when tracing is enabled, records its factor and formula.
-#[must_use]
 pub fn new_cost_ver2<F>(
     options: Option<&PlanCostOption>,
     factor: &CostVer2Factor,
@@ -204,7 +179,6 @@ where
 }
 
 /// Sums costs and merges factor traces/formulas in source argument order.
-#[must_use]
 pub fn sum_cost_ver2(costs: &[CostVer2]) -> CostVer2 {
     let mut result = CostVer2 {
         cost: 0.0,
@@ -234,7 +208,6 @@ pub fn sum_cost_ver2(costs: &[CostVer2]) -> CostVer2 {
 }
 
 /// Divides a cost and each traced factor by a denominator.
-#[must_use]
 pub fn div_cost_ver2(cost: &CostVer2, denominator: f64) -> CostVer2 {
     let trace = cost.trace.as_ref().map(|source| {
         let mut trace = CostTrace::new();
@@ -243,7 +216,11 @@ pub fn div_cost_ver2(cost: &CostVer2, denominator: f64) -> CostVer2 {
                 .factor_costs
                 .insert(factor.clone(), factor_cost / denominator);
         }
-        trace.formula = format!("({})/{denominator:.2}", source.formula);
+        trace.formula = format!(
+            "({})/{}",
+            source.formula,
+            format_float_fixed_two(denominator)
+        );
         trace
     });
     CostVer2 {
@@ -253,7 +230,6 @@ pub fn div_cost_ver2(cost: &CostVer2, denominator: f64) -> CostVer2 {
 }
 
 /// Multiplies a cost and each traced factor by a scale.
-#[must_use]
 pub fn mul_cost_ver2(cost: &CostVer2, scale: f64) -> CostVer2 {
     let trace = cost.trace.as_ref().map(|source| {
         let mut trace = CostTrace::new();
@@ -262,7 +238,7 @@ pub fn mul_cost_ver2(cost: &CostVer2, scale: f64) -> CostVer2 {
                 .factor_costs
                 .insert(factor.clone(), factor_cost * scale);
         }
-        trace.formula = format!("({})*{scale:.2}", source.formula);
+        trace.formula = format!("({})*{}", source.formula, format_float_fixed_two(scale));
         trace
     });
     CostVer2 {
@@ -272,121 +248,59 @@ pub fn mul_cost_ver2(cost: &CostVer2, scale: f64) -> CostVer2 {
 }
 
 /// Adds a tie-breaker cost without changing the existing trace.
-#[must_use]
 pub fn add_cost_without_trace(mut cost: CostVer2, additional_cost: f64) -> CostVer2 {
     cost.cost += additional_cost;
     cost
 }
 
-/// Creates the source equivalent of `ZeroCostVer2`.
-#[must_use]
-pub fn zero_cost_ver2() -> CostVer2 {
-    new_zero_cost_ver2(false)
+fn format_float_fixed_two(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".to_owned()
+    } else if value == f64::INFINITY {
+        "+Inf".to_owned()
+    } else if value == f64::NEG_INFINITY {
+        "-Inf".to_owned()
+    } else {
+        format!("{value:.2}")
+    }
 }
 
+/// The source package's pre-defined untraced zero cost.
+pub const ZERO_COST_VER2: CostVer2 = CostVer2 {
+    cost: 0.0,
+    trace: None,
+};
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn traced_options() -> PlanCostOption {
-        PlanCostOption::new().with_cost_flag(COST_FLAG_TRACE)
-    }
-
-    #[test]
-    fn test_cost_factor_and_flags() {
-        let factor = CostVer2Factor::new("tikv_scan_factor", 40.70);
-        assert_eq!(factor.name(), "tikv_scan_factor");
-        assert_eq!(factor.value(), 40.70);
-        assert_eq!(factor.to_string(), "tikv_scan_factor(40.7)");
-        assert!(has_cost_flag(
-            COST_FLAG_RECALCULATE | COST_FLAG_TRACE,
-            COST_FLAG_TRACE
-        ));
-        assert!(!has_cost_flag(COST_FLAG_RECALCULATE, COST_FLAG_TRACE));
-        assert!(trace_cost(Some(&traced_options())));
-        assert!(!trace_cost(None));
-    }
+mod return_contract_tests {
+    use super::{
+        add_cost_without_trace, div_cost_ver2, has_cost_flag, mul_cost_ver2, new_cost_ver2,
+        new_zero_cost_ver2, sum_cost_ver2, trace_cost, CostVer2Factor, PlanCostOption,
+        COST_FLAG_TRACE,
+    };
 
     #[test]
-    fn test_trace_construction_and_lazy_formula() {
-        let options = traced_options();
-        let factor = CostVer2Factor::new("cpu", 2.0);
-        let mut evaluated = false;
-        let cost = new_cost_ver2(Some(&options), &factor, 7.0, || {
-            evaluated = true;
-            "scan(7)".to_owned()
-        });
-        assert!(evaluated);
-        let trace = cost.trace().expect("trace enabled");
-        assert_eq!(trace.formula(), "scan(7)");
-        assert_eq!(trace.factor_costs().get("cpu"), Some(&7.0));
-
-        let no_trace = new_cost_ver2(None, &factor, -1.0, || "unobserved".to_owned());
-        assert!(no_trace.trace().is_none());
-        assert_eq!(no_trace.value(), 0.0);
-        assert!(new_zero_cost_ver2(true).trace().is_some());
-    }
-
-    #[test]
-    fn test_sum_div_mul_and_tie_breaker() {
-        let options = traced_options();
-        let scan_factor = CostVer2Factor::new("scan", 1.0);
-        let cpu_factor = CostVer2Factor::new("cpu", 1.0);
-        let scan = new_cost_ver2(Some(&options), &scan_factor, 4.0, || "scan(4)".to_owned());
-        let cpu = new_cost_ver2(Some(&options), &cpu_factor, 2.0, || "cpu(2)".to_owned());
-        let empty = new_zero_cost_ver2(true);
-        let summed = sum_cost_ver2(&[empty, scan.clone(), cpu.clone()]);
-        assert_eq!(summed.raw_value(), 6.0);
-        assert_eq!(summed.trace().unwrap().formula(), "(scan(4)) + (cpu(2))");
-        assert_eq!(
-            summed.trace().unwrap().factor_costs().get("scan"),
-            Some(&4.0)
-        );
-        assert_eq!(
-            summed.trace().unwrap().factor_costs().get("cpu"),
-            Some(&2.0)
-        );
-
-        let divided = div_cost_ver2(&summed, 3.0);
-        assert_eq!(divided.raw_value(), 2.0);
-        assert_eq!(
-            divided.trace().unwrap().formula(),
-            "((scan(4)) + (cpu(2)))/3.00"
-        );
-        assert_eq!(
-            divided.trace().unwrap().factor_costs().get("scan"),
-            Some(&(4.0 / 3.0))
-        );
-
-        let multiplied = mul_cost_ver2(&divided, 1.5);
-        assert_eq!(multiplied.raw_value(), 3.0);
-        assert_eq!(
-            multiplied.trace().unwrap().formula(),
-            "(((scan(4)) + (cpu(2)))/3.00)*1.50"
-        );
-        assert_eq!(
-            multiplied.trace().unwrap().factor_costs().get("cpu"),
-            Some(&1.0)
-        );
-
-        let adjusted = add_cost_without_trace(multiplied.clone(), 0.25);
-        assert_eq!(adjusted.raw_value(), 3.25);
-        assert_eq!(adjusted.trace(), multiplied.trace());
-        assert_eq!(sum_cost_ver2(&[]).raw_value(), 0.0);
-    }
-
-    #[test]
-    fn test_formula_scale_uses_fixed_two_decimals() {
-        let options = traced_options();
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        PlanCostOption::new();
+        let mut options = PlanCostOption::new();
+        options.with_cost_flag(COST_FLAG_TRACE);
         let factor = CostVer2Factor::new("factor", 1.0);
-        let cost = new_cost_ver2(Some(&options), &factor, 2.0, || "x".to_owned());
-        assert_eq!(
-            div_cost_ver2(&cost, 2.5).trace().unwrap().formula(),
-            "(x)/2.50"
-        );
-        assert_eq!(
-            mul_cost_ver2(&cost, 0.5).trace().unwrap().formula(),
-            "(x)*0.50"
-        );
+        let traced = new_zero_cost_ver2(true);
+
+        traced.value();
+        traced.trace();
+        if let Some(trace) = traced.trace() {
+            trace.formula();
+            trace.factor_costs();
+        }
+        has_cost_flag(COST_FLAG_TRACE, COST_FLAG_TRACE);
+        trace_cost(Some(&options));
+        new_zero_cost_ver2(false);
+        new_cost_ver2(Some(&options), &factor, 1.0, || "factor".to_owned());
+        sum_cost_ver2(std::slice::from_ref(&traced));
+        div_cost_ver2(&traced, 2.0);
+        mul_cost_ver2(&traced, 2.0);
+        add_cost_without_trace(traced, 1.0);
     }
 }

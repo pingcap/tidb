@@ -18,7 +18,7 @@ use tidb_error::mysql::FormatArg;
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_exec::{
     warnings_from_json, warnings_to_json, IgnoreWarnings, StatementWarning, StaticWarningHandler,
-    WarningAppender, WarningHandler, WarningLevel, WarningPublication, MAX_WARNING_COUNT,
+    WarningAppender, WarningHandler, WarningLevel, WarningPublication,
 };
 
 #[test]
@@ -203,16 +203,17 @@ fn publication_counts_wrap_for_large_set_warnings_inputs() {
     // pkg/sessionctx/stmtctx/stmtctx.go:1151-1157. Static append paths cap at
     // MaxUint16; direct SetWarnings can supply a larger slice, so publication
     // wraps packet-sized counts while retaining source order and length.
-    let max_warnings = vec![StatementWarning::new(WarningLevel::Error, "error"); MAX_WARNING_COUNT];
+    let max_warnings =
+        vec![StatementWarning::new(WarningLevel::Error, "error"); u16::MAX as usize];
     let max_publication = WarningPublication::new(&max_warnings);
     assert_eq!(max_publication.warning_count(), u16::MAX);
     assert_eq!(max_publication.summary().error_count(), u16::MAX);
 
     let wrapped_warnings =
-        vec![StatementWarning::new(WarningLevel::Error, "error"); MAX_WARNING_COUNT + 1];
+        vec![StatementWarning::new(WarningLevel::Error, "error"); u16::MAX as usize + 1];
     let publication = WarningPublication::new(&wrapped_warnings);
     assert_eq!(publication.warning_count(), 0);
     assert_eq!(publication.summary().error_count(), 0);
-    assert_eq!(publication.num_error_warnings(), (0, MAX_WARNING_COUNT + 1));
-    assert_eq!(publication.warnings().len(), MAX_WARNING_COUNT + 1);
+    assert_eq!(publication.num_error_warnings(), (0, u16::MAX as usize + 1));
+    assert_eq!(publication.warnings().len(), u16::MAX as usize + 1);
 }

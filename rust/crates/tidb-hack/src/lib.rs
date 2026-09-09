@@ -12,108 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/hack`.
+//! Rust counterpart of pinned Go `pkg/util/hack`.
 //!
-//! Go's package has two jobs: zero-copy byte/string views and memory accounting
-//! by reading the private Go Swiss-map ABI. Rust cannot soundly turn an
-//! arbitrary `&str` into `&mut [u8]`, so [`slice`] exposes the read-only
-//! zero-copy view used by every TiDB consumer. [`MutableBytes`] and
-//! [`MutableString`] preserve the deliberately mutable string behavior with
-//! shared, owned backing storage: mutation is visible through existing views,
-//! while growing the byte buffer keeps the old allocation alive just as Go's
-//! garbage collector does.
-//!
-//! The Go 1.25 and 1.26 private-map files become one Rust map implementation.
-//! It pins hashbrown and accounts for the table allocation directly from its
-//! public capacity contract and pinned allocation layout. This removes the Go
-//! version/build-tag branch while preserving map operations and exact memory
-//! deltas. Go's `TestMain` only installs common test state and leak exclusions;
-//! this module starts no background tasks, so Rust needs no process hook.
-//!
-//! Source disposition is complete: `hack.go` maps to this file;
-//! `map_abi.go` and `map_abi_go126.go` map to `map.rs`; `hack_test.go` maps to
-//! this file's test module; `map_abi_test.go` plus both build-tagged
-//! `map_abi_test_type_*` aliases map to `map.rs` tests and `benches/hack.rs`;
-//! `main_test.go` has the no-worker disposition above; and `BUILD.bazel` maps
-//! to this crate manifest.
+//! It provides zero-copy byte/string views and checkpointed hash-map memory
+//! accounting. Rust's ownership model requires owned shared storage for the
+//! deliberately mutable string view. The map counterpart models Go's Swiss-map
+//! group, table, directory, split, and checkpoint accounting over native keys.
 
 #![allow(unsafe_code)]
 
 mod map;
-#[cfg(test)]
-mod tests_hack;
-
-/// Live-allocation counters of the running jemalloc, the seam Go gets for
-/// free from `runtime.ReadMemStats`: TiDB's memory arbitrator samples the
-/// LIVE application allocation (`runtime.MemStats.HeapAlloc`), which on a
-/// jemalloc build is `stats.allocated` -- process RSS cannot stand in for it
-/// because RSS also counts freed-but-retained pages and non-heap mappings.
-/// Only this crate's raw-pointer exception may call `_rjem_mallctl`; every
-/// consumer reads plain numbers through [`sample`].
-#[cfg(feature = "jemalloc")]
-pub mod allocator_stats {
-    /// Reads one `size_t` mallctl counter; `None` when the allocator rejects
-    /// the name (e.g. stats compiled out).
-    fn stat(name: &[u8]) -> Option<i64> {
-        let mut value: usize = 0;
-        let mut size = std::mem::size_of::<usize>();
-        // SAFETY: `name` is a NUL-terminated literal, and `value`/`size` are
-        // valid out-parameters for a `size_t` read; no new pointer escapes.
-        let ok = unsafe {
-            tikv_jemalloc_sys::mallctl(
-                name.as_ptr().cast(),
-                (&mut value as *mut usize).cast(),
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            )
-        } == 0;
-        ok.then(|| i64::try_from(value).unwrap_or(i64::MAX))
-    }
-
-    /// One coherent-enough sample in bytes:
-    /// `(allocated, active, resident)`.
-    ///
-    /// - `allocated`: live application allocations (Go `HeapAlloc`).
-    /// - `active`: pages backing live allocations (Go `HeapInuse`).
-    /// - `resident`: pages physically mapped by the allocator.
-    ///
-    /// The cached statistics epoch is refreshed first so these are current,
-    /// exactly what Go's stop-the-world read guarantees. `None` when the
-    /// running allocator does not answer statistics queries.
-    #[must_use]
-    pub fn sample() -> Option<(i64, i64, i64)> {
-        let mut epoch: u64 = 0;
-        let mut epoch_size = std::mem::size_of::<u64>();
-        // SAFETY: passing the same `u64` as both old and new value refreshes
-        // the statistics epoch, the documented way to make counters current.
-        let refreshed = unsafe {
-            tikv_jemalloc_sys::mallctl(
-                b"epoch\0".as_ptr().cast(),
-                (&mut epoch as *mut u64).cast(),
-                &mut epoch_size,
-                (&mut epoch as *mut u64).cast(),
-                epoch_size,
-            )
-        } == 0;
-        if !refreshed {
-            return None;
-        }
-        Some((stat(b"stats.allocated\0")?, stat(b"stats.active\0")?, stat(b"stats.resident\0")?))
-    }
-}
 
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::rc::Rc;
 
 pub use map::{
-    map_type, to_swiss_map, MapType, MemAwareMap, SwissMapWrap,
+    to_swiss_map, MapType, MapValueLayout, MemAwareMap, SwissMapWrap,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_ANY,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_DECIMAL,
     DEF_BUCKET_MEMORY_USAGE_FOR_MAP_STRING_TO_STRING, DEF_BUCKET_MEMORY_USAGE_FOR_SET_FLOAT64,
     DEF_BUCKET_MEMORY_USAGE_FOR_SET_INT64, DEF_BUCKET_MEMORY_USAGE_FOR_SET_STRING,
-    MAX_TABLE_CAPACITY, MOCK_SEED_FOR_TEST,
 };
 
 /// An owned mutable byte buffer whose backing allocation may be shared by
@@ -135,18 +54,10 @@ impl MutableBytes {
         }
     }
 
-    /// Returns the current number of bytes.
-    #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         // SAFETY: `MutableBytes` and `MutableString` are deliberately
         // single-threaded (`Rc`). No reference into the `UnsafeCell` escapes.
         unsafe { (&*self.storage.get()).len() }
-    }
-
-    /// Returns whether the buffer is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     /// Replaces one byte.
@@ -186,19 +97,6 @@ impl MutableBytes {
             }
         }
     }
-
-    /// Copies the current bytes for an ownership-independent snapshot.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<u8> {
-        // SAFETY: no reference into the cell escapes.
-        unsafe { (&*self.storage.get()).clone() }
-    }
-}
-
-impl From<Vec<u8>> for MutableBytes {
-    fn from(value: Vec<u8>) -> Self {
-        Self::new(value)
-    }
 }
 
 /// A zero-copy string-like view over [`MutableBytes`].
@@ -212,7 +110,6 @@ pub struct MutableString {
 }
 
 /// Creates a zero-copy mutable string view.
-#[must_use]
 pub fn string(bytes: &MutableBytes) -> MutableString {
     MutableString {
         storage: Rc::clone(&bytes.storage),
@@ -226,24 +123,6 @@ impl MutableString {
         // slice is confined to this call.
         let storage = unsafe { &*self.storage.get() };
         f(&storage[..self.len])
-    }
-
-    /// Returns the byte length captured when the view was created.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Returns whether this view is empty.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Copies the current view into an owned byte vector.
-    #[must_use]
-    pub fn snapshot(&self) -> Vec<u8> {
-        self.with_bytes(<[u8]>::to_vec)
     }
 }
 
@@ -276,7 +155,6 @@ impl fmt::Display for MutableString {
 /// Go returns a mutable slice here through `unsafe`. TiDB's consumers only
 /// read that slice; Rust makes the actual contract explicit and prevents
 /// mutation of immutable string storage.
-#[must_use]
 pub const fn slice(value: &str) -> &[u8] {
     value.as_bytes()
 }
@@ -289,7 +167,6 @@ pub const fn slice(value: &str) -> &[u8] {
 /// returned lifetime. The memory must not be mutated while the returned slice
 /// is borrowed. For a zero length, `pointer` must still be aligned and
 /// non-null as required by [`std::slice::from_raw_parts`].
-#[must_use]
 pub unsafe fn get_bytes_from_ptr<'a>(pointer: *const u8, length: usize) -> &'a [u8] {
     // SAFETY: the caller owns the complete raw-pointer validity contract.
     unsafe { std::slice::from_raw_parts(pointer, length) }
@@ -311,15 +188,6 @@ mod tests {
 
         bytes.append(b"abc");
         assert_eq!(value, "aello world");
-        assert_eq!(bytes.snapshot(), b"aello worldabc");
-
-        let mut spare = Vec::with_capacity(32);
-        spare.extend_from_slice(b"hello world");
-        let mut spare = MutableBytes::new(spare);
-        let shared = string(&spare);
-        spare.append(b"abc");
-        spare.set(0, b'A');
-        assert_eq!(shared, "Aello world");
     }
 
     #[test]
@@ -337,13 +205,97 @@ mod tests {
         bytes.set(0, b's');
         assert_eq!(mutable, "sbc");
     }
+}
+
+/// Go `strings.ToLower`: the per-rune SIMPLE lowercase mapping
+/// (`unicode.ToLower`), with none of Unicode's conditional special
+/// casing -- Greek final sigma stays `σ` at a word's end and `İ` folds
+/// to plain `i`, both of which diverge from Rust's `str::to_lowercase`.
+/// Verified per rune: U+0130 is the only code point whose full
+/// lowercase mapping is multi-character, so first-character + the `İ`
+/// entry reproduces Go's table exactly. Delegates to the generated
+/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
+/// 15.0.0), which is the authoritative implementation.
+pub fn go_to_lower(input: impl AsRef<str>) -> String {
+    tidb_mysql::to_lowercase(input.as_ref())
+}
+
+/// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
+/// (`unicode.ToUpper`). Rust's full uppercase expands 102 code points
+/// to multiple characters (`ß` -> `SS`, the Latin and Armenian
+/// ligatures, the Greek iota-subscript vowels); Go's simple table
+/// leaves the ligatures and `ß` unchanged and folds the 27 Greek
+/// iota-subscript forms to their dropped-subscript vowel. Delegates to
+/// the generated `tidb-mysql::simple_case` table (Go
+/// `unicode.CaseRanges`, Unicode 15.0.0), the authoritative
+/// implementation.
+/// Method-form of [`go_to_lower`] for in-place call-site migration: a
+/// blanket impl over `AsRef<str>` so `.to_lowercase()` call sites can
+/// switch to `.go_to_lower()` without restructuring the receiver.
+pub trait GoToLower {
+    /// Go `strings.ToLower` over this value's text.
+    fn go_to_lower(&self) -> String;
+}
+
+impl<T: AsRef<str>> GoToLower for T {
+    fn go_to_lower(&self) -> String {
+        go_to_lower(self)
+    }
+}
+
+/// Method-form of [`go_to_upper`]; see [`GoToLower`].
+pub trait GoToUpper {
+    /// Go `strings.ToUpper` over this value's text.
+    fn go_to_upper(&self) -> String;
+}
+
+impl<T: AsRef<str>> GoToUpper for T {
+    fn go_to_upper(&self) -> String {
+        go_to_upper(self)
+    }
+}
+
+/// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
+/// (`unicode.ToUpper`). Delegates to the generated
+/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
+/// 15.0.0), which is the authoritative implementation.
+pub fn go_to_upper(input: impl AsRef<str>) -> String {
+    tidb_mysql::to_uppercase(input.as_ref())
+}
+
+#[cfg(test)]
+mod case_tests {
+    use super::{go_to_lower, go_to_upper};
 
     #[test]
-    fn get_bytes_from_pointer_preserves_the_requested_window() {
-        let bytes = b"prefix-value-suffix";
-        // SAFETY: the pointer starts six bytes into `bytes` and the requested
-        // five-byte window remains inside that live allocation.
-        let value = unsafe { get_bytes_from_ptr(bytes.as_ptr().add(7), 5) };
-        assert_eq!(value, b"value");
+    fn go_to_upper_matches_go_simple_mapping() {
+        // `straße` stays `STRAßE` (TiDB's captured behavior): the full
+        // uppercase of `ß` would be "SS".
+        assert_eq!(go_to_upper("stra\u{00DF}e"), "STRA\u{00DF}E");
+        assert_ne!("stra\u{00DF}e".to_uppercase(), "STRA\u{00DF}E");
+        // The Greek iota-subscript vowels take Go's dropped-subscript
+        // simple form, NOT the identity and NOT the multi-char expansion.
+        assert_eq!(go_to_upper("\u{1FA4}"), "\u{1FAC}");
+        assert_ne!("\u{1FA4}".to_uppercase(), "\u{1FAC}");
+        assert_eq!(go_to_upper("\u{1FB3}"), "\u{1FBC}");
+        // ASCII and already-uppercase text pass through.
+        assert_eq!(go_to_upper("aBc_01"), "ABC_01");
+        assert_eq!(go_to_upper("中文"), "中文");
+    }
+
+    #[test]
+    fn go_to_lower_matches_go_simple_mapping() {
+        // The plan's #196 one-line reproduction: Greek capital sigma has
+        // a word-end final form that Rust's `str::to_lowercase` picks
+        // and Go never does.
+        assert_eq!(go_to_lower("ΟΔΟΣ"), "οδοσ");
+        assert_ne!("ΟΔΟΣ".to_lowercase(), "οδοσ");
+        // Turkish İ: Go's simple table folds to plain `i`; Rust's full
+        // mapping appends the combining dot.
+        assert_eq!(go_to_lower("\u{0130}"), "i");
+        assert_ne!("\u{0130}".to_lowercase(), "i");
+        // ASCII and already-lowercase text pass through.
+        assert_eq!(go_to_lower("AbC_01"), "abc_01");
+        assert_eq!(go_to_lower("中文"), "中文");
     }
 }

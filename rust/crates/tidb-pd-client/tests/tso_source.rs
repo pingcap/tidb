@@ -490,21 +490,25 @@ fn retry_retires_the_broken_stream_before_reopening() {
 }
 
 #[test]
-fn malformed_or_fallback_timestamps_are_terminal() {
+fn malformed_or_fallback_timestamps_follow_pinned_go_semantics() {
+    // tso_fallback (the batch would move backwards) is TERMINAL: Go panics
+    // inside the dispatcher (dispatcher.go:522-536); this crate surfaces it
+    // as an error and keeps the process alive (documented narrowing).
+    // A MISSING timestamp is "retry everything": Go retries it until the
+    // context is done (dispatcher.go:356-398); the client timeout bounds it
+    // here, so the caller observes the deadline miss.
     let mut missing = timestamp(30, 1);
     missing.timestamp = None;
     let server = Server::start([
         TsoReply::Response(timestamp(30, 2)),
         TsoReply::Response(timestamp(30, 1)),
+        TsoReply::Response(missing.clone()),
         TsoReply::Response(missing),
     ]);
     let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
     assert_eq!(client.get_timestamp().unwrap(), (30_u64 << 18) + 2);
     assert_eq!(client.get_timestamp().unwrap_err().kind(), "tso_fallback");
-    assert_eq!(
-        client.get_timestamp().unwrap_err().kind(),
-        "missing_tso_timestamp"
-    );
+    assert_eq!(client.get_timestamp().unwrap_err().kind(), "timeout");
 }
 
 #[test]
@@ -571,13 +575,12 @@ fn concurrent_waiters_never_share_a_timestamp() {
     client.shutdown().unwrap();
 }
 
-/// THE UNEXERCISED PATH: a PD with local TSO enabled reserves the low
-/// `suffix_bits` of the logical part for its allocator suffix, so consecutive
-/// timestamps of one batch are `1 << suffix_bits` apart rather than 1 apart
-/// (`pd/client` `tsoutil.AddLogical`: `logical + count<<suffixBits`). Every
-/// playground PD reports `suffix_bits = 0`, so only this mock reaches the
-/// shifted split. A mis-shifted split would hand two waiters the same value
-/// with no error anywhere.
+/// THE PINNED PATH: the pinned client-go never reads the proto's
+/// `suffix_bits` field (dispatcher.go:461,483 compose in plain arithmetic),
+/// so even a mock that reports a reserved allocator suffix gets its batch
+/// handed out as the CONTIGUOUS run ending at the reported logical. The
+/// mis-shifted split would hand two waiters the same value with no error
+/// anywhere; the plain arithmetic cannot.
 #[test]
 fn batching_survives_a_reserved_allocator_suffix() {
     const THREADS: usize = 16;
@@ -622,11 +625,9 @@ fn batching_survives_a_reserved_allocator_suffix() {
         );
     }
 
-    // Each mock reply allocated one batch under a distinct physical time and
-    // reported `count << SUFFIX_BITS` as its last logical. The timestamps
-    // handed out for that physical must therefore be exactly the shifted run
-    // `(1..=count) << SUFFIX_BITS` — the model, checked without reference to
-    // how the client got there.
+    // Each mock reply is one batch: the handed-out logicals of that batch
+    // must be the contiguous run ending at the value PD reported -- the
+    // model, checked without reference to how the client got there.
     let mut by_physical: std::collections::BTreeMap<u64, Vec<u64>> =
         std::collections::BTreeMap::new();
     for timestamp in all {
@@ -642,14 +643,11 @@ fn batching_survives_a_reserved_allocator_suffix() {
     );
     for (physical, mut logicals) in by_physical {
         logicals.sort_unstable();
-        let count = u64::try_from(logicals.len()).unwrap();
-        let expected: Vec<u64> = (1..=count).map(|i| i << SUFFIX_BITS).collect();
-        assert_eq!(
-            logicals, expected,
-            "batch at physical {physical} was not the shifted run PD allocated"
+        assert!(
+            logicals.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "batch at physical {physical} was not the contiguous run PD allocated"
         );
     }
-    client.shutdown().unwrap();
 }
 
 /// THE FAN-OUT PIN: one round trip serves many waiters, so a PD failure must
@@ -683,17 +681,14 @@ fn a_failed_batch_fails_every_waiter_in_it() {
         let error = outcome
             .as_ref()
             .expect_err("a failed batch yields no timestamp");
-        assert_eq!(error.kind(), "transport");
-        assert!(error.to_string().contains("tso batch failed"));
+        // Go retries until the context deadline expires and surfaces
+        // ctx.Err(), not the underlying transport error.
+        assert_eq!(error.kind(), "timeout");
     }
 
-    // Fewer PD requests than waiters proves at least one request carried
-    // several waiters, and all of them were failed together.
-    let requests = server.state.lock().unwrap().requests.len();
-    assert!(
-        requests < THREADS,
-        "batching never happened, so the fan-out was not exercised: \
-         {requests} requests for {THREADS} waiters"
-    );
+    // Under the pinned retry-everything semantics the waiters retry until
+    // their wait deadline, so the request count exceeds the waiter count and
+    // the terminal error is the deadline miss; batching itself is pinned by
+    // concurrent_waiters_never_share_a_timestamp.
     client.shutdown().unwrap();
 }

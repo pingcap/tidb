@@ -68,7 +68,6 @@ pub struct Chunk {
 impl Chunk {
     /// Go `New`: a chunk for `fields`, capped at `min(capacity, max_chunk_size)`
     /// rows, with `required_rows = max_chunk_size`.
-    #[must_use]
     pub fn new(fields: &[FieldType], capacity: usize, max_chunk_size: usize) -> Self {
         let capacity = capacity.min(max_chunk_size);
         Chunk {
@@ -87,13 +86,11 @@ impl Chunk {
     }
 
     /// Go `NewChunkWithCapacity`.
-    #[must_use]
     pub fn new_with_capacity(fields: &[FieldType], capacity: usize) -> Self {
         Chunk::new(fields, capacity, capacity)
     }
 
     /// Go `NewEmptyChunk`: columns typed for `fields` with no preallocation.
-    #[must_use]
     pub fn new_empty(fields: &[FieldType]) -> Self {
         Chunk {
             columns: fields
@@ -142,7 +139,6 @@ impl Chunk {
     }
 
     /// Go `NumCols`.
-    #[must_use]
     pub fn num_cols(&self) -> usize {
         self.columns.len()
     }
@@ -153,7 +149,6 @@ impl Chunk {
     /// This is the number Go's memory-tracked operators consume per chunk, so
     /// it is capacity-based rather than length-based: an operator that keeps a
     /// chunk keeps its whole allocation, not just the rows in use.
-    #[must_use]
     pub fn memory_usage(&self) -> i64 {
         self.columns
             .iter()
@@ -161,8 +156,16 @@ impl Chunk {
             .sum()
     }
 
+    /// Go `UsedMemoryUsage`: bytes currently occupied by the chunk's columns,
+    /// summed over lengths rather than capacities.
+    pub fn used_memory_usage(&self) -> i64 {
+        self.columns
+            .iter()
+            .map(|column| column.read().used_memory_usage())
+            .sum()
+    }
+
     /// Go `RequiredRows`.
-    #[must_use]
     pub fn required_rows(&self) -> usize {
         self.required_rows
     }
@@ -178,7 +181,6 @@ impl Chunk {
     }
 
     /// Go `IsFull`.
-    #[must_use]
     pub fn is_full(&self) -> bool {
         self.num_rows() >= self.required_rows
     }
@@ -189,14 +191,12 @@ impl Chunk {
     }
 
     /// Go `IsInCompleteChunk`.
-    #[must_use]
     pub fn is_incomplete_chunk(&self) -> bool {
         self.in_complete_chunk
     }
 
     /// Go `NumRows`: the logical row count (selection aware; virtual for a
     /// column-less or incomplete chunk).
-    #[must_use]
     pub fn num_rows(&self) -> usize {
         if let Some(sel) = &self.sel {
             return sel.len();
@@ -208,7 +208,6 @@ impl Chunk {
     }
 
     /// Go `Column`: the column at `col_idx`.
-    #[must_use]
     pub fn column(&self, col_idx: usize) -> ColumnRead<'_> {
         self.columns[col_idx].read()
     }
@@ -222,7 +221,6 @@ impl Chunk {
     /// Duplicate indices remain duplicate aliases. Safe lazy promotion requires
     /// a mutable source borrow, but the source's values and metadata do not
     /// change.
-    #[must_use]
     pub fn prune(&mut self, used_col_idxs: &[usize]) -> Chunk {
         let columns = used_col_idxs
             .iter()
@@ -357,7 +355,6 @@ impl Chunk {
     }
 
     /// Go `GetRow`: the logical row at `idx`, mapped through the selection.
-    #[must_use]
     pub fn get_row(&self, idx: usize) -> Row<'_> {
         let physical = match &self.sel {
             Some(sel) => sel[idx],
@@ -372,7 +369,6 @@ impl Chunk {
     ///
     /// Go reads the last row before searching, so this panics on an empty
     /// chunk exactly as Go does.
-    #[must_use]
     pub fn lower_bound(&self, col_idx: usize, d: &Datum) -> (usize, bool) {
         if compare(self.get_row(self.num_rows() - 1), col_idx, d) == Ordering::Less {
             return (self.num_rows(), false);
@@ -390,7 +386,6 @@ impl Chunk {
 
     /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
     /// index whose value is larger than `d`.
-    #[must_use]
     pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
         sort_search(self.num_rows(), |i| {
             compare(self.get_row(i), col_idx, d) == Ordering::Greater
@@ -443,7 +438,6 @@ impl Chunk {
     ///
     /// Go's `chk.columns == nil` short-circuit returns a chunk that carries
     /// only `inCompleteChunk`; an empty `columns` vector reproduces it.
-    #[must_use]
     pub fn renew_with_capacity(&self, capacity: usize, required_rows: usize) -> Chunk {
         if !self.columns_initialized {
             return Chunk {
@@ -472,14 +466,12 @@ impl Chunk {
     }
 
     /// Go `Renew`: [`Chunk::renew_with_capacity`] at the grown capacity.
-    #[must_use]
     pub fn renew(&self, max_chunk_size: usize) -> Chunk {
         self.renew_with_capacity(self.re_calc_capacity(max_chunk_size), max_chunk_size)
     }
 
     /// Go `numVirtualRows`: the field itself, which the join copy helpers and
     /// their tests assert on directly.
-    #[must_use]
     pub fn num_virtual_rows(&self) -> usize {
         self.num_virtual_rows
     }
@@ -490,7 +482,6 @@ impl Chunk {
     }
 
     /// Go `Capacity`.
-    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -733,10 +724,10 @@ impl Chunk {
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
     /// A `Datum::Decimal` carries the value-layer `Decimal`, so it is converted
-    /// directly to Go's raw 40-byte `MyDecimal` layout. A
-    /// value too large for the `MyDecimal` buffer panics rather than being
-    /// silently truncated into the cell; callers holding a `MyDecimal`
-    /// already should use the exact [`Chunk::append_my_decimal`].
+    /// directly to Go's raw 40-byte `MyDecimal` layout. Values wider than the
+    /// fixed nine-word buffer use Go's ordinary prefix/truncation result;
+    /// `AppendDatum` itself never introduces an overflow panic. Callers holding
+    /// a `MyDecimal` already should use the exact [`Chunk::append_my_decimal`].
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
     /// float32, string/bytes, binary literal, time, duration, decimal, JSON,
@@ -767,11 +758,7 @@ impl Chunk {
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {
-                let value = dec.to_chunk_my_decimal().unwrap_or_else(|error| {
-                    panic!(
-                        "Chunk::append_datum: decimal {dec} does not fit a MyDecimal cell ({error:?})"
-                    )
-                });
+                let value = dec.to_chunk_my_decimal_lossy();
                 self.append_my_decimal(col_idx, &value);
             }
             Datum::MinNotNull | Datum::MaxValue => {}
@@ -781,9 +768,25 @@ impl Chunk {
     /// Go `AppendPartialRow`: append `row`'s cells into this chunk's columns
     /// starting at `col_off`.
     pub fn append_partial_row(&mut self, col_off: usize, row: Row<'_>) {
+        self.append_partial_row_limited(col_off, row, usize::MAX);
+    }
+
+    /// Appends at most `max_cols` source cells, bounded by the destination.
+    ///
+    /// Join residual-condition chunks are typed from the visible child
+    /// schemas, while a child row can retain hidden key columns. Go's row
+    /// append path only copies the requested schema width; keep that contract
+    /// here so an internal hidden column cannot index past the condition chunk.
+    pub fn append_partial_row_limited(&mut self, col_off: usize, row: Row<'_>, max_cols: usize) {
+        if col_off >= self.columns.len() || max_cols == 0 {
+            return;
+        }
         self.append_sel(col_off);
         let source = row.chunk().expect("cannot append the empty Row sentinel");
-        for (i, src_col) in source.columns.iter().enumerate() {
+        let count = max_cols
+            .min(source.columns.len())
+            .min(self.columns.len() - col_off);
+        for (i, src_col) in source.columns.iter().take(count).enumerate() {
             Self::append_cell_between(&mut self.columns[col_off + i], src_col, row.idx());
         }
     }
@@ -978,7 +981,6 @@ impl Chunk {
     }
 
     /// Go `CopyConstructSel`.
-    #[must_use]
     pub fn copy_construct_sel(&self) -> Chunk {
         let Some(selection) = &self.sel else {
             return self.copy_construct();
@@ -993,13 +995,11 @@ impl Chunk {
     }
 
     /// Go `CloneEmpty`.
-    #[must_use]
     pub fn clone_empty(&self, max_capacity: usize) -> Chunk {
         self.renew_with_capacity(max_capacity, max_capacity)
     }
 
     /// Go `CopyConstruct`: a new chunk with a deep copy of this chunk's data.
-    #[must_use]
     pub fn copy_construct(&self) -> Chunk {
         Chunk {
             sel: self.sel.clone(),
@@ -1017,7 +1017,6 @@ impl Chunk {
     /// Go `Chunk.ToString`: render every logical row and terminate each row
     /// with one newline. The byte-authoritative result can contain invalid
     /// UTF-8 through source string, ENUM, or SET cells.
-    #[must_use]
     pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
         let mut output = Vec::with_capacity(self.num_rows().saturating_mul(2));
         for row_idx in 0..self.num_rows() {
@@ -1073,12 +1072,8 @@ mod tests {
             FieldType::new(FieldTypeCode::Date),
             FieldType::new(FieldTypeCode::LongLong),
         ];
-        let zero_date = Time::new(
-            CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
-            TimeType::Date,
-            0,
-        )
-        .expect("the zero date is representable");
+        let zero_date = Time::new(CoreTime::from_date(0, 0, 0, 0, 0, 0, 0), TimeType::Date, 0)
+            .expect("the zero date is representable");
         let zero_datetime = Time::new(
             CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
             TimeType::DateTime,
@@ -1299,6 +1294,66 @@ mod tests {
             ["1.50", "-273.15", "0", "12345678901234567890.123456789"]
         );
         assert!(chunk.get_row(4).is_null(0));
+    }
+
+    /// Go's `Datum` already owns a fixed `MyDecimal`, so `AppendDatum` copies
+    /// its truncated nine-word value instead of panicking on a wider
+    /// value-layer decimal. The same boundary is shared by `MutRow`.
+    #[test]
+    fn decimal_datum_overflow_uses_go_truncation_without_panicking() {
+        use crate::mutrow::MutRow;
+        use tidb_datatype::{Decimal, FieldTypeCode, MyDecimal};
+
+        let text = format!("0.{}", "123456789".repeat(10));
+        let datum = Datum::Decimal(Decimal::from_literal(&text));
+        let expected = MyDecimal::from_string(text.as_bytes()).0;
+        let field_type = FieldType::new(FieldTypeCode::NewDecimal);
+
+        let mut chunk = Chunk::new(std::slice::from_ref(&field_type), 1, 1);
+        chunk.append_datum(0, &datum);
+        assert_eq!(chunk.get_row(0).get_my_decimal(0), expected);
+
+        let mut mut_row = MutRow::from_types(std::slice::from_ref(&field_type));
+        mut_row.set_datum(0, &datum);
+        assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
+        mut_row.set_value(0, &datum);
+        assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
+
+        let from_datums = MutRow::from_datums(std::slice::from_ref(&datum));
+        assert_eq!(from_datums.to_row().get_my_decimal(0), expected);
+    }
+
+    /// The datum a client reads back must render Go's `ToString` text for the
+    /// clamped cell. Go's `ToString` prints the cell's `digitsFrac` (72 kept
+    /// fraction digits here), so the read-back — which renders `resultFrac` —
+    /// must carry that kept fraction, and an integer-overflow cell must be
+    /// byte-equal to Go's own `MyDecimal.FromString` output for the same
+    /// over-wide literal.
+    #[test]
+    fn decimal_datum_read_back_matches_go_to_string_after_clamp() {
+        use tidb_datatype::{Decimal, FieldTypeCode, MyDecimal};
+        let ft = FieldType::new(FieldTypeCode::NewDecimal);
+        let mut chunk = Chunk::new(std::slice::from_ref(&ft), 2, 8);
+
+        // Fraction overflow: the read-back keeps the visible scale, not the
+        // hidden kept words.
+        let text = format!("2.{}", "3".repeat(101));
+        chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(&text)));
+        match chunk.get_row(0).get_datum(0, &ft) {
+            Datum::Decimal(d) => assert_eq!(d.to_string(), format!("2.{}", "3".repeat(72))),
+            other => panic!("expected a decimal datum, got {other:?}"),
+        }
+
+        // Integer overflow: the cell is the LOW 81 integer digits, byte-equal
+        // to Go's FromString clamp of the same literal.
+        let text = "9".repeat(100);
+        chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(&text)));
+        let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+        assert_eq!(go_error, Some(tidb_datatype::DecimalError::Overflow));
+        assert_eq!(
+            chunk.get_row(1).get_my_decimal(0).to_raw_bytes(),
+            go_cell.to_raw_bytes()
+        );
     }
 
     #[test]
@@ -1727,6 +1782,24 @@ mod tests {
     }
 
     #[test]
+    fn partial_row_limited_ignores_hidden_source_columns() {
+        let source_fields = vec![FieldType::new(FieldTypeCode::LongLong); 4];
+        let target_fields = vec![FieldType::new(FieldTypeCode::LongLong); 3];
+        let mut source = Chunk::new_with_capacity(&source_fields, 1);
+        for (column, value) in [10, 20, 30, 40].into_iter().enumerate() {
+            source.append_int64(column, value);
+        }
+        let mut target = Chunk::new_with_capacity(&target_fields, 1);
+        target.append_partial_row_limited(0, source.get_row(0), target_fields.len());
+
+        let row = target.get_row(0);
+        assert_eq!(row.len(), 3);
+        assert_eq!(row.get_int64(0), 10);
+        assert_eq!(row.get_int64(1), 20);
+        assert_eq!(row.get_int64(2), 30);
+    }
+
+    #[test]
     fn vector_float32_cell_and_datum_round_trip() {
         let field = FieldType::new(FieldTypeCode::VectorFloat32);
         let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 3);
@@ -1745,600 +1818,39 @@ mod tests {
     }
 }
 
-    // ---- Go `pkg/util/chunk/chunk_test.go` ports ---------------------------
+// ---- Go `pkg/util/chunk/chunk_test.go` ports ---------------------------
 
-    /// Go `newChunk(elemLen...)`: positive lengths build fixed columns,
-    /// otherwise variable columns, all with zero capacity.
-    use crate::column::{MY_DECIMAL_STRUCT_SIZE, SIZE_TIME};
-    use tidb_datatype::FieldTypeCode;
+/// Go `newChunk(elemLen...)`: positive lengths build fixed columns,
+/// otherwise variable columns, all with zero capacity.
+#[cfg(test)]
+use crate::column::{MY_DECIMAL_STRUCT_SIZE, SIZE_TIME};
+#[cfg(test)]
+use tidb_datatype::FieldTypeCode;
 
-    fn new_chunk_with_elem_lens(elem_lens: &[i64]) -> Chunk {
-        let columns = elem_lens
-            .iter()
-            .map(|&l| {
-                if l > 0 {
-                    Column::new_fixed_len(l as usize, 0)
-                } else {
-                    Column::new_var_len(0)
-                }
-            })
-            .collect();
-        Chunk::from_reusable_columns(columns, 0, 0)
-    }
-
-    /// Go `TestAppendRow`: every append/get family round-trips; a row copied
-    /// chunk-to-chunk is column-for-column equal; partial rows, projections
-    /// by column index, reset reuse, and float32 cells all match the source.
-    #[test]
-    fn go_test_append_row() {
-        let num_cols = 6usize;
-        let num_rows = 10usize;
-        let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
-        for i in 0..num_rows {
-            chk.append_null(0);
-            chk.append_int64(1, i as i64);
-            let s = format!("{i}.12345");
-            chk.append_string(2, s.as_str());
-            chk.append_bytes(3, s.as_bytes());
-            let dec = tidb_datatype::Decimal::from_signed_literal(&s)
-                .to_my_decimal()
-                .expect("valid decimal");
-            chk.append_my_decimal(4, &dec);
-            chk.append_json(5, &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap());
-        }
-        assert_eq!(chk.num_cols(), num_cols);
-        assert_eq!(chk.num_rows(), num_rows);
-        for i in 0..num_rows {
-            let row = chk.get_row(i);
-            let s = format!("{i}.12345");
-            assert_eq!(row.get_int64(0), 0);
-            assert!(row.is_null(0));
-            assert_eq!(row.get_int64(1), i as i64);
-            assert!(!row.is_null(1));
-            assert!(!row.is_null(2));
-            assert_eq!(row.get_string(2).as_bytes(), s.as_bytes());
-            assert!(!row.is_null(3));
-            assert_eq!(row.get_bytes(3), s.as_bytes());
-            assert!(!row.is_null(4));
-            let expected_dec = tidb_datatype::Decimal::from_signed_literal(&s)
-                .to_my_decimal()
-                .expect("valid decimal");
-            assert_eq!(row.get_my_decimal(4), expected_dec);
-            assert!(!row.is_null(5));
-            assert_eq!(
-                row.get_json(5).to_string(),
-                format!("\"{s}\"")
-            );
-        }
-
-        let mut chk2 = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
-        for i in 0..num_rows {
-            let row = chk.get_row(i);
-            chk2.append_row(row);
-        }
-        // Go nils both elemBufs before comparing: the one-element append
-        // scratch is not part of the observable column state.
-        for c in 0..num_cols {
-            let (a, b) = (chk.column(c), chk2.column(c));
-            assert_eq!(a.length(), b.length(), "column {c} length");
-            assert_eq!(a.null_bitmap, b.null_bitmap, "column {c} bitmap");
-            assert_eq!(a.offsets, b.offsets, "column {c} offsets");
-            assert_eq!(a.data.snapshot(), b.data.snapshot(), "column {c} data");
-        }
-
-        // Test more types.
-        let mut chk = new_chunk_with_elem_lens(&[4, 8, SIZE_TIME, SIZE_TIME, 0, 0]);
-        let f32_val = 1.2f32;
-        chk.append_float32(0, f32_val);
-        let f64_val = 1.3f64;
-        chk.append_float64(1, f64_val);
-        let t_val = Time::new(
-            tidb_datatype::CoreTime::from_date(1970, 1, 2, 0, 0, 0, 0),
-            tidb_datatype::TimeType::Date,
-            0,
-        )
-        .expect("valid time");
-        chk.append_time(2, t_val);
-        let dur_val = MySqlDuration::from_nanoseconds(3600 * 1_000_000_000, 6).unwrap();
-        chk.append_duration(3, dur_val);
-        let enum_val = tidb_datatype::MysqlEnum::new("abc", 100);
-        chk.append_enum(4, &enum_val);
-        let set_val = tidb_datatype::MysqlSet::new("def", 101);
-        chk.append_set(5, &set_val);
-
-        let row = chk.get_row(0);
-        assert_eq!(row.get_float32(0), f32_val);
-        assert_eq!(row.get_time(2).compare(t_val), std::cmp::Ordering::Equal);
-        assert_eq!(row.get_duration(3, 0).nanoseconds(), dur_val.nanoseconds());
-        assert_eq!(row.get_enum(4), enum_val);
-        assert_eq!(row.get_set(5), set_val);
-
-        // AppendPartialRow can append a row with different number of columns.
-        let fields_two = vec![FieldType::new(FieldTypeCode::LongLong); 2];
-        let fields_one = vec![FieldType::new(FieldTypeCode::LongLong)];
-        let mut chk = Chunk::new_with_capacity(&fields_two, 2);
-        let mut chk2 = Chunk::new_with_capacity(&fields_one, 2);
-        chk2.append_int64(0, 1);
-        chk2.append_int64(0, -1);
-        chk.append_partial_row(0, chk2.get_row(0));
-        chk.append_partial_row(1, chk2.get_row(0));
-        assert_eq!(chk.get_row(0).get_int64(0), 1);
-        assert_eq!(chk.get_row(0).get_int64(1), 1);
-        assert_eq!(chk.num_rows(), 1);
-
-        // AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection.
-        let fields_four = vec![FieldType::new(FieldTypeCode::LongLong); 4];
-        let mut chk = Chunk::new_with_capacity(&fields_two, 8);
-        let mut source = Chunk::new_with_capacity(&fields_four, 4);
-        for column in 0..4usize {
-            source.append_int64(column, column as i64);
-        }
-        let row = source.get_row(0);
-        chk.append_row_by_col_idxs(row, Some(&[3]));
-        chk.append_row_by_col_idxs(row, Some(&[1]));
-        chk.append_row_by_col_idxs(row, Some(&[]));
-        assert_eq!(
-            chk.column_mut(0).with_int64s_mut(|values| values.to_vec()),
-            vec![3, 1]
-        );
-        assert_eq!(chk.num_virtual_rows(), 3);
-        chk.append_partial_row_by_col_idxs(1, row, Some(&[2]));
-        chk.append_partial_row_by_col_idxs(1, row, Some(&[0]));
-        chk.append_partial_row_by_col_idxs(0, row, Some(&[1, 3]));
-        assert_eq!(
-            chk.column_mut(0).with_int64s_mut(|values| values.to_vec()),
-            vec![3, 1, 1]
-        );
-        assert_eq!(
-            chk.column_mut(1).with_int64s_mut(|values| values.to_vec()),
-            vec![2, 0, 3]
-        );
-        assert_eq!(chk.num_virtual_rows(), 3);
-
-        // Test Reset.
-        let fields_str = vec![FieldType::new(FieldTypeCode::VarString)];
-        let mut chk = Chunk::new_with_capacity(&fields_str, 0);
-        chk.append_string(0, "abcd");
-        chk.reset();
-        chk.append_string(0, "def");
-        assert_eq!(chk.get_row(0).get_string(0).as_bytes(), b"def");
-        assert_eq!(chk.num_rows(), 1);
-
-        // Test float32.
-        let fields_f32 = vec![FieldType::new(FieldTypeCode::Float)];
-        let mut chk = Chunk::new_with_capacity(&fields_f32, 0);
-        chk.append_float32(0, 1.0);
-        chk.append_float32(0, 1.0);
-        chk.append_float32(0, 1.0);
-        assert_eq!(chk.get_row(2).get_float32(0), 1.0f32);
-    }
-
-    /// Go `TestAppendChunk`: batch `Append` of a 2-row range, repeated and
-    /// self-appended, produces exactly Go's bitmap/offsets/data state.
-    #[test]
-    fn go_test_append_chunk() {
-        let field_types = vec![
-            FieldType::new(FieldTypeCode::Float),
-            FieldType::new(FieldTypeCode::Varchar),
-            FieldType::new(FieldTypeCode::Json),
-        ];
-        let json_obj =
-            tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
-        let encoded_len = json_obj.encoded().len();
-
-        let mut src = Chunk::new_with_capacity(&field_types, 32);
-        let mut dst = Chunk::new_with_capacity(&field_types, 32);
-
-        for _ in 0..2 {
-            src.append_float32(0, 12.8);
-            src.append_string(1, "abc");
-            src.append_json(2, &json_obj);
-            src.append_null(0);
-            src.append_null(1);
-            src.append_null(2);
-        }
-
-        for _ in 0..4 {
-            dst.append_range_from(&src, 0, 2);
-        }
-        // Go appends a range OF DST from DST itself: rows 2..6 and then the
-        // empty 6..6 range.
-        dst.append_own_range(2, 6);
-        dst.append_own_range(6, 6);
-
-        assert_eq!(dst.num_cols(), 3);
-        assert_eq!(dst.num_rows(), 12);
-
-        let col = dst.column(0);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(col.offsets.len(), 0);
-        assert_eq!(col.data.snapshot().len(), 4 * 12);
-        assert_eq!(col.elem_buffer_len(), 4);
-
-        let col = dst.column(1);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(
-            col.offsets,
-            vec![0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18]
-        );
-        assert_eq!(col.data.snapshot(), b"abcabcabcabcabcabc".to_vec());
-        assert!(col.elem_buf.is_none());
-
-        let col = dst.column(2);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(col.offsets.len(), 13);
-        assert_eq!(
-            col.data.snapshot().len(),
-            encoded_len * 6,
-            "six encoded JSON cells"
-        );
-        assert!(col.elem_buf.is_none());
-        for i in (0..12).step_by(2) {
-            let elem = dst.get_row(i).get_json(2);
-            assert_eq!(
-                tidb_datatype::compare_binary_json(&elem, &json_obj),
-                std::cmp::Ordering::Equal
-            );
-        }
-    }
-
-    /// Go `TestTruncateTo`: idempotent truncation keeps the state; dropping
-    /// the last rows restores exactly the earlier bitmap/offsets/data; a
-    /// truncated fixed column accepts new appends again.
-    #[test]
-    fn go_test_truncate_to() {
-        let field_types = vec![
-            FieldType::new(FieldTypeCode::Float),
-            FieldType::new(FieldTypeCode::Varchar),
-            FieldType::new(FieldTypeCode::Json),
-        ];
-        let json_obj =
-            tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
-        let encoded_len = json_obj.encoded().len();
-
-        let mut src = Chunk::new_with_capacity(&field_types, 32);
-        for _ in 0..8 {
-            src.append_float32(0, 12.8);
-            src.append_string(1, "abc");
-            src.append_json(2, &json_obj);
-            src.append_null(0);
-            src.append_null(1);
-            src.append_null(2);
-        }
-
-        assert_eq!(src.num_rows(), 16);
-        src.truncate_to(16);
-        src.truncate_to(16);
-        assert_eq!(src.num_rows(), 16);
-        src.truncate_to(14);
-        assert_eq!(src.num_rows(), 14);
-        src.truncate_to(12);
-        assert_eq!(src.num_cols(), 3);
-        assert_eq!(src.num_rows(), 12);
-
-        let col = src.column(0);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(col.offsets.len(), 0);
-        assert_eq!(col.data.snapshot().len(), 4 * 12);
-        assert_eq!(col.elem_buffer_len(), 4);
-
-        let col = src.column(1);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(
-            col.offsets,
-            vec![0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18]
-        );
-        assert_eq!(col.data.snapshot(), b"abcabcabcabcabcabc".to_vec());
-        assert!(col.elem_buf.is_none());
-
-        let col = src.column(2);
-        assert_eq!(col.length(), 12);
-        assert_eq!(col.null_count(), 6);
-        assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
-        assert_eq!(col.offsets.len(), 13);
-        assert_eq!(col.data.snapshot().len(), encoded_len * 6);
-        assert!(col.elem_buf.is_none());
-        for i in (0..12).step_by(2) {
-            let elem = src.get_row(i).get_json(2);
-            assert_eq!(
-                tidb_datatype::compare_binary_json(&elem, &json_obj),
-                std::cmp::Ordering::Equal
-            );
-        }
-
-        let fields_float = vec![FieldType::new(FieldTypeCode::Float)];
-        let mut chk = Chunk::new_with_capacity(&fields_float, 1);
-        chk.append_float32(0, 1.0);
-        chk.append_float32(0, 1.0);
-        chk.truncate_to(1);
-        assert_eq!(chk.num_rows(), 1);
-        chk.append_null(0);
-        assert!(chk.get_row(1).is_null(0));
-    }
-
-    /// Go `TestChunkSizeControl`: `RequiredRows`, `GrowAndReset`, `Renew`,
-    /// clamped `SetRequiredRows`, and the `IsFull` boundary.
-    #[test]
-    fn go_test_chunk_size_control() {
-        let fields = vec![FieldType::new(FieldTypeCode::Long)];
-        let mut max_chunk_size = 10usize;
-        let mut chk = Chunk::new(&fields, max_chunk_size, max_chunk_size);
-        assert_eq!(chk.required_rows(), max_chunk_size);
-
-        for _ in 0..max_chunk_size {
-            chk.append_int64(0, 1);
-        }
-        max_chunk_size += max_chunk_size / 3;
-        chk.grow_and_reset(max_chunk_size);
-        assert_eq!(chk.required_rows(), max_chunk_size);
-
-        let max_chunk_size2 = max_chunk_size + max_chunk_size / 3;
-        let chk2 = chk.renew(max_chunk_size2);
-        assert_eq!(chk2.required_rows(), max_chunk_size2);
-
-        chk.reset();
-        for i in 1..max_chunk_size * 2 {
-            chk.set_required_rows(i as isize, max_chunk_size);
-            assert_eq!(chk.required_rows(), max_chunk_size.min(i));
-        }
-
-        chk.set_required_rows(1, max_chunk_size)
-            .set_required_rows(2, max_chunk_size)
-            .set_required_rows(3, max_chunk_size);
-        assert_eq!(chk.required_rows(), 3);
-
-        chk.set_required_rows(-1, max_chunk_size);
-        assert_eq!(chk.required_rows(), max_chunk_size);
-
-        chk.set_required_rows(5, max_chunk_size);
-        for _ in 0..4 {
-            chk.append_int64(0, 1);
-        }
-        assert_eq!(chk.num_rows(), 4);
-        assert!(!chk.is_full());
-
-        chk.append_int64(0, 1);
-        assert_eq!(chk.num_rows(), 5);
-        assert!(chk.is_full());
-
-        for _ in 0..3 {
-            chk.append_int64(0, 1);
-        }
-        assert_eq!(chk.num_rows(), 8);
-        assert!(chk.is_full());
-
-        chk.set_required_rows(max_chunk_size as isize, max_chunk_size);
-        assert_eq!(chk.num_rows(), 8);
-        assert!(!chk.is_full());
-    }
-
-    /// Go `TestGetDecimalDatum`: a REAL converted into DECIMAL(4,2), stored in
-    /// a chunk and read back through `Row.GetDatum`, keeps the converted
-    /// precision and scale.
-    #[test]
-    fn go_test_get_decimal_datum() {
-        use tidb_datatype::ConversionFlags;
-        let datum = Datum::Real(1.01);
-        let dec_type = FieldType::new(FieldTypeCode::NewDecimal)
-            .with_flen(4)
-            .with_decimal(2);
-        let converted = datum
-            .convert_to(&dec_type, ConversionFlags::default())
-            .expect("decimal conversion succeeds")
-            .value;
-        let dec_datum = match converted {
-            Datum::Decimal(dec) => dec,
-            other => panic!("expected a decimal datum, got {other:?}"),
-        };
-
-        let fields = vec![dec_type.clone()];
-        let mut chk = Chunk::new_with_capacity(&fields, 32);
-        chk.append_my_decimal(
-            0,
-            &dec_datum.to_my_decimal().expect("round-trips to MyDecimal"),
-        );
-        let dec_from_chk = chk.get_row(0).get_datum(0, &dec_type);
-        let from_chk = match &dec_from_chk {
-            Datum::Decimal(dec) => dec.clone(),
-            other => panic!("expected a decimal datum, got {other:?}"),
-        };
-        assert_eq!(
-            from_chk.precision_and_frac(),
-            dec_datum.precision_and_frac()
-        );
-    }
-
-    /// Go `TestChunkMemoryUsage`: `MemoryUsage` equals the per-column sum of
-    /// bitmap/offsets/data/elem capacities plus the column payload, before and
-    /// after rows land, and only the over-grown column's data capacity moves.
-    #[test]
-    fn go_test_chunk_memory_usage() {
-        const PAYLOAD: i64 = 112; // Go `unsafe.Sizeof(*chunk.Column{})`.
-        let field_types = vec![
-            FieldType::new(FieldTypeCode::Float),
-            FieldType::new(FieldTypeCode::Varchar),
-            FieldType::new(FieldTypeCode::Json),
-            FieldType::new(FieldTypeCode::Datetime),
-            FieldType::new(FieldTypeCode::Duration),
-        ];
-        let init_cap = 10usize;
-        let chk = Chunk::new_with_capacity(&field_types, init_cap);
-
-        // cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf).
-        let column_usage = |column: &crate::column::Column| -> i64 {
-            PAYLOAD
-                + column.null_bitmap.capacity() as i64
-                + (column.offsets.capacity() * 8) as i64
-                + column.data.capacity() as i64
-                + column.elem_buf.as_ref().map_or(0, Vec::capacity) as i64
-        };
-        let expected_usage: i64 =
-            (0..chk.num_cols()).map(|c| column_usage(&chk.column(c))).sum();
-        // Empty chunk with initial capacity.
-        assert_eq!(chk.memory_usage(), expected_usage);
-
-        let json_obj = tidb_datatype::BinaryJSON::parse("1").expect("valid JSON");
-        let time_obj = Time::new(
-            tidb_datatype::CoreTime::from_date(2026, 8, 22, 12, 0, 0, 0),
-            tidb_datatype::TimeType::DateTime,
-            0,
-        )
-        .expect("valid time");
-        let duration_obj = MySqlDuration::from_raw_parts(i64::MAX, 0);
-
-        // Append one row, not exceeding capacity.
-        let mut chk = chk;
-        chk.append_float32(0, 12.4);
-        chk.append_string(1, "123");
-        chk.append_json(2, &json_obj);
-        chk.append_time(3, time_obj);
-        chk.append_duration(4, duration_obj);
-        assert_eq!(chk.memory_usage(), expected_usage);
-
-        // Append another row: only column 1 exceeds capacity.
-        chk.append_float32(0, 12.4);
-        chk.append_string(1, "123111111111111111111111111111111111111111111111");
-        chk.append_json(2, &json_obj);
-        chk.append_time(3, time_obj);
-        chk.append_duration(4, duration_obj);
-
-        let col1_data_capacity = chk.column(1).data.capacity() as i64;
-        let expected_usage = (0..chk.num_cols())
-            .map(|c| {
-                if c == 1 {
-                    PAYLOAD
-                        + chk.column(1).null_bitmap.capacity() as i64
-                        + (chk.column(1).offsets.capacity() * 8) as i64
-                        + col1_data_capacity
-                } else {
-                    column_usage(&chk.column(c))
-                }
-            })
-            .sum::<i64>();
-        assert_eq!(chk.memory_usage(), expected_usage);
-    }
-
-    /// Go `TestSwapColumn`: swapping columns between chunks (Go's unexported
-    /// `swapColumn`, expressed here through the column-handle take/set pair)
-    /// preserves every reference group.
-    #[test]
-    fn go_test_swap_column() {
-        let field_types = vec![FieldType::new(FieldTypeCode::Float); 3];
-
-        // chk1: column 1 refers to column 0.
-        let mut chk1 = Chunk::new_with_capacity(&field_types, 1);
-        chk1.append_float32(0, 1.0);
-        chk1.make_ref(0, 1);
-        chk1.append_float32(2, 3.0);
-
-        let mut chk2 = Chunk::new_with_capacity(&field_types, 1);
-        chk2.append_float32(0, 1.0);
-        chk2.make_ref(0, 1);
-        chk2.append_float32(2, 3.0);
-
-        assert!(chk1.columns_share_identity(0, &chk1, 1));
-        assert!(chk2.columns_share_identity(0, &chk2, 1));
-
-        let check_ref = |chk1: &Chunk, chk2: &Chunk| {
-            assert!(chk1.columns_share_identity(0, chk1, 1));
-            assert!(!chk1.columns_share_identity(0, chk2, 0));
-            assert!(chk2.columns_share_identity(0, chk2, 1));
-        };
-        check_ref(&chk1, &chk2);
-
-        // Swap two chunks' columns (Go's unexported `swapColumn`).
-        chk1.swap_column_with(0, &mut chk2, 0).expect("no selections");
-        check_ref(&chk1, &chk2);
-
-        chk1.swap_column_with(0, &mut chk2, 0).expect("no selections");
-        check_ref(&chk1, &chk2);
-
-        // Swap reference and referenced columns within one chunk.
-        fn swap_within(chunk: &mut Chunk, left: usize, right: usize) {
-            chunk.swap_column(left, right).expect("no selections");
-        }
-        swap_within(&mut chk2, 1, 0);
-        check_ref(&chk1, &chk2);
-
-        swap_within(&mut chk2, 1, 1);
-        check_ref(&chk1, &chk2);
-
-        swap_within(&mut chk2, 1, 2);
-        check_ref(&chk1, &chk2);
-
-        swap_within(&mut chk2, 2, 0);
-        check_ref(&chk1, &chk2);
-    }
-
-    /// Go `TestAppendSel`: a set selection counts only selected rows, appends
-    /// extend the selection, and `Sel` exposes it.
-    #[test]
-    fn go_test_append_sel() {
-        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-        let mut chk = Chunk::new_with_capacity(&fields, 1024);
-        let mut sel = Vec::with_capacity(512);
-        for i in 0..512i64 {
-            chk.append_int64(0, i);
-            if i % 2 == 0 {
-                sel.push(i as usize);
+#[cfg(test)]
+fn new_chunk_with_elem_lens(elem_lens: &[i64]) -> Chunk {
+    let columns = elem_lens
+        .iter()
+        .map(|&l| {
+            if l > 0 {
+                Column::new_fixed_len(l as usize, 0)
+            } else {
+                Column::new_var_len(0)
             }
-        }
-        chk.set_sel(Some(sel));
-        assert_eq!(chk.num_rows(), 256);
-        chk.append_int64(0, 1);
-        assert_eq!(chk.num_rows(), 257);
-        let sel = chk.sel().expect("selection is set");
-        assert_eq!(sel[sel.len() - 1], 512);
-    }
+        })
+        .collect();
+    Chunk::from_reusable_columns(columns, 0, 0)
+}
 
-    /// Go `TestMakeRefTo`: cross-chunk references alias both ways.
-    #[test]
-    fn go_test_make_ref_to() {
-        let fields = vec![FieldType::new(FieldTypeCode::Float); 2];
-
-        let mut chk1 = Chunk::new_with_capacity(&fields, 1);
-        chk1.append_float32(0, 1.0);
-        chk1.append_float32(1, 3.0);
-
-        let mut chk2 = Chunk::new_with_capacity(&fields, 1);
-        chk2.make_ref_to(0, &mut chk1, 1).expect("no selections");
-        chk2.make_ref_to(1, &mut chk1, 0).expect("no selections");
-
-        assert!(chk1.columns_share_identity(1, &chk2, 0));
-        assert!(chk1.columns_share_identity(0, &chk2, 1));
-    }
-
-    /// Go `TestAppendRows`: batch-appending collected rows reproduces every
-    /// cell of the source chunk.
-    #[test]
-    fn go_test_append_rows() {
-        let num_rows = 10usize;
-        let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
-        for i in 0..num_rows {
-            append_format_row(&mut chk, i, "row");
-        }
-        assert_eq!(chk.num_cols(), 6);
-        assert_eq!(chk.num_rows(), num_rows);
-
-        let mut chk2 = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
-        let rows: Vec<_> = (0..num_rows).map(|i| chk.get_row(i)).collect();
-        chk2.append_rows(&rows);
-        for i in 0..num_rows {
-            assert_format_row(&chk2.get_row(i), i);
-        }
-    }
-
-    fn append_format_row(chk: &mut Chunk, i: usize, _tag: &str) {
+/// Go `TestAppendRow`: every append/get family round-trips; a row copied
+/// chunk-to-chunk is column-for-column equal; partial rows, projections
+/// by column index, reset reuse, and float32 cells all match the source.
+#[test]
+fn go_test_append_row() {
+    let num_cols = 6usize;
+    let num_rows = 10usize;
+    let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
+    for i in 0..num_rows {
         chk.append_null(0);
         chk.append_int64(1, i as i64);
         let s = format!("{i}.12345");
@@ -2348,95 +1860,673 @@ mod tests {
             .to_my_decimal()
             .expect("valid decimal");
         chk.append_my_decimal(4, &dec);
-        chk.append_json(5, &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap());
+        chk.append_json(
+            5,
+            &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap(),
+        );
     }
-
-    fn assert_format_row(row: &crate::row::Row<'_>, i: usize) {
+    assert_eq!(chk.num_cols(), num_cols);
+    assert_eq!(chk.num_rows(), num_rows);
+    for i in 0..num_rows {
+        let row = chk.get_row(i);
         let s = format!("{i}.12345");
         assert_eq!(row.get_int64(0), 0);
         assert!(row.is_null(0));
         assert_eq!(row.get_int64(1), i as i64);
+        assert!(!row.is_null(1));
         assert!(!row.is_null(2));
         assert_eq!(row.get_string(2).as_bytes(), s.as_bytes());
         assert!(!row.is_null(3));
         assert_eq!(row.get_bytes(3), s.as_bytes());
         assert!(!row.is_null(4));
-        let expected = tidb_datatype::Decimal::from_signed_literal(&s)
+        let expected_dec = tidb_datatype::Decimal::from_signed_literal(&s)
             .to_my_decimal()
             .expect("valid decimal");
-        assert_eq!(row.get_my_decimal(4), expected);
+        assert_eq!(row.get_my_decimal(4), expected_dec);
         assert!(!row.is_null(5));
         assert_eq!(row.get_json(5).to_string(), format!("\"{s}\""));
     }
 
-    /// Go `TestAppendRowsByColIdxs`: projected batch append returns the wide
-    /// row count and reorders the selected columns.
-    #[test]
-    fn go_test_append_rows_by_col_idxs() {
-        let num_rows = 10usize;
-        let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
-        for i in 0..num_rows {
-            append_format_row(&mut chk, i, "row");
-        }
-        assert_eq!(chk.num_cols(), 6);
-        assert_eq!(chk.num_rows(), num_rows);
-
-        let cols_idx = [5usize, 3, 4];
-        let mut chk2 = new_chunk_with_elem_lens(&[0, 0, MY_DECIMAL_STRUCT_SIZE]);
-        let rows: Vec<_> = (0..num_rows).map(|i| chk.get_row(i)).collect();
-        let wide = chk2.append_rows_by_col_idxs(&rows, Some(&cols_idx));
-        assert_eq!(chk2.num_rows(), 10);
-        assert_eq!(wide, num_rows * cols_idx.len());
-
-        for i in 0..num_rows {
-            let row = chk2.get_row(i);
-            let s = format!("{i}.12345");
-            assert!(!row.is_null(0));
-            assert_eq!(row.get_json(0).to_string(), format!("\"{s}\""));
-            assert!(!row.is_null(1));
-            assert_eq!(row.get_bytes(1), s.as_bytes());
-            assert!(!row.is_null(2));
-            let expected = tidb_datatype::Decimal::from_signed_literal(&s)
-                .to_my_decimal()
-                .expect("valid decimal");
-            assert_eq!(row.get_my_decimal(2), expected);
-        }
+    let mut chk2 = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
+    for i in 0..num_rows {
+        let row = chk.get_row(i);
+        chk2.append_row(row);
+    }
+    // Go nils both elemBufs before comparing: the one-element append
+    // scratch is not part of the observable column state.
+    for c in 0..num_cols {
+        let (a, b) = (chk.column(c), chk2.column(c));
+        assert_eq!(a.length(), b.length(), "column {c} length");
+        assert_eq!(a.null_bitmap, b.null_bitmap, "column {c} bitmap");
+        assert_eq!(a.offsets, b.offsets, "column {c} offsets");
+        assert_eq!(a.data.snapshot(), b.data.snapshot(), "column {c} data");
     }
 
-    /// Go `TestToString` (`pkg/util/chunk/chunk_test.go:711`): `Chunk.ToString`
-    /// renders one comma-space-separated line per row with a trailing newline,
-    /// formatting each cell through its field type (float, double, string,
-    /// zero DATE and zero DATETIME, int).
-    #[test]
-    fn go_test_to_string() {
-        use tidb_datatype::{CoreTime, TimeType};
+    // Test more types.
+    let mut chk = new_chunk_with_elem_lens(&[4, 8, SIZE_TIME, SIZE_TIME, 0, 0]);
+    let f32_val = 1.2f32;
+    chk.append_float32(0, f32_val);
+    let f64_val = 1.3f64;
+    chk.append_float64(1, f64_val);
+    let t_val = Time::new(
+        tidb_datatype::CoreTime::from_date(1970, 1, 2, 0, 0, 0, 0),
+        tidb_datatype::TimeType::Date,
+        0,
+    )
+    .expect("valid time");
+    chk.append_time(2, t_val);
+    let dur_val = MySqlDuration::from_nanoseconds(3600 * 1_000_000_000, 6).unwrap();
+    chk.append_duration(3, dur_val);
+    let enum_val = tidb_datatype::MysqlEnum::new("abc", 100);
+    chk.append_enum(4, &enum_val);
+    let set_val = tidb_datatype::MysqlSet::new("def", 101);
+    chk.append_set(5, &set_val);
 
-        let field_types = vec![
-            FieldType::new(FieldTypeCode::Float),
-            FieldType::new(FieldTypeCode::Double),
-            FieldType::new(FieldTypeCode::VarString),
-            FieldType::new(FieldTypeCode::Date),
-            FieldType::new(FieldTypeCode::LongLong),
-        ];
+    let row = chk.get_row(0);
+    assert_eq!(row.get_float32(0), f32_val);
+    assert_eq!(row.get_time(2).compare(t_val), std::cmp::Ordering::Equal);
+    assert_eq!(row.get_duration(3, 0).nanoseconds(), dur_val.nanoseconds());
+    assert_eq!(row.get_enum(4), enum_val);
+    assert_eq!(row.get_set(5), set_val);
 
-        let mut chk = Chunk::new_with_capacity(&field_types, 2);
-        let zero_date = Time::new(CoreTime::default(), TimeType::Date, 0).unwrap();
-        let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+    // AppendPartialRow can append a row with different number of columns.
+    let fields_two = vec![FieldType::new(FieldTypeCode::LongLong); 2];
+    let fields_one = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let mut chk = Chunk::new_with_capacity(&fields_two, 2);
+    let mut chk2 = Chunk::new_with_capacity(&fields_one, 2);
+    chk2.append_int64(0, 1);
+    chk2.append_int64(0, -1);
+    chk.append_partial_row(0, chk2.get_row(0));
+    chk.append_partial_row(1, chk2.get_row(0));
+    assert_eq!(chk.get_row(0).get_int64(0), 1);
+    assert_eq!(chk.get_row(0).get_int64(1), 1);
+    assert_eq!(chk.num_rows(), 1);
 
-        chk.append_float32(0, 1.0);
-        chk.append_float64(1, 1.0);
-        chk.append_string(2, "1");
-        chk.append_time(3, zero_date);
-        chk.append_int64(4, 1);
+    // AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection.
+    let fields_four = vec![FieldType::new(FieldTypeCode::LongLong); 4];
+    let mut chk = Chunk::new_with_capacity(&fields_two, 8);
+    let mut source = Chunk::new_with_capacity(&fields_four, 4);
+    for column in 0..4usize {
+        source.append_int64(column, column as i64);
+    }
+    let row = source.get_row(0);
+    chk.append_row_by_col_idxs(row, Some(&[3]));
+    chk.append_row_by_col_idxs(row, Some(&[1]));
+    chk.append_row_by_col_idxs(row, Some(&[]));
+    assert_eq!(
+        chk.column_mut(0).with_int64s_mut(|values| values.to_vec()),
+        vec![3, 1]
+    );
+    assert_eq!(chk.num_virtual_rows(), 3);
+    chk.append_partial_row_by_col_idxs(1, row, Some(&[2]));
+    chk.append_partial_row_by_col_idxs(1, row, Some(&[0]));
+    chk.append_partial_row_by_col_idxs(0, row, Some(&[1, 3]));
+    assert_eq!(
+        chk.column_mut(0).with_int64s_mut(|values| values.to_vec()),
+        vec![3, 1, 1]
+    );
+    assert_eq!(
+        chk.column_mut(1).with_int64s_mut(|values| values.to_vec()),
+        vec![2, 0, 3]
+    );
+    assert_eq!(chk.num_virtual_rows(), 3);
 
-        chk.append_float32(0, 2.0);
-        chk.append_float64(1, 2.0);
-        chk.append_string(2, "2");
-        chk.append_time(3, zero_datetime);
-        chk.append_int64(4, 2);
+    // Test Reset.
+    let fields_str = vec![FieldType::new(FieldTypeCode::VarString)];
+    let mut chk = Chunk::new_with_capacity(&fields_str, 0);
+    chk.append_string(0, "abcd");
+    chk.reset();
+    chk.append_string(0, "def");
+    assert_eq!(chk.get_row(0).get_string(0).as_bytes(), b"def");
+    assert_eq!(chk.num_rows(), 1);
 
+    // Test float32.
+    let fields_f32 = vec![FieldType::new(FieldTypeCode::Float)];
+    let mut chk = Chunk::new_with_capacity(&fields_f32, 0);
+    chk.append_float32(0, 1.0);
+    chk.append_float32(0, 1.0);
+    chk.append_float32(0, 1.0);
+    assert_eq!(chk.get_row(2).get_float32(0), 1.0f32);
+}
+
+/// Go `TestAppendChunk`: batch `Append` of a 2-row range, repeated and
+/// self-appended, produces exactly Go's bitmap/offsets/data state.
+#[test]
+fn go_test_append_chunk() {
+    let field_types = vec![
+        FieldType::new(FieldTypeCode::Float),
+        FieldType::new(FieldTypeCode::Varchar),
+        FieldType::new(FieldTypeCode::Json),
+    ];
+    let json_obj = tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
+    let encoded_len = json_obj.encoded().len();
+
+    let mut src = Chunk::new_with_capacity(&field_types, 32);
+    let mut dst = Chunk::new_with_capacity(&field_types, 32);
+
+    for _ in 0..2 {
+        src.append_float32(0, 12.8);
+        src.append_string(1, "abc");
+        src.append_json(2, &json_obj);
+        src.append_null(0);
+        src.append_null(1);
+        src.append_null(2);
+    }
+
+    for _ in 0..4 {
+        dst.append_range_from(&src, 0, 2);
+    }
+    // Go appends a range OF DST from DST itself: rows 2..6 and then the
+    // empty 6..6 range.
+    dst.append_own_range(2, 6);
+    dst.append_own_range(6, 6);
+
+    assert_eq!(dst.num_cols(), 3);
+    assert_eq!(dst.num_rows(), 12);
+
+    let col = dst.column(0);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(col.offsets.len(), 0);
+    assert_eq!(col.data.snapshot().len(), 4 * 12);
+    assert_eq!(col.elem_buffer_len(), 4);
+
+    let col = dst.column(1);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(
+        col.offsets,
+        vec![0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18]
+    );
+    assert_eq!(col.data.snapshot(), b"abcabcabcabcabcabc".to_vec());
+    assert!(col.elem_buf.is_none());
+
+    let col = dst.column(2);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(col.offsets.len(), 13);
+    assert_eq!(
+        col.data.snapshot().len(),
+        encoded_len * 6,
+        "six encoded JSON cells"
+    );
+    assert!(col.elem_buf.is_none());
+    for i in (0..12).step_by(2) {
+        let elem = dst.get_row(i).get_json(2);
         assert_eq!(
-            chk.to_string(&field_types).as_bytes(),
-            &b"1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n"[..]
+            tidb_datatype::compare_binary_json(&elem, &json_obj),
+            std::cmp::Ordering::Equal
         );
     }
+}
+
+/// Go `TestTruncateTo`: idempotent truncation keeps the state; dropping
+/// the last rows restores exactly the earlier bitmap/offsets/data; a
+/// truncated fixed column accepts new appends again.
+#[test]
+fn go_test_truncate_to() {
+    let field_types = vec![
+        FieldType::new(FieldTypeCode::Float),
+        FieldType::new(FieldTypeCode::Varchar),
+        FieldType::new(FieldTypeCode::Json),
+    ];
+    let json_obj = tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
+    let encoded_len = json_obj.encoded().len();
+
+    let mut src = Chunk::new_with_capacity(&field_types, 32);
+    for _ in 0..8 {
+        src.append_float32(0, 12.8);
+        src.append_string(1, "abc");
+        src.append_json(2, &json_obj);
+        src.append_null(0);
+        src.append_null(1);
+        src.append_null(2);
+    }
+
+    assert_eq!(src.num_rows(), 16);
+    src.truncate_to(16);
+    src.truncate_to(16);
+    assert_eq!(src.num_rows(), 16);
+    src.truncate_to(14);
+    assert_eq!(src.num_rows(), 14);
+    src.truncate_to(12);
+    assert_eq!(src.num_cols(), 3);
+    assert_eq!(src.num_rows(), 12);
+
+    let col = src.column(0);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(col.offsets.len(), 0);
+    assert_eq!(col.data.snapshot().len(), 4 * 12);
+    assert_eq!(col.elem_buffer_len(), 4);
+
+    let col = src.column(1);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(
+        col.offsets,
+        vec![0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18]
+    );
+    assert_eq!(col.data.snapshot(), b"abcabcabcabcabcabc".to_vec());
+    assert!(col.elem_buf.is_none());
+
+    let col = src.column(2);
+    assert_eq!(col.length(), 12);
+    assert_eq!(col.null_count(), 6);
+    assert_eq!(col.null_bitmap, vec![0b1010101, 0b0000101]);
+    assert_eq!(col.offsets.len(), 13);
+    assert_eq!(col.data.snapshot().len(), encoded_len * 6);
+    assert!(col.elem_buf.is_none());
+    for i in (0..12).step_by(2) {
+        let elem = src.get_row(i).get_json(2);
+        assert_eq!(
+            tidb_datatype::compare_binary_json(&elem, &json_obj),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    let fields_float = vec![FieldType::new(FieldTypeCode::Float)];
+    let mut chk = Chunk::new_with_capacity(&fields_float, 1);
+    chk.append_float32(0, 1.0);
+    chk.append_float32(0, 1.0);
+    chk.truncate_to(1);
+    assert_eq!(chk.num_rows(), 1);
+    chk.append_null(0);
+    assert!(chk.get_row(1).is_null(0));
+}
+
+/// Go `TestChunkSizeControl`: `RequiredRows`, `GrowAndReset`, `Renew`,
+/// clamped `SetRequiredRows`, and the `IsFull` boundary.
+#[test]
+fn go_test_chunk_size_control() {
+    let fields = vec![FieldType::new(FieldTypeCode::Long)];
+    let mut max_chunk_size = 10usize;
+    let mut chk = Chunk::new(&fields, max_chunk_size, max_chunk_size);
+    assert_eq!(chk.required_rows(), max_chunk_size);
+
+    for _ in 0..max_chunk_size {
+        chk.append_int64(0, 1);
+    }
+    max_chunk_size += max_chunk_size / 3;
+    chk.grow_and_reset(max_chunk_size);
+    assert_eq!(chk.required_rows(), max_chunk_size);
+
+    let max_chunk_size2 = max_chunk_size + max_chunk_size / 3;
+    let chk2 = chk.renew(max_chunk_size2);
+    assert_eq!(chk2.required_rows(), max_chunk_size2);
+
+    chk.reset();
+    for i in 1..max_chunk_size * 2 {
+        chk.set_required_rows(i as isize, max_chunk_size);
+        assert_eq!(chk.required_rows(), max_chunk_size.min(i));
+    }
+
+    chk.set_required_rows(1, max_chunk_size)
+        .set_required_rows(2, max_chunk_size)
+        .set_required_rows(3, max_chunk_size);
+    assert_eq!(chk.required_rows(), 3);
+
+    chk.set_required_rows(-1, max_chunk_size);
+    assert_eq!(chk.required_rows(), max_chunk_size);
+
+    chk.set_required_rows(5, max_chunk_size);
+    for _ in 0..4 {
+        chk.append_int64(0, 1);
+    }
+    assert_eq!(chk.num_rows(), 4);
+    assert!(!chk.is_full());
+
+    chk.append_int64(0, 1);
+    assert_eq!(chk.num_rows(), 5);
+    assert!(chk.is_full());
+
+    for _ in 0..3 {
+        chk.append_int64(0, 1);
+    }
+    assert_eq!(chk.num_rows(), 8);
+    assert!(chk.is_full());
+
+    chk.set_required_rows(max_chunk_size as isize, max_chunk_size);
+    assert_eq!(chk.num_rows(), 8);
+    assert!(!chk.is_full());
+}
+
+/// Go `TestGetDecimalDatum`: a REAL converted into DECIMAL(4,2), stored in
+/// a chunk and read back through `Row.GetDatum`, keeps the converted
+/// precision and scale.
+#[test]
+fn go_test_get_decimal_datum() {
+    use tidb_datatype::ConversionFlags;
+    let datum = Datum::Real(1.01);
+    let dec_type = FieldType::new(FieldTypeCode::NewDecimal)
+        .with_flen(4)
+        .with_decimal(2);
+    let converted = datum
+        .convert_to(&dec_type, ConversionFlags::default())
+        .expect("decimal conversion succeeds")
+        .value;
+    let dec_datum = match converted {
+        Datum::Decimal(dec) => dec,
+        other => panic!("expected a decimal datum, got {other:?}"),
+    };
+
+    let fields = vec![dec_type.clone()];
+    let mut chk = Chunk::new_with_capacity(&fields, 32);
+    chk.append_my_decimal(
+        0,
+        &dec_datum.to_my_decimal().expect("round-trips to MyDecimal"),
+    );
+    let dec_from_chk = chk.get_row(0).get_datum(0, &dec_type);
+    let from_chk = match &dec_from_chk {
+        Datum::Decimal(dec) => dec.clone(),
+        other => panic!("expected a decimal datum, got {other:?}"),
+    };
+    assert_eq!(
+        from_chk.precision_and_frac(),
+        dec_datum.precision_and_frac()
+    );
+}
+
+/// Go `TestChunkMemoryUsage`: `MemoryUsage` equals the per-column sum of
+/// bitmap/offsets/data/elem capacities plus the column payload, before and
+/// after rows land, and only the over-grown column's data capacity moves.
+#[test]
+fn go_test_chunk_memory_usage() {
+    const PAYLOAD: i64 = 112; // Go `unsafe.Sizeof(*chunk.Column{})`.
+    let field_types = vec![
+        FieldType::new(FieldTypeCode::Float),
+        FieldType::new(FieldTypeCode::Varchar),
+        FieldType::new(FieldTypeCode::Json),
+        FieldType::new(FieldTypeCode::Datetime),
+        FieldType::new(FieldTypeCode::Duration),
+    ];
+    let init_cap = 10usize;
+    let chk = Chunk::new_with_capacity(&field_types, init_cap);
+
+    // cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf).
+    let column_usage = |column: &crate::column::Column| -> i64 {
+        PAYLOAD
+            + column.null_bitmap.capacity() as i64
+            + (column.offsets.capacity() * 8) as i64
+            + column.data.capacity() as i64
+            + column.elem_buf.as_ref().map_or(0, Vec::capacity) as i64
+    };
+    let expected_usage: i64 = (0..chk.num_cols())
+        .map(|c| column_usage(&chk.column(c)))
+        .sum();
+    // Empty chunk with initial capacity.
+    assert_eq!(chk.memory_usage(), expected_usage);
+    let initial_used_memory = chk.used_memory_usage();
+    assert!(initial_used_memory < chk.memory_usage());
+
+    let json_obj = tidb_datatype::BinaryJSON::parse("1").expect("valid JSON");
+    let time_obj = Time::new(
+        tidb_datatype::CoreTime::from_date(2026, 8, 22, 12, 0, 0, 0),
+        tidb_datatype::TimeType::DateTime,
+        0,
+    )
+    .expect("valid time");
+    let duration_obj = MySqlDuration::from_raw_parts(i64::MAX, 0);
+
+    // Append one row, not exceeding capacity.
+    let mut chk = chk;
+    chk.append_float32(0, 12.4);
+    chk.append_string(1, "123");
+    chk.append_json(2, &json_obj);
+    chk.append_time(3, time_obj);
+    chk.append_duration(4, duration_obj);
+    assert_eq!(chk.memory_usage(), expected_usage);
+
+    // Append another row: only column 1 exceeds capacity.
+    chk.append_float32(0, 12.4);
+    chk.append_string(1, "123111111111111111111111111111111111111111111111");
+    chk.append_json(2, &json_obj);
+    chk.append_time(3, time_obj);
+    chk.append_duration(4, duration_obj);
+
+    let col1_data_capacity = chk.column(1).data.capacity() as i64;
+    let expected_usage = (0..chk.num_cols())
+        .map(|c| {
+            if c == 1 {
+                PAYLOAD
+                    + chk.column(1).null_bitmap.capacity() as i64
+                    + (chk.column(1).offsets.capacity() * 8) as i64
+                    + col1_data_capacity
+            } else {
+                column_usage(&chk.column(c))
+            }
+        })
+        .sum::<i64>();
+    assert_eq!(chk.memory_usage(), expected_usage);
+    assert!(chk.used_memory_usage() > initial_used_memory);
+
+    let allocated_memory = chk.memory_usage();
+    chk.reset();
+    assert_eq!(chk.used_memory_usage(), initial_used_memory);
+    assert_eq!(chk.memory_usage(), allocated_memory);
+}
+
+/// Go `TestSwapColumn`: swapping columns between chunks (Go's unexported
+/// `swapColumn`, expressed here through the column-handle take/set pair)
+/// preserves every reference group.
+#[test]
+fn go_test_swap_column() {
+    let field_types = vec![FieldType::new(FieldTypeCode::Float); 3];
+
+    // chk1: column 1 refers to column 0.
+    let mut chk1 = Chunk::new_with_capacity(&field_types, 1);
+    chk1.append_float32(0, 1.0);
+    chk1.make_ref(0, 1);
+    chk1.append_float32(2, 3.0);
+
+    let mut chk2 = Chunk::new_with_capacity(&field_types, 1);
+    chk2.append_float32(0, 1.0);
+    chk2.make_ref(0, 1);
+    chk2.append_float32(2, 3.0);
+
+    assert!(chk1.columns_share_identity(0, &chk1, 1));
+    assert!(chk2.columns_share_identity(0, &chk2, 1));
+
+    let check_ref = |chk1: &Chunk, chk2: &Chunk| {
+        assert!(chk1.columns_share_identity(0, chk1, 1));
+        assert!(!chk1.columns_share_identity(0, chk2, 0));
+        assert!(chk2.columns_share_identity(0, chk2, 1));
+    };
+    check_ref(&chk1, &chk2);
+
+    // Swap two chunks' columns (Go's unexported `swapColumn`).
+    chk1.swap_column_with(0, &mut chk2, 0)
+        .expect("no selections");
+    check_ref(&chk1, &chk2);
+
+    chk1.swap_column_with(0, &mut chk2, 0)
+        .expect("no selections");
+    check_ref(&chk1, &chk2);
+
+    // Swap reference and referenced columns within one chunk.
+    fn swap_within(chunk: &mut Chunk, left: usize, right: usize) {
+        chunk.swap_column(left, right).expect("no selections");
+    }
+    swap_within(&mut chk2, 1, 0);
+    check_ref(&chk1, &chk2);
+
+    swap_within(&mut chk2, 1, 1);
+    check_ref(&chk1, &chk2);
+
+    swap_within(&mut chk2, 1, 2);
+    check_ref(&chk1, &chk2);
+
+    swap_within(&mut chk2, 2, 0);
+    check_ref(&chk1, &chk2);
+}
+
+/// Go `TestAppendSel`: a set selection counts only selected rows, appends
+/// extend the selection, and `Sel` exposes it.
+#[test]
+fn go_test_append_sel() {
+    let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut sel = Vec::with_capacity(512);
+    for i in 0..512i64 {
+        chk.append_int64(0, i);
+        if i % 2 == 0 {
+            sel.push(i as usize);
+        }
+    }
+    chk.set_sel(Some(sel));
+    assert_eq!(chk.num_rows(), 256);
+    chk.append_int64(0, 1);
+    assert_eq!(chk.num_rows(), 257);
+    let sel = chk.sel().expect("selection is set");
+    assert_eq!(sel[sel.len() - 1], 512);
+}
+
+/// Go `TestMakeRefTo`: cross-chunk references alias both ways.
+#[test]
+fn go_test_make_ref_to() {
+    let fields = vec![FieldType::new(FieldTypeCode::Float); 2];
+
+    let mut chk1 = Chunk::new_with_capacity(&fields, 1);
+    chk1.append_float32(0, 1.0);
+    chk1.append_float32(1, 3.0);
+
+    let mut chk2 = Chunk::new_with_capacity(&fields, 1);
+    chk2.make_ref_to(0, &mut chk1, 1).expect("no selections");
+    chk2.make_ref_to(1, &mut chk1, 0).expect("no selections");
+
+    assert!(chk1.columns_share_identity(1, &chk2, 0));
+    assert!(chk1.columns_share_identity(0, &chk2, 1));
+}
+
+/// Go `TestAppendRows`: batch-appending collected rows reproduces every
+/// cell of the source chunk.
+#[test]
+fn go_test_append_rows() {
+    let num_rows = 10usize;
+    let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
+    for i in 0..num_rows {
+        append_format_row(&mut chk, i, "row");
+    }
+    assert_eq!(chk.num_cols(), 6);
+    assert_eq!(chk.num_rows(), num_rows);
+
+    let mut chk2 = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
+    let rows: Vec<_> = (0..num_rows).map(|i| chk.get_row(i)).collect();
+    chk2.append_rows(&rows);
+    for i in 0..num_rows {
+        assert_format_row(&chk2.get_row(i), i);
+    }
+}
+
+#[cfg(test)]
+fn append_format_row(chk: &mut Chunk, i: usize, _tag: &str) {
+    chk.append_null(0);
+    chk.append_int64(1, i as i64);
+    let s = format!("{i}.12345");
+    chk.append_string(2, s.as_str());
+    chk.append_bytes(3, s.as_bytes());
+    let dec = tidb_datatype::Decimal::from_signed_literal(&s)
+        .to_my_decimal()
+        .expect("valid decimal");
+    chk.append_my_decimal(4, &dec);
+    chk.append_json(
+        5,
+        &tidb_datatype::BinaryJSON::parse(&format!("\"{s}\"")).unwrap(),
+    );
+}
+
+#[cfg(test)]
+fn assert_format_row(row: &crate::row::Row<'_>, i: usize) {
+    let s = format!("{i}.12345");
+    assert_eq!(row.get_int64(0), 0);
+    assert!(row.is_null(0));
+    assert_eq!(row.get_int64(1), i as i64);
+    assert!(!row.is_null(2));
+    assert_eq!(row.get_string(2).as_bytes(), s.as_bytes());
+    assert!(!row.is_null(3));
+    assert_eq!(row.get_bytes(3), s.as_bytes());
+    assert!(!row.is_null(4));
+    let expected = tidb_datatype::Decimal::from_signed_literal(&s)
+        .to_my_decimal()
+        .expect("valid decimal");
+    assert_eq!(row.get_my_decimal(4), expected);
+    assert!(!row.is_null(5));
+    assert_eq!(row.get_json(5).to_string(), format!("\"{s}\""));
+}
+
+/// Go `TestAppendRowsByColIdxs`: projected batch append returns the wide
+/// row count and reorders the selected columns.
+#[test]
+fn go_test_append_rows_by_col_idxs() {
+    let num_rows = 10usize;
+    let mut chk = new_chunk_with_elem_lens(&[8, 8, 0, 0, MY_DECIMAL_STRUCT_SIZE, 0]);
+    for i in 0..num_rows {
+        append_format_row(&mut chk, i, "row");
+    }
+    assert_eq!(chk.num_cols(), 6);
+    assert_eq!(chk.num_rows(), num_rows);
+
+    let cols_idx = [5usize, 3, 4];
+    let mut chk2 = new_chunk_with_elem_lens(&[0, 0, MY_DECIMAL_STRUCT_SIZE]);
+    let rows: Vec<_> = (0..num_rows).map(|i| chk.get_row(i)).collect();
+    let wide = chk2.append_rows_by_col_idxs(&rows, Some(&cols_idx));
+    assert_eq!(chk2.num_rows(), 10);
+    assert_eq!(wide, num_rows * cols_idx.len());
+
+    for i in 0..num_rows {
+        let row = chk2.get_row(i);
+        let s = format!("{i}.12345");
+        assert!(!row.is_null(0));
+        assert_eq!(row.get_json(0).to_string(), format!("\"{s}\""));
+        assert!(!row.is_null(1));
+        assert_eq!(row.get_bytes(1), s.as_bytes());
+        assert!(!row.is_null(2));
+        let expected = tidb_datatype::Decimal::from_signed_literal(&s)
+            .to_my_decimal()
+            .expect("valid decimal");
+        assert_eq!(row.get_my_decimal(2), expected);
+    }
+}
+
+/// Go `TestToString` (`pkg/util/chunk/chunk_test.go:711`): `Chunk.ToString`
+/// renders one comma-space-separated line per row with a trailing newline,
+/// formatting each cell through its field type (float, double, string,
+/// zero DATE and zero DATETIME, int).
+#[test]
+fn go_test_to_string() {
+    use tidb_datatype::{CoreTime, TimeType};
+
+    let field_types = vec![
+        FieldType::new(FieldTypeCode::Float),
+        FieldType::new(FieldTypeCode::Double),
+        FieldType::new(FieldTypeCode::VarString),
+        FieldType::new(FieldTypeCode::Date),
+        FieldType::new(FieldTypeCode::LongLong),
+    ];
+
+    let mut chk = Chunk::new_with_capacity(&field_types, 2);
+    let zero_date = Time::new(CoreTime::default(), TimeType::Date, 0).unwrap();
+    let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+
+    chk.append_float32(0, 1.0);
+    chk.append_float64(1, 1.0);
+    chk.append_string(2, "1");
+    chk.append_time(3, zero_date);
+    chk.append_int64(4, 1);
+
+    chk.append_float32(0, 2.0);
+    chk.append_float64(1, 2.0);
+    chk.append_string(2, "2");
+    chk.append_time(3, zero_datetime);
+    chk.append_int64(4, 2);
+
+    assert_eq!(
+        chk.to_string(&field_types).as_bytes(),
+        &b"1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n"[..]
+    );
+}

@@ -16,7 +16,7 @@
 //! `LogicalMemTable`, the memory / virtual table scan.
 //!
 //! SEED of `pkg/planner/core`. `LogicalMemTable` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! The crate's `logical_mem_table` identity leaf is KEPT rather than merged:
 //! `difftests/planner-tests/tests/logical_mem_table.rs` consumes its
@@ -104,6 +104,8 @@ pub const PRUNABLE_MEM_TABLES: &[&str] = &[
     "CLUSTER_DEADLOCKS",
     // `infoschema.TableTables`
     "TABLES",
+    // `infoschema.TablePartitions`
+    "PARTITIONS",
 ];
 
 /// What the ported `LogicalMemTable` bodies read off a `*model.ColumnInfo`.
@@ -196,7 +198,9 @@ impl LogicalMemTable {
     /// (`logical_mem_table.go:80`); see [`PRUNABLE_MEM_TABLES`].
     #[must_use]
     pub fn is_prunable(&self) -> bool {
-        PRUNABLE_MEM_TABLES.contains(&self.table_name.as_str())
+        PRUNABLE_MEM_TABLES
+            .iter()
+            .any(|name| self.table_name.eq_ignore_ascii_case(name))
     }
 
     /// The rest of `LogicalMemTable.PruneColumns` (`logical_mem_table.go:98`):

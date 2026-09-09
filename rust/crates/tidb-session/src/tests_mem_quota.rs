@@ -94,6 +94,44 @@ fn cursor_authority_is_captured_before_set_var_restoration() {
 }
 
 #[test]
+fn prepared_server_result_retains_the_executing_statement_authority() {
+    let mut session = Session::new();
+    session.run("SET @@tidb_mem_quota_query = 4096").unwrap();
+    session.run("SET @@tidb_init_chunk_size = 16").unwrap();
+    session.run("SET @@tidb_max_chunk_size = 128").unwrap();
+
+    let sql = "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
+               SET_VAR(tidb_init_chunk_size=8) \
+               SET_VAR(tidb_max_chunk_size=64) */ 1";
+    let prepared = session.prepare_ast(sql).unwrap();
+    let bound = prepared.bind(&[]).unwrap();
+    let output = session.run_parsed_bound_owned_with_sql(bound, sql).unwrap();
+    assert!(matches!(output, StmtOutput::Rows { .. }));
+
+    // The cluster server asks for the authority after the session call has
+    // returned. It must receive the tracker and chunk policy that executed
+    // the statement, not rebuild them from the now-restored session vars.
+    let (memory, init_chunk_size, max_chunk_size) =
+        session.result_materialization_authority().into_parts();
+    assert_eq!(memory.quota(), 97);
+    assert_eq!(init_chunk_size, 8);
+    assert_eq!(max_chunk_size, 64);
+
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_quota_query").as_deref(),
+        Some("4096")
+    );
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_init_chunk_size").as_deref(),
+        Some("16")
+    );
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_max_chunk_size").as_deref(),
+        Some("128")
+    );
+}
+
+#[test]
 fn an_ordinary_statement_is_nowhere_near_the_default_quota() {
     let mut session = ordered_session();
     let rows = crate::tests_support::row_text(session.run("SELECT a FROM t ORDER BY b"));

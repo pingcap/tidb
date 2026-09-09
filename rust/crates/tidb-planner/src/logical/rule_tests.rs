@@ -22,8 +22,11 @@
 //! decisions directly on hand-built plans: which node ends up where, which
 //! predicate travels how far, which column survives.
 
+use std::cell::RefCell;
+
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
@@ -35,33 +38,59 @@ use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 
 use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT};
+use super::apply::LogicalApply;
 use super::data_source::DataSource;
 use super::fold::{fold_owned, Descend, OwnedRewrite};
 use super::join::LogicalJoin;
 use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
 use super::rule::{
-    self, add_selection, flags, logical_optimize, BuildKeySolver, ColumnPruner,
-    DisabledLogicalRules, LogicalOptRule, PpdSolver, PushDownTopNOptimizer, RuleContext, RuleId,
-    OPT_RULE_FLAGS, OPT_RULE_LIST,
+    self, add_selection, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver,
+    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PlanCacheMarker, PpdSolver,
+    PushDownTopNOptimizer, RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
 };
+use super::rule_partition_processor::{PartitionProcessor, PartitionPruning};
 use super::selection::LogicalSelection;
 use super::sort::LogicalSort;
 use super::topn::LogicalTopN;
-use super::{BaseLogicalPlan, LogicalPlan};
+use super::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalUnionScan};
 
 pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
 
 /// A [`RuleContext`] over a caller-owned allocator, for tests elsewhere in the
 /// crate as well as this file.
 pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
+    static COLUMN_ALLOCATOR: crate::expression_rewriter::ColumnIdAllocator =
+        crate::expression_rewriter::ColumnIdAllocator::new();
     RuleContext {
         allocator,
+        column_allocator: &COLUMN_ALLOCATOR,
         builder: &TEST_BUILDER,
+        eval_context: &tidb_expr::NoColumns,
         use_plan_cache: false,
+        plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
+        statistics_load: None,
+        partition_pruning: None,
+        opt_index_prune_threshold: 20,
+        range_max_size: 0,
+        selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
+        range_fallback_handler: None,
+        always_keep_join_key: true,
+        enable_unsafe_substitute: false,
+        enable_semi_join_rewrite: false,
+        enable_no_decorrelate_in_select: false,
+        join_reorder_threshold: 0,
+        allow_agg_push_down: false,
+        advanced_join_reorder: true,
+        cartesian_join_order_threshold: 0.0,
+        join_reorder_through_proj: false,
+        join_reorder_through_sel: false,
+        outer_join_reorder: true,
+        advanced_join_hint: true,
+        hint_warning_sink: None,
     }
 }
 
@@ -97,12 +126,39 @@ fn eq_const(id: i64, value: i64) -> Expression {
     ))
 }
 
+fn not_ne_const(id: i64, value: i64) -> Expression {
+    let not_equal = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("ne"),
+        int_type(),
+        vec![
+            col_expr(id),
+            Expression::Constant(Constant::new(Datum::Int(value), int_type())),
+        ],
+    ));
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("not"),
+        int_type(),
+        vec![not_equal],
+    ))
+}
+
 /// `col(left) = col(right)`, the shape that becomes an `EqualCondition`.
 fn eq_cols(left: i64, right: i64) -> Expression {
     Expression::ScalarFunction(ScalarFunction::new(
         CiString::new("eq"),
         int_type(),
         vec![col_expr(left), col_expr(right)],
+    ))
+}
+
+fn gt_const(id: i64, value: i64) -> Expression {
+    Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("gt"),
+        int_type(),
+        vec![
+            col_expr(id),
+            Expression::Constant(Constant::new(Datum::Int(value), int_type())),
+        ],
     ))
 }
 
@@ -335,7 +391,9 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
 
     let flag = flags::PRUNE_COLUMNS
         | flags::BUILD_KEY_INFO
+        | flags::CONSTANT_PROPAGATION
         | flags::PREDICATE_PUSH_DOWN
+        | flags::PREDICATE_SIMPLIFICATION
         | flags::PUSH_DOWN_TOPN
         | flags::ELIMINATE_AGG;
     let outcome = logical_optimize(&ctx, flag, topn).expect("no rule fails on this plan");
@@ -344,16 +402,15 @@ fn logical_optimize_runs_the_ported_rules_in_order_and_reports_the_rest() {
         vec![
             RuleId::ColumnPruner,
             RuleId::BuildKeySolver,
+            RuleId::AggregationEliminator,
+            RuleId::ConstantPropagationSolver,
             RuleId::PpdSolver,
+            RuleId::PredicateSimplification,
             RuleId::PushDownTopNOptimizer,
         ],
         "Go's execution order, not the flag-bit order"
     );
-    assert_eq!(
-        outcome.skipped,
-        vec![RuleId::AggregationEliminator],
-        "an unported rule is reported, never silently treated as a no-op"
-    );
+    assert!(outcome.skipped.is_empty());
     outcome.plan.dismantle();
 }
 
@@ -369,17 +426,89 @@ fn logical_optimize_honours_the_flag_mask() {
 }
 
 #[test]
+fn aggregation_elimination_requires_the_complete_strong_unique_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut source_schema = schema_of(&[1, 2, 3]);
+    source_schema.pk_or_uk = vec![vec![column(1), column(2)]];
+    let source = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(source_schema)),
+        1,
+        "t",
+    ));
+    let count = tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: AGG_FUNC_COUNT.to_owned(),
+            args: vec![col_expr(3)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let mut aggregation = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![count],
+        vec![col_expr(1), col_expr(2)],
+    ));
+    aggregation.set_children(vec![source]);
+
+    let outcome = logical_optimize(&ctx, flags::ELIMINATE_AGG, aggregation)
+        .expect("aggregation elimination must build the replacement projection");
+    assert!(matches!(outcome.plan, LogicalPlan::Projection(_)));
+    outcome.plan.dismantle();
+
+    let mut incomplete_schema = schema_of(&[1, 2, 3]);
+    incomplete_schema.pk_or_uk = vec![vec![column(1), column(2)]];
+    let source = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(incomplete_schema)),
+        1,
+        "t",
+    ));
+    let count = tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: AGG_FUNC_COUNT.to_owned(),
+            args: vec![col_expr(3)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let mut aggregation = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![count],
+        vec![col_expr(1)],
+    ));
+    aggregation.set_children(vec![source]);
+    let outcome = logical_optimize(&ctx, flags::ELIMINATE_AGG, aggregation)
+        .expect("an ineligible aggregation remains intact");
+    assert!(matches!(outcome.plan, LogicalPlan::Aggregation(_)));
+    outcome.plan.dismantle();
+}
+
+#[test]
 fn every_ported_rule_names_itself_as_go_does() {
     assert_eq!(ColumnPruner.name(), RuleId::ColumnPruner.name());
     assert_eq!(BuildKeySolver.name(), RuleId::BuildKeySolver.name());
+    assert_eq!(
+        super::rule_constant_propagation::ConstantPropagationSolver.name(),
+        RuleId::ConstantPropagationSolver.name()
+    );
     assert_eq!(PpdSolver.name(), RuleId::PpdSolver.name());
+    assert_eq!(
+        super::rule_predicate_simplification::PredicateSimplification.name(),
+        RuleId::PredicateSimplification.name()
+    );
     assert_eq!(
         PushDownTopNOptimizer.name(),
         RuleId::PushDownTopNOptimizer.name()
     );
 }
 
-// ***** AddSelection and its simplification subset *****
+// ***** AddSelection and predicate simplification *****
 
 #[test]
 fn add_selection_returns_the_child_when_there_is_nothing_to_filter() {
@@ -392,7 +521,7 @@ fn add_selection_returns_the_child_when_there_is_nothing_to_filter() {
 }
 
 #[test]
-fn add_selection_drops_a_condition_the_simplification_subset_deletes() {
+fn add_selection_drops_a_true_condition() {
     // Go's `constraint.DeleteTrueExprs`: `WHERE TRUE` filters nothing, so the
     // whole `LogicalSelection` never appears.
     let allocator = PlanIdAllocator::new();
@@ -450,11 +579,231 @@ fn add_selection_leaves_an_already_empty_dual_alone() {
 }
 
 #[test]
-fn the_simplification_subset_keeps_what_it_cannot_decide() {
+fn predicate_simplification_keeps_a_nonconstant_condition() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let kept = rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()]);
+    let kept =
+        rule::apply_predicate_simplification(&ctx, vec![eq_const(1, 7), const_true()], false, None);
     assert_eq!(kept.len(), 1, "only the constant TRUE is deleted");
+}
+
+#[test]
+fn ordinary_predicate_simplification_forwards_the_validity_filter() {
+    fn is_gt_on_column(condition: &Expression, id: i64) -> bool {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(_)]
+                if function.func_name.lowercase() == "gt" && column.unique_id == id
+        )
+    }
+
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let conditions = rule::apply_predicate_simplification(
+        &ctx,
+        vec![eq_cols(1, 2), gt_const(1, 7)],
+        true,
+        Some(&|_| false),
+    );
+
+    assert!(conditions
+        .iter()
+        .any(|condition| is_gt_on_column(condition, 1)));
+    assert!(
+        !conditions.iter().any(|condition| is_gt_on_column(condition, 2)),
+        "Go forwards the validity filter to constant propagation, so it rejects the derived predicate"
+    );
+}
+
+#[test]
+fn convert_outer_to_inner_join_uses_the_parent_selection_predicate() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![left, right]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![eq_const(2, 7)],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, changed) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    assert!(!changed, "pinned Go keeps planChanged false");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the converted Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_preserves_a_non_null_rejecting_outer_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("isnull"),
+        int_type(),
+        vec![col_expr(2)],
+    ));
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![is_null],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::LeftOuter);
+}
+
+#[test]
+fn convert_outer_to_inner_join_maps_predicates_through_projection() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[3]))),
+        vec![col_expr(2)],
+    ));
+    projection.set_children(vec![join]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[3]))),
+        vec![gt_const(3, 0)],
+    ));
+    selection.set_children(vec![projection]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Projection(projection)] = selection.base.children() else {
+        panic!("expected the Projection below the Selection");
+    };
+    let [LogicalPlan::Join(join)] = projection.base.children() else {
+        panic!("expected the Join below the Projection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_propagates_parent_on_clause_to_nested_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut nested = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    ));
+    nested.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut parent = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    );
+    parent.other_conditions = vec![gt_const(2, 0)];
+    parent
+        .base
+        .set_children(vec![nested, data_source(&allocator, &[3])]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, LogicalPlan::Join(parent))
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Join(parent) = plan else {
+        panic!("expected the parent Join");
+    };
+    let [LogicalPlan::Join(nested), _] = parent.base.children() else {
+        panic!("expected the nested Join");
+    };
+    assert_eq!(nested.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_handles_right_outer_inner_side() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::RightOuter,
+    ));
+    join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+    let mut selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
+        vec![gt_const(1, 0)],
+    ));
+    selection.set_children(vec![join]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, selection)
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Selection(selection) = plan else {
+        panic!("the Selection must remain");
+    };
+    let [LogicalPlan::Join(join)] = selection.base.children() else {
+        panic!("expected the Join below the Selection");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::Inner);
+}
+
+#[test]
+fn convert_outer_to_inner_join_matches_go_promoted_apply_method() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut apply = LogicalApply::new(
+        base(&allocator, LogicalApply::TYPE, Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    apply.join.base.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+
+    let (plan, _) = super::rule_outer_to_inner_join::ConvertOuterToInnerJoin
+        .optimize(&ctx, LogicalPlan::Apply(apply))
+        .expect("outer-to-inner conversion succeeds");
+    let LogicalPlan::Join(join) = plan else {
+        panic!("Go's promoted LogicalJoin method returns its embedded Join receiver");
+    };
+    assert_eq!(join.join_type, LogicalJoinType::LeftOuter);
 }
 
 // ***** predicate pushdown, per operator *****
@@ -489,12 +838,11 @@ fn predicate_push_down_moves_a_selection_below_a_projection() {
     let out = push(&ctx, root);
     // Go's `LogicalProjection` arm rewrites the predicate through the
     // projection's expressions and hands it to the child; the DataSource
-    // records it in `AllConds`, which is the proof that it crossed. The
-    // Selection stays above because the narrowed DataSource arm claims
-    // nothing as coprocessor-pushable — see that arm's note in `rewrite.rs`.
-    assert!(matches!(out, LogicalPlan::Selection(_)));
-    let projection = &out.children()[0];
-    assert!(matches!(projection, LogicalPlan::Projection(_)));
+    // records it in `AllConds`, which is the proof that it crossed. Equality
+    // is in TiKV's expression catalogue, so the Selection disappears and the
+    // predicate is owned by the DataSource.
+    assert!(matches!(out, LogicalPlan::Projection(_)));
+    let projection = &out;
     let LogicalPlan::DataSource(source) = &projection.children()[0] else {
         panic!("expected a DataSource under the Projection");
     };
@@ -528,6 +876,52 @@ fn predicate_push_down_does_not_cross_a_limit() {
         matches!(out.children()[0].children()[0], LogicalPlan::DataSource(_)),
         "nothing was re-attached under the Limit"
     );
+    out.dismantle();
+}
+
+/// Go `BaseLogicalPlan.PredicatePushDown`'s tail (`base_logical_plan.go:137`):
+/// a projection rewrites the predicate through its expressions, but when the
+/// CHILD refuses the result, the leftover is attached as a `Selection` above
+/// the child (below the projection), not above the projection. The substituted
+/// predicate references the child's columns, so leaving it above the
+/// projection would leave them unavailable.
+#[test]
+fn predicate_push_down_attaches_a_projection_leftover_below_the_projection() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    // Selection(a = 7) / Projection(a) / Limit / DataSource: the Limit
+    // forbids every condition.
+    let source = data_source(&allocator, &[1]);
+    let limit = unary(
+        &allocator,
+        "Limit",
+        LogicalPlan::Limit(LogicalLimit::new(base(&allocator, "Limit", None), 0, 10)),
+        source,
+    );
+    let projection = unary(
+        &allocator,
+        "Projection",
+        LogicalPlan::Projection(LogicalProjection::new(
+            base(&allocator, "Projection", Some(schema_of(&[1]))),
+            vec![col_expr(1)],
+        )),
+        limit,
+    );
+    let root = selection_over(&allocator, vec![eq_const(1, 7)], projection);
+
+    let out = push(&ctx, root);
+    assert!(
+        matches!(out, LogicalPlan::Projection(_)),
+        "the original Selection must disappear: {out:?}"
+    );
+    let LogicalPlan::Selection(selection) = &out.children()[0] else {
+        panic!("expected the leftover Selection below the Projection");
+    };
+    assert_eq!(selection.conditions.len(), 1);
+    assert!(matches!(
+        selection.base.children()[0],
+        LogicalPlan::Limit(_)
+    ));
     out.dismantle();
 }
 
@@ -576,12 +970,352 @@ fn predicate_push_down_splits_an_inner_join_condition_by_side() {
     );
     assert!(join.left_conditions.is_empty() && join.right_conditions.is_empty());
     for (side, child) in ["left", "right"].iter().zip(out.children()) {
+        let LogicalPlan::DataSource(source) = child else {
+            panic!("the {side} filter should be owned by its DataSource, got {child:?}");
+        };
         assert!(
-            matches!(child, LogicalPlan::Selection(_)),
-            "the {side} filter was re-attached as a Selection, got {child:?}"
+            !source.pushed_down_conds.is_empty(),
+            "the {side} source should carry its pushed predicate"
         );
     }
     out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_drops_not_is_null_for_a_not_null_child_column() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut left_schema = schema_of(&[1]);
+    left_schema.columns[0]
+        .ret_type
+        .as_mut()
+        .unwrap()
+        .add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    let left_column = left_schema.columns[0].clone();
+    let left = LogicalPlan::DataSource(DataSource::new(
+        base(&allocator, "DataSource", Some(left_schema)),
+        1,
+        "t",
+    ));
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    ));
+    join.set_children(vec![left, right]);
+    let is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("isnull"),
+        int_type(),
+        vec![Expression::Column(left_column)],
+    ));
+    let not_is_null = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("not"),
+        int_type(),
+        vec![is_null],
+    ));
+    let root = selection_over(&allocator, vec![not_is_null], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::DataSource(left) = &out.children()[0] else {
+        panic!("the left child should remain a DataSource")
+    };
+    assert!(
+        left.pushed_down_conds.is_empty(),
+        "Go deletes NOT(ISNULL(col)) after resolving a NOT NULL child column"
+    );
+    out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_propagates_a_constant_across_an_inner_join_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    let root = selection_over(&allocator, vec![eq_const(2, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(
+        join.equal_conditions.len(),
+        1,
+        "constant propagation must retain the cross-side equality as a join key"
+    );
+    for ((side, column_id), child) in [("left", 1), ("right", 2)].iter().zip(out.children()) {
+        let LogicalPlan::DataSource(source) = child else {
+            panic!("the {side} filter should be owned by its DataSource, got {child:?}");
+        };
+        assert!(
+            source.pushed_down_conds.iter().any(|condition| {
+                let Expression::ScalarFunction(function) = condition else {
+                    return false;
+                };
+                let [Expression::Column(column), Expression::Constant(constant)] =
+                    function.get_args()
+                else {
+                    return false;
+                };
+                function.func_name.lowercase() == "eq"
+                    && column.unique_id == *column_id
+                    && matches!(constant.value, Datum::Int(7))
+            }),
+            "Go PropagateConstantForJoin derives the equality filter on the {side} side"
+        );
+    }
+    out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_derives_an_inner_filter_for_a_left_outer_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    let root = selection_over(&allocator, vec![gt_const(1, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(join.equal_conditions.len(), 1);
+    let LogicalPlan::DataSource(inner) = &out.children()[1] else {
+        panic!("the inner filter should reach the right DataSource");
+    };
+    assert!(inner.pushed_down_conds.iter().any(|condition| {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(column), Expression::Constant(constant)]
+                if function.func_name.lowercase() == "gt"
+                    && column.unique_id == 2
+                    && matches!(constant.value, Datum::Int(7))
+        )
+    }));
+    out.dismantle();
+}
+
+/// Go `simplifyOuterJoin` (`logical_join.go:306`) runs at the top of
+/// `LogicalJoin.PredicatePushDown`: a WHERE predicate on the null-supplying
+/// side rejects the null-extended rows, so the outer join becomes inner and
+/// the predicate is attributed by the inner arm instead of staying above.
+#[test]
+fn predicate_push_down_turns_a_null_rejected_left_outer_join_into_an_inner_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    // `gt(col2, 7)` reads only the inner (right) side, so it null-rejects it.
+    let root = selection_over(&allocator, vec![gt_const(2, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(
+        join.join_type,
+        LogicalJoinType::Inner,
+        "a null-rejecting predicate on the inner side makes the outer join inner"
+    );
+    out.dismantle();
+}
+
+#[test]
+fn constant_propagation_pulls_a_projected_child_predicate_above_an_inner_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let source = data_source(&allocator, &[1]);
+    let selection = selection_over(&allocator, vec![eq_const(1, 7)], source);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[10]))),
+        vec![col_expr(1)],
+    ));
+    projection.set_children(vec![selection]);
+    let right = data_source(&allocator, &[20]);
+    let mut join = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[10, 20]))),
+        LogicalJoinType::Inner,
+    ));
+    join.set_children(vec![projection, right]);
+
+    let out = super::rule_constant_propagation::constant_propagation(&ctx, join);
+    let LogicalPlan::Selection(pulled) = &out else {
+        panic!("the join must gain a parent Selection, got {out:?}")
+    };
+    assert!(matches!(
+        pulled.conditions.as_slice(),
+        [Expression::ScalarFunction(function)]
+            if matches!(function.get_args(), [Expression::Column(column), Expression::Constant(_)] if column.unique_id == 10)
+    ));
+    assert!(matches!(out.children(), [LogicalPlan::Join(_)]));
+    out.dismantle();
+}
+
+#[test]
+fn constant_propagation_keeps_go_preorder_for_nested_joins() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let selected = selection_over(
+        &allocator,
+        vec![eq_const(1, 7)],
+        data_source(&allocator, &[1]),
+    );
+    let mut inner = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    ));
+    inner.set_children(vec![selected, data_source(&allocator, &[2])]);
+    let mut outer = LogicalPlan::Join(LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    ));
+    outer.set_children(vec![inner, data_source(&allocator, &[3])]);
+
+    let out = super::rule_constant_propagation::constant_propagation(&ctx, outer);
+    assert!(matches!(out, LogicalPlan::Join(_)));
+    assert!(matches!(out.children()[0], LogicalPlan::Selection(_)));
+    assert!(matches!(
+        out.children()[0].children(),
+        [LogicalPlan::Join(_)]
+    ));
+    out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_does_not_synthesize_a_transitive_join_key() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+
+    let mut lower_join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::Inner,
+    );
+    lower_join.other_conditions = vec![eq_cols(1, 2)];
+    let mut lower_join = LogicalPlan::Join(lower_join);
+    lower_join.set_children(vec![
+        data_source(&allocator, &[1]),
+        data_source(&allocator, &[2]),
+    ]);
+
+    let mut upper_join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2, 3]))),
+        LogicalJoinType::Inner,
+    );
+    upper_join.other_conditions = vec![eq_cols(1, 3)];
+    let mut root = LogicalPlan::Join(upper_join);
+    root.set_children(vec![lower_join, data_source(&allocator, &[3])]);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(upper_join) = &out else {
+        panic!("the upper join should remain the root, got {out:?}");
+    };
+    assert_eq!(
+        upper_join.equal_conditions.len(),
+        1,
+        "Go uses column equalities to build equivalence classes but does not substitute them into additional join keys"
+    );
+    let LogicalPlan::Join(lower_join) = &out.children()[0] else {
+        panic!("the lower join should remain the left child");
+    };
+    assert_eq!(lower_join.equal_conditions.len(), 1);
+    out.dismantle();
+}
+
+#[test]
+fn join_simplification_does_not_substitute_column_equalities() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let conditions = super::rule::apply_predicate_simplification_for_join(
+        &ctx,
+        vec![eq_cols(1, 2), eq_cols(1, 3)],
+        &schema_of(&[1]),
+        &schema_of(&[2, 3]),
+        true,
+        None,
+    );
+
+    assert!(
+        !conditions.iter().any(|condition| {
+            let Expression::ScalarFunction(function) = condition else {
+                return false;
+            };
+            let [Expression::Column(left), Expression::Column(right)] = function.get_args() else {
+                return false;
+            };
+            function.func_name.lowercase() == "eq"
+                && [left.unique_id, right.unique_id]
+                    .into_iter()
+                    .all(|id| id == 2 || id == 3)
+        }),
+        "Go marks column-column equalities visited before substitution, so they cannot synthesize the transitive 2 = 3 join key"
+    );
+}
+
+#[test]
+fn join_key_retention_follows_the_session_variable() {
+    fn is_join_key(condition: &Expression) -> bool {
+        let Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        matches!(
+            function.get_args(),
+            [Expression::Column(left), Expression::Column(right)]
+                if function.func_name.lowercase() == "eq"
+                    && left.unique_id == 1
+                    && right.unique_id == 2
+        )
+    }
+    let allocator = PlanIdAllocator::new();
+    let left = schema_of(&[1]);
+    let right = schema_of(&[2]);
+    let input = vec![eq_cols(1, 2), eq_const(1, 7)];
+
+    let keep_context = test_context(&allocator);
+    let kept = super::rule::apply_predicate_simplification_for_join(
+        &keep_context,
+        input.clone(),
+        &left,
+        &right,
+        true,
+        None,
+    );
+    assert!(kept.iter().any(is_join_key));
+
+    let mut drop_context = test_context(&allocator);
+    drop_context.always_keep_join_key = false;
+    let dropped = super::rule::apply_predicate_simplification_for_join(
+        &drop_context,
+        input,
+        &left,
+        &right,
+        true,
+        None,
+    );
+    assert!(!dropped.iter().any(is_join_key), "{dropped:#?}");
 }
 
 #[test]
@@ -612,33 +1346,207 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
     assert_eq!(kept.conditions.len(), 1);
     let agg = &out.children()[0];
     assert!(matches!(agg, LogicalPlan::Aggregation(_)));
-    assert!(
-        matches!(agg.children()[0], LogicalPlan::Selection(_)),
-        "the group-by filter crossed the aggregate"
-    );
+    let LogicalPlan::DataSource(source) = &agg.children()[0] else {
+        panic!("the group-by filter should reach the aggregate's DataSource");
+    };
+    assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();
 }
 
 #[test]
-fn predicate_push_down_records_every_condition_on_a_data_source() {
+fn predicate_push_down_moves_supported_conditions_into_a_data_source() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1]);
     let root = selection_over(&allocator, vec![eq_const(1, 7)], source);
     let out = push(&ctx, root);
-    // The DataSource cannot claim the predicate without the pushdown
-    // whitelist, so the Selection stays — and `AllConds` still records it,
-    // which is what column pruning reads.
-    assert!(matches!(out, LogicalPlan::Selection(_)));
-    let LogicalPlan::DataSource(source) = &out.children()[0] else {
+    assert!(matches!(out, LogicalPlan::DataSource(_)));
+    let LogicalPlan::DataSource(source) = &out else {
         panic!("expected a DataSource");
     };
     assert_eq!(source.all_conds.len(), 1);
-    assert!(source.pushed_down_conds.is_empty());
+    assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();
 }
 
+struct FixedPartitionPruning(Vec<usize>);
+
+impl PartitionPruning for FixedPartitionPruning {
+    fn partition_indices(
+        &self,
+        _source: &DataSource,
+    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+        Ok(self.0.clone())
+    }
+}
+
+struct UnexpectedPartitionPruning;
+
+impl PartitionPruning for UnexpectedPartitionPruning {
+    fn partition_indices(
+        &self,
+        _source: &DataSource,
+    ) -> Result<Vec<usize>, crate::plan_base::PlanError> {
+        panic!("constant-false conditions must become TableDual before partition pruning")
+    }
+}
+
+#[derive(Default)]
+struct RecordingPlanCacheMarker(RefCell<Option<String>>);
+
+impl PlanCacheMarker for RecordingPlanCacheMarker {
+    fn set_skip_plan_cache(&self, reason: &str) {
+        *self.0.borrow_mut() = Some(reason.to_owned());
+    }
+}
+
+#[test]
+fn partition_processor_puts_union_scan_inside_each_partition_branch() {
+    let allocator = PlanIdAllocator::new();
+    let mut source = data_source(&allocator, &[1, 2]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102, 103];
+
+    let conditions = vec![eq_const(2, 7)];
+    let handles = vec![column(1)];
+    let mut union_scan = LogicalUnionScan::new(
+        base(&allocator, LogicalUnionScan::TYPE, None),
+        handles.clone(),
+    );
+    union_scan.conditions.clone_from(&conditions);
+    union_scan.base.set_children(vec![source]);
+
+    let pruning = FixedPartitionPruning(vec![0, 2]);
+    let marker = RecordingPlanCacheMarker::default();
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&pruning);
+    ctx.plan_cache_marker = Some(&marker);
+
+    let (plan, changed) = PartitionProcessor
+        .optimize(&ctx, LogicalPlan::UnionScan(union_scan))
+        .expect("static partition rewrite");
+    assert!(!changed);
+    let LogicalPlan::PartitionUnionAll(union) = &plan else {
+        panic!("expected a PartitionUnionAll, got {plan:?}");
+    };
+    let physical_ids = union
+        .union_all
+        .base
+        .children()
+        .iter()
+        .map(|branch| {
+            let LogicalPlan::UnionScan(branch) = branch else {
+                panic!("each partition must be wrapped by UnionScan");
+            };
+            assert!(matches!(
+                branch.conditions.as_slice(),
+                [Expression::ScalarFunction(condition)] if condition.func_name.lowercase() == "eq"
+            ));
+            assert_eq!(
+                branch
+                    .handle_cols
+                    .iter()
+                    .map(|column| column.unique_id)
+                    .collect::<Vec<_>>(),
+                vec![1]
+            );
+            let [LogicalPlan::DataSource(source)] = branch.base.children() else {
+                panic!("UnionScan must directly own its partition DataSource");
+            };
+            source.physical_table_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(physical_ids, vec![101, 103]);
+    assert_eq!(
+        marker.0.borrow().as_deref(),
+        Some("Static partition pruning mode")
+    );
+    plan.dismantle();
+}
+
+#[test]
+fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
+    let allocator = PlanIdAllocator::new();
+    let pruning = FixedPartitionPruning(vec![1]);
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&pruning);
+
+    let mut source = data_source(&allocator, &[1, 2]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.all_conds = vec![not_ne_const(2, 7)];
+    source_ref.pushed_down_conds = vec![not_ne_const(2, 7)];
+
+    let (plan, _) = PartitionProcessor
+        .optimize(&ctx, source)
+        .expect("static partition rewrite");
+    let LogicalPlan::DataSource(source) = &plan else {
+        panic!("one surviving partition must remain a DataSource");
+    };
+    for conditions in [&source.all_conds, &source.pushed_down_conds] {
+        assert!(matches!(
+            conditions.as_slice(),
+            [Expression::ScalarFunction(condition)] if condition.func_name.lowercase() == "eq"
+        ));
+    }
+    assert_eq!(source.physical_table_id, 102);
+    plan.dismantle();
+
+    let unexpected = UnexpectedPartitionPruning;
+    let mut ctx = test_context(&allocator);
+    ctx.partition_pruning = Some(&unexpected);
+    let mut source = data_source(&allocator, &[1]);
+    let LogicalPlan::DataSource(source_ref) = &mut source else {
+        unreachable!("the helper builds a DataSource");
+    };
+    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.all_conds = vec![const_false()];
+    source_ref.pushed_down_conds = vec![const_false()];
+    let (plan, _) = PartitionProcessor
+        .optimize(&ctx, source)
+        .expect("constant false fold");
+    assert!(matches!(plan, LogicalPlan::TableDual(_)));
+    plan.dismantle();
+}
+
 // ***** column pruning, per operator *****
+
+#[test]
+fn column_pruning_zero_column_schema_exemptions_match_go() {
+    let allocator = PlanIdAllocator::new();
+
+    let empty_child = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+        base(&allocator, "TableDual", Some(Schema::default())),
+        1,
+    ));
+    let inherited = selection_over(&allocator, Vec::new(), empty_child);
+    assert!(no_unexpected_zero_column_schema(&inherited));
+
+    let dual = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+        base(&allocator, "TableDual", Some(Schema::default())),
+        1,
+    ));
+    assert!(no_unexpected_zero_column_schema(&dual));
+
+    let own_empty_schema = data_source(&allocator, &[]);
+    assert!(!no_unexpected_zero_column_schema(&own_empty_schema));
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(
+    expected = "After column pruning, some operator got an unexpected zero-column output schema. Please fix it."
+)]
+fn column_pruner_checks_the_real_pruned_plan() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let source = data_source(&allocator, &[]);
+    let _ = ColumnPruner.optimize(&ctx, source);
+}
 
 #[test]
 fn column_pruning_drops_an_unused_data_source_column() {
@@ -674,6 +1582,67 @@ fn column_pruning_keeps_a_column_a_selection_reads() {
         vec![2, 3],
         "column 3 survives because the filter reads it"
     );
+    plan.dismantle();
+}
+
+#[test]
+fn column_pruning_projects_condition_only_columns_below_a_partition_union() {
+    // Go LogicalUnionAll.PruneColumns adds an identity projection when a
+    // child keeps a column solely to evaluate its pushed condition. Without
+    // it, the child row shape is wider than PartitionUnion's row shape.
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let child = || {
+        let mut source = data_source(&allocator, &[1, 2, 3]);
+        if let LogicalPlan::DataSource(data_source) = &mut source {
+            data_source.all_conds = vec![eq_const(2, 7)];
+        } else {
+            unreachable!("the helper builds a DataSource");
+        }
+        source
+    };
+    let mut union = LogicalPartitionUnionAll::new(base(
+        &allocator,
+        LogicalPartitionUnionAll::TYPE,
+        Some(schema_of(&[1, 2, 3])),
+    ));
+    union.union_all.base.set_children(vec![child(), child()]);
+
+    let (plan, failure) = super::rewrite::prune_columns(
+        &ctx,
+        LogicalPlan::PartitionUnionAll(union),
+        vec![column(1), column(3)],
+    );
+    assert!(failure.is_none());
+    assert_eq!(
+        plan.schema()
+            .expect("the union has a schema")
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    for child in plan.children() {
+        let LogicalPlan::Projection(projection) = child else {
+            panic!("a condition-only column needs a projection, got {child:?}")
+        };
+        assert!(matches!(
+            projection.exprs.as_slice(),
+            [Expression::Column(first), Expression::Column(second)]
+                if first.unique_id == 1 && second.unique_id == 3
+        ));
+        assert_eq!(
+            projection.base.children()[0]
+                .schema()
+                .expect("the source has a schema")
+                .columns
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
     plan.dismantle();
 }
 
@@ -786,6 +1755,82 @@ fn topn_push_down_absorbs_a_sort_below_a_topn() {
 }
 
 #[test]
+fn topn_keeps_travelling_after_it_absorbs_a_sort() {
+    // Go `LogicalSort.PushDownTopN` returns
+    // `ls.Children()[0].PushDownTopN(topN)`: with a Projection below the Sort,
+    // the Projection stays above the pushed TopN. Stopping at the removed
+    // Sort leaves `TopN -> Projection`, which prevents a cop LIMIT candidate
+    // from reaching a double-read DataSource.
+    let allocator = PlanIdAllocator::new();
+    let source = data_source(&allocator, &[1]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[1]))),
+        vec![Expression::Column(column(1))],
+    ));
+    projection.set_children(vec![source]);
+    let sort = unary(
+        &allocator,
+        "Sort",
+        LogicalPlan::Sort(LogicalSort::new(
+            base(&allocator, "Sort", None),
+            vec![ByItems::new(Expression::Column(column(1)), false)],
+        )),
+        projection,
+    );
+    let mut limit = LogicalPlan::Limit(LogicalLimit::new(
+        base(&allocator, "Limit", Some(schema_of(&[1]))),
+        0,
+        3,
+    ));
+    limit.set_children(vec![sort]);
+
+    let out = super::rewrite::push_down_topn(limit, None);
+    let LogicalPlan::Projection(projection) = &out else {
+        panic!("Projection should remain above the pushed TopN: {out:#?}");
+    };
+    assert!(matches!(
+        projection.base.children().first(),
+        Some(LogicalPlan::TopN(_))
+    ));
+    out.dismantle();
+}
+
+#[test]
+fn topn_push_down_substitutes_projection_columns() {
+    // Go `LogicalProjection.PushDownTopN` writes the expressions produced by
+    // `ColumnSubstitute` back to `topN.ByItems` before descending.
+    let allocator = PlanIdAllocator::new();
+    let source = data_source(&allocator, &[1]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", Some(schema_of(&[2]))),
+        vec![Expression::Column(column(1))],
+    ));
+    projection.set_children(vec![source]);
+    let topn = LogicalTopN::new(
+        base(&allocator, "TopN", Some(schema_of(&[2]))),
+        vec![ByItems::new(Expression::Column(column(2)), false)],
+        0,
+        5,
+    );
+
+    let out = super::rewrite::push_down_topn(projection, Some(topn));
+    let LogicalPlan::Projection(projection) = &out else {
+        panic!("Projection should remain above the pushed TopN: {out:#?}");
+    };
+    let Some(LogicalPlan::TopN(topn)) = projection.base.children().first() else {
+        panic!("TopN should be pushed beneath the Projection: {out:#?}");
+    };
+    assert!(matches!(
+        topn.by_items.as_slice(),
+        [ByItems {
+            expr: Expression::Column(column),
+            ..
+        }] if column.unique_id == 1
+    ));
+    out.dismantle();
+}
+
+#[test]
 fn topn_push_down_leaves_a_join_alone() {
     // Go `LogicalJoin.PushDownTopN` (`logical_join.go:428`): without a unique
     // inner side the offset cannot travel, so the limit re-attaches above the
@@ -836,11 +1881,7 @@ fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
         "t",
     );
     let left = LogicalPlan::DataSource(left);
-    let right = DataSource::new(
-        base(&allocator, "DataSource", Some(right_schema)),
-        1,
-        "t",
-    );
+    let right = DataSource::new(base(&allocator, "DataSource", Some(right_schema)), 1, "t");
     let right = LogicalPlan::DataSource(right);
     let mut join = LogicalPlan::Join(LogicalJoin::new(
         base(&allocator, "Join", Some(schema_of(&[1, 2]))),
@@ -920,7 +1961,10 @@ fn topn_push_down_keeps_the_limit_above_a_left_join_with_a_wide_inner_side() {
     let out = super::rewrite::push_down_topn(limit, None);
     // The original limit stays ABOVE the join...
     let LogicalPlan::Limit(root) = &out else {
-        panic!("expected the limit above the join, got {}", out.explain_info())
+        panic!(
+            "expected the limit above the join, got {}",
+            out.explain_info()
+        )
     };
     assert_eq!(root.offset, 3, "the incoming limit keeps its own offset");
     assert_eq!(root.count, 5);
@@ -946,11 +1990,7 @@ fn topn_push_down_over_an_inner_join_takes_the_base_body() {
     let mut right_schema = schema_of(&[2]);
     right_schema.pk_or_uk = vec![vec![column(2)]];
     let left = data_source(&allocator, &[1]);
-    let right = DataSource::new(
-        base(&allocator, "DataSource", Some(right_schema)),
-        1,
-        "t",
-    );
+    let right = DataSource::new(base(&allocator, "DataSource", Some(right_schema)), 1, "t");
     let right = LogicalPlan::DataSource(right);
     let mut join = LogicalPlan::Join(LogicalJoin::new(
         base(&allocator, "Join", Some(schema_of(&[1, 2]))),
@@ -967,10 +2007,7 @@ fn topn_push_down_over_an_inner_join_takes_the_base_body() {
 
     let out = super::rewrite::push_down_topn(topn, None);
     // The TopN stays above the join (as the limit it becomes on attach).
-    assert!(matches!(
-        out,
-        LogicalPlan::TopN(_) | LogicalPlan::Limit(_)
-    ));
+    assert!(matches!(out, LogicalPlan::TopN(_) | LogicalPlan::Limit(_)));
     out.dismantle();
 }
 
@@ -981,7 +2018,22 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     let allocator = PlanIdAllocator::new();
     let mut source_schema = schema_of(&[1, 2]);
     source_schema.pk_or_uk = vec![vec![column(1)]];
-    let source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
+    let mut source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
+    source.pk_is_handle = true;
+    source.columns = vec![
+        super::data_source::DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: true,
+            is_not_null: true,
+        },
+        super::data_source::DataSourceColumn {
+            id: 2,
+            name: "b".to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        },
+    ];
     let source = LogicalPlan::DataSource(source);
 
     let mut limit = LogicalPlan::Limit(LogicalLimit::new(

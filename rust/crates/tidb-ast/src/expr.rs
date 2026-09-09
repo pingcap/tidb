@@ -183,6 +183,10 @@ pub enum Expr {
         order: usize,
         /// Whether an execute-time value has been installed.
         in_execute: bool,
+        /// The current execution's value. Go keeps this on the marker's
+        /// embedded `ValueExpr`; retaining it lets physical planning build a
+        /// `Constant` that still remembers which parameter it came from.
+        value: Option<tidb_datatype::Datum>,
         /// Projection offset used by positional-expression lowering.
         /// The Go driver's embedded zero-value `ValueExpr` initializes this to 0.
         projection_offset: isize,
@@ -1200,9 +1204,10 @@ impl crate::Visitable for Expr {
                 offset,
                 order,
                 in_execute,
+                value,
                 projection_offset,
             } => {
-                let _ = (offset, order, in_execute, projection_offset);
+                let _ = (offset, order, in_execute, value, projection_offset);
             }
             Self::Int(field_0) => {
                 let _ = field_0;

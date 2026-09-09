@@ -199,6 +199,11 @@ where
 /// is single-threaded in spirit and its interior mutability stays behind
 /// `&mut self` methods.
 pub trait TableStorage: fmt::Debug + Send + Sync {
+    /// Go snapshot runtime command totals. In-process storage has no RPCs.
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (0, 0)
+    }
+
     /// Reads one key, Go `kv.Retriever.Get`. Reports
     /// [`StorageError::NotFound`] when the key has no value, as Go returns
     /// `kv.ErrNotExist`.
@@ -225,12 +230,7 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Marks a presumed-absent key and retains the Go duplicate text for a
     /// deferred prewrite assertion. Backends without a commit boundary keep
     /// the ordinary mark only.
-    fn mark_presume_key_not_exists_with_hint(
-        &mut self,
-        key: &Key,
-        value: &str,
-        index: &str,
-    ) {
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
         let _ = (value, index);
         self.mark_presume_key_not_exists(key);
     }
@@ -327,6 +327,16 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
 
     /// The number of stored keys. Divergence: see the module doc.
     fn key_count(&self) -> usize;
+
+    /// Whether the surrounding session owns a statement savepoint for this
+    /// backend. Cluster sessions keep row mutations in an outer
+    /// `MutationBuffer::checkpoint`/`restore` pair, so cloning a table for
+    /// the catalog image must not be mistaken for the rollback mechanism.
+    /// In-process stores have no such outer owner and therefore rely on the
+    /// catalog image itself.
+    fn has_external_statement_rollback(&self) -> bool {
+        false
+    }
 
     /// Drops every key this backend holds. Divergence: see the module doc.
     fn clear(&mut self);

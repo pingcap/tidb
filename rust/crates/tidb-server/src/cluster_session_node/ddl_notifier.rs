@@ -1,0 +1,517 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The `mysql.tidb_ddl_notifier` adapter for the cluster session owner.
+
+use std::any::Any;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tidb_datatype::Datum;
+use tidb_ddl_notifier::{
+    DdlNotifier, Handler, ListResult, NotifierError, NotifierSession, SchemaChange, SessionPool,
+    Store, PRIORITY_QUEUE_HANDLER_ID, STATS_META_HANDLER_ID,
+};
+
+use super::{
+    table_and_partition_ids, ClusterServerSession, ClusterSessionFactory,
+    ClusterStatsSessionContext,
+};
+use crate::sql_node::QuerySession;
+
+fn notifier_error(error: impl std::fmt::Display) -> NotifierError {
+    NotifierError::Message(error.to_string())
+}
+
+struct ClusterNotifierSession {
+    session: Option<tidb_syssession::Session<ClusterStatsSessionContext>>,
+}
+
+impl ClusterNotifierSession {
+    fn session(
+        &self,
+    ) -> Result<&tidb_syssession::Session<ClusterStatsSessionContext>, NotifierError> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| NotifierError::Message("notifier session already returned".to_owned()))
+    }
+
+    fn with_server<T>(
+        &self,
+        callback: impl FnOnce(&mut ClusterServerSession) -> Result<T, NotifierError>,
+    ) -> Result<T, NotifierError> {
+        self.session()?
+            .with_session_context(|context| {
+                context
+                    .with_session(|session| {
+                        callback(session)
+                            .map_err(|error| super::stats_session_error(error.to_string()))
+                    })
+                    .map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
+            })
+            .map_err(notifier_error)
+    }
+
+    fn write(&self, sql: &str) -> Result<u64, NotifierError> {
+        self.with_server(|session| {
+            session
+                .execute_write(sql)
+                .map(|outcome| outcome.map_or(0, |outcome| outcome.affected_rows))
+                .map_err(|error| NotifierError::Message(error.message))
+        })
+    }
+
+    fn query(&self, sql: &str) -> Result<Vec<Vec<Datum>>, NotifierError> {
+        self.session()?
+            .with_session_context(|context| {
+                context
+                    .state
+                    .materialize(sql)
+                    .map(|(rows, _)| rows)
+                    .map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
+            })
+            .map_err(notifier_error)
+    }
+
+    fn control_transaction(&self, sql: &str) -> Result<(), NotifierError> {
+        self.with_server(|session| {
+            session
+                .control_transaction(sql)
+                .map(|_| ())
+                .map_err(|error| NotifierError::Message(error.message))
+        })
+    }
+}
+
+impl NotifierSession for ClusterNotifierSession {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn begin_pessimistic(&mut self) -> Result<(), NotifierError> {
+        self.control_transaction("BEGIN PESSIMISTIC")
+    }
+
+    fn commit(&mut self) -> Result<(), NotifierError> {
+        self.control_transaction("COMMIT")
+    }
+
+    fn rollback(&mut self) {
+        let _ = self.control_transaction("ROLLBACK");
+    }
+}
+
+pub(super) struct ClusterNotifierSessionPool {
+    pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+}
+
+impl ClusterNotifierSessionPool {
+    pub(super) fn new(
+        pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
+    ) -> Self {
+        Self { pool }
+    }
+}
+
+impl SessionPool for ClusterNotifierSessionPool {
+    fn get(&self) -> Result<Box<dyn NotifierSession>, NotifierError> {
+        self.pool
+            .get()
+            .map(|session| {
+                Box::new(ClusterNotifierSession {
+                    session: Some(session),
+                }) as Box<dyn NotifierSession>
+            })
+            .map_err(notifier_error)
+    }
+
+    fn put(&self, mut session: Box<dyn NotifierSession>) {
+        let Some(session) = session
+            .as_any_mut()
+            .downcast_mut::<ClusterNotifierSession>()
+        else {
+            return;
+        };
+        if let Some(session) = session.session.take() {
+            self.pool.put(&session);
+        }
+    }
+}
+
+/// Go `OpenTableStore` over the bootstrapped notifier system table.
+pub(super) struct ClusterNotifierTableStore;
+
+fn cluster_session(
+    session: &mut dyn NotifierSession,
+) -> Result<&mut ClusterNotifierSession, NotifierError> {
+    session
+        .as_any_mut()
+        .downcast_mut::<ClusterNotifierSession>()
+        .ok_or_else(|| NotifierError::Message("wrong notifier session implementation".to_owned()))
+}
+
+fn bytes_literal(bytes: &[u8]) -> String {
+    let mut literal = String::with_capacity(bytes.len() * 2 + 3);
+    literal.push_str("X'");
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for byte in bytes {
+        literal.push(HEX[usize::from(byte >> 4)] as char);
+        literal.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    literal.push('\'');
+    literal
+}
+
+fn run_auto_analyze(global_vars: &tidb_session::GlobalSysvars) -> bool {
+    global_vars
+        .get(tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE)
+        .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
+}
+
+fn finish_stats_handler(
+    event: &tidb_ddl_notifier::SchemaChangeEvent,
+    result: Result<(), NotifierError>,
+) -> Result<(), NotifierError> {
+    if let Err(error) = result {
+        // Pinned Go `ddlHandlerImpl.HandleDDLEvent` deliberately logs a
+        // subscriber failure and returns nil. Mark this handler's event
+        // processed as well: leaving it pending would retry mutations which
+        // Go does not retry at the notifier boundary.
+        eprintln!(
+            "{{\"event\":\"stats_ddl_event_failed\",\"schema_change\":{},\"error\":{}}}",
+            serde_json::to_string(&event.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned()),
+            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned())
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn build_notifier(
+    factory: &Arc<ClusterSessionFactory>,
+    stats_lease: Duration,
+) -> Arc<DdlNotifier> {
+    let notifier = Arc::new(DdlNotifier::new(
+        Arc::new(ClusterNotifierSessionPool::new(
+            factory.advanced_sys_session_pool(),
+        )),
+        Arc::new(ClusterNotifierTableStore),
+        Duration::from_secs(1),
+    ));
+    let stats_handler: Handler = Arc::new(|session, event| {
+        cluster_session(session)?.with_server(|server| {
+            let result = server
+                .stage_stats_notifier_event(event)
+                .map_err(|error| notifier_error(error.message));
+            finish_stats_handler(event, result)
+        })
+    });
+    notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
+
+    let queue = factory.auto_analyze_priority_queue(stats_lease);
+    let global_vars = factory.global_vars.clone();
+    let priority_handler: Handler = Arc::new(move |_, event| {
+        use tidb_model::ActionType;
+        use tidb_stats_handle_autoanalyze_priorityqueue::{DdlHandleError, PriorityQueueDdlEvent};
+
+        let queue_event = match event.action_type() {
+            ActionType::ACTION_ADD_INDEX => {
+                let (table, _, analyzed) = event.add_index_info();
+                PriorityQueueDdlEvent::AddIndex {
+                    table_id: table.id,
+                    analyzed,
+                }
+            }
+            ActionType::ACTION_TRUNCATE_TABLE => {
+                let (_, dropped) = event.truncate_table_info();
+                PriorityQueueDdlEvent::TruncateTable {
+                    dropped_ids: table_and_partition_ids(dropped),
+                }
+            }
+            ActionType::ACTION_DROP_TABLE => PriorityQueueDdlEvent::DropTable {
+                dropped_ids: table_and_partition_ids(event.drop_table_info()),
+            },
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+                let (table, _, dropped) = event.truncate_partition_info();
+                PriorityQueueDdlEvent::TruncatePartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_DROP_TABLE_PARTITION => {
+                let (table, dropped) = event.drop_partition_info();
+                PriorityQueueDdlEvent::DropPartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_REORGANIZE_PARTITION => {
+                let (table, _, dropped) = event.reorganize_partition_info();
+                PriorityQueueDdlEvent::ReorganizePartition {
+                    table_id: table.id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                }
+            }
+            ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+                let (old_table_id, table, _) = event.add_partitioning_info();
+                PriorityQueueDdlEvent::AlterTablePartitioning {
+                    old_table_id,
+                    new_table_id: table.id,
+                }
+            }
+            ActionType::ACTION_REMOVE_PARTITIONING => {
+                let (old_table_id, table, dropped) = event.remove_partitioning_info();
+                PriorityQueueDdlEvent::RemovePartitioning {
+                    old_table_id,
+                    dropped_partition_ids: dropped
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect(),
+                    new_table_id: table.id,
+                }
+            }
+            ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+                let (table, partition, standalone) = event.exchange_partition_info();
+                let old_partition_id = partition
+                    .definitions
+                    .snapshot()
+                    .first()
+                    .expect("exchange event has one partition")
+                    .id;
+                PriorityQueueDdlEvent::ExchangePartition {
+                    partitioned_table_id: table.id,
+                    old_partition_id,
+                    old_standalone_table_id: standalone.id,
+                    new_standalone_table_id: Some(old_partition_id),
+                }
+            }
+            ActionType::ACTION_DROP_SCHEMA => {
+                let mut dropped_ids = Vec::new();
+                for table in &event.drop_schema_info().tables {
+                    dropped_ids.extend(table.partitions.iter().map(|partition| partition.id));
+                    dropped_ids.push(table.id);
+                }
+                PriorityQueueDdlEvent::DropSchema { dropped_ids }
+            }
+            _ => PriorityQueueDdlEvent::Other,
+        };
+        queue
+            .handle_ddl_event(run_auto_analyze(&global_vars), &queue_event)
+            .map_err(|error| match error {
+                DdlHandleError::NotReadyRetryLater => NotifierError::NotReadyRetryLater,
+            })
+    });
+    notifier.register_handler(PRIORITY_QUEUE_HANDLER_ID, priority_handler);
+    notifier
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finish_stats_handler, run_auto_analyze};
+    use tidb_ddl_notifier::{NotifierError, SchemaChangeEvent};
+    use tidb_session::GlobalSysvars;
+
+    #[test]
+    fn auto_analyze_gate_reads_each_global_change() {
+        let globals = GlobalSysvars::new();
+        assert!(run_auto_analyze(&globals));
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                "OFF".to_owned(),
+            )
+            .unwrap();
+        assert!(!run_auto_analyze(&globals));
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                "ON".to_owned(),
+            )
+            .unwrap();
+        assert!(run_auto_analyze(&globals));
+    }
+
+    #[test]
+    fn stats_handler_marks_a_failed_event_processed_like_go() {
+        let event = SchemaChangeEvent::flashback_cluster();
+        assert!(finish_stats_handler(
+            &event,
+            Err(NotifierError::Message("subscriber failed".to_owned())),
+        )
+        .is_ok());
+    }
+}
+
+impl Store for ClusterNotifierTableStore {
+    fn insert(
+        &self,
+        session: &mut dyn NotifierSession,
+        change: &SchemaChange,
+    ) -> Result<(), NotifierError> {
+        let event = serde_json::to_vec(&change.event).map_err(notifier_error)?;
+        cluster_session(session)?
+            .write(&format!(
+                "INSERT INTO mysql.tidb_ddl_notifier \
+                 (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \
+                 VALUES ({}, {}, {}, 0)",
+                change.ddl_job_id,
+                change.sub_job_id,
+                bytes_literal(&event)
+            ))
+            .map(|_| ())
+    }
+
+    fn update_processed(
+        &self,
+        session: &mut dyn NotifierSession,
+        ddl_job_id: i64,
+        sub_job_id: i64,
+        old_processed_by: u64,
+        new_processed_by: u64,
+    ) -> Result<(), NotifierError> {
+        let affected = cluster_session(session)?.write(&format!(
+            "UPDATE mysql.tidb_ddl_notifier SET processed_by_flag = {new_processed_by} \
+             WHERE ddl_job_id = {ddl_job_id} AND sub_job_id = {sub_job_id} \
+             AND processed_by_flag = {old_processed_by}"
+        ))?;
+        if affected == 0 {
+            return Err(NotifierError::Message(format!(
+                "failed to update processed_by_flag, maybe the row has been updated by other owner. \
+                 ddl_job_id: {ddl_job_id}, sub_job_id: {sub_job_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn delete_and_commit(
+        &self,
+        session: &mut dyn NotifierSession,
+        ddl_job_id: i64,
+        sub_job_id: i64,
+    ) -> Result<(), NotifierError> {
+        let session = cluster_session(session)?;
+        session.write("BEGIN")?;
+        let result = session.write(&format!(
+            "DELETE FROM mysql.tidb_ddl_notifier \
+             WHERE ddl_job_id = {ddl_job_id} AND sub_job_id = {sub_job_id}"
+        ));
+        match result {
+            Ok(_) => session.write("COMMIT").map(|_| ()),
+            Err(error) => {
+                let _ = session.write("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn list(
+        &self,
+        _session: &mut dyn NotifierSession,
+    ) -> Result<Box<dyn ListResult>, NotifierError> {
+        Ok(Box::new(ClusterNotifierListResult {
+            started: false,
+            max_job_id: 0,
+            max_sub_job_id: 0,
+        }))
+    }
+}
+
+struct ClusterNotifierListResult {
+    started: bool,
+    max_job_id: i64,
+    max_sub_job_id: i64,
+}
+
+impl ListResult for ClusterNotifierListResult {
+    fn read(
+        &mut self,
+        session: &mut dyn NotifierSession,
+        capacity: usize,
+    ) -> Result<Vec<SchemaChange>, NotifierError> {
+        let session = cluster_session(session)?;
+        if !self.started {
+            session.write("BEGIN")?;
+            self.started = true;
+        }
+        let rows = session.query(&format!(
+            "SELECT ddl_job_id, sub_job_id, schema_change, processed_by_flag \
+             FROM mysql.tidb_ddl_notifier \
+             WHERE (ddl_job_id, sub_job_id) > ({}, {}) \
+             ORDER BY ddl_job_id, sub_job_id LIMIT {capacity}",
+            self.max_job_id, self.max_sub_job_id
+        ))?;
+        let mut changes = Vec::with_capacity(rows.len());
+        for row in rows {
+            let [Datum::Int(ddl_job_id), Datum::Int(sub_job_id), event, processed] = row.as_slice()
+            else {
+                return Err(NotifierError::Message(
+                    "invalid mysql.tidb_ddl_notifier row shape".to_owned(),
+                ));
+            };
+            let bytes = match event {
+                Datum::Bytes(bytes) | Datum::Raw(bytes) => bytes.as_slice(),
+                Datum::String(value) => value.bytes(),
+                _ => {
+                    return Err(NotifierError::Message(
+                        "invalid notifier schema_change value".to_owned(),
+                    ))
+                }
+            };
+            let processed_by_flag = match processed {
+                Datum::UInt(value) => *value,
+                Datum::Int(value) => *value as u64,
+                _ => {
+                    return Err(NotifierError::Message(
+                        "invalid notifier processed_by_flag value".to_owned(),
+                    ))
+                }
+            };
+            changes.push(SchemaChange {
+                ddl_job_id: *ddl_job_id,
+                sub_job_id: *sub_job_id,
+                event: serde_json::from_slice(bytes).map_err(notifier_error)?,
+                processed_by_flag,
+            });
+        }
+        if let Some(last) = changes.last() {
+            self.max_job_id = last.ddl_job_id;
+            self.max_sub_job_id = last.sub_job_id;
+        }
+        Ok(changes)
+    }
+
+    fn close(self: Box<Self>, session: &mut dyn NotifierSession) {
+        if let Ok(session) = cluster_session(session) {
+            let _ = session.write("ROLLBACK");
+        }
+    }
+}

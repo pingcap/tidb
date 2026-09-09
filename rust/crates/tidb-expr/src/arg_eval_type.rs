@@ -117,6 +117,9 @@ const fn datetime_arg_mask(name: &str) -> ArgMask {
         // types.ETDatetime` (timestampDiffFunctionClass) -- the UNIT is
         // argument 0 and stays a string.
         b"TIMESTAMPDIFF" => (1 << 1) | (1 << 2),
+        // `:7081` `types.ETDatetime, types.ETDatetime`
+        // (tidbBoundedStalenessFunctionClass).
+        b"TIDB_BOUNDED_STALENESS" => (1 << 0) | (1 << 1),
         // `:6551` `types.ETString, types.ETString, types.ETReal,
         // types.ETDatetime` (timestampAddFunctionClass).
         b"TIMESTAMPADD" => 1 << 2,
@@ -214,6 +217,13 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         // `for i := 1; i < length; i++ { argTps[i] = types.ETString }`
         // (makeSetFunctionClass).
         b"MAKE_SET" => 1 << 0,
+        // `builtin_string.go:3368-3375` `argTps = append(argTps,
+        // types.ETInt, types.ETString, types.ETString)` then optionally
+        // `types.ETString` and `types.ETInt` (exportSetFunctionClass) --
+        // the SELECTOR (bits) is argument 0 and, in the five-argument
+        // form, `number_of_bits` is argument 4. A four-argument call
+        // ignores bit 4 because the mask is read over the actual args.
+        b"EXPORT_SET" => (1 << 0) | (1 << 4),
         // `builtin_string.go:1503-1506` `argTps := []types.EvalType{
         // types.ETString, types.ETString}` then `if hasStartPos { argTps =
         // append(argTps, types.ETInt) }` (locateFunctionClass) -- the
@@ -231,6 +241,9 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         b"TIDB_PARSE_TSO" | b"TIDB_PARSE_TSO_LOGICAL" => 1 << 0,
         // `lockFunctionClass`: lock name is ETString and timeout is ETInt.
         b"GET_LOCK" => 1 << 1,
+        // `getParamFunctionClass`: the parameter selector is the sole
+        // `types.ETInt` argument (`builtin_other.go:1911`).
+        b"GETPARAM" => 1 << 0,
         _ => 0,
     }
 }
@@ -508,6 +521,7 @@ mod tests {
         assert_eq!(datetime_arg_mask("YEARWEEK"), 1);
         assert_eq!(datetime_arg_mask("TO_SECONDS"), 1);
         assert_eq!(datetime_arg_mask("LAST_DAY"), 1);
+        assert_eq!(datetime_arg_mask("TIDB_BOUNDED_STALENESS"), 0b11);
         // Not a member: Go declares `types.ETString` and branches on
         // `isFloat` instead (see the mask's doc).
         assert_eq!(datetime_arg_mask("TIMESTAMP"), 0);

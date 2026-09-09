@@ -21,7 +21,7 @@ use crate::{
         detacher::{
             append_conditions_if_not_exist, detach_conds_for_column, extract_eq_and_in_condition_in,
         },
-        points::ConstantEvaluator,
+        points::ExpressionEvaluator,
         ranger::{append_ranges_to_point_ranges, build_column_range_in},
         types::{ranges_mem_usage, Range, Ranges, EMPTY_DATUM_SIZE},
     },
@@ -102,7 +102,7 @@ pub struct IndexJoinPathRangeBuilder<'a> {
     /// Go DataSource.PushedDownConds, before ordinary range detachment.
     pub pushed_conditions: &'a [Expression],
     /// Current statement parameter/deferred constant evaluation.
-    pub eval_constant: &'a ConstantEvaluator<'a>,
+    pub eval_expression: &'a ExpressionEvaluator<'a>,
     /// Session RangeMaxSize, ignored in rebuild mode.
     pub range_max_size: i64,
     /// Go StmtContext.RecordRangeFallback, including rejected paths.
@@ -155,7 +155,7 @@ impl IndexJoinPathRangeBuilder<'_> {
             &prefix.non_key_columns,
             &prefix.non_key_lengths,
             self.regard_null_as_point,
-            self.eval_constant,
+            self.eval_expression,
         );
         if extracted.empty_range {
             return Ok((None, true));
@@ -214,7 +214,7 @@ impl IndexJoinPathRangeBuilder<'_> {
                         column_type(&self.columns[point_width])?,
                         self.lengths[point_width],
                         quota,
-                        self.eval_constant,
+                        self.eval_expression,
                     )
                     .map_err(|err| {
                         PlanError::internal(format!("IndexJoin column range: {err:?}"))
@@ -397,7 +397,7 @@ impl IndexJoinPathRangeBuilder<'_> {
                     column_type(&prefix.non_key_columns[index])?,
                     prefix.non_key_lengths[index],
                     quota,
-                    self.eval_constant,
+                    self.eval_expression,
                 )
                 .map_err(|err| PlanError::internal(format!("IndexJoin equality range: {err:?}")))?;
                 if built.ranges.is_empty() {

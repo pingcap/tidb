@@ -14,6 +14,7 @@
 
 //! Bounded concurrent listener and worker-local query-session ownership.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -22,20 +23,21 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tidb_ast::Stmt;
+use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
+use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator};
-use tidb_util::versioninfo::VersionInfo;
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{
-    serve_mysql_connection_with_tls_and_version_info, MysqlConnectionError, MysqlConnectionRuntime,
+    serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
 use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
@@ -338,6 +340,8 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
+        ClusterDdlError::ExchangeValidation(error) => lock_sql_error(&error),
+        ClusterDdlError::CheckConstraintValidation(error) => lock_sql_error(&error),
         ClusterDdlError::Plan(tidb_exec::cluster_ddl::DdlPlanError::InvalidAutoRandom(reason)) => {
             SqlQueryError::new(8216, *b"HY000", format!("Invalid auto random: {reason}"))
         }
@@ -407,7 +411,36 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
     match error {
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
+        ClusterAnalyzeError::Killed(error) => SqlQueryError::new(
+            error.code,
+            error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+            error.message,
+        ),
+        ClusterAnalyzeError::MissingPartitionStats(detail) => {
+            SqlQueryError::new(8243, *b"HY000", detail)
+        }
+        ClusterAnalyzeError::MissingPartitionItemStats(detail) => {
+            SqlQueryError::new(8244, *b"HY000", detail)
+        }
         ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
+    }
+}
+
+pub(crate) fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> SqlQueryError {
+    match error {
+        ClusterStatsLockCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterStatsLockCommitError::Commit(error) => lock_sql_error(&error),
+        ClusterStatsLockCommitError::Plan(ClusterStatsLockError::NoDatabaseSelected) => {
+            SqlQueryError::new(1046, *b"3D000", "No database selected")
+        }
+        ClusterStatsLockCommitError::Plan(error @ ClusterStatsLockError::MissingTable { .. }) => {
+            SqlQueryError::new(1146, *b"42S02", error.to_string())
+        }
+        ClusterStatsLockCommitError::Plan(
+            error @ ClusterStatsLockError::UnknownPartition { .. },
+        ) => SqlQueryError::new(1735, *b"HY000", error.to_string()),
+        ClusterStatsLockCommitError::Plan(error) => SqlQueryError::unknown(error.to_string()),
+        ClusterStatsLockCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }
 
@@ -453,6 +486,12 @@ pub struct QueryResult<'a> {
     /// holds the session's mutable borrow while it is being written and
     /// nothing can change the transaction state under it in the meantime.
     status: WireStatus,
+    /// Statement affected-row value carried by a deprecated-EOF OK packet.
+    affected_rows: u64,
+    /// Statement last-insert-id value carried by a deprecated-EOF OK packet.
+    last_insert_id: u64,
+    /// Statement informational text carried by a deprecated-EOF OK packet.
+    info: Vec<u8>,
 }
 
 /// Typed statement policy retained only when a prepared cursor materializes
@@ -472,6 +511,7 @@ pub(crate) struct CursorMaterializationAuthority {
 /// or TiKV.
 #[derive(Clone, Debug)]
 pub struct PreparedPointRead {
+    sql: String,
     template: ConfiguredPreparedPointReadTemplate,
     result_columns: Vec<ColumnInfo>,
     result_field_types: Vec<tidb_datatype::FieldType>,
@@ -480,6 +520,7 @@ pub struct PreparedPointRead {
 impl PreparedPointRead {
     /// Creates a concrete prepared definition after parser/catalog admission.
     pub fn new(
+        sql: String,
         template: ConfiguredPreparedPointReadTemplate,
         result_columns: Vec<ColumnInfo>,
         result_field_types: Vec<tidb_datatype::FieldType>,
@@ -492,10 +533,17 @@ impl PreparedPointRead {
             )));
         }
         Ok(Self {
+            sql,
             template,
             result_columns,
             result_field_types,
         })
+    }
+
+    /// The statement text retained at prepare time.
+    #[must_use]
+    pub fn sql(&self) -> &str {
+        &self.sql
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -532,14 +580,21 @@ impl PreparedPointRead {
 /// immutable planner template is bound afresh for each execute.
 #[derive(Clone, Debug)]
 pub struct PreparedWrite {
+    sql: String,
     template: ConfiguredPreparedWriteTemplate,
 }
 
 impl PreparedWrite {
     /// Creates a concrete prepared write after parser/catalog admission.
     #[must_use]
-    pub const fn new(template: ConfiguredPreparedWriteTemplate) -> Self {
-        Self { template }
+    pub const fn new(sql: String, template: ConfiguredPreparedWriteTemplate) -> Self {
+        Self { sql, template }
+    }
+
+    /// The statement text retained at prepare time.
+    #[must_use]
+    pub fn sql(&self) -> &str {
+        &self.sql
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -627,6 +682,29 @@ impl PreparedGeneral {
     pub fn prepared_ast(&self) -> Option<&tidb_session::PreparedAst> {
         self.prepared_ast.as_ref()
     }
+
+    /// The immutable point-get cache candidate owned by the prepared definition.
+    pub fn point_get_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
+        self.prepared_ast
+            .as_ref()
+            .and_then(tidb_session::PreparedAst::point_get_plan)
+    }
+
+    /// The immutable prepared SELECT cache descriptor.
+    #[must_use]
+    pub fn select_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>> {
+        self.prepared_ast
+            .as_ref()
+            .and_then(tidb_session::PreparedAst::select_plan)
+    }
+
+    /// The immutable prepared DML plan.
+    #[must_use]
+    pub fn dml_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>> {
+        self.prepared_ast
+            .as_ref()
+            .and_then(tidb_session::PreparedAst::dml_plan)
+    }
 }
 
 /// What executing a general prepared statement produced.
@@ -702,6 +780,9 @@ impl<'a> QueryResult<'a> {
             cursor_materialization: None,
             warnings: 0,
             status: WireStatus::AUTOCOMMIT,
+            affected_rows: 0,
+            last_insert_id: 0,
+            info: Vec::new(),
         }
     }
 
@@ -745,6 +826,21 @@ impl<'a> QueryResult<'a> {
         self
     }
 
+    /// Attaches the statement values Go's `writeEOF` forwards to its
+    /// deprecated-EOF OK packet. Legacy EOF clients ignore these fields.
+    #[must_use]
+    pub fn with_statement_output(
+        mut self,
+        affected_rows: u64,
+        last_insert_id: u64,
+        info: Vec<u8>,
+    ) -> Self {
+        self.affected_rows = affected_rows;
+        self.last_insert_id = last_insert_id;
+        self.info = info;
+        self
+    }
+
     /// The status word for the EOF packets that frame this result set.
     #[must_use]
     pub fn wire_status(&self) -> WireStatus {
@@ -755,6 +851,24 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn warning_count(&self) -> u16 {
         self.warnings
+    }
+
+    /// Statement affected rows preserved for deprecated-EOF framing.
+    #[must_use]
+    pub const fn affected_rows(&self) -> u64 {
+        self.affected_rows
+    }
+
+    /// Statement last insert id preserved for deprecated-EOF framing.
+    #[must_use]
+    pub const fn last_insert_id(&self) -> u64 {
+        self.last_insert_id
+    }
+
+    /// Statement info preserved for deprecated-EOF framing.
+    #[must_use]
+    pub fn info(&self) -> &[u8] {
+        &self.info
     }
 
     /// Returns the sole mutable result-set owner.
@@ -770,6 +884,75 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn into_source(self) -> Box<dyn ResultSetSource + 'a> {
         self.source.inner
+    }
+
+    /// Retains the process-list statement until this result set is finished.
+    #[must_use]
+    pub fn with_process_statement(
+        self,
+        statement: tidb_session::process::ProcessStatementGuard,
+    ) -> Self {
+        let Self {
+            source,
+            cursor_materialization,
+            warnings,
+            status,
+            affected_rows,
+            last_insert_id,
+            info,
+        } = self;
+        Self {
+            source: BoxedResultSetSource {
+                inner: Box::new(ProcessTrackedResultSet {
+                    inner: source.inner,
+                    statement: Some(statement),
+                }),
+            },
+            cursor_materialization,
+            warnings,
+            status,
+            affected_rows,
+            last_insert_id,
+            info,
+        }
+    }
+}
+
+struct ProcessTrackedResultSet<'a> {
+    inner: Box<dyn ResultSetSource + 'a>,
+    statement: Option<tidb_session::process::ProcessStatementGuard>,
+}
+
+impl ResultSetSource for ProcessTrackedResultSet<'_> {
+    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+        self.inner.next_batch(max_rows)
+    }
+
+    fn supports_text_batch(&self) -> bool {
+        self.inner.supports_text_batch()
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+        self.inner.next_text_batch(max_rows)
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        self.inner.columns()
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        let result = self.inner.finish();
+        self.statement.take();
+        result
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        let result = self.inner.close();
+        self.statement.take();
+        result
     }
 }
 
@@ -817,11 +1000,14 @@ pub struct SessionContext {
     /// Identity established by ordinary password verification or validated
     /// process-wide skip-grant admission.
     pub identity: AuthenticatedIdentity,
+    /// Whether this client negotiated `CLIENT_FOUND_ROWS`, making UPDATE and
+    /// duplicate-key UPDATE report successfully matched unchanged rows.
+    pub client_found_rows: bool,
     /// Whether the MySQL front end completed a TLS handshake for this
     /// connection.
     pub secure_transport: bool,
     /// The negotiated TLS `(cipher, version)` in their MySQL/OpenSSL
-    /// spellings (`tidb_util::tlsutil`), `None` on a plaintext connection.
+    /// spellings (`tidb_util::tls`), `None` on a plaintext connection.
     /// Go reports the same pair through `Ssl_cipher`/`Ssl_version`
     /// (`server.go:1329`).
     pub tls_status: Option<(String, String)>,
@@ -829,14 +1015,32 @@ pub struct SessionContext {
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.
     pub close: ConnectionClose,
-    /// Coherent build identity captured when the SQL listener started.
-    pub version_info: VersionInfo,
 }
 
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
+
+    /// Returns the client-local path a statement asks the connection to read.
+    fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
+        Ok(None)
+    }
+
+    /// Finishes a statement after the connection transferred its local file.
+    fn execute_local_infile(
+        &mut self,
+        _sql: &str,
+        _data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this session does not accept client-local files",
+        ))
+    }
+
+    /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
+    /// called after the SQL command has written its response.
+    fn finish_execute_stmt(&mut self, _cost: Duration) {}
 
     /// Splits one COM_QUERY text into the statements the connection runs in
     /// order — Go `handleQuery` parses the whole text and loops the result
@@ -885,12 +1089,31 @@ pub trait QuerySession {
     /// ```
     ///
     /// so the limit a client READS and the limit the server ENFORCES are one
-    /// value, and `SET max_allowed_packet` takes effect on the next packet.
+    /// value. Go refuses SQL `SET SESSION max_allowed_packet`; its internal
+    /// session seeding and inherited GLOBAL copy take effect on the next
+    /// packet.
     /// `None` is Go's `cc.getCtx() == nil`: the config seed
     /// (`PacketIO.SetMaxAllowedPacket(config.GetMaxAllowedPacket())`) stands
     /// until a session exists to ask.
     fn max_allowed_packet(&self) -> Option<usize> {
         None
+    }
+
+    /// Attempts to charge bytes retained by `COM_STMT_SEND_LONG_DATA` to this
+    /// connection's persistent session tracker. Sessions without a memory
+    /// tracker keep the historical unbounded behavior; real TiDB sessions
+    /// override this with the same quota check as Go's `AppendParam`.
+    fn try_consume_long_data(&mut self, _bytes: i64) -> bool {
+        true
+    }
+
+    /// Releases bytes previously charged for `COM_STMT_SEND_LONG_DATA` when
+    /// the statement is reset, executed, or closed.
+    fn release_long_data(&mut self, _bytes: i64) {}
+
+    /// Connection ID used in the client-visible memory-quota diagnostic.
+    fn connection_id(&self) -> u64 {
+        0
     }
 
     /// Prepares a statement of any shape, reporting the marker count and the
@@ -996,6 +1219,23 @@ pub trait QuerySession {
         0
     }
 
+    /// MySQL warning numbers in the statement context that produced the
+    /// response. Go records each of these in `clientConn.flush`.
+    fn warning_codes(&self) -> Vec<u16> {
+        Vec::new()
+    }
+
+    /// The length-encoded info string Go's `StatementContext.LastMessage`
+    /// publishes in the INSERT/REPLACE/UPDATE OK packet. INSERT and REPLACE
+    /// compose `Records: <records>  Duplicates: <dups>  Warnings: <warnings>`
+    /// once the statement attempted more than one row or ran as INSERT ...
+    /// SELECT (`InsertExec.setMessage` / `ReplaceExec.setMessage`); UPDATE
+    /// composes its own matched/changed text. Sessions without a
+    /// statement-message producer keep the protocol field empty.
+    fn statement_info(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
     /// The live session status word every OK packet this session's statements
     /// produce must carry (Go `status := cc.ctx.Status()`, `pkg/server/conn.go`,
     /// read afresh per statement and passed to every `writeOkWith`/`writeEOF`).
@@ -1022,15 +1262,15 @@ pub trait QuerySession {
     /// Go's `NewResultEncoder("")` state -- the variable unset -- which
     /// leaves metadata and data in their column charset; a session with no
     /// variables reports it and is unchanged.
-    fn result_charset(&self) -> String {
-        String::new()
+    fn result_charset(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
     }
 
     /// Go `clientConn.initInputEncoder`: this session's
     /// `@@character_set_client`, applied to string-family binary parameters
     /// before they reach expression or storage semantics.
-    fn input_charset(&self) -> String {
-        "utf8mb4".to_owned()
+    fn input_charset(&self) -> Cow<'_, str> {
+        Cow::Borrowed("utf8mb4")
     }
 
     /// Selects this session's current schema (Go `clientConn.useDB`).
@@ -1070,6 +1310,11 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
 
     /// Opens a session from already-running process authorities.
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError>;
+
+    /// Returns the server's session manager for process memory control.
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        None
+    }
 }
 
 /// Process-wide connection accounting with exactly-once owned-lease cleanup.
@@ -1201,7 +1446,6 @@ struct WorkerPool {
 #[derive(Clone)]
 struct WorkerConnectionConfig {
     max_allowed_packet: usize,
-    version_info: VersionInfo,
     tls: Option<MysqlServerTls>,
 }
 
@@ -1414,7 +1658,6 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     max_allowed_packet: usize,
-    version_info: VersionInfo,
     /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
     /// the only thing that lets a connection advertise `CLIENT_SSL`.
     tls: Option<MysqlServerTls>,
@@ -1426,6 +1669,65 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
     connection_timeout: Duration,
+    _server_memory_limit: Option<ServerMemoryLimitRunner>,
+    _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
+}
+
+struct ServerMemoryLimitRunner {
+    exit: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ServerMemoryLimitRunner {
+    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+        let (exit, receiver) = mpsc::channel();
+        let mut handle = tidb_util::servermemorylimit::new_server_memory_limit_handle(receiver);
+        handle.set_session_manager(manager);
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for ServerMemoryLimitRunner {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+struct MemoryUsageAlarmRunner {
+    exit: crossbeam_channel::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl MemoryUsageAlarmRunner {
+    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+        let (exit, receiver) = crossbeam_channel::unbounded();
+        let handle = tidb_util::memoryusagealarm::Handle::new(
+            receiver,
+            Arc::new(tidb_util::memoryusagealarm::TiDBConfigProvider),
+        );
+        handle.set_session_manager(Some(manager));
+        let thread = std::thread::spawn(move || handle.run());
+        Self {
+            exit,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for MemoryUsageAlarmRunner {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
@@ -1450,18 +1752,24 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tls.is_some(),
             tls.as_ref().map_or("none", MysqlServerTls::origin)
         );
+        let session_manager = factory.session_manager();
+        let server_memory_limit = session_manager
+            .as_ref()
+            .map(|manager| ServerMemoryLimitRunner::start(Arc::clone(manager)));
+        let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         Ok(Self {
             listener,
             factory,
             users,
             tracker: Arc::new(ConnectionTracker::default()),
             max_allowed_packet: config.max_allowed_packet,
-            version_info: config.version_info.clone(),
             tls,
             worker_count: config.max_connections,
             shutdown: ShutdownHandle::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             connection_timeout: config.connection_timeout,
+            _server_memory_limit: server_memory_limit,
+            _memory_usage_alarm: memory_usage_alarm,
         })
     }
 
@@ -1541,7 +1849,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.tracker,
             WorkerConnectionConfig {
                 max_allowed_packet: self.max_allowed_packet,
-                version_info: self.version_info.clone(),
                 tls: self.tls.clone(),
             },
         )?;
@@ -1551,7 +1858,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let mut next_worker_index = warm_workers;
         let connection_config = WorkerConnectionConfig {
             max_allowed_packet: self.max_allowed_packet,
-            version_info: self.version_info.clone(),
             tls: self.tls.clone(),
         };
         let accept_result = (|| loop {
@@ -1742,7 +2048,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
         cancellation,
         registration: _registration,
     } = work;
-    if let Err(error) = serve_mysql_connection_with_tls_and_version_info(
+    if let Err(error) = serve_mysql_connection_with_runtime(
         stream,
         peer_addr,
         cancellation,
@@ -1752,7 +2058,6 @@ fn serve_connection_work<F: QuerySessionFactory>(
         MysqlConnectionRuntime {
             max_allowed_packet: connection.max_allowed_packet,
             tls: connection.tls.as_ref(),
-            version_info: &connection.version_info,
         },
     ) {
         let message = error.to_string();
@@ -2140,6 +2445,7 @@ mod tests {
             auto_tls: false,
             disconnect_on_expired_password: true,
             sem_enabled: false,
+            sem_config: String::new(),
             skip_grant_table: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
@@ -2147,18 +2453,19 @@ mod tests {
             deadlock_history_capacity: 10,
             deadlock_history_collect_retryable: false,
             schema_lease: Duration::from_millis(45_000),
+            stats_lease: crate::node_config::StatsLease::Positive(Duration::from_secs(3)),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
-            spill_storage: tidb_util::disk::SpillStorageSpec {
+            spill_storage: tidb_util::spill_storage::SpillStorageSpec {
                 path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),
                 quota_bytes: -1,
-                encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+                encryption: tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
             },
             memory_arbitrator: MemoryArbitratorConfig {
                 server_memory_limit: "80%".to_owned(),
                 mode: "disable".to_owned(),
                 soft_limit: "0".to_owned(),
             },
-            version_info: VersionInfo::build_default(),
+            global_config: tidb_config::config_tree::Config::default(),
         }
     }
 
@@ -2237,7 +2544,6 @@ mod tests {
             &tracker,
             WorkerConnectionConfig {
                 max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
-                version_info: VersionInfo::build_default(),
                 tls: None,
             },
             move |index, job: WorkerJob| {

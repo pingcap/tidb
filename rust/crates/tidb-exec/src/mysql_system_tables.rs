@@ -59,13 +59,17 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use tidb_codec::table_key::cut_row_key_prefix;
+use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{decode as decode_datums, encode_key, encode_row_key, gen_table_record_prefix};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::decode_table_row_to_map;
+use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
+use tidb_txnkv::Handle;
 
-use crate::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use crate::cluster_catalog::{
+    prefix_scan_end, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+};
 
 /// Go `mysql.SystemDB`: the schema every table in this module lives in.
 pub const SYSTEM_DB: &str = "mysql";
@@ -219,6 +223,8 @@ pub struct SystemTableView {
     types: BTreeMap<i64, FieldType>,
     /// Which projected columns the record key carries instead of the value.
     handle: HandleLayout,
+    /// Public secondary-index name -> `(index ID, indexed column count)`.
+    indexes: BTreeMap<String, (i64, usize)>,
 }
 
 impl SystemTableView {
@@ -272,12 +278,26 @@ impl SystemTableView {
                 types.insert(column.id, column.field_type.clone());
             }
         }
+        let indexes = table
+            .indices
+            .iter_deref()
+            .filter_map(|index| {
+                let index = index.read();
+                (index.state == SchemaState::PUBLIC && !index.primary).then(|| {
+                    (
+                        index.name.lowercase().to_owned(),
+                        (index.id, index.columns.len()),
+                    )
+                })
+            })
+            .collect();
         Self {
             name: name.to_owned(),
             table_id: table.id,
             ids,
             types,
             handle,
+            indexes,
         }
     }
 
@@ -355,6 +375,14 @@ impl SystemTableView {
     }
 }
 
+fn record_key_for_handle(table_id: i64, handle: &Handle) -> Vec<u8> {
+    match handle {
+        Handle::Int(handle) => encode_row_key(table_id, &handle.encoded()),
+        Handle::Common(handle) => encode_row_key(table_id, handle.encoded()),
+        Handle::Partition(handle) => record_key_for_handle(handle.partition_id(), handle.inner()),
+    }
+}
+
 /// Reads every row in one `mysql.*` table's record range, in key order.
 ///
 /// Both halves of each pair matter and neither may be dropped: the key carries
@@ -379,6 +407,83 @@ pub fn scan_system_table_prefixed<S: MetaSnapshot>(
 ) -> Result<MetaPairs, SystemTableError> {
     let key_prefix = view.record_prefix(prefix)?;
     Ok(snapshot.scan_prefix(&key_prefix)?)
+}
+
+/// Reads the record range beginning at one integer clustered handle.
+///
+/// This is the storage shape of SQL `WHERE handle_column >= value`: tables
+/// without an integer clustered handle fall back to their full record range,
+/// and the caller still applies the SQL predicate to decoded rows.
+pub fn scan_system_table_from_int_handle<S: MetaSnapshot>(
+    snapshot: &mut S,
+    view: &SystemTableView,
+    minimum: i64,
+) -> Result<MetaPairs, SystemTableError> {
+    let table_prefix = view.record_prefix(&[])?;
+    let start = match view.handle() {
+        HandleLayout::Int(_) => view.record_prefix(&[Datum::Int(minimum)])?,
+        HandleLayout::RowId | HandleLayout::Common(_) => table_prefix.clone(),
+    };
+    let end = prefix_scan_end(&table_prefix).ok_or_else(|| {
+        SystemTableError::Snapshot("system-table record prefix has no finite scan end".to_owned())
+    })?;
+    Ok(snapshot.scan_range(&start, &end)?)
+}
+
+/// Reads rows through one named secondary index whose leading indexed values
+/// equal `prefix`.
+///
+/// Go's restricted SQL uses this path for
+/// `mysql.stats_top_n INDEX(tbl) (table_id, is_index, hist_id)`. Returning
+/// record key/value pairs keeps [`SystemRow::parse`] independent of whether a
+/// caller reached the record directly or through an index lookup.
+pub fn scan_system_table_index_prefixed<S: MetaSnapshot>(
+    snapshot: &mut S,
+    view: &SystemTableView,
+    index_name: &str,
+    prefix: &[Datum],
+) -> Result<MetaPairs, SystemTableError> {
+    let Some((index_id, column_count)) = view.indexes.get(&index_name.to_ascii_lowercase()) else {
+        return Err(SystemTableError::Missing {
+            name: format!("{} index `{index_name}`", view.name()),
+        });
+    };
+    if prefix.len() > *column_count {
+        return Err(SystemTableError::Decode {
+            name: view.name().to_owned(),
+            detail: format!(
+                "index `{index_name}` has {column_count} columns but received a {}-column prefix",
+                prefix.len()
+            ),
+        });
+    }
+    let encoded = encode_key(prefix).map_err(|error| SystemTableError::Decode {
+        name: view.name().to_owned(),
+        detail: error.to_string(),
+    })?;
+    let index_prefix = encode_index_seek_key(view.table_id(), *index_id, &encoded);
+    let entries = snapshot.scan_prefix(&index_prefix)?;
+    let mut rows = Vec::with_capacity(entries.len());
+    for (index_key, index_value) in entries {
+        let handle = decode_index_handle(&index_key, &index_value, *column_count)
+            .map_err(|error| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` entry has no valid row handle: {error}"),
+            })?
+            .ok_or_else(|| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` entry has no row handle"),
+            })?;
+        let record_key = record_key_for_handle(view.table_id(), &handle);
+        let record_value = snapshot
+            .get(&record_key)?
+            .ok_or_else(|| SystemTableError::Decode {
+                name: view.name().to_owned(),
+                detail: format!("index `{index_name}` refers to a missing record"),
+            })?;
+        rows.push((record_key, record_value));
+    }
+    Ok(rows)
 }
 
 /// Decodes the clustered key columns one record key carries.
@@ -452,12 +557,23 @@ impl<'view> SystemRow<'view> {
         key: &[u8],
         value: &[u8],
     ) -> Result<Self, SystemTableError> {
-        let mut values = decode_table_row_to_map(value, &view.types, None).map_err(|error| {
-            SystemTableError::Decode {
-                name: view.name.clone(),
-                detail: error.to_string(),
-            }
-        })?;
+        Self::parse_in_timezone(view, key, value, None)
+    }
+
+    /// Decodes a system row whose projection may contain TIMESTAMP columns.
+    pub fn parse_in_timezone(
+        view: &'view SystemTableView,
+        key: &[u8],
+        value: &[u8],
+        timezone: Option<&SessionTimeZone>,
+    ) -> Result<Self, SystemTableError> {
+        let mut values =
+            decode_table_row_to_map(value, &view.types, timezone).map_err(|error| {
+                SystemTableError::Decode {
+                    name: view.name.clone(),
+                    detail: error.to_string(),
+                }
+            })?;
         for (column, datum) in decode_handle_columns(view, key)? {
             if let Some(id) = view.ids.get(&column) {
                 values.insert(*id, datum);
@@ -513,6 +629,13 @@ impl<'view> SystemRow<'view> {
     pub fn stored_datum(&self, column: &str) -> Result<Option<&Datum>, SystemTableError> {
         let id = self.view.column_id(column)?;
         Ok(self.values.get(&id))
+    }
+
+    /// Returns the decoded values keyed by stored column ID. Writers use this
+    /// to edit a system row without losing columns they do not interpret.
+    #[must_use]
+    pub fn into_values(self) -> BTreeMap<i64, Datum> {
+        self.values
     }
 
     fn wrong_value(&self, column: &str, wanted: &'static str, stored: &Datum) -> SystemTableError {
@@ -973,6 +1096,15 @@ mod clustered_handle_tests {
         version.set_flag(version.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         let mut count = stats_column(3, 4, "count", FieldTypeCode::LongLong);
         count.set_flag(count.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
+        let mut snapshot = stats_column(4, 5, "snapshot", FieldTypeCode::LongLong);
+        snapshot.set_flag(snapshot.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
+        let mut last_analyze = stats_column(
+            5,
+            6,
+            "last_stats_histograms_version",
+            FieldTypeCode::LongLong,
+        );
+        last_analyze.set_flag(last_analyze.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         TableInfo {
             id: 22,
             name: CiString::new("stats_meta"),
@@ -982,6 +1114,8 @@ mod clustered_handle_tests {
                 table_id,
                 stats_column(2, 3, "modify_count", FieldTypeCode::LongLong),
                 count,
+                snapshot,
+                last_analyze,
             ]
             .into(),
             ..TableInfo::default()

@@ -19,6 +19,140 @@ use tidb_txnkv::transaction::{
     UndeterminedTransaction,
 };
 
+/// Go `pkg/executor/executor_failpoint_test.go::TestTxnWriteThroughputSLI`.
+#[test]
+fn txn_write_throughput_sli_matches_source() {
+    const FAILPOINT: &str = "CheckTxnWriteThroughput";
+
+    struct FailpointGuard;
+    impl Drop for FailpointGuard {
+        fn drop(&mut self) {
+            fail::remove(FAILPOINT);
+        }
+    }
+
+    fn finish(session: &mut ClusterServerSession, affected_rows: u64) {
+        let in_txn = session.session.in_transaction();
+        session
+            .session
+            .txn_write_throughput_sli()
+            .finish_execute_stmt(1_000_000_000, affected_rows, in_txn);
+    }
+
+    fn write(session: &mut ClusterServerSession, sql: &str) {
+        let affected_rows = session
+            .execute_write(sql)
+            .expect("statement succeeds")
+            .expect("write statement")
+            .affected_rows;
+        finish(session, affected_rows);
+    }
+
+    fn control(session: &mut ClusterServerSession, sql: &str) {
+        session
+            .control_transaction(sql)
+            .expect("statement succeeds");
+        finish(session, 0);
+    }
+
+    fn reset(session: &mut ClusterServerSession) {
+        session.session.txn_write_throughput_sli().reset();
+    }
+
+    fn state(session: &mut ClusterServerSession) -> String {
+        session.session.txn_write_throughput_sli().to_string()
+    }
+
+    fail::cfg(FAILPOINT, "return").expect("enable failpoint");
+    let _guard = FailpointGuard;
+    let (mut session, _) = open_session();
+
+    write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
+    assert!(!session.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s"
+    );
+    reset(&mut session);
+
+    write(&mut session, "INSERT INTO t SELECT v, id FROM t");
+    assert!(session.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert_eq!(
+        state(&mut session),
+        "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s"
+    );
+    reset(&mut session);
+
+    write(&mut session, "DELETE FROM t");
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 4, writeSize: 76, readKeys: 4, writeKeys: 4, writeTime: 1s"
+    );
+    reset(&mut session);
+
+    control(&mut session, "BEGIN");
+    for value in 0..20 {
+        write(
+            &mut session,
+            &format!("INSERT INTO t (id, v) VALUES ({value}, {value})"),
+        );
+        assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    }
+    let _ = rows(&mut session, "SELECT COUNT(*) FROM t");
+    finish(&mut session, 0);
+    let _ = rows(&mut session, "SELECT * FROM t");
+    finish(&mut session, 0);
+    write(&mut session, "INSERT INTO t (id, v) VALUES (20, 20)");
+    assert!(!session.session.txn_write_throughput_sli().is_small_txn());
+    control(&mut session, "COMMIT");
+    assert!(!session.session.txn_write_throughput_sli().is_invalid());
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s"
+    );
+    reset(&mut session);
+
+    write(&mut session, "DELETE FROM t");
+    reset(&mut session);
+    control(&mut session, "BEGIN");
+    write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
+    write(&mut session, "REPLACE INTO t SELECT v, id FROM t");
+    control(&mut session, "COMMIT");
+    assert!(session.session.txn_write_throughput_sli().is_invalid());
+    assert_eq!(
+        state(&mut session),
+        "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s"
+    );
+    reset(&mut session);
+
+    fail::remove(FAILPOINT);
+    control(&mut session, "BEGIN");
+    write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
+    assert!(session.control_transaction("COMMIT").is_err());
+    finish(&mut session, 0);
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s"
+    );
+
+    fail::cfg(FAILPOINT, "return").expect("enable failpoint");
+    control(&mut session, "BEGIN");
+    write(&mut session, "INSERT INTO t (id, v) VALUES (5, 6)");
+    control(&mut session, "COMMIT");
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 1, writeSize: 29, readKeys: 0, writeKeys: 1, writeTime: 2s"
+    );
+
+    reset(&mut session);
+    assert_eq!(
+        state(&mut session),
+        "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s"
+    );
+}
+
 /// Go `pkg/store/driver/error.ToTiDBErr` preserves the result-undetermined
 /// identity all the way to `pkg/server`, where the connection closes without
 /// sending an ERR packet. The cluster transaction path used to replace that
@@ -87,6 +221,61 @@ fn an_explicit_transaction_publishes_once_at_commit() {
     assert_eq!(cluster.rows(), 2);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
+    let node = MockNode::start();
+    let (mut session, usage) = open_session_on_with_usage(&node);
+    let table_id = node
+        .catalog
+        .load()
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "app")
+        .and_then(|database| {
+            database
+                .tables
+                .iter()
+                .find(|table| table.name.lowercase() == "t")
+        })
+        .expect("app.t exists")
+        .id;
+
+    session.control_transaction("BEGIN").expect("begin");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("first insert");
+    session
+        .control_transaction("SAVEPOINT before_second")
+        .expect("savepoint");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+        .expect("second insert");
+    session
+        .control_transaction("ROLLBACK TO SAVEPOINT before_second")
+        .expect("rollback to savepoint");
+    session.control_transaction("COMMIT").expect("commit");
+
+    let committed = usage
+        .session_stats_list()
+        .begin_table_delta_dump()
+        .get(table_id)
+        .expect("committed delta is collected");
+    assert_eq!(committed.delta, 1);
+    assert_eq!(committed.count, 1);
+
+    usage.session_stats_list().session_table_delta().reset();
+    session.control_transaction("BEGIN").expect("begin");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
+        .expect("insert before rollback");
+    session.control_transaction("ROLLBACK").expect("rollback");
+    assert!(usage
+        .session_stats_list()
+        .begin_table_delta_dump()
+        .get(table_id)
+        .is_none());
 }
 
 /// One `BEGIN` takes one timestamp, and every statement until `COMMIT`

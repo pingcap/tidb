@@ -22,7 +22,7 @@ pub use consts_2::*;
 pub use consts_3::*;
 pub use consts_4::*;
 
-const CATALOG_LEN: usize = 1164;
+const CATALOG_LEN: usize = 1165;
 
 /// Concatenates the catalog parts into one contiguous array, in the
 /// same source order, entirely at compile time.

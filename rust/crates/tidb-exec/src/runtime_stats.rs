@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/execdetails`, covering `runtime_stats.go` and
+//! Go `pkg/util/execdetails` runtime statistics and utility surface,
+//! covering `runtime_stats.go` and
 //! `util.go`: the `Tp*` runtime-stats kind constants, the [`RuntimeStats`]
 //! interface, `basicCopRuntimeStats`/[`CopRuntimeStats`]/
 //! [`StmtCopRuntimeStats`]/[`BasicRuntimeStats`]/[`RootRuntimeStats`]/
@@ -23,48 +24,20 @@
 //! `canGetFloat64`/[`Int64`]/[`Duration`]/[`DurationWithAddr`]/
 //! [`Percentile`]/[`format_duration`] (`FormatDuration`) surface.
 //!
-//! Narrowings (Go input → Rust snapshot shape):
-//! - `*tipb.ExecutorExecutionSummary` → [`ExecutorExecutionSummarySnapshot`]:
-//!   only the fields the ported code reads (`TimeProcessedNs`,
-//!   `NumProducedRows`, `NumIterations`, `GetConcurrency()`,
-//!   `GetExecutorId()`), with proto optionals collapsed to Go's
-//!   zero-defaulted getter results. The `DetailInfo` oneof narrows to
-//!   [`ExecutionSummaryDetailInfo`] (the `TiflashScanContext`/
-//!   `ColumnarScanContext` variants the ported arms read), and
-//!   `TiflashWaitSummary`/`TiflashNetworkSummary` ride along as the
-//!   [`crate::tiflash_stats`] snapshot narrowings, `Option`-wrapped like
-//!   Go's nil-checked getters.
-//! - client-go `util.ScanDetail` → [`CopScanDetail`]: composition over the
-//!   already-ported [`crate::exec_details::ScanDetail`] plus the
-//!   `ProcessedKeysSize` field only this module reads. Its `String()` is
-//!   recovered from the Go test literals (per-field zero suppression;
-//!   `get_snapshot_time` and the IA fields are never rendered by the
-//!   fixtures and stay unrendered), and its `Merge` is the additive merge
-//!   the `TestCopRuntimeStats2` sums pin.
-//! - client-go `util.TimeDetail` → [`CopTimeDetail`]: composition over
-//!   [`crate::exec_details::TimeDetail`] plus `SuspendTime` and
-//!   `KvReadWallTime`. `String()` is recovered from `TestCopRuntimeStats2`
-//!   (`total_process_time`, `total_suspend_time`, `total_wait_time`,
-//!   `total_kv_read_wall_time`, `tikv_wall_time`, zero-suppressed);
-//!   `KvGrpcWaitTime`/`KvGrpcProcessTime` are not representable in the
-//!   reused type and stay open. `Merge` is additive.
+//! TiFlash runtime-statistics entry points consume the generated `tipb`
+//! `ExecutorExecutionSummary` message directly.
+//! - client-go `util.ScanDetail` and `util.TimeDetail` reuse the complete
+//!   shared [`crate::exec_details::ScanDetail`] and
+//!   [`crate::exec_details::TimeDetail`] representations.
 //! - client-go `*util.CommitDetails`/`*util.LockKeysDetails` reuse
 //!   [`crate::exec_details::CommitDetails`]/[`crate::exec_details::LockKeysDetails`];
-//!   their client-go `Merge`/`Clone` (source not on disk) are recovered as
-//!   [`merge_commit_details`]/[`merge_lock_keys_details`]: additive at every
-//!   test-pinned field, slowest-request slots by larger `ReqTotalTime`;
-//!   unpinned arms (for example client-go's exact `RetryCount` handling)
-//!   stay open under the additive reading.
-//! - client-go `*util.RUDetails` → the reused
-//!   [`crate::slow_log_format::RuDetailsSnapshot`]; `RUDetails.Merge` is
-//!   recovered as the additive [`merge_ru_details`].
-//! - `*execdetails.RUV2Metrics`/`RUV2Weights` (`ruv2_metrics.go`, outside
-//!   this claim) reuse [`crate::slow_log_format::RuV2MetricsSnapshot`]/
-//!   [`crate::slow_log_format::RuV2Weights`]; the `TotalRU`/
-//!   `CalculateRUValues`/`Merge` slices [`RuRuntimeStats`] needs are seeded
-//!   here as [`ruv2_total_ru`]/[`merge_ruv2_metrics_snapshot`] (the weighted
-//!   sum is restated because `slow_log_format`'s copy is private), with the
-//!   prometheus side effects dropped.
+//!   their client-go `Merge` behavior is implemented by
+//!   [`merge_commit_details`]/[`merge_lock_keys_details`].
+//! - client-go `*util.RUDetails` reuses [`tikv_client::RuDetails`], including
+//!   its synchronized `Merge` and deep-clone behavior.
+//! - `*execdetails.RUV2Metrics` reuses
+//!   [`crate::ruv2_metrics::RuV2Metrics`] and
+//!   [`crate::ruv2_metrics::RuV2Weights`].
 //! - `rmclient.RUVersion` (pd client, source not on disk) → plain [`i64`]
 //!   ([`RU_VERSION_V1`] `= 1`, [`RU_VERSION_V2`] `= 2`), pinned by the Go
 //!   doc comment on `RURuntimeStats` ("1 (v1) … 2 (v2) … 0 / unknown
@@ -82,46 +55,25 @@
 //! `TestColumnarScanContextStats`) live in [`crate::tiflash_stats`]'s test
 //! module and drive these production types.
 //!
-//! Boundaries:
-//! - `util.go`'s `context.Context` plumbing has no Rust context here:
-//!   `ContextWithInitializedExecDetails`,
-//!   `ContextWithMissingExecDetailsInitialized`,
-//!   `ContextWithInheritedRUV2Details`, `ContextWithRUV2Metrics`,
-//!   `SyncRUV2MetricsFromContext`, and `GetExecDetailsFromContext` stay
-//!   open. `LoadTiKVExecDetails` collapses into the already-ported
-//!   post-load [`crate::slow_log_format::TikvExecDetailsSnapshot`]
-//!   narrowing.
-//! - `github.com/influxdata/tdigest` is replaced by a simplified merging
-//!   centroid digest: exact for the degenerate distributions the tests pin
-//!   (all-equal values past `MaxDetailsNumsForOneQuery`), approximate
-//!   quantiles elsewhere.
-//! - Go `sync.Mutex`/`sync/atomic` guards: `RuntimeStatsColl.mu` and
-//!   `RuntimeStatsWithConcurrencyInfo`'s embedded mutex flatten to plain
-//!   single-threaded fields; [`BasicRuntimeStats`] keeps real
-//!   `std::sync::atomic` fields (SeqCst) because Go shares one instance
-//!   across executors with the same id and the tests exercise that sharing
-//!   (here through `Rc`).
-//! - `strconv.FormatFloat(x, 'f', 2, 64)` renders through Rust `{:.2}`;
-//!   they agree at every fixture point, exotic ties stay open. client-go
-//!   `util.FormatBytes` (source not on disk) is restated from TiDB's own
-//!   `memory.FormatBytes` and pinned at the `Bytes` and `98.2 KB` fixture
-//!   points; client-go's duration rendering coincides with
-//!   [`format_duration`] at every pinned point.
+//! The context lifecycle is implemented in [`crate::exec_details`], and
+//! percentile aggregation uses the algorithm and defaults of the pinned
+//! `github.com/influxdata/tdigest` dependency. Shared runtime-statistics
+//! state retains Go's mutex/atomic synchronization.
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
+
+use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
+use tidb_proto::ExecutorExecutionSummary;
 
 use crate::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
 };
-use crate::slow_log_format::{RuDetailsSnapshot, RuV2MetricsSnapshot, RuV2Weights};
-use crate::tiflash_stats::{
-    ColumnarScanContextSnapshot, TiFlashNetworkSummarySnapshot, TiFlashNetworkTrafficSummary,
-    TiFlashScanContextSnapshot, TiFlashWaitSummarySnapshot, TiflashStats,
-};
+use crate::ruv2_metrics::RuV2Weights;
+use crate::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
 
 /// Go `TpBasicRuntimeStats`: the tp for `BasicRuntimeStats`.
 pub const TP_BASIC_RUNTIME_STATS: i32 = 0;
@@ -257,68 +209,192 @@ impl CanGetFloat64 for DurationWithAddr {
     }
 }
 
-/// One weighted centroid of the simplified digest.
+/// One weighted centroid of pinned `github.com/influxdata/tdigest v0.0.1`.
 #[derive(Clone, Copy, Debug)]
 struct Centroid {
     mean: f64,
     weight: f64,
 }
 
-/// The simplified stand-in for `github.com/influxdata/tdigest`: a sorted
-/// centroid list merging exactly-equal means, compressed pairwise past a
-/// cap. Exact when all values coincide (what the tests pin); approximate
-/// quantiles otherwise.
-#[derive(Clone, Debug, Default)]
+impl Centroid {
+    fn add(&mut self, other: Self) {
+        if self.weight != 0.0 {
+            self.weight += other.weight;
+            self.mean += other.weight * (other.mean - self.mean) / self.weight;
+        } else {
+            *self = other;
+        }
+    }
+}
+
+/// Exact transcreation of the subset of pinned
+/// `github.com/influxdata/tdigest v0.0.1` used by `Percentile`.
+#[derive(Clone, Debug)]
 struct TDigest {
-    centroids: Vec<Centroid>,
+    compression: f64,
+    max_processed: usize,
+    max_unprocessed: usize,
+    processed: Vec<Centroid>,
+    unprocessed: Vec<Centroid>,
+    cumulative: Vec<f64>,
+    processed_weight: f64,
+    unprocessed_weight: f64,
+    min: f64,
+    max: f64,
+}
+
+impl Default for TDigest {
+    fn default() -> Self {
+        let compression = 1000.0;
+        Self {
+            compression,
+            max_processed: (2.0_f64 * compression.ceil()) as usize,
+            max_unprocessed: (8.0_f64 * compression.ceil()) as usize,
+            processed: Vec::with_capacity((2.0_f64 * compression.ceil()) as usize),
+            unprocessed: Vec::with_capacity((8.0_f64 * compression.ceil()) as usize + 1),
+            cumulative: Vec::new(),
+            processed_weight: 0.0,
+            unprocessed_weight: 0.0,
+            min: f64::MAX,
+            max: -f64::MAX,
+        }
+    }
 }
 
 impl TDigest {
-    const COMPRESS_LIMIT: usize = 4096;
-
     fn add(&mut self, mean: f64, weight: f64) {
-        match self.centroids.binary_search_by(|c| c.mean.total_cmp(&mean)) {
-            Ok(idx) => self.centroids[idx].weight += weight,
-            Err(idx) => self.centroids.insert(idx, Centroid { mean, weight }),
+        if mean.is_nan() {
+            return;
         }
-        if self.centroids.len() > Self::COMPRESS_LIMIT {
-            self.compress();
+        self.add_centroid(Centroid { mean, weight });
+    }
+
+    fn add_centroid(&mut self, centroid: Centroid) {
+        self.unprocessed.push(centroid);
+        self.unprocessed_weight += centroid.weight;
+        if self.processed.len() > self.max_processed
+            || self.unprocessed.len() > self.max_unprocessed
+        {
+            self.process();
         }
     }
 
-    fn compress(&mut self) {
-        let mut merged = Vec::with_capacity(self.centroids.len().div_ceil(2));
-        for pair in self.centroids.chunks(2) {
-            let weight: f64 = pair.iter().map(|c| c.weight).sum();
-            let mean = pair.iter().map(|c| c.mean * c.weight).sum::<f64>() / weight;
-            merged.push(Centroid { mean, weight });
+    fn process(&mut self) {
+        if self.unprocessed.is_empty() && self.processed.len() <= self.max_processed {
+            return;
         }
-        self.centroids = merged;
-    }
+        self.unprocessed.append(&mut self.processed);
+        self.unprocessed
+            .sort_by(|left, right| left.mean.total_cmp(&right.mean));
 
-    fn add_centroid_list(&mut self, other: &TDigest) {
-        for c in &other.centroids {
-            self.add(c.mean, c.weight);
-        }
-    }
-
-    /// Go `tdigest.Quantile`, approximated: the mean of the centroid the
-    /// cumulative weight `q * total` falls into.
-    fn quantile(&self, q: f64) -> f64 {
-        let total: f64 = self.centroids.iter().map(|c| c.weight).sum();
-        if total == 0.0 {
-            return f64::NAN;
-        }
-        let target = q * total;
-        let mut cumulative = 0.0;
-        for c in &self.centroids {
-            cumulative += c.weight;
-            if cumulative >= target {
-                return c.mean;
+        self.processed.push(self.unprocessed[0]);
+        self.processed_weight += self.unprocessed_weight;
+        self.unprocessed_weight = 0.0;
+        let mut so_far = self.unprocessed[0].weight;
+        let mut limit = self.processed_weight * self.integrated_q(1.0);
+        for centroid in self.unprocessed.iter().copied().skip(1) {
+            let projected = so_far + centroid.weight;
+            if projected <= limit {
+                so_far = projected;
+                self.processed
+                    .last_mut()
+                    .expect("processed contains the first centroid")
+                    .add(centroid);
+            } else {
+                let k1 = self.integrated_location(so_far / self.processed_weight);
+                limit = self.processed_weight * self.integrated_q(k1 + 1.0);
+                so_far += centroid.weight;
+                self.processed.push(centroid);
             }
         }
-        self.centroids[self.centroids.len() - 1].mean
+        self.min = self.min.min(self.processed[0].mean);
+        self.max = self
+            .max
+            .max(self.processed.last().expect("processed is non-empty").mean);
+        self.update_cumulative();
+        self.unprocessed.clear();
     }
+
+    fn update_cumulative(&mut self) {
+        self.cumulative.resize(self.processed.len() + 1, 0.0);
+        let mut previous = 0.0;
+        for (index, centroid) in self.processed.iter().enumerate() {
+            self.cumulative[index] = previous + centroid.weight / 2.0;
+            previous += centroid.weight;
+        }
+        self.cumulative[self.processed.len()] = previous;
+    }
+
+    fn centroids(&mut self) -> Vec<Centroid> {
+        self.process();
+        self.processed.clone()
+    }
+
+    fn add_centroid_list(&mut self, centroids: &[Centroid]) {
+        for centroid in centroids {
+            self.add_centroid(*centroid);
+        }
+    }
+
+    fn quantile(&mut self, q: f64) -> f64 {
+        self.process();
+        if !(0.0..=1.0).contains(&q) || self.processed.is_empty() {
+            return f64::NAN;
+        }
+        if self.processed.len() == 1 {
+            return self.processed[0].mean;
+        }
+        let index = q * self.processed_weight;
+        if index <= self.processed[0].weight / 2.0 {
+            return self.min
+                + 2.0 * index / self.processed[0].weight * (self.processed[0].mean - self.min);
+        }
+        let lower = self.cumulative.partition_point(|value| *value < index);
+        if lower + 1 != self.cumulative.len() {
+            let z1 = index - self.cumulative[lower - 1];
+            let z2 = self.cumulative[lower] - index;
+            return weighted_average(
+                self.processed[lower - 1].mean,
+                z2,
+                self.processed[lower].mean,
+                z1,
+            );
+        }
+        let z1 = index - self.processed_weight - self.processed[lower - 1].weight / 2.0;
+        let z2 = self.processed[lower - 1].weight / 2.0 - z1;
+        weighted_average(
+            self.processed.last().expect("processed is non-empty").mean,
+            z1,
+            self.max,
+            z2,
+        )
+    }
+
+    fn integrated_q(&self, k: f64) -> f64 {
+        ((k.min(self.compression) * std::f64::consts::PI / self.compression
+            - std::f64::consts::PI / 2.0)
+            .sin()
+            + 1.0)
+            / 2.0
+    }
+
+    fn integrated_location(&self, q: f64) -> f64 {
+        self.compression * ((2.0 * q - 1.0).asin() + std::f64::consts::PI / 2.0)
+            / std::f64::consts::PI
+    }
+}
+
+fn weighted_average(x1: f64, w1: f64, x2: f64, w2: f64) -> f64 {
+    if x1 <= x2 {
+        weighted_average_sorted(x1, w1, x2, w2)
+    } else {
+        weighted_average_sorted(x2, w2, x1, w1)
+    }
+}
+
+fn weighted_average_sorted(x1: f64, w1: f64, x2: f64, w2: f64) -> f64 {
+    let value = (x1 * w1 + x2 * w2) / (w1 + w2);
+    x1.max(value.min(x2))
 }
 
 /// Go `execdetails.Percentile`: percentile calculation over a series of
@@ -390,7 +466,7 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
         reason = "Go int(float64(len(p.values)) * f) index arithmetic"
     )]
     pub fn get_percentile(&mut self, f: f64) -> f64 {
-        match &self.dt {
+        match &mut self.dt {
             None => {
                 if !self.is_sorted {
                     self.is_sorted = true;
@@ -436,7 +512,8 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
             self.dt = Some(dt);
         }
         if let Some(dt) = &mut self.dt {
-            dt.add_centroid_list(other_dt);
+            let mut other = other_dt.clone();
+            dt.add_centroid_list(&other.centroids());
         }
     }
 
@@ -498,251 +575,14 @@ fn get_unit(ns: i64) -> i64 {
     }
 }
 
-/// client-go `util.FormatBytes`, restated from TiDB's own
-/// `memory.FormatBytes` (`pkg/util/memory/tracker.go`) because the
-/// client-go source is not on disk; pinned by the fixtures at the plain
-/// `Bytes` and `98.2 KB` points.
-#[expect(clippy::cast_precision_loss, reason = "Go float64(int64) conversion")]
-fn format_bytes(num_bytes: i64) -> String {
-    const KB: i64 = 1 << 10;
-    const MB: i64 = 1 << 20;
-    const GB: i64 = 1 << 30;
-    if num_bytes <= KB {
-        return format!("{num_bytes} Bytes");
-    }
-    let (unit, unit_str) = if num_bytes > GB {
-        (GB, "GB")
-    } else if num_bytes > MB {
-        (MB, "MB")
-    } else {
-        (KB, "KB")
-    };
-    let v = num_bytes as f64 / unit as f64;
-    let decimal = if num_bytes % unit == 0 {
-        0
-    } else if v < 10.0 {
-        2
-    } else {
-        1
-    };
-    format!("{v:.decimal$} {unit_str}")
-}
+/// Compatibility name for the one client-go `util.ScanDetail` type.
+pub type CopScanDetail = ScanDetail;
 
-/// Go `tipb.ExecutorExecutionSummary.DetailInfo` oneof, narrowed to the
-/// two variants the ported TiFlash arms read (Go's
-/// `summary.GetTiflashScanContext()`/`summary.GetColumnarScanContext()`
-/// yield nil unless `DetailInfo` holds the matching variant).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "narrowing of the Go oneof; the wide scan snapshot variant is \
-              intentional"
-)]
-pub enum ExecutionSummaryDetailInfo {
-    /// Go `*tipb.ExecutorExecutionSummary_TiflashScanContext`.
-    TiflashScanContext(TiFlashScanContextSnapshot),
-    /// Go `*tipb.ExecutorExecutionSummary_ColumnarScanContext`.
-    ColumnarScanContext(ColumnarScanContextSnapshot),
-}
-
-/// The fields this module reads off a `*tipb.ExecutorExecutionSummary`,
-/// with proto optionals collapsed to Go's zero-defaulted getter results.
-/// The TiFlash `DetailInfo`/wait/network payloads carry the
-/// [`crate::tiflash_stats`] snapshot narrowings, `Option`-wrapped like
-/// Go's nil-checked getters.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ExecutorExecutionSummarySnapshot {
-    /// Go `summary.TimeProcessedNs`.
-    pub time_processed_ns: u64,
-    /// Go `summary.NumProducedRows`.
-    pub num_produced_rows: u64,
-    /// Go `summary.NumIterations`.
-    pub num_iterations: u64,
-    /// Go `summary.GetConcurrency()` (0 when unset).
-    pub concurrency: u64,
-    /// Go `summary.GetExecutorId()` (`""` when unset).
-    pub executor_id: String,
-    /// Go `summary.DetailInfo` (`None` when unset).
-    pub detail_info: Option<ExecutionSummaryDetailInfo>,
-    /// Go `summary.GetTiflashWaitSummary()` (`None` when unset).
-    pub tiflash_wait_summary: Option<TiFlashWaitSummarySnapshot>,
-    /// Go `summary.GetTiflashNetworkSummary()` (`None` when unset).
-    pub tiflash_network_summary: Option<TiFlashNetworkSummarySnapshot>,
-}
-
-/// client-go `util.ScanDetail` as `runtime_stats.go` reads it: the
-/// already-ported [`ScanDetail`] value plus `ProcessedKeysSize`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CopScanDetail {
-    /// The [`crate::exec_details::ScanDetail`] slice of the client-go
-    /// struct.
-    pub base: ScanDetail,
-    /// Go `ScanDetail.ProcessedKeysSize` (`int64`).
-    pub processed_keys_size: i64,
-}
-
-impl CopScanDetail {
-    /// client-go `ScanDetail.Merge`: the additive merge pinned by the
-    /// `TestCopRuntimeStats2` sums.
-    pub fn merge(&mut self, other: &CopScanDetail) {
-        self.base.processed_keys += other.base.processed_keys;
-        self.processed_keys_size += other.processed_keys_size;
-        self.base.total_keys += other.base.total_keys;
-        self.base.get_snapshot_duration += other.base.get_snapshot_duration;
-        self.base.rocksdb_delete_skipped_count += other.base.rocksdb_delete_skipped_count;
-        self.base.rocksdb_key_skipped_count += other.base.rocksdb_key_skipped_count;
-        self.base.rocksdb_block_cache_hit_count += other.base.rocksdb_block_cache_hit_count;
-        self.base.rocksdb_block_read_count += other.base.rocksdb_block_read_count;
-        self.base.rocksdb_block_read_byte += other.base.rocksdb_block_read_byte;
-        self.base.rocksdb_block_read_duration += other.base.rocksdb_block_read_duration;
-        self.base.ia_remote_read_segment_count += other.base.ia_remote_read_segment_count;
-        self.base.ia_remote_read_segment_bytes += other.base.ia_remote_read_segment_bytes;
-        self.base.ia_remote_read_segment_duration += other.base.ia_remote_read_segment_duration;
-    }
-
-    /// client-go `ScanDetail.String`, recovered from the Go test literals:
-    /// each field zero-suppressed, `""` when nothing renders.
-    #[must_use]
-    #[expect(
-        clippy::cast_possible_wrap,
-        reason = "Go renders the uint64 count verbatim"
-    )]
-    pub fn string(&self) -> String {
-        let mut block: Vec<String> = Vec::new();
-        if self.base.rocksdb_block_cache_hit_count > 0 {
-            block.push(format!(
-                "cache_hit_count: {}",
-                self.base.rocksdb_block_cache_hit_count
-            ));
-        }
-        if self.base.rocksdb_block_read_count > 0 {
-            block.push(format!(
-                "read_count: {}",
-                self.base.rocksdb_block_read_count
-            ));
-        }
-        if self.base.rocksdb_block_read_byte > 0 {
-            block.push(format!(
-                "read_byte: {}",
-                format_bytes(self.base.rocksdb_block_read_byte as i64)
-            ));
-        }
-        if self.base.rocksdb_block_read_duration > StdDuration::ZERO {
-            block.push(format!(
-                "read_time: {}",
-                format_duration(self.base.rocksdb_block_read_duration)
-            ));
-        }
-        let mut rocksdb: Vec<String> = Vec::new();
-        if self.base.rocksdb_delete_skipped_count > 0 {
-            rocksdb.push(format!(
-                "delete_skipped_count: {}",
-                self.base.rocksdb_delete_skipped_count
-            ));
-        }
-        if self.base.rocksdb_key_skipped_count > 0 {
-            rocksdb.push(format!(
-                "key_skipped_count: {}",
-                self.base.rocksdb_key_skipped_count
-            ));
-        }
-        if !block.is_empty() {
-            rocksdb.push(format!("block: {{{}}}", block.join(", ")));
-        }
-        let mut parts: Vec<String> = Vec::new();
-        if self.base.processed_keys > 0 {
-            parts.push(format!("total_process_keys: {}", self.base.processed_keys));
-        }
-        if self.processed_keys_size > 0 {
-            parts.push(format!(
-                "total_process_keys_size: {}",
-                self.processed_keys_size
-            ));
-        }
-        if self.base.total_keys > 0 {
-            parts.push(format!("total_keys: {}", self.base.total_keys));
-        }
-        if !rocksdb.is_empty() {
-            parts.push(format!("rocksdb: {{{}}}", rocksdb.join(", ")));
-        }
-        if parts.is_empty() {
-            return String::new();
-        }
-        format!("scan_detail: {{{}}}", parts.join(", "))
-    }
-}
-
-/// client-go `util.TimeDetail` as `runtime_stats.go` reads it: the
-/// already-ported [`TimeDetail`] value plus `SuspendTime` and
-/// `KvReadWallTime`. The `KvGrpc*` fields are not representable in the
-/// reused type and stay open.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CopTimeDetail {
-    /// The [`crate::exec_details::TimeDetail`] slice of the client-go
-    /// struct.
-    pub base: TimeDetail,
-    /// Go `TimeDetail.SuspendTime`.
-    pub suspend_time: StdDuration,
-    /// Go `TimeDetail.KvReadWallTime`.
-    pub kv_read_wall_time: StdDuration,
-}
-
-impl CopTimeDetail {
-    /// client-go `TimeDetail.Merge`: the additive merge pinned by the
-    /// `TestCopRuntimeStats2` sums.
-    pub fn merge(&mut self, other: &CopTimeDetail) {
-        self.base.process_time += other.base.process_time;
-        self.suspend_time += other.suspend_time;
-        self.base.wait_time += other.base.wait_time;
-        self.kv_read_wall_time += other.kv_read_wall_time;
-        self.base.total_rpc_wall_time += other.base.total_rpc_wall_time;
-    }
-
-    /// client-go `TimeDetail.String`, recovered from the
-    /// `TestCopRuntimeStats2` literal: each field zero-suppressed, `""`
-    /// when nothing renders.
-    #[must_use]
-    pub fn string(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        if self.base.process_time > StdDuration::ZERO {
-            parts.push(format!(
-                "total_process_time: {}",
-                format_duration(self.base.process_time)
-            ));
-        }
-        if self.suspend_time > StdDuration::ZERO {
-            parts.push(format!(
-                "total_suspend_time: {}",
-                format_duration(self.suspend_time)
-            ));
-        }
-        if self.base.wait_time > StdDuration::ZERO {
-            parts.push(format!(
-                "total_wait_time: {}",
-                format_duration(self.base.wait_time)
-            ));
-        }
-        if self.kv_read_wall_time > StdDuration::ZERO {
-            parts.push(format!(
-                "total_kv_read_wall_time: {}",
-                format_duration(self.kv_read_wall_time)
-            ));
-        }
-        if self.base.total_rpc_wall_time > StdDuration::ZERO {
-            parts.push(format!(
-                "tikv_wall_time: {}",
-                format_duration(self.base.total_rpc_wall_time)
-            ));
-        }
-        if parts.is_empty() {
-            return String::new();
-        }
-        format!("time_detail: {{{}}}", parts.join(", "))
-    }
-}
+/// Compatibility name for the one client-go `util.TimeDetail` type.
+pub type CopTimeDetail = TimeDetail;
 
 /// Go `RuntimeStats`: the executor runtime information interface.
-pub trait RuntimeStats: Any {
+pub trait RuntimeStats: Any + Send {
     /// Go `String`.
     fn string(&self) -> String;
     /// Go `Merge`.
@@ -779,12 +619,13 @@ impl BasicCopRuntimeStats {
         clippy::cast_possible_wrap,
         reason = "Go int32/int64(uint64) conversions"
     )]
-    fn merge_exec_summary(&mut self, summary: &ExecutorExecutionSummarySnapshot) {
-        self.loops += summary.num_iterations as i32;
-        self.rows += summary.num_produced_rows as i64;
-        self.threads += summary.concurrency as i32;
-        self.proc_times
-            .add(Duration(summary.time_processed_ns as i64));
+    fn merge_exec_summary(&mut self, summary: &ExecutorExecutionSummary) {
+        self.loops += summary.num_iterations.unwrap_or_default() as i32;
+        self.rows += summary.num_produced_rows.unwrap_or_default() as i64;
+        self.threads += summary.concurrency.unwrap_or_default() as i32;
+        self.proc_times.add(Duration(
+            summary.time_processed_ns.unwrap_or_default() as i64
+        ));
         match &summary.detail_info {
             Some(ExecutionSummaryDetailInfo::TiflashScanContext(tiflash_scan_context)) => {
                 self.tiflash_stats
@@ -804,7 +645,10 @@ impl BasicCopRuntimeStats {
             self.tiflash_stats
                 .get_or_insert_with(TiflashStats::default)
                 .wait_summary
-                .merge_exec_summary(Some(tiflash_wait_summary), summary.time_processed_ns);
+                .merge_exec_summary(
+                    Some(tiflash_wait_summary),
+                    summary.time_processed_ns.unwrap_or_default(),
+                );
         }
         if let Some(tiflash_network_summary) = &summary.tiflash_network_summary {
             self.tiflash_stats
@@ -894,20 +738,24 @@ impl RuntimeStats for BasicCopRuntimeStats {
 
 /// Go `StmtCopRuntimeStats`: stores the cop runtime stats of the total
 /// statement.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct StmtCopRuntimeStats {
     /// Go `StmtCopRuntimeStats.TiflashNetworkStats`: stats all mpp tasks'
     /// network traffic info, `None` if no any mpp tasks' network traffic.
-    pub tiflash_network_stats: Option<TiFlashNetworkTrafficSummary>,
+    pub tiflash_network_stats: Option<Arc<Mutex<TiFlashNetworkTrafficSummary>>>,
 }
 
 impl StmtCopRuntimeStats {
     /// Go `StmtCopRuntimeStats.mergeExecSummary`: merges an
     /// `ExecutorExecutionSummary` into stmt cop runtime stats directly.
-    fn merge_exec_summary(&mut self, summary: &ExecutorExecutionSummarySnapshot) {
+    fn merge_exec_summary(&mut self, summary: &ExecutorExecutionSummary) {
         if let Some(tiflash_network_summary) = &summary.tiflash_network_summary {
             self.tiflash_network_stats
-                .get_or_insert_with(TiFlashNetworkTrafficSummary::default)
+                .get_or_insert_with(|| {
+                    Arc::new(Mutex::new(TiFlashNetworkTrafficSummary::default()))
+                })
+                .lock()
+                .expect("TiFlashNetworkTrafficSummary mutex poisoned")
                 .merge_exec_summary(Some(tiflash_network_summary));
         }
     }
@@ -1019,13 +867,13 @@ impl CopRuntimeStats {
             print_tiflash_specific_info(&mut buf);
         }
         if !is_tiflash_cop {
-            let detail = self.scan_detail.string();
+            let detail = self.scan_detail.to_string();
             if !detail.is_empty() {
                 buf.push_str(", ");
                 buf.push_str(&detail);
             }
             if self.time_detail != CopTimeDetail::default() {
-                let time_detail_str = self.time_detail.string();
+                let time_detail_str = self.time_detail.to_string();
                 if !time_detail_str.is_empty() {
                     buf.push_str(", ");
                     buf.push_str(&time_detail_str);
@@ -1037,7 +885,7 @@ impl CopRuntimeStats {
 }
 
 /// Go `BasicRuntimeStats`: the basic runtime stats. All executors with the
-/// same executor id share one instance (through [`Rc`] here), so the
+/// same executor id share one instance (through [`Arc`] here), so the
 /// counters stay real atomics as in Go (SeqCst).
 #[derive(Debug, Default)]
 pub struct BasicRuntimeStats {
@@ -1182,7 +1030,7 @@ impl RuntimeStats for BasicRuntimeStats {
 #[derive(Default)]
 pub struct RootRuntimeStats {
     /// Go `RootRuntimeStats.basic` (shared across same-id executors).
-    basic: Option<Rc<BasicRuntimeStats>>,
+    basic: Option<Arc<BasicRuntimeStats>>,
     /// Go `RootRuntimeStats.groupRss`.
     group_rss: Vec<Box<dyn RuntimeStats>>,
 }
@@ -1205,7 +1053,7 @@ impl RootRuntimeStats {
 
     /// Go `RootRuntimeStats.MergeStats`: the stats suitable for display.
     #[must_use]
-    pub fn merge_stats(&self) -> (Option<&Rc<BasicRuntimeStats>>, &[Box<dyn RuntimeStats>]) {
+    pub fn merge_stats(&self) -> (Option<&Arc<BasicRuntimeStats>>, &[Box<dyn RuntimeStats>]) {
         (self.basic.as_ref(), &self.group_rss)
     }
 
@@ -1227,17 +1075,20 @@ impl RootRuntimeStats {
     }
 }
 
-/// Go `RuntimeStatsColl`: collects executors' execution info. The Go
-/// `sync.Mutex` flattens away — this snapshot-side port is
-/// single-threaded.
 #[derive(Default)]
-pub struct RuntimeStatsColl {
+struct RuntimeStatsCollInner {
     /// Go `RuntimeStatsColl.rootStats`.
-    root_stats: HashMap<i64, RootRuntimeStats>,
+    root_stats: HashMap<i64, Arc<Mutex<RootRuntimeStats>>>,
     /// Go `RuntimeStatsColl.copStats`.
-    cop_stats: HashMap<i64, CopRuntimeStats>,
+    cop_stats: HashMap<i64, Arc<Mutex<CopRuntimeStats>>>,
     /// Go `RuntimeStatsColl.stmtCopStats`.
     stmt_cop_stats: StmtCopRuntimeStats,
+}
+
+/// Go `RuntimeStatsColl`: mutex-protected executor runtime statistics.
+#[derive(Default)]
+pub struct RuntimeStatsColl {
+    inner: Mutex<RuntimeStatsCollInner>,
 }
 
 impl RuntimeStatsColl {
@@ -1246,10 +1097,16 @@ impl RuntimeStatsColl {
     #[must_use]
     pub fn new(reuse: Option<RuntimeStatsColl>) -> RuntimeStatsColl {
         match reuse {
-            Some(mut reuse) => {
-                reuse.root_stats.clear();
-                reuse.cop_stats.clear();
-                reuse
+            Some(reuse) => {
+                let mut inner = reuse
+                    .inner
+                    .into_inner()
+                    .expect("RuntimeStatsColl mutex poisoned");
+                inner.root_stats.clear();
+                inner.cop_stats.clear();
+                RuntimeStatsColl {
+                    inner: Mutex::new(inner),
+                }
             }
             None => RuntimeStatsColl::default(),
         }
@@ -1257,8 +1114,16 @@ impl RuntimeStatsColl {
 
     /// Go `RuntimeStatsColl.RegisterStats`: registers a group stat for an
     /// executor, merging into an existing group of the same tp.
-    pub fn register_stats(&mut self, plan_id: i64, info: Box<dyn RuntimeStats>) {
-        let stats = self.root_stats.entry(plan_id).or_default();
+    pub fn register_stats(&self, plan_id: i64, info: Box<dyn RuntimeStats>) {
+        let stats = {
+            let mut inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+            inner
+                .root_stats
+                .entry(plan_id)
+                .or_insert_with(|| Arc::new(Mutex::new(RootRuntimeStats::default())))
+                .clone()
+        };
+        let mut stats = stats.lock().expect("RootRuntimeStats mutex poisoned");
         let tp = info.tp();
         for rss in &mut stats.group_rss {
             if rss.tp() == tp {
@@ -1274,61 +1139,91 @@ impl RuntimeStatsColl {
     /// state and counts the executor; otherwise missing state yields
     /// `None`.
     pub fn get_basic_runtime_stats(
-        &mut self,
+        &self,
         plan_id: i64,
         init_new_executor_stats: bool,
-    ) -> Option<Rc<BasicRuntimeStats>> {
-        let stats = if init_new_executor_stats {
-            self.root_stats.entry(plan_id).or_default()
-        } else {
-            self.root_stats.get_mut(&plan_id)?
+    ) -> Option<Arc<BasicRuntimeStats>> {
+        let stats = {
+            let mut inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+            if init_new_executor_stats {
+                inner
+                    .root_stats
+                    .entry(plan_id)
+                    .or_insert_with(|| Arc::new(Mutex::new(RootRuntimeStats::default())))
+                    .clone()
+            } else {
+                inner.root_stats.get(&plan_id)?.clone()
+            }
         };
+        let mut stats = stats.lock().expect("RootRuntimeStats mutex poisoned");
         if init_new_executor_stats {
             let basic = stats
                 .basic
-                .get_or_insert_with(|| Rc::new(BasicRuntimeStats::default()));
+                .get_or_insert_with(|| Arc::new(BasicRuntimeStats::default()));
             basic.executor_count.fetch_add(1, Ordering::SeqCst);
         }
         stats.basic.clone()
     }
 
     /// Go `RuntimeStatsColl.GetStmtCopRuntimeStats`: gets execStat for a
-    /// executor. Go returns the struct by value; its network pointer
-    /// aliasing collapses to the `Copy` of the snapshot-side summary.
+    /// executor. The returned value shares Go's network-statistics pointer.
     #[must_use]
     pub fn get_stmt_cop_runtime_stats(&self) -> StmtCopRuntimeStats {
-        self.stmt_cop_stats
+        self.inner
+            .lock()
+            .expect("RuntimeStatsColl mutex poisoned")
+            .stmt_cop_stats
+            .clone()
     }
 
     /// Go `RuntimeStatsColl.GetRootStats`: the root stats for an executor,
     /// created when missing.
-    pub fn get_root_stats(&mut self, plan_id: i64) -> &RootRuntimeStats {
-        self.root_stats.entry(plan_id).or_default()
+    pub fn get_root_stats(&self, plan_id: i64) -> Arc<Mutex<RootRuntimeStats>> {
+        self.inner
+            .lock()
+            .expect("RuntimeStatsColl mutex poisoned")
+            .root_stats
+            .entry(plan_id)
+            .or_insert_with(|| Arc::new(Mutex::new(RootRuntimeStats::default())))
+            .clone()
     }
 
     /// Go `RuntimeStatsColl.GetPlanActRows`: the actual rows of the plan.
     #[must_use]
     pub fn get_plan_act_rows(&self, plan_id: i64) -> i64 {
-        match self.root_stats.get(&plan_id) {
+        let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+        match inner.root_stats.get(&plan_id) {
             None => 0,
-            Some(stats) => stats.get_act_rows(),
+            Some(stats) => stats
+                .lock()
+                .expect("RootRuntimeStats mutex poisoned")
+                .get_act_rows(),
         }
     }
 
     /// Go `RuntimeStatsColl.GetCopStats`: the `CopRuntimeStats` for
-    /// `plan_id`, `None` when absent. Go returns a live pointer; the
-    /// mutable borrow is that seam.
-    pub fn get_cop_stats(&mut self, plan_id: i64) -> Option<&mut CopRuntimeStats> {
-        self.cop_stats.get_mut(&plan_id)
+    /// `plan_id`, `None` when absent. The returned value shares Go's live
+    /// pointer semantics.
+    pub fn get_cop_stats(&self, plan_id: i64) -> Option<Arc<Mutex<CopRuntimeStats>>> {
+        self.inner
+            .lock()
+            .expect("RuntimeStatsColl mutex poisoned")
+            .cop_stats
+            .get(&plan_id)
+            .cloned()
     }
 
     /// Go `RuntimeStatsColl.GetCopCountAndRows`: total cop-task count and
     /// rows.
     #[must_use]
     pub fn get_cop_count_and_rows(&self, plan_id: i64) -> (i32, i64) {
-        match self.cop_stats.get(&plan_id) {
+        let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+        match inner.cop_stats.get(&plan_id) {
             None => (0, 0),
-            Some(cop) => (cop.get_tasks(), cop.get_act_rows()),
+            Some(cop) => {
+                let cop = cop.lock().expect("CopRuntimeStats mutex poisoned");
+                (cop.get_tasks(), cop.get_act_rows())
+            }
         }
     }
 
@@ -1336,47 +1231,57 @@ impl RuntimeStatsColl {
     /// execution detail, returning the (possibly executor-id-overridden)
     /// plan id.
     pub fn record_cop_stats(
-        &mut self,
+        &self,
         mut plan_id: i64,
         store_type: StoreType,
         scan: Option<&CopScanDetail>,
         time: CopTimeDetail,
-        summary: Option<&ExecutorExecutionSummarySnapshot>,
+        summary: Option<&ExecutorExecutionSummary>,
     ) -> i64 {
-        if let Some(cop_stats) = self.cop_stats.get_mut(&plan_id) {
-            if let Some(scan) = scan {
-                cop_stats.scan_detail.merge(scan);
+        let mut inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+        let mut cop_stats = if let Some(existing) = inner.cop_stats.get(&plan_id).cloned() {
+            {
+                let mut cop = existing.lock().expect("CopRuntimeStats mutex poisoned");
+                if let Some(scan) = scan {
+                    cop.scan_detail.merge(scan);
+                }
+                cop.time_detail.merge(&time);
             }
-            cop_stats.time_detail.merge(&time);
+            existing
         } else {
-            self.cop_stats.insert(
-                plan_id,
-                CopRuntimeStats {
-                    scan_detail: scan.cloned().unwrap_or_default(),
-                    time_detail: time,
-                    store_type,
-                    ..CopRuntimeStats::default()
-                },
-            );
-        }
+            let created = Arc::new(Mutex::new(CopRuntimeStats {
+                time_detail: time.clone(),
+                scan_detail: scan.cloned().unwrap_or_default(),
+                store_type,
+                ..CopRuntimeStats::default()
+            }));
+            inner.cop_stats.insert(plan_id, created.clone());
+            created
+        };
         if let Some(summary) = summary {
             // For a TiFlash cop response the summary carries an executor
             // id; a valid one overwrites the plan id.
             if let Some(id) = get_plan_id_from_execution_summary(summary) {
                 if id != plan_id {
                     plan_id = id;
-                    self.cop_stats
+                    cop_stats = inner
+                        .cop_stats
                         .entry(plan_id)
-                        .or_insert_with(|| CopRuntimeStats {
-                            store_type,
-                            ..CopRuntimeStats::default()
-                        });
+                        .or_insert_with(|| {
+                            Arc::new(Mutex::new(CopRuntimeStats {
+                                store_type,
+                                ..CopRuntimeStats::default()
+                            }))
+                        })
+                        .clone();
                 }
             }
-            if let Some(cop_stats) = self.cop_stats.get_mut(&plan_id) {
-                cop_stats.stats.merge_exec_summary(summary);
-            }
-            self.stmt_cop_stats.merge_exec_summary(summary);
+            cop_stats
+                .lock()
+                .expect("CopRuntimeStats mutex poisoned")
+                .stats
+                .merge_exec_summary(summary);
+            inner.stmt_cop_stats.merge_exec_summary(summary);
         }
         plan_id
     }
@@ -1385,47 +1290,63 @@ impl RuntimeStatsColl {
     /// execution summary, returning the (possibly executor-id-overridden)
     /// plan id.
     pub fn record_one_cop_task(
-        &mut self,
+        &self,
         mut plan_id: i64,
         store_type: StoreType,
-        summary: &ExecutorExecutionSummarySnapshot,
+        summary: &ExecutorExecutionSummary,
     ) -> i64 {
         if let Some(id) = get_plan_id_from_execution_summary(summary) {
             plan_id = id;
         }
-        let cop_stats = self
+        let mut inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+        let cop_stats = inner
             .cop_stats
             .entry(plan_id)
-            .or_insert_with(|| CopRuntimeStats {
-                store_type,
-                ..CopRuntimeStats::default()
-            });
-        cop_stats.stats.merge_exec_summary(summary);
-        self.stmt_cop_stats.merge_exec_summary(summary);
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(CopRuntimeStats {
+                    store_type,
+                    ..CopRuntimeStats::default()
+                }))
+            })
+            .clone();
+        cop_stats
+            .lock()
+            .expect("CopRuntimeStats mutex poisoned")
+            .stats
+            .merge_exec_summary(summary);
+        inner.stmt_cop_stats.merge_exec_summary(summary);
         plan_id
     }
 
     /// Go `RuntimeStatsColl.ExistsRootStats`.
     #[must_use]
     pub fn exists_root_stats(&self, plan_id: i64) -> bool {
-        self.root_stats.contains_key(&plan_id)
+        self.inner
+            .lock()
+            .expect("RuntimeStatsColl mutex poisoned")
+            .root_stats
+            .contains_key(&plan_id)
     }
 
     /// Go `RuntimeStatsColl.ExistsCopStats`.
     #[must_use]
     pub fn exists_cop_stats(&self, plan_id: i64) -> bool {
-        self.cop_stats.contains_key(&plan_id)
+        self.inner
+            .lock()
+            .expect("RuntimeStatsColl mutex poisoned")
+            .cop_stats
+            .contains_key(&plan_id)
     }
 }
 
 /// Go `getPlanIDFromExecutionSummary`: parses the plan id off the summary's
 /// executor id (the digits after the last `_`).
-fn get_plan_id_from_execution_summary(summary: &ExecutorExecutionSummarySnapshot) -> Option<i64> {
-    if summary.executor_id.is_empty() {
+fn get_plan_id_from_execution_summary(summary: &ExecutorExecutionSummary) -> Option<i64> {
+    let executor_id = summary.executor_id.as_deref().unwrap_or_default();
+    if executor_id.is_empty() {
         return None;
     }
-    summary
-        .executor_id
+    executor_id
         .split('_')
         .next_back()
         .and_then(|last| last.parse::<i64>().ok())
@@ -1453,25 +1374,34 @@ impl ConcurrencyInfo {
 }
 
 /// Go `RuntimeStatsWithConcurrencyInfo`: concurrency info attached to the
-/// runtime stats. Go's embedded `sync.Mutex` flattens away.
-#[derive(Clone, Debug, Default)]
+/// runtime stats.
+#[derive(Debug, Default)]
 pub struct RuntimeStatsWithConcurrencyInfo {
     /// Go `RuntimeStatsWithConcurrencyInfo.concurrency`.
-    concurrency: Vec<ConcurrencyInfo>,
+    concurrency: Mutex<Vec<ConcurrencyInfo>>,
 }
 
 impl RuntimeStatsWithConcurrencyInfo {
     /// Go `SetConcurrencyInfo`: replaces the concurrency information.
     /// `num <= 0` means the operator is not executed in parallel.
-    pub fn set_concurrency_info(&mut self, infos: Vec<ConcurrencyInfo>) {
-        self.concurrency = infos;
+    pub fn set_concurrency_info(&self, infos: Vec<ConcurrencyInfo>) {
+        *self.concurrency.lock().unwrap() = infos;
+    }
+}
+
+impl Clone for RuntimeStatsWithConcurrencyInfo {
+    fn clone(&self) -> Self {
+        Self {
+            concurrency: Mutex::new(self.concurrency.lock().unwrap().clone()),
+        }
     }
 }
 
 impl RuntimeStats for RuntimeStatsWithConcurrencyInfo {
     fn string(&self) -> String {
         let mut buf = String::with_capacity(8);
-        for (i, concurrency) in self.concurrency.iter().enumerate() {
+        let concurrency = self.concurrency.lock().unwrap();
+        for (i, concurrency) in concurrency.iter().enumerate() {
             if i > 0 {
                 buf.push_str(", ");
             }
@@ -1502,54 +1432,14 @@ impl RuntimeStats for RuntimeStatsWithConcurrencyInfo {
     }
 }
 
-/// client-go `CommitDetails.Merge`, recovered as the additive merge (the
-/// slowest-request slots keep the larger `ReqTotalTime`); client-go's
-/// unpinned arms stay open under this reading.
+/// client-go `CommitDetails.Merge`.
 pub fn merge_commit_details(dst: &mut CommitDetails, src: &CommitDetails) {
-    dst.get_commit_ts_time += src.get_commit_ts_time;
-    dst.get_latest_ts_time += src.get_latest_ts_time;
-    dst.prewrite_time += src.prewrite_time;
-    dst.wait_prewrite_binlog_time += src.wait_prewrite_binlog_time;
-    dst.commit_time += src.commit_time;
-    dst.local_latch_time += src.local_latch_time;
-    dst.commit_backoff_time += src.commit_backoff_time;
-    dst.prewrite_backoff_types
-        .extend(src.prewrite_backoff_types.iter().cloned());
-    dst.commit_backoff_types
-        .extend(src.commit_backoff_types.iter().cloned());
-    if dst.slowest_prewrite.req_total_time < src.slowest_prewrite.req_total_time {
-        dst.slowest_prewrite = src.slowest_prewrite.clone();
-    }
-    if dst.commit_primary.req_total_time < src.commit_primary.req_total_time {
-        dst.commit_primary = src.commit_primary.clone();
-    }
-    dst.resolve_lock.resolve_lock_time += src.resolve_lock.resolve_lock_time;
-    dst.write_keys += src.write_keys;
-    dst.write_size += src.write_size;
-    dst.prewrite_region_num += src.prewrite_region_num;
-    dst.txn_retry += src.txn_retry;
+    dst.merge(src);
 }
 
-/// client-go `LockKeysDetails.Merge`, recovered as the additive merge (the
-/// slowest-request slot keeps the larger total time); client-go's unpinned
-/// arms — notably its exact `RetryCount` handling — stay open under this
-/// reading.
+/// client-go `LockKeysDetails.Merge`.
 pub fn merge_lock_keys_details(dst: &mut LockKeysDetails, src: &LockKeysDetails) {
-    dst.total_time += src.total_time;
-    dst.region_num += src.region_num;
-    dst.lock_keys += src.lock_keys;
-    dst.resolve_lock.resolve_lock_time += src.resolve_lock.resolve_lock_time;
-    dst.backoff_time += src.backoff_time;
-    dst.lock_rpc_time += src.lock_rpc_time;
-    dst.lock_rpc_count += src.lock_rpc_count;
-    dst.backoff_types.extend(src.backoff_types.iter().cloned());
-    if dst.slowest_req_total_time < src.slowest_req_total_time {
-        dst.slowest_req_total_time = src.slowest_req_total_time;
-        dst.slowest_region = src.slowest_region;
-        dst.slowest_store_addr = src.slowest_store_addr.clone();
-        dst.slowest_exec_details = src.slowest_exec_details.clone();
-    }
-    dst.retry_count += src.retry_count;
+    dst.merge(src);
 }
 
 /// Go `RuntimeStatsWithCommit`: the runtime stats with commit and lock-keys
@@ -1635,38 +1525,40 @@ impl RuntimeStatsWithCommit {
             buf.push_str(", keys:");
             buf.push_str(&lock_keys.lock_keys.to_string());
         }
-        if lock_keys.resolve_lock.resolve_lock_time > 0 {
+        if lock_keys.resolve_lock.resolve_lock_time_ns > 0 {
             buf.push_str(", resolve_lock:");
             buf.push_str(&format_duration(StdDuration::from_nanos(
-                lock_keys.resolve_lock.resolve_lock_time as u64,
+                lock_keys.resolve_lock.resolve_lock_time_ns as u64,
             )));
         }
-        if lock_keys.backoff_time > 0 {
+        if lock_keys.backoff_time_ns > 0 {
             buf.push_str(", backoff: {time: ");
             buf.push_str(&format_duration(StdDuration::from_nanos(
-                lock_keys.backoff_time as u64,
+                lock_keys.backoff_time_ns as u64,
             )));
-            if !lock_keys.backoff_types.is_empty() {
+            if !lock_keys.detail.backoff_types.is_empty() {
                 buf.push_str(", type: ");
-                Self::format_backoff(buf, &lock_keys.backoff_types);
+                Self::format_backoff(buf, &lock_keys.detail.backoff_types);
             }
             buf.push('}');
         }
-        if lock_keys.slowest_req_total_time > StdDuration::ZERO {
+        if lock_keys.detail.slowest_request_total_time > StdDuration::ZERO {
             buf.push_str(", slowest_rpc: {total: ");
-            buf.push_str(&format_seconds_3(lock_keys.slowest_req_total_time));
+            buf.push_str(&format_seconds_3(
+                lock_keys.detail.slowest_request_total_time,
+            ));
             buf.push_str("s, region_id: ");
-            buf.push_str(&lock_keys.slowest_region.to_string());
+            buf.push_str(&lock_keys.detail.slowest_region.to_string());
             buf.push_str(", store: ");
-            buf.push_str(&lock_keys.slowest_store_addr);
+            buf.push_str(&lock_keys.detail.slowest_store_address);
             buf.push_str(", ");
-            buf.push_str(&lock_keys.slowest_exec_details.to_string());
+            buf.push_str(&lock_keys.detail.slowest_exec_details.to_string());
             buf.push('}');
         }
-        if lock_keys.lock_rpc_time > 0 {
+        if lock_keys.lock_rpc_time_ns > 0 {
             buf.push_str(", lock_rpc:");
             buf.push_str(&format_go_duration(StdDuration::from_nanos(
-                lock_keys.lock_rpc_time as u64,
+                lock_keys.lock_rpc_time_ns as u64,
             )));
         }
         if lock_keys.lock_rpc_count > 0 {
@@ -1710,48 +1602,52 @@ impl RuntimeStats for RuntimeStatsWithCommit {
                 buf.push_str(&format_duration(commit.commit_time));
             }
             // Go takes commit.Mu here; the guarded fields are flattened.
-            let commit_backoff_time = commit.commit_backoff_time;
+            let commit_backoff_time = commit.detail.commit_backoff_time_ns;
             if commit_backoff_time > 0 {
                 buf.push_str(", backoff: {time: ");
                 buf.push_str(&format_duration(StdDuration::from_nanos(
                     commit_backoff_time as u64,
                 )));
-                if !commit.prewrite_backoff_types.is_empty() {
+                if !commit.detail.prewrite_backoff_types.is_empty() {
                     buf.push_str(", prewrite type: ");
-                    Self::format_backoff(&mut buf, &commit.prewrite_backoff_types);
+                    Self::format_backoff(&mut buf, &commit.detail.prewrite_backoff_types);
                 }
-                if !commit.commit_backoff_types.is_empty() {
+                if !commit.detail.commit_backoff_types.is_empty() {
                     buf.push_str(", commit type: ");
-                    Self::format_backoff(&mut buf, &commit.commit_backoff_types);
+                    Self::format_backoff(&mut buf, &commit.detail.commit_backoff_types);
                 }
                 buf.push('}');
             }
-            if commit.slowest_prewrite.req_total_time > StdDuration::ZERO {
+            if commit.detail.slowest_prewrite.request_total_time > StdDuration::ZERO {
                 buf.push_str(", slowest_prewrite_rpc: {total: ");
-                buf.push_str(&format_seconds_3(commit.slowest_prewrite.req_total_time));
+                buf.push_str(&format_seconds_3(
+                    commit.detail.slowest_prewrite.request_total_time,
+                ));
                 buf.push_str("s, region_id: ");
-                buf.push_str(&commit.slowest_prewrite.region.to_string());
+                buf.push_str(&commit.detail.slowest_prewrite.region.to_string());
                 buf.push_str(", store: ");
-                buf.push_str(&commit.slowest_prewrite.store_addr);
+                buf.push_str(&commit.detail.slowest_prewrite.store_address);
                 buf.push_str(", ");
-                buf.push_str(&commit.slowest_prewrite.exec_details.to_string());
+                buf.push_str(&commit.detail.slowest_prewrite.exec_details.to_string());
                 buf.push('}');
             }
-            if commit.commit_primary.req_total_time > StdDuration::ZERO {
+            if commit.detail.commit_primary.request_total_time > StdDuration::ZERO {
                 buf.push_str(", commit_primary_rpc: {total: ");
-                buf.push_str(&format_seconds_3(commit.commit_primary.req_total_time));
+                buf.push_str(&format_seconds_3(
+                    commit.detail.commit_primary.request_total_time,
+                ));
                 buf.push_str("s, region_id: ");
-                buf.push_str(&commit.commit_primary.region.to_string());
+                buf.push_str(&commit.detail.commit_primary.region.to_string());
                 buf.push_str(", store: ");
-                buf.push_str(&commit.commit_primary.store_addr);
+                buf.push_str(&commit.detail.commit_primary.store_address);
                 buf.push_str(", ");
-                buf.push_str(&commit.commit_primary.exec_details.to_string());
+                buf.push_str(&commit.detail.commit_primary.exec_details.to_string());
                 buf.push('}');
             }
-            if commit.resolve_lock.resolve_lock_time > 0 {
+            if commit.resolve_lock.resolve_lock_time_ns > 0 {
                 buf.push_str(", resolve_lock: ");
                 buf.push_str(&format_duration(StdDuration::from_nanos(
-                    commit.resolve_lock.resolve_lock_time as u64,
+                    commit.resolve_lock.resolve_lock_time_ns as u64,
                 )));
             }
             if commit.prewrite_region_num > 0 {
@@ -1766,9 +1662,9 @@ impl RuntimeStats for RuntimeStatsWithCommit {
                 buf.push_str(", write_byte:");
                 buf.push_str(&commit.write_size.to_string());
             }
-            if commit.txn_retry > 0 {
+            if commit.transaction_retry > 0 {
                 buf.push_str(", txn_retry:");
-                buf.push_str(&commit.txn_retry.to_string());
+                buf.push_str(&commit.transaction_retry.to_string());
             }
             buf.push('}');
         }
@@ -1817,118 +1713,38 @@ impl RuntimeStats for RuntimeStatsWithCommit {
     }
 }
 
-/// Go `RUV2Metrics.CalculateRUValues` (`ruv2_metrics.go`), seeded here for
-/// [`RuRuntimeStats`]: the weighted TiDB RU, zero under bypass.
-#[must_use]
-#[expect(clippy::cast_precision_loss, reason = "Go float64(int64) conversions")]
-pub fn ruv2_calculate_ru_values(metrics: &RuV2MetricsSnapshot, weights: &RuV2Weights) -> f64 {
-    if metrics.bypass {
-        return 0.0;
-    }
-    let sum = |map: &std::collections::BTreeMap<String, i64>| map.values().sum::<i64>();
-    let tidb_ru_float = metrics.result_chunk_cells as f64 * weights.result_chunk_cells
-        + sum(&metrics.executor_l1) as f64 * weights.executor_l1
-        + sum(&metrics.executor_l2) as f64 * weights.executor_l2
-        + sum(&metrics.executor_l3) as f64 * weights.executor_l3
-        + metrics.executor_l5_insert_rows as f64 * weights.executor_l5_insert_rows
-        + metrics.plan_cnt as f64 * weights.plan_cnt
-        + metrics.plan_derive_stats_paths as f64 * weights.plan_derive_stats_paths
-        + metrics.resource_manager_read_cnt as f64 * weights.resource_manager_read_cnt
-        + metrics.resource_manager_write_cnt as f64 * weights.resource_manager_write_cnt
-        + metrics.write_keys as f64 * weights.write_keys
-        + metrics.session_parser_total as f64 * weights.session_parser_total
-        + metrics.txn_cnt as f64 * weights.txn_cnt;
-    tidb_ru_float * weights.ru_scale
-}
-
-/// Go `RUV2Metrics.TotalRU` (`ruv2_metrics.go`), seeded here for
-/// [`RuRuntimeStats`]: TiDB + TiKV + TiFlash RU, with Go's nil-receiver
-/// (TiKV + TiFlash only) and bypass (zero) branches.
-#[must_use]
-pub fn ruv2_total_ru(
-    metrics: Option<&RuV2MetricsSnapshot>,
-    weights: &RuV2Weights,
-    tikv_ru: f64,
-    tiflash_ru: f64,
-) -> f64 {
-    match metrics {
-        None => tikv_ru + tiflash_ru,
-        Some(metrics) if metrics.bypass => 0.0,
-        Some(metrics) => ruv2_calculate_ru_values(metrics, weights) + tikv_ru + tiflash_ru,
-    }
-}
-
-/// Go `RUV2Metrics.Merge` (`ruv2_metrics.go`) over the snapshot narrowing:
-/// no-op when either side bypasses (or `src` is absent), additive counters
-/// and label maps otherwise.
-pub fn merge_ruv2_metrics_snapshot(
-    dst: &mut RuV2MetricsSnapshot,
-    src: Option<&RuV2MetricsSnapshot>,
-) {
-    let Some(src) = src else {
-        return;
-    };
-    if dst.bypass || src.bypass {
-        return;
-    }
-    let merge_map = |dst: &mut std::collections::BTreeMap<String, i64>,
-                     src: &std::collections::BTreeMap<String, i64>| {
-        for (label, value) in src {
-            if *value != 0 {
-                *dst.entry(label.clone()).or_insert(0) += value;
-            }
-        }
-    };
-    dst.result_chunk_cells += src.result_chunk_cells;
-    merge_map(&mut dst.executor_l1, &src.executor_l1);
-    merge_map(&mut dst.executor_l2, &src.executor_l2);
-    merge_map(&mut dst.executor_l3, &src.executor_l3);
-    dst.executor_l5_insert_rows += src.executor_l5_insert_rows;
-    dst.plan_cnt += src.plan_cnt;
-    dst.plan_derive_stats_paths += src.plan_derive_stats_paths;
-    dst.session_parser_total += src.session_parser_total;
-    dst.txn_cnt += src.txn_cnt;
-    dst.resource_manager_read_cnt += src.resource_manager_read_cnt;
-    dst.resource_manager_write_cnt += src.resource_manager_write_cnt;
-    dst.write_keys += src.write_keys;
-    dst.write_size += src.write_size;
-    dst.tikv_kv_engine_cache_miss += src.tikv_kv_engine_cache_miss;
-    dst.tikv_coprocessor_executor_iterations += src.tikv_coprocessor_executor_iterations;
-    dst.tikv_coprocessor_response_bytes += src.tikv_coprocessor_response_bytes;
-    dst.tikv_raftstore_store_write_trigger_wb += src.tikv_raftstore_store_write_trigger_wb;
-    dst.tikv_storage_processed_keys_batch_get += src.tikv_storage_processed_keys_batch_get;
-    dst.tikv_storage_processed_keys_get += src.tikv_storage_processed_keys_get;
-    merge_map(
-        &mut dst.tikv_coprocessor_executor_work_total,
-        &src.tikv_coprocessor_executor_work_total,
-    );
-}
-
-/// client-go `RUDetails.Merge`, recovered as the additive merge over the
-/// snapshot narrowing.
-pub fn merge_ru_details(dst: &mut RuDetailsSnapshot, src: &RuDetailsSnapshot) {
-    dst.rru += src.rru;
-    dst.wru += src.wru;
-    dst.ru_wait_duration += src.ru_wait_duration;
-    dst.tikv_ru_v2 += src.tikv_ru_v2;
-    dst.tiflash_ru += src.tiflash_ru;
-}
-
 /// Go `RURuntimeStats`: RU details and statement-level RU v2 metrics for
 /// EXPLAIN output. `ru_version` selects the accounting version — `1` (v1)
 /// shows RRU + WRU, `2` (v2) shows the v2 total, `0`/unknown defaults to
 /// v1.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct RuRuntimeStats {
-    /// Go's embedded `*util.RUDetails`, as the snapshot narrowing.
-    pub ru_details: Option<RuDetailsSnapshot>,
+    /// Go's embedded `*util.RUDetails`.
+    pub ru_details: Option<Arc<tikv_client::RuDetails>>,
     /// Go `RURuntimeStats.Metrics`.
-    pub metrics: Option<RuV2MetricsSnapshot>,
+    pub metrics: Option<Arc<crate::ruv2_metrics::RuV2Metrics>>,
     /// Go `RURuntimeStats.Weights`.
     pub weights: RuV2Weights,
     /// Go `RURuntimeStats.RUVersion` (`rmclient.RUVersion`, narrowed to a
     /// plain integer).
     pub ru_version: i64,
+}
+
+impl Clone for RuRuntimeStats {
+    fn clone(&self) -> Self {
+        Self {
+            ru_details: self
+                .ru_details
+                .as_ref()
+                .map(|details| Arc::new(details.cloned())),
+            metrics: self
+                .metrics
+                .as_ref()
+                .map(|metrics| Arc::new(metrics.as_ref().clone())),
+            weights: self.weights,
+            ru_version: self.ru_version,
+        }
+    }
 }
 
 impl RuRuntimeStats {
@@ -1947,10 +1763,15 @@ impl RuntimeStats for RuRuntimeStats {
     fn string(&self) -> String {
         if self.ru_version == RU_VERSION_V2 {
             let (tikv_ru, tiflash_ru) = match &self.ru_details {
-                Some(details) => (details.tikv_ru_v2, details.tiflash_ru),
+                Some(details) => (details.tikv_ru_v2(), details.tiflash_ru()),
                 None => (0.0, 0.0),
             };
-            let total_ru = ruv2_total_ru(self.metrics.as_ref(), &self.weights, tikv_ru, tiflash_ru);
+            let total_ru = crate::ruv2_metrics::total_ru(
+                self.metrics.as_deref(),
+                self.weights,
+                tikv_ru,
+                tiflash_ru,
+            );
             if total_ru == 0.0 {
                 return String::new();
             }
@@ -1958,7 +1779,7 @@ impl RuntimeStats for RuRuntimeStats {
         }
         // v1 or unknown.
         match &self.ru_details {
-            Some(details) => format!("RU:{:.2}", details.rru + details.wru),
+            Some(details) => format!("RU:{:.2}", details.read_ru() + details.write_ru()),
             None => String::new(),
         }
     }
@@ -1967,14 +1788,15 @@ impl RuntimeStats for RuRuntimeStats {
         let Some(tmp) = other.as_any().downcast_ref::<RuRuntimeStats>() else {
             return;
         };
-        match (&mut self.ru_details, &tmp.ru_details) {
-            (Some(dst), Some(src)) => merge_ru_details(dst, src),
-            (dst @ None, Some(src)) => *dst = Some(*src),
+        match (&self.ru_details, &tmp.ru_details) {
+            (Some(dst), Some(src)) => dst.merge(src),
+            (None, Some(src)) => self.ru_details = Some(Arc::new(src.cloned())),
             _ => {}
         }
-        match &mut self.metrics {
-            Some(metrics) => merge_ruv2_metrics_snapshot(metrics, tmp.metrics.as_ref()),
-            None => self.metrics = tmp.metrics.clone(),
+        match (&self.metrics, &tmp.metrics) {
+            (Some(metrics), Some(src)) => metrics.merge(src),
+            (None, Some(src)) => self.metrics = Some(Arc::new(src.as_ref().clone())),
+            _ => {}
         }
         if self.weights == RuV2Weights::default() {
             self.weights = tmp.weights;
@@ -2007,12 +1829,12 @@ mod tests {
         time_processed_ns: u64,
         num_produced_rows: u64,
         num_iterations: u64,
-    ) -> ExecutorExecutionSummarySnapshot {
-        ExecutorExecutionSummarySnapshot {
-            time_processed_ns,
-            num_produced_rows,
-            num_iterations,
-            ..ExecutorExecutionSummarySnapshot::default()
+    ) -> ExecutorExecutionSummary {
+        ExecutorExecutionSummary {
+            time_processed_ns: Some(time_processed_ns),
+            num_produced_rows: Some(num_produced_rows),
+            num_iterations: Some(num_iterations),
+            ..ExecutorExecutionSummary::default()
         }
     }
 
@@ -2034,6 +1856,29 @@ mod tests {
             session_parser_total: 0.192_304_99,
             txn_cnt: 0.030_137_09,
         }
+    }
+
+    fn empty_ruv2_metrics() -> Arc<crate::ruv2_metrics::RuV2Metrics> {
+        Arc::new(crate::ruv2_metrics::RuV2Metrics::new())
+    }
+
+    fn v1_ru_details(read_ru: f64, write_ru: f64) -> Arc<tikv_client::RuDetails> {
+        Arc::new(tikv_client::RuDetails::new_with(
+            read_ru,
+            write_ru,
+            StdDuration::ZERO,
+        ))
+    }
+
+    fn v2_ru_details() -> Arc<tikv_client::RuDetails> {
+        let details = Arc::new(tikv_client::RuDetails::new());
+        details.add_tikv_ru_v2(200.0);
+        details.update_tiflash(&tikv_client::proto::resource_manager::Consumption {
+            r_r_u: 100.0,
+            w_r_u: 200.0,
+            ..Default::default()
+        });
+        details
     }
 
     /// Port of Go `TestCopRuntimeStats` (`execdetails_test.go`), expected
@@ -2065,17 +1910,15 @@ mod tests {
             &mock_executor_execution_summary(4, 4, 4),
         );
         let scan_detail = CopScanDetail {
-            base: ScanDetail {
-                total_keys: 15,
-                processed_keys: 10,
-                rocksdb_delete_skipped_count: 5,
-                rocksdb_key_skipped_count: 1,
-                rocksdb_block_cache_hit_count: 10,
-                rocksdb_block_read_count: 20,
-                rocksdb_block_read_byte: 100,
-                ..ScanDetail::default()
-            },
+            total_keys: 15,
+            processed_keys: 10,
+            rocksdb_delete_skipped_count: 5,
+            rocksdb_key_skipped_count: 1,
+            rocksdb_block_cache_hit_count: 10,
+            rocksdb_block_read_count: 20,
+            rocksdb_block_read_bytes: 100,
             processed_keys_size: 10,
+            ..ScanDetail::default()
         };
         stats.record_cop_stats(
             table_scan_id,
@@ -2087,6 +1930,7 @@ mod tests {
         assert!(stats.exists_cop_stats(table_scan_id));
 
         let cop = stats.get_cop_stats(table_scan_id).unwrap();
+        let mut cop = cop.lock().expect("CopRuntimeStats mutex poisoned");
         let expected = "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, \
             scan_detail: {total_process_keys: 10, total_process_keys_size: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}";
         assert_eq!(expected, cop.string());
@@ -2094,25 +1938,29 @@ mod tests {
         assert_eq!("time:3ns, loops:3", cop.stats.string());
         assert_eq!(
             "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}",
-            stats.get_cop_stats(agg_id).unwrap().string()
+            stats
+                .get_cop_stats(agg_id)
+                .unwrap()
+                .lock()
+                .expect("CopRuntimeStats mutex poisoned")
+                .string()
         );
 
         let root_stats = stats.get_root_stats(table_reader_id);
         let _ = root_stats;
         assert!(stats.exists_root_stats(table_reader_id));
 
-        let cop = stats.get_cop_stats(table_scan_id).unwrap();
-        cop.scan_detail.base.processed_keys = 0;
+        cop.scan_detail.processed_keys = 0;
         cop.scan_detail.processed_keys_size = 0;
-        cop.scan_detail.base.rocksdb_key_skipped_count = 0;
-        cop.scan_detail.base.rocksdb_block_read_count = 0;
+        cop.scan_detail.rocksdb_key_skipped_count = 0;
+        cop.scan_detail.rocksdb_block_read_count = 0;
         // Print all fields even though the value of some fields is 0.
         let s = "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}";
         assert_eq!(s, cop.string());
         let zero_scan_detail = CopScanDetail::default();
         let zero_cop_stats = CopRuntimeStats::default();
-        assert_eq!("", zero_scan_detail.string());
-        assert_eq!("", CopTimeDetail::default().string());
+        assert_eq!("", zero_scan_detail.to_string());
+        assert_eq!("", CopTimeDetail::default().to_string());
         assert_eq!("", zero_cop_stats.string());
     }
 
@@ -2124,26 +1972,23 @@ mod tests {
         let mut stats = RuntimeStatsColl::new(None);
         let table_scan_id = 1;
         let scan_detail = CopScanDetail {
-            base: ScanDetail {
-                total_keys: 15,
-                processed_keys: 10,
-                rocksdb_delete_skipped_count: 5,
-                rocksdb_key_skipped_count: 1,
-                rocksdb_block_cache_hit_count: 10,
-                rocksdb_block_read_count: 20,
-                rocksdb_block_read_byte: 100,
-                ..ScanDetail::default()
-            },
+            total_keys: 15,
+            processed_keys: 10,
+            rocksdb_delete_skipped_count: 5,
+            rocksdb_key_skipped_count: 1,
+            rocksdb_block_cache_hit_count: 10,
+            rocksdb_block_read_count: 20,
+            rocksdb_block_read_bytes: 100,
             processed_keys_size: 10,
+            ..ScanDetail::default()
         };
         let time_detail = CopTimeDetail {
-            base: TimeDetail {
-                process_time: StdDuration::from_millis(10),
-                wait_time: StdDuration::from_millis(30),
-                total_rpc_wall_time: StdDuration::from_millis(50),
-            },
+            process_time: StdDuration::from_millis(10),
+            wait_time: StdDuration::from_millis(30),
+            total_rpc_wall_time: StdDuration::from_millis(50),
             suspend_time: StdDuration::from_millis(20),
             kv_read_wall_time: StdDuration::from_millis(5),
+            ..TimeDetail::default()
         };
         stats.record_cop_stats(
             table_scan_id,
@@ -2163,6 +2008,7 @@ mod tests {
         }
 
         let cop = stats.get_cop_stats(table_scan_id).unwrap();
+        let cop = cop.lock().expect("CopRuntimeStats mutex poisoned");
         let expected = "tikv_task:{proc max:2ns, min:2ns, avg: 2ns, p80:2ns, p95:2ns, iters:2010, tasks:1005}, \
             scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, \
             rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, \
@@ -2177,49 +2023,122 @@ mod tests {
     ///
     /// Divergence from the Go literal, in the commit fixture only: the
     /// reused [`crate::exec_details::TimeDetail`]/[`WriteDetail`] carry
-    /// neither `KvGrpcWaitTime`/`KvGrpcProcessTime` nor the scheduler
-    /// `latch_wait`/`pessimistic_lock_wait`/`throttle` durations, so those
-    /// fixture fields are dropped and the expected literal reads
-    /// `time_detail: {tikv_wall_time: 500ms}` (Go:
-    /// `{tikv_grpc_process_time: 200ms, tikv_grpc_wait_time: 100ms,
-    /// tikv_wall_time: 500ms}`) and `scheduler: {process: 104µs}` (Go:
-    /// `{process: 104µs, latch_wait: 103µs, pessimistic_lock_wait: 106µs,
-    /// throttle: 105µs}`). Everything else, including the whole lock-keys
-    /// half, is byte for byte.
+    /// Port of Go `TestRuntimeStatsWithCommit` (`execdetails_test.go`).
     #[test]
     fn runtime_stats_with_commit() {
         let commit_detail = CommitDetails {
             get_commit_ts_time: StdDuration::from_secs(1),
             prewrite_time: StdDuration::from_secs(1),
             commit_time: StdDuration::from_secs(1),
-            commit_backoff_time: 1_000_000_000,
-            prewrite_backoff_types: vec![
-                "backoff1".to_owned(),
-                "backoff2".to_owned(),
-                "backoff1".to_owned(),
-            ],
-            commit_backoff_types: vec![],
-            slowest_prewrite: ReqDetailInfo {
-                req_total_time: StdDuration::from_secs(1),
-                region: 1000,
-                store_addr: "tikv-1:20160".to_owned(),
-                exec_details: TiKVExecDetails {
-                    time_detail: Some(TimeDetail {
+            detail: crate::exec_details::CommitDetailsInner {
+                commit_backoff_time_ns: 1_000_000_000,
+                prewrite_backoff_types: vec![
+                    "backoff1".to_owned(),
+                    "backoff2".to_owned(),
+                    "backoff1".to_owned(),
+                ],
+                commit_backoff_types: vec![],
+                slowest_prewrite: ReqDetailInfo {
+                    request_total_time: StdDuration::from_secs(1),
+                    region: 1000,
+                    store_address: "tikv-1:20160".to_owned(),
+                    exec_details: TiKVExecDetails {
+                        time_detail: Some(Arc::new(TimeDetail {
+                            total_rpc_wall_time: StdDuration::from_millis(500),
+                            kv_grpc_wait_time: StdDuration::from_millis(100),
+                            kv_grpc_process_time: StdDuration::from_millis(200),
+                            ..TimeDetail::default()
+                        })),
+                        scan_detail: Some(Arc::new(ScanDetail {
+                            processed_keys: 10,
+                            total_keys: 100,
+                            rocksdb_delete_skipped_count: 1,
+                            rocksdb_key_skipped_count: 1,
+                            rocksdb_block_cache_hit_count: 1,
+                            rocksdb_block_read_count: 1,
+                            rocksdb_block_read_bytes: 100,
+                            rocksdb_block_read_duration: StdDuration::from_millis(20),
+                            ..ScanDetail::default()
+                        })),
+                        write_detail: Some(Arc::new(WriteDetail {
+                            store_batch_wait_duration: StdDuration::from_micros(10),
+                            propose_send_wait_duration: StdDuration::from_micros(20),
+                            persist_log_duration: StdDuration::from_micros(30),
+                            raft_db_write_leader_wait_duration: StdDuration::from_micros(40),
+                            raft_db_sync_log_duration: StdDuration::from_micros(45),
+                            raft_db_write_memtable_duration: StdDuration::from_micros(50),
+                            commit_log_duration: StdDuration::from_micros(60),
+                            apply_batch_wait_duration: StdDuration::from_micros(70),
+                            apply_log_duration: StdDuration::from_micros(80),
+                            apply_mutex_lock_duration: StdDuration::from_micros(90),
+                            apply_write_leader_wait_duration: StdDuration::from_micros(100),
+                            apply_write_wal_duration: StdDuration::from_micros(101),
+                            apply_write_memtable_duration: StdDuration::from_micros(102),
+                            scheduler_process_duration: StdDuration::from_micros(104),
+                            scheduler_latch_wait_duration: StdDuration::from_micros(103),
+                            scheduler_pessimistic_lock_wait_duration: StdDuration::from_micros(106),
+                            scheduler_throttle_duration: StdDuration::from_micros(105),
+                            ..WriteDetail::default()
+                        })),
+                    },
+                },
+                commit_primary: ReqDetailInfo::default(),
+            },
+            write_keys: 3,
+            write_size: 66,
+            prewrite_region_num: 5,
+            transaction_retry: 2,
+            resolve_lock: ResolveLockDetail {
+                resolve_lock_time_ns: 1_000_000_000,
+            },
+            ..CommitDetails::default()
+        };
+        let stats = RuntimeStatsWithCommit {
+            commit: Some(commit_detail),
+            ..RuntimeStatsWithCommit::default()
+        };
+        let expect = "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, \
+            slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, \
+            time_detail: {tikv_grpc_process_time: 200ms, tikv_grpc_wait_time: 100ms, tikv_wall_time: 500ms}, \
+            scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, \
+            block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, \
+            write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, \
+            sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, \
+            write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 104µs, latch_wait: 103µs, pessimistic_lock_wait: 106µs, throttle: 105µs}}}, resolve_lock: 1s, region_num:5, write_keys:3\
+            , write_byte:66, txn_retry:2}";
+        assert_eq!(expect, stats.string());
+
+        let lock_detail = LockKeysDetails {
+            total_time: StdDuration::from_secs(1),
+            region_num: 2,
+            lock_keys: 10,
+            backoff_time_ns: 3_000_000_000,
+            detail: crate::exec_details::LockKeysDetailsInner {
+                backoff_types: vec![
+                    "backoff4".to_owned(),
+                    "backoff5".to_owned(),
+                    "backoff5".to_owned(),
+                ],
+                slowest_request_total_time: StdDuration::from_secs(1),
+                slowest_region: 1000,
+                slowest_store_address: "tikv-1:20160".to_owned(),
+                slowest_exec_details: TiKVExecDetails {
+                    time_detail: Some(Arc::new(TimeDetail {
                         total_rpc_wall_time: StdDuration::from_millis(500),
                         ..TimeDetail::default()
-                    }),
-                    scan_detail: Some(ScanDetail {
+                    })),
+                    scan_detail: Some(Arc::new(ScanDetail {
                         processed_keys: 10,
                         total_keys: 100,
                         rocksdb_delete_skipped_count: 1,
                         rocksdb_key_skipped_count: 1,
                         rocksdb_block_cache_hit_count: 1,
                         rocksdb_block_read_count: 1,
-                        rocksdb_block_read_byte: 100,
+                        rocksdb_block_read_bytes: 100,
                         rocksdb_block_read_duration: StdDuration::from_millis(20),
                         ..ScanDetail::default()
-                    }),
-                    write_detail: Some(WriteDetail {
+                    })),
+                    write_detail: Some(Arc::new(WriteDetail {
                         store_batch_wait_duration: StdDuration::from_micros(10),
                         propose_send_wait_duration: StdDuration::from_micros(20),
                         persist_log_duration: StdDuration::from_micros(30),
@@ -2233,87 +2152,18 @@ mod tests {
                         apply_write_leader_wait_duration: StdDuration::from_micros(100),
                         apply_write_wal_duration: StdDuration::from_micros(101),
                         apply_write_memtable_duration: StdDuration::from_micros(102),
-                        scheduler_process_duration: StdDuration::from_micros(104),
-                    }),
+                        scheduler_process_duration: StdDuration::ZERO,
+                        ..WriteDetail::default()
+                    })),
                 },
             },
-            commit_primary: ReqDetailInfo::default(),
-            write_keys: 3,
-            write_size: 66,
-            prewrite_region_num: 5,
-            txn_retry: 2,
-            resolve_lock: ResolveLockDetail {
-                resolve_lock_time: 1_000_000_000,
-            },
-            ..CommitDetails::default()
-        };
-        let stats = RuntimeStatsWithCommit {
-            commit: Some(commit_detail),
-            ..RuntimeStatsWithCommit::default()
-        };
-        let expect = "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, \
-            slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, \
-            time_detail: {tikv_wall_time: 500ms}, \
-            scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, \
-            block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, \
-            write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, \
-            sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, \
-            write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 104µs}}}, resolve_lock: 1s, region_num:5, write_keys:3\
-            , write_byte:66, txn_retry:2}";
-        assert_eq!(expect, stats.string());
-
-        let lock_detail = LockKeysDetails {
-            total_time: StdDuration::from_secs(1),
-            region_num: 2,
-            lock_keys: 10,
-            backoff_time: 3_000_000_000,
-            backoff_types: vec![
-                "backoff4".to_owned(),
-                "backoff5".to_owned(),
-                "backoff5".to_owned(),
-            ],
-            slowest_req_total_time: StdDuration::from_secs(1),
-            slowest_region: 1000,
-            slowest_store_addr: "tikv-1:20160".to_owned(),
-            slowest_exec_details: TiKVExecDetails {
-                time_detail: Some(TimeDetail {
-                    total_rpc_wall_time: StdDuration::from_millis(500),
-                    ..TimeDetail::default()
-                }),
-                scan_detail: Some(ScanDetail {
-                    processed_keys: 10,
-                    total_keys: 100,
-                    rocksdb_delete_skipped_count: 1,
-                    rocksdb_key_skipped_count: 1,
-                    rocksdb_block_cache_hit_count: 1,
-                    rocksdb_block_read_count: 1,
-                    rocksdb_block_read_byte: 100,
-                    rocksdb_block_read_duration: StdDuration::from_millis(20),
-                    ..ScanDetail::default()
-                }),
-                write_detail: Some(WriteDetail {
-                    store_batch_wait_duration: StdDuration::from_micros(10),
-                    propose_send_wait_duration: StdDuration::from_micros(20),
-                    persist_log_duration: StdDuration::from_micros(30),
-                    raft_db_write_leader_wait_duration: StdDuration::from_micros(40),
-                    raft_db_sync_log_duration: StdDuration::from_micros(45),
-                    raft_db_write_memtable_duration: StdDuration::from_micros(50),
-                    commit_log_duration: StdDuration::from_micros(60),
-                    apply_batch_wait_duration: StdDuration::from_micros(70),
-                    apply_log_duration: StdDuration::from_micros(80),
-                    apply_mutex_lock_duration: StdDuration::from_micros(90),
-                    apply_write_leader_wait_duration: StdDuration::from_micros(100),
-                    apply_write_wal_duration: StdDuration::from_micros(101),
-                    apply_write_memtable_duration: StdDuration::from_micros(102),
-                    scheduler_process_duration: StdDuration::ZERO,
-                }),
-            },
-            lock_rpc_time: 5_000_000_000,
+            lock_rpc_time_ns: 5_000_000_000,
             lock_rpc_count: 50,
             retry_count: 2,
             resolve_lock: ResolveLockDetail {
-                resolve_lock_time: 2_000_000_000,
+                resolve_lock_time_ns: 2_000_000_000,
             },
+            ..LockKeysDetails::default()
         };
         let mut stats = RuntimeStatsWithCommit {
             lock_keys: Some(lock_detail.clone()),
@@ -2387,7 +2237,7 @@ mod tests {
             write_keys: 3,
             write_size: 66,
             prewrite_region_num: 5,
-            txn_retry: 2,
+            transaction_retry: 2,
             ..CommitDetails::default()
         };
         stmt_stats.register_stats(pid, Box::new(concurrency));
@@ -2400,7 +2250,13 @@ mod tests {
         );
         let stats = stmt_stats.get_root_stats(1);
         let expect = "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}";
-        assert_eq!(expect, stats.string());
+        assert_eq!(
+            expect,
+            stats
+                .lock()
+                .expect("RootRuntimeStats mutex poisoned")
+                .string()
+        );
     }
 
     /// Port of Go `TestFormatDurationForExplain` (`execdetails_test.go`):
@@ -2455,12 +2311,8 @@ mod tests {
     #[test]
     fn ru_runtime_stats_string_v1() {
         let stats = RuRuntimeStats {
-            ru_details: Some(RuDetailsSnapshot {
-                rru: 10.5,
-                wru: 20.3,
-                ..RuDetailsSnapshot::default()
-            }),
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            ru_details: Some(v1_ru_details(10.5, 20.3)),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V1,
         };
@@ -2472,7 +2324,7 @@ mod tests {
     #[test]
     fn ru_runtime_stats_string_v1_nil_details() {
         let stats = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V1,
             ..RuRuntimeStats::default()
@@ -2483,17 +2335,12 @@ mod tests {
 
     /// Port of Go `TestRURuntimeStatsStringV2`. Go builds the details with
     /// `AddTiKVRUV2(200)` and `UpdateTiFlash(&Consumption{RRU: 100, WRU:
-    /// 200})`; the snapshot narrowing carries the resulting accessor values
-    /// (`TiKVRUV2() == 200`, `TiflashRU() == 300`).
+    /// 200})` (`TiKVRUV2() == 200`, `TiflashRU() == 300`).
     #[test]
     fn ru_runtime_stats_string_v2() {
         let stats = RuRuntimeStats {
-            ru_details: Some(RuDetailsSnapshot {
-                tikv_ru_v2: 200.0,
-                tiflash_ru: 300.0,
-                ..RuDetailsSnapshot::default()
-            }),
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            ru_details: Some(v2_ru_details()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V2,
         };
@@ -2505,7 +2352,7 @@ mod tests {
     #[test]
     fn ru_runtime_stats_string_v2_zero_ru() {
         let stats = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V2,
             ..RuRuntimeStats::default()
@@ -2520,12 +2367,8 @@ mod tests {
         // RUVersion=0 (zero value) should default to v1 for backward
         // compatibility.
         let stats = RuRuntimeStats {
-            ru_details: Some(RuDetailsSnapshot {
-                rru: 10.5,
-                wru: 20.3,
-                ..RuDetailsSnapshot::default()
-            }),
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            ru_details: Some(v1_ru_details(10.5, 20.3)),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ..RuRuntimeStats::default()
         };
@@ -2537,12 +2380,8 @@ mod tests {
     #[test]
     fn ru_runtime_stats_clone_preserves_ru_version() {
         let stats = RuRuntimeStats {
-            ru_details: Some(RuDetailsSnapshot {
-                rru: 10.0,
-                wru: 20.0,
-                ..RuDetailsSnapshot::default()
-            }),
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            ru_details: Some(v1_ru_details(10.0, 20.0)),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V1,
         };
@@ -2565,12 +2404,12 @@ mod tests {
     fn ru_runtime_stats_merge_ru_version() {
         // Merge takes RUVersion from other when receiver has zero value.
         let mut dst = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ..RuRuntimeStats::default()
         };
         let src = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V2,
             ..RuRuntimeStats::default()
@@ -2584,13 +2423,13 @@ mod tests {
     fn ru_runtime_stats_merge_keeps_existing_ru_version() {
         // Merge does NOT override a non-zero RUVersion.
         let mut dst = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V1,
             ..RuRuntimeStats::default()
         };
         let src = RuRuntimeStats {
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V2,
             ..RuRuntimeStats::default()
@@ -2601,17 +2440,12 @@ mod tests {
 
     /// Port of Go `TestRURuntimeStatsStringIncludesTiFlashRU`. Go builds
     /// the details with `AddTiKVRUV2(200)` and
-    /// `UpdateTiFlash(&Consumption{RRU: 100, WRU: 200})`; the snapshot
-    /// narrowing carries the resulting accessor values.
+    /// `UpdateTiFlash(&Consumption{RRU: 100, WRU: 200})`.
     #[test]
     fn ru_runtime_stats_string_includes_tiflash_ru() {
         let stats = RuRuntimeStats {
-            ru_details: Some(RuDetailsSnapshot {
-                tikv_ru_v2: 200.0,
-                tiflash_ru: 300.0,
-                ..RuDetailsSnapshot::default()
-            }),
-            metrics: Some(RuV2MetricsSnapshot::default()),
+            ru_details: Some(v2_ru_details()),
+            metrics: Some(empty_ruv2_metrics()),
             weights: default_ruv2_weights_for_test(),
             ru_version: RU_VERSION_V2,
         };

@@ -107,7 +107,6 @@ pub(super) fn global_aggregator() -> &'static Arc<Aggregator> {
 
 impl Aggregator {
     /// Go `newAggregator`: an empty aggregator.
-    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             running: AtomicBool::new(false),
@@ -144,7 +143,6 @@ impl Aggregator {
     }
 
     /// Go `aggregator.currentRUVersion`.
-    #[must_use]
     pub fn current_ru_version(&self) -> RuVersion {
         match self.ru_version_provider() {
             Some(provider) => normalize_ru_version(provider.get_ru_version()),
@@ -289,10 +287,22 @@ impl Aggregator {
 
     /// Go `aggregator.register`: binds a [`StatementStats`]. Thread-safe.
     pub fn register(&self, stats: &Arc<StatementStats>) {
-        if self.stats_len.load(Ordering::SeqCst) > MAX_STMT_STATS_SIZE {
-            return;
+        // Reserve a slot with CAS before publishing the pointer. A load then
+        // increment admits max+1 sessions at the boundary and lets concurrent
+        // callers overshoot the cap, while Go's CompareAndSwap loop does not.
+        loop {
+            let current = self.stats_len.load(Ordering::SeqCst);
+            if current >= MAX_STMT_STATS_SIZE {
+                return;
+            }
+            if self
+                .stats_len
+                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break;
+            }
         }
-        self.stats_len.fetch_add(1, Ordering::SeqCst);
         self.lock_stats().push(Arc::clone(stats));
     }
 
@@ -384,9 +394,22 @@ impl Aggregator {
     }
 
     /// Go `aggregator.closed`.
-    #[must_use]
     pub fn closed(&self) -> bool {
         !self.running.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        Aggregator::new();
+        let aggregator = Aggregator::new();
+        aggregator.current_ru_version();
+        aggregator.closed();
     }
 }
 
@@ -437,6 +460,7 @@ mod tests {
     };
     use super::*;
     use crate::topsql_state::{disable_top_sql, enable_top_ru, enable_top_sql};
+    use std::sync::Barrier;
 
     const SECOND_NS: u64 = 1_000_000_000;
     const MILLISECOND_NS: u64 = 1_000_000;
@@ -541,6 +565,47 @@ mod tests {
             MILLISECOND_NS
         );
         disable_top_sql();
+    }
+
+    // Go `TestAuditTopSQLStatementStatsRegistrationHonorsHardCap`.
+    #[test]
+    fn aggregator_register_honors_hard_cap() {
+        let aggregator = Aggregator::new();
+        let stats = StatementStats::detached();
+        aggregator
+            .stats_len
+            .store(MAX_STMT_STATS_SIZE, Ordering::SeqCst);
+        aggregator.register(&stats);
+        assert!(!aggregator.contains_stats(&stats));
+        assert_eq!(
+            MAX_STMT_STATS_SIZE,
+            aggregator.stats_len.load(Ordering::SeqCst)
+        );
+
+        const WORKERS: usize = 64;
+        aggregator
+            .stats_len
+            .store(MAX_STMT_STATS_SIZE - 1, Ordering::SeqCst);
+        let barrier = Arc::new(Barrier::new(WORKERS + 1));
+        let mut handles = Vec::with_capacity(WORKERS);
+        for _ in 0..WORKERS {
+            let aggregator = Arc::clone(&aggregator);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let stats = StatementStats::detached();
+                barrier.wait();
+                aggregator.register(&stats);
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(
+            MAX_STMT_STATS_SIZE,
+            aggregator.stats_len.load(Ordering::SeqCst)
+        );
+        assert_eq!(1, aggregator.lock_stats().len());
     }
 
     // Go `TestAggregatorRunClose`: start/close idempotence on a standalone

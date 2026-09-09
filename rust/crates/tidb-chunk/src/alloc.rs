@@ -391,7 +391,6 @@ pub struct ChunkAllocator {
 
 impl ChunkAllocator {
     /// Go `NewAllocator`.
-    #[must_use]
     pub fn new() -> Self {
         let free_chunk_limit = MAX_FREE_CHUNKS.load(Ordering::Relaxed);
         let free_columns_per_type = MAX_FREE_COLUMNS_PER_TYPE.load(Ordering::Relaxed);
@@ -461,7 +460,6 @@ impl Allocator for ChunkAllocator {
 }
 
 /// Go `NewAllocator`.
-#[must_use]
 pub fn new_allocator() -> ChunkAllocator {
     ChunkAllocator::new()
 }
@@ -473,7 +471,6 @@ pub struct SyncAllocator {
 
 impl SyncAllocator {
     /// Go `NewSyncAllocator`.
-    #[must_use]
     pub fn new(allocator: impl Allocator + 'static) -> Self {
         Self {
             allocator: Mutex::new(Box::new(allocator)),
@@ -510,7 +507,6 @@ impl Allocator for SyncAllocator {
 }
 
 /// Go `NewSyncAllocator`.
-#[must_use]
 pub fn new_sync_allocator(allocator: impl Allocator + 'static) -> SyncAllocator {
     SyncAllocator::new(allocator)
 }
@@ -524,7 +520,6 @@ pub struct ReuseHookAllocator {
 
 impl ReuseHookAllocator {
     /// Go `NewReuseHookAllocator`.
-    #[must_use]
     pub fn new(
         allocator: impl Allocator + 'static,
         hook: impl Fn() + Send + Sync + 'static,
@@ -573,7 +568,6 @@ impl Allocator for ReuseHookAllocator {
 }
 
 /// Go `NewReuseHookAllocator`.
-#[must_use]
 pub fn new_reuse_hook_allocator(
     allocator: impl Allocator + 'static,
     hook: impl Fn() + Send + Sync + 'static,
@@ -603,7 +597,6 @@ impl Allocator for EmptyAllocator {
 }
 
 /// Go `NewEmptyAllocator`.
-#[must_use]
 pub const fn new_empty_allocator() -> EmptyAllocator {
     EmptyAllocator
 }
@@ -1071,10 +1064,8 @@ mod tests {
         let codec = crate::codec::Codec::new(fields());
         let buf = codec.encode(&chk);
 
-        let mut decoder = crate::codec::Decoder::new(
-            Chunk::new_with_capacity(&fields(), 0),
-            fields(),
-        );
+        let mut decoder =
+            crate::codec::Decoder::new(Chunk::new_with_capacity(&fields(), 0), fields());
         decoder.reset(&buf);
         decoder.reuse_intermediate_chunk(&mut chk);
         for index in 0..chk.num_cols() {
@@ -1176,8 +1167,11 @@ mod tests {
             assert!(chunk.column(1).elem_buf.is_none());
             for index in 2..8 {
                 let elem_len = chunk.column(index).elem_buf.as_ref().map_or(0, Vec::len);
-                assert_eq!(chunk.column(index).type_size() as usize, elem_len,
-                    "fixed-length column {index} stores its elem size");
+                assert_eq!(
+                    chunk.column(index).type_size() as usize,
+                    elem_len,
+                    "fixed-length column {index} stores its elem size"
+                );
             }
             for index in 2..8 {
                 assert_eq!(
@@ -1238,7 +1232,8 @@ mod tests {
                         bytes.as_ptr()
                     })
                     .collect();
-                let unique: std::collections::HashSet<*const u8> = identities.iter().copied().collect();
+                let unique: std::collections::HashSet<*const u8> =
+                    identities.iter().copied().collect();
                 assert_eq!(
                     identities.len(),
                     unique.len(),

@@ -14,10 +14,10 @@
 
 //! The session-layer bootstrap: Go `pkg/session/bootstrap.go`'s
 //! `doDDLWorks`/`doDMLWorks`, reduced to the system tables this tier actually
-//! serves. Today that is four: `mysql.user` (Go `metadef.CreateUserTable`
+//! serves. This includes `mysql.user` (Go `metadef.CreateUserTable`
 //! plus `doDMLWorks`' root row -- account statements keep it in sync, see
-//! `crate::user_table`), `mysql.bind_info`, whose absence was the measured
-//! gap the GLOBAL-binding refusal pointed at, and the two blacklist tables
+//! `crate::user_table`), `mysql.bind_info`, the statistics metadata and lock
+//! tables used by `LOCK STATS`, and the two blacklist tables
 //! `ADMIN RELOAD` reads (`crate::blacklist`) -- a statement that can only
 //! report what a table holds needs the table to exist first.
 //!
@@ -29,13 +29,11 @@
 //! bootstrap statements go through an internal session whose `sql_mode` does
 //! not carry `NO_ZERO_DATE`.
 //!
-//! Runs once per catalog, from the ONE place a session over a fresh catalog
-//! is built ([`Session::default`]). A front end that installs a shared
-//! catalog afterwards ([`Session::with_catalog`]) inherits whatever bootstrap
-//! that catalog's own creator ran; the cluster-loaded catalog is deliberately
-//! NOT bootstrapped here, because a locally created `bind_info` over cluster
-//! storage would be a table no peer node reads -- the real cluster's copy
-//! comes from Go's own bootstrap.
+//! Runs once for the standalone fresh store built by [`Session::default`]. A
+//! front end that opens a session on an existing shared catalog
+//! ([`Session::with_catalog`]) does not run bootstrap at all: like Go
+//! `createSessionWithOpt`, it consumes the domain's already-bootstrapped
+//! infoschema.
 
 use crate::Session;
 use tidb_executor::DriverError;
@@ -70,10 +68,14 @@ impl Session {
     /// text), not a user error, so it panics rather than leaving every later
     /// binding statement to fail with a misleading missing-table message.
     pub(crate) fn bootstrap_system_tables(&mut self) {
-        let has_bind_info = self
-            .with_catalog_mut(|catalog| Ok(catalog.contains_in("mysql", "bind_info")))
+        let has_required_tables = self
+            .with_catalog_mut(|catalog| {
+                Ok(["user", "bind_info", "stats_meta", "stats_table_locked"]
+                    .into_iter()
+                    .all(|table| catalog.contains_in("mysql", table)))
+            })
             .unwrap_or(false);
-        if has_bind_info {
+        if has_required_tables {
             return;
         }
         self.run_bootstrap_statements()
@@ -94,6 +96,8 @@ impl Session {
             // names the account table rather than a bystander.
             tidb_metadef::system_tables_def::CREATE_USER_TABLE,
             tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
+            tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
+            tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,
             // Go bootstraps these two empty (`doDDLWorks`); only an upgrade
             // from a pre-v4 cluster seeds `expr_pushdown_blacklist` rows
             // (`writeDefaultExprPushDownBlacklist`), and a fresh cluster --
@@ -147,17 +151,36 @@ impl Session {
         let root = "INSERT INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,\
              Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,\
              References_priv,Alter_priv,Show_db_priv,Super_priv,Create_tmp_table_priv,\
-             Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,\
+             Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,\
              Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,\
              Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,\
              Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,\
              User_attributes,Token_issuer) VALUES (\"%\", \"root\", \"\", \
              \"mysql_native_password\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \
              \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \
-             \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"N\", \"Y\", \"Y\", \"Y\", \"Y\", \
+             \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"N\", \"Y\", \"Y\", \"Y\", \"Y\", \
              \"Y\", null, \"\")";
         self.with_catalog_mut(|catalog| {
             tidb_executor::run_insert_in(root, catalog, "mysql", &insert_ctx).map(|_| ())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `createSessionWithOpt` never runs `bootstrap()`; bootstrap belongs
+    /// to `bootstrapSessionImpl` and precedes ordinary session creation.
+    #[test]
+    fn shared_catalog_session_does_not_bootstrap_a_discarded_store() {
+        let catalog = crate::SharedCatalog::default();
+        let session = Session::with_catalog(crate::SharedCatalog::clone(&catalog));
+
+        assert!(!catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_in("mysql", "user"));
+        assert!(session.table_delta_savepoint().is_empty());
     }
 }

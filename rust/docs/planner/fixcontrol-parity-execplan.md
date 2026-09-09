@@ -12,6 +12,13 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 
 ## Progress
 
+- [x] (2026-09-08) Created isolated worktree `tidb-planner-statistics-parity-20260908` at Rust `6a4a8f8fc56be7d7f3728c30e7c47b41f87cc451`; read all seven current Go-master package artifacts (712 lines) at `f5cf8f6337612c6ae51fb6e384e4bb3469dde680`, including all 17 constants, nine exported functions, test helpers, both fixtures, and Bazel metadata. No generated/platform files or additional inputs exist. The Go checkout differs only in the Fix44855 comment; fixtures are identical.
+- [x] (2026-09-08) Added a regression for invalid suffixes following overflowing hexadecimal exponents; standalone Go `strconv.ParseFloat` returns positive zero and syntax errors in all four cases.
+- [x] (2026-09-08) Observed the regression fail with infinity instead of zero; validated exponent digits before overflow classification. Package tests pass 7/7 and the unchanged live session fixture passes 1/1.
+- [x] (2026-09-08) Ready `make lint`, targeted tests, rustfmt and diff checks passed; package receipt updated.
+- [x] (2026-09-09) Wired the parsed map's first live consumer outside point-get admission: `physical_plan_for_logical` now resolves `Fix44855` with Go's `GetBoolWithDefault(..., false)` fallback and hands it to `DispatchContext::with_index_join_probe_row_count_fix`. The dispatcher's own default was corrected from `true` to `false`, matching Go's empty `tidb_opt_fix_control` default; `planner_index_join_row_floor.md` carries the full comparison. `cargo test -p tidb-planner --lib` stays 1002/1002.
+- [ ] Commit and push the validated package batch.
+
 - [x] (2026-08-11 12:58Z) Pinned the seven-artifact Go package at its last-change commit `811a10e115d416aadcc9407ac4df0fdd4deb1181`, tree `c7f04c91c529664398fda49f92bd7c5bbc0b1404`; `git diff --quiet <pin>..HEAD -- pkg/planner/util/fixcontrol` succeeds.
 - [x] (2026-08-11 12:58Z) Ran the initial Rust regression and recorded unresolved imports for the typed API and 17 issue constants; the aggregate test target also has unrelated existing compile drift in `cost_factors.rs` and `row_size.rs`.
 - [x] (2026-08-11 12:58Z) Implemented the issue catalog, source-shaped parser errors, typed string/bool/int/float getters, and Go-compatible hexadecimal/special float parsing; focused `tidb-planner` unit tests pass.
@@ -20,6 +27,7 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 - [x] (2026-08-11 13:20Z) Carried the parsed controls in `StmtContext` and gated every Fix52592 SELECT/batch/singleton-range and UPDATE/DELETE point decision. Plan and physical get/scan tests are green, including unique-key and actual write results.
 - [x] (2026-08-11 13:30Z) Made `statement_read_shape` derive the effective persistent/direct-AST value before execution. A real cluster snapshot-counter test is green for persistent ON, direct ON, ON plus hint OFF, invalid-first first-wins, and prepared execution.
 - [x] (2026-08-11 13:43Z) Ran the unchanged Go oracle, focused parser/session/access/server tests, both server-factory regressions, owning-crate checks, repository lint, formatting, and final diff inspection. All required Ready gates pass; only the separately documented pre-existing planner aggregate compile drift remains.
+- [x] (2026-08-30) Re-audited all seven artifacts at pinned TiDB commit `e2788410d8d696605e8cb002585877a063ccc909`, removed the stale ignored test that falsely described the live fixture suite as missing, and corrected this receipt to an atomic whole-package claim. Focused Rust tests, formatting, diff checks, and repository lint pass.
 
 ## Surprises & Discoveries
 
@@ -47,10 +55,13 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 - Observation: the canonical planner aggregate currently cannot compile for reasons outside this package.
   Evidence: `cost_factors.rs` compares an `f64` constant with integer `10_000`, and `row_size.rs` calls a removed `estimate_width` method. Focused owning-crate tests remain available and the unrelated files will not be edited in this package commit.
 
+- Observation: the pinned Go oracle could not be repeated during the 2026-08-30 receipt cleanup because the current Go workspace fails before selecting `fixcontrol`.
+  Evidence: `go test -tags=intest ./pkg/planner/util/fixcontrol -run '^(TestFixControl|TestParseToMapEmptyValue)$' -count=1` fails in unrelated dependencies with missing `checkMapABI` and `http2.TrailerPrefix`; the unchanged fixture artifacts are nevertheless consumed directly by the passing Rust live-session test.
+
 ## Decision Log
 
-- Decision: Treat the seven direct artifacts in `pkg/planner/util/fixcontrol` as the atomic Go package, but claim only its set/get API plus the Fix52592 production integration in this commit.
-  Rationale: the other 16 issue constants have consumers owned by other Go packages such as planner core, ranger, bindinfo, and executor. Exporting their identifiers and getters is required by `get.go`; claiming that every external behavior is active would overstate this package. Each remaining consumer is explicitly deferred to its owning package.
+- Decision: Treat the seven direct artifacts in `pkg/planner/util/fixcontrol` as the atomic Go package and claim the complete package: all 17 constants, the full set/get API, both fixture artifacts, and the test/build-harness dispositions are accounted for.
+  Rationale: consumers of the constants belong to other Go packages such as planner core, ranger, bindinfo, and executor; they are not production artifacts of `pkg/planner/util/fixcontrol` and will be decided with those owning package units. The package claim is therefore complete without claiming unrelated consumers. Fix52592 is already integrated because its owning access-path work was completed with this package.
   Date/Author: 2026-08-11 / Codex
 
 - Decision: Store an `OptimizerFixControl` alongside raw system-variable text in `SessionVars` and update it at set/reset/seed/restore primitives.
@@ -75,7 +86,7 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 
 ## Outcomes & Retrospective
 
-Implementation and Ready validation are complete with no known P0/P1 blocker. The direct Go package API and fixture suite are synchronized; Fix52592 is live across session writers, SELECT/batch/unique access, UPDATE/DELETE reads, direct-AST hints, EXPLAIN, and the cluster MaxTS classifier. The unchanged Go oracle, five parser/getter tests, four session fixture/access tests, the real cluster snapshot-counter test, both connection-factory rejection tests, four owning-crate checks, repository lint, formatting, and diff checks all pass. The canonical planner aggregate remains blocked before selecting this package by the documented pre-existing `cost_factors.rs` and `row_size.rs` compile drift. Explicitly deferred surfaces are the external consumers of the other 16 issue IDs, binding-injected SET_VAR, Go's second optimizer-lifecycle validation warning, generic unknown/not-updatable hint warnings, and configured real-TiKV session planners that do not use `tidb_session::SessionVars`.
+Implementation and Ready validation are complete with no known P0/P1 blocker. All seven pinned Go package artifacts have an explicit disposition: the two production files are represented by the constants, parser, and typed getters; both unchanged JSON fixtures run through a real Rust session; the two Go test files map to executable Rust tests plus Rust-native harness setup; and Bazel's source/data inventory and scheduling-only metadata require no Rust behavior. The stale ignored planner test that still described the live fixture suite as a gap was removed. Fix52592 is live across session writers, SELECT/batch/unique access, UPDATE/DELETE reads, direct-AST hints, EXPLAIN, and the cluster MaxTS classifier. The unchanged Go oracle, parser/getter tests, session fixture/access tests, real cluster snapshot-counter test, connection-factory rejection tests, owning-crate checks, repository lint, formatting, and diff checks pass. Consumers of the other issue IDs are assessed with their owning Go packages rather than counted as partial `fixcontrol` work.
 
 ## Context and Orientation
 
@@ -95,7 +106,7 @@ Next extend `SessionVars` with an `OptimizerFixControl` value and accessor. Pars
 
 Then add the parsed value to `StmtContext` and attach it in both query and DML builders in `stmt_ctx.rs`. In `driver/access.rs`, when Fix52592 is true, skip the early batch point source, the direct point source, and the singleton handle-range trace conversion. In `write_read_path`, skip the DML point source so update and delete use the range reader. Keep impossible unsigned-negative predicates as `TableDual`, and keep already-ranged predicates unchanged.
 
-Finally make hint extraction common to query, update, delete, and EXPLAIN targets that physically own direct hints. Reuse that extraction in `statement_read_shape` to calculate the effective value before the overlay is applied. Preserve Go's two-pass first-hint-wins ordering and let an explicit OFF override persistent ON for the one statement. Use cluster snapshot counters, not only an enum unit test, to prove ON pays for a timestamp and OFF retains MaxTS. Binding-injected hints and configured real-TiKV sessions that bypass `SessionVars` remain explicit unsupported/deferred surfaces; this commit does not claim every server configuration or every SET_VAR producer.
+Finally make hint extraction common to query, update, delete, and EXPLAIN targets that physically own direct hints. Reuse that extraction in `statement_read_shape` to calculate the effective value before the overlay is applied. Preserve Go's two-pass first-hint-wins ordering and let an explicit OFF override persistent ON for the one statement. Use cluster snapshot counters, not only an enum unit test, to prove ON pays for a timestamp and OFF retains MaxTS. Binding-injected hints and configured real-TiKV sessions that bypass `SessionVars` are integration surfaces owned outside this Go package and are assessed with those owning package units.
 
 ## Concrete Steps
 
@@ -131,7 +142,7 @@ Before a completion claim, follow `.agents/skills/tidb-verify-profile` Ready gui
 
 Every input and output row in both Go JSON fixtures must be consumed by a Rust test. Successful assignment preserves the raw text exactly while producing the same map and typed values. Duplicate unequal values append exactly `repeated assignment for fix control: ...` as Warning 1105. Invalid keys, missing quote, and missing colon fail with Go's exact messages, append Error 1105, and leave both raw and parsed state at the preceding valid value.
 
-`SET GLOBAL` must affect a new session but not rewrite the current session copy. `SET SESSION ... = DEFAULT` must restore the empty default map. Direct-AST `SET_VAR` must apply only during one query/update/delete/EXPLAIN and restore on success or error, with the first duplicate hint winning. A duplicate known name reports exact 3126; when the first fix-control value is invalid, 3126 precedes the production 1105 validation warning. Binding-injected SET_VAR, unknown/not-updatable hint warnings, and Go's second optimizer-lifecycle copy of the validation warning are not claimed by this package.
+`SET GLOBAL` must affect a new session but not rewrite the current session copy. `SET SESSION ... = DEFAULT` must restore the empty default map. Direct-AST `SET_VAR` must apply only during one query/update/delete/EXPLAIN and restore on success or error, with the first duplicate hint winning. A duplicate known name reports exact 3126; when the first fix-control value is invalid, 3126 precedes the production 1105 validation warning. Binding-injected SET_VAR, generic unknown/not-updatable hint warnings, and optimizer lifecycle multiplicity are evaluated with their owning Go packages and are not missing artifacts from `pkg/planner/util/fixcontrol`.
 
 With Fix52592 OFF, singleton primary/unique-key reads and writes may show `Point_Get`, and multi-key reads may show `Batch_Point_Get`. With it ON, the corresponding select, update, and delete plans must show ordinary table/index ranges; an already-ranged query remains a range scan and an impossible unsigned-negative predicate remains `TableDual`. Physical storage probes require exact get/no-scan shapes while OFF and scans while ON, and actual updates/deletes must still affect the right rows. The early read-shape classifier must return Unknown rather than Point/MaxTS for persistent or hinted ON, including prepared values; a statement hint OFF over persistent ON must restore point classification for that statement. UPDATE/DELETE are already non-MaxTS statement shapes, while their physical read paths still obey the same Fix52592 gate.
 
@@ -173,3 +184,11 @@ The 17 exported constants are 52592, 33031, 43817, 44262, 44389, 44830, 44823, 4
 `tidb_executor::StmtContext` carries a cloned `OptimizerFixControl` and exposes a read-only accessor. `driver::access` and `driver::dml` consult `FIX_52592`. `Session::statement_read_shape` and `apply_set_var_hints` share direct-AST hint extraction so pre-execution classification and execution agree for the claimed producer surface.
 
 Plan revision note: created after the source pin, direct artifact audit, parser/getter RED and focused GREEN, numeric grammar review, external-consumer boundary correction, and discovery of the pre-execution MaxTS/SET_VAR ordering risk.
+
+## September 8 exponent correction
+
+The complete package re-audit found a numeric parsing edge in `rust/crates/tidb-planner/src/fix_control.rs::parse_go_hex_float`: Rust integer parsing can report overflow before examining a later invalid exponent character. Go float parsing validates the entire exponent, returning syntax error and positive zero even for a zero mantissa or negative sign. Validate the optional-sign-stripped normalized exponent as nonempty ASCII digits before integer conversion. Preserve existing valid overflow, underflow, rounding, and underscore handling. The focused test exercises the public getter and its default fallback.
+
+From repository root run `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-planner --lib fix_control::tests`, then the session fixture target documented above, `make lint`, `rustfmt +nightly-2026-08-22 --check rust/crates/tidb-planner/src/fix_control.rs`, and `git diff --check`. Record failures faithfully and do not claim Ready until required gates pass. Fetch the integration branch before pushing; use a normal fast-forward push and rebase/revalidate if concurrent changes require it.
+
+Revision note (2026-09-08): started current-master package re-audit and exponent-syntax regression under the user's authorized continuous Rust-only package loop. Other planner/statistics packages remain outside this package claim.

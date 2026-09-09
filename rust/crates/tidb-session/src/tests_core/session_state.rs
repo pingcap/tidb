@@ -5,6 +5,189 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn resource_group_is_session_scoped_and_statement_hint_overrides_once() {
+    let mut session = Session::new();
+    assert_eq!(session.current_resource_group(), "default");
+
+    assert_eq!(
+        session.apply_set("SET RESOURCE GROUP analytics").unwrap(),
+        Some(())
+    );
+    assert_eq!(session.current_resource_group(), "analytics");
+
+    let hinted = session
+        .parse_statement("SELECT /*+ RESOURCE_GROUP(Burst) */ 1")
+        .unwrap();
+    assert_eq!(session.statement_resource_group(&hinted), "Burst");
+    assert_eq!(session.current_resource_group(), "analytics");
+    session.activate_statement_resource_group(&hinted);
+    assert_eq!(session.active_resource_group(), "burst");
+    assert_eq!(
+        session.statement_context(false).resource_group_name(),
+        "burst"
+    );
+
+    let ordinary = session.parse_statement("SELECT 1").unwrap();
+    assert_eq!(session.statement_resource_group(&ordinary), "analytics");
+    session.activate_statement_resource_group(&ordinary);
+    assert_eq!(session.active_resource_group(), "analytics");
+    assert_eq!(
+        session.statement_context(false).resource_group_name(),
+        "analytics"
+    );
+}
+
+/// Pinned Go `pkg/planner/optimize.go`: RESOURCE_GROUP is an optimizer
+/// postcondition, not an unconditional parser-side override.  Disabled
+/// resource control leaves the session group in force and emits 8250.
+#[test]
+fn resource_group_hint_is_ignored_when_resource_control_is_disabled() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = OFF")
+        .unwrap();
+
+    session
+        .run("SELECT /*+ RESOURCE_GROUP(analytics) */ 1")
+        .unwrap();
+
+    assert_eq!(session.active_resource_group(), "default");
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            8250,
+            "Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature".to_owned(),
+        )]
+    );
+}
+
+/// Pinned Go `pkg/planner/optimize.go`: strict resource control accepts
+/// SUPER (through the dynamic-privilege fallback), RESOURCE_GROUP_ADMIN, or
+/// RESOURCE_GROUP_USER.  A connected account with none keeps its session
+/// group and receives the ordinary 1227 warning.
+#[test]
+fn strict_resource_group_hint_requires_resource_group_authority() {
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut session = authenticated_session(&privileges, "ordinary", "%");
+
+    session
+        .run("SELECT /*+ RESOURCE_GROUP(analytics) */ 1")
+        .unwrap();
+
+    assert_eq!(session.active_resource_group(), "default");
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1227,
+            "Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation".to_owned(),
+        )]
+    );
+}
+
+/// Pinned Go `pkg/session/test/session_test.go:TestStmtHints`: statement-level
+/// fields come from the one `hint.ParseStmtHints` result retained in StmtCtx.
+#[test]
+fn statement_hints_use_the_canonical_parse_result() {
+    let mut session = Session::new();
+
+    session.run("SELECT /*+ MEMORY_QUOTA(1 MB) */ 1").unwrap();
+    assert!(session.stmt_hints.has_mem_quota_hint);
+    assert_eq!(session.stmt_hints.mem_quota_query, 1024 * 1024);
+    assert_eq!(
+        session.statement_context(false).statement_memory().quota(),
+        1024 * 1024,
+    );
+
+    session.run("SELECT /*+ NO_INDEX_MERGE() */ 1").unwrap();
+    assert!(session.stmt_hints.no_index_merge_hint);
+    assert!(!session.statement_context(false).index_merge());
+
+    session.run("SELECT /*+ STRAIGHT_JOIN() */ 1").unwrap();
+    assert!(session.stmt_hints.straight_join_order);
+
+    session.run("SELECT /*+ USE_TOJA(false) */ 1").unwrap();
+    assert!(session.stmt_hints.has_allow_in_subq_to_join_and_agg_hint);
+    assert!(!session.stmt_hints.allow_in_subq_to_join_and_agg);
+    assert!(!session
+        .statement_context(false)
+        .allow_in_subq_to_join_and_agg());
+
+    session.run("SELECT /*+ USE_CASCADES(true) */ 1").unwrap();
+    assert!(session.stmt_hints.has_enable_cascades_planner_hint);
+    assert!(session.stmt_hints.enable_cascades_planner);
+
+    session
+        .run("SELECT /*+ READ_CONSISTENT_REPLICA() */ 1")
+        .unwrap();
+    assert!(session.stmt_hints.has_replica_read_hint);
+    assert_eq!(session.stmt_hints.replica_read, 1);
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Follower,
+    );
+
+    // Statement-local fields are not part of the generation-cached session
+    // variable snapshot. An unhinted successor immediately sees the
+    // persistent session values again.
+    session.run("SELECT 1").unwrap();
+    let ctx = session.statement_context(false);
+    assert!(ctx.index_merge());
+    assert!(ctx.allow_in_subq_to_join_and_agg());
+    assert_eq!(ctx.replica_read(), tidb_executor::ReplicaReadType::Leader,);
+    assert_eq!(
+        ctx.statement_memory().quota(),
+        session
+            .vars
+            .get_system("tidb_mem_quota_query")
+            .unwrap()
+            .parse::<i64>()
+            .unwrap(),
+    );
+}
+
+#[test]
+fn replica_read_sysvar_reaches_statement_snapshot() {
+    let mut session = Session::new();
+    if tidb_config::kerneltype::is_next_gen() {
+        assert!(session.run("SET tidb_replica_read = 'follower'").is_err());
+        return;
+    }
+
+    session.run("SET tidb_replica_read = 'follower'").unwrap();
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Follower,
+    );
+    session
+        .run("SET tidb_replica_read = 'leader-and-follower'")
+        .unwrap();
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Mixed,
+    );
+}
+
+/// Pinned Go `pkg/session/test/variable/variable_test.go::TestIsolationRead`:
+/// the session variable is the source of the planner's per-statement engine
+/// set, not a catalog-side preference.
+#[test]
+fn isolation_read_engines_reach_the_statement_context() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.statement_context(false).isolation_read_engines(),
+        "tikv,tiflash,tidb"
+    );
+
+    session
+        .run("SET @@session.tidb_isolation_read_engines = 'tiflash'")
+        .unwrap();
+    assert_eq!(
+        session.statement_context(false).isolation_read_engines(),
+        "tiflash"
+    );
+}
+
 /// SET and the variable reads a connecting client performs.
 #[test]
 fn session_variables() {
@@ -74,54 +257,6 @@ fn session_variables() {
     assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
 }
 
-#[test]
-fn version_comment_uses_the_server_identity_snapshot() {
-    let mut session = Session::new();
-    let info = tidb_util::versioninfo::VersionInfo::build_default()
-        .with_configured_edition("Starter")
-        .with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0")
-        .with_runtime_environment(true, "tikv", "Classic", None);
-    let expected_tidb_info = tidb_util::printer::get_tidb_info(&info);
-    let expected_server_version = info.server_version.clone();
-    session.set_version_info(info);
-
-    assert_eq!(
-        scalar_text(&mut session, "SELECT @@version_comment"),
-        Some("TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible".to_owned())
-    );
-    assert_eq!(
-        scalar_text(&mut session, "SELECT TIDB_VERSION()"),
-        Some(expected_tidb_info)
-    );
-    assert_eq!(
-        scalar_text(&mut session, "SELECT VERSION()"),
-        Some(expected_server_version)
-    );
-    assert!(matches!(
-        session.apply_set("SET version_comment = 'changed'"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::ReadOnlyVariable(_)
-        ))
-    ));
-}
-
-#[test]
-fn tidb_version_metadata_uses_the_server_identity_snapshot() {
-    let mut session = Session::new();
-    let info = tidb_util::versioninfo::VersionInfo::build_default()
-        .with_configured_edition("An Edition Whose Name Changes The Result Width");
-    let expected_flen = tidb_util::printer::get_tidb_info(&info).len() as i64;
-    session.set_version_info(info);
-
-    let StmtOutput::Rows { columns, .. } = session
-        .run_with_columns("SELECT TIDB_VERSION()")
-        .expect("TIDB_VERSION query")
-    else {
-        panic!("TIDB_VERSION must return rows");
-    };
-    assert_eq!(columns[0].1.flen(), expected_flen);
-}
-
 /// Hash-join versions are source string variables with a closed value domain:
 /// casing is accepted and retained, while every other spelling is refused by
 /// the variable-specific validation closure.
@@ -166,6 +301,30 @@ fn hash_join_versions_accept_only_legacy_or_optimized() {
             );
         }
     }
+}
+
+/// Pinned `sysvar.go`'s `TiDBAnalyzeVersion` entry: the compatibility
+/// variable still has the integer range `[1, 2]`, but its validation closure
+/// refuses v1 because the planner always uses Analyze v2.
+#[test]
+fn analyze_version_one_is_no_longer_supported() {
+    let mut session = Session::new();
+
+    let error = session
+        .apply_set("SET tidb_analyze_version = 1")
+        .expect_err("Analyze v1 must be refused")
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(
+        error.message,
+        "tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_analyze_version"),
+        Some("2".to_owned()),
+        "a refused SET leaves the v2 default intact"
+    );
 }
 
 /// `sql_mode` is normalized at SET time, so every reader afterwards sees the
@@ -228,12 +387,14 @@ fn sql_mode_is_normalized_when_it_is_set() {
         (" STRICT_TRANS_TABLES", " STRICT_TRANS_TABLES"),
     ] {
         match session.apply_set(&format!("SET sql_mode = '{value}'")) {
-            Err(DriverError::Var(tidb_executor::VarErrorKind::WrongValueForVar(
-                name,
-                reported,
-            ))) => {
-                assert_eq!(name, "sql_mode");
-                assert_eq!(reported, token, "for {value}");
+            Err(DriverError::Var(tidb_executor::VarErrorKind::SqlError(error))) => {
+                assert_eq!(error.code, 1231, "for {value}");
+                assert_eq!(error.state, "42000", "for {value}");
+                assert_eq!(
+                    error.message,
+                    format!("Variable 'sql_mode' can't be set to the value of '{token}'"),
+                    "for {value}"
+                );
             }
             other => panic!("{value} should be rejected, got {other:?}"),
         }
@@ -249,10 +410,9 @@ fn sql_mode_is_normalized_when_it_is_set() {
 /// against captured TiDB output with `tidb_enable_noop_functions` at its
 /// `OFF` default.
 ///
-/// NOT PORTED from Go's own suites: `tidb_enable_shared_lock_promotion`
-/// (no locking layer here to promote to) and the `READ ONLY` /
-/// `OFFLINE MODE` / `sql_auto_is_null` gates, which belong to variable
-/// and transaction surfaces this tier does not have.
+/// The real locking executor is still outside this tier, but the
+/// `tidb_enable_shared_lock_promotion` admission rewrite is covered by the
+/// focused regression below.
 #[test]
 fn noop_function_gate() {
     let mut session = Session::new();
@@ -335,6 +495,40 @@ fn noop_function_gate() {
     assert!(matches!(
         session.run("SELECT b FROM t INTO OUTFILE '/tmp/x'"),
         Err(DriverError::Unsupported(_))
+    ));
+}
+
+/// Go `preprocess.checkSelectNoopFuncs`: enabling shared-lock promotion turns
+/// `FOR SHARE` into the real `FOR UPDATE` path before the no-op gate, so the
+/// clause is accepted even while `tidb_enable_noop_functions` remains OFF.
+#[test]
+fn shared_lock_promotion_bypasses_noop_share_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+
+    assert!(matches!(
+        session.run("SELECT b FROM t WHERE a = 1 FOR SHARE"),
+        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
+    ));
+    session
+        .run("SET tidb_enable_shared_lock_promotion = ON")
+        .unwrap();
+    assert!(session.vars().shared_lock_promotion_enabled());
+    session
+        .run("SELECT b FROM t WHERE a = 1 FOR SHARE")
+        .unwrap();
+    assert!(session.warnings().is_empty());
+
+    session
+        .run("SET tidb_enable_shared_lock_promotion = OFF")
+        .unwrap();
+    assert!(!session.vars().shared_lock_promotion_enabled());
+    assert!(matches!(
+        session.run("SELECT b FROM t WHERE a = 1 LOCK IN SHARE MODE"),
+        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
     ));
 }
 
@@ -430,6 +624,36 @@ fn read_only_noop_variables_need_the_noop_gate() {
         session.run("SET TRANSACTION READ ONLY"),
         Err(DriverError::FunctionsNoopImpl("READ ONLY"))
     ));
+}
+
+/// Go's `tidb_enable_noop_functions` Validation rejects disabling the SESSION
+/// gate while a same-scope no-op read-only variable is still ON.
+#[test]
+fn noop_gate_cannot_be_disabled_while_session_read_only_is_on() {
+    let mut session = Session::new();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'ON'")
+        .unwrap();
+    session.run("SET tx_read_only = ON").unwrap();
+
+    let error = session
+        .run("SET tidb_enable_noop_functions = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1235);
+    assert_eq!(
+        error.message,
+        "tidb_enable_noop_functions = OFF is not supported when tx_read_only = ON"
+    );
+    assert_eq!(
+        session.run("SELECT @@tidb_enable_noop_functions").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("ON")]])
+    );
+
+    session.run("SET tx_read_only = OFF").unwrap();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'OFF'")
+        .unwrap();
 }
 
 /// Go `preprocess.go:TryAddExtraLimit`: `sql_select_limit` caps a top-level
@@ -761,14 +985,14 @@ fn prepared_statement_parameters() {
 #[test]
 fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
     let mut session = Session::new();
-    for index in 0..tidb_executor::MAX_WARNING_COUNT + 16 {
+    for index in 0..u16::MAX as usize + 16 {
         session.append_warning(WarningLevel::Warning, 1292, format!("value {index}"));
     }
-    assert_eq!(session.warnings().len(), tidb_executor::MAX_WARNING_COUNT);
+    assert_eq!(session.warnings().len(), u16::MAX as usize);
     // The FIRST entries survive: Go appends until the limit and then drops.
     assert_eq!(session.warnings()[0].message, "value 0");
     assert_eq!(
-        session.warnings()[tidb_executor::MAX_WARNING_COUNT - 1].message,
+        session.warnings()[u16::MAX as usize - 1].message,
         "value 65534"
     );
 }

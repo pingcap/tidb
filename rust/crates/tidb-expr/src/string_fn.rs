@@ -24,6 +24,7 @@ use crate::{Datum, EvalError};
 use tidb_datatype::{
     find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
 };
+use tidb_hack::{go_to_lower, go_to_upper};
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -90,39 +91,23 @@ pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalErr
     }
 }
 
-/// Go's case mapping, which is SIMPLE (one rune in, one rune out) where
-/// Rust's is FULL.
-///
 /// TiDB maps case with `strings.ToUpper`/`ToLower`
-/// (`parser/charset/encoding_base.go`), and those walk the string applying
-/// `unicode.ToUpper`/`ToLower` per rune -- a table lookup that has no entry
-/// for a rune whose uppercase needs more than one rune, so it is left alone.
-/// Rust's `str::to_uppercase` applies the FULL mapping instead, which expands
-/// such runes.
+/// (`parser/charset/encoding_base.go`), which walk the string applying the
+/// SIMPLE per-rune mappings `unicode.ToUpper`/`ToLower`. Rust's
+/// `str::to_uppercase`/`to_lowercase` apply the FULL mappings instead,
+/// which diverge on 103 code points: `ß` expands to "SS", the ligatures
+/// (ﬁ, ﬄ) and Turkish `İ` grow extra characters, and the 27 Greek
+/// iota-subscript vowels change to a DIFFERENT single vowel
+/// (U+1FA4 -> U+1FAC) rather than expanding.
 ///
-/// The visible difference: `upper('straße')` is `STRAßE` in TiDB and was
-/// `STRASSE` here, because U+00DF's full uppercase is the two-char "SS" while
-/// its simple uppercase is itself. The same split covers the ligatures
-/// (`ﬁ`, `ﬄ`) and the other multi-char expansions.
-///
-/// Taking the full mapping only when it produces exactly one char IS the
-/// simple mapping for these runes: a rune whose full and simple mappings
-/// agree yields one char, and a rune that would expand is the one Go leaves
-/// unchanged.
+/// `tidb_hack::go_to_upper`/`go_to_lower` reproduce Go's simple tables
+/// exactly; see their docs for the per-code-point argument.
 fn go_simple_case(text: &str, upper: bool) -> String {
-    text.chars()
-        .map(|source| {
-            let mut mapped = if upper {
-                source.to_uppercase().collect::<Vec<_>>()
-            } else {
-                source.to_lowercase().collect::<Vec<_>>()
-            };
-            match mapped.len() {
-                1 => mapped.remove(0),
-                _ => source,
-            }
-        })
-        .collect()
+    if upper {
+        go_to_upper(text)
+    } else {
+        go_to_lower(text)
+    }
 }
 
 #[cfg(test)]
@@ -313,6 +298,98 @@ pub(crate) fn locate(
         .windows(needle.len())
         .position(|window| window == needle.as_slice());
     Ok(Datum::Int(found.map_or(0, |index| index as i64 + 1)))
+}
+
+/// `LOCATE(substr, str, pos)` — the three-argument signatures
+/// `builtinLocate3ArgsSig` (bytes, under a binary collation) and
+/// `builtinLocate3ArgsUTF8Sig` (characters, under any other collation)
+/// (`pkg/expression/builtin_string.go:1615/:1660`).
+///
+/// Go converts the 1-based `pos` to a 0-based index BEFORE the bounds check;
+/// `pos < 1` (0-based negative) or `pos` beyond `len - needle_len` answers 0,
+/// and an empty needle answers `pos` itself (reported 1-based). Under a
+/// case-insensitive collation Go lowers BOTH strings with `strings.ToLower`
+/// before the rune-count bounds, so the bounds apply to the lowered lengths.
+/// Matching in the slice is by the function's collator — which the 2-arg
+/// path already relies on — so a folding collation finds a case-folded
+/// occurrence exactly as it does without a start position.
+pub(crate) fn locate_with_position(
+    vals: &[Datum],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    let [substr, str, pos] = vals else {
+        return Err(EvalError::Unsupported("bad LOCATE arity"));
+    };
+    // Go evaluates substr, str, then pos, and isNull on ANY of them is the
+    // NULL result (the Int signatures return `0, true, nil`).
+    let binary = collation == tidb_datatype::Collation::Binary;
+    let needle_opt = if binary {
+        coerce_str_bytes(substr)?.map(|bytes| bytes.to_vec())
+    } else {
+        coerce_str(substr)?.map(|text| text.into_bytes())
+    };
+    let hay_opt = if binary {
+        coerce_str_bytes(str)?.map(|bytes| bytes.to_vec())
+    } else {
+        coerce_str(str)?.map(|text| text.into_bytes())
+    };
+    let (Some(needle), Some(hay)) = (needle_opt, hay_opt) else {
+        return Ok(Datum::Null);
+    };
+    let Some(position) = crate::arg_eval_type::eval_int(pos)? else {
+        return Ok(Datum::Null);
+    };
+    // Transfer the 1-based argument to a 0-based index.
+    let start = position - 1;
+
+    if binary {
+        if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
+            return Ok(Datum::Int(0));
+        }
+        if needle.is_empty() {
+            return Ok(Datum::Int(start + 1));
+        }
+        let found = hay[start as usize..]
+            .windows(needle.len())
+            .position(|window| window == needle.as_slice());
+        return Ok(Datum::Int(
+            found.map_or(0, |index| start + index as i64 + 1),
+        ));
+    }
+
+    // Under a case-insensitive collation Go lowers both strings BEFORE the
+    // rune-count bounds, using `strings.ToLower` (the same simple mapping
+    // `tidb_mysql::to_lowercase` ports).
+    let lower = tidb_datatype::is_ci_collation(collation.name());
+    let (needle, hay) = if lower {
+        (
+            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&needle)).into_bytes(),
+            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&hay)).into_bytes(),
+        )
+    } else {
+        (needle, hay)
+    };
+    let needle = String::from_utf8(needle)
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE needle"))?;
+    let hay = String::from_utf8(hay)
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE haystack"))?;
+    let needle: Vec<char> = needle.chars().collect();
+    let hay: Vec<char> = hay.chars().collect();
+    if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
+        return Ok(Datum::Int(0));
+    }
+    if needle.is_empty() {
+        return Ok(Datum::Int(start + 1));
+    }
+    let slice: String = hay[start as usize..].iter().collect();
+    let window = needle.iter().collect::<String>();
+    for offset in 0..=(slice.chars().count() - needle.len()) {
+        let candidate: String = slice.chars().skip(offset).take(needle.len()).collect();
+        if collation.compare(candidate.as_bytes(), window.as_bytes()) == std::cmp::Ordering::Equal {
+            return Ok(Datum::Int(start + offset as i64 + 1));
+        }
+    }
+    Ok(Datum::Int(0))
 }
 
 /// The collation `LOCATE`/`INSTR` derive when no derivation pass ran: Go's
@@ -602,7 +679,7 @@ pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
     digits.extend_from_slice(&s);
     let mut bytes = Vec::with_capacity(digits.len() / 2);
-    for pair in digits.chunks_exact(2) {
+    for pair in digits.as_chunks::<2>().0 {
         let hi = hex_nibble(pair[0]);
         let lo = hex_nibble(pair[1]);
         match (hi, lo) {
@@ -1164,6 +1241,63 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
     Ok(Datum::new_string(parts.join(",")))
 }
+/// Go `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`
+/// (`builtin_string.go:3403`/`:3434-3542`): bit 0 first, `separator`
+/// between entries. The three-argument form uses `,` and 64 bits; the
+/// four-argument form uses the given separator with 64 bits; the
+/// five-argument form clamps a `number_of_bits` outside 0..=64 to 64. Any
+/// `NULL` argument yields `NULL`.
+pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
+    if !(3..=5).contains(&vals.len()) {
+        return Err(EvalError::Unsupported("bad EXPORT_SET arguments"));
+    }
+    if vals.iter().any(|v| matches!(v, Datum::Null)) {
+        return Ok(Datum::Null);
+    }
+    let bits = crate::arg_eval_type::eval_int(&vals[0])?.unwrap_or(0);
+    let Some(on) = crate::arg_eval_type::eval_string(&vals[1])? else {
+        return Ok(Datum::Null);
+    };
+    let Some(off) = crate::arg_eval_type::eval_string(&vals[2])? else {
+        return Ok(Datum::Null);
+    };
+    let on = String::from_utf8_lossy(&on).into_owned();
+    let off = String::from_utf8_lossy(&off).into_owned();
+    let (separator, number_of_bits) = match vals.len() {
+        3 => (",".to_owned(), 64),
+        4 => {
+            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
+                return Ok(Datum::Null);
+            };
+            (String::from_utf8_lossy(&separator).into_owned(), 64)
+        }
+        _ => {
+            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
+                return Ok(Datum::Null);
+            };
+            let separator = String::from_utf8_lossy(&separator).into_owned();
+            let number = crate::arg_eval_type::eval_int(&vals[4])?.unwrap_or(64);
+            let number_of_bits = if !(0..=64).contains(&number) {
+                64
+            } else {
+                number
+            };
+            (separator, number_of_bits)
+        }
+    };
+    let mut result = String::new();
+    for i in 0..number_of_bits {
+        if bits & (1 << i) > 0 {
+            result.push_str(&on);
+        } else {
+            result.push_str(&off);
+        }
+        if i < number_of_bits - 1 {
+            result.push_str(&separator);
+        }
+    }
+    Ok(Datum::new_string(result))
+}
 
 /// `FROM_BASE64(str)`: inverse of [`to_base64`], ported from
 /// `builtinFromBase64Sig.evalString` in `pkg/expression/builtin_string.go`.
@@ -1171,12 +1305,34 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// whose decoder also ignores CR/LF.  The result is binary string data, so
 /// invalid UTF-8 is preserved rather than replaced or turned into NULL.
 pub(crate) fn from_base64(vals: &[Datum]) -> Result<Datum, EvalError> {
+    from_base64_with_packet_limit(vals, None)
+}
+
+/// Evaluates `FROM_BASE64` with Go's signature-level packet bound. The Go
+/// builtin checks the decoded-size estimate before stripping spaces/tabs and
+/// invoking the decoder; keeping that check in the context-aware entry point
+/// lets both the AST and chunk evaluators share the same warning/NULL policy
+/// while the value-only helper remains useful for datatype-style tests.
+pub(crate) fn from_base64_with_packet_limit(
+    vals: &[Datum],
+    ctx: Option<&dyn crate::Columns>,
+) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("FROM_BASE64 arity"));
     }
     let Some(input) = coerce_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
+    if let Some(ctx) = ctx {
+        if input.len() > (isize::MAX as usize) / 3 {
+            return Ok(Datum::Null);
+        }
+        let estimated_len = input.len() * 3 / 4;
+        if estimated_len as u64 > ctx.max_allowed_packet() {
+            ctx.handle_allowed_packet_overflowed("from_base64")?;
+            return Ok(Datum::Null);
+        }
+    }
     let cleaned: Vec<u8> = input
         .into_iter()
         .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
@@ -1198,7 +1354,7 @@ pub(crate) fn from_base64(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     };
     let mut bytes = Vec::new();
-    for (group_index, chunk) in cleaned.chunks_exact(4).enumerate() {
+    for (group_index, chunk) in cleaned.as_chunks::<4>().0.iter().enumerate() {
         let last = group_index + 1 == cleaned.len() / 4;
         let Some(a) = val(chunk[0]) else {
             return Ok(Datum::Null);
@@ -1513,7 +1669,7 @@ pub(crate) fn format_num_locale(
     let Some(number) = format_number_text(number, ctx)? else {
         return Ok(Datum::Null);
     };
-    let Some(precision) = format_precision(precision)? else {
+    let Some(precision) = format_precision(precision, ctx)? else {
         return Ok(Datum::Null);
     };
     // `evalNumDecArgsForFormat`: `d` is clamped, the number is rounded to it,
@@ -1565,19 +1721,16 @@ fn format_number_text(
     })
 }
 
-fn format_precision(value: &Datum) -> Result<Option<i64>, EvalError> {
+fn format_precision(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<i64>, EvalError> {
     Ok(match value {
         Datum::Null => None,
         Datum::Int(n) => Some(*n),
         Datum::UInt(n) => Some(*n as i64),
         Datum::Decimal(n) => Some(n.round_to_i64_saturating()),
         Datum::Real(n) => Some(round_float_to_i64_saturating(*n)),
-        Datum::String(s) => Some(s.as_utf8().map(parse_string_i64_saturating).unwrap_or(0)),
-        Datum::Bytes(s) => Some(
-            std::str::from_utf8(s)
-                .map(parse_string_i64_saturating)
-                .unwrap_or(0),
-        ),
+        Datum::String(_) | Datum::Bytes(_) => {
+            Some(crate::cast::to_i64_signed_with_warnings(value, ctx)?)
+        }
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel FORMAT precision"));
         }
@@ -1598,35 +1751,6 @@ fn round_float_to_i64_saturating(value: f64) -> i64 {
         i64::MAX
     } else {
         rounded as i64
-    }
-}
-
-fn parse_string_i64_saturating(value: &str) -> i64 {
-    let value = value.trim_start();
-    let (negative, digits) = match value.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => match value.strip_prefix('+') {
-            Some(rest) => (false, rest),
-            None => (false, value),
-        },
-    };
-    let digits = &digits[..digits.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return 0;
-    }
-    let Ok(magnitude) = digits.parse::<u64>() else {
-        return if negative { i64::MIN } else { i64::MAX };
-    };
-    if negative {
-        if magnitude > i64::MAX as u64 {
-            i64::MIN
-        } else {
-            -(magnitude as i64)
-        }
-    } else if magnitude > i64::MAX as u64 {
-        i64::MAX
-    } else {
-        magnitude as i64
     }
 }
 
@@ -2085,5 +2209,100 @@ mod hex_bit_column_tests {
             hex(&[Datum::BinaryLiteral(BinaryLiteral::from(vec![0x00, 0x41]))]).unwrap(),
             Datum::new_string("0041".to_owned())
         );
+    }
+}
+
+#[cfg(test)]
+mod export_set_tests {
+    use super::*;
+
+    fn d(s: &str) -> Datum {
+        Datum::new_string(s.to_string())
+    }
+
+    #[test]
+    fn export_set_matches_go_bit_order_and_arity_forms() {
+        // MySQL doc example: bits 0 and 2 set within 4 bits → Y,N,Y,N.
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)]).unwrap(),
+            d("Y,N,Y,N")
+        );
+        // Bit 0 first: 6 = 0b110 within 10 bits.
+        assert_eq!(
+            export_set(&[Datum::Int(6), d("1"), d("0"), d(","), Datum::Int(10)]).unwrap(),
+            d("0,1,1,0,0,0,0,0,0,0")
+        );
+        // Three-argument form: `,` separator, 64 bits (bits 0 and 3 set).
+        let three = export_set(&[Datum::Int(9), d("Y"), d("N")]).unwrap();
+        eprintln!("PROBE three: {:?}", three);
+        assert_eq!(three, d(&format!("Y,N,N,Y{}", ",N".repeat(60))));
+        // Four-argument form: the custom separator with 64 bits.
+        let expected_four = format!("Y@N@N@Y{}", "@N".repeat(60));
+        assert_eq!(
+            export_set(&[Datum::Int(9), d("Y"), d("N"), d("@")]).unwrap(),
+            d(&expected_four)
+        );
+        // Five-argument form: a negative or oversized number_of_bits clamps
+        // to 64; zero yields the empty string.
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(100)]).unwrap(),
+            d(&format!("Y,N,Y,N{}", ",N".repeat(60)))
+        );
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(0)]).unwrap(),
+            d("")
+        );
+    }
+
+    #[test]
+    fn export_set_null_arguments_propagate_like_go() {
+        for args in [
+            vec![Datum::Null, d("Y"), d("N")],
+            vec![Datum::Int(5), Datum::Null, d("N")],
+            vec![Datum::Int(5), d("Y"), Datum::Null],
+            vec![Datum::Int(5), d("Y"), d("N"), Datum::Null],
+            vec![Datum::Int(5), d("Y"), d("N"), d(","), Datum::Null],
+        ] {
+            assert_eq!(
+                export_set(&args).unwrap(),
+                Datum::Null,
+                "any NULL argument yields NULL"
+            );
+        }
+    }
+
+    #[test]
+    fn export_set_is_reachable_through_the_values_dispatch() {
+        let result = crate::func::eval_func_values(
+            "EXPORT_SET",
+            &[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)],
+            &crate::context::NoColumns,
+        );
+        assert!(result.is_some(), "the dispatch must own EXPORT_SET");
+        assert_eq!(result.unwrap().unwrap(), d("Y,N,Y,N"));
+    }
+}
+
+#[cfg(test)]
+mod cast_in_union_tests {
+    use super::*;
+
+    /// Go `castAsIntSig.evalInt`'s in-union arm
+    /// (`builtin_cast.go:998`): a negative result clamps to 0 for an
+    /// unsigned target instead of the unsigned wrap.
+    #[test]
+    fn cast_unsigned_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result =
+            crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(-1)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::UInt(0));
+    }
+
+    #[test]
+    fn cast_unsigned_in_union_keeps_non_negatives() {
+        let ctx = crate::context::NoColumns;
+        let result =
+            crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(7)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::UInt(7));
     }
 }

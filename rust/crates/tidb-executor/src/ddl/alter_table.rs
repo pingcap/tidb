@@ -33,12 +33,16 @@
 //! actions an ALTER can also carry are in the sibling `indexes` module, and
 //! the type/charset resolution both share lives in the parent.
 
+use std::collections::HashSet;
+
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
+use crate::kv_table::KvForeignKey;
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
@@ -52,6 +56,276 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 /// silently accepted, and dropping a column an index uses is rejected rather
 /// than leaving the index addressing a column that is gone.
 pub fn run_alter_table_in(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    // Go submits one ALTER TABLE job for the whole action list and rolls the
+    // job back if any action fails. Stage statements carrying foreign-key
+    // actions on a catalog clone so earlier adds/column changes cannot leak
+    // when a later FK fails validation. Single-action ALTERs retain the
+    // existing fast path.
+    let stmt = ctx.parse(sql)?;
+    let atomic_foreign_key_actions = match &stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            DdlStmt::AlterTable(alter) => {
+                alter.actions.len() > 1
+                    && alter.actions.iter().any(|action| match action {
+                        tidb_ast::AlterTableAction::AddForeignKey(_) => true,
+                        tidb_ast::AlterTableAction::AddColumns { constraints, .. } => {
+                            constraints.iter().any(|constraint| {
+                                matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_))
+                            })
+                        }
+                        _ => false,
+                    })
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    if atomic_foreign_key_actions {
+        let mut staged = catalog.clone();
+        let result = run_alter_table_in_inner(sql, &mut staged, current_db, ctx);
+        if result.is_ok() {
+            *catalog = staged;
+        }
+        return result;
+    }
+    run_alter_table_in_inner(sql, catalog, current_db, ctx)
+}
+
+/// Mirrors Go `checkOperateSameColAndIdx` for one multi-spec ALTER.
+///
+/// Go turns every specification into a sub-job, collects the affected names
+/// by category, and rejects a name that appears in two incompatible
+/// categories before any sub-job runs. The synchronous Rust runner used to
+/// apply the actions in source order instead, which both exposed a later
+/// 1054/1091 and left earlier actions committed. Keep the category ordering
+/// (ADD, DROP, POSITION, MODIFY, relative columns, then ADD/DROP/ALTER index)
+/// exactly as Go does so the first conflicting name and its 8200 diagnostic
+/// are stable.
+fn reject_multi_schema_same_column_or_index(
+    actions: &[tidb_ast::AlterTableAction],
+) -> Result<(), DriverError> {
+    let mut add_columns = Vec::new();
+    let mut drop_columns = Vec::new();
+    let mut position_columns = Vec::new();
+    let mut modify_columns = Vec::new();
+    let mut relative_columns = Vec::new();
+    let mut add_indexes = Vec::new();
+    let mut drop_indexes = Vec::new();
+    let mut alter_indexes = Vec::new();
+
+    fn add_column_spec(
+        column: &tidb_ast::ColumnDef,
+        position: &tidb_ast::ColumnPosition,
+        add_columns: &mut Vec<String>,
+        position_columns: &mut Vec<String>,
+        relative_columns: &mut Vec<String>,
+    ) {
+        add_columns.push(column.name.clone());
+        if let tidb_ast::ColumnPosition::After(name) = position {
+            position_columns.push(name.clone());
+        }
+        // `fillMultiSchemaInfo` records generated-column dependencies as
+        // RelativeColumns. Defaults and ON UPDATE expressions do not name
+        // table columns in Go's dependency map, so only GENERATED is walked.
+        for option in &column.options {
+            let tidb_ast::ColumnOption::Generated { expression, .. } = option else {
+                continue;
+            };
+            collect_expression_columns(expression, relative_columns);
+        }
+    }
+
+    fn add_index_spec(
+        index: &tidb_ast::IndexConstraintDefinition,
+        add_indexes: &mut Vec<String>,
+        relative_columns: &mut Vec<String>,
+    ) {
+        // Named indexes are the normal path. For an anonymous index Go picks
+        // the first column (or `expression_index`) before filling the
+        // MultiSchemaInfo; using the same seed is enough for conflict checks.
+        let name = index.name.clone().unwrap_or_else(|| {
+            index
+                .parts
+                .first()
+                .map(|part| match part {
+                    tidb_ast::IndexPart::Column { name, .. } => name.clone(),
+                    tidb_ast::IndexPart::Expr { .. } => "expression_index".to_owned(),
+                })
+                .unwrap_or_default()
+        });
+        add_indexes.push(name);
+        for part in &index.parts {
+            match part {
+                tidb_ast::IndexPart::Column { name, .. } => relative_columns.push(name.clone()),
+                tidb_ast::IndexPart::Expr { expr, .. } => {
+                    collect_expression_columns(expr, relative_columns)
+                }
+            }
+        }
+    }
+
+    for action in actions {
+        match action {
+            tidb_ast::AlterTableAction::AddColumn {
+                column, position, ..
+            } => add_column_spec(
+                column,
+                position,
+                &mut add_columns,
+                &mut position_columns,
+                &mut relative_columns,
+            ),
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => {
+                for column in columns {
+                    add_column_spec(
+                        column,
+                        &tidb_ast::ColumnPosition::Default,
+                        &mut add_columns,
+                        &mut position_columns,
+                        &mut relative_columns,
+                    );
+                }
+                for constraint in constraints {
+                    if let tidb_ast::TableConstraint::Index(index) = constraint {
+                        add_index_spec(index, &mut add_indexes, &mut relative_columns);
+                    }
+                }
+            }
+            tidb_ast::AlterTableAction::DropColumn { name, .. } => drop_columns.push(name.clone()),
+            tidb_ast::AlterTableAction::DropPrimaryKey(_) => {
+                drop_indexes.push("PRIMARY".to_owned())
+            }
+            tidb_ast::AlterTableAction::DropIndex { name, .. } => drop_indexes.push(name.clone()),
+            tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
+                add_index_spec(index, &mut add_indexes, &mut relative_columns)
+            }
+            tidb_ast::AlterTableAction::ModifyColumn {
+                column, position, ..
+            } => {
+                modify_columns.push(column.name.clone());
+                if let tidb_ast::ColumnPosition::After(name) = position {
+                    position_columns.push(name.clone());
+                }
+            }
+            tidb_ast::AlterTableAction::ChangeColumn {
+                old_name,
+                column,
+                position,
+                ..
+            } => {
+                let old_name = old_name.last().cloned().unwrap_or_default();
+                if old_name.eq_ignore_ascii_case(&column.name) {
+                    modify_columns.push(column.name.clone());
+                } else {
+                    add_columns.push(column.name.clone());
+                    drop_columns.push(old_name);
+                }
+                if let tidb_ast::ColumnPosition::After(name) = position {
+                    position_columns.push(name.clone());
+                }
+            }
+            tidb_ast::AlterTableAction::RenameColumn(rename) => {
+                add_columns.push(rename.to.clone());
+                drop_columns.push(rename.from.clone());
+            }
+            tidb_ast::AlterTableAction::RenameIndex(rename) => {
+                // Go's fillMultiSchemaInfo treats RENAME INDEX as an ADD of
+                // the source name plus a DROP of the target name. This makes
+                // both `DROP INDEX i, RENAME INDEX i TO j` and
+                // `ADD INDEX j(...), RENAME INDEX i TO j` collide in the
+                // same category order as the Go checker.
+                add_indexes.push(rename.from.clone());
+                drop_indexes.push(rename.to.clone());
+            }
+            tidb_ast::AlterTableAction::AlterIndexVisibility(alter) => {
+                alter_indexes.push(alter.name.clone())
+            }
+            tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
+                if let Some(name) = alter.name.last() {
+                    modify_columns.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn check_names(
+        names: &[String],
+        add_to_seen: bool,
+        seen: &mut HashSet<String>,
+        kind: &str,
+    ) -> Result<(), DriverError> {
+        for name in names {
+            let canonical = name.go_to_lower();
+            if seen.contains(&canonical) {
+                return Err(DriverError::DdlCoded {
+                    errno: 8200,
+                    message: format!(
+                        "Unsupported modify column: operate same {kind} '{canonical}'"
+                    ),
+                });
+            }
+            if add_to_seen {
+                seen.insert(canonical);
+            }
+        }
+        Ok(())
+    }
+
+    let mut columns = HashSet::new();
+    check_names(&add_columns, true, &mut columns, "column")?;
+    check_names(&drop_columns, true, &mut columns, "column")?;
+    check_names(&position_columns, false, &mut columns, "column")?;
+    check_names(&modify_columns, true, &mut columns, "column")?;
+    check_names(&relative_columns, false, &mut columns, "column")?;
+
+    let mut indexes = HashSet::new();
+    check_names(&add_indexes, true, &mut indexes, "index")?;
+    check_names(&drop_indexes, true, &mut indexes, "index")?;
+    check_names(&alter_indexes, true, &mut indexes, "index")?;
+    Ok(())
+}
+
+/// Collects the leaf column names from an expression, as Go's generated
+/// column/index dependency map does while filling a multi-schema job.
+fn collect_expression_columns(expression: &tidb_ast::Expr, output: &mut Vec<String>) {
+    use std::any::Any;
+    use tidb_ast::{Visitable, Visitor};
+
+    struct Collector<'a> {
+        output: &'a mut Vec<String>,
+    }
+
+    impl Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
+                if let Some(name) = path.last() {
+                    self.output.push(name.clone());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+
+    let mut expression = expression.clone();
+    let mut collector = Collector { output };
+    expression.accept(&mut collector);
+}
+
+fn run_alter_table_in_inner(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
@@ -80,6 +354,7 @@ pub fn run_alter_table_in(
             format!("{database}.{name}"),
         )));
     }
+    reject_multi_schema_same_column_or_index(&alter.actions)?;
     super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     // Go's ALTER path checks the two guards in THIS order, and the corpus
     // asserts the difference: `ddl/db_integration`'s
@@ -91,10 +366,9 @@ pub fn run_alter_table_in(
     super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
-    // A constraint names its columns and its referenced table, and a DROP
-    // COLUMN, a column RENAME or a table RENAME rewrites neither, so each
-    // would leave the constraint naming something that is gone. Refused
-    // rather than corrupted; see `foreign_key::participates`.
+    // A constraint names its columns and its referenced table. DROP COLUMN
+    // remains refused rather than corrupted; table and column renames are
+    // handled by the metadata rewrites below.
     //
     // ADD COLUMN is NOT in this set: Go's `AddColumn` asks nothing about
     // foreign keys, and a constraint that resolves its names at every use
@@ -104,19 +378,11 @@ pub fn run_alter_table_in(
     // blanket refusal was: it lets a nullability change through and refuses
     // an incompatible type with Go's 3780/1832/1833 instead of 1105.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
+    reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &alter.actions)?;
     for action in &alter.actions {
-        if participates
-            && matches!(
-                action,
-                tidb_ast::AlterTableAction::DropColumn { .. }
-                    | tidb_ast::AlterTableAction::RenameTable { .. }
-                    // A foreign key names its REFERENCED columns by name, so
-                    // renaming one would silently repoint the constraint.
-                    | tidb_ast::AlterTableAction::RenameColumn(_)
-            )
-        {
+        if participates && matches!(action, tidb_ast::AlterTableAction::DropColumn { .. }) {
             return Err(DriverError::unsupported(
-                "changing the columns or name of a table involved in a FOREIGN KEY is not supported yet",
+                "changing the columns of a table involved in a FOREIGN KEY is not supported yet",
             ));
         }
         match action {
@@ -124,12 +390,64 @@ pub fn run_alter_table_in(
                 super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
             }
             tidb_ast::AlterTableAction::AddColumn {
-                column, position, ..
-            } => add_column_action(catalog, &database, &name, column, position, ctx)?,
+                if_not_exists,
+                column,
+                position,
+            } => {
+                add_column_action(
+                    catalog,
+                    &database,
+                    &name,
+                    column,
+                    position,
+                    *if_not_exists,
+                    ctx,
+                )?;
+                // Go's `AddColumn` DOES install the column's inline CHECK
+                // (the constraint `buildColumnAndConstraint` returns runs the
+                // same build/validate flow as a table-level ADD CONSTRAINT
+                // CHECK), so a default that violates the check is refused at
+                // ALTER time with 3819.
+                if let Some(check) = column.options.iter().find_map(|option| match option {
+                    tidb_ast::ColumnOption::Check(check) => Some(check),
+                    _ => None,
+                }) {
+                    if ctx.enable_check_constraint() {
+                        if let Err(error) = add_check_constraint_action(
+                            catalog,
+                            &database,
+                            &name,
+                            super::check_constraint::CheckConstraintInput {
+                                definition: check.clone(),
+                                in_column: Some(column.name.clone()),
+                            },
+                            ctx,
+                        ) {
+                            // Go's AddColumn validates the new column's
+                            // default against its inline CHECK before
+                            // committing the job, so a violation refuses the
+                            // whole ALTER and the column is NOT added. Roll
+                            // the column add back to match.
+                            if let Some(crate::TableEntry::Kv(table)) =
+                                catalog.table_mut_in(&database, &name)
+                            {
+                                if let Some(offset) = table
+                                    .columns
+                                    .iter()
+                                    .position(|c| c.name.eq_ignore_ascii_case(&column.name))
+                                {
+                                    table.drop_column(offset);
+                                }
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+            }
             tidb_ast::AlterTableAction::AddColumns {
+                if_not_exists,
                 columns,
                 constraints,
-                ..
             } => {
                 // Go `resolveAlterTableAddColumns` expands the parenthesized
                 // form into all columns first, then all constraints. Keeping
@@ -142,6 +460,7 @@ pub fn run_alter_table_in(
                         &name,
                         column,
                         &tidb_ast::ColumnPosition::Default,
+                        *if_not_exists,
                         ctx,
                     )?;
                 }
@@ -153,9 +472,20 @@ pub fn run_alter_table_in(
                         tidb_ast::TableConstraint::ForeignKey(definition) => {
                             add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
                         }
-                        // The session has already accounted for the warning
-                        // or refusal dictated by tidb_enable_check_constraint.
-                        tidb_ast::TableConstraint::Check(_) => {}
+                        tidb_ast::TableConstraint::Check(definition) => {
+                            if ctx.enable_check_constraint() {
+                                add_check_constraint_action(
+                                    catalog,
+                                    &database,
+                                    &name,
+                                    super::check_constraint::CheckConstraintInput {
+                                        definition: definition.clone(),
+                                        in_column: None,
+                                    },
+                                    ctx,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -206,6 +536,15 @@ pub fn run_alter_table_in(
             tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
                 add_index_constraint_action(catalog, &database, &name, index, ctx)?;
             }
+            // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
+            // table's TTL config; a table without one is a no-op.
+            tidb_ast::AlterTableAction::RemoveTtl(_) => {
+                if let Some(crate::TableEntry::Kv(table)) =
+                    catalog.table_mut_in(&database, &name)
+                {
+                    table.set_ttl_info(None);
+                }
+            }
             // `ALTER TABLE x RENAME TO y` is the same operation as
             // `RENAME TABLE x TO y`.
             tidb_ast::AlterTableAction::RenameTable { new_name } => {
@@ -228,6 +567,9 @@ pub fn run_alter_table_in(
                         format!("{to_db}.{to_name}"),
                     )));
                 }
+                crate::foreign_key::rewrite_table_references(
+                    catalog, &database, &name, &to_db, &to_name,
+                );
                 catalog.rename_table(&database, &name, &to_db, &to_name);
             }
             tidb_ast::AlterTableAction::DropIndex {
@@ -245,6 +587,15 @@ pub fn run_alter_table_in(
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options, ctx)?;
             }
+            tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
+                convert_table_charset_action(
+                    catalog,
+                    &database,
+                    &name,
+                    charset.as_deref(),
+                    collation.as_deref(),
+                )?
+            }
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
                 all,
                 names,
@@ -258,6 +609,10 @@ pub fn run_alter_table_in(
                 spec,
                 ..
             }) => add_partition_action(catalog, &database, &name, *if_not_exists, spec, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Coalesce {
+                count,
+                ..
+            }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -302,29 +657,34 @@ pub fn run_alter_table_in(
                     ctx,
                 )?;
             }
-            // `CHECK` constraints, under the `tidb_enable_check_constraint =
-            // OFF` model this engine implements (see `crate::ddl`'s doc and
-            // `run_create_table_in`). The variable is read by the SESSION,
-            // which refuses `ADD CHECK` outright when it is ON and files the
-            // per-action `tidb_enable_check_constraint is off` warning when it
-            // is OFF; what is left here is what the DDL itself does.
-            //
-            // Captured from real TiDB with the variable OFF:
-            //   alter table t3 add constraint cc check (a > 0)
-            //     -> OK, Warning 1105, and SHOW CREATE TABLE is UNCHANGED
-            //   insert into t3 values (-1)          -> OK (nothing enforces)
-            //   alter table e alter constraint nope not enforced
-            //     -> OK, Warning 1105 -- the name is NOT looked up
-            //   alter table e drop constraint nope  -> ERROR 3940
-            // The asymmetry in the last two is Go's, and is ported as
-            // measured: DROP resolves the name and ALTER does not.
-            tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
+            tidb_ast::AlterTableAction::AddCheck(definition) => {
+                if ctx.enable_check_constraint() {
+                    add_check_constraint_action(
+                        catalog,
+                        &database,
+                        &name,
+                        super::check_constraint::CheckConstraintInput {
+                            definition: definition.clone(),
+                            in_column: None,
+                        },
+                        ctx,
+                    )?;
+                }
             }
-            // No table in this engine can hold a CHECK constraint, so the
-            // name never resolves -- which is the same answer Go gives with
-            // the variable ON for a name that is not there (captured: 3940).
+            tidb_ast::AlterTableAction::AlterCheck(alter) => {
+                if ctx.enable_check_constraint() {
+                    alter_check_constraint_action(
+                        catalog,
+                        &database,
+                        &name,
+                        &alter.name,
+                        alter.enforced,
+                        ctx,
+                    )?;
+                }
+            }
             tidb_ast::AlterTableAction::DropCheck(drop) => {
-                return Err(DriverError::CheckConstraintNotExists(drop.name.clone()));
+                drop_check_constraint_action(catalog, &database, &name, &drop.name, ctx)?;
             }
             // Go removes LOCK specs before dispatch and treats ENABLE/DISABLE
             // KEYS as MyISAM-only compatibility syntax with no TiDB action.
@@ -364,6 +724,209 @@ pub fn run_alter_table_in(
     Ok(())
 }
 
+fn check_constraint_columns(table: &crate::KvTable) -> Vec<tidb_model::ColumnInfo> {
+    table
+        .visible_columns()
+        .iter()
+        .enumerate()
+        .map(|(offset, column)| {
+            let mut info =
+                tidb_model::ColumnInfo::new(column.id, &column.name, column.field_type.clone());
+            info.offset = offset as i64;
+            info.version = column.column_info_version;
+            info
+        })
+        .collect()
+}
+
+fn check_constraint_foreign_keys(
+    table: &crate::KvTable,
+) -> Vec<super::check_constraint::CheckConstraintForeignKey> {
+    table
+        .foreign_keys()
+        .iter()
+        .map(
+            |foreign_key| super::check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key.cols.clone(),
+                has_referential_action: foreign_key.on_delete != crate::FkAction::NoOption
+                    || foreign_key.on_update != crate::FkAction::NoOption,
+            },
+        )
+        .collect()
+}
+
+fn check_table_clone(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+) -> Result<crate::KvTable, DriverError> {
+    match catalog.table_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => Ok(table.clone()),
+        _ => Err(DriverError::unsupported(
+            "CHECK constraints need a storage-backed table",
+        )),
+    }
+}
+
+fn install_check_constraint_infos(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    mut table: crate::KvTable,
+    infos: Vec<tidb_model::table::ConstraintInfo>,
+    validate_rows: bool,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    table
+        .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+        .map_err(check_constraint_table_error)?;
+    if validate_rows {
+        let mut cursor = table
+            .row_cursor_with_context(&crate::RowDecodeContext::for_write(ctx))
+            .map_err(check_constraint_table_error)?;
+        while let Some((_, row)) = cursor.next_row().map_err(check_constraint_table_error)? {
+            table
+                .validate_check_constraints(&row, ctx)
+                .map_err(check_constraint_table_error)?;
+        }
+    }
+    match catalog.table_mut_in(database, table_name) {
+        Some(crate::TableEntry::Kv(stored)) => {
+            *stored = table;
+            Ok(())
+        }
+        _ => Err(DriverError::unsupported(
+            "CHECK constraints need a storage-backed table",
+        )),
+    }
+}
+
+fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
+            DriverError::CheckConstraintViolated(name)
+        }
+        error => DriverError::DdlCoded {
+            errno: 1105,
+            message: format!("{error:?}"),
+        },
+    }
+}
+
+fn add_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    input: super::check_constraint::CheckConstraintInput,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let columns = check_constraint_columns(&table);
+    let foreign_keys = check_constraint_foreign_keys(&table);
+    let mut max_constraint_id = table.max_constraint_id();
+    let names = table
+        .indexes()
+        .iter()
+        .map(|index| index.name.clone())
+        .chain(
+            table
+                .check_constraint_infos()
+                .iter()
+                .map(|info| info.name.original().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    let built = super::check_constraint::build_constraint_infos(
+        &tidb_ast::CiString::new(table_name),
+        &columns,
+        names,
+        &foreign_keys,
+        std::slice::from_ref(&input),
+        &mut max_constraint_id,
+        tidb_model::SchemaState::PUBLIC,
+        ctx,
+    )
+    .map_err(|error| DriverError::DdlCoded {
+        errno: error.code,
+        message: error.message,
+    })?;
+    let added = built
+        .first()
+        .expect("one CHECK input builds one metadata record");
+    if super::check_constraint_name_exists_in_schema(
+        catalog,
+        database,
+        Some(table_name),
+        added.name.original(),
+    ) {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+            message: format!(
+                "Duplicate check constraint name '{}'.",
+                added.name.original()
+            ),
+        });
+    }
+    let validate_rows = added.enforced;
+    let mut infos = table.check_constraint_infos().to_vec();
+    infos.extend(built);
+    install_check_constraint_infos(
+        catalog,
+        database,
+        table_name,
+        table,
+        infos,
+        validate_rows,
+        ctx,
+    )
+}
+
+fn drop_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    constraint_name: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let mut infos = table.check_constraint_infos().to_vec();
+    let Some(offset) = infos
+        .iter()
+        .position(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+    else {
+        return Err(DriverError::CheckConstraintNotExists(
+            constraint_name.to_owned(),
+        ));
+    };
+    infos.remove(offset);
+    install_check_constraint_infos(catalog, database, table_name, table, infos, false, ctx)
+}
+
+fn alter_check_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    constraint_name: &str,
+    enforced: bool,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let table = check_table_clone(catalog, database, table_name)?;
+    let mut infos = table.check_constraint_infos().to_vec();
+    let Some(info) = infos
+        .iter_mut()
+        .find(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+    else {
+        return Err(DriverError::CheckConstraintNotExists(
+            constraint_name.to_owned(),
+        ));
+    };
+    if info.enforced == enforced {
+        return Ok(());
+    }
+    info.enforced = enforced;
+    info.state = tidb_model::SchemaState::PUBLIC;
+    install_check_constraint_infos(catalog, database, table_name, table, infos, enforced, ctx)
+}
+
 fn truncate_partition_action(
     catalog: &mut Catalog,
     database: &str,
@@ -386,13 +949,9 @@ fn truncate_partition_action(
         } else {
             let mut ordinals = Vec::with_capacity(names.len());
             for name in names {
-                let Some(ordinal) = partition
-                    .definitions
-                    .iter()
-                    .position(|definition| {
-                        super::table_partition::partition_names_equal(&definition.name, name)
-                    })
-                else {
+                let Some(ordinal) = partition.definitions.iter().position(|definition| {
+                    super::table_partition::partition_names_equal(&definition.name, name)
+                }) else {
                     // Go `TruncateTablePartition` (`ddl/executor.go:2851`)
                     // passes `name.L` here -- the FOLDED name -- while the
                     // SELECT/DML partition-list errors (`builder.go:6258`,
@@ -423,6 +982,88 @@ fn truncate_partition_action(
     table
         .truncate_partitions(&ordinals, &replacement_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
+}
+
+/// Go `CoalescePartitions` (`pkg/ddl/executor.go:2751-2778`): reduce a
+/// HASH table's partition count by `count`, re-hashing every row. Refusals
+/// in Go's order: a non-partitioned table (1505), a non-HASH method (1509),
+/// a count below one (1515), and a count that would remove the last
+/// partition (1508).
+/// Go `AddTablePartitions`'s HASH arm (executor.go:2297-2306): grow a HASH
+/// table to `current + count` partitions, re-hashing every row. Go's
+/// refusals apply before the reorganize: a non-partitioned table (1505) and
+/// a count of zero (1501, `ErrPartitionsError`).
+fn add_hash_partitions_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    count: u64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let new_count = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... ADD PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+            return Err(DriverError::unsupported(
+                "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
+            ));
+        }
+        let grown = partition.definitions.len() + count as usize;
+        if grown > super::table_partition::MAX_PARTITIONS as usize {
+            return Err(DriverError::PartitionTooMany);
+        }
+        grown
+    };
+    // Every partition gets a FRESH physical id, matching Go's reorganize.
+    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table
+        .rehash_hash_partitions(&new_ids, ctx)
+        .map_err(|error| crate::driver::kv_read_error("add partition", error))
+}
+
+fn coalesce_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    count: u64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let new_count = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... COALESCE PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+            return Err(DriverError::CoalesceOnlyOnHashPartition);
+        }
+        if count < 1 {
+            return Err(DriverError::CoalescePartitionNoPartition);
+        }
+        if count as usize >= partition.definitions.len() {
+            return Err(DriverError::PartitionDropLast);
+        }
+        partition.definitions.len() - count as usize
+    };
+    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table
+        .rehash_hash_partitions(&new_ids, ctx)
+        .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))
 }
 
 fn drop_partition_action(
@@ -456,13 +1097,9 @@ fn drop_partition_action(
         }
         let mut ordinals = Vec::with_capacity(names.len());
         for name in names {
-            let Some(ordinal) = partition
-                .definitions
-                .iter()
-                .position(|definition| {
-                    super::table_partition::partition_names_equal(&definition.name, name)
-                })
-            else {
+            let Some(ordinal) = partition.definitions.iter().position(|definition| {
+                super::table_partition::partition_names_equal(&definition.name, name)
+            }) else {
                 if if_exists {
                     ctx.append_suppressed(&DriverError::PartitionDropNonexistent);
                     return Ok(());
@@ -496,10 +1133,14 @@ fn add_partition_action(
     spec: &tidb_ast::AddPartitionSpec,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let tidb_ast::AddPartitionSpec::Definitions(definitions) = spec else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD PARTITION PARTITIONS n is not supported yet",
-        ));
+    let definitions = match spec {
+        tidb_ast::AddPartitionSpec::Definitions(definitions) => definitions,
+        // Go `AddTablePartitions` (executor.go:2297-2306): `PARTITIONS n` on
+        // a HASH table reorganizes to count + n partitions, re-hashing every
+        // row -- the mirror of COALESCE PARTITION.
+        tidb_ast::AddPartitionSpec::Count(count) => {
+            return add_hash_partitions_action(catalog, database, table_name, *count, ctx);
+        }
     };
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("LIST"));
@@ -528,12 +1169,9 @@ fn add_partition_action(
             return Err(DriverError::PartitionTooMany);
         }
         for definition in definitions {
-            let duplicate_existing = partition
-                .definitions
-                .iter()
-                .any(|old| {
-                    super::table_partition::partition_names_equal(&old.name, &definition.name)
-                });
+            let duplicate_existing = partition.definitions.iter().any(|old| {
+                super::table_partition::partition_names_equal(&old.name, &definition.name)
+            });
             let duplicate_added = definitions
                 .iter()
                 .filter(|candidate| {
@@ -588,16 +1226,18 @@ fn add_partition_action(
                         definitions,
                         *unsigned,
                         ctx,
-                    // Go reaches these builders through the SAME
-                    // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
-                    // an added partition's name faces the 64-rune rule at the
-                    // same point. Per-partition options are refused above, so
-                    // there is no comment to validate.
-                    &mut |ordinal: usize| {
-                        definitions.get(ordinal).map_or(Ok(()), |definition| {
-                            super::table_partition::check_too_long_partition_name(&definition.name)
-                        })
-                    },
+                        // Go reaches these builders through the SAME
+                        // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
+                        // an added partition's name faces the 64-rune rule at the
+                        // same point. Per-partition options are refused above, so
+                        // there is no comment to validate.
+                        &mut |ordinal: usize| {
+                            definitions.get(ordinal).map_or(Ok(()), |definition| {
+                                super::table_partition::check_too_long_partition_name(
+                                    &definition.name,
+                                )
+                            })
+                        },
                     )?;
                 if let Some(duplicate) = duplicate {
                     return Err(duplicate);
@@ -752,10 +1392,12 @@ fn add_partition_action(
                         ctx,
                         super::table_partition::PartitionBuildMode::Create,
                         &mut |ordinal: usize| {
-                        definitions.get(ordinal).map_or(Ok(()), |definition| {
-                            super::table_partition::check_too_long_partition_name(&definition.name)
-                        })
-                    },
+                            definitions.get(ordinal).map_or(Ok(()), |definition| {
+                                super::table_partition::check_too_long_partition_name(
+                                    &definition.name,
+                                )
+                            })
+                        },
                     )?;
                 // Go validates an addition by CONCATENATING it onto the
                 // existing definitions and running the whole CREATE-time
@@ -803,7 +1445,10 @@ fn add_partition_action(
     // The bound TEXT a RANGE addition prints, rendered from the folded bound
     // by the SAME helper a CREATE uses, so the two cannot drift.
     let range_bound_text = |ordinal: usize| match &added_kind {
-        PartitionKind::Range { less_than, unsigned } => less_than
+        PartitionKind::Range {
+            less_than,
+            unsigned,
+        } => less_than
             .get(ordinal)
             .map(|bound| {
                 vec![super::table_partition::stored_range_bound_text(
@@ -864,17 +1509,34 @@ fn add_index_constraint_action(
             ))
         }
     }
-    crate::ddl::indexes::reject_partial_index(&index.options)?;
+    if index.options.condition.is_some()
+        && catalog.table_in(database, table_name).is_some_and(
+            |entry| matches!(entry, crate::TableEntry::Kv(table) if table.partition().is_some()),
+        )
+    {
+        return Err(crate::ddl::indexes::unsupported_partial_index(
+            "partial index on partitioned table is not supported",
+        ));
+    }
     // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
-    // part's column name, or `expression_index` for an expression part.
-    let index_name = index
-        .name
-        .clone()
-        .unwrap_or_else(|| match index.parts.first() {
-            Some(tidb_ast::IndexPart::Column { name, .. }) => name.clone(),
-            Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index".to_owned(),
-            None => String::new(),
-        });
+    // part's column name, or `expression_index` for an expression part, and
+    // keeps suffixing while that name is already present on the table.
+    let index_name = match index.name.clone() {
+        Some(name) => name,
+        None => {
+            let first_column = match index.parts.first() {
+                Some(tidb_ast::IndexPart::Column { name, .. }) => name.as_str(),
+                Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index",
+                None => "",
+            };
+            let existing = match catalog.table_in(database, table_name) {
+                Some(crate::TableEntry::Kv(table)) => table.indexes(),
+                _ => &[],
+            };
+            super::indexes::anonymous_index_name(existing, first_column)
+        }
+    };
+    let max_index_length = catalog.max_index_length();
     add_index_to_table(
         catalog,
         database,
@@ -886,8 +1548,11 @@ fn add_index_constraint_action(
             parts: &index.parts,
             visible: is_visible(&index.options),
             global: index.options.global,
+            if_not_exists: index.if_not_exists,
+            condition: index.options.condition.as_ref(),
         },
         ctx,
+        max_index_length,
     )
 }
 
@@ -905,12 +1570,16 @@ fn add_index_constraint_action(
 ///    generated column on either side, 3104 for an action that would write a
 ///    stored one, the parent lookup behind `foreign_key_checks` -- hold
 ///    identically whichever statement declared it.
-/// 3. A constraint whose referencing columns no index covers gets one, named
+/// 3. An existing parent must have a covering index (or a clustered handle
+///    primary key for the single-column case), and same-column self-reference
+///    is rejected with Go's 1215. These owner checks run before metadata is
+///    staged.
+/// 4. A constraint whose referencing columns no index covers gets one, named
 ///    after the constraint, exactly as `CREATE TABLE` does. Go creates it
 ///    here as a real `createIndex` before the job is submitted, which is why
 ///    the missing-index error inside `checkAddForeignKeyValidInOwner` is not
 ///    reachable from this path.
-/// 4. The rows the table ALREADY holds are checked against the new
+/// 5. The rows the table ALREADY holds are checked against the new
 ///    constraint, and an orphan is 1452 -- see
 ///    [`crate::foreign_key::require_existing_rows`]. `foreign_key_checks = 0`
 ///    skips this and only this step, which is how a constraint can be
@@ -944,6 +1613,7 @@ fn add_foreign_key_action(
         .map(|column| super::table_constraints::FkColumn {
             name: column.name.clone(),
             generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+            field_type: column.field_type.clone(),
         })
         .collect();
     let clustered: Vec<usize> = match table.pk_handle_offset() {
@@ -954,10 +1624,13 @@ fn add_foreign_key_action(
         definition,
         fk_name,
         &columns,
+        Some(table),
         catalog,
         database,
         ctx.foreign_key_checks(),
+        table.partition().is_some(),
     )?;
+    validate_alter_foreign_key_parent(catalog, database, name, &foreign_key)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
@@ -1001,6 +1674,7 @@ fn add_foreign_key_action(
         .collect();
     let covered_index = |index: &super::KvIndex| {
         covered(&index.column_offsets)
+            && table.partial_index_safe_for_columns(index, &fk_offsets)
             && fk_offsets.iter().enumerate().all(|(position, at)| {
                 let length = index.prefix_length(position);
                 length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
@@ -1009,21 +1683,168 @@ fn add_foreign_key_action(
     };
     if !covered(&clustered) && !table.indexes().iter().any(covered_index) {
         let id = table.next_index_id();
-        table.add_index(super::KvIndex {
-            id,
-            name: foreign_key.name.clone(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: fk_offsets.clone(),
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; fk_offsets.len()],
-            visible: true,
-            // A foreign key's auto-created index is local to the table it
-            // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            super::KvIndex {
+                id,
+                name: foreign_key.name.clone(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: fk_offsets.clone(),
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    fk_offsets.len()
+                ],
+                visible: true,
+                // A foreign key's auto-created index is local to the table it
+                // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     table.add_foreign_key(foreign_key);
+    catalog.mark_has_foreign_keys();
+    Ok(())
+}
+
+/// Go's multi-action ALTER validator evaluates a dropped index against an FK
+/// added by the same statement before either action is committed. If the
+/// existing index is the key the new constraint would rely on, dropping it is
+/// refused with 1553 rather than allowing the later ADD to auto-create a
+/// replacement index. This is the exact `drop idx_c, add constraint fk_c`
+/// shape in `TestAddForeignKey`.
+fn reject_drop_index_used_by_added_foreign_key(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+    actions: &[tidb_ast::AlterTableAction],
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        return Ok(());
+    };
+    let drops: Vec<&str> = actions
+        .iter()
+        .filter_map(|action| match action {
+            tidb_ast::AlterTableAction::DropIndex { if_exists: _, name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if drops.is_empty() {
+        return Ok(());
+    }
+    let added: Vec<&tidb_ast::ForeignKeyConstraintDefinition> = actions
+        .iter()
+        .filter_map(|action| match action {
+            tidb_ast::AlterTableAction::AddForeignKey(definition) => Some(definition),
+            _ => None,
+        })
+        .collect();
+    for index_name in drops {
+        let Some(index) = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        else {
+            continue;
+        };
+        let index_offsets = &index.column_offsets;
+        for definition in &added {
+            let fk_names = super::indexes::index_part_names(&definition.parts)?;
+            let fk_offsets: Vec<usize> = fk_names
+                .iter()
+                .filter_map(|column| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                })
+                .collect();
+            if !fk_offsets.is_empty() && index_offsets.starts_with(&fk_offsets) {
+                return Err(DriverError::DropIndexNeededInForeignKey(
+                    index_name.to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Go `checkTableForeignKeyValid`'s owner-side self-reference and parent-index
+/// checks (`pkg/ddl/foreign_key.go:186-211, 290-297`). CREATE TABLE has its own
+/// historical path; this helper is deliberately called only for ALTER ADD.
+fn validate_alter_foreign_key_parent(
+    catalog: &Catalog,
+    database: &str,
+    child_table: &str,
+    foreign_key: &KvForeignKey,
+) -> Result<(), DriverError> {
+    let self_reference = foreign_key.ref_schema.eq_ignore_ascii_case(database)
+        && foreign_key.ref_table.eq_ignore_ascii_case(child_table)
+        && foreign_key.cols.len() == foreign_key.ref_cols.len()
+        && foreign_key
+            .cols
+            .iter()
+            .zip(&foreign_key.ref_cols)
+            .all(|(child, parent)| child.eq_ignore_ascii_case(parent));
+    if self_reference {
+        return Err(DriverError::DdlCoded {
+            errno: 1215,
+            message: "Cannot add foreign key constraint".to_owned(),
+        });
+    }
+
+    // With checks off Go permits an as-yet-missing parent. There is no parent
+    // index to validate in that deferred case; when the parent exists, its
+    // covering-index rule still applies just as in Go's checkTableForeignKey.
+    let Some(crate::TableEntry::Kv(parent)) =
+        catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
+    else {
+        return Ok(());
+    };
+    let Some(ref_offsets) = foreign_key
+        .ref_cols
+        .iter()
+        .map(|column| {
+            parent
+                .columns
+                .iter()
+                .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(());
+    };
+    let clustered = parent
+        .pk_handle_offset()
+        .map(|offset| vec![offset])
+        .unwrap_or_else(|| parent.common_handle_offsets().to_vec());
+    let clustered_cover = ref_offsets.len() == 1 && ref_offsets == clustered;
+    let column_flens: Vec<i64> = parent
+        .columns
+        .iter()
+        .map(|column| column.field_type.flen())
+        .collect();
+    let index_cover = parent.indexes().iter().any(|index| {
+        index.column_offsets.starts_with(&ref_offsets)
+            && ref_offsets.iter().enumerate().all(|(position, offset)| {
+                let length = index.prefix_length(position);
+                length == super::index_prefix::UNSPECIFIED_LENGTH
+                    || column_flens
+                        .get(*offset)
+                        .is_some_and(|flen| length >= *flen)
+            })
+    });
+    if !clustered_cover && !index_cover {
+        return Err(DriverError::DdlCoded {
+            errno: 1822,
+            message: format!(
+                "Failed to add the foreign key constraint. Missing index for constraint '{}' in the referenced table '{}'",
+                foreign_key.name, foreign_key.ref_table
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -1066,7 +1887,48 @@ fn set_table_options_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     super::validate_table_options(options)?;
-    let mut pending_placement: Option<String> = None;
+    let current_charset = match catalog.table_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => table.charset(),
+        _ => {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE needs a storage-backed table",
+            ))
+        }
+    };
+    let mut pending_charset = None;
+    if options.iter().any(|option| {
+        matches!(
+            option,
+            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_)
+        )
+    }) {
+        let target = alter_table_charset_pair(options, current_charset)?;
+        // Go's ordinary ALTER TABLE CHARSET path only supports the utf8mb4
+        // table default in this executor tier. `utf8` and `gbk` are parsed,
+        // then refused with ErrUnsupportedDDLOperation (8200).
+        if matches!(target.charset, Charset::Utf8 | Charset::Gbk) {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                message: "unsupported alter table charset operation".to_owned(),
+            });
+        }
+        pending_charset = Some(target);
+    }
+    // `Some(None)` records Go's `PLACEMENT POLICY=default` reset, while
+    // `Some(Some(name))` records a policy to resolve after the mutable table
+    // borrow is released. `None` means this ALTER has no placement option.
+    let mut pending_placement: Option<Option<String>> = None;
+    // Go `executor.go:1934-1952`: TTL options in an ALTER reach
+    // `AlterTableTTLInfoOrEnable` as ONE group, so they are pre-scanned here
+    // and applied after the per-option loop.
+    let pending_ttl = options.iter().any(|option| {
+        matches!(
+            option,
+            tidb_ast::TableOption::Ttl { .. }
+                | tidb_ast::TableOption::TtlEnable(_)
+                | tidb_ast::TableOption::TtlJobInterval(_)
+        )
+    });
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1090,6 +1952,12 @@ fn set_table_options_action(
             tidb_ast::TableOption::Comment(comment) => {
                 table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
             }
+            tidb_ast::TableOption::Compression(value) => {
+                // Go `handleTableOptions` stores the string verbatim; ALTER
+                // reaches the same loop (`create_table.go:964-965`).
+                table.set_compression(value.clone());
+            }
+            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {}
             tidb_ast::TableOption::ForceAutoIncrement(value) => {
                 let next = value.parse::<u64>().map_err(|_| {
                     DriverError::unsupported("FORCE AUTO_INCREMENT needs an integer value")
@@ -1155,7 +2023,16 @@ fn set_table_options_action(
                 // The catalog is borrowed mutably through `table`, so the
                 // lookup is deferred to after this loop rather than fought
                 // with here.
-                pending_placement = Some(policy_name.clone());
+                pending_placement = Some(if policy_name.eq_ignore_ascii_case("default") {
+                    None
+                } else {
+                    Some(policy_name.clone())
+                });
+            }
+            tidb_ast::TableOption::Ttl { .. }
+            | tidb_ast::TableOption::TtlEnable(_)
+            | tidb_ast::TableOption::TtlJobInterval(_) => {
+                // Consumed by the group apply after this loop.
             }
             _ => {
                 return Err(DriverError::unsupported(
@@ -1164,18 +2041,148 @@ fn set_table_options_action(
             }
         }
     }
+    if let Some(charset) = pending_charset {
+        table.set_charset(charset);
+    }
+    if pending_ttl {
+        alter_ttl_info_or_enable(catalog, database, name, options)?;
+    }
     if let Some(policy_name) = pending_placement {
-        let Some(policy) = catalog.policy(&policy_name) else {
-            return Err(DriverError::PlacementPolicyNotExists(policy_name));
-        };
-        let reference = tidb_model::PolicyRefInfo {
-            id: policy.id,
-            name: tidb_ast::CiString::new(policy_name),
+        let reference = match policy_name {
+            None => None,
+            Some(policy_name) => {
+                let Some(policy) = catalog.policy(&policy_name) else {
+                    return Err(DriverError::PlacementPolicyNotExists(policy_name));
+                };
+                Some(tidb_model::PolicyRefInfo {
+                    id: policy.id,
+                    name: tidb_ast::CiString::new(policy_name),
+                })
+            }
         };
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
             unreachable!("the table was resolved above")
         };
-        table.set_placement_policy(Some(reference));
+        table.set_placement_policy(reference);
+    }
+    Ok(())
+}
+
+fn alter_table_charset_pair(
+    options: &[tidb_ast::TableOption],
+    fallback: TableCharset,
+) -> Result<TableCharset, DriverError> {
+    let mut charset = None;
+    let mut collation = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::CharacterSet(name) => {
+                if charset.is_some() {
+                    return Err(DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                        message: "Conflicting declarations for CHARACTER SET".to_owned(),
+                    });
+                }
+                charset = Some(Charset::from_name(name).ok_or(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                    message: format!("Unknown character set: '{name}'"),
+                })?);
+            }
+            tidb_ast::TableOption::Collate(name) => {
+                let value = Collation::from_name(name).ok_or(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                    message: format!("Unknown collation: '{name}'"),
+                })?;
+                if let Some(charset) = charset {
+                    if value.charset() != charset {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                            message: format!(
+                                "Collation '{}' is not valid for CHARACTER SET '{}'",
+                                value.name(),
+                                charset.name()
+                            ),
+                        });
+                    }
+                }
+                collation = Some(value);
+            }
+            _ => {}
+        }
+    }
+    if let (Some(charset), Some(collation)) = (charset, collation) {
+        if collation.charset() != charset {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                message: format!(
+                    "Collation '{}' is not valid for CHARACTER SET '{}'",
+                    collation.name(),
+                    charset.name()
+                ),
+            });
+        }
+    }
+    Ok(TableCharset {
+        charset: charset.unwrap_or(fallback.charset),
+        collation: collation
+            .unwrap_or_else(|| charset.unwrap_or(fallback.charset).default_collation()),
+    })
+}
+
+fn convert_table_charset_action(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    charset: Option<&str>,
+    collation: Option<&str>,
+) -> Result<(), DriverError> {
+    let current = match catalog.table_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => table.charset(),
+        _ => {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE needs a storage-backed table",
+            ))
+        }
+    };
+    let options = [
+        charset.map(|name| tidb_ast::TableOption::CharacterSet(name.to_owned())),
+        collation.map(|name| tidb_ast::TableOption::Collate(name.to_owned())),
+    ];
+    let options: Vec<_> = options.into_iter().flatten().collect();
+    let target = alter_table_charset_pair(&options, TableCharset::default())?;
+    if target.charset == Charset::Gbk {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            message: "unsupported alter table charset operation".to_owned(),
+        });
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    for column in table.columns() {
+        if !column.field_type.is_character_string() {
+            continue;
+        }
+        let column_charset = column.field_type.charset();
+        if column_charset == Charset::Ascii
+            || (target.charset == Charset::Utf8
+                && current.charset != Charset::Utf8
+                && column_charset != Charset::Utf8)
+        {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                message: "unsupported alter table charset operation".to_owned(),
+            });
+        }
+    }
+    table.set_charset(target);
+    for column in table.columns_mut() {
+        if column.field_type.is_character_string() {
+            column.field_type.set_charset_name(target.charset.name());
+            column.field_type.set_collation(target.collation);
+        }
     }
     Ok(())
 }
@@ -1344,6 +2351,7 @@ pub fn prepare_column_default(
 /// `origin` is settled once for rows that predate an ADD COLUMN. This is the
 /// same `DefaultValue`/`OriginDefaultValue` split used by Go's DDL path.
 struct PreparedAlterDefault {
+    has_default: bool,
     default: Option<crate::column_default::ColumnDefault>,
     origin: Option<Datum>,
 }
@@ -1362,11 +2370,13 @@ fn prepare_alter_column_default(
                 prepare_column_default(value, field_type, column, column_info_version, ctx, zone)?;
             if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
                 return Ok(PreparedAlterDefault {
+                    has_default: false,
                     default: None,
                     origin: None,
                 });
             }
             Ok(PreparedAlterDefault {
+                has_default: prepared.has_default,
                 default: Some(crate::column_default::ColumnDefault::Value(
                     prepared.stored.clone(),
                 )),
@@ -1380,6 +2390,7 @@ fn prepare_alter_column_default(
             if body.added_origin_safety == crate::column_default::AddedOriginSafety::SequenceDefault
             {
                 return Ok(PreparedAlterDefault {
+                    has_default: true,
                     default: Some(computed),
                     origin: None,
                 });
@@ -1389,6 +2400,7 @@ fn prepare_alter_column_default(
             let origin =
                 prepare_computed_origin(value, field_type, column, column_info_version, ctx, zone)?;
             Ok(PreparedAlterDefault {
+                has_default: true,
                 default: Some(computed),
                 origin: Some(origin),
             })
@@ -1793,16 +2805,16 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
 /// definition in place, keeping the column id so indexes and handles survive.
 ///
 /// NOT MODELLED (documented, and rejected rather than ignored): a type change
-/// on a clustered handle column to anything but another integer type (Go 8200
+/// on a clustered handle column that requires reorganization (Go 8200
 /// "this column has primary key flag"), a BLOB/TEXT column that an index
 /// covers (Go 1170), generated columns, and the column options beyond
 /// NULL/NOT NULL/DEFAULT/AUTO_INCREMENT that CREATE TABLE also rejects here.
 /// A KEY or UNIQUE option lands in that last group, which is Go's rule too:
 /// MODIFY may keep a constraint but never ADD one.
 ///
-/// NOT ENFORCED (measured, pinned in `tidb-session`'s `tests_alter_column`):
 /// Go's `ErrTooLongKey` (1071) when the new type widens a column an index
-/// covers past the key-length limit.
+/// covers past the key-length limit is checked below for both each key part
+/// and the affected index's running byte sum.
 /// The existing table's default charset/collation, which a column added or
 /// modified by ALTER TABLE inherits just as a CREATE TABLE column does.
 fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -> TableCharset {
@@ -2102,7 +3114,13 @@ fn modify_column_action(
         if_exists,
         allow_remove_auto_inc,
     } = request;
-    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let max_index_length = catalog.max_index_length();
+    let enum_length_limit = catalog.enable_enum_length_limit();
+    let mut field_type = field_type_of(
+        def,
+        existing_table_charset(catalog, database, table_name),
+        enum_length_limit,
+    )?;
     let mut default_value = None;
     let mut nullability = None;
     let mut has_null_flag = false;
@@ -2138,7 +3156,17 @@ fn modify_column_action(
             // Go `ProcessModifyColumnOptions` handles COMMENT here; the new
             // value is read from the option list below, where an ABSENT one
             // keeps the old column's.
-            | tidb_ast::ColumnOption::Comment(_) => {}
+            | tidb_ast::ColumnOption::Comment(_)
+            // Go's ProcessModifyColumnOptions lets MODIFY restamp the
+            // declared CHARACTER SET/COLLATE through the rebuilt FieldType.
+            | tidb_ast::ColumnOption::Collate(_) => {}
+            // Go parses REFERENCES on MODIFY but refuses it with the
+            // dedicated 8200 reason rather than a generic unsupported option.
+            tidb_ast::ColumnOption::Reference(_) => {
+                return Err(DriverError::UnsupportedModifyColumn(
+                    "can't modify with references",
+                ))
+            }
             tidb_ast::ColumnOption::OnUpdate(expr) => {
                 crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
                     .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
@@ -2350,10 +3378,24 @@ fn modify_column_action(
     // below never runs when there are zero rows, so without this table-level
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
-    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
     let had_auto_random = table
         .auto_random()
         .is_some_and(|spec| spec.offset == offset);
+    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
+    if let Some(index_name) = table.partial_index_condition_dependency(old_name) {
+        return Err(super::indexes::partial_index_column_dependency(
+            old_name,
+            &index_name,
+        ));
+    }
+    // Go's `checkModifyTypes` runs before `checkAutoRandom`: changing the
+    // AUTO_RANDOM column away from BIGINT is the generic 8200 unsupported
+    // MODIFY error, not the later 8216 auto-random type diagnostic.
+    if had_auto_random && field_type.code() != FieldTypeCode::LongLong {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "Unsupported modify column",
+        ));
+    }
     if (had_auto_random || auto_random_option.is_some())
         && field_type.code() != FieldTypeCode::LongLong
     {
@@ -2443,10 +3485,17 @@ fn modify_column_action(
                 | tidb_datatype::FieldTypeCode::LongLong
         )
     };
-    // Go refuses to move a clustered handle off the integer domain, because
-    // the handle IS the row key.
+    // Go refuses a clustered-handle type change whenever
+    // CheckModifyTypeCompatible says that reorganization is required,
+    // because the handle IS the row key.  Integer display-width changes with
+    // the same signedness are the one exception: Go normalizes their default
+    // widths and treats those as metadata-only.
     let is_handle = table.pk_handle_offset() == Some(offset);
-    if is_handle && !integer_type(field_type.code()) {
+    let origin_code = table.columns[offset].field_type.code();
+    let origin_unsigned = table.columns[offset].field_type.is_unsigned();
+    let reorg_type_change =
+        origin_code != field_type.code() || origin_unsigned != field_type.is_unsigned();
+    if is_handle && (!integer_type(field_type.code()) || reorg_type_change) {
         return Err(DriverError::UnsupportedModifyColumn(
             "this column has primary key flag",
         ));
@@ -2469,13 +3518,43 @@ fn modify_column_action(
             let length = index.prefix_length(position);
             let surviving = (field_type.code().is_type_prefixable() && field_type.flen() > length)
                 .then_some(length);
-            crate::ddl::index_prefix::key_part_length(
+            crate::ddl::index_prefix::key_part_length_with_max(
                 &field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(&def.name),
                 surviving,
                 true,
+                max_index_length,
             )?;
         }
+    }
+    // Go's `checkIndexInModifiableColumns` also re-runs the running sum for
+    // each affected index. Rechecking only the changed key part misses a
+    // composite index whose parts are individually legal but whose new total
+    // exceeds `MAX_INDEX_LENGTH` (1071).
+    for index in table.indexes() {
+        if !index.column_offsets.contains(&offset) {
+            continue;
+        }
+        let parts = index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, column_offset)| {
+                let field_type = if *column_offset == offset {
+                    &field_type
+                } else {
+                    &table.columns[*column_offset].field_type
+                };
+                (field_type, index.prefix_length(position))
+            });
+        crate::ddl::index_prefix::check_index_key_length_with_max(
+            parts,
+            index.column_offsets.len(),
+            index.unique,
+            true,
+            max_index_length,
+        )
+        .map_err(crate::ddl::index_prefix::driver_error)?;
     }
 
     // The second shape of the dependency error, and the one this tier used to
@@ -2531,6 +3610,7 @@ fn modify_column_action(
             if preserve_origin_default =>
         {
             PreparedAlterDefault {
+                has_default: true,
                 default: Some(default),
                 origin: previous_origin_default,
             }
@@ -2549,15 +3629,18 @@ fn modify_column_action(
             prepared
         }
         None => PreparedAlterDefault {
+            has_default: false,
             default: None,
             origin: previous_origin_default,
         },
     };
+    let has_default_value = prepared_default.has_default;
+    super::set_no_default_value_flag(&mut field_type, has_default_value);
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
     table
-        .alter_auto_random_spec(new_auto_random, &def.name)
+        .alter_auto_random_spec(new_auto_random, offset, &def.name)
         .map_err(super::auto_random::rebase_error)?;
     // Go `updateFKInfoWhenModifyColumn` +
     // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
@@ -2601,9 +3684,12 @@ fn modify_column_action(
             crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
                 DriverError::DataTruncatedValue { column, value }
             }
-            crate::kv_table::KvTableError::DataTruncatedAtRow { column, row } => {
-                DriverError::DataTruncatedAtRow { column, row }
-            }
+            crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrInvalidUseOfNull,
+                message: tidb_error::tidb::errname::ErrInvalidUseOfNull
+                    .raw
+                    .to_owned(),
+            },
             crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
             crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                 DriverError::DuplicateEntry { value, key }
@@ -2618,10 +3704,15 @@ fn add_column_action(
     table_name: &str,
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
+    if_not_exists: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let zone = &ctx.session_zone();
-    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let mut field_type = field_type_of(
+        def,
+        existing_table_charset(catalog, database, table_name),
+        catalog.enable_enum_length_limit(),
+    )?;
     let mut default_value = None;
     let mut not_null = false;
     for option in &def.options {
@@ -2671,6 +3762,23 @@ fn add_column_action(
                 ))
             }
             tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
+            tidb_ast::ColumnOption::AutoRandom(_) => {
+                // Go's `checkAddColumn` reports the dedicated auto-random
+                // error instead of the generic unsupported-column-option
+                // refusal used by the other unsupported ADD options.
+                return Err(DriverError::InvalidAutoRandom(format!(
+                    "unsupported add column '{}' constraint AUTO_RANDOM when altering '{}.{}'",
+                    def.name, database, table_name
+                )));
+            }
+            tidb_ast::ColumnOption::Check(_) => {
+                // Pinned Go `buildColumnAndConstraint` emits this warning
+                // while disabled, then `CreateNewColumn` discards the
+                // returned inline constraint in both modes.
+                if !ctx.enable_check_constraint() {
+                    ctx.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                }
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE ADD COLUMN",
@@ -2682,6 +3790,7 @@ fn add_column_action(
         tidb_ast::ColumnOption::Generated { expression, .. } => Some(expression),
         _ => None,
     });
+    let column_limit = catalog.table_column_count_limit();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -2692,7 +3801,22 @@ fn add_column_action(
         .iter()
         .any(|column| column.name.eq_ignore_ascii_case(&def.name))
     {
-        return Err(DriverError::DuplicateColumnName(def.name.clone()));
+        // Go's checkAndCreateNewColumn reports ErrColumnExists after the
+        // column definition has passed its own option checks, then lets an
+        // individual IF NOT EXISTS guard demote that 1060 to a Note and
+        // continue the ALTER (including the grouped ADD COLUMNS form).
+        let duplicate = DriverError::DuplicateColumnName(def.name.clone());
+        if if_not_exists {
+            ctx.append_suppressed(&duplicate);
+            return Ok(());
+        }
+        return Err(duplicate);
+    }
+    if table.columns.len() >= column_limit {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: "Too many columns".to_owned(),
+        });
     }
     let index = match position {
         tidb_ast::ColumnPosition::Default => table.columns.len(),
@@ -2730,23 +3854,30 @@ fn add_column_action(
         })
         .transpose()?
         .unwrap_or(PreparedAlterDefault {
+            has_default: false,
             default: None,
             origin: None,
         });
-    // A generated expression resolves against the columns that will PRECEDE
-    // the new one, which is Go's `verifyColumnGeneration` prior-order rule
-    // and, for the default append position, every column the table has.
+    let has_default_value = prepared_default.has_default;
+    super::set_no_default_value_flag(&mut field_type, has_default_value);
+    // Go's `CreateNewColumn` validates generated expressions against the
+    // WHOLE current table first (`checkDependedColExist`), then applies the
+    // position-sensitive `verifyColumnGenerationSingle` check. Resolving
+    // against only `table.columns[..index]` would turn a later generated
+    // dependency into 1054 instead of Go's 3107.
     let generated = match generated_expression {
         Some(expression) => {
-            let names: Vec<String> = table.columns[..index]
+            let names: Vec<String> = table
+                .columns
                 .iter()
                 .map(|column| column.name.clone())
                 .collect();
-            let types: Vec<tidb_datatype::FieldType> = table.columns[..index]
+            let types: Vec<tidb_datatype::FieldType> = table
+                .columns
                 .iter()
                 .map(|column| column.field_type.clone())
                 .collect();
-            Some(
+            let generated =
                 crate::generated_column::build_added_generated_column_with_like_default_escape(
                     &def.name,
                     expression,
@@ -2756,8 +3887,25 @@ fn add_column_action(
                     zone,
                     ctx.like_default_escape(),
                 )
-                .map_err(crate::ddl::generated_column_error)?,
-            )
+                .map_err(crate::ddl::generated_column_error)?;
+            for dependency in &generated.dependencies {
+                let Some(dependency_offset) = table
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(dependency))
+                else {
+                    // The full-table resolver above already turns this into
+                    // Go's 1054, so this is defensive if the resolver ever
+                    // gains a non-column dependency form.
+                    continue;
+                };
+                if table.columns[dependency_offset].generated.is_some()
+                    && dependency_offset >= index
+                {
+                    return Err(DriverError::GeneratedColumnNonPrior);
+                }
+            }
+            Some(generated)
         }
         None => None,
     };
@@ -2829,6 +3977,14 @@ fn drop_column_action(
             table: table_name.to_owned(),
         });
     }
+    // Go `checkDropColumnWithTTLConfig` (`pkg/ddl/ttl.go:152-159`): the column
+    // a TTL config names cannot be dropped while the config stands
+    // (`ErrTTLColumnCannotDrop`, 8149); the TTL_ENABLE clause must go first.
+    if let Some(info) = table.ttl_info() {
+        if info.column_name.lowercase() == column_name.to_ascii_lowercase() {
+            return Err(DriverError::TtlColumnCannotDrop(column_name.to_owned()));
+        }
+    }
     // Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`) runs `isDroppableColumn`
     // and then `checkDropColumnWithPartitionConstraint`, which is the pair
     // `column_dependent` answers: with `index idx((a+b))`, `drop column a` is
@@ -2859,6 +4015,31 @@ fn drop_column_action(
             column_name.to_owned(),
         ));
     }
+    // Go `IsColumnDroppableWithCheckConstraint`: a CHECK that also
+    // references another column blocks the drop. A CHECK whose sole
+    // dependency is this column is allowed and becomes invalid; Go removes
+    // it lazily in `table.LoadCheckConstraint` when the new schema is loaded.
+    let mut invalid_constraint_ids = Vec::new();
+    for info in table.check_constraint_infos() {
+        if !super::check_constraint::uses_column(info, column_name) {
+            continue;
+        }
+        if info.constraint_cols.len() > 1 {
+            let error =
+                super::check_constraint::column_dependency_error(info.name.original(), column_name);
+            return Err(DriverError::DdlCoded {
+                errno: error.code,
+                message: error.message,
+            });
+        }
+        invalid_constraint_ids.push(info.id);
+    }
+    if let Some(index_name) = table.partial_index_condition_dependency(column_name) {
+        return Err(super::indexes::partial_index_column_dependency(
+            column_name,
+            &index_name,
+        ));
+    }
     let covering: Vec<String> = table
         .indexes()
         .iter()
@@ -2871,7 +4052,114 @@ fn drop_column_action(
             .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     }
     table.drop_column(offset);
+    if !invalid_constraint_ids.is_empty() {
+        let infos = table
+            .check_constraint_infos()
+            .iter()
+            .filter(|info| !invalid_constraint_ids.contains(&info.id))
+            .cloned()
+            .collect();
+        table
+            .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+            .map_err(check_constraint_table_error)?;
+    }
     Ok(())
+}
+
+/// Go `AlterTableTTLInfoOrEnable` (`pkg/ddl/executor.go:3851-3903`) plus the
+/// `onAlterTTLInfo` merge rules (`pkg/ddl/ttl.go:54-90`): the TTL options of
+/// one ALTER form ONE group. A full `TTL=` re-definition is validated like
+/// CREATE and inherits the existing `TTL_ENABLE`/`TTL_JOB_INTERVAL` unless
+/// this ALTER also carries them; the enable/interval-only forms need an
+/// existing config (`ErrSetTTLOptionForNonTTLTable`, 8150).
+fn alter_ttl_info_or_enable(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    options: &[tidb_ast::TableOption],
+) -> Result<(), DriverError> {
+    // The FK referral scan needs the catalog immutably, so it runs BEFORE the
+    // table is resolved mutably.
+    let wants_full_definition = options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::TableOption::Ttl { .. }));
+    if wants_full_definition && crate::foreign_key::is_table_referred(catalog, database, name) {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    let mut info = super::ttl_info_from_options(options)?;
+    let mut explicit_enable: Option<bool> = None;
+    let mut explicit_interval: Option<String> = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::TtlEnable(enabled) => explicit_enable = Some(*enabled),
+            tidb_ast::TableOption::TtlJobInterval(interval) => {
+                explicit_interval = Some(interval.clone());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(mut built) = info {
+        // Go runs `checkTTLInfoValid` on the NEW config before the job.
+        validate_ttl_column(table, built.column_name.original())?;
+        // The merge rules: an explicit enable/interval wins; otherwise the
+        // existing config's survives a re-definition.
+        if let Some(current) = table.ttl_info() {
+            if explicit_enable.is_none() {
+                built.enable = current.enable;
+            }
+            if explicit_interval.is_none() {
+                built.job_interval = current.job_interval.clone();
+            }
+        }
+        table.set_ttl_info(Some(built));
+        return Ok(());
+    }
+
+    let Some(current) = table.ttl_info() else {
+        // Go: both enable-only and interval-only refuse on a non-TTL table.
+        if explicit_enable.is_some() {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_ENABLE".to_owned(),
+            ));
+        }
+        if let Some(_) = explicit_interval {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_JOB_INTERVAL".to_owned(),
+            ));
+        }
+        return Ok(());
+    };
+    let mut updated = current.clone();
+    if let Some(enabled) = explicit_enable {
+        updated.enable = enabled;
+    }
+    if let Some(interval) = explicit_interval {
+        updated.job_interval = interval;
+    }
+    table.set_ttl_info(Some(updated));
+    Ok(())
+}
+
+/// Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go
+/// :141-149`): the TTL column must exist and be a time type.
+fn validate_ttl_column(table: &crate::KvTable, named: &str) -> Result<(), DriverError> {
+    match table
+        .columns
+        .iter()
+        .find(|column| column.name.eq_ignore_ascii_case(named))
+    {
+        None => Err(DriverError::UnknownColumnInTtlConfig(named.to_owned())),
+        Some(column) if !column.field_type.code().is_type_time() => {
+            Err(DriverError::UnsupportedColumnInTtlConfig(named.to_owned()))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 #[cfg(test)]

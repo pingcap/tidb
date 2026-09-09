@@ -35,6 +35,7 @@
 //! Prepared statements and transaction control keep the trait's fail-closed
 //! defaults.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
@@ -202,9 +203,6 @@ impl QuerySessionFactory for PipelineSessionFactory {
             .set_advisory_lock_service(Arc::clone(&self.advisory_locks));
         session
             .session
-            .set_version_info(context.version_info.clone());
-        session
-            .session
             .set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         // Go sets `SessionVars.User` from the identity the handshake matched:
         // `CURRENT_USER()` reports that matched grant identity and `USER()`
@@ -219,6 +217,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
         session.session.set_connection_id(context.connection_id);
+        session
+            .session
+            .set_client_found_rows(context.client_found_rows);
         if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
             session.session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
@@ -266,9 +267,17 @@ impl QuerySessionFactory for PipelineSessionFactory {
             .map_err(map_error)?;
         Ok(session)
     }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
+    }
 }
 
 impl QuerySession for PipelineServerSession {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        self.session.finish_txn_write_throughput(cost);
+    }
+
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
         Some(Arc::new(self.session.begin_query_cancellation()))
     }
@@ -280,11 +289,19 @@ impl QuerySession for PipelineServerSession {
     /// This session's own `@@max_allowed_packet`, which is what Go bounds the
     /// packet reader by; see the trait's own doc.
     fn max_allowed_packet(&self) -> Option<usize> {
-        self.session
-            .vars()
-            .get_system("max_allowed_packet")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
+        Some(self.session.max_allowed_packet() as usize)
+    }
+
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        self.session.try_consume_long_data(bytes)
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        self.session.release_long_data(bytes);
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.session.connection_id()
     }
 
     /// The live status word Go reads with `cc.ctx.Status()` before every
@@ -302,13 +319,25 @@ impl QuerySession for PipelineServerSession {
         self.session.wire_warning_count()
     }
 
+    fn statement_info(&self) -> Vec<u8> {
+        self.session.statement_message().as_bytes().to_vec()
+    }
+
+    fn warning_codes(&self) -> Vec<u16> {
+        self.session
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
     /// Go `clientConn.initResultEncoder`'s read: this session's
     /// `@@character_set_results`.
-    fn result_charset(&self) -> String {
+    fn result_charset(&self) -> Cow<'_, str> {
         self.session.result_charset()
     }
 
-    fn input_charset(&self) -> String {
+    fn input_charset(&self) -> Cow<'_, str> {
         self.session.input_charset()
     }
 
@@ -338,6 +367,7 @@ impl QuerySession for PipelineServerSession {
     /// A `SET` statement answers the same way, which is what a connecting
     /// client expects for `SET NAMES` and friends.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.session.clear_statement_message();
         // Both questions below are answered off ONE parse: whether this is a
         // `SET` to apply, and -- if it is not -- what shape its answer takes.
         // They remain two questions with two answers; only the lexing is
@@ -389,7 +419,7 @@ impl QuerySession for PipelineServerSession {
     /// statement that answers with an OK packet reports none.
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
         let prepared = self.session.prepare_ast(sql).map_err(map_error)?;
-        let result_columns = match prepared.statement_kind(&self.session) {
+        let result_columns = match self.session.statement_kind_parsed(prepared.statement()) {
             StmtKind::Query => {
                 match self.session.probe_prepared(&prepared) {
                     Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
@@ -418,12 +448,11 @@ impl QuerySession for PipelineServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(statement.sql());
         let params = prepared_parameters(values);
         let (output, result_authority) = if let Some(prepared) = statement.prepared_ast() {
-            let bound = prepared
-                .bind_for_execution(&self.session, &params)
-                .map_err(map_error)?;
-            self.session.run_bound_prepared_with_result_authority(bound)
+            self.session
+                .run_prepared_with_result_authority(prepared, &params)
         } else {
             self.session
                 .run_with_params_and_result_authority(statement.sql(), &params)
@@ -432,20 +461,27 @@ impl QuerySession for PipelineServerSession {
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
-                GeneralExecuteOutcome::Rows(
-                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                        select_columns(&columns),
-                        rows,
-                    )))
-                    .with_cursor_materialization(
-                        field_types,
-                        result_authority.expect("a row result carries materialization authority"),
-                    )
-                    .with_statement_status(
-                        self.session.wire_warning_count(),
-                        WireStatus::of_session(&self.session),
-                    ),
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    select_columns(&columns),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
                 )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                )
+                .with_statement_output(
+                    0,
+                    self.session.statement_insert_id(),
+                    self.session.statement_message().as_bytes().to_vec(),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
             }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -459,6 +495,7 @@ impl QuerySession for PipelineServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(sql);
         let source = match self.session.run_with_columns(sql).map_err(map_error)? {
             StmtOutput::Rows { columns, rows } => {
                 MaterializedResultSetSource::new(select_columns(&columns), rows)
@@ -472,10 +509,20 @@ impl QuerySession for PipelineServerSession {
         };
         // The rows are already materialized, so the buffer this reads is the
         // finished statement's -- the same one Go's terminal `writeEOF` reads.
-        Ok(QueryResult::new(Box::new(source)).with_statement_status(
-            self.session.wire_warning_count(),
-            WireStatus::of_session(&self.session),
-        ))
+        let result = QueryResult::new(Box::new(source))
+            .with_statement_status(
+                self.session.wire_warning_count(),
+                WireStatus::of_session(&self.session),
+            )
+            .with_statement_output(
+                0,
+                self.session.statement_insert_id(),
+                self.session.statement_message().as_bytes().to_vec(),
+            );
+        Ok(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        })
     }
 }
 
@@ -635,32 +682,6 @@ mod tests {
     const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
     const SALT: [u8; 20] = [7; 20];
 
-    #[derive(Default)]
-    struct NoopMemStateRecorder;
-
-    impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
-        fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
-            Ok(None)
-        }
-
-        fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
-        let arbitrator =
-            tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
-        assert!(arbitrator.auto_run(
-            tidb_util::memory::MemArbitratorActions::default(),
-            tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
-            4,
-            tidb_util::memory::DEF_TASK_TICK_DUR,
-        ));
-        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
-        arbitrator
-    }
-
     fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
         let stage_one = Sha1::digest(password);
         let stage_two = Sha1::digest(stage_one);
@@ -695,68 +716,12 @@ mod tests {
             connection_id,
             peer_addr,
             identity,
+            client_found_rows: false,
             secure_transport: false,
             tls_status: None,
             cancellation: ConnectionCancellation::default(),
             close: crate::sql_node::ConnectionClose::default(),
-            version_info: tidb_util::versioninfo::VersionInfo::build_default(),
         }
-    }
-
-    #[test]
-    fn factory_installs_the_listener_version_identity() {
-        let factory = PipelineSessionFactory::default();
-        let mut context = session_context(7);
-        context.version_info =
-            tidb_util::versioninfo::VersionInfo::build_default().with_configured_edition("Starter");
-        let session = factory.open_session(context).expect("session opens");
-
-        assert_eq!(
-            session
-                .session
-                .vars()
-                .get_system("version_comment")
-                .unwrap(),
-            "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
-        );
-    }
-
-    #[test]
-    fn factory_propagates_the_process_memory_authority_to_query_statements() {
-        let arbitrator = test_mem_arbitrator();
-        let factory =
-            PipelineSessionFactory::default().with_mem_arbitrator(Arc::clone(&arbitrator));
-        let mut session = open_on(&factory, 117);
-        session
-            .session
-            .run("SET @@tidb_mem_arbitrator_query_reserved = 64")
-            .unwrap();
-        session.session.run("SELECT 1").unwrap();
-
-        // A declined fast-read candidate, metadata probe and ordinary
-        // prepared execution must each own one statement context. A second
-        // live context attempts to restart this connection's active root pool.
-        let prepared = session.session.prepare_ast("SELECT ?").unwrap();
-        session.session.probe_prepared(&prepared).unwrap();
-        for value in [1, 2] {
-            let bound = prepared
-                .bind_for_execution(&session.session, &[Datum::Int(value)])
-                .unwrap();
-            let (StmtOutput::Rows { rows, .. }, _) = session
-                .session
-                .run_bound_prepared_with_result_authority(bound)
-                .unwrap()
-            else {
-                panic!("expected rows");
-            };
-            assert_eq!(rows, vec![vec![Datum::Int(value)]]);
-        }
-
-        assert!(
-            arbitrator.find_root_pool(117).entry.is_some(),
-            "the listener-created session must create its statement root through the process arbitrator"
-        );
-        assert!(arbitrator.stop());
     }
 
     #[test]

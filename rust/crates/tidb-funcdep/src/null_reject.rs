@@ -57,7 +57,6 @@ use tidb_expr::expression::{is_null_rejected as prove_null_rejected, Expression}
 /// This is the single-column shape: a UNIQUE-key promotion asks about one
 /// nullable key member at a time (Go `FDSet.MakeNotNull` fed from
 /// `ExtractNotNullFromConds`).
-#[must_use]
 pub fn is_null_rejected(predicate: &Expression, column_id: i64) -> bool {
     prove_null_rejected(&[column_id], predicate)
 }
@@ -71,7 +70,6 @@ pub fn is_null_rejected(predicate: &Expression, column_id: i64) -> bool {
 /// multi-column child is one synthetic column -- the two are not equivalent,
 /// because a predicate may reject the pair while rejecting neither member
 /// alone.
-#[must_use]
 pub fn is_null_rejected_by(predicate: &Expression, nullified: &[i64]) -> bool {
     prove_null_rejected(nullified, predicate)
 }
@@ -215,5 +213,13 @@ mod tests {
             &call("isnull", vec![column(B)]),
             &schema
         ));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let predicate = call("gt", vec![column(A), int(3)]);
+        is_null_rejected(&predicate, A);
+        is_null_rejected_by(&predicate, &[A]);
     }
 }

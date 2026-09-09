@@ -39,6 +39,7 @@
 //! `TiDBVectorFloat32` uses the datatype layer's source-compatible
 //! lexicographic vector comparison over serialized variable-length cells.
 
+use crate::column::Column;
 use crate::row::Row;
 use std::cmp::Ordering;
 use tidb_datatype::{
@@ -49,6 +50,139 @@ use tidb_datatype::{
 /// of `r`. The two columns must have the same type.
 pub type CompareFunc =
     Box<dyn for<'a> Fn(Row<'a>, usize, Row<'a>, usize) -> Ordering + Send + Sync>;
+
+/// A compiled comparator over columns whose storage is already borrowed.
+///
+/// Sort keeps these borrows for the whole `sort_unstable_by` call. That is
+/// equivalent to Go's direct `chunk.Row` access, while avoiding a fresh
+/// `ColumnSlot` read (and, for shared variable-width columns, a cell copy) on
+/// every comparison.
+pub type ColumnCompareFunc = Box<dyn Fn(&Column, usize, &Column, usize) -> Ordering + Send + Sync>;
+
+/// The null pre-check for two already-borrowed columns.
+fn column_null_order(
+    left: &Column,
+    left_row: usize,
+    right: &Column,
+    right_row: usize,
+) -> Option<Ordering> {
+    let (left_null, right_null) = (left.is_null(left_row), right.is_null(right_row));
+    if left_null || right_null {
+        Some(cmp_null(left_null, right_null))
+    } else {
+        None
+    }
+}
+
+/// Compiles Go `keyCmpFuncs` for column storage that the caller has already
+/// borrowed.
+///
+/// This has the same type and NULL ordering as [`get_compare_func`]. It is a
+/// separate surface because a `Row` intentionally reopens its `ColumnSlot` on
+/// each typed accessor, whereas blocking operators such as Sort can retain a
+/// read view while they compare the same columns repeatedly.
+#[must_use]
+pub fn get_column_compare_func(field_type: &FieldType) -> Option<ColumnCompareFunc> {
+    let func: ColumnCompareFunc = match field_type.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong
+        | FieldTypeCode::Year => {
+            if field_type.is_unsigned() {
+                Box::new(|left, left_row, right, right_row| {
+                    column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                        left.get_uint64(left_row).cmp(&right.get_uint64(right_row))
+                    })
+                })
+            } else {
+                Box::new(|left, left_row, right, right_row| {
+                    column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                        left.get_int64(left_row).cmp(&right.get_int64(right_row))
+                    })
+                })
+            }
+        }
+        FieldTypeCode::Float => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                cmp_float(
+                    f64::from(left.get_float32(left_row)),
+                    f64::from(right.get_float32(right_row)),
+                )
+            })
+        }),
+        FieldTypeCode::Double => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                cmp_float(left.get_float64(left_row), right.get_float64(right_row))
+            })
+        }),
+        FieldTypeCode::String
+        | FieldTypeCode::VarString
+        | FieldTypeCode::Varchar
+        | FieldTypeCode::Blob
+        | FieldTypeCode::TinyBlob
+        | FieldTypeCode::MediumBlob
+        | FieldTypeCode::LongBlob => {
+            let collator = get_collator(field_type.collation_name());
+            Box::new(move |left, left_row, right, right_row| {
+                column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                    let left = left.get_bytes(left_row);
+                    let right = right.get_bytes(right_row);
+                    collator.compare(left.as_ref(), right.as_ref())
+                })
+            })
+        }
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+            Box::new(|left, left_row, right, right_row| {
+                column_null_order(left, left_row, right, right_row)
+                    .unwrap_or_else(|| left.get_time(left_row).compare(right.get_time(right_row)))
+            })
+        }
+        FieldTypeCode::Duration => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                left.get_duration(left_row, 0)
+                    .nanoseconds()
+                    .cmp(&right.get_duration(right_row, 0).nanoseconds())
+            })
+        }),
+        FieldTypeCode::NewDecimal => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                left.get_my_decimal(left_row)
+                    .compare(&right.get_my_decimal(right_row))
+            })
+        }),
+        FieldTypeCode::Set | FieldTypeCode::Enum => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                left.get_name_value(left_row)
+                    .1
+                    .cmp(&right.get_name_value(right_row).1)
+            })
+        }),
+        FieldTypeCode::Bit => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                let left = left.get_bytes(left_row);
+                let right = right.get_bytes(right_row);
+                tidb_datatype::BinaryLiteral::from(left.as_ref())
+                    .compare(&tidb_datatype::BinaryLiteral::from(right.as_ref()))
+            })
+        }),
+        FieldTypeCode::Json => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                compare_binary_json(&left.get_json(left_row), &right.get_json(right_row))
+            })
+        }),
+        FieldTypeCode::VectorFloat32 => Box::new(|left, left_row, right, right_row| {
+            column_null_order(left, left_row, right, right_row).unwrap_or_else(|| {
+                left.get_vector_float32(left_row)
+                    .compare(&right.get_vector_float32(right_row))
+            })
+        }),
+        FieldTypeCode::Null => Box::new(|_, _, _, _| Ordering::Equal),
+        _ => return None,
+    };
+    Some(func)
+}
 
 /// Go's `cmp.Compare` for floats: a NaN is less than every non-NaN and equal to
 /// another NaN, and `-0.0 == 0.0`.

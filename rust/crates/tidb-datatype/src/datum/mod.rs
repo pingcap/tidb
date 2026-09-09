@@ -608,8 +608,12 @@ fn datum_encoding(flags: ConversionFlags, charset: &str) -> Option<Encoding> {
 }
 
 pub(super) fn decimal_from_bytes(bytes: &[u8]) -> Result<Converted<Decimal>, DatumValueError> {
-    let text = std::str::from_utf8(bytes)?;
-    Ok(crate::convert::decimal_from_text(text))
+    // Go's `MyDecimal.FromString` scans a byte string and stops at the first
+    // non-numeric byte; it does not require the source `string` to be UTF-8.
+    // Decimal comparison/conversion therefore keeps the best-effort zero (or
+    // numeric prefix) and its truncation event for arbitrary octets.
+    let text = String::from_utf8_lossy(bytes);
+    Ok(crate::convert::decimal_from_text(&text))
 }
 
 /// Deep-copies a datum row.

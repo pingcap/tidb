@@ -37,7 +37,6 @@ impl TableMode {
 
     /// Go `CanTransitionTo`: whether the mode may change from `self` to
     /// `target`. Only import<->restore conversions are blocked.
-    #[must_use]
     pub fn can_transition_to(self, target: TableMode) -> bool {
         if self == TableMode::IMPORT && target == TableMode::RESTORE {
             return false;
@@ -156,5 +155,11 @@ mod tests {
         let back: AlterTableModeTarget = serde_json::from_str(&encoded).unwrap();
         assert_eq!(back.target_mode, TableMode::IMPORT);
         assert_eq!(back.schema_name.lowercase(), "db");
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn can_transition_return_may_be_ignored_like_go() {
+        TableMode::NORMAL.can_transition_to(TableMode::IMPORT);
     }
 }

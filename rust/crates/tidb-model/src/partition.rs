@@ -629,6 +629,27 @@ impl PartitionInfo {
             .map_or(-1, |d| d.id)
     }
 
+    /// Go `findNextNonTouchedPartitionID`: return the next definition after
+    /// `current_id` that is not present in `dropping_definitions`, or zero
+    /// when the current definition is unknown, last, or has no untouched
+    /// successor.
+    #[must_use]
+    pub fn find_next_non_touched_partition_id(&self, current_id: i64) -> i64 {
+        let definitions = self.definitions.snapshot();
+        let Some(current) = definitions
+            .iter()
+            .position(|definition| definition.id == current_id)
+        else {
+            return 0;
+        };
+        let dropping = self.dropping_definitions.snapshot();
+        definitions
+            .iter()
+            .skip(current + 1)
+            .find(|candidate| !dropping.iter().any(|dropped| dropped.id == candidate.id))
+            .map_or(0, |candidate| candidate.id)
+    }
+
     /// Go `GetDefaultListPartition`: the first empty/default LIST partition.
     #[must_use]
     pub fn get_default_list_partition(&self) -> isize {

@@ -178,11 +178,12 @@ impl CursorState {
         row_count: usize,
         options: tidb_protocol::ResultSetOptions,
     ) -> Result<(), CursorFetchError> {
-        let mut stream = tidb_protocol::BinaryResultSetStream::new(self.columns.clone(), options)
-            .map_err(|error| CursorFetchError::Protocol {
-            message: error.to_string(),
-            sequence: 1,
-        })?;
+        let mut stream =
+            tidb_protocol::BinaryResultSetStream::new(self.columns.clone(), options.clone())
+                .map_err(|error| CursorFetchError::Protocol {
+                    message: error.to_string(),
+                    sequence: 1,
+                })?;
         let _ = stream
             .metadata_packets()
             .map_err(|error| CursorFetchError::Protocol {
@@ -283,7 +284,7 @@ mod tests {
 
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_executor::{OomAction, StatementMemory};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
     use crate::pipeline_session::select_columns;

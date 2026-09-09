@@ -57,11 +57,11 @@ use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::{estimated_mem_usage, Datum};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, KillSignalTransport, LogOnExceed, Tracker,
     DEF_MEM_QUOTA_QUERY, DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
 };
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 use crate::executor::ExecError;
@@ -492,6 +492,18 @@ impl SessionMemory {
     pub fn bytes_consumed(&self) -> i64 {
         self.session.bytes_consumed()
     }
+
+    /// The persistent memory root stored in `sessmgr.ProcessInfo`.
+    #[must_use]
+    pub fn session_tracker(&self) -> &Arc<Tracker> {
+        &self.session
+    }
+
+    /// The persistent disk root stored in `sessmgr.ProcessInfo`.
+    #[must_use]
+    pub fn session_disk_tracker(&self) -> &Arc<Tracker> {
+        &self.disk_session
+    }
 }
 
 /// One statement's memory budget: the session tracker holding
@@ -582,6 +594,12 @@ impl StatementMemory {
         &self.session
     }
 
+    /// The statement's canonical SQL killer.
+    #[must_use]
+    pub fn sql_killer(&self) -> &Arc<SqlKiller> {
+        &self.killer
+    }
+
     /// The statement tracker an operator attaches its own tracker to (Go
     /// `StmtCtx.MemTracker`).
     #[must_use]
@@ -648,22 +666,36 @@ impl StatementMemory {
     /// Under `LOG` it can never fail, which is exactly the captured behavior.
     pub fn check(&self) -> Result<(), ExecError> {
         match self.killer.get_kill_signal() {
-            Some(KillSignal::QueryMemoryExceeded) => Err(ExecError::MemoryExceedForQuery {
+            KillSignal::QueryMemoryExceeded => Err(ExecError::MemoryExceedForQuery {
                 conn_id: self.killer.conn_id.load(SeqCst),
             }),
-            Some(_) => self
+            KillSignal::UnspecifiedKillSignal => Ok(()),
+            _ => self
                 .killer
                 .handle_signal()
                 .map_or(Ok(()), |error| Err(ExecError::Killed(error.to_sql_error()))),
-            None => Ok(()),
         }
     }
 
     /// Waits for a SQL `SLEEP` duration or this statement's canonical kill
-    /// event, whichever happens first.
+    /// signal, polling every 10ms like Go's `doSleep`.
     #[must_use]
     pub fn sleep_for(&self, duration: std::time::Duration) -> bool {
-        self.killer.wait_kill_event_timeout(duration)
+        let started = std::time::Instant::now();
+        let interval = std::time::Duration::from_millis(10);
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= duration {
+                return false;
+            }
+            std::thread::sleep(interval.min(duration - elapsed));
+            if started.elapsed() >= duration {
+                return false;
+            }
+            if self.killer.handle_signal().is_some() {
+                return true;
+            }
+        }
     }
 
     /// Clears a handled standalone-query kill, as Go's `doSleep` does after

@@ -143,14 +143,18 @@
 //! ported in full as `tidb_exec::topn_slow_query`. That was verified
 //! symbol-by-symbol rather than assumed.
 
+pub mod cdcutil;
+pub mod disttask;
 pub mod domain_sysvars;
 pub mod domainutil;
 pub mod historical_stats;
 pub mod optimize_trace;
 pub mod plan_replayer;
+pub mod replayer;
 pub mod ru_stats;
 pub mod schema_checker;
 pub mod serverinfo;
 pub mod serverinfo_syncer;
+pub mod status_endpoint_claim;
 pub mod sysvar_cache;
 pub mod topn_slow_query;

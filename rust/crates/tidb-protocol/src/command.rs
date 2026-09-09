@@ -28,6 +28,8 @@ pub const COM_INIT_DB: u8 = 0x02;
 pub const COM_QUERY: u8 = 0x03;
 /// MySQL command byte for a metadata request.
 pub const COM_FIELD_LIST: u8 = 0x04;
+/// MySQL command byte for refreshing server state.
+pub const COM_REFRESH: u8 = 0x07;
 /// MySQL command byte for the server statistics line (`mysqladmin status`).
 pub const COM_STATISTICS: u8 = 0x09;
 /// MySQL command byte for a server ping.
@@ -45,9 +47,14 @@ pub const COM_STMT_RESET: u8 = 0x1a;
 /// MySQL command byte for fetching a cursor result.
 pub const COM_STMT_FETCH: u8 = 0x1c;
 /// MySQL command byte for changing connection options.
+/// MySQL command byte for shutting the server down (`SHUTDOWN` query).
+pub const COM_SHUTDOWN: u8 = 0x08;
 pub const COM_SET_OPTION: u8 = 0x1b;
 /// MySQL command byte for resetting a connection.
 pub const COM_RESET_CONNECTION: u8 = 0x1f;
+/// MySQL command byte for changing the connection user; the payload is
+/// auth data the server owns.
+pub const COM_CHANGE_USER: u8 = 0x11;
 
 /// A decoded command and its source-owned raw payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +67,10 @@ pub enum Command {
     Query(Vec<u8>),
     /// Request table-field metadata.
     FieldList(Vec<u8>),
+    /// Refresh server state. The first payload byte selects the refresh
+    /// target; Go accepts the same raw subcommand byte and treats all targets
+    /// except `0x01` (privileges) as no-ops.
+    Refresh(Vec<u8>),
     /// Ping the server.
     Ping,
     /// `COM_STATISTICS`: the one-line server summary `mysqladmin status`
@@ -83,6 +94,12 @@ pub enum Command {
     SetOption(Vec<u8>),
     /// Reset all per-connection state.
     ResetConnection,
+    /// Shut the server down. Go answers it with `handleQuery("SHUTDOWN")`
+    /// (conn.go:1554); dispatch and privileges remain server obligations.
+    Shutdown,
+    /// Change the connection user. The payload is the auth blob Go's
+    /// `handleChangeUser` parses in the server (conn.go:1567).
+    ChangeUser(Vec<u8>),
     /// A command byte not yet owned by a Rust server leaf.
     Unknown {
         /// The command byte that has no Rust owner yet.
@@ -130,6 +147,7 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
         COM_INIT_DB => Command::InitDb(command_payload.to_vec()),
         COM_QUERY => Command::Query(command_payload.to_vec()),
         COM_FIELD_LIST => Command::FieldList(command_payload.to_vec()),
+        COM_REFRESH => Command::Refresh(command_payload.to_vec()),
         COM_PING => Command::Ping,
         COM_STATISTICS => Command::Statistics,
         COM_STMT_PREPARE => Command::StmtPrepare(command_payload.to_vec()),
@@ -140,6 +158,8 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
         COM_STMT_FETCH => Command::StmtFetch(command_payload.to_vec()),
         COM_SET_OPTION => Command::SetOption(command_payload.to_vec()),
         COM_RESET_CONNECTION => Command::ResetConnection,
+        COM_SHUTDOWN => Command::Shutdown,
+        COM_CHANGE_USER => Command::ChangeUser(command_payload.to_vec()),
         code => Command::Unknown {
             code,
             payload: command_payload.to_vec(),
@@ -177,6 +197,10 @@ mod tests {
         );
         assert_eq!(decode_command(&[0x0e]), Ok(Command::Ping));
         assert_eq!(decode_command(&[0x09]), Ok(Command::Statistics));
+        assert_eq!(
+            decode_command(&[crate::command::COM_REFRESH, 0x01]),
+            Ok(Command::Refresh(vec![0x01]))
+        );
         assert_eq!(decode_command(&[0x01]), Ok(Command::Quit));
         assert_eq!(
             decode_command(&[0xfa, 1, 2]),

@@ -110,6 +110,112 @@ fn package_root_data_and_option_contracts_are_distinct_and_complete() {
     assert_eq!(request.store_busy_threshold_ns, -3);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn TestCoprRequestLimiterWaitsUntilRelease() {
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    assert_eq!(limiter.capacity(), 1);
+    assert!(limiter.try_acquire());
+    assert!(!limiter.try_acquire());
+
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            let cancelled = limiter
+                .acquire_with_context(std::future::pending(), std::future::pending())
+                .await;
+            if !cancelled {
+                limiter.release();
+            }
+            cancelled
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    limiter.release();
+    assert!(
+        !tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("waiting acquire completes after release")
+            .expect("waiting acquire task")
+    );
+    assert!(limiter.try_acquire());
+    limiter.release();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn TestCoprRequestLimiterAcquireCanBeCanceled() {
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    assert!(limiter.try_acquire());
+
+    let (context_cancel, context_wait) = tokio::sync::oneshot::channel::<()>();
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            limiter
+                .acquire_with_context(
+                    async move {
+                        let _ = context_wait.await;
+                    },
+                    std::future::pending(),
+                )
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    context_cancel.send(()).expect("cancel context");
+    assert!(waiting.await.expect("context-cancelled acquire"));
+
+    let (done, done_wait) = tokio::sync::oneshot::channel::<()>();
+    let waiting = {
+        let limiter = Arc::clone(&limiter);
+        tokio::spawn(async move {
+            limiter
+                .acquire_with_context(std::future::pending(), async move {
+                    let _ = done_wait.await;
+                })
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    done.send(()).expect("close done");
+    assert!(waiting.await.expect("done-cancelled acquire"));
+
+    limiter.release();
+    assert!(limiter.try_acquire());
+    limiter.release();
+}
+
+#[test]
+fn TestCoprRequestLimiterRedundantReleasePanics() {
+    assert!(new_copr_request_limiter(0).is_none());
+    let limiter = new_copr_request_limiter(1).expect("positive capacity");
+    let panic = std::panic::catch_unwind(|| limiter.release()).expect_err("redundant release");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("release a redundant cop request token"));
+}
+
+#[test]
+fn TestQueryCopStoreLimiter() {
+    assert!(new_query_cop_store_limiter(0).is_none());
+    let group = new_query_cop_store_limiter(1).expect("positive limit");
+    assert_eq!(group.capacity(), 1);
+    assert!(group.get_store_limiter(0).is_none());
+
+    let store_one = group.get_store_limiter(1).expect("store one");
+    assert!(Arc::ptr_eq(
+        &store_one,
+        &group.get_store_limiter(1).expect("same store one")
+    ));
+    assert!(!Arc::ptr_eq(
+        &store_one,
+        &group.get_store_limiter(2).expect("store two")
+    ));
+}
+
 #[test]
 fn TestPartialNext() {
     let key_a = tidb_codec::encode_value(&[Datum::new_string("abc"), Datum::new_string("def")])
@@ -180,12 +286,12 @@ fn TestHandle() {
     assert_eq!(decoded[1].as_raw_bytes(), Some(b"abc".as_slice()));
     assert_eq!(common.to_string(), "{100, abc}");
 
-    let partition_int = Handle::from(PartitionHandle::new(2, int.clone()));
+    let partition_int = Handle::from(PartitionHandle::new(2, Some(int.clone())));
     assert!(partition_int.equal(&int));
     assert!(int.equal(&partition_int));
 
     let next = Handle::from(next);
-    let partition_common = Handle::from(PartitionHandle::new(1, next.clone()));
+    let partition_common = Handle::from(PartitionHandle::new(1, Some(next.clone())));
     assert!(partition_common.equal(&next));
     assert!(next.equal(&partition_common));
 }
@@ -281,9 +387,18 @@ fn partial_handles() -> Vec<(Handle, i32)> {
     )
     .expect("common");
     vec![
-        (Handle::from(PartitionHandle::new(1, IntHandle::new(1))), 1),
-        (Handle::from(PartitionHandle::new(2, IntHandle::new(1))), 2),
-        (Handle::from(PartitionHandle::new(1, IntHandle::new(3))), 5),
+        (
+            Handle::from(PartitionHandle::new(1, Some(IntHandle::new(1).into()))),
+            1,
+        ),
+        (
+            Handle::from(PartitionHandle::new(2, Some(IntHandle::new(1).into()))),
+            2,
+        ),
+        (
+            Handle::from(PartitionHandle::new(1, Some(IntHandle::new(3).into()))),
+            5,
+        ),
         (Handle::from(IntHandle::new(1)), 3),
         (Handle::from(decimal), 4),
     ]
@@ -302,7 +417,10 @@ fn TestHandleMapWithPartialHandle() {
     assert_eq!(map.len(), 5);
     map.delete(&handles[0].0);
     assert_eq!(map.get(&handles[0].0), None);
-    map.delete(&Handle::from(PartitionHandle::new(3, IntHandle::new(1))));
+    map.delete(&Handle::from(PartitionHandle::new(
+        3,
+        Some(IntHandle::new(1).into()),
+    )));
     assert_eq!(map.len(), 4);
 }
 
@@ -892,6 +1010,7 @@ fn TestError() {
         &ERR_NOT_IMPLEMENTED,
         &ERR_WRITE_CONFLICT,
         &ERR_WRITE_CONFLICT_IN_TIDB,
+        &ERR_SHARED_LOCK_LOST,
     ] {
         assert_ne!(error.mysql_code().as_u16(), 1105);
         assert_eq!(
@@ -899,6 +1018,12 @@ fn TestError() {
             error.rfc_code().split(':').nth(1).expect("code")
         );
     }
+    assert_eq!(ERR_SHARED_LOCK_LOST.mysql_code().as_u16(), 9015);
+    assert_eq!(
+        ERR_SHARED_LOCK_LOST.message_template(),
+        "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s"
+    );
+    assert_eq!(ERR_SHARED_LOCK_LOST.redact_arg_positions(), &[1]);
 }
 
 #[test]
@@ -913,14 +1038,11 @@ fn TestIsRequestTypeSupported() {
     assert!(!checker.is_request_type_supported(REQ_TYPE_CHECKSUM, 0));
 }
 
-/// Master's `TestIsRequestTypeSupported` (pkg/kv/checker_test.go) additionally
-/// asserts that the aggregate expression types `tipb.ExprType_MaxCount` (3023)
-/// and `tipb.ExprType_MinCount` (3022) are supported for `ReqTypeSelect`,
-/// matching master's `checker.go::supportExpr`. The Rust checker in
-/// `src/checker.rs` was transcreated from a snapshot before those two
-/// identities were added, so it does not support them yet.
+/// Master's `TestIsRequestTypeSupported` (pkg/kv/checker_test.go) asserts that
+/// the aggregate expression types `tipb.ExprType_MaxCount` (3023) and
+/// `tipb.ExprType_MinCount` (3022) are supported for `ReqTypeSelect`, matching
+/// master's `checker.go::supportExpr`.
 #[test]
-#[ignore = "go-parity-gap: src/checker.rs supportExpr lacks ExprType_MaxCount(3023)/ExprType_MinCount(3022) added on master"]
 fn master_max_count_and_min_count_expr_types_are_pushed_down() {
     let checker = RequestTypeSupportedChecker;
     assert!(checker.is_request_type_supported(REQ_TYPE_SELECT, 3023));

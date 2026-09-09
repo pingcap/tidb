@@ -65,7 +65,7 @@
 //!   an orphan is 1452 rather than a silent blessing.
 //! * The **index a constraint relies on may not be dropped** (1553), on
 //!   either side, unless another index still covers the same columns or the
-//!   referenced column is the clustered handle. See [`check_index_needed`].
+//!   constrained column is the clustered handle. See [`check_index_needed`].
 //!
 //! * **`foreign_key_checks = 0`** disables every ROW-level rule above, plus
 //!   the DDL-time checks that RESOLVE a reference (`DROP TABLE` of a
@@ -87,13 +87,16 @@
 //!   anything at that level, so a single-level statement is all-or-nothing,
 //!   but a deeper level that restricts after a shallower one cascaded leaves
 //!   the shallower change applied. Real TiDB rolls the statement back.
-//! * `RENAME TABLE` does not rewrite the `ref_table` of the constraints that
-//!   pointed at the old name.
+//! * Multi-action ALTER atomicity remains outside this module's metadata
+//!   model. Whole-table renames rewrite `ref_schema` and `ref_table` through
+//!   [`rewrite_table_references`], and column renames rewrite `cols` and
+//!   `ref_cols` through [`rewrite_column_name`].
 
 use tidb_datatype::Datum;
 
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::kv_table::{FkAction, KvForeignKey};
+use tidb_hack::GoToLower;
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
 /// raises `ErrFkExceedMaxDepth` (3008).
@@ -179,6 +182,13 @@ fn referring(
     database: &str,
     table: &str,
 ) -> Vec<(String, String, KvForeignKey)> {
+    // Sysbench and the normal TiDB bootstrap have no foreign-key declarations.
+    // Avoid rebuilding and sorting the complete catalog path list for every
+    // UPDATE/DELETE in that case; catalogs that do declare one retain the
+    // deterministic scan below.
+    if !catalog.has_foreign_keys() {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     for (child_db, child_table, entry) in catalog.table_entries() {
         let TableEntry::Kv(child) = entry else {
@@ -533,13 +543,7 @@ fn cascade_at_depth(
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
                 cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
-                delete_rows(
-                    catalog,
-                    &child_db,
-                    &child_table,
-                    &doomed,
-                    &ctx.session_zone(),
-                )?;
+                delete_rows(catalog, &child_db, &child_table, &doomed, ctx)?;
             }
             FkAction::Cascade | FkAction::SetNull => {
                 // ON UPDATE CASCADE repoints the referencing columns; SET
@@ -577,19 +581,19 @@ fn delete_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
     let stored = kv
-        .scan_rows_with_handles(zone)
+        .scan_rows_with_handles(&ctx.session_zone())
         .map_err(|e| crate::driver::kv_read_error("row decode failed", e))?;
     let mut remaining: Vec<&Vec<Datum>> = rows.iter().collect();
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|wanted| ***wanted == row[..]) {
             remaining.swap_remove(position);
-            kv.delete_row(&handle, zone)
+            kv.delete_row_with_old_context(&handle, &row, ctx)
                 .map_err(crate::driver::kv_write_error)?;
         }
     }
@@ -614,7 +618,7 @@ fn rewrite_rows(
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|(old, _)| old[..] == row[..]) {
             let (_, new) = remaining.swap_remove(position);
-            kv.update_row(&handle, new, ctx)
+            kv.update_row_with_context(&handle, new, ctx)
                 .map_err(crate::driver::kv_write_error)?;
         }
     }
@@ -627,14 +631,11 @@ fn rewrite_rows(
 /// A constraint stores BOTH sides as names now (Go `FKInfo.Cols` and
 /// `FKInfo.RefTable`), so repositioning a column no longer moves the
 /// constraint off its columns -- `KvTable::foreign_key_offsets` resolves the
-/// names against the current column list at every use. What is still
-/// unmodelled is a DDL that makes one of those names WRONG: `RENAME TABLE`
-/// and `DROP TABLE` leave `ref_table` dangling, so both stay REFUSED on a
-/// participating table rather than silently breaking the reference. Go
-/// rewrites the affected `FKInfo`s instead, which is the graduation path.
-/// A column RENAME is still in that group: `rename_column_action` assigns the
-/// new name and rewrites nothing else, so a constraint over the renamed column
-/// would be left naming a column no table has.
+/// names against the current column list at every use. `RENAME TABLE` is
+/// handled by [`rewrite_table_references`], which follows Go's metadata
+/// rewrite over every child and the moved table itself. `DROP TABLE` still
+/// refuses a participating parent before removal, while a column RENAME
+/// rewrites both sides through [`rewrite_column_name`].
 ///
 /// `MODIFY`/`CHANGE` is NOT in that group any more: it asks
 /// [`check_modify_column`] the same question Go's
@@ -645,6 +646,43 @@ fn rewrite_rows(
 pub(crate) fn participates(catalog: &Catalog, database: &str, table: &str) -> bool {
     let (declared_keys, _) = declared(catalog, database, table);
     !declared_keys.is_empty() || !referring(catalog, database, table).is_empty()
+}
+
+/// Rewrites every foreign key that names `from_database.from_table` as its
+/// parent, including a self-reference on the table being moved. This is Go's
+/// `updateFKInfoWhenRenameTable` metadata maintenance, performed before the
+/// catalog key is moved so the source table is included in the same pass.
+pub(crate) fn rewrite_table_references(
+    catalog: &mut Catalog,
+    from_database: &str,
+    from_table: &str,
+    to_database: &str,
+    to_table: &str,
+) {
+    let tables: Vec<(String, String)> = catalog
+        .database_names()
+        .into_iter()
+        .flat_map(|database| {
+            catalog
+                .table_names(&database)
+                .unwrap_or_default()
+                .into_iter()
+                .map(move |table| (database.clone(), table))
+        })
+        .collect();
+    for (database, table) in tables {
+        let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&database, &table) else {
+            continue;
+        };
+        for foreign_key in table.foreign_keys_mut() {
+            if foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
+                && foreign_key.ref_table.eq_ignore_ascii_case(from_table)
+            {
+                foreign_key.ref_schema = to_database.to_owned();
+                foreign_key.ref_table = to_table.to_owned();
+            }
+        }
+    }
 }
 
 /// Go `ddl.isAcceptableForeignKeyColumnChange` (`pkg/ddl/foreign_key.go`).
@@ -738,14 +776,31 @@ pub(crate) fn check_modify_column(
             }
             let referenced = &foreign_key.ref_cols[i];
             // Go reads the parent through the infoschema and propagates its
-            // error; a parent that is gone cannot answer the question, and
-            // this tier has no such error to raise here.
+            // error before it can compare the two column types.  This matters
+            // for unchecked, deferred foreign keys: a CHANGE COLUMN against
+            // a parent that has not landed yet is 1146, not an accepted local
+            // rename (or a later generic type error).
+            let Some(parent) = catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
+            else {
+                return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+                    format!("{}.{}", foreign_key.ref_schema, foreign_key.ref_table),
+                )));
+            };
             let Some(refer) = column_type(
                 catalog,
                 &foreign_key.ref_schema,
                 &foreign_key.ref_table,
                 referenced,
             ) else {
+                // Keep the same infoschema lookup order as Go: once the
+                // parent exists, a stale referenced column is reported as
+                // 1054 rather than silently skipping this constraint.
+                if matches!(parent, TableEntry::Kv(_)) {
+                    return Err(DriverError::UnknownColumnInTable {
+                        column: referenced.clone(),
+                        table: foreign_key.ref_table.clone(),
+                    });
+                }
                 continue;
             };
             if new.code() != refer.code() {
@@ -787,8 +842,8 @@ pub(crate) fn check_modify_column(
                     constraint: foreign_key.name.clone(),
                     child_table: format!(
                         "{}.{}",
-                        child_db.to_lowercase(),
-                        child_table.to_lowercase()
+                        child_db.go_to_lower(),
+                        child_table.go_to_lower()
                     ),
                 });
             }
@@ -860,10 +915,10 @@ pub(crate) fn rewrite_column_name(
 ///
 /// * A REMAINING index that also covers the columns makes the drop legal --
 ///   `alter table t1 add index idx2(b)` lets `drop index idx1(b)` through.
-/// * A referenced column that IS the clustered primary key needs no index of
-///   its own (`tbInfo.PKIsHandle && len(cols) == 1`). This is PARENT-side
-///   only: captured, a child's own `index fk(b)` referencing a clustered
-///   `t1(id)` is still 1553.
+/// * A single constrained column that IS the clustered primary key needs no
+///   index of its own (`tbInfo.PKIsHandle && len(cols) == 1`). This applies to
+///   both the table's declared (CHILD) constraints and the constraints that
+///   REFER to it (PARENT), exactly as Go's shared `checkFn` does.
 ///
 /// NOT gated by `foreign_key_checks`. Captured: with the session variable set
 /// to 0, `alter table t1 drop index idx1` is STILL 1553, because Go gates
@@ -897,6 +952,7 @@ pub(crate) fn check_index_needed(
             !index.name.eq_ignore_ascii_case(index_name)
                 && index.column_offsets.len() >= offsets.len()
                 && index.column_offsets[..offsets.len()] == *offsets
+                && kv.partial_index_safe_for_columns(index, offsets)
         })
     };
     let refused = || DriverError::DropIndexNeededInForeignKey(dropping.name.clone());
@@ -908,7 +964,11 @@ pub(crate) fn check_index_needed(
         let Some(child) = child_offsets(&own, foreign_key) else {
             continue;
         };
-        if covers(&child) && !remaining_covers(&child) {
+        if covers(&child)
+            && kv.partial_index_safe_for_columns(dropping, &child)
+            && !remaining_covers(&child)
+            && !(child.len() == 1 && kv.is_clustered_handle_column(child[0]))
+        {
             return Err(refused());
         }
     }
@@ -918,7 +978,7 @@ pub(crate) fn check_index_needed(
         let Some((offsets, _)) = parent_offsets(catalog, &foreign_key) else {
             continue;
         };
-        if !covers(&offsets) {
+        if !covers(&offsets) || !kv.partial_index_safe_for_columns(dropping, &offsets) {
             continue;
         }
         if offsets.len() == 1 && kv.is_clustered_handle_column(offsets[0]) {
@@ -932,7 +992,8 @@ pub(crate) fn check_index_needed(
 }
 
 /// Go `checkDropTableHasForeignKeyReferredInOwner`: a table may not be
-/// dropped while a table OUTSIDE this statement still references it.
+/// dropped while a table OUTSIDE this statement still references it. Unlike
+/// TRUNCATE, DROP uses the dedicated 3730 `ErrForeignKeyCannotDrop` diagnostic.
 pub(crate) fn check_drop_tables(
     catalog: &Catalog,
     dropping: &[(String, String)],
@@ -944,178 +1005,82 @@ pub(crate) fn check_drop_tables(
             }) {
                 continue;
             }
-            return Err(violation(
-                Side::Parent,
-                &child_db,
-                &child_table,
-                &foreign_key,
-            ));
+            return Err(DriverError::ForeignKeyTableCannotDrop {
+                parent_table: table.clone(),
+                constraint: foreign_key.name,
+                child_table,
+            });
         }
     }
     Ok(())
 }
 
-#[cfg(test)]
-mod metadata_tests {
-    use super::*;
-
-    fn add_key(catalog: &mut Catalog, database: &str, table: &str, name: &str) {
-        let Some(TableEntry::Kv(child)) = catalog.get_mut_in(database, table) else {
-            panic!("missing child {database}.{table}");
-        };
-        child.add_foreign_key(KvForeignKey {
-            name: name.to_owned(),
-            cols: vec!["pid".to_owned()],
-            ref_schema: "TeSt".to_owned(),
-            ref_table: "PaReNt".to_owned(),
-            ref_cols: vec!["id".to_owned()],
-            on_delete: FkAction::Cascade,
-            on_update: FkAction::Restrict,
-        });
+/// Go `checkTruncateTableHasForeignKeyReferredInOwner` raises
+/// `ErrTruncateIllegalForeignKey` (1701), rather than the row-level 1451 used
+/// by DELETE/UPDATE. `detail` is the child-side text Go places inside the
+/// parentheses. DROP TABLE uses the dedicated 3730 variant above.
+pub(crate) fn table_referenced(
+    child_db: &str,
+    child_table: &str,
+    foreign_key: &KvForeignKey,
+) -> DriverError {
+    DriverError::ForeignKeyTableReferenced {
+        detail: format!(
+            "`{child_db}`.`{child_table}` CONSTRAINT `{}`",
+            foreign_key.name
+        ),
     }
+}
 
-    fn fixture() -> Catalog {
-        let mut catalog = Catalog::default();
-        catalog.create_database("Alpha");
-        catalog.create_database("zeta");
-        for table in [
-            "test.parent", "test.child_b", "test.child_a", "Alpha.child", "zeta.child",
-        ] {
-            crate::run_create_table_on(
-                &format!("CREATE TABLE {table} (id INT PRIMARY KEY, pid INT)"),
-                &mut catalog,
-            )
-            .unwrap();
-        }
-        for (database, table, key) in [
-            ("test", "child_b", "fk_z"),
-            ("test", "child_b", "fk_a"),
-            ("test", "child_a", "fk_a"),
-            ("Alpha", "child", "fk_a"),
-            ("zeta", "child", "fk_a"),
-        ] {
-            add_key(&mut catalog, database, table, key);
-        }
-        catalog.register("memory_only", crate::driver::MemTable::default());
-        catalog
-    }
+/// Finds the first child outside `ignored` that still references a parent.
+/// The caller supplies the ignored set because TRUNCATE treats a self-
+/// reference as safe, while DROP TABLE uses the complete statement list.
+/// Go `checkTableHasForeignKeyReferred` (`pkg/ddl/ttl.go:100-102`) boolean
+/// form: whether ANY table declares a foreign key referencing this one. The
+/// TTL config refuses to be added to such a parent.
+pub(crate) fn is_table_referred(catalog: &Catalog, database: &str, table: &str) -> bool {
+    !referring(catalog, database, table).is_empty()
+}
 
-    // The previous discovery algorithm is the compatibility oracle for
-    // ordering and the benchmark's owned-metadata reference, not production.
-    fn owned_reference(
-        catalog: &Catalog,
-        database: &str,
-        table: &str,
-    ) -> Vec<(String, String, KvForeignKey)> {
-        let mut paths: Vec<_> = catalog
-            .table_entries()
-            .map(|(db, name, _)| (db.to_owned(), name.to_owned()))
-            .collect();
-        paths.sort();
-        let mut found = Vec::new();
-        for (db, name) in paths {
-            let (keys, _) = declared(catalog, &db, &name);
-            for key in keys {
-                if key.ref_schema.eq_ignore_ascii_case(database)
-                    && key.ref_table.eq_ignore_ascii_case(table)
-                {
-                    found.push((db.clone(), name.clone(), key));
-                }
-            }
-        }
-        found
-    }
+pub(crate) fn find_table_referred(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    ignored: &[(String, String)],
+) -> Option<DriverError> {
+    referring(catalog, database, table)
+        .into_iter()
+        .find(|(child_db, child_table, _)| {
+            !ignored.iter().any(|(db, name)| {
+                db.eq_ignore_ascii_case(child_db) && name.eq_ignore_ascii_case(child_table)
+            })
+        })
+        .map(|(child_db, child_table, foreign_key)| {
+            table_referenced(&child_db, &child_table, &foreign_key)
+        })
+}
 
-    fn identities(keys: Vec<(String, String, KvForeignKey)>) -> Vec<(String, String, String)> {
-        keys.into_iter()
-            .map(|(db, table, key)| (db, table, key.name))
-            .collect()
-    }
-
-    #[test]
-    fn borrowed_discovery_preserves_case_matching_and_cascade_order() {
-        let catalog = fixture();
-        let actual = identities(referring(&catalog, "TEST", "PARENT"));
-        assert_eq!(
-            actual,
-            identities(owned_reference(&catalog, "TEST", "PARENT"))
-        );
-        assert_eq!(actual, vec![
-            ("Alpha".to_owned(), "child".to_owned(), "fk_a".to_owned()),
-            ("test".to_owned(), "child_a".to_owned(), "fk_a".to_owned()),
-            ("test".to_owned(), "child_b".to_owned(), "fk_z".to_owned()),
-            ("test".to_owned(), "child_b".to_owned(), "fk_a".to_owned()),
-            ("zeta".to_owned(), "child".to_owned(), "fk_a".to_owned()),
-        ]);
-        assert!(referring(&catalog, "missing", "parent").is_empty());
-        assert!(referring(&catalog, "test", "missing").is_empty());
-    }
-
-    #[test]
-    fn borrowed_discovery_observes_current_metadata_without_changing_snapshots() {
-        let mut catalog = fixture();
-        let snapshot = catalog.clone();
-        let original = identities(referring(&snapshot, "test", "parent"));
-        let Some(TableEntry::Kv(child)) = catalog.get_mut_in("test", "child_b") else {
-            panic!("missing child");
-        };
-        assert!(child.drop_foreign_key("fk_z"));
-        child.foreign_keys_mut()[0].ref_table = "other".to_owned();
-        add_key(&mut catalog, "test", "child_a", "new_key");
-        catalog.drop_table_in("zeta", "child");
-        assert_eq!(
-            identities(referring(&snapshot, "test", "parent")),
-            original
-        );
-        for parent in ["parent", "other"] {
-            assert_eq!(
-                identities(referring(&catalog, "test", parent)),
-                identities(owned_reference(&catalog, "test", parent))
-            );
-        }
-        assert_eq!(referring(&catalog, "test", "parent").len(), 3);
-        assert_eq!(referring(&catalog, "test", "other").len(), 1);
-    }
-
-    #[test]
-    #[ignore = "manual metadata-only timing; run without concurrent builds or workloads"]
-    fn benchmark_referring_metadata() {
-        let mut catalog = fixture();
-        let columns = (0..32)
-            .map(|i| format!("c{i} VARCHAR(32)"))
-            .collect::<Vec<_>>()
-            .join(",");
-        for i in 0..100 {
-            crate::run_create_table_on(
-                &format!("CREATE TABLE unrelated_{i} ({columns})"),
-                &mut catalog,
-            )
-            .unwrap();
-        }
-        for parent in ["parent", "missing"] {
-            for round in 0..6 {
-                let order = if round % 2 == 0 {
-                    [false, true]
-                } else {
-                    [true, false]
-                };
-                for borrowed in order {
-                    let start = std::time::Instant::now();
-                    for _ in 0..5000 {
-                        let keys = if borrowed {
-                            referring(std::hint::black_box(&catalog), "test", parent)
-                        } else {
-                            owned_reference(std::hint::black_box(&catalog), "test", parent)
-                        };
-                        assert_eq!(keys.len(), if parent == "parent" { 5 } else { 0 });
-                        std::hint::black_box(keys);
-                    }
-                    println!(
-                        "parent={parent} round={round} borrowed={borrowed} ns={}",
-                        start.elapsed().as_nanos()
-                    );
-                }
-            }
+/// Go `checkDatabaseHasForeignKeyReferred`: before removing a schema, find a
+/// parent table in it whose child lives outside the schema. Children in the
+/// same DROP DATABASE statement are ignored because they disappear together.
+pub fn find_database_referred(catalog: &Catalog, database: &str) -> Option<DriverError> {
+    let target_tables: Vec<String> = catalog
+        .table_paths()
+        .into_iter()
+        .filter(|(db, _)| db.eq_ignore_ascii_case(database))
+        .map(|(_, table)| table)
+        .collect();
+    for parent_table in target_tables {
+        if let Some((_, child_table, foreign_key)) = referring(catalog, database, &parent_table)
+            .into_iter()
+            .find(|(child_db, _, _)| !child_db.eq_ignore_ascii_case(database))
+        {
+            return Some(DriverError::ForeignKeyDatabaseReferenced {
+                parent_table,
+                constraint: foreign_key.name,
+                child_table,
+            });
         }
     }
+    None
 }

@@ -19,6 +19,8 @@
 //! statements that REPORT it must be handed the previous statement's entries --
 //! see [`reports_warnings`].
 
+use std::borrow::Cow;
+
 use tidb_ast::{AdminStmt, ShowInspectionKind, Stmt};
 use tidb_datatype::{Datum, FieldType};
 
@@ -130,10 +132,10 @@ impl Session {
     /// live in one place rather than at each caller.
     ///
     /// That rule is Go's retention limit: `StaticWarnHandler` stops appending
-    /// once the buffer holds [`tidb_executor::MAX_WARNING_COUNT`] entries,
+    /// once the buffer holds `math.MaxUint16` entries,
     /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
-        if self.warnings.len() >= tidb_executor::MAX_WARNING_COUNT {
+        if self.warnings.len() >= u16::MAX as usize {
             return;
         }
         self.warnings.push(SqlWarning {
@@ -215,12 +217,9 @@ impl Session {
         }
     }
 
-    /// Records a warning raised while a cluster-routed DDL was APPLIED,
-    /// after the lowering context has already been drained.
-    ///
-    /// Go carries these on `job.Warning` and on the session `StmtContext` the
-    /// statement runs under; both reach the client through `SHOW WARNINGS`.
-    pub fn append_ddl_warning(&mut self, code: u16, message: String) {
+    /// Records a warning raised by a cluster-routed statement after it has
+    /// bypassed the ordinary session executor.
+    pub fn append_routed_warning(&mut self, code: u16, message: String) {
         self.append_warning(WarningLevel::Warning, code, message);
     }
 
@@ -244,6 +243,7 @@ impl Session {
     /// parse clearing it, which is what Go's failed parse does by never
     /// reaching the copy.
     pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
+        self.prepared_params = None;
         let previous = std::mem::take(&mut self.warnings);
         let stmt = self.parse(sql)?;
         self.install_statement_warning_state(&stmt, previous);
@@ -251,7 +251,12 @@ impl Session {
     }
 
     /// Starts a statement boundary for an AST retained by PREPARE.
-    pub(crate) fn begin_prepared_statement_boundary(&mut self, stmt: &Stmt) {
+    pub(crate) fn begin_prepared_statement_boundary(
+        &mut self,
+        stmt: &Stmt,
+        parameters: Option<std::sync::Arc<[Datum]>>,
+    ) {
+        self.prepared_params = parameters;
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);
     }
@@ -259,16 +264,18 @@ impl Session {
     /// Starts the boundary for the cached prepared PointGet path. That path is
     /// known to be a SELECT rather than SHOW WARNINGS, so the previous buffer
     /// is discarded without revisiting the retained AST.
-    /// The statement boundary for a cluster-routed DDL, which bypasses the
-    /// ordinary run path: the previous statement's warnings go, and the
-    /// statement is never SHOW WARNINGS.
-    pub fn begin_ddl_statement_warnings(&mut self) {
+    /// The statement boundary for a cluster-routed statement, which bypasses
+    /// the ordinary run path: the previous statement's warnings go, and the
+    /// routed statement is never SHOW WARNINGS.
+    pub fn begin_routed_statement_warnings(&mut self) {
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
+        self.prepared_params = None;
+        self.statement_result_authority.get_mut().take();
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
@@ -320,19 +327,19 @@ impl Session {
     /// column definition's identifiers and every string cell of a result set
     /// go out in. The empty string is Go's unset state.
     #[must_use]
-    pub fn result_charset(&self) -> String {
+    pub fn result_charset(&self) -> Cow<'_, str> {
         self.vars
-            .get_system("character_set_results")
-            .unwrap_or_default()
+            .system_value("character_set_results")
+            .unwrap_or(Cow::Borrowed(""))
     }
 
     /// Go `clientConn.initInputEncoder`'s read of
     /// `@@character_set_client` for binary protocol string parameters.
     #[must_use]
-    pub fn input_charset(&self) -> String {
+    pub fn input_charset(&self) -> Cow<'_, str> {
         self.vars
-            .get_system("character_set_client")
-            .unwrap_or_else(|_| "utf8mb4".to_owned())
+            .system_value("character_set_client")
+            .unwrap_or(Cow::Borrowed("utf8mb4"))
     }
 
     /// The warning count the OK/EOF packet carries, which Go reads through

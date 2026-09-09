@@ -53,6 +53,7 @@ pub struct CopIterator<R: QueryResponse> {
     driver: Driver<R>,
     start: Option<ConcurrentStart<R>>,
     lite: Option<Arc<AtomicBool>>,
+    limiter_wait: crate::LimiterWaitStats,
 }
 
 impl<R: QueryResponse> CopIterator<R> {
@@ -86,6 +87,7 @@ impl<R: QueryResponse> CopIterator<R> {
             driver,
             start,
             lite,
+            limiter_wait: crate::LimiterWaitStats::default(),
         }
     }
 }
@@ -100,14 +102,30 @@ impl<R: QueryResponse> CopIterator<R> {
     fn close_inner(&mut self) {
         self.release_lite();
         match std::mem::replace(&mut self.driver, Driver::Closed) {
-            Driver::Inline(mut source) => source.close(),
-            Driver::Concurrent(mut source) => source.close(),
+            Driver::Inline(mut source) => {
+                source.close();
+                self.limiter_wait.merge(source.limiter_wait_stats());
+            }
+            Driver::Concurrent(mut source) => {
+                source.close();
+                self.limiter_wait.merge(source.limiter_wait_stats());
+            }
             Driver::Closed => {}
         }
     }
 }
 
 impl<R: CopTaskSource> QueryResponse for CopIterator<R> {
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        let mut stats = self.limiter_wait;
+        match &self.driver {
+            Driver::Inline(source) => stats.merge(source.limiter_wait_stats()),
+            Driver::Concurrent(source) => stats.merge(source.limiter_wait_stats()),
+            Driver::Closed => {}
+        }
+        stats
+    }
+
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         let result = match &mut self.driver {
             Driver::Inline(source) => recover(|| source.next()),
@@ -165,6 +183,7 @@ struct State<R> {
     current: usize,
     retired: usize,
     live_workers: usize,
+    limiter_wait: crate::LimiterWaitStats,
 }
 
 /// Go's task sender, per-task ordered channels and unordered rendezvous.
@@ -396,6 +415,12 @@ async fn run_worker<R: CopTaskSource + Send + 'static>(
         }
         // Drop this task's pending handles before publishing its finish.
         // It does not cancel the shared query or another worker's task.
+        group
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .limiter_wait
+            .merge(source.limiter_wait_stats());
         drop(source);
         if group.closed.load(Ordering::Acquire) {
             return;
@@ -409,6 +434,14 @@ struct ConcurrentResponse<R: CopTaskSource + Send + 'static> {
 }
 
 impl<R: CopTaskSource + Send + 'static> QueryResponse for ConcurrentResponse<R> {
+    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+        self.group
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .limiter_wait
+    }
+
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         let result = (|| loop {
             while self
@@ -447,6 +480,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     lite_fallback: bool,
 ) -> Box<dyn QueryResponse + Send> {
     let call = source.call();
+    let limiter_wait = source.limiter_wait_stats();
     let ordered = source.keep_order();
     let concurrency = if lite_fallback {
         1
@@ -475,6 +509,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
             current: 0,
             retired: 0,
             live_workers: workers,
+            limiter_wait,
         }),
         ready: CompletionNotifier::new(),
         available: tokio::sync::Notify::new(),

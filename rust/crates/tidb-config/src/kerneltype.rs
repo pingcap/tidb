@@ -15,8 +15,17 @@
 //! Transcreation of Go `pkg/config/kerneltype`: the kernel type (Classic or
 //! NextGen) chosen at compile time.
 //!
+//! The Classic kernel is TiDB's original shared-nothing architecture: each
+//! TiKV instance owns its local storage and compute resources. This provides
+//! horizontal scalability and fault tolerance but does not use shared object
+//! storage and requires local storage to be managed on every node.
+//!
+//! The NextGen cloud-native kernel uses shared storage for the data plane,
+//! typically object storage such as Amazon S3 as the source of truth.
+//!
 //! Go selects via the `nextgen` build tag; the Rust crate uses the
-//! equivalent cargo feature `nextgen`.
+//! equivalent cargo feature `nextgen`. Kernel type is a binary-wide build
+//! choice; components built for different kernel types cannot be mixed.
 
 const CLASSIC_KERNEL_NAME: &str = "Classic";
 const NEXTGEN_KERNEL_NAME: &str = "Next Generation";

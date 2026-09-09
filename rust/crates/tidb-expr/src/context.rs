@@ -20,7 +20,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, Time};
 
 /// The transaction timestamp visible to one SQL session.
 ///
@@ -60,6 +60,11 @@ pub enum EvalError {
     /// appends (`clauseMsg`, `planbuilder.go:132`) belongs to the resolving
     /// caller; renderers without one use Go's `expressionClause` spelling.
     UnknownColumn(String),
+    /// Go `plannererrors.ErrBadField` (1054) with the clause the name was
+    /// written in (`clauseMsg`), so the renderer prints
+    /// `Unknown column 'x' in 'order clause'` rather than Go's
+    /// `expressionClause` default.
+    UnknownColumnInClause(String, &'static str),
     /// Go `expression.ErrFunctionNotExists` (1305).
     FunctionNotExists(String),
     /// Go `plannererrors.ErrNoDB` (1046), raised before 1305 when resolving an
@@ -73,6 +78,15 @@ pub enum EvalError {
     /// Go `ErrWrongArguments` (1210), with the source-formatted argument
     /// description.
     IncorrectArguments(String),
+    /// Go `types.ErrTooBigPrecision` (1426): a clock function's
+    /// fractional-seconds argument exceeds `MaxFsp`, raised at evaluation
+    /// time (`pkg/expression/builtin_time.go:2730` and siblings).
+    TooBigFsp {
+        /// The requested fractional-seconds precision.
+        fsp: i64,
+        /// The clock function's own name (`now`, `curtime`, ...).
+        function: &'static str,
+    },
     /// A source-owned advisory-lock error with its exact MySQL code/message.
     AdvisoryLock {
         /// MySQL error number (3057, 3058, or a backend error code).
@@ -85,7 +99,7 @@ pub enum EvalError {
         /// The value class printed before "value is out of range".
         value: &'static str,
         /// The expression/function printed inside quotes.
-        expression: &'static str,
+        expression: String,
     },
     /// A binary operation reached the evaluator with an operand pair that no
     /// domain dispatch claims.
@@ -140,6 +154,11 @@ pub enum EvalError {
     GroupConcatCut(String),
     /// A `json`-class error that carries its own MySQL error code.
     Json(JsonError),
+    /// Go `exprctx.ErrParamIndexExceedParamCounts`, raised by GETPARAM when
+    /// a plan-cache parameter index is outside the statement's parameter
+    /// list. The error has no dynamic payload; its exact message is the
+    /// package-level sentinel's whole contract.
+    ParamIndexExceedParamCounts,
     /// Go `types.ErrWrongValue` (1292) / `ErrWrongValue2` (1525) raised while
     /// BUILDING a typed temporal literal (`DATE 'lit'`, `TIMESTAMP 'lit'`).
     /// Unlike the cast of the same text, these reject the whole statement --
@@ -187,8 +206,9 @@ pub enum EvalError {
 ///
 /// The two are DIFFERENT error classes in Go, and neither is the auto-id
 /// allocator's 1467: reading past the end of a `NOCYCLE` sequence is
-/// `table.ErrSequenceHasRunOut`, and naming something that is not a sequence
-/// is the ordinary `infoschema.ErrTableNotExists`.
+/// `table.ErrSequenceHasRunOut`; an absent name is
+/// `infoschema.ErrTableNotExists`, while an existing table/view is
+/// `infoschema.ErrWrongObject`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SequenceEvalError {
     /// Go `table.ErrSequenceHasRunOut` (4135). Captured:
@@ -197,6 +217,9 @@ pub enum SequenceEvalError {
     /// Go `infoschema.ErrTableNotExists` (1146). Captured for
     /// `select nextval(nosuch)`: `Table 'test.nosuch' doesn't exist`.
     NotASequence(String),
+    /// Go `infoschema.ErrWrongObject` (1347). An existing table or view was
+    /// named where Go's sequence lookup requires `SEQUENCE`.
+    WrongObject(String),
 }
 
 impl SequenceEvalError {
@@ -206,6 +229,7 @@ impl SequenceEvalError {
         match self {
             SequenceEvalError::RunOut(_) => 4135,
             SequenceEvalError::NotASequence(_) => 1146,
+            SequenceEvalError::WrongObject(_) => 1347,
         }
     }
 
@@ -215,6 +239,7 @@ impl SequenceEvalError {
         match self {
             SequenceEvalError::RunOut(name) => format!("Sequence '{name}' has run out"),
             SequenceEvalError::NotASequence(name) => format!("Table '{name}' doesn't exist"),
+            SequenceEvalError::WrongObject(name) => format!("'{name}' is not SEQUENCE"),
         }
     }
 }
@@ -470,6 +495,33 @@ pub trait Columns {
         Err(EvalError::Unsupported("unbound prepared parameter"))
     }
 
+    /// Go `SessionVars.CurrInsertValues`, read by `builtinValues*Sig` at
+    /// evaluation time. A statement without an active insert row returns
+    /// `Ok(None)` (the SQL NULL result); an active row whose offset is outside
+    /// its field list returns the source-shaped length/offset error. The
+    /// default keeps expression-only contexts equivalent to Go's empty
+    /// `chunk.Row` used by constant folding.
+    fn current_insert_value(&self, _offset: usize) -> Result<Option<Datum>, EvalError> {
+        Ok(None)
+    }
+
+    /// Go `exprctx.ParamValues.GetParamValue`, used by the internal
+    /// `GETPARAM()` builtin. A resolver with no plan-cache parameter list
+    /// exposes Go's empty-list error by default; statement/session owners
+    /// carrying prepared parameters override this method.
+    fn get_param_value(&self, _idx: usize) -> Result<Datum, EvalError> {
+        Err(EvalError::ParamIndexExceedParamCounts)
+    }
+
+    /// Go `GetStmtMinSafeTime`'s statement-cached SafeTS converted to the
+    /// session timezone. A storage-backed statement overrides this seam;
+    /// contexts without a KV store leave it absent, so bounded staleness
+    /// falls back to the lower bound just as a zero SafeTS does for ordinary
+    /// post-epoch timestamps.
+    fn bounded_staleness_safe_time(&self) -> Option<Time> {
+        None
+    }
+
     /// The statement's connection charset/collation used by implicit casts.
     /// Go reads this from `BuildContext.GetCharsetInfo`; keeping it on the
     /// evaluation context prevents a cast built for one session from silently
@@ -487,6 +539,13 @@ pub trait Columns {
     /// The statement's fixed `(utc_secs, nanos, tz_offset_seconds)` clock.
     fn now(&self) -> Option<(i64, u32, i32)> {
         None
+    }
+
+    /// Go `types.Context.Flags().CastTimeToYearThroughConcat`, used by the
+    /// duration-to-YEAR compatibility path. The default statement context
+    /// leaves this mode disabled.
+    fn cast_time_to_year_through_concat(&self) -> bool {
+        false
     }
 
     /// Whether `SYSDATE` is an alias of the statement-scoped `NOW`.
@@ -518,6 +577,13 @@ pub trait Columns {
     /// literal `NONE` when no role is active. `None` is a resolver with no
     /// session at all, which reports NULL like `CURRENT_USER()` does.
     fn current_role(&self) -> Option<String> {
+        None
+    }
+
+    /// Go `StmtCtx.ResourceGroupName`, with any statement resource-group
+    /// hint already resolved by the session. `CURRENT_RESOURCE_GROUP()`
+    /// returns this effective name.
+    fn current_resource_group(&self) -> Option<String> {
         None
     }
 
@@ -573,6 +639,16 @@ pub trait Columns {
         0
     }
 
+    /// Go `DDLOwnerPropReader.IsDDLOwner`: whether this node is the DDL
+    /// owner. A context that does not carry the `OptPropDDLOwnerInfo`
+    /// provider fails exactly as Go's `getPropProvider` does; a session that
+    /// registers `DdlOwnerInfoProvider` answers 1/0.
+    fn ddl_owner_info(&self) -> Result<bool, EvalError> {
+        Err(EvalError::Unsupported(
+            "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext",
+        ))
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);
@@ -581,11 +657,10 @@ pub trait Columns {
 
     /// The process identity returned by `TIDB_VERSION()`.
     ///
-    /// Unlike ordinary information builtins, Go reads this from immutable
-    /// build/config state and does not require a session. A real statement
-    /// overrides this default with the identity captured by its server.
+    /// Unlike ordinary information builtins, Go reads this from process-wide
+    /// package and configuration state and does not require a session.
     fn tidb_info(&self) -> String {
-        tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
+        tidb_util::printer::get_tidb_info()
     }
 
     /// The statement snapshot of `@@block_encryption_mode`.

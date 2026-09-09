@@ -27,14 +27,19 @@
 use tidb_expr::aggregation::AggFuncDesc;
 use tidb_expr::aggregation::AggFunctionMode;
 use tidb_expr::column::Column;
+use tidb_expr::expr_util::substitute::{evaluate_expr_with_null, SubstituteOptions};
+use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::{ConstLevel, CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
+use tidb_expr::NoColumns;
 
 use crate::hash_equaler::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use crate::plan_base::{
+    hash_possible_properties, possible_properties_equal, PossiblePropertiesInfo,
+};
 use crate::stats_info::StatsInfo;
 
 /// Go `ast.AggFuncFirstRow`.
@@ -198,15 +203,10 @@ impl LogicalAggregation {
         }
         let mut cols = Vec::with_capacity(self.agg_funcs.len());
         for (idx, column) in self_schema.columns.iter().enumerate() {
-            let Some(func) = self.agg_funcs.get(idx) else {
-                break;
-            };
-            if func.name() == AGG_FUNC_FIRST_ROW
-                && func
-                    .args()
-                    .first()
-                    .is_some_and(|arg| extract_columns(arg).len() == 1)
-            {
+            // Go indexes `la.AggFuncs[idx]` and `Args[0]` unguarded
+            // (`logical_aggregation.go:724-725`).
+            let func = &self.agg_funcs[idx];
+            if func.name() == AGG_FUNC_FIRST_ROW && extract_columns(&func.args()[0]).len() == 1 {
                 cols.push(column.clone());
             }
         }
@@ -324,9 +324,9 @@ impl LogicalAggregation {
         let mut all_first_row = true;
         let mut all_remain_first_row = true;
         for i in (0..used.len()).rev() {
-            let Some(func) = self.agg_funcs.get(i) else {
-                continue;
-            };
+            // Go indexes `la.AggFuncs[i]` directly
+            // (`logical_aggregation.go:123`).
+            let func = &self.agg_funcs[i];
             if func.name() != AGG_FUNC_FIRST_ROW {
                 all_first_row = false;
             }
@@ -425,6 +425,41 @@ impl LogicalAggregation {
         self.build_self_key_info(self_schema);
     }
 
+    /// Go `LogicalAggregation.CanPullUp()` (`logical_aggregation.go:815`):
+    /// only an UNGROUPED aggregation whose every argument becomes NULL over a
+    /// NULL child row may be pulled above an apply. That is exactly what makes
+    /// the pull-up sound: an empty input contributes no value, so the outer
+    /// join's NULL extension is the same answer.
+    ///
+    /// # Narrowing
+    ///
+    /// Go evaluates through the statement's `ExprContext`; this port has no
+    /// `Columns` value here, so the substitution/evaluation uses
+    /// [`NoColumns`]. An argument that needs the session context therefore
+    /// answers `false`, which only keeps the apply correlated.
+    #[must_use]
+    pub fn can_pull_up(&self, child_schema: &Schema) -> bool {
+        if !self.group_by_items.is_empty() {
+            return false;
+        }
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let options = SubstituteOptions::new(&builder);
+        for func in &self.agg_funcs {
+            for arg in func.args() {
+                let Ok(result) =
+                    evaluate_expr_with_null(arg, child_schema, true, &NoColumns, &options)
+                else {
+                    return false;
+                };
+                match result {
+                    Expression::Constant(constant) if constant.value.is_null() => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
+    }
+
     /// Go `LogicalAggregation.ExtractColGroups(_)`
     /// (`logical_aggregation.go:250`): the parent's groups are DISCARDED, and
     /// the group-by columns are asked for as one group when there is more than
@@ -486,15 +521,9 @@ impl LogicalAggregation {
     /// reloads)` (`logical_aggregation.go:219`): the output row count is the
     /// NDV of the group-by columns, and every output column takes that NDV.
     ///
-    /// # Blocked
-    ///
-    /// Go's row count is `cardinality.EstimateColsNDVWithMatchedLen(sctx,
-    /// gbyCols, childSchema[0], childProfile)`, which needs the session and the
-    /// child histograms. The dependency-closed part of that estimator — the
-    /// product of the per-column NDVs, capped at the child row count — is what
-    /// runs here; a group-by column absent from the child profile falls back to
-    /// the child row count, as Go's `EstimateColsNDVWithMatchedLen` does for an
-    /// unmatched column.
+    /// The production default `RiskGroupNDVSkewRatio == 0` uses Go's
+    /// conservative estimate: an exact `GroupNDV` when present, otherwise the
+    /// largest group-column NDV. It does not multiply independent column NDVs.
     pub fn derive_stats(
         &mut self,
         child_stats: &[StatsInfo],
@@ -507,22 +536,17 @@ impl LogicalAggregation {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let mut gby_cols = Vec::new();
         for item in &self.group_by_items {
             gby_cols.extend(extract_columns(item));
         }
-        let mut ndv = 1.0_f64;
-        for column in &gby_cols {
-            ndv *= child
-                .col_ndvs()
-                .get(&column.unique_id)
-                .copied()
-                .unwrap_or(child.row_count());
-        }
-        if gby_cols.is_empty() {
-            ndv = 1.0;
-        }
+        let group_ids = gby_cols
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>();
+        let (ndv, _) =
+            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&group_ids, child);
         let ndv = ndv.min(child.row_count());
         let stats = StatsInfo::new(
             ndv,
@@ -561,7 +585,7 @@ impl LogicalAggregation {
             let mut item = item.clone();
             hasher.hash_bytes(item.hash_code());
         }
-        hasher.hash_bool(self.possible_properties.has_tiflash);
+        hash_possible_properties(&mut hasher, &self.possible_properties);
         hasher.sum64()
     }
 
@@ -581,6 +605,7 @@ impl LogicalAggregation {
                 .zip(&other.agg_funcs)
                 .all(|(left, right)| left.equals(right))
             && schema_producer::expression_lists_equal(&self.group_by_items, &other.group_by_items)
+            && possible_properties_equal(&self.possible_properties, &other.possible_properties)
     }
 }
 

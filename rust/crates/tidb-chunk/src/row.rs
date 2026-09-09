@@ -181,57 +181,48 @@ impl<'a> Row<'a> {
     }
 
     /// Go `Idx`: the (physical) row index within the chunk.
-    #[must_use]
     pub fn idx(&self) -> usize {
         self.idx
     }
 
     /// Go `Len`: the number of columns.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.chunk.map_or(0, Chunk::num_cols)
     }
 
     /// Go `IsEmpty`: only the zero `Row{}` sentinel is empty. A valid row of a
     /// zero-column/virtual chunk is not empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.chunk.is_none()
     }
 
     /// Go `GetInt64`.
-    #[must_use]
     pub fn get_int64(&self, col_idx: usize) -> i64 {
         self.expect_chunk().column(col_idx).get_int64(self.idx)
     }
 
     /// Go `GetUint64`.
-    #[must_use]
     pub fn get_uint64(&self, col_idx: usize) -> u64 {
         self.expect_chunk().column(col_idx).get_uint64(self.idx)
     }
 
     /// Go `GetFloat32`.
-    #[must_use]
     pub fn get_float32(&self, col_idx: usize) -> f32 {
         self.expect_chunk().column(col_idx).get_float32(self.idx)
     }
 
     /// Go `GetFloat64`.
-    #[must_use]
     pub fn get_float64(&self, col_idx: usize) -> f64 {
         self.expect_chunk().column(col_idx).get_float64(self.idx)
     }
 
     /// Go `GetTime`.
-    #[must_use]
     pub fn get_time(&self, col_idx: usize) -> Time {
         self.expect_chunk().column(col_idx).get_time(self.idx)
     }
 
     /// Go `GetDuration`: reads the cell's nanoseconds and stamps `fill_fsp` on
     /// (the column stores no fsp).
-    #[must_use]
     pub fn get_duration(&self, col_idx: usize, fill_fsp: i64) -> MySqlDuration {
         self.expect_chunk()
             .column(col_idx)
@@ -239,56 +230,47 @@ impl<'a> Row<'a> {
     }
 
     /// Go `GetMyDecimal`.
-    #[must_use]
     pub fn get_my_decimal(&self, col_idx: usize) -> MyDecimal {
         self.expect_chunk().column(col_idx).get_my_decimal(self.idx)
     }
 
     /// Go `GetEnum`.
-    #[must_use]
     pub fn get_enum(&self, col_idx: usize) -> tidb_datatype::MysqlEnum {
         self.expect_chunk().column(col_idx).get_enum(self.idx)
     }
 
     /// Go `GetSet`.
-    #[must_use]
     pub fn get_set(&self, col_idx: usize) -> tidb_datatype::MysqlSet {
         self.expect_chunk().column(col_idx).get_set(self.idx)
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
-    #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> CellBytes<'a> {
         self.expect_chunk().column_slots()[col_idx].get_bytes(self.idx)
     }
 
     /// Go `GetString`: a byte-preserving string view of a variable-length
     /// column's cell.
-    #[must_use]
     pub fn get_string(&self, col_idx: usize) -> GoString {
         self.expect_chunk().column(col_idx).get_string(self.idx)
     }
 
     /// Go `GetRawLen`: the encoded cell width for either column kind.
-    #[must_use]
     pub fn get_raw_len(&self, col_idx: usize) -> usize {
         self.expect_chunk().column(col_idx).raw_len(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
-    #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
         self.expect_chunk().column_slots()[col_idx].get_raw(self.idx)
     }
 
     /// Go `GetJSON`.
-    #[must_use]
     pub fn get_json(&self, col_idx: usize) -> tidb_datatype::BinaryJSON {
         self.expect_chunk().column(col_idx).get_json(self.idx)
     }
 
     /// Go `GetVectorFloat32`.
-    #[must_use]
     pub fn get_vector_float32(&self, col_idx: usize) -> VectorFloat32 {
         self.expect_chunk()
             .column(col_idx)
@@ -296,20 +278,17 @@ impl<'a> Row<'a> {
     }
 
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
-    #[must_use]
     pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
         self.expect_chunk().column(col_idx).get_name_value(self.idx)
     }
 
     /// Go `IsNull`.
-    #[must_use]
     pub fn is_null(&self, col_idx: usize) -> bool {
         self.expect_chunk().column(col_idx).is_null(self.idx)
     }
 
     /// Go `GetDatumRow`: materializes every column with the corresponding
     /// field type.
-    #[must_use]
     pub fn get_datum_row(&self, field_types: &[FieldType]) -> Vec<Datum> {
         let mut datums = vec![Datum::Null; self.len()];
         self.get_datum_row_with_buffer(field_types, &mut datums);
@@ -356,7 +335,6 @@ impl<'a> Row<'a> {
     /// `SetMysqlBit`). A source type with no switch arm leaves a caller-supplied
     /// datum unchanged; [`Row::get_datum`] therefore returns its initialized
     /// NULL value for that same type.
-    #[must_use]
     pub fn get_datum(&self, col_idx: usize, field_type: &FieldType) -> Datum {
         let mut datum = Datum::Null;
         self.datum_with_buffer(col_idx, field_type, &mut datum);
@@ -559,7 +537,6 @@ impl<'a> Row<'a> {
 
     /// Go `Row.CopyConstruct`: deep-copy this physical row into an independently
     /// owned one-row chunk.
-    #[must_use]
     pub fn copy_construct(&self) -> OwnedRow {
         let mut chunk = self.expect_chunk().renew_with_capacity(1, 1);
         chunk.append_row(*self);
@@ -571,7 +548,6 @@ impl<'a> Row<'a> {
     /// The result is [`GoString`] because source string, ENUM, and SET cells
     /// may contain arbitrary bytes. Numeric, temporal, JSON, and vector text is
     /// ASCII and follows the corresponding source value formatter.
-    #[must_use]
     pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
         assert!(
             field_types.len() >= self.len(),

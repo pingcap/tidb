@@ -27,12 +27,11 @@
 //! * [`query_observability`] -- in-flight query accounting, the transport
 //!   evidence a publication reports, and the leases a result set holds.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::{Collation, FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
+use tidb_distsql::CancelHandle;
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::{
     CatalogReloadError, CatalogReloadPass, CatalogReloadStats, CatalogReloader, SharedCatalog,
@@ -47,19 +46,21 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    prepare_configured_write, prepare_text_write, ConfiguredWriteWarning,
+    prepare_configured_write, prepare_text_write, ConfiguredWriteReport, ConfiguredWriteWarning,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
     ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
-    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
-    RealTiKvReadSessionOpener,
+    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadError,
+    RealTiKvReadSession, RealTiKvReadSessionOpener,
 };
 use tidb_exec::real_tikv_stats::{
-    load_stats_meta_versions, load_stats_snapshot_and_loader, load_stats_snapshot_from_cluster,
-    stats_snapshot_unchanged_since,
+    load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
 };
-use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
+use tidb_exec::stats_watch::{
+    AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloadStats,
+    StatsReloader,
+};
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, PdClient, DDL_GLOBAL_SCHEMA_VERSION_KEY,
     PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
@@ -69,10 +70,12 @@ use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindVa
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind, ConfiguredIndex,
     ConfiguredScalarType, ConfiguredTable, PreparedAggregate, PreparedAggregateKind,
-    ReadOnlyScanPlan,
+    PreparedBindError, PreparedPlanError, ReadOnlyScanError, ReadOnlyScanPlan,
+    UnsupportedReadOnlyFeature,
 };
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::ColumnInfo;
+use tidb_session::process::{ProcessGuard, ProcessRegistry};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
@@ -86,21 +89,19 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode,
+    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, ConnectionKillTarget,
     PreparedPointRead, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;
+use tidb_hack::GoToLower;
 
 mod query_observability;
 mod schema_following;
 mod session_time_zone;
 
-pub(crate) use query_observability::{
-    install_remote_publication_observer, observe_real_tikv_query, QueryActivity,
-    QueryActivityLease, QueryCompletion,
-};
+pub(crate) use query_observability::complete_real_tikv_query;
 pub(crate) use schema_following::{
     connect_schema_notifier, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
     spawn_schema_version_watch, spawn_sysvar_watch,
@@ -175,7 +176,7 @@ pub(crate) fn point_read_result_field_types(plan: &ReadOnlyScanPlan) -> Vec<Fiel
 
 pub(crate) fn default_cursor_memory(
     connection_id: u64,
-    spill_storage: Option<&Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<&Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<&Arc<tidb_util::memory::MemArbitrator>>,
 ) -> tidb_executor::SessionMemory {
     let memory = tidb_executor::SessionMemory::new(
@@ -208,6 +209,9 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
 
     let warnings = result.warning_count();
     let status = result.wire_status();
+    let affected_rows = result.affected_rows();
+    let last_insert_id = result.last_insert_id();
+    let info = result.info().to_vec();
     if let Some(aggregate) = aggregate {
         let kind = match aggregate.kind() {
             PreparedAggregateKind::Sum => AggregateKind::Sum,
@@ -218,7 +222,8 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
             aggregate.source_offset(),
             statement.result_columns().to_vec(),
         )))
-        .with_statement_status(warnings, status);
+        .with_statement_status(warnings, status)
+        .with_statement_output(affected_rows, last_insert_id, info);
     }
 
     let output_width = statement.result_columns().len();
@@ -233,7 +238,9 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
     if distinct {
         source = Box::new(DistinctResultSetSource::new(source));
     }
-    QueryResult::new(source).with_statement_status(warnings, status)
+    QueryResult::new(source)
+        .with_statement_status(warnings, status)
+        .with_statement_output(affected_rows, last_insert_id, info)
 }
 
 impl ActiveQueryCancellation for CancelHandle {
@@ -252,7 +259,6 @@ pub struct RealTiKvSessionFactory<
 > {
     opener: RealTiKvReadSessionOpener<F, S>,
     transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
-    query_activity: Arc<QueryActivity>,
     read_authority_id: u64,
     /// Tables the cluster really has, that this node loaded and cannot serve.
     /// They are not hidden: a query naming one gets the exact reason back.
@@ -284,11 +290,14 @@ pub struct RealTiKvSessionFactory<
     /// The lease-cadence stats reload thread, stopped and joined when this
     /// factory is dropped.
     stats_reloader: Option<StatsReloader>,
+    /// Go Domain's independent asynchronous histogram loader.
+    _async_stats_loader: Option<AsyncStatsLoader>,
     /// Startup-validated temporary-storage authority shared by every cursor
     /// opened by this process. `None` exists only for direct unit factories;
     /// the production runner installs it before accepting connections.
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    processes: ProcessRegistry,
 }
 
 impl RealTiKvSessionFactory {
@@ -317,7 +326,7 @@ impl RealTiKvSessionFactory {
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let schema_notifier = connect_schema_notifier(config);
-        let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
+        let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) = match loaded {
             Some(catalog) => {
                 let (catalog, reloader) = spawn_catalog_reloader(
                     catalog,
@@ -325,10 +334,10 @@ impl RealTiKvSessionFactory {
                     config.schema_lease,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                let (stats, stats_reloader) = spawn_node_stats(
+                let (stats, stats_reloader, async_stats_loader) = spawn_node_stats(
                     Arc::clone(&catalog),
                     authority.transaction_opener(),
-                    config.schema_lease,
+                    config.stats_lease,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -339,9 +348,10 @@ impl RealTiKvSessionFactory {
                     Some(reloader),
                     Some(stats),
                     Some(stats_reloader),
+                    Some(async_stats_loader),
                 )
             }
-            None => (None, None, None, None, None),
+            None => (None, None, None, None, None, None),
         };
         let factory = Self::from_authority_with_catalog(
             &authority,
@@ -352,6 +362,7 @@ impl RealTiKvSessionFactory {
             schema_notifier,
             stats,
             stats_reloader,
+            async_stats_loader,
         );
         Ok((factory, authority))
     }
@@ -373,11 +384,11 @@ impl RealTiKvSessionFactory {
         schema_notifier: Option<Arc<EtcdClient>>,
         stats: Option<Arc<SharedStats>>,
         stats_reloader: Option<StatsReloader>,
+        async_stats_loader: Option<AsyncStatsLoader>,
     ) -> Self {
         Self {
             opener: authority.opener(),
             transaction_opener: authority.transaction_opener(),
-            query_activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
             table_refusals: Arc::new(table_refusals),
             catalog,
@@ -386,8 +397,10 @@ impl RealTiKvSessionFactory {
             schema_notifier,
             stats,
             stats_reloader,
+            _async_stats_loader: async_stats_loader,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 }
@@ -395,9 +408,7 @@ impl RealTiKvSessionFactory {
 impl<F, S, C, L, P> RealTiKvSessionFactory<F, S, C, L, P>
 where
     F: tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory + 'static,
-    F::Transport: tidb_distsql::query_runtime::QueryTransport
-        + tidb_exec::real_tikv_read::TransportEvidenceSource
-        + 'static,
+    F::Transport: tidb_distsql::query_runtime::QueryTransport + 'static,
     <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
@@ -417,7 +428,6 @@ where
         Self {
             opener,
             transaction_opener,
-            query_activity: Arc::new(QueryActivity::default()),
             read_authority_id,
             table_refusals: Arc::new(Vec::new()),
             catalog: None,
@@ -426,14 +436,16 @@ where
             schema_notifier: None,
             stats: None,
             stats_reloader: None,
+            _async_stats_loader: None,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 
     pub(crate) fn with_spill_storage(
         mut self,
-        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -520,9 +532,7 @@ where
 impl<F, S, C, L, P> QuerySessionFactory for RealTiKvSessionFactory<F, S, C, L, P>
 where
     F: tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory + 'static,
-    F::Transport: tidb_distsql::query_runtime::QueryTransport
-        + tidb_exec::real_tikv_read::TransportEvidenceSource
-        + 'static,
+    F::Transport: tidb_distsql::query_runtime::QueryTransport + 'static,
     <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
@@ -541,19 +551,39 @@ where
             self.spill_storage.as_ref(),
             self.mem_arbitrator.as_ref(),
         );
+        let process = self.processes.register(
+            context.connection_id,
+            context.identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            String::new(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        process.set_trackers(
+            Arc::clone(cursor_memory.session_tracker()),
+            Arc::clone(cursor_memory.session_disk_tracker()),
+        );
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),
             table_refusals: Arc::clone(&self.table_refusals),
             schema_notifier: self.schema_notifier.clone(),
             context,
-            query_activity: Arc::clone(&self.query_activity),
-            next_query_id: 1,
             transaction: SessionTransaction::new(),
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            statement_message: None,
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
+            last_affected_rows: 0,
+            _process: process,
         })
+    }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
     }
 }
 
@@ -577,8 +607,6 @@ pub struct RealTiKvServerSession<
     /// announces itself the way Go's DDL owner does.
     schema_notifier: Option<Arc<EtcdClient>>,
     context: SessionContext,
-    query_activity: Arc<QueryActivity>,
-    next_query_id: u64,
     /// The session's explicit-transaction state, pinning one read snapshot for
     /// the duration of a `BEGIN`/`COMMIT` transaction.
     transaction: SessionTransaction<C, L, P>,
@@ -595,13 +623,20 @@ pub struct RealTiKvServerSession<
     /// The warning records the most recently completed statement exposes in
     /// its OK packet. Configured DML builds them while resolving `IGNORE`.
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    /// The OK-packet info text the most recently completed write composed
+    /// (Go `StmtCtx.SetMessage`). INSERT/REPLACE fill it once the statement
+    /// attempted more than one row, mirroring `setMessage`'s own gate.
+    statement_message: Option<String>,
+    /// Go `LazyTxn.writeSLI` for this worker-local session.
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
+    /// Go statement-context affected rows read by `addQueryMetrics`.
+    last_affected_rows: u64,
+    _process: ProcessGuard,
 }
 
 impl<T, S, C, L, P> RealTiKvServerSession<T, S, C, L, P>
 where
-    T: tidb_distsql::query_runtime::QueryTransport
-        + tidb_exec::real_tikv_read::TransportEvidenceSource
-        + 'static,
+    T: tidb_distsql::query_runtime::QueryTransport + 'static,
     T::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
@@ -685,9 +720,7 @@ where
         &'a mut self,
         plan: ReadOnlyScanPlan,
         cancellation: Arc<CancelHandle>,
-        query_id: u64,
         cancellation_lease: QueryCancellationLease,
-        query_activity: QueryActivityLease,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
         // A contradiction returns no rows at any snapshot and locks nothing, so
         // it never opens a transaction or touches storage.
@@ -695,8 +728,8 @@ where
             let query = self
                 .inner
                 .execute_lowered_plan_with_cancellation(plan, cancellation)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            return self.observe(query, query_id, cancellation_lease, query_activity);
+                .map_err(read_error_sql_error)?;
+            return Ok(self.complete_query(query, cancellation_lease));
         }
         let lock = plan.lock();
         let handles = point_handles(&plan);
@@ -739,8 +772,8 @@ where
                 .inner
                 .execute_lowered_plan_with_cancellation(plan, cancellation),
         }
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let result = self.observe(query, query_id, cancellation_lease, query_activity)?;
+        .map_err(read_error_sql_error)?;
+        let result = self.complete_query(query, cancellation_lease);
         let Some((rows, handles)) = overlay else {
             return Ok(result);
         };
@@ -749,24 +782,12 @@ where
         )))
     }
 
-    fn observe<'a>(
+    fn complete_query<'a>(
         &'a mut self,
         query: RealTiKvQuery,
-        query_id: u64,
         cancellation_lease: QueryCancellationLease,
-        query_activity: QueryActivityLease,
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
-        let cluster_id = self.inner.cluster_id();
-        let evidence = self.inner.transport_evidence_handle();
-        observe_real_tikv_query(
-            &self.context,
-            query,
-            query_id,
-            cancellation_lease,
-            query_activity,
-            cluster_id,
-            evidence,
-        )
+    ) -> QueryResult<'a> {
+        complete_real_tikv_query(query, cancellation_lease)
     }
 
     /// Binds one write template and applies it, whichever protocol carried it.
@@ -782,6 +803,7 @@ where
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.statement_warnings.clear();
+        self.statement_message = None;
         let bound = template
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -824,31 +846,34 @@ where
                             sql_error.message.clone(),
                         )
                     })?;
+                let (write_size, write_keys) = transaction.write_details();
                 transaction
                     .commit()
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                report
+                ConfiguredWriteReport {
+                    write_size,
+                    write_keys,
+                    ..report
+                }
             }
-        };
+        }
+        .with_client_found_rows(self.context.client_found_rows);
+        if report.write_size > 0 {
+            self.write_sli
+                .add_txn_write_size(report.write_size, report.write_keys);
+        }
+        if report.processed_keys > 0 && report.affected_rows > 0 {
+            self.write_sli.add_read_keys(report.processed_keys);
+        }
+        self.last_affected_rows = report.affected_rows;
+        self.statement_message =
+            tidb_exec::real_tikv_dml::compose_configured_write_message(&bound, &report);
         self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
             last_insert_id: 0,
         })
-    }
-
-    /// Allocates this session's next query identity and its activity lease.
-    fn begin_query(&mut self) -> Result<(u64, QueryActivityLease), SqlQueryError> {
-        let query_id = self.next_query_id;
-        self.next_query_id = self
-            .next_query_id
-            .checked_add(1)
-            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
-        let activity = self
-            .query_activity
-            .begin(self.context.connection_id, query_id);
-        Ok((query_id, activity))
     }
 }
 
@@ -1059,31 +1084,94 @@ pub(crate) fn refusal_aware_error(
     refusals: &[LoadedTableRefusal],
     message: String,
 ) -> SqlQueryError {
-    let lowered = message.to_lowercase();
+    loaded_table_refusal_error(refusals, &message)
+        .unwrap_or_else(|| SqlQueryError::unknown(message))
+}
+
+fn loaded_table_refusal_error(
+    refusals: &[LoadedTableRefusal],
+    message: &str,
+) -> Option<SqlQueryError> {
+    let lowered = message.go_to_lower();
     for refusal in refusals {
-        if lowered.contains(&refusal.name.to_lowercase()) {
-            return SqlQueryError::unknown(refusal.to_string());
+        if lowered.contains(&refusal.name.go_to_lower()) {
+            return Some(SqlQueryError::unknown(refusal.to_string()));
         }
         if let Some((_, table)) = refusal.name.split_once('.') {
-            if lowered.contains(&format!("table: {}", table.to_lowercase())) {
-                return SqlQueryError::unknown(refusal.to_string());
+            if lowered.contains(&format!("table: {}", table.go_to_lower())) {
+                return Some(SqlQueryError::unknown(refusal.to_string()));
             }
         }
     }
-    SqlQueryError::unknown(message)
+    None
+}
+
+fn sql_query_error(code: u16, state: [u8; 5], message: String) -> SqlQueryError {
+    SqlQueryError::new(code, state, message)
+}
+
+fn read_only_sql_error(error: &ReadOnlyScanError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+fn prepared_plan_sql_error(error: &PreparedPlanError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+pub(crate) fn prepared_bind_sql_error(error: &PreparedBindError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+pub(crate) fn read_error_sql_error(error: RealTiKvReadError) -> SqlQueryError {
+    match error {
+        RealTiKvReadError::Plan(error) => read_only_sql_error(&error),
+        other => SqlQueryError::unknown(other.to_string()),
+    }
+}
+
+fn refusal_aware_read_only_error(
+    refusals: &[LoadedTableRefusal],
+    error: ReadOnlyScanError,
+) -> SqlQueryError {
+    let message = error.to_string();
+    if let Some(refusal_error) = loaded_table_refusal_error(refusals, &message) {
+        return refusal_error;
+    }
+    read_only_sql_error(&error)
+}
+
+pub(crate) fn refusal_aware_prepared_plan_error(
+    refusals: &[LoadedTableRefusal],
+    error: PreparedPlanError,
+) -> SqlQueryError {
+    let message = error.to_string();
+    if let Some(refusal_error) = loaded_table_refusal_error(refusals, &message) {
+        return refusal_error;
+    }
+    prepared_plan_sql_error(&error)
 }
 
 impl<T, S, C, L, P> QuerySession for RealTiKvServerSession<T, S, C, L, P>
 where
-    T: tidb_distsql::query_runtime::QueryTransport
-        + tidb_exec::real_tikv_read::TransportEvidenceSource
-        + 'static,
+    T: tidb_distsql::query_runtime::QueryTransport + 'static,
     T::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        self.write_sli.finish_execute_stmt(
+            cost,
+            self.last_affected_rows,
+            self.transaction.is_active(),
+        );
+    }
+
     /// This session's status word: it owns a real explicit transaction (so the
     /// `SERVER_STATUS_IN_TRANS` bit is its own [`SessionTransaction`]'s answer)
     /// but no `autocommit` variable, so that bit is constant here.
@@ -1095,30 +1183,40 @@ where
         u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
     }
 
+    fn warning_codes(&self) -> Vec<u16> {
+        self.statement_warnings
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.statement_message
+            .clone()
+            .unwrap_or_default()
+            .into_bytes()
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
-        let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         // Text and prepared reads share one lowering and one execution seam, so
         // a transaction's snapshot, locks, and read-your-own-writes overlay
         // apply identically to both.
         let plan = ReadOnlyScanPlan::lower(sql, self.inner.configured_table())
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        self.execute_read(
-            plan,
-            cancellation,
-            query_id,
-            cancellation_lease,
-            query_activity,
-        )
+            .map_err(|error| refusal_aware_read_only_error(&self.table_refusals, error))?;
+        self.execute_read(plan, cancellation, cancellation_lease)
+            .map(|result| result.with_process_statement(process_statement))
     }
 
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
         let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+            .map_err(|error| refusal_aware_prepared_plan_error(&self.table_refusals, error))?;
         // An aggregate's result column is its own type (a DECIMAL for SUM), not
         // the summed scan column's, so it bypasses the scan-derived metadata.
         let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
@@ -1131,7 +1229,7 @@ where
             // metadata; a range template needs one placeholder per marker.
             let metadata_plan = template
                 .bind(&vec![0; template.parameter_count()])
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                .map_err(|error| prepared_bind_sql_error(&error))?;
             let result_field_types = point_read_result_field_types(&metadata_plan);
             let result_columns = self
                 .inner
@@ -1139,7 +1237,7 @@ where
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             (result_columns, result_field_types)
         };
-        PreparedPointRead::new(template, result_columns, result_field_types)
+        PreparedPointRead::new(sql.to_owned(), template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -1147,6 +1245,10 @@ where
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         let field_types = statement.result_field_types().to_vec();
         let authority = tidb_session::ResultMaterializationAuthority::new(
             self.cursor_memory.statement(),
@@ -1156,22 +1258,16 @@ where
         let plan = statement
             .template()
             .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let (query_id, query_activity) = self.begin_query()?;
+            .map_err(|error| prepared_bind_sql_error(&error))?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         let statement_status = self.wire_status();
-        let result = self.execute_read(
-            plan,
-            cancellation,
-            query_id,
-            cancellation_lease,
-            query_activity,
-        )?;
+        let result = self.execute_read(plan, cancellation, cancellation_lease)?;
         let warnings = result.warning_count();
         let result = result.with_statement_status(warnings, statement_status);
         Ok(shape_prepared_point_read_result(result, statement)
-            .with_cursor_materialization(field_types, authority))
+            .with_cursor_materialization(field_types, authority)
+            .with_process_statement(process_statement))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
@@ -1179,10 +1275,12 @@ where
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_write(sql, &catalog)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage at all: every read's DAG request and every write's
         // `TIMESTAMP` literal conversion consult it from here on.
@@ -1228,26 +1326,51 @@ where
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let _process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         self.commit_bound_write(statement.template(), parameters)
     }
 
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        self.last_affected_rows = 0;
         match classify_transaction_control(sql) {
             None => Ok(None),
             Some(TransactionControl::Begin { mode }) => {
                 // A BEGIN that implicitly commits a previous transaction reports
                 // that commit's failure: the client must not be told the new
                 // transaction started while the old one's writes were lost.
+                let write_details = self
+                    .transaction
+                    .opened()
+                    .map(MultiStatementTransaction::write_details)
+                    .unwrap_or((0, 0));
                 self.transaction
                     .begin(mode)
                     .map_err(|error| self.transaction_error(&error))?;
+                if write_details.0 > 0 {
+                    self.write_sli
+                        .add_txn_write_size(write_details.0, write_details.1);
+                }
                 Ok(Some(true))
             }
             Some(control @ (TransactionControl::Commit | TransactionControl::Rollback)) => {
                 let commit = control == TransactionControl::Commit;
+                let write_details = (commit)
+                    .then(|| {
+                        self.transaction
+                            .opened()
+                            .map(MultiStatementTransaction::write_details)
+                            .unwrap_or((0, 0))
+                    })
+                    .unwrap_or((0, 0));
                 self.transaction
                     .end(commit)
                     .map_err(|error| self.transaction_error(&error))?;
+                if write_details.0 > 0 {
+                    self.write_sli
+                        .add_txn_write_size(write_details.0, write_details.1);
+                }
                 Ok(Some(false))
             }
             // This node reads; it stages no writes, so a savepoint would have
@@ -1416,7 +1539,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
 
 pub(crate) fn run_configured_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = configured_account_store(&config)?;
@@ -1446,7 +1569,7 @@ pub(crate) fn run_bound_node(
     factory: RealTiKvSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
@@ -1819,32 +1942,34 @@ pub(crate) fn connect_loaded_catalog_authority(
             // cluster's schema instead of running forever on its startup
             // read. `loaded` is `None` only when every table came from
             // `--read-table` (no `--load-table` was given at all).
-            let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
-                Some(catalog) => {
-                    let (catalog, reloader) = spawn_catalog_reloader(
-                        catalog,
-                        authority.transaction_opener(),
-                        config.schema_lease,
-                    )
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                    let (stats, stats_reloader) = spawn_node_stats(
-                        Arc::clone(&catalog),
-                        authority.transaction_opener(),
-                        config.schema_lease,
-                        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                    )
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-                    let watcher = spawn_schema_version_watch(config, &reloader);
-                    (
-                        Some(catalog),
-                        watcher,
-                        Some(reloader),
-                        Some(stats),
-                        Some(stats_reloader),
-                    )
-                }
-                None => (None, None, None, None, None),
-            };
+            let (catalog, watcher, reloader, stats, stats_reloader, async_stats_loader) =
+                match loaded {
+                    Some(catalog) => {
+                        let (catalog, reloader) = spawn_catalog_reloader(
+                            catalog,
+                            authority.transaction_opener(),
+                            config.schema_lease,
+                        )
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        let (stats, stats_reloader, async_stats_loader) = spawn_node_stats(
+                            Arc::clone(&catalog),
+                            authority.transaction_opener(),
+                            config.stats_lease,
+                            PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                        )
+                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        let watcher = spawn_schema_version_watch(config, &reloader);
+                        (
+                            Some(catalog),
+                            watcher,
+                            Some(reloader),
+                            Some(stats),
+                            Some(stats_reloader),
+                            Some(async_stats_loader),
+                        )
+                    }
+                    None => (None, None, None, None, None, None),
+                };
             Ok(LoadedCatalogAuthority::Single(
                 Box::new(RealTiKvSessionFactory::from_authority_with_catalog(
                     &authority,
@@ -1855,6 +1980,7 @@ pub(crate) fn connect_loaded_catalog_authority(
                     schema_notifier,
                     stats,
                     stats_reloader,
+                    async_stats_loader,
                 )),
                 authority,
             ))
@@ -1975,7 +2101,7 @@ pub enum RunConfiguredNodeError {
     /// The required immutable account catalog was rejected.
     Auth(ConfiguredUserStoreError),
     /// Spill storage could not be leased or admitted before listener startup.
-    Spill(tidb_util::disk::SpillStorageOpenError),
+    Spill(tidb_util::spill_storage::SpillStorageOpenError),
     /// The process SIGINT/SIGTERM handler could not be installed.
     Signal(ctrlc::Error),
     /// Production query-authority construction failed.
@@ -2039,7 +2165,7 @@ mod tests {
     use crate::mysql_connection::MysqlConnectionError;
     use crate::secure_transport::TransportKind;
     use crate::sql_node::configured_write_error;
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
     use tidb_exec::real_tikv_dml::ConfiguredWriteError;
@@ -2058,6 +2184,38 @@ mod tests {
             self.0.push(payload.to_vec());
             Ok(sequence.wrapping_add(1))
         }
+    }
+
+    #[test]
+    fn read_only_refusals_reach_the_server_with_go_wire_codes() {
+        let unsupported = refusal_aware_read_only_error(
+            &[],
+            ReadOnlyScanError::Unsupported(UnsupportedReadOnlyFeature::Ordering),
+        );
+        assert_eq!(unsupported.code, 1235);
+        assert_eq!(unsupported.state, *b"42000");
+
+        let unknown_column = refusal_aware_read_only_error(
+            &[],
+            ReadOnlyScanError::UnknownColumn("balance".to_owned()),
+        );
+        assert_eq!(unknown_column.code, 1054);
+        assert_eq!(unknown_column.state, *b"42S22");
+
+        let direct_plan = read_error_sql_error(RealTiKvReadError::Plan(
+            ReadOnlyScanError::UnknownTable("missing".to_owned()),
+        ));
+        assert_eq!(direct_plan.code, 1146);
+        assert_eq!(direct_plan.state, *b"42S02");
+
+        let prepared_plan =
+            refusal_aware_prepared_plan_error(&[], PreparedPlanError::PrimaryKeyComparison);
+        assert_eq!(prepared_plan.code, 1235);
+        assert_eq!(prepared_plan.state, *b"42000");
+
+        let parameter_count = prepared_bind_sql_error(&PreparedBindError::ParameterCount(0));
+        assert_eq!(parameter_count.code, 8112);
+        assert_eq!(parameter_count.state, *b"HY000");
     }
 
     #[test]
@@ -2329,30 +2487,6 @@ mod tests {
         assert_eq!(fields[0].code(), FieldTypeCode::NewDecimal);
         assert!(fields[0].has_flag(FieldTypeFlags::BINARY));
         assert_eq!(fields[0].collation(), Collation::Binary);
-    }
-
-    #[test]
-    fn contradiction_then_remote_query_leaves_no_stale_publication_observer() {
-        let installed = Cell::new(false);
-        let install_calls = Cell::new(0);
-        let install_once = || {
-            install_calls.set(install_calls.get() + 1);
-            if installed.replace(true) {
-                Err("a publication observer is already installed for this query")
-            } else {
-                Ok(())
-            }
-        };
-
-        install_remote_publication_observer(None, install_once)
-            .expect("a local contradiction has no physical publication to observe");
-        assert!(!installed.get());
-        assert_eq!(install_calls.get(), 0);
-
-        install_remote_publication_observer(Some(42), install_once)
-            .expect("the next remote query must own the sole observer slot");
-        assert!(installed.get());
-        assert_eq!(install_calls.get(), 1);
     }
 
     #[test]

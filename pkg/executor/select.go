@@ -932,6 +932,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 	}()
 	vars := ctx.GetSessionVars()
+	// Scalar subquery plans belong to the statement being planned. Clear the
+	// registry before plan selection, including fast and cached plans that can
+	// bypass the reset in buildLogicalPlan.
+	vars.MapScalarSubQ = nil
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
 		if err != nil {

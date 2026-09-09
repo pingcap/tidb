@@ -128,7 +128,7 @@ fn now_current_timestamp() {
     // valid precision.
     assert_eq!(
         e_at("now(8)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 8, function: \"now\" }"
     );
     assert_eq!(
         e_at("now(-2)", &clock),
@@ -137,7 +137,7 @@ fn now_current_timestamp() {
     // Additional boundary neighbors retain the same contract.
     assert_eq!(
         e_at("now(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"now\" }"
     );
     assert_eq!(
         e_at("now(-1)", &clock),
@@ -191,7 +191,7 @@ fn test_current_time() {
     assert!(tidb_parser::parse("select current_time(-1)").is_err());
     assert_eq!(
         e_at("current_time(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"current_time\" }"
     );
     assert_eq!(e_at("curtime(3)", &clock), "STR:03:43:20.654");
 
@@ -233,7 +233,7 @@ fn utc_timestamp_rounding() {
     );
     assert_eq!(
         e_at("utc_timestamp(8)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 8, function: \"utc_timestamp\" }"
     );
     // Signed precision is a parse error in Go's FuncDatetimePrecListOpt.
     assert!(tidb_parser::parse("select utc_timestamp(-2)").is_err());
@@ -251,7 +251,7 @@ fn test_utc_time() {
     assert!(tidb_parser::parse("select utc_time(-1)").is_err());
     assert_eq!(
         e_at("utc_time(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"utc_time\" }"
     );
 }
 
@@ -1397,42 +1397,38 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     }
 }
 
-/// `TIMESTAMP` is the ONE member of the measured class this layer does NOT
-/// cover, and the reason is worth pinning rather than leaving as a silent
-/// gap.
+/// Go's `TIMESTAMP` signatures choose their parser from the argument's static
+/// type, even though both signatures first evaluate the argument as a string.
+/// The numeric and string parsers agree for packed integers, but differ when a
+/// date-only value carries a fractional suffix. Capture both outcomes here so
+/// a future refactor does not collapse the source-type distinction again.
 ///
-/// The earlier diagnosis -- that `timestamp(20240315123045)` is NULL because
-/// the argument's STATIC TYPE is not consulted -- does not survive contact
-/// with real TiDB. Go reaches `2024-03-15 12:30:45` down EITHER branch of
-/// its `isFloat` switch; captured through `gorun`:
+/// The packed integer agrees with Go down EITHER branch of its `isFloat`
+/// switch; captured through `gorun`:
 ///
 /// ```text
 /// select timestamp(20240315123045)    RS:2024-03-15 12:30:45   (isFloat)
 /// select timestamp('20240315123045')  RS:2024-03-15 12:30:45   (not isFloat)
 /// ```
 ///
-/// so the NULL here is this tier's own `add_sub::parse_datetime` refusing a
-/// bare 14-digit run, not a missing type. `TIMESTAMP` DOES depend on its
-/// argument's type -- Go's
-/// `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
+/// Go's `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
 /// mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal,
 /// mysql.TypeLonglong: isFloat = true }` (`builtin_time.go:4592-4595`)
 /// stores the answer in the SIGNATURE (`builtinTimestamp1ArgSig{bf,
-/// isFloat}`) -- but the dependence only becomes observable where the two
-/// PARSERS disagree, which is a value carrying a fraction. Captured:
+/// isFloat}`). The dependence remains observable for a date-only fraction:
 ///
 /// ```text
 /// select timestamp(20240315.5)    RS:2024-03-15 00:00:00.0   ParseTimeFromFloatString: `.5` is a SECOND fraction
 /// select timestamp('20240315.5')  RS:2024-03-15 05:00:00.0   ParseTime: `.5` is an HOUR
 /// ```
 ///
-/// That is signature-selection state over an `types.ETString` argument, not
-/// an argument cast, so it is NOT this rung's `types.ETDatetime` layer and
-/// must not be smuggled into it. Both rows are NULL here today; the
-/// assertion is deliberately absolute so the gap cannot close silently.
+/// The Rust evaluator now preserves the source kind and routes numeric DATUMs
+/// through `parse_time(..., is_float = true)` while string DATUMs use the
+/// `is_float = false` branch. This keeps Go's distinct date-only suffix
+/// meanings executable in both paths.
 #[test]
-fn timestamp_stays_outside_the_etdatetime_layer_and_says_why() {
-    assert_eq!(e("timestamp(20240315123045)"), "NULL");
-    assert_eq!(e("timestamp(20240315.5)"), "NULL");
-    assert_eq!(e("timestamp('20240315.5')"), "NULL");
+fn timestamp_numeric_and_string_fraction_use_distinct_parsers() {
+    assert_eq!(e("timestamp(20240315123045)"), "STR:2024-03-15 12:30:45");
+    assert_eq!(e("timestamp(20240315.5)"), "STR:2024-03-15 00:00:00.0");
+    assert_eq!(e("timestamp('20240315.5')"), "STR:2024-03-15 05:00:00.0");
 }

@@ -409,44 +409,91 @@ fn validate_definition(
     definition: &PartitionDefinition,
     parser: &Parser,
 ) -> PResult<()> {
-    let columns = method.columns.len();
     // `PartitionType` is a value-preserving newtype, so its named constants
     // are ordinary constant patterns: they need the kind by value, not by
     // reference.
     match (method.kind, &definition.clause) {
         (PartitionType::HASH | PartitionType::KEY, PartitionDefinitionClause::None) => Ok(()),
         (PartitionType::RANGE, PartitionDefinitionClause::LessThan(values)) => {
-            if columns == 0 && values.len() != 1 || columns > 0 && values.len() != columns {
-                Err(parser.err_here("RANGE partition value count does not match columns"))
-            } else {
-                Ok(())
+            // Go `PartitionDefinitionClauseLessThan.Validate` (ast/ddl.go):
+            // the grammar action calls `opt.Validate()` inside
+            // `parsePartitionOptions`, so arity mismatches are PARSE errors
+            // carrying the coded DDL errno, not deferred DDL-later checks.
+            let columns = method.columns.len();
+            if columns == 0 && values.len() != 1 {
+                // Go `ErrTooManyValues.GenWithStackByArgs("RANGE")`:
+                // [ddl:1657], template "%-.64s" -> "RANGE".
+                return Err(parser.err_coded(
+                    1657,
+                    "Cannot have more than one value for this type of RANGE partitioning",
+                ));
             }
+            if columns > 0 && values.len() != columns {
+                // Go `ErrPartitionColumnList`: [ddl:1653].
+                return Err(parser.err_coded(
+                    1653,
+                    "Inconsistency in usage of column lists for partitioning",
+                ));
+            }
+            Ok(())
         }
         (PartitionType::LIST, PartitionDefinitionClause::In(values)) => {
-            let mut expected = None;
+            // Go rejects MAXVALUE inside VALUES IN at the parse level
+            // (`rejectMaxValue` in `parsePartitionDef`), for every method.
             for value in values {
-                match value {
-                    PartitionValue::MaxValue => {
-                        return Err(parser.err_here("MAXVALUE is not valid in VALUES IN"));
-                    }
-                    PartitionValue::Default => continue,
-                    PartitionValue::Expr(_) => {
-                        // Go's AST accepts a scalar value for one-column
-                        // LIST COLUMNS; only multi-column methods require a
-                        // tuple payload.
-                        if columns > 1 {
-                            return Err(parser.err_here("LIST COLUMNS values require tuples"));
-                        }
-                        expected.get_or_insert(1usize);
-                    }
-                    PartitionValue::Tuple(tuple) => {
-                        if columns == 0 || tuple.len() != columns {
-                            return Err(parser
-                                .err_here("LIST partition value count does not match columns"));
-                        }
-                        expected.get_or_insert(tuple.len());
-                    }
+                if matches!(value, PartitionValue::MaxValue) {
+                    return Err(parser.err_here("MAXVALUE is not valid in VALUES IN"));
                 }
+            }
+            // Go `PartitionDefinitionClauseIn.Validate` (ast/ddl.go): every
+            // VALUES IN entry maps to a row (scalar -> single-element row,
+            // DEFAULT -> single-element row of DefaultExpr); shape checks run
+            // here at parse time with the coded errnos.
+            if values.is_empty() {
+                return Ok(());
+            }
+            let value_len = |value: &PartitionValue| match value {
+                PartitionValue::Tuple(tuple) => tuple.len(),
+                _ => 1,
+            };
+            let is_default = |value: &PartitionValue| matches!(value, PartitionValue::Default);
+            let mut expected = value_len(&values[0]);
+            let mut next_index = 1;
+            // OK if one of the values is DEFAULT as the only value.
+            if expected == 1 && is_default(&values[0]) && values.len() > 1 {
+                expected = value_len(&values[1]);
+                next_index += 1;
+            }
+            for value in &values[next_index..] {
+                if value_len(value) != expected {
+                    if value_len(value) == 1 && is_default(value) {
+                        continue;
+                    }
+                    // Go `ErrPartitionColumnList`: [ddl:1653].
+                    return Err(parser.err_coded(
+                        1653,
+                        "Inconsistency in usage of column lists for partitioning",
+                    ));
+                }
+            }
+            let columns = method.columns.len();
+            if columns == 0 && expected != 1 {
+                // Go `ErrRowSinglePartitionField`: [ddl:1658].
+                return Err(parser.err_coded(
+                    1658,
+                    "Row expressions in VALUES IN only allowed for multi-field column partitioning",
+                ));
+            }
+            if columns > 0 && expected != columns {
+                if values.len() == 1 && expected == 1 && is_default(&values[0]) {
+                    // Only one value, which is DEFAULT, which is OK.
+                    return Ok(());
+                }
+                // Go `ErrPartitionColumnList`: [ddl:1653].
+                return Err(parser.err_coded(
+                    1653,
+                    "Inconsistency in usage of column lists for partitioning",
+                ));
             }
             Ok(())
         }

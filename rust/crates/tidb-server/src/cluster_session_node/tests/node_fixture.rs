@@ -314,6 +314,7 @@ pub(super) fn open_session_on(node: &MockNode) -> ClusterServerSession {
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -331,6 +332,7 @@ pub(super) fn open_session_on_with_context(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
         context,
     )
 }
@@ -347,6 +349,7 @@ pub(super) fn open_session_on_with_ddl(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -360,6 +363,7 @@ pub(super) fn open_session_on_with_accounts(
         accounts,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -373,6 +377,7 @@ pub(super) fn open_session_on_with_sysvars(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         sysvars,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -386,6 +391,21 @@ pub(super) fn open_session_on_with_analyze(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         analyze,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    )
+}
+
+pub(super) fn open_session_on_with_stats_lock(
+    node: &MockNode,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+) -> ClusterServerSession {
+    open_session_on_with_seams(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        stats_lock,
     )
 }
 
@@ -395,6 +415,7 @@ fn open_session_on_with_seams(
     accounts: Arc<dyn ClusterAccountWriter>,
     sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> ClusterServerSession {
     let mut session = open_session_on_with_context_and_seams(
         node,
@@ -402,6 +423,7 @@ fn open_session_on_with_seams(
         accounts,
         sysvars,
         analyze,
+        stats_lock,
         session_context(1),
     );
     // The catalog is loaded, not created here: `USE` is how a connection
@@ -416,8 +438,46 @@ fn open_session_on_with_context_and_seams(
     accounts: Arc<dyn ClusterAccountWriter>,
     sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> ClusterServerSession {
+    open_session_on_with_context_and_seams_and_usage(
+        node, ddl, accounts, sysvars, analyze, stats_lock, context,
+    )
+    .0
+}
+
+pub(super) fn open_session_on_with_usage(
+    node: &MockNode,
+) -> (
+    ClusterServerSession,
+    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+) {
+    let (mut session, usage) = open_session_on_with_context_and_seams_and_usage(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(MockStatsLock) as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+        session_context(1),
+    );
+    session.execute_write("USE app").expect("USE app");
+    (session, usage)
+}
+
+fn open_session_on_with_context_and_seams_and_usage(
+    node: &MockNode,
+    ddl: Arc<dyn ClusterDdl>,
+    accounts: Arc<dyn ClusterAccountWriter>,
+    sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+    analyze: Arc<dyn ClusterAnalyze>,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    context: SessionContext,
+) -> (
+    ClusterServerSession,
+    Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+) {
     let cluster = Arc::clone(&node.cluster);
     let factory = ClusterSessionFactory::new(
         Arc::new(MockTransactions(cluster)),
@@ -425,17 +485,21 @@ fn open_session_on_with_context_and_seams(
         accounts,
         sysvars,
         analyze,
+        stats_lock,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),
-        Arc::new(SharedStats::new(
-            tidb_exec::stats_watch::StatsSnapshot::new(),
-        )),
+        Arc::new(
+            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+                .expect("statistics cache"),
+        ),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
-    factory
+    let usage = Arc::clone(&factory.stats_usage);
+    let session = factory
         .open_session(context)
-        .expect("the cluster session opens")
+        .expect("the cluster session opens");
+    (session, usage)
 }
 
 pub(super) fn session_context(connection_id: u64) -> SessionContext {
@@ -457,11 +521,11 @@ pub(super) fn session_context_with_identity(
         connection_id,
         peer_addr,
         identity,
+        client_found_rows: false,
         secure_transport: false,
         tls_status: None,
         cancellation: ConnectionCancellation::default(),
         close: ConnectionClose::default(),
-        version_info: tidb_util::versioninfo::VersionInfo::build_default(),
     }
 }
 

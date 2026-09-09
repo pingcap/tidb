@@ -29,6 +29,7 @@
 //! in the parent.
 
 use super::{Catalog, DdlStmt, DriverError, Stmt};
+use tidb_hack::GoToLower;
 
 /// Runs a `RENAME TABLE`, validating each pair in written order and then
 /// moving them all or none.
@@ -87,9 +88,9 @@ pub fn run_rename_table_in(
     };
     for (from, to) in &pairs {
         let (from_db, from_name) = crate::driver::split_table_path_pub(from, current_db)?;
-        let (from_db, from_name) = (from_db.to_lowercase(), from_name.to_lowercase());
+        let (from_db, from_name) = (from_db.go_to_lower(), from_name.go_to_lower());
         let (to_db, to_name) = crate::driver::split_table_path_pub(to, current_db)?;
-        let (to_db, to_name) = (to_db.to_lowercase(), to_name.to_lowercase());
+        let (to_db, to_name) = (to_db.go_to_lower(), to_name.go_to_lower());
 
         super::refuse_local_temporary_table_ddl(catalog, &from_db, &from_name, "RENAME TABLE")?;
         if !staged_table_exists(catalog, &staged, &from_db, &from_name) {
@@ -129,13 +130,6 @@ pub fn run_rename_table_in(
         if source_cached {
             return Err(DriverError::OperationOnCachedTable(cache_operation));
         }
-        // A foreign key names the referenced table, so moving one side would
-        // leave the constraint pointing at a name that no longer resolves.
-        if crate::foreign_key::participates(catalog, &from_db, &from_name) {
-            return Err(DriverError::unsupported(
-                "renaming a table involved in a FOREIGN KEY is not supported yet",
-            ));
-        }
         staged.push(Rename {
             from_db,
             from_name,
@@ -146,6 +140,13 @@ pub fn run_rename_table_in(
     }
 
     for rename in &staged {
+        crate::foreign_key::rewrite_table_references(
+            catalog,
+            &rename.from_db,
+            &rename.from_name,
+            &rename.to_db,
+            &rename.to_name,
+        );
         catalog.rename_table(
             &rename.from_db,
             &rename.from_name,
@@ -198,6 +199,20 @@ pub fn run_truncate_table_in(
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
+    run_truncate_table_in_with_foreign_key_checks(sql, catalog, current_db, sql_mode, true)
+}
+
+/// Runs `TRUNCATE TABLE` with the issuing session's `foreign_key_checks`
+/// switch. Go's owner check is skipped when the switch is OFF, and a
+/// self-referencing constraint is ignored because truncation removes the
+/// child and parent rows together.
+pub fn run_truncate_table_in_with_foreign_key_checks(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    sql_mode: tidb_parser::SqlMode,
+    foreign_key_checks: bool,
+) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
@@ -212,6 +227,16 @@ pub fn run_truncate_table_in(
     };
     let (database, name) = crate::driver::split_table_path_pub(truncate, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
+    if foreign_key_checks {
+        if let Some(error) = crate::foreign_key::find_table_referred(
+            catalog,
+            &database,
+            &name,
+            &[(database.clone(), name.clone())],
+        ) {
+            return Err(error);
+        }
+    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
@@ -283,13 +308,12 @@ pub fn run_drop_table_in(
     // `None` is "no such object"; a view or a sequence answers
     // `TempTableType::NONE`, because Go's `TableByName` finds those too and
     // judges them by the `TempTableType` their `TableInfo` carries.
-    let kind_of = |catalog: &Catalog, database: &str, name: &str| match catalog
-        .table_in(database, name)
-    {
-        Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
-        Some(_) => Some(tidb_model::TempTableType::NONE),
-        None => None,
-    };
+    let kind_of =
+        |catalog: &Catalog, database: &str, name: &str| match catalog.table_in(database, name) {
+            Some(crate::TableEntry::Kv(table)) => Some(table.temp_table_type()),
+            Some(_) => Some(tidb_model::TempTableType::NONE),
+            None => None,
+        };
 
     match drop.temporary {
         tidb_ast::DropTemporary::None => {}

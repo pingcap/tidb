@@ -54,7 +54,7 @@
 use crate::cardinality::row_size::{get_avg_row_size_data_in_disk_by_rows, RowSizeColumn};
 use crate::cost_usage::{
     add_cost_without_trace, div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2,
-    sum_cost_ver2, trace_cost, zero_cost_ver2, CostVer2, CostVer2Factor, PlanCostOption,
+    sum_cost_ver2, trace_cost, CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2,
 };
 use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
@@ -270,6 +270,9 @@ impl Ver2Factors {
 /// already applied here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CostSessionOpts {
+    /// `tidb_hash_join_concurrency`, resolved and stamped on each
+    /// `PhysicalHashJoin` candidate when it is built.
+    pub hash_join_concurrency: f64,
     /// `tidb_distsql_scan_concurrency`.
     pub distsql_scan_concurrency: f64,
     /// `tidb_index_lookup_concurrency`, resolved.
@@ -301,6 +304,7 @@ pub struct CostSessionOpts {
 impl Default for CostSessionOpts {
     fn default() -> Self {
         Self {
+            hash_join_concurrency: 5.0,
             distsql_scan_concurrency: 15.0,
             index_lookup_concurrency: 5.0,
             index_lookup_join_concurrency: 5.0,
@@ -587,7 +591,7 @@ pub fn index_join_seeking_cost(
     scan_factor: &CostVer2Factor,
 ) -> CostVer2 {
     if build_rows <= 1.0 || num_ranges <= 1.0 {
-        return zero_cost_ver2();
+        return ZERO_COST_VER2;
     }
     new_cost_ver2(
         option,
@@ -949,7 +953,7 @@ pub fn index_merge_reader_cost(
             dist_concurrency,
         )
     };
-    let table_cost = table_side.map_or_else(zero_cost_ver2, side_cost);
+    let table_cost = table_side.map_or_else(|| ZERO_COST_VER2, side_cost);
     let index_costs: Vec<CostVer2> = index_sides.iter().map(side_cost).collect();
     let mut cost = sum_cost_ver2(&[table_cost, sum_cost_ver2(&index_costs)]);
     if has_pushed_limit {
@@ -1007,7 +1011,7 @@ pub fn sort_cost(
                 rows * row_size * mem_factor.value(),
                 || format!("sortMem({rows}*{row_size}*{mem_factor})"),
             ),
-            zero_cost_ver2(),
+            ZERO_COST_VER2,
         )
     };
     let cost = sum_cost_ver2(&[child_cost.clone(), sort_cpu, sort_mem, sort_disk]);
@@ -1137,7 +1141,7 @@ pub fn hash_agg_cost(
                 || format!("hashmem({concurrency}*{output_rows}*{output_row_size}*{mem_factor})"),
             )
         } else {
-            zero_cost_ver2()
+            ZERO_COST_VER2
         };
         let hash_build_cpu = new_cost_ver2(
             option,
@@ -1469,7 +1473,7 @@ pub fn point_get_cost(
     has_access_cols: bool,
 ) -> CostVer2 {
     if !has_access_cols {
-        return zero_cost_ver2();
+        return ZERO_COST_VER2;
     }
     net_cost(option, rows, row_size, net_factor)
 }

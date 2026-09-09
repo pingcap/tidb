@@ -63,6 +63,16 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_column(path)
     }
 
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        self.base.resolve_expression(path)
+    }
+
+    /// Forwarded: the clause an unknown-column error names belongs to the
+    /// statement's rewriter, and this decorator wraps it for sub-expressions.
+    fn clause_message(&self) -> &'static str {
+        self.base.clause_message()
+    }
+
     fn orig_name(&self, path: &[String]) -> Option<String> {
         self.base.orig_name(path)
     }
@@ -101,6 +111,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
 
     fn no_unsigned_subtraction(&self) -> bool {
         self.base.no_unsigned_subtraction()
+    }
+
+    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+        self.base.comparison_context()
     }
 
     fn div_precision_increment(&self) -> u32 {

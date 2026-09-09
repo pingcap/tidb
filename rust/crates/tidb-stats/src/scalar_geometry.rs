@@ -27,7 +27,6 @@ use tidb_datatype::{CoreTime, Datum, Time, TimeType, DEFAULT_FSP};
 ///
 /// This follows the source's boundary ordering and its fallback of `0.5` for
 /// invalid fractions rather than exposing a NaN/Infinity to callers.
-#[must_use]
 pub fn calc_fraction(lower: f64, upper: f64, value: f64) -> f64 {
     if upper <= lower {
         return 0.5;
@@ -46,7 +45,6 @@ pub fn calc_fraction(lower: f64, upper: f64, value: f64) -> f64 {
 }
 
 /// Returns the common prefix length of all byte strings.
-#[must_use]
 pub fn common_prefix_length(strings: &[&[u8]]) -> usize {
     let Some(first) = strings.first() else {
         return 0;
@@ -66,7 +64,6 @@ pub fn common_prefix_length(strings: &[&[u8]]) -> usize {
 /// At most the first eight bytes participate. Shorter values are shifted into
 /// the high bits, while eight-or-more-byte values use the first eight bytes as
 /// a big-endian `u64`, exactly as the Go helper does.
-#[must_use]
 pub fn convert_bytes_to_scalar(bytes: &[u8]) -> f64 {
     if bytes.is_empty() {
         return 0.0;
@@ -123,7 +120,6 @@ fn time_to_scalar(value: Time) -> f64 {
 
 /// `pkg/statistics/scalar.go`'s `convertDatumToScalar` over an already-decoded
 /// datum.
-#[must_use]
 pub fn convert_datum_to_scalar(value: &Datum, common_prefix_length: usize) -> f64 {
     match value {
         // KindFloat32 retains a float64 raw payload, but GetFloat32 narrows it
@@ -228,7 +224,6 @@ fn bytes_to_scalar(bytes: &[u8], common_prefix_length: usize) -> f64 {
 /// `pkg/statistics/scalar.go`'s `calcFraction4Datums`, which chooses numeric
 /// getters solely from `value`'s kind, even when either bound has another
 /// representable fresh datum kind.
-#[must_use]
 pub fn calc_fraction_from_datums(lower: &Datum, upper: &Datum, value: &Datum) -> f64 {
     match value {
         Datum::Float32(_) => calc_fraction(

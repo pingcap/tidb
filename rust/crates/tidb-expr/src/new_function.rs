@@ -57,20 +57,22 @@
 //!   [`crate::scalar_function`]'s BRIDGE DECISION). Consequently:
 //!   - Arity is verified exactly, via
 //!     [`crate::builtin_registry::verify_args_by_count`].
-//!   - The return type comes from this crate's own name-keyed inference
-//!     table, `rewriter::result_type::builtin_return_type`, which is the
-//!     nearest thing to `f.getRetTp()`. When that table has no entry, the
-//!     CALLER's `ret_type` is kept. Go's rule is
+//!   - The return type comes from this crate's arithmetic inference table
+//!     followed by the name-keyed `rewriter::result_type::builtin_return_type`,
+//!     which together are the nearest thing to `f.getRetTp()`. When neither
+//!     table has an entry, the CALLER's `ret_type` is kept. Go's rule is
 //!     `if builtinRetTp != TypeUnspecified || retType == TypeUnspecified {
 //!     retType = builtinRetTp }`; the Rust rule is the same statement with
 //!     "the table produced an answer" standing in for "the signature's
 //!     `getRetTp` is not `TypeUnspecified`".
-//!   - Collation derivation on the built node does NOT happen here. Go
-//!     derives it inside `getFunction` via `deriveCollation`. A node built by
-//!     this file carries [`crate::expr_collation::CollationInfo`]'s default
-//!     until something sets it. This is the single largest gap in this file
-//!     and it is why callers that care about collation still go through
-//!     [`crate::rewriter`].
+//!   - Collation derivation and `HandleBinaryLiteral` wrapping run here in the
+//!     same order as Go's `newBaseBuiltinFuncWithTp` for string-bearing calls:
+//!     derive the result charset first, then wrap non-legacy string arguments
+//!     when the function consumes a binary result. The ordinary AST rewriter
+//!     shares the same wrapping helper, so direct `NewFunction` callers and
+//!     rewritten SQL cannot disagree on charset bytes. Purely numeric calls
+//!     retain their existing metadata so constant-propagation rebuilds stay
+//!     structurally identical.
 //!
 //! - **Four special-cased names are refused, not built.** `newFunctionImpl`
 //!   opens with a switch that hands four names to dedicated node builders
@@ -97,12 +99,10 @@
 //!   upstream today. It is therefore not modelled, and no `noop_funcs_mode`
 //!   accessor is added to [`crate::Columns`] for a branch that has no members.
 //!
-//! - **`defaultScalarFunctionCheck`'s `ast.Grouping` branch is dropped.** It
-//!   downcasts `function.Function` to `*BuiltinGroupingImplSig` to assert
-//!   `isMetaInited`. The Rust node holds no signature object, so there is
-//!   nothing to downcast; [`crate::grouping::GroupingFunction`] owns that
-//!   metadata separately and validates it at its own construction. Building a
-//!   `grouping` node here therefore does NOT reproduce Go's
+//! - **`defaultScalarFunctionCheck`'s `ast.Grouping` branch is carried by the
+//!   node.** [`ScalarFunction::set_grouping_metadata`] is the Rust spelling of
+//!   `BuiltinGroupingImplSig.SetMetadata`; the default callback rejects a
+//!   grouping node until that metadata is installed, reproducing Go's
 //!   "grouping meta data hasn't been initialized" error.
 //!
 //! - **`typeInferForNull` drops its `EvalContext`.** Go needs it for
@@ -122,7 +122,7 @@ use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, EvalError};
 use tidb_ast::CiString;
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Go `ScalarFunctionCallBack` (`scalar_function.go:295`): a hook run on the
 /// freshly built node before folding, able to reject or replace it.
@@ -201,11 +201,15 @@ pub fn type_infer_for_null(args: &mut [Expression]) {
 
 /// Go `defaultScalarFunctionCheck` (`scalar_function.go:298`).
 ///
-/// Go's only check is the `ast.Grouping` metadata assertion, which this port
-/// cannot express -- see the module header's `defaultScalarFunctionCheck`
-/// narrowing. The function is kept so the callback plumbing matches Go's and
-/// so future checks have the same place to land.
+/// Grouping is the one built-in whose signature carries planner-installed
+/// state. The source rejects a fresh node until `SetMetadata` has run; the
+/// Rust node carries the same state directly and exposes the same guard.
 fn default_scalar_function_check(function: ScalarFunction) -> Result<ScalarFunction, EvalError> {
+    if function.func_name.lowercase() == "grouping" && !function.has_grouping_metadata() {
+        return Err(EvalError::Unsupported(
+            "grouping meta data hasn't been initialized, try use function clone instead",
+        ));
+    }
     Ok(function)
 }
 
@@ -287,20 +291,80 @@ pub fn new_function_impl(
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
     // `getFunction` narrowing for why the inference table stands in for
     // `f.getRetTp()`.
-    let ret_type = crate::rewriter::result_type::builtin_return_type(func_name, &func_args)
+    // Go's function-class `getFunction` infers arithmetic result metadata
+    // before applying the caller's placeholder `retType`.  Keep that same
+    // precedence for direct `NewFunction` callers (the AST rewriter already
+    // uses this helper's arithmetic table for binary operators); otherwise a
+    // non-constant `plus` built through a `FunctionBuilder` remains
+    // `Unspecified` and comparison construction inserts a spurious
+    // `cast_signed` around it.
+    let arithmetic_type = match func_args.as_slice() {
+        [lhs, rhs] => crate::builtin_arithmetic::infer_arithmetic_type_with_context(
+            func_name,
+            lhs,
+            rhs,
+            ctx.no_unsigned_subtraction(),
+            ctx.div_precision_increment(),
+        ),
+        _ => None,
+    };
+    let ret_type = arithmetic_type
+        .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))
         .filter(|inferred| {
             inferred.code() != FieldTypeCode::Unspecified
                 || ret_type.code() == FieldTypeCode::Unspecified
         })
         .unwrap_or(ret_type);
 
-    let function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
+    // Collation participates in Go's construction-time conversion only when
+    // the call produces a string or consumes one. Numeric-only rebuilds (for
+    // example constant propagation's `gt(INT, INT)`) deliberately keep the
+    // pre-existing result metadata; those nodes do not consult collation and
+    // their structural identity is observable by the rewrite passes.
+    let derive_collation = (ret_type.code() != FieldTypeCode::Unspecified
+        && ret_type.eval_type() == EvalType::String)
+        || func_args.iter().any(|arg| {
+            arg.static_type()
+                .is_some_and(|field_type| field_type.eval_type() == EvalType::String)
+        });
+    let derived = if derive_collation {
+        Some(crate::collation_derive::derive_collation_with_connection(
+            func_name,
+            &func_args,
+            ret_type.eval_type(),
+            ctx.connection_charset_info(),
+        )?)
+    } else {
+        None
+    };
+    let func_args = match &derived {
+        Some(derived) => crate::rewriter::wrap_binary_literals(
+            func_name,
+            &derived.charset,
+            func_args,
+            |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
+        ),
+        None => func_args,
+    };
+
+    let mut function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
+    // Go's grouping signature marks its result as an unsigned BIGINT because
+    // the returned bits encode multiple grouping flags.
+    if func_name == "grouping" {
+        if let Some(ret_type) = function.ret_type.as_mut() {
+            ret_type.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+    }
     let function = match check_or_init {
         Some(callback) => callback(function)?,
         None => function,
     };
 
     let mut expr = Expression::ScalarFunction(function);
+    if let Some(derived) = &derived {
+        crate::collation_derive::apply_derived_collation(&mut expr, derived);
+        crate::rewriter::restore_function_result_charset(&mut expr)?;
+    }
     fold_constant_in_mode(&mut expr, ctx, fold);
     Ok(expr)
 }
@@ -425,8 +489,9 @@ mod tests {
         scalar_funcs_to_exprs, type_infer_for_null,
     };
     use crate::column::Column;
-    use crate::constant::Constant;
+    use crate::constant::{Constant, ParamMarker};
     use crate::context::NoColumns;
+    use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
     use crate::expression::Expression;
     use crate::scalar_function::ScalarFunction;
     use crate::{Columns, EvalError};
@@ -575,6 +640,83 @@ mod tests {
         )
         .expect("plus over a column builds");
         assert_eq!(as_func(&built).func_name.lowercase(), "plus");
+    }
+
+    /// Go's arithmetic function classes infer the result type even when the
+    /// caller supplies an unspecified placeholder.  A correctly typed
+    /// `plus(Column, constant)` must stay in the integer comparison domain;
+    /// leaving it unspecified makes `lt(Column, plus(...))` acquire a
+    /// Rust-only `cast_signed` wrapper during comparison refinement.
+    #[test]
+    fn arithmetic_builder_infers_result_type_before_comparison_refinement() {
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let column =
+            |id| Expression::Column(Column::new(id, FieldType::new(FieldTypeCode::LongLong)));
+        let sum = builder
+            .new_function("plus", None, vec![column(1), int_constant(1)])
+            .expect("plus over a column builds");
+        assert_eq!(
+            as_func(&sum)
+                .ret_type
+                .as_ref()
+                .expect("plus has a result type")
+                .code(),
+            FieldTypeCode::LongLong
+        );
+
+        let comparison = builder
+            .new_function("lt", None, vec![column(0), sum])
+            .expect("lt over the arithmetic expression builds");
+        let right = &as_func(&comparison).get_args()[1];
+        assert_eq!(
+            as_func(right).func_name.lowercase(),
+            "plus",
+            "comparison refinement must not wrap a typed integer expression"
+        );
+    }
+
+    /// Go's `FoldConstant` preserves parameter provenance on a folded result.
+    /// The value is available for this construction context, but the
+    /// expression must remain `ConstOnlyInContext` so a plan cache cannot
+    /// treat it as a strict literal.
+    #[test]
+    fn folding_a_parameter_keeps_context_only_provenance() {
+        struct Parameters(Vec<Datum>);
+        impl Columns for Parameters {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+                self.0
+                    .get(order)
+                    .cloned()
+                    .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+            }
+        }
+        let mut parameter = Constant::new(Datum::Int(7), FieldType::new(FieldTypeCode::LongLong));
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let folded = new_function(
+            &Parameters(vec![Datum::Int(7)]),
+            "plus",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![int_constant(1), Expression::Constant(parameter)],
+        )
+        .expect("plus over a parameter builds");
+        let Expression::Constant(constant) = &folded else {
+            panic!("the constant expression should fold during construction");
+        };
+        assert!(
+            constant.deferred_expr.is_some(),
+            "folded parameter must retain deferred provenance"
+        );
+        assert_eq!(
+            folded.const_level(),
+            crate::expression::ConstLevel::ONLY_IN_CONTEXT
+        );
+        assert_eq!(
+            crate::eval_expression_once(&folded, &Parameters(vec![Datum::Int(11)])).unwrap(),
+            Datum::Int(12)
+        );
     }
 
     /// NEW COVERAGE of the arity gate, Go `ErrIncorrectParameterCount` (1582).

@@ -57,3 +57,9 @@ fn every_byte_has_the_exact_go_result() {
         assert_eq!(actual, expected, "input {byte:#04x}");
     }
 }
+
+#[test]
+#[deny(unused_must_use)]
+fn return_value_may_be_ignored_like_go() {
+    unescape_char(b'n');
+}

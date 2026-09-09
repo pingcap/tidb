@@ -39,117 +39,6 @@ use super::{DirectUnaryClientError, TransportShutdownError};
 
 mod batching;
 
-/// Env-gated admission diagnostics (`TIKV_ADMISSION_LOG=1`). Purely additive:
-/// relaxed atomics on the measured paths plus one stderr dumper thread.
-pub mod admit_diag {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
-
-    static ADMIT_WAIT_US: AtomicU64 = AtomicU64::new(0);
-    static ADMIT_COUNT: AtomicU64 = AtomicU64::new(0);
-    static ADMIT_MAX_US: AtomicU64 = AtomicU64::new(0);
-    static WORKER_SUBMIT_US: AtomicU64 = AtomicU64::new(0);
-    static WORKER_SUBMIT_COUNT: AtomicU64 = AtomicU64::new(0);
-    static WORKER_SUBMIT_MAX_US: AtomicU64 = AtomicU64::new(0);
-    static WORKER_EVENT_US: AtomicU64 = AtomicU64::new(0);
-    static WORKER_EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
-
-    fn bump(total: &AtomicU64, count: &AtomicU64, max: &AtomicU64, us: u64) {
-        total.fetch_add(us, Ordering::Relaxed);
-        count.fetch_add(1, Ordering::Relaxed);
-        max.fetch_max(us, Ordering::Relaxed);
-    }
-
-    /// Client side: full wait from command send to the worker's reply.
-    pub fn note_admit_wait(wait: std::time::Duration) {
-        if !enabled() {
-            return;
-        }
-        bump(
-            &ADMIT_WAIT_US,
-            &ADMIT_COUNT,
-            &ADMIT_MAX_US,
-            wait.as_micros() as u64,
-        );
-        start_dumper();
-    }
-
-    /// Worker side: one batch publication duration.
-    pub fn note_worker_submit(elapsed: std::time::Duration) {
-        if !enabled() {
-            return;
-        }
-        bump(
-            &WORKER_SUBMIT_US,
-            &WORKER_SUBMIT_COUNT,
-            &WORKER_SUBMIT_MAX_US,
-            elapsed.as_micros() as u64,
-        );
-    }
-
-    /// Worker side: one stream retirement/recreation duration.
-    pub fn note_worker_event(elapsed: std::time::Duration) {
-        if !enabled() {
-            return;
-        }
-        bump(
-            &WORKER_EVENT_US,
-            &WORKER_EVENT_COUNT,
-            &WORKER_EVENT_MAX_US,
-            elapsed.as_micros() as u64,
-        );
-    }
-
-    static WORKER_EVENT_MAX_US: AtomicU64 = AtomicU64::new(0);
-
-    fn enabled() -> bool {
-        static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("TIKV_ADMISSION_LOG").is_some())
-    }
-
-    fn snapshot_line() -> String {
-        let aw = ADMIT_WAIT_US.swap(0, Ordering::Relaxed);
-        let ac = ADMIT_COUNT.swap(0, Ordering::Relaxed);
-        let am = ADMIT_MAX_US.swap(0, Ordering::Relaxed);
-        let ws = WORKER_SUBMIT_US.swap(0, Ordering::Relaxed);
-        let wc = WORKER_SUBMIT_COUNT.swap(0, Ordering::Relaxed);
-        let wm = WORKER_SUBMIT_MAX_US.swap(0, Ordering::Relaxed);
-        let we = WORKER_EVENT_US.swap(0, Ordering::Relaxed);
-        let ec = WORKER_EVENT_COUNT.swap(0, Ordering::Relaxed);
-        let em = WORKER_EVENT_MAX_US.swap(0, Ordering::Relaxed);
-        let avg = |t: u64, c: u64| if c > 0 { t / c } else { 0 };
-        format!(
-            "ADMISSION admit_n={ac} admit_avg_us={} admit_max_us={am} wsubmit_n={wc} wsubmit_avg_us={} wsubmit_max_us={wm} wevent_n={ec} wevent_avg_us={} wevent_max_us={em}",
-            avg(aw, ac),
-            avg(ws, wc),
-            avg(we, ec),
-        )
-    }
-
-    fn start_dumper() {
-        static START: OnceLock<()> = OnceLock::new();
-        START.get_or_init(|| {
-            if !enabled() {
-                return;
-            }
-            let period_ms = std::env::var("TIKV_ADMISSION_LOG_PERIOD_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(2_000)
-                .clamp(200, 60_000);
-            let spawned = std::thread::Builder::new()
-                .name("admission-log".to_owned())
-                .spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_millis(period_ms));
-                    eprintln!("{}", snapshot_line());
-                });
-            if let Err(err) = spawned {
-                eprintln!("admission-log failed to spawn: {err}");
-            }
-        });
-    }
-}
-
 pub(super) enum WorkerCommand {
     UnarySend {
         address: String,
@@ -367,11 +256,8 @@ impl TransportHandle {
         address: &str,
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        let started = std::time::Instant::now();
         let response = self.batch_submit_with_receipts(address, entries, None)?;
-        let receipts = wait(response).map_err(|_| DirectUnaryClientError::Closed);
-        admit_diag::note_admit_wait(started.elapsed());
-        receipts
+        wait(response).map_err(|_| DirectUnaryClientError::Closed)
     }
 
     fn batch_submit_with_receipts(
@@ -490,12 +376,6 @@ impl TransportHandle {
     }
 }
 
-/// Env gate for wire-level stall tracing (`TIKV_QUERY_TRACE`).
-pub(in crate::rpc) fn wtrace_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TIKV_QUERY_TRACE").is_some())
-}
-
 struct TransportConnection {
     channels: ChannelPool,
     batch: BatchTransportState,
@@ -520,7 +400,6 @@ fn publish_batch(
     submissions: Vec<BatchSubmission>,
     commands: &mpsc::UnboundedSender<WorkerCommand>,
 ) {
-    let started = std::time::Instant::now();
     let count = NonZeroUsize::new(connections.len()).expect("nonempty connection fleet");
     let index = select_connection(cursors, address, count);
     let connection = &mut connections[index];
@@ -533,7 +412,6 @@ fn publish_batch(
         submissions,
         commands,
     );
-    admit_diag::note_worker_submit(started.elapsed());
 }
 
 async fn run_worker(
@@ -711,7 +589,6 @@ async fn run_worker(
                     }
                 }
                 WorkerCommand::BatchEvent(event) => {
-                    let event_started = std::time::Instant::now();
                     let BatchStreamEvent::Retired { route } = &event;
                     // Channel versions are unique within this owner. A stale event
                     // after exact invalidation cannot match another connection.
@@ -726,7 +603,6 @@ async fn run_worker(
                             event,
                         );
                     }
-                    admit_diag::note_worker_event(event_started.elapsed());
                 }
                 WorkerCommand::CloseAddress { address, reply } => {
                     for connection in &mut connections {
@@ -849,7 +725,7 @@ mod tests {
             let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
             let entry = BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, vec![index]),
-                completion.into(),
+                completion,
             );
             progress.push(entry.progress());
             pending.push(pull);
@@ -928,7 +804,7 @@ mod tests {
             let (completion, mut pull) = completion_pair(CompletionRunLoop::new(), || {});
             let mut entry = BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, vec![index as u8]),
-                completion.into(),
+                completion,
             );
             if index == 3 {
                 entry = entry.with_forwarded_host("logical-store:20160");
@@ -995,6 +871,18 @@ mod tests {
             .batch_state()
             .unwrap()
             .shares_state_with(&progress[3].batch_state().unwrap()));
+    }
+
+    #[test]
+    fn batch_publication_refuses_a_closed_transport() {
+        let (commands, receiver) = mpsc::unbounded_channel();
+        drop(receiver);
+        let handle = TransportHandle { commands };
+
+        assert!(matches!(
+            handle.batch_submit("127.0.0.1:20160", Vec::new()),
+            Err(DirectUnaryClientError::Closed)
+        ));
     }
 
     fn cancellation() -> TransportShutdownCancellation {

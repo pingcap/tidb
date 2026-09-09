@@ -29,9 +29,9 @@
 //! optimizer pass can be written against. The tree is what those become
 //! passes over.
 //!
-//! It is a SEED of `pkg/planner/core`: the tree and its method surface land
-//! complete; the operator set does not, and every operator not yet ported is
-//! an explicit `Todo` variant naming its Go type rather than a default arm.
+//! It is an incremental transcreation of `pkg/planner/core`: the ordinary
+//! SELECT path now builds and costs this tree, with typed variants for the
+//! logical and physical operators rather than a silent default arm.
 //!
 //! # One tree is the truth
 //!
@@ -42,15 +42,13 @@
 //! * Statistics derive on the tree directly:
 //!   `LogicalPlan::recursive_derive_stats`, over the per-operator
 //!   `DeriveStats` bodies.
-//! * The join enumeration's reduced view (`find_best_task::LogicalNode`) is
-//!   PRODUCED FROM the tree by `find_best_task::project_join_spine`; its
+//! * Join enumeration projects only the fields it reads from the shared
+//!   logical join; its
 //!   leaves take caller-supplied access-path alternatives until access-path
 //!   enumeration is real — a named residue.
-//! * The third representation this crate once held — the DP join-reorder
-//!   driver's private catalog model — now lives WITH that driver
-//!   (`tidb-executor`'s `driver::legacy_stats`) and dies with it. This crate
-//!   keeps only the shared per-rule arithmetic in [`cardinality`], cited to
-//!   the same Go bodies both passes were read from.
+//! * The former executor-local catalog and statistics representation has been
+//!   removed. This crate keeps the shared per-rule arithmetic in
+//!   [`cardinality`], cited to the corresponding Go planner implementation.
 //!
 //! Do not add reduced plan representations here: project from the tree, or
 //! derive on it.
@@ -78,22 +76,23 @@
 //! stack-explicit; the measurements behind both decisions are recorded in the
 //! [`logical`] module header.
 //!
-//! # What is NOT here
+//! # Runtime boundary
 //!
-//! No optimizer driver. Nothing in this crate runs a rule pass or picks a
-//! plan; the live query path still plans inside `tidb-executor`'s driver.
-//! [`plan::PlanNode`] remains as the explain-only metadata view it always
-//! was, and is not a second plan representation — see its module header.
+//! [`plan_builder`], [`logical::prepare_possible_properties`], and
+//! [`find_best_task`] form the live ordinary SELECT optimizer. The executor
+//! driver supplies catalog/session inputs and mechanically lowers the selected
+//! physical receipt; it must not re-enumerate access, join, or aggregation
+//! alternatives. [`plan::PlanNode`] remains an explain-only metadata view and
+//! is not a second plan representation — see its module header.
 
+pub mod access;
 pub mod access_path;
 pub mod aggregation_descriptor;
 pub mod base_traits;
 pub mod by_item;
-pub mod candidate_cost;
 pub mod cardinality;
 pub mod cascades_base;
 pub mod column_length;
-pub mod column_pruning;
 pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod condition_to_dual;
@@ -101,9 +100,12 @@ pub mod configured_join_plan;
 pub mod configured_order_limit;
 pub mod configured_order_limit_contract;
 pub mod configured_relation_tree;
+pub mod constraint;
+pub mod core_usage;
 pub mod cost_factors;
 pub mod cost_usage;
 pub mod derive_topn_from_window;
+pub mod domain_misc;
 pub mod eliminate_empty_selection;
 pub mod eliminate_unionall_dual_item;
 pub mod enforce;
@@ -114,6 +116,7 @@ pub mod expression_rewriter;
 pub mod final_mode_agg;
 pub mod find_best_task;
 pub mod fix_control;
+pub mod fulltext;
 pub mod group_expr;
 pub mod handle_cols;
 pub mod hash_equaler;
@@ -122,7 +125,7 @@ pub mod index_advisor_model;
 pub mod index_columns;
 pub mod index_task;
 pub mod join_condition;
-pub mod join_reorder_projection_inline;
+pub mod joinorder;
 pub mod logical;
 pub mod logical_cte_table;
 pub mod logical_data_source;
@@ -131,6 +134,7 @@ pub mod logical_limit;
 pub mod logical_lock;
 pub mod logical_max_one_row;
 pub mod logical_mem_table;
+pub mod logical_property;
 pub mod logical_schema_producer;
 pub mod logical_sequence;
 pub mod logical_show;
@@ -139,42 +143,23 @@ pub mod logical_sort;
 pub mod logical_table_dual;
 pub mod logical_top_n;
 pub mod logical_union_all;
-pub mod max_min_elimination;
 pub mod memo_group_id;
+pub mod metrics;
+pub mod partidx;
 pub mod pattern;
 pub mod pattern_engine;
 pub mod physical;
-pub mod physical_apply;
-pub mod physical_cte_table;
-pub mod physical_exchange_receiver;
-pub mod physical_exchange_sender;
-pub mod physical_index_scan;
-pub mod physical_limit;
-pub mod physical_lock;
-pub mod physical_max_one_row;
-pub mod physical_projection;
+pub mod physical_plan_cache;
 pub mod physical_property;
-pub mod physical_selection;
-pub mod physical_show;
-pub mod physical_shuffle;
-pub mod physical_sort;
-pub mod physical_table_dual;
 pub mod physical_table_reader;
-pub mod physical_table_sample;
-pub mod physical_table_scan;
-pub mod physical_topn;
-pub mod physical_union_all;
-pub mod physical_union_scan;
-pub mod physical_window;
 pub mod plan;
 pub mod plan_base;
 pub mod plan_builder;
-pub mod plan_cache_constants;
+pub mod plan_cache_lru;
 pub mod plan_context;
 pub mod plan_cost_ver2;
 pub mod predicate_partition;
 pub mod prepared_dml;
-pub mod projection_elimination;
 pub mod push_down_sequence;
 pub mod pushdown;
 pub mod range_detacher;
@@ -193,7 +178,9 @@ pub mod selectivity_greedy;
 pub mod signed_bigint_ranger;
 pub mod stack_contract;
 pub mod stats_info;
+pub mod storage_engine_usage;
 pub mod string_writer;
+pub mod table_sampler;
 pub mod task;
 pub mod task_scheduler;
 pub mod task_stack;

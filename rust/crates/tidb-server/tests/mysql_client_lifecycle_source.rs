@@ -33,13 +33,14 @@ use tidb_server::{
     SessionTransaction, SqlQueryError, WireStatus, WriteOutcome, SERVER_STATUS_IN_TRANS,
 };
 use tidb_session::ResultMaterializationAuthority;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
 const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
 const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
+const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 
 #[derive(Default)]
 struct Lifecycle {
@@ -195,6 +196,17 @@ fn authenticate_with_eof_mode(
     password: &[u8],
     deprecate_eof: bool,
 ) {
+    authenticate_with_options(client, reader, user, password, deprecate_eof, false);
+}
+
+fn authenticate_with_options(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &str,
+    password: &[u8],
+    deprecate_eof: bool,
+    local_files: bool,
+) {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let salt = handshake_salt(&initial);
@@ -211,6 +223,9 @@ fn authenticate_with_eof_mode(
         | CLIENT_CONNECT_ATTRS;
     if deprecate_eof {
         capabilities |= CLIENT_DEPRECATE_EOF;
+    }
+    if local_files {
+        capabilities |= CLIENT_LOCAL_FILES;
     }
     let mut response = Vec::new();
     response.extend_from_slice(&capabilities.to_le_bytes());
@@ -257,6 +272,149 @@ fn assert_mysql_error(packet: &[u8], code: u16, state: &[u8; 5]) {
     assert_eq!(&packet[4..9], state);
 }
 
+struct LocalInfileSession {
+    received: Arc<Mutex<Vec<u8>>>,
+}
+
+impl QuerySession for LocalInfileSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown("LOAD STATS must not use the query path"))
+    }
+
+    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
+        Ok((sql == "LOAD STATS 'client/stats.json'")
+            .then(|| "client/stats.json".to_owned()))
+    }
+
+    fn execute_local_infile(
+        &mut self,
+        sql: &str,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        assert_eq!(sql, "LOAD STATS 'client/stats.json'");
+        *self.received.lock().unwrap() = data.to_vec();
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
+}
+
+struct LocalInfileFactory {
+    received: Arc<Mutex<Vec<u8>>>,
+}
+
+impl QuerySessionFactory for LocalInfileFactory {
+    type Session = LocalInfileSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(LocalInfileSession {
+            received: Arc::clone(&self.received),
+        })
+    }
+}
+
+#[test]
+fn load_stats_uses_client_local_infile_packets() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let worker_received = Arc::clone(&received);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &LocalInfileFactory {
+                received: worker_received,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate_with_options(&mut client, &mut reader, "alice", b"secret", true, true);
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"LOAD STATS 'client/stats.json'");
+    write_packet(&mut client, 0, &query);
+    reader.set_sequence(1);
+    let request = reader.read_packet().unwrap();
+    assert_eq!(request[0], 0xfb);
+    assert_eq!(&request[1..], b"client/stats.json");
+    write_packet(&mut client, 2, br#"{"database_name":"test"}"#);
+    write_packet(&mut client, 3, &[]);
+    reader.set_sequence(4);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    assert_eq!(
+        received.lock().unwrap().as_slice(),
+        br#"{"database_name":"test"}"#
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+#[test]
+fn load_stats_requires_client_local_files() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let worker_received = Arc::clone(&received);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &LocalInfileFactory {
+                received: worker_received,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"LOAD STATS 'client/stats.json'");
+    write_packet(&mut client, 0, &query);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_mysql_error(&error, 1148, b"42000");
+    assert_eq!(
+        &error[9..],
+        b"The used command is not allowed with this MySQL version"
+    );
+    assert!(received.lock().unwrap().is_empty());
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
 fn prepared_catalog() -> ConfiguredCatalog {
     ConfiguredCatalog::new([ConfiguredTable::new(
         "campaign27",
@@ -294,6 +452,7 @@ fn prepared_point_range_keeps_its_two_marker_contract() {
     )
     .unwrap();
     let read = PreparedPointRead::new(
+        "SELECT balance FROM campaign27.rows WHERE id >= ? AND id <= ?".to_owned(),
         template,
         vec![prepared_balance_column()],
         vec![FieldType::new(FieldTypeCode::LongLong)],
@@ -367,6 +526,7 @@ impl QuerySession for PreparedSession {
         let template = prepare_configured_point_read(sql, &prepared_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         PreparedPointRead::new(
+            sql.to_owned(),
             template,
             vec![prepared_balance_column()],
             vec![FieldType::new(FieldTypeCode::LongLong)],
@@ -412,7 +572,7 @@ impl QuerySession for PreparedSession {
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let template = prepare_configured_write(sql, &prepared_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(
@@ -1910,6 +2070,8 @@ fn long_data_catalog() -> ConfiguredCatalog {
 /// a long-data parameter must arrive as one concatenated byte string.
 struct LongDataSession {
     bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    long_data_quota: Option<i64>,
+    long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
 
 impl QuerySession for LongDataSession {
@@ -1922,7 +2084,7 @@ impl QuerySession for LongDataSession {
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let template = prepare_configured_write(sql, &long_data_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(
@@ -1940,10 +2102,35 @@ impl QuerySession for LongDataSession {
             last_insert_id: 0,
         })
     }
+
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        let (Some(quota), Some(consumed)) = (&self.long_data_quota, &self.long_data_consumed)
+        else {
+            return true;
+        };
+        let mut consumed = consumed.lock().unwrap();
+        if *quota > 0 && consumed.saturating_add(bytes) >= *quota {
+            return false;
+        }
+        *consumed += bytes;
+        true
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        if let Some(consumed) = &self.long_data_consumed {
+            *consumed.lock().unwrap() -= bytes;
+        }
+    }
+
+    fn connection_id(&self) -> u64 {
+        42
+    }
 }
 
 struct LongDataFactory {
     bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    long_data_quota: Option<i64>,
+    long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
 
 impl QuerySessionFactory for LongDataFactory {
@@ -1952,6 +2139,8 @@ impl QuerySessionFactory for LongDataFactory {
     fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         Ok(LongDataSession {
             bound: Arc::clone(&self.bound),
+            long_data_quota: self.long_data_quota,
+            long_data_consumed: self.long_data_consumed.as_ref().map(Arc::clone),
         })
     }
 }
@@ -2016,6 +2205,8 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
         let (stream, peer_addr) = listener.accept().unwrap();
         let factory = LongDataFactory {
             bound: worker_bound,
+            long_data_quota: None,
+            long_data_consumed: None,
         };
         serve_mysql_connection(
             stream,
@@ -2102,6 +2293,104 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
 }
 
 #[test]
+fn long_data_quota_refuses_before_copy_and_releases_on_execute_and_close() {
+    // pkg/server/driver_tidb.go:126-132 charges SEND_LONG_DATA to the
+    // session tracker, refuses a chunk that reaches tidb_mem_quota_query, and
+    // reports the sticky refusal only on EXECUTE. The bytes accepted before
+    // that refusal are released by the unconditional RESET in EXECUTE; a
+    // later accepted buffer is released by CLOSE.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let bound = Arc::new(Mutex::new(Vec::new()));
+    let consumed = Arc::new(Mutex::new(0_i64));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_bound = Arc::clone(&bound);
+    let worker_consumed = Arc::clone(&consumed);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = LongDataFactory {
+            bound: worker_bound,
+            long_data_quota: Some(1024),
+            long_data_consumed: Some(worker_consumed),
+        };
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &factory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let timeout_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_long_data_insert(&mut client, &mut reader);
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'a'; 600]),
+    );
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'b'; 500]),
+    );
+    assert_no_pending_packet(&timeout_side, &mut reader, "after the refused quota chunk");
+    assert_eq!(*consumed.lock().unwrap(), 600);
+
+    // EXECUTE has no long-data bytes in its value section. The sticky quota
+    // verdict is returned before the configured write path is entered.
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    execute.push(0);
+    execute.push(1);
+    execute.extend_from_slice(&[TYPE_LONGLONG, 0, TYPE_BLOB, 0]);
+    execute.extend_from_slice(&7_i64.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_eq!(error[0], 0xff, "EXECUTE must return an ERR packet");
+    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 8175);
+    assert_eq!(&error[4..9], b"HY000");
+    assert_eq!(*consumed.lock().unwrap(), 0, "EXECUTE reset releases prior bytes");
+    assert!(bound.lock().unwrap().is_empty(), "quota failure skips the write");
+
+    // A later chunk is accepted again after RESET released the old bytes.
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'c'; 1023]),
+    );
+    assert_no_pending_packet(&timeout_side, &mut reader, "after a post-reset chunk");
+    assert_eq!(*consumed.lock().unwrap(), 1023);
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &close);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(
+        *consumed.lock().unwrap(),
+        0,
+        "CLOSE releases long-data bytes still held by the statement"
+    );
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(report.commands.stmt_send_long_data_commands, 3);
+    assert_eq!(report.commands.stmt_execute_successes, 0);
+}
+
+#[test]
 fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
     // pkg/server/conn_stmt.go:627-631 names what RESET must clear: the open
     // cursor and "the argument sent through SEND_LONG_DATA".
@@ -2118,6 +2407,8 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
         let (stream, peer_addr) = listener.accept().unwrap();
         let factory = LongDataFactory {
             bound: worker_bound,
+            long_data_quota: None,
+            long_data_consumed: None,
         };
         serve_mysql_connection(
             stream,
@@ -2187,4 +2478,100 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
     let report = worker.join().unwrap();
     assert_eq!(report.exit, ConnectionExit::Quit);
     assert_eq!(report.commands.stmt_reset_commands, 1);
+}
+
+/// Go `ReplaceExec.setMessage` / `InsertExec.setMessage`
+/// (`pkg/executor/replace.go:211`, `insert.go:557`): a multi-row INSERT or
+/// REPLACE composes `Records: N  Duplicates: W  Warnings: M` into the
+/// statement context, and Go's `writeOKWith` appends that text to the OK
+/// packet (`pkg/server/conn.go`). The connection writer must forward the
+/// session's composed message as the OK packet's info field.
+#[test]
+fn a_multi_row_write_ok_packet_carries_the_records_message_as_info() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &MessageFactory,
+            &users(),
+            &Arc::new(ConnectionTracker::default()),
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    write_packet(
+        &mut client,
+        0,
+        &[&[COM_QUERY][..], b"REPLACE INTO m.rows VALUES (1), (2)"].concat(),
+    );
+    reader.set_sequence(1);
+    let ok = reader.read_packet().unwrap();
+    assert_eq!(ok[0], 0, "a write answers with OK");
+    // The info text rides the OK packet tail as a length-encoded string:
+    // exactly Go's ErrInsertInfo text for the counts the session composed.
+    // Header ahead of it: affected-rows varint, insert-id varint, and the
+    // two-byte warning count.
+    let text = b"Records: 2  Duplicates: 1  Warnings: 0";
+    let tail = &ok[ok.len() - text.len() - 1..];
+    assert_eq!(tail[0], text.len() as u8, "length-encoded info string");
+    assert_eq!(
+        &tail[1..],
+        &text[..],
+        "the OK packet carries Go's ErrInsertInfo info text"
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    worker.join().unwrap();
+}
+
+struct MessageFactory;
+
+impl QuerySessionFactory for MessageFactory {
+    type Session = MessageSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(MessageSession)
+    }
+}
+
+/// A session whose multi-row REPLACE composed Go's message, the way the real
+/// configured-write sessions do after `compose_insert_ok_message`.
+struct MessageSession;
+
+impl QuerySession for MessageSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        if !sql.to_ascii_uppercase().starts_with("REPLACE") {
+            return Ok(None);
+        }
+        Ok(Some(WriteOutcome {
+            affected_rows: 3,
+            last_insert_id: 0,
+        }))
+    }
+
+    fn warning_count(&self) -> u16 {
+        0
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        b"Records: 2  Duplicates: 1  Warnings: 0".to_vec()
+    }
 }

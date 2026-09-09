@@ -32,7 +32,6 @@ pub struct RowEstimate {
 }
 
 /// Creates an estimate with the same value in all three fields.
-#[must_use]
 pub const fn default_row_est(est: f64) -> RowEstimate {
     RowEstimate {
         est,
@@ -42,7 +41,6 @@ pub const fn default_row_est(est: f64) -> RowEstimate {
 }
 
 /// Calculates the default/min/max skew estimates used by TiDB.
-#[must_use]
 pub fn calculate_skew_ratio_counts(
     estimate: f64,
     skew_estimate: f64,

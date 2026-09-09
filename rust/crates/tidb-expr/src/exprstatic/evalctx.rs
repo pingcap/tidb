@@ -49,6 +49,7 @@ use crate::exprctx::{
 };
 use crate::expropt::{DynOptionalEvalPropProvider, EvalPropContext, OptionalEvalPropProviders};
 use crate::user_vars::{UserVars, UserVarsReader};
+use tidb_hack::go_to_lower;
 
 /// boundary: Go `vardef.DefMaxAllowedPacket`, which is
 /// `config.DefMaxAllowedPacket` (`64 << 20`). `tidb-vardef` ports only
@@ -592,7 +593,7 @@ impl EvalContext {
     ) -> EvalContext {
         let mut opts: Vec<EvalCtxOption> = Vec::with_capacity(8);
         for (name, val) in sys_vars {
-            match name.to_lowercase().as_str() {
+            match go_to_lower(name).as_str() {
                 TIME_ZONE => opts.push(with_location(session_vars.location())),
                 SQL_MODE_VAR => opts.push(with_sql_mode(session_vars.sql_mode())),
                 TIMESTAMP => opts.push(with_current_time(current_time_fn_from_string_val(val))),
@@ -610,6 +611,14 @@ impl EvalContext {
             }
         }
         self.apply(opts)
+    }
+}
+
+impl crate::exprctx::ParamValues for EvalContext {
+    type Error = EvalCtxError;
+
+    fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error> {
+        EvalContext::get_param_value(self, idx)
     }
 }
 
@@ -634,7 +643,8 @@ fn current_time_fn_from_string_val(val: &str) -> CurrentTimeFn {
         let converted = str_to_float(&val, false);
         if converted.event.is_some() {
             return Err(EvalCtxError::new(format!(
-                "[types:1292]Truncated incorrect DOUBLE value: '{val}'"
+                "[types:1292]Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(&val)
             )));
         }
 
@@ -731,7 +741,7 @@ impl StaticSessionVars {
     /// `ON`/`OFF`) is reproduced here for the enum and boolean variables
     /// below, since the hooks observe the *normalized* value.
     pub fn set_system_var(&mut self, name: &str, val: &str) -> Result<(), EvalCtxError> {
-        let lower = name.to_lowercase();
+        let lower = go_to_lower(name);
         self.systems.insert(lower.clone(), val.to_owned());
         match lower.as_str() {
             TIME_ZONE => {
@@ -820,7 +830,7 @@ impl SessionVarsSnapshot for StaticSessionVars {
     }
 
     fn get_system_var(&self, name: &str) -> Option<String> {
-        self.systems.get(&name.to_lowercase()).cloned()
+        self.systems.get(&go_to_lower(name)).cloned()
     }
 
     fn sysdate_is_now(&self) -> bool {
@@ -886,7 +896,7 @@ pub fn new_session_vars_with_system_variables(
     let mut collation: Option<(&str, &str)> = None;
 
     for (name, val) in vars {
-        match name.to_lowercase().as_str() {
+        match go_to_lower(name).as_str() {
             // Go: `charset_connection` and `collation_connection` overwrite
             // each other, so they are applied last, charset first.
             CHARACTER_SET_CONNECTION => charset = Some((name, val)),
@@ -1314,7 +1324,7 @@ mod tests {
         assert_eq!(ctx.warning_count(), 0);
 
         // `with_warn_handler` installs the given handler.
-        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_util::context::IgnoreWarn);
+        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_util::context::IGNORE_WARN);
         let ctx = EvalContext::new([with_warn_handler(Arc::clone(&ignore))]);
         assert!(Arc::ptr_eq(ctx.get_warn_handler(), &ignore));
 

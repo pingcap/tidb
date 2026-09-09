@@ -79,32 +79,49 @@ message FieldType {
   optional bool array = 8;
 }
 
-// The scalar expression kinds admitted by the bounded signed-BIGINT
-// comparison path. Values are copied from expression.proto.
+// The scalar expression kinds admitted by the coprocessor expression path.
+// Values are copied from expression.proto; keeping the concrete literal
+// families here lets Rust carry the same metadata as Go's ExprToPB.
 enum ExprType {
   Null = 0;
   Int64 = 1;
+  Uint64 = 2;
   Float32 = 3;
   Float64 = 4;
   // Go `constantToPBExpr`'s `KindString`/`KindBinaryLiteral` arm: the raw
-  // bytes as `Val`, with no codec around them. `Bytes` (6, `KindBytes`) is
-  // deliberately absent -- no leaf this path builds is that kind.
+  // bytes as `Val`, with no codec around them.
   String = 5;
+  // Additional scalar leaves used by the upstream DAG converter.  Keeping
+  // the exact tipb numbers here lets the Rust pushdown path carry the same
+  // concrete values instead of falling back to a root Selection.
+  Bytes = 6;
+  MysqlBit = 101;
   MysqlDecimal = 102;
+  MysqlDuration = 103;
+  MysqlEnum = 104;
+  MysqlSet = 106;
   MysqlTime = 107;
+  MysqlJson = 108;
+  TiDBVectorFloat32 = 121;
   ColumnRef = 201;
   // The aggregate-function family a partial TiKV aggregation carries. Only
   // the kinds the pushed-aggregate lowering builds are projected; upstream
   // also numbers Avg (3003), First (3006) and GroupConcat (3007).
   Count = 3001;
   Sum = 3002;
+  // Go tipb `ExprType_MaxCount` / `ExprType_MinCount`: the aggregate
+  // partials that retain an extreme value and its tie count.
+  MinCount = 3022;
+  MaxCount = 3023;
   Min = 3004;
   Max = 3005;
   ScalarFunc = 10000;
 }
 
-// The ordinary signed-integer comparison signatures admitted by this path.
-// NULL-safe equality remains outside the six-operator product boundary.
+// Scalar function signatures used by the coprocessor expression path. The
+// comparison rows start with the ordinary signed-integer family; subsequent
+// rows carry the concrete string, temporal, JSON and cast families mirrored
+// from Go's tipb expression contract.
 enum ScalarFuncSig {
   Unspecified = 0;
   LTInt = 100;
@@ -135,6 +152,14 @@ enum ScalarFuncSig {
   GEString = 133;
   EQString = 143;
   NEString = 153;
+  // The same six operators over a REAL argument pair (`GetAccurateCmpType`
+  // answers ETReal when either side is double).
+  LTReal = 101;
+  LEReal = 111;
+  GTReal = 121;
+  GEReal = 131;
+  EQReal = 141;
+  NEReal = 151;
   // The op group: logical composition, negation, and the evaluation-family
   // specific `IS NULL` signatures selected by Go's `isNullFunctionClass`.
   LogicalAnd = 3101;
@@ -158,6 +183,126 @@ enum ScalarFuncSig {
   // `builtinJSONMemberOfSig` over (json, json). The numeric id is the
   // upstream tipb ScalarFuncSig contract (`JsonMemberOfSig = 5029`).
   JsonMemberOfSig = 5029;
+  JsonReplaceSig = 5006;
+  JsonArrayAppendSig = 5013;
+  JsonMergePatchSig = 5015;
+
+  // Time functions admitted by Go's scalarExprSupportedByTiKV.
+  DateFormatSig = 6001;
+  DateDiff = 6003;
+  Date = 6012;
+  Hour = 6013;
+  Minute = 6014;
+  Second = 6015;
+  MicroSecond = 6016;
+  Month = 6017;
+  WeekWithoutMode = 6026;
+  UnixTimestampCurrent = 6065;
+  UnixTimestampInt = 6066;
+  UnixTimestampDec = 6067;
+  FromUnixTime1Arg = 6088;
+  FromUnixTime2Arg = 6089;
+  TimestampDiff = 6108;
+  AddDateStringString = 6092;
+  AddDateStringInt = 6093;
+  AddDateStringDecimal = 6094;
+  AddDateIntString = 6095;
+  AddDateIntInt = 6096;
+  AddDateDatetimeString = 6097;
+  AddDateDatetimeInt = 6098;
+  SubDateStringString = 6099;
+  SubDateStringInt = 6100;
+  SubDateStringDecimal = 6101;
+  SubDateIntString = 6102;
+  SubDateIntInt = 6103;
+  SubDateDatetimeString = 6104;
+  SubDateDatetimeInt = 6105;
+  SubDateStringReal = 6109;
+  SubDateIntReal = 6110;
+  SubDateIntDecimal = 6111;
+  SubDateDatetimeReal = 6112;
+  SubDateDatetimeDecimal = 6113;
+  SubDateDurationString = 6114;
+  SubDateDurationInt = 6115;
+  SubDateDurationReal = 6116;
+  SubDateDurationDecimal = 6117;
+  AddDateStringReal = 6118;
+  AddDateIntReal = 6119;
+  AddDateIntDecimal = 6120;
+  AddDateDatetimeReal = 6121;
+  AddDateDatetimeDecimal = 6122;
+  AddDateDurationString = 6123;
+  AddDateDurationInt = 6124;
+  AddDateDurationReal = 6125;
+  AddDateDurationDecimal = 6126;
+  AddDateDurationStringDatetime = 6144;
+  AddDateDurationIntDatetime = 6145;
+  AddDateDurationRealDatetime = 6146;
+  AddDateDurationDecimalDatetime = 6147;
+  SubDateDurationStringDatetime = 6148;
+  SubDateDurationIntDatetime = 6149;
+  SubDateDurationRealDatetime = 6150;
+  SubDateDurationDecimalDatetime = 6151;
+  AddDateRealString = 6128;
+  AddDateRealInt = 6129;
+  AddDateRealReal = 6130;
+  AddDateRealDecimal = 6131;
+  AddDateDecimalString = 6132;
+  AddDateDecimalInt = 6133;
+  AddDateDecimalReal = 6134;
+  AddDateDecimalDecimal = 6135;
+  SubDateRealString = 6136;
+  SubDateRealInt = 6137;
+  SubDateRealReal = 6138;
+  SubDateRealDecimal = 6139;
+  SubDateDecimalString = 6140;
+  SubDateDecimalInt = 6141;
+  SubDateDecimalReal = 6142;
+  SubDateDecimalDecimal = 6143;
+
+  // Casts inserted by Go's newBaseBuiltinFuncWithTp for the temporal/JSON
+  // families.  The numeric ids are the upstream tipb contract.
+  CastIntAsString = 3;
+  CastIntAsDecimal = 4;
+  CastIntAsTime = 5;
+  CastIntAsDuration = 6;
+  CastIntAsJson = 7;
+  CastRealAsString = 12;
+  CastRealAsDecimal = 13;
+  CastRealAsTime = 14;
+  CastRealAsDuration = 15;
+  CastRealAsJson = 16;
+  CastDecimalAsString = 22;
+  CastDecimalAsDecimal = 23;
+  CastDecimalAsTime = 24;
+  CastDecimalAsDuration = 25;
+  CastDecimalAsJson = 26;
+  CastStringAsString = 32;
+  CastStringAsDecimal = 33;
+  CastStringAsTime = 34;
+  CastStringAsDuration = 35;
+  CastStringAsJson = 36;
+  CastTimeAsInt = 40;
+  CastTimeAsReal = 41;
+  CastTimeAsString = 42;
+  CastTimeAsDecimal = 43;
+  CastTimeAsTime = 44;
+  CastTimeAsDuration = 45;
+  CastTimeAsJson = 46;
+  CastDurationAsInt = 50;
+  CastDurationAsReal = 51;
+  CastDurationAsString = 52;
+  CastDurationAsDecimal = 53;
+  CastDurationAsTime = 54;
+  CastDurationAsDuration = 55;
+  CastDurationAsJson = 56;
+  CastJsonAsInt = 60;
+  CastJsonAsReal = 61;
+  CastJsonAsString = 62;
+  CastJsonAsDecimal = 63;
+  CastJsonAsTime = 64;
+  CastJsonAsDuration = 65;
+  CastJsonAsJson = 66;
 
   // The implicit casts `newBaseBuiltinFuncWithTp` inserts when a builtin's
   // argument does not already evaluate as the type the chosen signature
@@ -176,9 +321,43 @@ enum ScalarFuncSig {
   PlusDecimal = 201;
   MinusDecimal = 205;
   MultiplyDecimal = 209;
+  // The INTEGER arithmetic family. Go picks between the flag pairings by
+  // the two arguments' UNSIGNED flags, and an overflow answer is the
+  // request-level 1690 error (`BIGINT [UNSIGNED] value is out of range in
+  // '<OP>'`).
+  PlusInt = 203;
+  MinusInt = 207;
+  MultiplyInt = 210;
+  MultiplyIntUnsigned = 218;
+  PlusIntUnsignedUnsigned = 219;
+  PlusIntUnsignedSigned = 220;
+  PlusIntSignedUnsigned = 221;
+  PlusIntSignedSigned = 222;
+  MinusIntUnsignedUnsigned = 227;
+  MinusIntUnsignedSigned = 228;
+  MinusIntSignedUnsigned = 229;
+  MinusIntSignedSigned = 230;
+  MinusIntForcedUnsignedUnsigned = 231;
+  MinusIntForcedUnsignedSigned = 232;
+  MinusIntForcedSignedUnsigned = 233;
+  // The REAL arithmetic family (`builtinArithmeticSig`'s real signatures).
+  PlusReal = 200;
+  MinusReal = 204;
+  MultiplyReal = 208;
+  DivideReal = 211;
+  DivideDecimal = 212;
 
   // The arithmetic `MOD` family. Go picks between the four integer
   // signatures by the two arguments' UNSIGNED flags, not by their width.
+  // The integer DIV family (`builtinArithmeticSig`'s IntDivide signatures):
+  // truncating division, NULL on a zero divisor. Go picks between the four
+  // unsigned-flag pairings by the two arguments' UNSIGNED flags.
+  IntDivideInt = 213;
+  IntDivideDecimal = 214;
+  IntDivideIntUnsignedUnsigned = 234;
+  IntDivideIntUnsignedSigned = 235;
+  IntDivideIntSignedSigned = 236;
+  IntDivideIntSignedUnsigned = 237;
   ModReal = 215;
   ModDecimal = 216;
   ModIntUnsignedUnsigned = 223;
@@ -382,6 +561,7 @@ message ExecutorExecutionSummary {
 
   oneof DetailInfo {
     TiFlashScanContext tiflash_scan_context = 6;
+    ColumnarScanContext columnar_scan_context = 10;
   }
 
   optional bytes ru_consumption = 7;
@@ -474,12 +654,41 @@ message TiFlashScanContext {
   optional uint64 fts_idx_tiny_total_read_others_ms = 172;
   optional uint64 fts_brute_total_read_ms = 173;
   optional uint64 fts_brute_total_search_ms = 174;
+
+  optional uint32 tici_vec_query_count = 200;
+  optional uint64 tici_vec_search_total_ms = 201;
+  optional uint64 tici_vec_filter_total_ms = 202;
+  optional uint64 tici_vec_candidate_count = 203;
+  optional uint64 tici_vec_result_count = 204;
+  optional uint64 tici_vec_shard_count = 205;
 }
 
 message TiFlashWaitSummary {
   optional uint64 minTSO_wait_ns = 1;
   optional uint64 pipeline_queue_wait_ns = 2;
   optional uint64 pipeline_breaker_wait_ns = 3;
+}
+
+message ColumnarScanContext {
+  optional uint64 regions = 1;
+  optional uint64 read_tasks = 3;
+  optional uint64 physical_tables = 4;
+  optional uint64 columns = 5;
+  optional uint64 user_read_bytes = 6;
+  optional uint64 mvcc_input_rows = 7;
+  optional uint64 mvcc_input_bytes = 8;
+  optional uint64 mvcc_output_rows = 9;
+  optional uint64 total_read_block_ms = 10;
+  optional uint64 total_serialize_block_ms = 11;
+  optional uint64 total_init_reader_ms = 12;
+  optional uint64 total_prefetch_ms = 13;
+  optional uint64 rough_check_total_packs = 14;
+  optional uint64 rough_check_selected_packs = 15;
+  optional uint64 rough_check_skipped_packs = 16;
+  optional uint64 rough_check_unknown_packs = 17;
+  optional uint64 remote_segments = 18;
+  optional uint64 total_segments = 19;
+  optional uint64 total_deserialize_block_ms = 20;
 }
 
 message TiFlashNetWorkSummary {

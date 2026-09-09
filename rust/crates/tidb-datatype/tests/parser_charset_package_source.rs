@@ -19,6 +19,7 @@ use tidb_datatype::{
     get_collation_by_name, get_default_collation, get_default_collation_legacy,
     get_supported_charsets, get_supported_collations, remove_charset, valid_charset_and_collation,
     CharsetInfo, CollationInfo, Encoding, TransformOp, PAD_NONE,
+    TIFLASH_SUPPORTED_CHARSETS,
 };
 
 static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -49,20 +50,17 @@ fn test_valid_charset() {
     }
 }
 
-/// Go runs this inside `pkg/parser/charset`, which never imports
-/// `pkg/util/collate` and so never runs `switchDefaultCollation`. Its final
-/// assertion -- that every supported charset's default is among the
-/// `IsDefault` supported collations -- holds only in that pre-switch state,
-/// because Go's supported-collation list is the seven `_bin` names and the
-/// switch is what takes `IsDefault` away from `gbk_bin`/`gb18030_bin`. This
-/// crate has one registry rather than a package boundary, and it starts
-/// SWITCHED, matching a running server. So the pre-switch state is entered
-/// deliberately here and restored after, which is what "run the parser package
-/// in isolation" means for us.
+#[test]
+fn tiflash_supported_charset_set_matches_source() {
+    assert_eq!(
+        TIFLASH_SUPPORTED_CHARSETS,
+        &["utf8", "utf8mb4", "ascii", "latin1", "binary"]
+    );
+}
+
 #[test]
 fn test_get_default_collation() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
-    tidb_datatype::set_new_collation_enabled(false);
     for (charset, expected) in [
         ("utf8", Some("utf8_bin")),
         ("UTF8", Some("utf8_bin")),
@@ -86,13 +84,9 @@ fn test_get_default_collation() {
             row.charset_name == charset.name && row.name == charset.default_collation
         }));
     }
-    // Pre-switch, `gbk` really is `gbk_bin`; this is the state Go's literal
-    // describes, and the state a live server has already left.
-    assert_eq!(get_default_collation("gbk").ok().as_deref(), Some("gbk_bin"));
-    tidb_datatype::set_new_collation_enabled(true);
     assert_eq!(
         get_default_collation("gbk").ok().as_deref(),
-        Some("gbk_chinese_ci")
+        Some("gbk_bin")
     );
 }
 
@@ -154,6 +148,20 @@ fn test_valid_custom_charset() {
 }
 
 #[test]
+fn custom_charset_lookup_uses_go_simple_lowercase() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    add_charset(CharsetInfo {
+        name: "i".to_owned(),
+        default_collation: "i_bin".to_owned(),
+        collations: Default::default(),
+        description: "Unicode lowercase probe".to_owned(),
+        maxlen: 1,
+    });
+    assert_eq!(get_charset_info("İ").unwrap().name, "i");
+    remove_charset("i");
+}
+
+#[test]
 fn test_utf8mb3() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
     assert_eq!(get_default_collation_legacy("utf8mb3").unwrap(), "utf8_bin");
@@ -165,12 +173,6 @@ fn test_utf8mb3() {
     ] {
         assert_eq!(get_collation_by_name(alias).unwrap().name, canonical);
     }
-}
-
-#[test]
-fn benchmark_get_charset_desc_obligation_executes_one_lookup() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
-    assert_eq!(get_charset_info("utf8mb4").unwrap().name, "utf8mb4");
 }
 
 fn joined(parts: &[&[u8]]) -> Vec<u8> {
@@ -359,7 +361,12 @@ fn test_encoding_validate() {
             joined(&["中文".as_bytes(), b"???"]),
             false,
         ),
-        ("utf8", rune_error.to_vec(), "\u{fffd}".as_bytes().to_vec(), true),
+        (
+            "utf8",
+            rune_error.to_vec(),
+            "\u{fffd}".as_bytes().to_vec(),
+            true,
+        ),
         ("gbk", vec![], vec![], true),
         ("gbk", b"asdf".to_vec(), b"asdf".to_vec(), true),
         (
@@ -389,7 +396,12 @@ fn test_encoding_validate() {
             "中文".as_bytes().to_vec(),
             true,
         ),
-        ("gb18030", "À".as_bytes().to_vec(), "À".as_bytes().to_vec(), true),
+        (
+            "gb18030",
+            "À".as_bytes().to_vec(),
+            "À".as_bytes().to_vec(),
+            true,
+        ),
         (
             "gb18030",
             "中文À中文".as_bytes().to_vec(),

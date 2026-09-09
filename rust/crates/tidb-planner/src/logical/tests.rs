@@ -25,6 +25,8 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
 
+use crate::find_best_task::LogicalJoinType;
+
 use super::*;
 
 fn column(unique_id: i64) -> Column {
@@ -97,11 +99,16 @@ fn set_child_replaces_and_returns_the_previous_node() {
     let previous = tree.set_child(0, source(9, &[7])).expect("child 0 exists");
     assert_eq!(previous.id(), 1);
     assert_eq!(tree.children()[0].id(), 9);
-    // Go panics on an out-of-range index; this refuses instead.
-    assert!(tree.set_child(4, source(10, &[8])).is_none());
     assert_eq!(tree.base().child_len(), 1);
     tree.dismantle();
     previous.dismantle();
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn set_child_panics_on_an_out_of_range_index_like_go() {
+    let mut tree = selection(2, source(1, &[1]));
+    let _ = tree.set_child(4, source(10, &[8]));
 }
 
 #[test]
@@ -131,13 +138,65 @@ fn schema_falls_through_to_the_first_child() {
             .collect::<Vec<_>>(),
         vec![11, 12]
     );
-    // A childless node with no schema of its own has none.
-    let bare = LogicalPlan::Todo(TodoLogicalOp {
-        base: BaseLogicalPlan::with_id(1, "LogicalWindow", 0),
-        go_operator: "logicalop.LogicalWindow".to_owned(),
+    // A schema-producing leaf may have no materialized schema yet.
+    let bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
     });
     assert!(bare.schema().is_none());
     tree.dismantle();
+}
+
+#[test]
+fn sequence_schema_uses_the_last_main_query_child_like_go() {
+    let mut base = BaseLogicalPlan::with_id(3, LogicalSequence::TYPE, 0);
+    base.set_children(vec![source(1, &[11]), source(2, &[22, 23])]);
+    let sequence = LogicalPlan::Sequence(LogicalSequence::new(base));
+    let schema = sequence.schema().expect("main query child schema");
+    assert_eq!(
+        schema
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![22, 23]
+    );
+    sequence.dismantle();
+}
+
+#[test]
+fn schema_producer_leaf_keeps_output_names_locally() {
+    let mut bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
+    });
+    let names = vec![tidb_datatype::FieldName::default()];
+    bare.set_output_names(names.clone());
+    assert_eq!(bare.output_names(), names.as_slice());
+}
+
+#[test]
+fn schema_producer_leaf_without_names_returns_empty_output_names() {
+    let bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
+    });
+    assert!(bare.output_names().is_empty());
+}
+
+#[test]
+fn schema_producer_parent_keeps_output_names_off_its_child() {
+    let mut base = BaseLogicalPlan::with_id(2, "Projection", 0);
+    base.set_children(vec![source(1, &[11])]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection {
+        base,
+        ..LogicalProjection::default()
+    });
+    let names = vec![tidb_datatype::FieldName::default()];
+    projection.set_output_names(names.clone());
+    assert_eq!(projection.output_names(), names.as_slice());
+    assert!(projection.children()[0].output_names().is_empty());
+    projection.dismantle();
 }
 
 #[test]
@@ -285,12 +344,19 @@ fn join_child_stats_and_schema_only_answers_for_a_join() {
     assert_eq!(r.map(StatsInfo::row_count), Some(5.0));
     assert!(ls.is_some() && rs.is_some());
 
-    // Go's base body panics for a non-join; this refuses.
+    // Go's base body panics for a non-join; preserve that boundary.
     let unary = selection(4, source(5, &[1]));
-    assert!(unary.get_join_child_stats_and_schema().is_none());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unary.get_join_child_stats_and_schema()
+    }))
+    .is_err());
     // And GetChildStatsAndSchema answers for the unary node.
     assert!(unary.get_child_stats_and_schema().is_some());
-    assert!(source(6, &[1]).get_child_stats_and_schema().is_none());
+    let leaf = source(6, &[1]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        leaf.get_child_stats_and_schema()
+    }))
+    .is_err());
     tree.dismantle();
     unary.dismantle();
 }
@@ -351,4 +417,70 @@ fn clone_shallow_keeps_the_node_and_drops_the_children() {
     assert_eq!(shallow.base().child_len(), 0);
     assert_eq!(tree.base().child_len(), 1);
     tree.dismantle();
+}
+
+// ***************************************************************************
+// ExtractFD child-access boundaries — Go's operator overrides index children
+// (or answer empty for the default join types) before anything else.
+// ***************************************************************************
+
+#[test]
+fn a_childless_outer_join_panics_when_extracting_fd_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    // Go `ExtractFDForOuterJoin` reads `p.Children()[0]` and `[1]`.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { join.extract_fd() })).is_err()
+    );
+}
+
+#[test]
+fn a_single_child_inner_join_panics_when_extracting_fd_like_go() {
+    let mut base = BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0);
+    base.set_children(vec![source(1, &[11])]);
+    let join = LogicalPlan::Join(LogicalJoin::new(base, LogicalJoinType::Inner));
+    // Go `ExtractFDForInnerJoin` reads `child[1]` before `child[0]`.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { join.extract_fd() })).is_err()
+    );
+    join.dismantle();
+}
+
+#[test]
+fn a_default_join_type_answers_an_empty_fdset_without_touching_children_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuterSemi,
+    ));
+    // Go's switch default returns the empty set before any child access.
+    let fd = join.extract_fd();
+    assert!(fd.not_null_cols.is_empty());
+    assert!(fd.group_by_cols.is_empty());
+}
+
+#[test]
+fn a_childless_apply_panics_when_extracting_fd_like_go() {
+    let apply = LogicalPlan::Apply(LogicalApply::new(
+        BaseLogicalPlan::with_id(1, LogicalApply::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    // Go indexes `la.Children()[1]` before its join-type switch.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { apply.extract_fd() })).is_err()
+    );
+}
+
+#[test]
+fn a_childless_selection_panics_when_extracting_fd_like_go() {
+    let selection = LogicalPlan::Selection(LogicalSelection::new(
+        BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        Vec::new(),
+    ));
+    // Go indexes `p.Children()[0]` before the `*LogicalJoin` assertion.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { selection.extract_fd() }))
+            .is_err()
+    );
 }

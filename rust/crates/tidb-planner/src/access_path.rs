@@ -194,6 +194,10 @@ pub enum ResolvedTableScanKind {
     Full,
     /// At least one source range restricts the table handle domain.
     Range,
+    /// The table side of an index lookup reads rows by handles emitted by
+    /// the index side. Go names this `TableRowIDScan` regardless of the
+    /// source table's ordinary handle-range classification.
+    RowId,
 }
 
 impl ResolvedTableScanKind {
@@ -203,6 +207,7 @@ impl ResolvedTableScanKind {
         match self {
             Self::Full => "TableFullScan",
             Self::Range => "TableRangeScan",
+            Self::RowId => "TableRowIDScan",
         }
     }
 }
@@ -350,7 +355,6 @@ pub struct TableAccessPath {
     store: AccessPathStore,
     empty_ranges: bool,
     partitioned: bool,
-    sampled: bool,
     has_filters: bool,
 }
 
@@ -370,7 +374,6 @@ impl TableAccessPath {
             store: AccessPathStore::TiKv,
             empty_ranges: false,
             partitioned: false,
-            sampled: false,
             has_filters: false,
         })
     }
@@ -394,13 +397,6 @@ impl TableAccessPath {
     #[must_use]
     pub const fn with_partitioned(mut self, partitioned: bool) -> Self {
         self.partitioned = partitioned;
-        self
-    }
-
-    /// Records a `TABLESAMPLE` path, which uses a different physical plan.
-    #[must_use]
-    pub const fn with_table_sample(mut self, sampled: bool) -> Self {
-        self.sampled = sampled;
         self
     }
 
@@ -457,12 +453,6 @@ impl TableAccessPath {
     #[must_use]
     pub const fn is_partitioned(&self) -> bool {
         self.partitioned
-    }
-
-    /// Reports whether this path came from `TABLESAMPLE`.
-    #[must_use]
-    pub const fn is_table_sample(&self) -> bool {
-        self.sampled
     }
 
     /// Reports whether a Selection would be required around the scan.
@@ -787,11 +777,69 @@ pub enum PossiblePath {
         /// its PRIMARY index, by offset into the catalog's index list.
         primary_index: Option<usize>,
     },
+    /// Go `genTiFlashPath`: a table path served by an available TiFlash
+    /// replica.
+    TiFlashTable,
     /// One public index, by offset into the catalog's index list.
     Index {
         /// The offset into `SourceTable::indexes`.
         index: usize,
     },
+}
+
+/// Go `util.IndexLookUpPushDownByType`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IndexLookupPushDownBy {
+    /// Go `IndexLookUpPushDownNone`.
+    #[default]
+    None,
+    /// Go `IndexLookUpPushDownByHint`.
+    Hint,
+    /// Go `IndexLookUpPushDownBySysVar`.
+    SysVar,
+}
+
+/// Go `SessionVars.IndexLookUpPushDownPolicy`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IndexLookupPushDownPolicy {
+    /// Go `IndexLookUpPushDownPolicyHintOnly`.
+    #[default]
+    HintOnly,
+    /// Go `IndexLookUpPushDownPolicyAffinityForce`.
+    AffinityForce,
+    /// Go `IndexLookUpPushDownPolicyForce`.
+    Force,
+}
+
+/// The session/transaction facts read by pinned
+/// `checkIndexLookUpPushDownSupported`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndexLookupPushDownSession {
+    /// Whether the transaction isolation is `REPEATABLE-READ`.
+    pub repeatable_read: bool,
+    /// Whether replica read is exactly leader-only.
+    pub leader_read: bool,
+    /// Go `TxnCtx.IsStaleness`.
+    pub staleness: bool,
+    /// Whether `SnapshotTS != 0`.
+    pub historical_read: bool,
+    /// Go `SessionVars.MaxKeysRead`.
+    pub max_keys_read: u64,
+    /// Go `IndexLookUpPushDownPolicy`.
+    pub policy: IndexLookupPushDownPolicy,
+}
+
+impl Default for IndexLookupPushDownSession {
+    fn default() -> Self {
+        Self {
+            repeatable_read: true,
+            leader_read: true,
+            staleness: false,
+            historical_read: false,
+            max_keys_read: 0,
+            policy: IndexLookupPushDownPolicy::HintOnly,
+        }
+    }
 }
 
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
@@ -805,29 +853,31 @@ pub enum PossiblePath {
 ///   `OptimizerUseInvisibleIndexes` (`:1378`);
 /// * a common-handle table's PRIMARY index is skipped as an index path
 ///   (`:1382`) — it already rode in on the table path;
-/// * a columnar index is skipped, because using one requires an available
-///   TiFlash replica (`:1399-1404`) and this catalog carries no replica
-///   state.
+/// * a columnar index is skipped because this access-path representation does
+///   not yet carry Go's TiFlash index-path identity (`:1399-1404`).
 ///
 /// Named boundaries, absent rather than approximated:
-/// * TiFlash replica paths (`genTiFlashPath`, `:1332-1347`) — no replica
-///   state on [`crate::plan_builder::catalog::SourceTable`];
+/// * TiFlash columnar-index paths (`:1399-1404`) — only TiFlash table paths
+///   are represented today;
 /// * `kv.TiDB` for cluster tables (`:1324-1326`) — no cluster-table flag;
 /// * inverted indexes (`:1396-1398`) — no inverted flag on
 ///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
 ///   would enumerate here where Go skips it; the catalog does not model one
 ///   today;
 /// * hypo indexes (`:1419-1441`) — explain-only session state;
-/// * the read-committed `GetLatestIndexInfo` re-check (`:1385-1395`) —
-///   schema-validator machinery;
-/// * USE/IGNORE/FORCE INDEX and comment-style hints (`:1443` onward) — with
-///   no hints Go returns every public path available, which is exactly this
-///   answer.
+/// Hint filtering (`:1443` onward) is the separate
+/// [`apply_table_index_hints`] stage, matching Go's enumeration-then-filter
+/// structure. Comment-style hints must join that same stage through the
+/// query-block hint owner; they are not approximated here.
 #[must_use]
 pub fn get_possible_access_paths(
     table: &crate::plan_builder::catalog::SourceTable,
     optimizer_use_invisible_indexes: bool,
-) -> Vec<PossiblePath> {
+    latest_index_schema: Option<&crate::domain_misc::LatestIndexSchema>,
+    connection_id: Option<u64>,
+    repeatable_read: bool,
+    is_for_update_read: bool,
+) -> Result<Vec<PossiblePath>, crate::plan_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
     // a table with no explicit handle column is still an int-handle path,
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
@@ -842,8 +892,29 @@ pub fn get_possible_access_paths(
             None
         },
     });
+    if table.has_tiflash_replica {
+        paths.push(PossiblePath::TiFlashTable);
+    }
+    let mut check_latest_schema =
+        (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
+    let mut latest_indexes = None;
     for (offset, index) in table.indexes.iter().enumerate() {
         if !index.is_public {
+            continue;
+        }
+        if check_latest_schema && latest_indexes.is_none() {
+            let (indexes, changed) =
+                crate::domain_misc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;
+            latest_indexes = indexes;
+            check_latest_schema = changed;
+        }
+        if check_latest_schema
+            && latest_indexes.as_ref().is_none_or(|indexes| {
+                indexes
+                    .get(&index.id)
+                    .is_none_or(|latest| !latest.is_public)
+            })
+        {
             continue;
         }
         if !optimizer_use_invisible_indexes && !index.is_visible {
@@ -857,12 +928,395 @@ pub fn get_possible_access_paths(
         }
         paths.push(PossiblePath::Index { index: offset });
     }
-    paths
+    Ok(paths)
+}
+
+/// Go `getPossibleAccessPaths`' hint-filtering result.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResolvedIndexPaths {
+    /// Go `available` after ignore and fallback handling.
+    pub paths: Vec<PossiblePath>,
+    /// Index IDs whose path has `Forced` set.
+    pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceKeepOrder` set.
+    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Whether the TiKV table path has `ForceKeepOrder` set.
+    pub force_keep_order_table_path: bool,
+    /// Whether the TiKV table path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_table_path: bool,
+    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
+    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookupPushDownBy>,
+    /// Unknown names from comment-style hints; Go downgrades these to 1176
+    /// warnings while table-syntax hints return the error directly.
+    pub unknown_comment_indexes: Vec<String>,
+    /// Go statement-context hint warnings produced while resolving paths.
+    pub hint_warnings: Vec<String>,
+    /// Ordinary statement warnings produced when a comment-style index hint
+    /// names a TiKV index while TiKV is absent from the isolation engines.
+    pub isolation_read_warnings: Vec<String>,
+}
+
+/// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
+/// comment-style index-hint tail to an enumerated public-path list.
+pub fn apply_table_index_hints(
+    table: &crate::plan_builder::catalog::SourceTable,
+    public_paths: &[PossiblePath],
+    hints: &[tidb_ast::IndexHint],
+    comment_hints: &[crate::logical::data_source::DataSourceIndexHint],
+    remove_global_indexes: bool,
+    force_no_index_lookup_push_down: bool,
+    session: IndexLookupPushDownSession,
+    tikv_in_isolation_read: bool,
+    isolation_read_engines_value: &str,
+) -> Result<ResolvedIndexPaths, crate::plan_base::PlanError> {
+    use tidb_ast::{IndexHintKind, IndexHintScope};
+
+    let table_path = public_paths
+        .iter()
+        .find(|path| matches!(path, PossiblePath::Table { .. }))
+        .cloned()
+        .expect("getPossibleAccessPaths always creates a table path");
+    let mut has_scan_hint = false;
+    let mut has_use_or_force = false;
+    let mut available = Vec::new();
+    let mut ignored = std::collections::BTreeSet::new();
+    let mut result = ResolvedIndexPaths::default();
+
+    let unsupported_reason = |metadata: &crate::plan_builder::catalog::SourceIndex| {
+        if table.is_common_handle && table.common_handle_version < 1 {
+            Some("common handle table with old encoding version is not supported")
+        } else if metadata.global {
+            Some("the global index in partition table is not supported")
+        } else if table.is_temporary {
+            Some("temporary table is not supported")
+        } else if table.is_cached {
+            Some("cached table is not supported")
+        } else if metadata.is_multi_valued {
+            Some("multi-valued index is not supported")
+        } else if !session.repeatable_read {
+            Some("transaction isolation level is not REPEATABLE-READ")
+        } else if !session.leader_read {
+            Some("only leader read is supported")
+        } else if session.staleness {
+            Some("stale read is not supported")
+        } else if session.historical_read {
+            Some("historical read is not supported")
+        } else if session.max_keys_read > 0 {
+            Some("tidb_max_keys_read is set")
+        } else {
+            None
+        }
+    };
+    if !force_no_index_lookup_push_down
+        && matches!(
+            session.policy,
+            IndexLookupPushDownPolicy::Force | IndexLookupPushDownPolicy::AffinityForce
+        )
+        && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity)
+    {
+        for path in public_paths {
+            let PossiblePath::Index { index } = path else {
+                continue;
+            };
+            let Some(metadata) = table.indexes.get(*index) else {
+                continue;
+            };
+            if unsupported_reason(metadata).is_none() {
+                result
+                    .index_lookup_push_down_by
+                    .insert(metadata.id, IndexLookupPushDownBy::SysVar);
+            }
+        }
+    }
+
+    let table_hints = hints.iter().filter_map(|hint| {
+        if hint.scope != IndexHintScope::All {
+            return None;
+        }
+        Some((
+            hint.kind,
+            hint.indexes.as_slice(),
+            false,
+            false,
+            false,
+            false,
+        ))
+    });
+    let comment_hints = comment_hints.iter().map(|hint| {
+        (
+            hint.kind,
+            hint.index_names.as_slice(),
+            true,
+            hint.force_keep_order,
+            hint.force_no_keep_order,
+            hint.push_down_lookup,
+        )
+    });
+    for (kind, indexes, comment_style, force_keep_order, force_no_keep_order, push_down_lookup) in
+        table_hints.chain(comment_hints)
+    {
+        has_scan_hint = true;
+        // Go checks this before the ordinary empty-list handling. With TiKV
+        // disabled, `USE INDEX ()` must leave the public TiFlash paths
+        // available rather than manufacture a TiKV table path that the
+        // isolation filter immediately removes.
+        if !tikv_in_isolation_read && indexes.is_empty() {
+            continue;
+        }
+        if indexes.is_empty() && kind != IndexHintKind::Ignore {
+            has_use_or_force = true;
+            available.push(table_path.clone());
+        }
+        for name in indexes {
+            let mut prefix_path = None;
+            let mut prefix_matches = 0;
+            let exact_path = public_paths.iter().find(|path| match path {
+                PossiblePath::Table { .. } => {
+                    name.eq_ignore_ascii_case("primary")
+                        && (table.pk_is_handle || table.is_common_handle)
+                }
+                PossiblePath::Index { index } => {
+                    table.indexes.get(*index).is_some_and(|metadata| {
+                        if metadata.name.eq_ignore_ascii_case(name) {
+                            return true;
+                        }
+                        if metadata
+                            .name
+                            .to_ascii_lowercase()
+                            .starts_with(&name.to_ascii_lowercase())
+                        {
+                            prefix_path = Some(*path);
+                            prefix_matches += 1;
+                        }
+                        false
+                    })
+                }
+                PossiblePath::TiFlashTable => false,
+            });
+            let path = exact_path.or_else(|| {
+                if prefix_matches == 1 {
+                    prefix_path
+                } else {
+                    None
+                }
+            });
+            let Some(path) = path.cloned() else {
+                if comment_style {
+                    result.unknown_comment_indexes.push(name.clone());
+                    continue;
+                }
+                return Err(crate::plan_base::PlanError::key_not_exists(
+                    name,
+                    &table.table_name,
+                ));
+            };
+            if kind == IndexHintKind::Ignore {
+                if let PossiblePath::Index { index } = path {
+                    ignored.insert(index);
+                }
+                continue;
+            }
+            let is_tikv_index = match path {
+                PossiblePath::Table { .. } => {
+                    name.eq_ignore_ascii_case("primary") && table.pk_is_handle
+                        || table.is_common_handle
+                }
+                PossiblePath::Index { index } => table
+                    .indexes
+                    .get(index)
+                    .is_some_and(|metadata| !metadata.is_columnar),
+                PossiblePath::TiFlashTable => false,
+            };
+            if is_tikv_index && !tikv_in_isolation_read {
+                let message = format!(
+                    "TiDB doesn't support index '{name}' in the isolation read engines(value: '{isolation_read_engines_value}')"
+                );
+                if comment_style {
+                    result.isolation_read_warnings.push(message);
+                    continue;
+                }
+                return Err(crate::plan_base::PlanError::internal(message));
+            }
+            has_use_or_force = true;
+            match path {
+                PossiblePath::Index { index } => {
+                    if let Some(metadata) = table.indexes.get(index) {
+                        result.forced_index_ids.insert(metadata.id);
+                        if force_keep_order {
+                            result.force_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if force_no_keep_order {
+                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if push_down_lookup {
+                            if force_no_index_lookup_push_down {
+                                result.hint_warnings.push(
+                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
+                                );
+                                continue;
+                            }
+                            if let Some(reason) = unsupported_reason(metadata) {
+                                result.hint_warnings.push(format!(
+                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+                                ));
+                                continue;
+                            }
+                            result
+                                .index_lookup_push_down_by
+                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
+                        }
+                    }
+                }
+                PossiblePath::Table { primary_index, .. } => {
+                    if force_keep_order {
+                        result.force_keep_order_table_path = true;
+                    }
+                    if force_no_keep_order {
+                        result.force_no_keep_order_table_path = true;
+                    }
+                    if let Some(metadata) = primary_index.and_then(|index| table.indexes.get(index))
+                    {
+                        result.forced_index_ids.insert(metadata.id);
+                        if force_keep_order {
+                            result.force_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if force_no_keep_order {
+                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                        }
+                        if push_down_lookup {
+                            if force_no_index_lookup_push_down {
+                                result.hint_warnings.push(
+                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
+                                );
+                                continue;
+                            }
+                            if let Some(reason) = unsupported_reason(metadata) {
+                                result.hint_warnings.push(format!(
+                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+                                ));
+                                continue;
+                            }
+                            result
+                                .index_lookup_push_down_by
+                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
+                        }
+                    }
+                }
+                PossiblePath::TiFlashTable => continue,
+            }
+            available.push(path);
+        }
+    }
+
+    if !has_scan_hint || !has_use_or_force {
+        available = public_paths.to_vec();
+    }
+    available
+        .retain(|path| !matches!(path, PossiblePath::Index { index } if ignored.contains(index)));
+    if remove_global_indexes {
+        available.retain(|path| {
+            !matches!(path, PossiblePath::Index { index }
+                if table.indexes.get(*index).is_some_and(|metadata| metadata.global))
+        });
+    }
+    if available.is_empty() {
+        available.push(table_path.clone());
+    }
+    if available.iter().all(|path| match path {
+        PossiblePath::Table { .. } | PossiblePath::TiFlashTable => false,
+        PossiblePath::Index { index } => table.indexes.get(*index).is_some_and(|metadata| {
+            metadata.is_multi_valued || !metadata.condition_expr_string.is_empty()
+        }),
+    }) {
+        available.push(table_path);
+    }
+    result.paths = available;
+    Ok(result)
+}
+
+/// Pinned Go `indexIsAvailableByHints`, the deliberately smaller hint check
+/// used only while trying a point/batch-point fast plan.
+///
+/// Unlike ordinary `getPossibleAccessPaths`, the fast check recognizes only
+/// `USE_INDEX`, `FORCE_INDEX`, and `IGNORE_INDEX`, matches index names exactly
+/// (not by unique prefix), and performs no warning or name validation. A
+/// rejected fast candidate falls back to ordinary planning, which owns those
+/// full behaviors.
+pub fn fast_index_is_available_by_hints(
+    current_db: &str,
+    db_name: &str,
+    table_alias: &str,
+    index_name: Option<&str>,
+    comment_hints: &[tidb_ast::Hint],
+    table_hints: &[tidb_ast::IndexHint],
+) -> bool {
+    use tidb_ast::{HintKind, IndexHintKind, IndexHintScope};
+
+    let matches_target = |name: &str| match index_name {
+        Some(index) => index.eq_ignore_ascii_case(name),
+        None => name.eq_ignore_ascii_case("primary"),
+    };
+    let mut is_ignore = false;
+    let mut saw_hint = !table_hints.is_empty();
+    let mut apply = |kind: IndexHintKind, scope: IndexHintScope, indexes: &[String]| {
+        if scope != IndexHintScope::All {
+            return None;
+        }
+        if kind == IndexHintKind::Ignore && !indexes.is_empty() {
+            is_ignore = true;
+            if indexes.iter().any(|name| matches_target(name)) {
+                return Some(false);
+            }
+        }
+        if matches!(kind, IndexHintKind::Use | IndexHintKind::Force)
+            && !indexes.is_empty()
+            && indexes.iter().any(|name| matches_target(name))
+        {
+            return Some(true);
+        }
+        None
+    };
+
+    for hint in table_hints {
+        if let Some(available) = apply(hint.kind, hint.scope, &hint.indexes) {
+            return available;
+        }
+    }
+    for hint in comment_hints {
+        let HintKind::Index { table, indexes, .. } = &hint.kind else {
+            continue;
+        };
+        let kind = match hint.name.as_str() {
+            "USE_INDEX" => IndexHintKind::Use,
+            "IGNORE_INDEX" => IndexHintKind::Ignore,
+            "FORCE_INDEX" => IndexHintKind::Force,
+            _ => continue,
+        };
+        let hint_db = table.db_name.as_deref().unwrap_or(current_db);
+        if !table.name.eq_ignore_ascii_case(table_alias)
+            || !(hint_db.eq_ignore_ascii_case(db_name) || hint_db == "*")
+        {
+            continue;
+        }
+        saw_hint = true;
+        if let Some(available) = apply(kind, IndexHintScope::All, indexes) {
+            return available;
+        }
+    }
+    if !saw_hint {
+        return true;
+    }
+    is_ignore
 }
 
 #[cfg(test)]
 mod enumeration_tests {
-    use super::{get_possible_access_paths, PossiblePath};
+    use std::collections::BTreeMap;
+
+    use super::{get_possible_access_paths as enumerate_possible_access_paths, PossiblePath};
+    use crate::domain_misc::LatestIndexSchema;
     use crate::plan_builder::catalog::{SourceIndex, SourceTable};
 
     // All WRITTEN: Go's coverage of getPossibleAccessPaths is
@@ -880,6 +1334,9 @@ mod enumeration_tests {
             is_visible: true,
             is_columnar: false,
             is_multi_valued: false,
+            global: false,
+            condition_expr_string: String::new(),
+            affect_column_offsets: Vec::new(),
         }
     }
 
@@ -888,6 +1345,21 @@ mod enumeration_tests {
             indexes,
             ..SourceTable::default()
         }
+    }
+
+    fn get_possible_access_paths(
+        table: &SourceTable,
+        optimizer_use_invisible_indexes: bool,
+    ) -> Vec<PossiblePath> {
+        enumerate_possible_access_paths(
+            table,
+            optimizer_use_invisible_indexes,
+            None,
+            None,
+            true,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -929,14 +1401,76 @@ mod enumeration_tests {
     }
 
     #[test]
-    fn a_columnar_index_is_skipped_without_replica_state() {
-        // Go admits a columnar index only with an available TiFlash replica
-        // (`planbuilder.go:1399-1404`); this catalog has no replica state.
+    fn a_columnar_index_is_skipped_without_a_tiflash_index_path_identity() {
+        // Go admits a columnar index only as a TiFlash index path
+        // (`planbuilder.go:1399-1404`); this path type is not represented yet.
         let mut columnar = index("v");
         columnar.is_columnar = true;
         assert_eq!(
             get_possible_access_paths(&table(vec![columnar]), false).len(),
             1
         );
+    }
+
+    #[test]
+    fn read_committed_connected_session_uses_only_latest_public_indexes() {
+        let mut source = table(vec![
+            index("removed"),
+            SourceIndex {
+                id: 2,
+                name: "public".to_owned(),
+                ..index("public")
+            },
+        ]);
+        source.table_id = 42;
+        let latest = LatestIndexSchema {
+            schema_meta_version: 8,
+            table_indexes: BTreeMap::from([(
+                42,
+                vec![SourceIndex {
+                    id: 2,
+                    is_public: true,
+                    ..SourceIndex::default()
+                }],
+            )]),
+        };
+
+        let paths =
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), false, false)
+                .unwrap();
+
+        assert_eq!(
+            paths,
+            vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn internal_session_does_not_consult_the_latest_domain_schema() {
+        let source = table(vec![index("i1")]);
+        let paths =
+            enumerate_possible_access_paths(&source, false, None, None, false, false).unwrap();
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn repeatable_read_for_update_uses_the_latest_schema() {
+        let mut source = table(vec![index("removed")]);
+        source.table_id = 42;
+        let latest = LatestIndexSchema {
+            schema_meta_version: 8,
+            table_indexes: BTreeMap::from([(42, Vec::new())]),
+        };
+
+        let paths =
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), true, true)
+                .unwrap();
+        assert_eq!(paths.len(), 1);
     }
 }

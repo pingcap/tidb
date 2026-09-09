@@ -310,14 +310,15 @@ fn write_binary_payloads<W: ResultSetSink>(
     payloads: &[&[u8]],
     finish_attempted: bool,
 ) -> Result<(), BinaryTrackedError> {
-    sink.write_payloads(payloads).map_err(|error| BinaryTrackedError {
-        error: ResultSetWriteError {
-            message: error.message,
-            retryable: false,
-            bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
-        },
-        finish_attempted,
-    })
+    sink.write_payloads(payloads)
+        .map_err(|error| BinaryTrackedError {
+            error: ResultSetWriteError {
+                message: error.message,
+                retryable: false,
+                bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
+            },
+            finish_attempted,
+        })
 }
 
 fn flush_binary_payload<W: ResultSetSink>(
@@ -378,7 +379,9 @@ mod tests {
         .unwrap();
         stream.metadata_packets().unwrap();
         let mut buffer = Vec::new();
-        stream.row_packet_owned_into(vec![cell], &mut buffer).unwrap();
+        stream
+            .row_packet_owned_into(vec![cell], &mut buffer)
+            .unwrap();
         assert_eq!(buffer, expected);
         buffer
     }

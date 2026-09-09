@@ -57,7 +57,7 @@ pub const ERR_MSG_STRING_LIST_ELEM_MISMATCH: &str =
 /// Go keeps the `Msg` template plus `Args` and renders through `fmt.Sprintf`;
 /// this transcreation renders eagerly at construction, byte-for-byte matching
 /// the Go output for every argument shape this package produces.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct IncompatibleError {
     message: String,
 }
@@ -71,12 +71,6 @@ impl IncompatibleError {
             message: message.into(),
         }
     }
-
-    /// The rendered message, exactly as Go's `Error()` returns it.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl fmt::Display for IncompatibleError {
@@ -86,26 +80,6 @@ impl fmt::Display for IncompatibleError {
 }
 
 impl std::error::Error for IncompatibleError {}
-
-/// Renders a string with Go `%q` (`strconv.Quote`) semantics for the
-/// identifier-shaped keys this package quotes.
-fn go_quote(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
 
 pub(crate) fn type_mismatch_error(a: &dyn Lattice, b: &dyn Lattice) -> IncompatibleError {
     IncompatibleError::raw(format!(
@@ -140,7 +114,11 @@ pub(crate) fn wrap_tuple_index_error(index: usize, inner: &IncompatibleError) ->
 }
 
 pub(crate) fn wrap_map_key_error(key: &str, inner: &IncompatibleError) -> IncompatibleError {
-    IncompatibleError::raw(format!("at map key {}: {}", go_quote(key), inner))
+    IncompatibleError::raw(format!(
+        "at map key {}: {}",
+        tidb_error::mysql::go_quote_string(key),
+        inner
+    ))
 }
 
 /// Custom equality, mirroring Go's `Equality` interface.
@@ -150,6 +128,9 @@ pub trait Equality: fmt::Debug {
 
     /// Rust downcast hook standing in for Go's dynamic type assertions.
     fn as_any(&self) -> &dyn Any;
+
+    /// Go `%v` rendering used when an equality singleton is incompatible.
+    fn go_format(&self) -> String;
 }
 
 /// The explicit domain of Go's `interface{}` values flowing through
@@ -219,7 +200,6 @@ impl PartialEq for Value {
 impl Value {
     /// Renders this value the way Go's `%v` verb does, for error arguments
     /// and for `DEFAULT` clauses in restored SQL.
-    #[must_use]
     pub fn go_format(&self) -> String {
         match self {
             Self::Nil => "<nil>".to_owned(),
@@ -227,9 +207,10 @@ impl Value {
             Self::Int(value) | Self::Int64(value) => value.to_string(),
             Self::Uint(value) | Self::Uint64(value) => value.to_string(),
             Self::Byte(value) => value.to_string(),
-            Self::Float64(value) => value.to_string(),
+            Self::Float64(value) => tidb_datatype::format_float_g_shortest(*value),
             Self::Str(value) => value.to_utf8_lossy_go(),
             Self::IndexType(value) => value.sql().to_owned(),
+            Self::Equality(value) => value.go_format(),
             Self::Any(value) => value.to_string(),
             other => format!("{other:?}"),
         }
@@ -238,7 +219,6 @@ impl Value {
     /// Converts a [`GoAny`] interface payload into this domain, keeping the
     /// built-in shapes comparable with values this package itself produces
     /// (for example a joined column's synthesized string default).
-    #[must_use]
     pub fn from_go_any(value: &GoAny) -> Self {
         match value.view() {
             None => Self::Nil,
@@ -361,7 +341,6 @@ struct Singleton {
 
 /// Go `Singleton`: wraps an unordered value. Distinct instances of
 /// `Singleton` are incompatible.
-#[must_use]
 pub fn singleton(value: Value) -> Box<dyn Lattice> {
     Box::new(Singleton { value })
 }
@@ -422,7 +401,6 @@ struct EqualitySingleton {
 
 /// Go `EqualitySingleton`: wraps an unordered value with equality defined by
 /// custom code instead of the `==` operator.
-#[must_use]
 pub fn equality_singleton(value: Rc<dyn Equality>) -> Box<dyn Lattice> {
     Box::new(EqualitySingleton { value })
 }
@@ -436,8 +414,8 @@ impl Lattice for EqualitySingleton {
         match cast::<Self>(other) {
             None => Err(type_mismatch_error(self, other)),
             Some(b) if !self.value.equals(b.value.as_ref()) => Err(distinct_singletons_error(
-                &format!("{:?}", self.value),
-                &format!("{:?}", b.value),
+                &self.value.go_format(),
+                &b.value.go_format(),
             )),
             Some(_) => Ok(0),
         }
@@ -447,8 +425,8 @@ impl Lattice for EqualitySingleton {
         match cast::<Self>(other) {
             None => Err(type_mismatch_error(self, other)),
             Some(b) if !self.value.equals(b.value.as_ref()) => Err(distinct_singletons_error(
-                &format!("{:?}", self.value),
-                &format!("{:?}", b.value),
+                &self.value.go_format(),
+                &b.value.go_format(),
             )),
             Some(_) => Ok(self.clone_lattice()),
         }
@@ -615,7 +593,6 @@ struct FieldTp {
 
 /// Go `FieldTp`: used for the column field type
 /// (`github.com/pingcap/tidb/pkg/parser/types.FieldType.Tp`).
-#[must_use]
 pub fn field_tp(value: u8) -> Box<dyn Lattice> {
     Box::new(FieldTp { value })
 }
@@ -793,14 +770,12 @@ struct Maybe(Option<Box<dyn Lattice>>);
 
 /// Go `Maybe`: includes `nil` as the universal lower bound of the original
 /// lattice.
-#[must_use]
 pub fn maybe(inner: Option<Box<dyn Lattice>>) -> Box<dyn Lattice> {
     Box::new(Maybe(inner))
 }
 
 /// Go `MaybeSingletonInterface`: a convenient function calling
 /// `Maybe(Singleton(value))`.
-#[must_use]
 pub fn maybe_singleton_interface(value: &GoAny) -> Box<dyn Lattice> {
     if value.is_nil() {
         return maybe(None);
@@ -810,7 +785,6 @@ pub fn maybe_singleton_interface(value: &GoAny) -> Box<dyn Lattice> {
 
 /// Go `MaybeSingletonString`: a convenient function calling
 /// `Maybe(Singleton(s))`.
-#[must_use]
 pub fn maybe_singleton_string(s: &str) -> Box<dyn Lattice> {
     if s.is_empty() {
         return maybe(None);
@@ -874,7 +848,7 @@ impl Lattice for Maybe {
 }
 
 /// Go `StringList`: a list of string where `a <= b` iff `a == b[:len(a)]`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct StringList(pub Vec<GoString>);
 
 impl Lattice for StringList {
@@ -892,8 +866,8 @@ impl Lattice for StringList {
                 return Err(IncompatibleError::raw(format!(
                     "at string list index {}: distinct values ({} vs {})",
                     index,
-                    go_quote(&self.0[index].to_utf8_lossy_go()),
-                    go_quote(&b.0[index].to_utf8_lossy_go()),
+                    tidb_error::mysql::go_quote_bytes(self.0[index].as_bytes()),
+                    tidb_error::mysql::go_quote_bytes(b.0[index].as_bytes()),
                 )));
             }
         }
@@ -993,7 +967,6 @@ impl Clone for MapLattice {
 }
 
 /// Go `Map`: wraps a `LatticeMap` instance into a `Lattice`.
-#[must_use]
 pub fn map_lattice(inner: Box<dyn LatticeMap>) -> Box<dyn Lattice> {
     Box::new(MapLattice { inner })
 }

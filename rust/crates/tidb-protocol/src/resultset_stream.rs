@@ -67,6 +67,19 @@ pub enum ResultSetStreamError {
     },
 }
 
+impl ResultSetStreamError {
+    /// The protocol error category Go's server derives from the same
+    /// failure: an unrenderable datum is `err.ErrInvalidType` (8057,
+    /// column.go:175/238); every other variant has no single source errno
+    /// and stays `Unknown`.
+    pub fn error_kind(&self) -> crate::ErrorKind {
+        match self {
+            Self::TextFormat { .. } => crate::ErrorKind::InvalidType,
+            _ => crate::ErrorKind::Unknown,
+        }
+    }
+}
+
 impl std::fmt::Display for ResultSetStreamError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -437,11 +450,13 @@ impl ResultSetStream {
 
     fn eof(&self) -> EofPacket {
         EofPacket {
+            affected_rows: self.options.affected_rows,
+            last_insert_id: self.options.last_insert_id,
             warnings: self.options.warnings,
             status_flags: self.options.status_flags,
             deprecate_eof: self.options.deprecate_eof,
             protocol_41: self.options.protocol_41,
-            info: Vec::new(),
+            info: self.options.info.clone(),
         }
     }
 }

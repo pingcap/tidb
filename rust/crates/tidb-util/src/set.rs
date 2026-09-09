@@ -12,21 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stable-key and memory-aware sets from `pkg/util/set`.
+//! Keyed, primitive, and memory-aware sets from `pkg/util/set`.
 //!
-//! Rust's standard collections own the ordinary integer/string set cases.
-//! [`KeyedSet`] retains the one source-specific rule: values are identified by
-//! an arbitrary-byte string key, and stable lists are ordered by that key.
-//! [`MemorySet`] and [`MemoryMap`] add the allocation deltas consumed by TiDB's
-//! aggregate memory trackers without exposing Go's runtime map layout.
+//! [`KeyedSet`] retains the source-specific stable-key rule. The primitive
+//! sets preserve Go map equality and unspecified iteration. The five concrete
+//! memory-aware types report the same checkpoint deltas and expose trackers
+//! only on the three source types that support one.
 
 use crate::memory::Tracker;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fmt;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 use tidb_datatype::{GoString, MyDecimal};
-use tidb_hack::MemAwareMap;
+use tidb_hack::{MapValueLayout, MemAwareMap};
 use tidb_mysql::{to_lowercase, to_uppercase};
 
 /// A value whose set identity is an arbitrary-byte Go string.
@@ -36,16 +34,25 @@ pub trait SetKey {
 }
 
 /// A set that keeps the latest value for each stable string key.
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyedSet<T> {
-    values: BTreeMap<GoString, T>,
+    values: HashMap<GoString, T>,
 }
 
-impl<T> Default for KeyedSet<T> {
+impl<T> Clone for KeyedSet<T>
+where
+    T: Clone + SetKey,
+{
+    fn clone(&self) -> Self {
+        list_to_set(self.to_list())
+    }
+}
+
+impl<T> Default for KeyedSet<T>
+where
+    T: Clone + SetKey,
+{
     fn default() -> Self {
-        Self {
-            values: BTreeMap::new(),
-        }
+        Self::new()
     }
 }
 
@@ -54,9 +61,10 @@ where
     T: Clone + SetKey,
 {
     /// Creates an empty set.
-    #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            values: HashMap::new(),
+        }
     }
 
     /// Adds values, replacing an older value with the same key.
@@ -67,39 +75,38 @@ where
     }
 
     /// Returns whether a value with the same key exists.
-    #[must_use]
     pub fn contains(&self, value: &T) -> bool {
         self.values.contains_key(&value.set_key())
     }
 
     /// Removes the value with the same key.
-    pub fn remove(&mut self, value: &T) -> Option<T> {
-        self.values.remove(&value.set_key())
+    pub fn remove(&mut self, value: &T) {
+        self.values.remove(&value.set_key());
     }
 
     /// Returns cloned values in stable key order.
-    #[must_use]
     pub fn to_list(&self) -> Vec<T> {
-        self.values.values().cloned().collect()
+        let mut values: Vec<_> = self.values.values().cloned().collect();
+        values.sort_by_key(SetKey::set_key);
+        values
     }
 
     /// Returns the number of distinct keys.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
-    /// Returns whether the set is empty.
-    #[must_use]
+    /// Returns whether the set has no values.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
     /// Returns the source `String` representation without assuming UTF-8.
-    #[must_use]
-    pub fn display_bytes(&self) -> GoString {
+    pub fn string(&self) -> GoString {
+        let mut keys: Vec<_> = self.values.values().map(SetKey::set_key).collect();
+        keys.sort();
         let mut out = vec![b'{'];
-        for (index, key) in self.values.keys().enumerate() {
+        for (index, key) in keys.iter().enumerate() {
             if index != 0 {
                 out.extend_from_slice(b", ");
             }
@@ -107,29 +114,6 @@ where
         }
         out.push(b'}');
         GoString::from_bytes(out)
-    }
-
-    /// Returns every size-`count` combination in stable source order.
-    #[must_use]
-    pub fn combinations(&self, count: isize) -> Vec<Self> {
-        if count < 0 {
-            return Vec::new();
-        }
-        let wanted = count as usize;
-        let items = self.to_list();
-        let mut current = Self::new();
-        let mut result = Vec::new();
-        combinations_from(&items, &mut current, 0, wanted, &mut result);
-        result
-    }
-}
-
-impl<T> fmt::Display for KeyedSet<T>
-where
-    T: Clone + SetKey,
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&String::from_utf8_lossy(self.display_bytes().as_bytes()))
     }
 }
 
@@ -155,8 +139,17 @@ fn combinations_from<T>(
     combinations_from(items, current, depth + 1, wanted, result);
 }
 
+/// Converts a list to a set.
+pub fn list_to_set<T>(values: impl IntoIterator<Item = T>) -> KeyedSet<T>
+where
+    T: Clone + SetKey,
+{
+    let mut result = KeyedSet::new();
+    result.add(values);
+    result
+}
+
 /// Returns the union of all input sets.
-#[must_use]
 pub fn union<T>(sets: &[&KeyedSet<T>]) -> KeyedSet<T>
 where
     T: Clone + SetKey,
@@ -169,7 +162,6 @@ where
 }
 
 /// Returns the intersection of all input sets.
-#[must_use]
 pub fn intersection<T>(sets: &[&KeyedSet<T>]) -> KeyedSet<T>
 where
     T: Clone + SetKey,
@@ -187,7 +179,6 @@ where
 }
 
 /// Returns the values present in `left` but absent from `right`.
-#[must_use]
 pub fn difference<T>(left: &KeyedSet<T>, right: &KeyedSet<T>) -> KeyedSet<T>
 where
     T: Clone + SetKey,
@@ -201,64 +192,76 @@ where
     result
 }
 
-/// An ordered numeric set used by the source `IntSet` and `Int64Set` APIs.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct NumericSet<T> {
-    values: BTreeSet<T>,
+/// Returns every size-`count` combination in stable source order.
+pub fn combinations<T>(set: &KeyedSet<T>, count: isize) -> Vec<KeyedSet<T>>
+where
+    T: Clone + SetKey,
+{
+    if count < 0 {
+        return Vec::new();
+    }
+    let wanted = count as usize;
+    let items = set.to_list();
+    let mut current = KeyedSet::new();
+    let mut result = Vec::new();
+    combinations_from(&items, &mut current, 0, wanted, &mut result);
+    result
 }
 
-impl<T: Ord> NumericSet<T> {
-    /// Builds a set from initial values.
-    #[must_use]
-    pub fn new(values: impl IntoIterator<Item = T>) -> Self {
-        Self {
-            values: values.into_iter().collect(),
+macro_rules! numeric_set {
+    ($name:ident, $value:ty, $doc:literal) => {
+        #[doc = $doc]
+        pub struct $name {
+            values: HashSet<$value>,
         }
-    }
 
-    /// Inserts a value and returns whether it was new.
-    pub fn insert(&mut self, value: T) -> bool {
-        self.values.insert(value)
-    }
+        impl $name {
+            /// Builds a set from initial values.
+            pub fn new(values: impl IntoIterator<Item = $value>) -> Self {
+                Self {
+                    values: values.into_iter().collect(),
+                }
+            }
 
-    /// Returns whether `value` exists.
-    #[must_use]
-    pub fn contains(&self, value: &T) -> bool {
-        self.values.contains(value)
-    }
+            /// Inserts a value.
+            pub fn insert(&mut self, value: $value) {
+                self.values.insert(value);
+            }
 
-    /// Returns the number of values.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
+            /// Returns whether `value` exists.
+            pub fn contains(&self, value: &$value) -> bool {
+                self.values.contains(value)
+            }
 
-    /// Returns whether the set is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
+            /// Returns the number of values.
+            pub fn len(&self) -> usize {
+                self.values.len()
+            }
 
-    /// Iterates in numeric order.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.values.iter()
-    }
+            /// Returns whether the set has no values.
+            pub fn is_empty(&self) -> bool {
+                self.values.is_empty()
+            }
+
+            /// Iterates over values in unspecified map order.
+            pub fn iter(&self) -> impl Iterator<Item = &$value> {
+                self.values.iter()
+            }
+        }
+    };
 }
 
-/// Source `IntSet` using the target's pointer-sized integer.
-pub type IntSet = NumericSet<isize>;
-/// Source `Int64Set`.
-pub type Int64Set = NumericSet<i64>;
+numeric_set!(IntSet, isize, "Source `IntSet`.");
+numeric_set!(Int64Set, i64, "Source `Int64Set`.");
 
 /// An arbitrary-byte string set.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StringSet {
-    values: BTreeSet<GoString>,
+    values: HashSet<GoString>,
 }
 
 impl StringSet {
     /// Builds a string set from initial values.
-    #[must_use]
     pub fn new<I, S>(values: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -269,19 +272,17 @@ impl StringSet {
         }
     }
 
-    /// Inserts a string and returns whether it was new.
-    pub fn insert(&mut self, value: impl Into<GoString>) -> bool {
-        self.values.insert(value.into())
+    /// Inserts a string.
+    pub fn insert(&mut self, value: impl Into<GoString>) {
+        self.values.insert(value.into());
     }
 
     /// Returns whether a byte string exists.
-    #[must_use]
     pub fn contains(&self, value: &GoString) -> bool {
         self.values.contains(value)
     }
 
     /// Returns the intersection with `right`.
-    #[must_use]
     pub fn intersection(&self, right: &Self) -> Self {
         Self {
             values: self.values.intersection(&right.values).cloned().collect(),
@@ -290,9 +291,8 @@ impl StringSet {
 
     /// Returns original values from `right` whose lower/upper-case form is in
     /// this set.
-    #[must_use]
     pub fn intersection_with_case(&self, right: &Self, to_lower: bool) -> Self {
-        let mut result = Self::default();
+        let mut result = Self::new([] as [GoString; 0]);
         for original in &right.values {
             let text = original.to_utf8_lossy_go();
             let folded = if to_lower {
@@ -308,13 +308,11 @@ impl StringSet {
     }
 
     /// Returns the number of values.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
     /// Returns whether the set is empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -324,15 +322,17 @@ impl StringSet {
         self.values.clear();
     }
 
-    /// Iterates in stable byte order.
-    pub fn iter(&self) -> impl Iterator<Item = &GoString> {
-        self.values.iter()
+    /// Calls `function` for every value in unspecified map order.
+    pub fn iterate_with(&self, mut function: impl FnMut(GoString)) {
+        for value in &self.values {
+            function(value.clone());
+        }
     }
 }
 
 /// A float set with Go map equality: signed zero aliases, while every NaN
 /// insertion is distinct and a NaN lookup never succeeds.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Float64Set {
     numbers: HashSet<u64>,
     nan_count: usize,
@@ -340,40 +340,40 @@ pub struct Float64Set {
 
 impl Float64Set {
     /// Builds a float set from initial values.
-    #[must_use]
     pub fn new(values: impl IntoIterator<Item = f64>) -> Self {
-        let mut result = Self::default();
+        let mut result = Self {
+            numbers: HashSet::new(),
+            nan_count: 0,
+        };
         for value in values {
             result.insert(value);
         }
         result
     }
 
-    /// Inserts a value and returns whether the map gained an entry.
-    pub fn insert(&mut self, value: f64) -> bool {
+    /// Inserts a value.
+    pub fn insert(&mut self, value: f64) {
         match canonical_float_bits(value) {
-            Some(bits) => self.numbers.insert(bits),
+            Some(bits) => {
+                self.numbers.insert(bits);
+            }
             None => {
                 self.nan_count += 1;
-                true
             }
         }
     }
 
     /// Returns whether `value` exists. NaN never equals a map key in Go.
-    #[must_use]
     pub fn contains(&self, value: f64) -> bool {
         canonical_float_bits(value).is_some_and(|bits| self.numbers.contains(&bits))
     }
 
     /// Returns the number of map entries.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.numbers.len() + self.nan_count
     }
 
-    /// Returns whether the set is empty.
-    #[must_use]
+    /// Returns whether the set has no values.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -391,24 +391,23 @@ fn canonical_float_bits(value: f64) -> Option<u64> {
 
 /// A hash map that reports native allocation deltas and can consume them
 /// immediately on a TiDB memory tracker.
-pub struct MemoryMap<K, V> {
+struct MemoryMap<K, V> {
     map: MemAwareMap<K, V>,
     tracker: Option<Arc<Tracker>>,
 }
 
 impl<K, V> MemoryMap<K, V>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
+    V: MapValueLayout,
 {
     /// Creates an empty map.
-    #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self::with_capacity(0)
     }
 
     /// Creates an empty map with capacity for at least `capacity` values.
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             map: MemAwareMap::new(capacity),
             tracker: None,
@@ -416,13 +415,13 @@ where
     }
 
     /// Inserts or replaces a value and returns its allocation delta.
-    pub fn insert(&mut self, key: K, value: V) -> i64 {
+    fn insert(&mut self, key: K, value: V) -> i64 {
         self.insert_ext(key, value).0
     }
 
     /// Inserts or replaces a value, returning allocation delta and whether
     /// the key was new.
-    pub fn insert_ext(&mut self, key: K, value: V) -> (i64, bool) {
+    fn insert_ext(&mut self, key: K, value: V) -> (i64, bool) {
         let (delta, inserted) = self.map.set_ext(key, value);
         if delta != 0 {
             if let Some(tracker) = &self.tracker {
@@ -434,49 +433,45 @@ where
     }
 
     /// Installs the tracker that consumes future allocation changes.
-    pub fn set_tracker(&mut self, tracker: Arc<Tracker>) {
-        self.tracker = Some(tracker);
+    fn set_tracker(&mut self, tracker: Option<Arc<Tracker>>) {
+        self.tracker = tracker;
     }
 
     /// Returns whether a key exists.
-    #[must_use]
-    pub fn contains_key(&self, key: &K) -> bool {
+    fn contains_key(&self, key: &K) -> bool {
         self.map.contains_key(key)
     }
 
     /// Gets a value.
-    #[must_use]
-    pub fn get(&self, key: &K) -> Option<&V> {
+    fn get(&self, key: &K) -> Option<&V> {
         self.map.get(key)
     }
 
     /// Returns the number of entries.
-    #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Returns whether the map is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
     /// Returns the current accounted map bytes.
-    #[must_use]
-    pub const fn accounted_bytes(&self) -> u64 {
+    const fn accounted_bytes(&self) -> u64 {
         self.map.bytes()
     }
 
     /// Iterates over entries.
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+    fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
         self.map.iter()
     }
 }
 
 impl<K, V> Default for MemoryMap<K, V>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
+    V: MapValueLayout,
 {
     fn default() -> Self {
         Self::new()
@@ -484,92 +479,234 @@ where
 }
 
 /// A hash set that reports native table-allocation changes.
-pub struct MemorySet<K> {
+struct MemorySet<K> {
     map: MemoryMap<K, ()>,
 }
 
 impl<K> MemorySet<K>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
 {
     /// Creates an empty set.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            map: MemoryMap::new(),
-        }
+    fn new() -> Self {
+        Self::with_capacity(0)
     }
 
-    /// Creates an empty set with an initial capacity.
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
+    /// Creates an empty set with capacity for at least `capacity` values.
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             map: MemoryMap::with_capacity(capacity),
         }
     }
 
     /// Inserts a value, returning allocation delta and whether it was new.
-    pub fn insert(&mut self, value: K) -> (i64, bool) {
+    fn insert(&mut self, value: K) -> (i64, bool) {
         self.map.insert_ext(value, ())
     }
 
     /// Installs the tracker that consumes future allocation changes.
-    pub fn set_tracker(&mut self, tracker: Arc<Tracker>) {
+    fn set_tracker(&mut self, tracker: Option<Arc<Tracker>>) {
         self.map.set_tracker(tracker);
     }
 
     /// Returns whether a value exists.
-    #[must_use]
-    pub fn contains(&self, value: &K) -> bool {
+    fn contains(&self, value: &K) -> bool {
         self.map.contains_key(value)
     }
 
     /// Returns the number of values.
-    #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Returns whether the set is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
     /// Returns current accounted table bytes.
-    #[must_use]
-    pub const fn accounted_bytes(&self) -> u64 {
+    const fn accounted_bytes(&self) -> u64 {
         self.map.accounted_bytes()
     }
 
     /// Iterates over values.
-    pub fn iter(&self) -> impl Iterator<Item = &K> {
+    fn iter(&self) -> impl Iterator<Item = &K> {
         self.map.iter().map(|(key, ())| key)
     }
 }
 
 impl<K> Default for MemorySet<K>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + MapValueLayout,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Source string-to-string memory-aware map, with arbitrary-byte strings.
-pub type StringToStringMapWithMemoryUsage = MemoryMap<GoString, GoString>;
-/// Source string-to-decimal memory-aware map.
-pub type StringToDecimalMapWithMemoryUsage = MemoryMap<GoString, MyDecimal>;
-/// Source arbitrary-byte string memory-aware set.
-pub type StringSetWithMemoryUsage = MemorySet<GoString>;
-/// Source signed-64-bit memory-aware set.
-pub type Int64SetWithMemoryUsage = MemorySet<i64>;
+macro_rules! tracked_memory_map {
+    ($name:ident, $value:ty) => {
+        /// A source memory-aware string map.
+        pub struct $name {
+            values: MemoryMap<GoString, $value>,
+        }
+
+        impl $name {
+            /// Builds an empty map and returns its initial accounted bytes.
+            pub fn new() -> (Self, i64) {
+                let values = MemoryMap::new();
+                let bytes = i64::try_from(values.accounted_bytes()).unwrap_or(i64::MAX);
+                (Self { values }, bytes)
+            }
+
+            /// Inserts or replaces one value and returns the allocation delta.
+            pub fn insert(&mut self, key: GoString, value: $value) -> i64 {
+                self.values.insert(key, value)
+            }
+
+            /// Sets or clears the tracker that consumes future deltas.
+            pub fn set_tracker(&mut self, tracker: Option<Arc<Tracker>>) {
+                self.values.set_tracker(tracker);
+            }
+
+            /// Returns the value for `key`.
+            pub fn get(&self, key: &GoString) -> Option<&$value> {
+                self.values.get(key)
+            }
+
+            /// Returns the number of entries.
+            pub fn len(&self) -> usize {
+                self.values.len()
+            }
+
+            /// Returns whether the map is empty.
+            pub fn is_empty(&self) -> bool {
+                self.values.is_empty()
+            }
+
+            /// Iterates over entries in unspecified map order.
+            pub fn iter(&self) -> impl Iterator<Item = (&GoString, &$value)> {
+                self.values.iter()
+            }
+        }
+    };
+}
+
+tracked_memory_map!(StringToStringMapWithMemoryUsage, GoString);
+tracked_memory_map!(StringToDecimalMapWithMemoryUsage, Box<MyDecimal>);
+
+/// A source memory-aware string set.
+pub struct StringSetWithMemoryUsage {
+    values: MemorySet<GoString>,
+}
+
+impl StringSetWithMemoryUsage {
+    /// Builds a set and returns its initial accounted bytes.
+    pub fn new<I>(values: I) -> (Self, i64)
+    where
+        I: IntoIterator<Item = GoString>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let values = values.into_iter();
+        let mut result = Self {
+            values: MemorySet::with_capacity(values.len()),
+        };
+        for value in values {
+            result.insert(value);
+        }
+        let bytes = i64::try_from(result.values.accounted_bytes()).unwrap_or(i64::MAX);
+        (result, bytes)
+    }
+
+    /// Inserts one value and returns its allocation delta.
+    pub fn insert(&mut self, value: GoString) -> i64 {
+        self.values.insert(value).0
+    }
+
+    /// Sets or clears the tracker that consumes future deltas.
+    pub fn set_tracker(&mut self, tracker: Option<Arc<Tracker>>) {
+        self.values.set_tracker(tracker);
+    }
+
+    /// Returns whether `value` exists.
+    pub fn contains(&self, value: &GoString) -> bool {
+        self.values.contains(value)
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Returns whether the set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Iterates over values in unspecified map order.
+    pub fn iter(&self) -> impl Iterator<Item = &GoString> {
+        self.values.iter()
+    }
+}
+
+/// A source memory-aware signed-64-bit set.
+pub struct Int64SetWithMemoryUsage {
+    values: MemorySet<i64>,
+}
+
+impl Int64SetWithMemoryUsage {
+    /// Builds a set and returns its initial accounted bytes.
+    pub fn new<I>(values: I) -> (Self, i64)
+    where
+        I: IntoIterator<Item = i64>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let values = values.into_iter();
+        let mut result = Self {
+            values: MemorySet::with_capacity(values.len()),
+        };
+        for value in values {
+            result.insert(value);
+        }
+        let bytes = i64::try_from(result.values.accounted_bytes()).unwrap_or(i64::MAX);
+        (result, bytes)
+    }
+
+    /// Inserts one value and returns its allocation delta.
+    pub fn insert(&mut self, value: i64) -> i64 {
+        self.values.insert(value).0
+    }
+
+    /// Returns whether `value` exists.
+    pub fn contains(&self, value: i64) -> bool {
+        self.values.contains(&value)
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Returns whether the set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Iterates over values in unspecified map order.
+    pub fn iter(&self) -> impl Iterator<Item = &i64> {
+        self.values.iter()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum FloatKey {
     Number(u64),
     Nan { bits: u64, identity: u64 },
+}
+
+impl MapValueLayout for FloatKey {
+    const SOURCE_SIZE: usize = 8;
+    const SOURCE_ALIGN: usize = 8;
 }
 
 impl FloatKey {
@@ -588,10 +725,14 @@ pub struct Float64SetWithMemoryUsage {
 
 impl Float64SetWithMemoryUsage {
     /// Builds a set from initial values and returns its accounted bytes.
-    #[must_use]
-    pub fn new(values: impl IntoIterator<Item = f64>) -> (Self, i64) {
+    pub fn new<I>(values: I) -> (Self, i64)
+    where
+        I: IntoIterator<Item = f64>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let values = values.into_iter();
         let mut result = Self {
-            values: MemorySet::new(),
+            values: MemorySet::with_capacity(values.len()),
             next_nan_identity: 0,
         };
         for value in values {
@@ -618,34 +759,29 @@ impl Float64SetWithMemoryUsage {
     }
 
     /// Returns whether a float exists. NaN lookups always fail.
-    #[must_use]
     pub fn contains(&self, value: f64) -> bool {
         canonical_float_bits(value)
             .is_some_and(|bits| self.values.contains(&FloatKey::Number(bits)))
     }
 
     /// Returns the number of entries.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
     /// Returns whether the set contains no values.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
     /// Returns current accounted table bytes.
-    #[must_use]
     pub const fn accounted_bytes(&self) -> u64 {
         self.values.accounted_bytes()
     }
 
-    /// Returns the stored values. Iteration order is deliberately unspecified.
-    #[must_use]
-    pub fn values(&self) -> Vec<f64> {
-        self.values.iter().map(|value| value.value()).collect()
+    /// Iterates over stored values in unspecified map order.
+    pub fn iter(&self) -> impl Iterator<Item = f64> + '_ {
+        self.values.iter().map(|value| value.value())
     }
 }
 
@@ -669,125 +805,189 @@ mod tests {
     }
 
     #[test]
-    fn keyed_set_operations_and_combinations_are_stable() {
-        let mut left = keyed(&["q3", "q1", "q2"]);
-        assert_eq!(left.to_list(), vec![Item("q1"), Item("q2"), Item("q3")]);
-        assert!(left.contains(&Item("q2")));
-        left.remove(&Item("q2"));
-        assert_eq!(left.display_bytes(), "{q1, q3}");
-
-        let right = keyed(&["q2", "q3", "q4"]);
-        assert_eq!(union(&[&left, &right]).display_bytes(), "{q1, q2, q3, q4}");
-        assert_eq!(intersection(&[&left, &right]).display_bytes(), "{q3}");
-        assert_eq!(difference(&right, &left).display_bytes(), "{q2, q4}");
-
-        let combinations: Vec<GoString> = keyed(&["q1", "q2", "q3"])
-            .combinations(2)
-            .into_iter()
-            .map(|set| set.display_bytes())
-            .collect();
-        assert_eq!(combinations, ["{q1, q2}", "{q1, q3}", "{q2, q3}"]);
-        assert!(keyed(&["q1"]).combinations(-1).is_empty());
-    }
-
-    #[test]
-    fn primitive_sets_match_source_membership() {
-        let mut ints = IntSet::new([1, 2, 3]);
-        assert!(!ints.insert(2));
-        assert!(ints.insert(4));
-        assert_eq!(ints.iter().copied().collect::<Vec<_>>(), [1, 2, 3, 4]);
-
-        let lower = StringSet::new(["a", "b"]);
-        let original = StringSet::new(["A", "B", "C"]);
-        assert_eq!(
-            lower.intersection(&StringSet::new(["b", "c"])),
-            StringSet::new(["b"])
-        );
-        assert_eq!(
-            lower
-                .intersection_with_case(&original, true)
-                .iter()
-                .map(GoString::as_bytes)
-                .collect::<Vec<_>>(),
-            [b"A".as_slice(), b"B".as_slice()]
-        );
-        assert_eq!(
-            StringSet::new(["A", "B"])
-                .intersection_with_case(&StringSet::new(["a", "b", "c"]), false),
-            StringSet::new(["a", "b"])
-        );
-        let mut cleared = original.clone();
-        cleared.clear();
-        assert!(cleared.is_empty());
-
-        let nan = f64::from_bits(0x7ff8_0000_0000_0001);
-        let mut floats = Float64Set::new([0.0, -0.0, nan]);
-        assert_eq!(floats.len(), 2);
-        assert!(floats.contains(-0.0));
-        assert!(!floats.contains(nan));
-        floats.insert(nan);
-        assert_eq!(floats.len(), 3);
-    }
-
-    #[test]
-    fn string_set_case_intersection_uses_go_simple_case_mapping() {
-        let dotted_capital_i = StringSet::new(["\u{130}"]);
-        assert_eq!(
-            StringSet::new(["i"]).intersection_with_case(&dotted_capital_i, true),
-            dotted_capital_i
-        );
-
-        let sharp_s = StringSet::new(["ß"]);
-        assert_eq!(sharp_s.intersection_with_case(&sharp_s, false), sharp_s);
-
-        let malformed = GoString::from_bytes([0xe2, 0x82]);
-        assert_eq!(
-            StringSet::new(["\u{fffd}\u{fffd}"])
-                .intersection_with_case(&StringSet::new([malformed.clone()]), true),
-            StringSet::new([malformed])
-        );
-    }
-
-    #[test]
-    fn memory_aware_sets_report_or_consume_table_growth() {
-        let mut set = MemorySet::new();
-        assert!(set.accounted_bytes() > 0);
-        let mut reported = 0;
-        for value in 0..128_i64 {
-            let (delta, inserted) = set.insert(value);
-            assert!(inserted);
-            reported += delta;
-        }
-        assert!(reported > 0);
-        assert_eq!(set.insert(127), (0, false));
-
-        let tracker = Tracker::new(-1, -1);
-        let mut tracked = MemorySet::new();
-        tracked.set_tracker(Arc::clone(&tracker));
-        for value in 0..128_i64 {
-            assert_eq!(tracked.insert(value).0, 0);
-        }
-        assert!(tracker.bytes_consumed() > 0);
-
-        let mut map = StringToDecimalMapWithMemoryUsage::new();
-        let key = GoString::from_bytes([0xff, 0]);
-        map.insert(key.clone(), MyDecimal::from_int(7));
-        assert_eq!(map.get(&key), Some(&MyDecimal::from_int(7)));
-    }
-
-    #[test]
-    fn memory_aware_float_set_keeps_go_nan_and_zero_rules() {
-        let nan = f64::from_bits(0x7ff8_0000_0000_0001);
-        let (mut set, initial) = Float64SetWithMemoryUsage::new([0.0, -0.0, nan]);
-        assert!(initial > 0);
-        assert_eq!(set.len(), 2);
-        assert!(set.contains(-0.0));
-        assert!(!set.contains(nan));
-        set.insert(nan);
+    fn test_set_basic() {
+        let mut set = keyed(&[]);
+        set.add([Item("q1"), Item("q2"), Item("q3")]);
+        assert!(set.contains(&Item("q1")));
+        assert!(set.contains(&Item("q2")));
+        assert!(set.contains(&Item("q3")));
+        assert!(!set.contains(&Item("q4")));
         assert_eq!(set.len(), 3);
+        assert_eq!(set.to_list(), [Item("q1"), Item("q2"), Item("q3")]);
+        set.remove(&Item("q2"));
+        assert!(!set.contains(&Item("q2")));
+        assert_eq!(set.len(), 2);
+        let cloned = set.clone();
+        set.remove(&Item("q1"));
+        assert!(!set.contains(&Item("q1")));
+        assert!(cloned.contains(&Item("q1")));
+        assert_eq!(cloned.len(), 2);
+    }
+
+    #[test]
+    fn test_set_operation() {
+        let left = keyed(&["q1", "q2", "q3"]);
+        let right = keyed(&["q2", "q3", "q4"]);
+        assert_eq!(union(&[&left, &right]).string(), "{q1, q2, q3, q4}");
+        assert_eq!(intersection(&[&left, &right]).string(), "{q2, q3}");
+        assert_eq!(difference(&left, &right).string(), "{q1}");
+        assert_eq!(difference(&right, &left).string(), "{q4}");
+    }
+
+    #[test]
+    fn test_set_combination() {
+        let set = keyed(&["q1", "q2", "q3", "q4"]);
+        let render = |count| {
+            combinations(&set, count)
+                .into_iter()
+                .map(|set| set.string().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        assert_eq!(render(1), "{q1}, {q2}, {q3}, {q4}");
         assert_eq!(
-            set.values().iter().filter(|value| value.is_nan()).count(),
-            2
+            render(2),
+            "{q1, q2}, {q1, q3}, {q1, q4}, {q2, q3}, {q2, q4}, {q3, q4}"
         );
+        assert_eq!(
+            render(3),
+            "{q1, q2, q3}, {q1, q2, q4}, {q1, q3, q4}, {q2, q3, q4}"
+        );
+        assert_eq!(render(4), "{q1, q2, q3, q4}");
+        assert_eq!(render(5), "");
+    }
+
+    #[test]
+    fn test_float64_set() {
+        let mut set = Float64Set::new([]);
+        let values = [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
+        for value in values {
+            for _ in 0..5 {
+                set.insert(value);
+            }
+        }
+        assert_eq!(set.len(), values.len());
+        assert!(values.into_iter().all(|value| set.contains(value)));
+        assert!(!set.contains(3.0));
+    }
+
+    #[test]
+    fn test_int_set() {
+        let mut set = IntSet::new([]);
+        let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        for value in values {
+            for _ in 0..5 {
+                set.insert(value);
+            }
+        }
+        assert_eq!(set.len(), values.len());
+        assert!(values.iter().all(|value| set.contains(value)));
+        assert!(!set.contains(&11));
+    }
+
+    #[test]
+    fn test_int64_set() {
+        let set = Int64Set::new([1, 2, 3, 4, 5, 6]);
+        assert!((1..7).all(|value| set.contains(&value)));
+        assert!(!set.contains(&7));
+    }
+
+    #[test]
+    fn test_string_set() {
+        let mut set = StringSet::new([] as [&str; 0]);
+        let values = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+        for value in values {
+            for _ in 0..5 {
+                set.insert(value);
+            }
+        }
+        assert_eq!(set.len(), values.len());
+        assert!(values
+            .iter()
+            .all(|value| set.contains(&GoString::from(*value))));
+        assert!(!set.contains(&GoString::from("11")));
+        let intersection =
+            StringSet::new(["1", "2", "3"]).intersection(&StringSet::new(["4", "2", "3"]));
+        assert_eq!(intersection, StringSet::new(["2", "3"]));
+        assert_eq!(
+            intersection.intersection(&StringSet::new(["4", "5", "3"])),
+            StringSet::new(["3"])
+        );
+        assert!(intersection
+            .intersection(&StringSet::new(["4", "5"]))
+            .is_empty());
+    }
+
+    // Go permits callers to discard constructor, query, and set-operation
+    // return values; Rust must not add a `must_use` diagnostic here.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        KeyedSet::<Item>::new();
+        let keyed_set = keyed(&["q1"]);
+        keyed_set.contains(&Item("q1"));
+        keyed_set.to_list();
+        keyed_set.len();
+        keyed_set.is_empty();
+        keyed_set.string();
+        list_to_set([Item("q1")]);
+        union::<Item>(&[]);
+        intersection::<Item>(&[]);
+        difference(&keyed_set, &keyed_set);
+        combinations(&keyed_set, 1);
+
+        IntSet::new([]);
+        let ints = IntSet::new([1]);
+        ints.contains(&1);
+        ints.len();
+        ints.is_empty();
+
+        Int64Set::new([]);
+        let int64s = Int64Set::new([1]);
+        int64s.contains(&1);
+        int64s.len();
+        int64s.is_empty();
+
+        StringSet::new([] as [&str; 0]);
+        let strings = StringSet::new(["q1"]);
+        let key = GoString::from("q1");
+        strings.contains(&key);
+        strings.intersection(&strings);
+        strings.intersection_with_case(&strings, true);
+        strings.len();
+        strings.is_empty();
+
+        Float64Set::new([]);
+        let floats = Float64Set::new([1.0]);
+        floats.contains(1.0);
+        floats.len();
+        floats.is_empty();
+
+        StringToStringMapWithMemoryUsage::new();
+        let string_map = StringToStringMapWithMemoryUsage::new().0;
+        string_map.get(&key);
+        string_map.len();
+        string_map.is_empty();
+
+        StringToDecimalMapWithMemoryUsage::new();
+
+        StringSetWithMemoryUsage::new(std::iter::empty::<GoString>());
+        let string_memory_set = StringSetWithMemoryUsage::new([key.clone()]).0;
+        string_memory_set.contains(&key);
+        string_memory_set.len();
+        string_memory_set.is_empty();
+
+        Int64SetWithMemoryUsage::new(std::iter::empty::<i64>());
+        let int64_memory_set = Int64SetWithMemoryUsage::new([1_i64]).0;
+        int64_memory_set.contains(1);
+        int64_memory_set.len();
+        int64_memory_set.is_empty();
+
+        Float64SetWithMemoryUsage::new(std::iter::empty::<f64>());
+        let float_memory_set = Float64SetWithMemoryUsage::new([1.0_f64]).0;
+        float_memory_set.contains(1.0);
+        float_memory_set.len();
+        float_memory_set.is_empty();
+        float_memory_set.accounted_bytes();
     }
 }

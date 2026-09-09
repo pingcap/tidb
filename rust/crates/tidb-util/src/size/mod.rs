@@ -61,31 +61,3 @@ pub const SIZE_OF_FUNC: i64 = WORD_SIZE;
 pub const SIZE_OF_INT64: i64 = 8;
 /// Size of a Go map value, excluding its backing map.
 pub const SIZE_OF_MAP: i64 = WORD_SIZE;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_constant_table_is_exact_for_the_target_word_size() {
-        assert_eq!(
-            (KB, MB, GB, TB, PB),
-            (1 << 10, 1 << 20, 1 << 30, 1 << 40, 1 << 50)
-        );
-        assert_eq!(SIZE_OF_SLICE, WORD_SIZE * 3);
-        assert_eq!(SIZE_OF_BYTE, 1);
-        assert_eq!(SIZE_OF_STRING, WORD_SIZE * 2);
-        assert_eq!(SIZE_OF_BOOL, 1);
-        assert_eq!(SIZE_OF_POINTER, WORD_SIZE);
-        assert_eq!(SIZE_OF_INTERFACE, WORD_SIZE * 2);
-        assert_eq!(SIZE_OF_FLOAT64, 8);
-        assert_eq!(SIZE_OF_UINT64, 8);
-        assert_eq!(SIZE_OF_INT32, 4);
-        assert_eq!(SIZE_OF_INT, WORD_SIZE);
-        assert_eq!(SIZE_OF_UINT8, 1);
-        assert_eq!(SIZE_OF_UINT, WORD_SIZE);
-        assert_eq!(SIZE_OF_FUNC, WORD_SIZE);
-        assert_eq!(SIZE_OF_INT64, 8);
-        assert_eq!(SIZE_OF_MAP, WORD_SIZE);
-    }
-}

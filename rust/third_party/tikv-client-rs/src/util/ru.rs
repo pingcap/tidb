@@ -46,12 +46,17 @@ impl RuDetails {
     }
 
     pub fn merge(&self, other: &Self) {
-        *self.read_ru.lock().unwrap() += other.read_ru();
-        *self.write_ru.lock().unwrap() += other.write_ru();
-        *self.ru_wait_duration.lock().unwrap() += other.ru_wait_duration();
-        *self.tiflash_ru.lock().unwrap() += other.tiflash_ru();
-        *self.tikv_ru_v2.lock().unwrap() += other.tikv_ru_v2();
+        let read_ru = other.read_ru();
+        let write_ru = other.write_ru();
+        let wait_duration = other.ru_wait_duration();
+        let tiflash_ru = other.tiflash_ru();
+        let tikv_ru_v2 = other.tikv_ru_v2();
         let raw = other.raw_ru_v2.lock().unwrap().clone();
+        *self.read_ru.lock().unwrap() += read_ru;
+        *self.write_ru.lock().unwrap() += write_ru;
+        *self.ru_wait_duration.lock().unwrap() += wait_duration;
+        *self.tiflash_ru.lock().unwrap() += tiflash_ru;
+        *self.tikv_ru_v2.lock().unwrap() += tikv_ru_v2;
         self.add_ru_v2(raw.as_ref());
     }
 
@@ -118,11 +123,23 @@ impl fmt::Display for RuDetails {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "RRU:{:.6}, WRU:{:.6}, WaitDuration:{}",
-            self.read_ru(),
-            self.write_ru(),
+            "RRU:{}, WRU:{}, WaitDuration:{}",
+            go_fixed_float(self.read_ru()),
+            go_fixed_float(self.write_ru()),
             crate::util::format_duration(self.ru_wait_duration())
         )
+    }
+}
+
+fn go_fixed_float(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".to_owned()
+    } else if value == f64::INFINITY {
+        "+Inf".to_owned()
+    } else if value == f64::NEG_INFINITY {
+        "-Inf".to_owned()
+    } else {
+        format!("{value:.6}")
     }
 }
 
@@ -177,6 +194,9 @@ fn merge_ru_v2(dst: &mut Ruv2, src: &Ruv2) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration as StdDuration;
+
     use super::*;
 
     #[test]
@@ -233,5 +253,40 @@ mod tests {
         assert_eq!(merged.read_ru(), 4.0);
         assert_eq!(merged.write_ru(), 6.0);
         assert_eq!(merged.tiflash_ru(), 7.0);
+    }
+
+    #[test]
+    fn source_uncovered_self_merge_matches_atomic_go_implementation() {
+        let details = Arc::new(RuDetails::new_with(1.0, 2.0, Duration::from_millis(3)));
+        details.add_tikv_ru_v2(5.0);
+        details.add_ru_v2(Some(&Ruv2 {
+            read_rpc_count: 7,
+            ..Default::default()
+        }));
+        let worker = details.clone();
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            worker.merge(&worker);
+            send.send((
+                worker.read_ru(),
+                worker.write_ru(),
+                worker.ru_wait_duration(),
+                worker.tikv_ru_v2(),
+                worker.drain_ru_v2().unwrap().read_rpc_count,
+            ))
+            .unwrap();
+        });
+        assert_eq!(
+            receive.recv_timeout(StdDuration::from_secs(2)).unwrap(),
+            (2.0, 4.0, Duration::from_millis(6), 10.0, 14)
+        );
+    }
+
+    #[test]
+    fn source_uncovered_string_uses_go_special_float_spellings() {
+        let details = RuDetails::new_with(f64::INFINITY, f64::NEG_INFINITY, Duration::ZERO);
+        assert_eq!(details.to_string(), "RRU:+Inf, WRU:-Inf, WaitDuration:0s");
+        let nan = RuDetails::new_with(f64::NAN, 0.0, Duration::ZERO);
+        assert_eq!(nan.to_string(), "RRU:NaN, WRU:0.000000, WaitDuration:0s");
     }
 }

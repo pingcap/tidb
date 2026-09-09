@@ -223,6 +223,11 @@ pub struct PartitionSpec {
     /// The partitions, in definition order. Never empty: Go's
     /// `checkNoHashPartitions` rejects `PARTITIONS 0` with 1504.
     pub definitions: Vec<PartitionDef>,
+    /// Go `PartitionInfo.GetOverlappingDroppingPartitionIdx`, captured for
+    /// every definition while the model metadata is still available. Empty
+    /// means the ordinary identity mapping used outside Go's online DROP
+    /// PARTITION write-only state.
+    pub overlapping_dropping_partition_indices: Vec<Option<usize>>,
     /// Go `PartitionInfo.IsEmptyColumns`: set when `PARTITION BY KEY ()` was
     /// written with no column list and Go filled one in from the primary key.
     ///
@@ -272,6 +277,21 @@ impl PartitionSpec {
     #[must_use]
     pub fn physical_ids(&self) -> Vec<i64> {
         self.definitions.iter().map(|def| def.id).collect()
+    }
+
+    /// Go `PartitionInfo.GetOverlappingDroppingPartitionIdx` for one
+    /// definition ordinal. Online DROP PARTITION may redirect a RANGE or LIST
+    /// read to a still-readable overlapping definition, or skip it.
+    #[must_use]
+    pub fn overlapping_dropping_partition_index(&self, index: usize) -> Option<usize> {
+        if self.overlapping_dropping_partition_indices.len() != self.definitions.len() {
+            return (index < self.definitions.len()).then_some(index);
+        }
+        self.overlapping_dropping_partition_indices
+            .get(index)
+            .copied()
+            .flatten()
+            .filter(|replacement| *replacement < self.definitions.len())
     }
 
     pub(crate) fn update_dependency_type(&mut self, name: &str, field_type: &FieldType) {

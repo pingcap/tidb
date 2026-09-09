@@ -49,21 +49,14 @@ pub struct RowHeader {
 impl RowHeader {
     /// Parses the six-byte header and returns the unconsumed suffix.
     pub fn parse(input: &[u8]) -> Result<(Self, &[u8]), RowCodecError> {
-        let header = input
-            .get(..ROW_HEADER_LEN)
-            .ok_or(RowCodecError::InsufficientBytes {
-                section: "row header",
-                needed: ROW_HEADER_LEN,
-                available: input.len(),
-            })?;
-        if header[0] != ROW_CODEC_VERSION {
-            return Err(RowCodecError::InvalidCodecVersion { found: header[0] });
+        if input[0] != ROW_CODEC_VERSION {
+            return Err(RowCodecError::InvalidCodecVersion { found: input[0] });
         }
         Ok((
             Self {
-                flags: header[1],
-                not_null_count: u16::from_le_bytes([header[2], header[3]]),
-                null_count: u16::from_le_bytes([header[4], header[5]]),
+                flags: input[1],
+                not_null_count: u16::from_le_bytes(input[2..4].try_into().unwrap()),
+                null_count: u16::from_le_bytes(input[4..6].try_into().unwrap()),
             },
             &input[ROW_HEADER_LEN..],
         ))
@@ -185,8 +178,8 @@ impl<'a> RowLayout<'a> {
         let (header, mut cursor) = RowHeader::parse(input)?;
         let id_width = header.column_id_width();
         let offset_width = header.offset_width();
-        let id_bytes = checked_len(header.column_count(), id_width, "column IDs")?;
-        let ids_raw = take(&mut cursor, id_bytes, "column IDs")?;
+        let id_bytes = header.column_count() * id_width;
+        let ids_raw = take(&mut cursor, id_bytes);
         let mut column_ids = Vec::with_capacity(header.column_count());
         for bytes in ids_raw.chunks_exact(id_width) {
             column_ids.push(if id_width == 1 {
@@ -196,28 +189,20 @@ impl<'a> RowLayout<'a> {
             });
         }
 
-        let offset_bytes = checked_len(header.not_null_count() as usize, offset_width, "offsets")?;
-        let offsets_raw = take(&mut cursor, offset_bytes, "offsets")?;
+        let offset_bytes = header.not_null_count() as usize * offset_width;
+        let offsets_raw = take(&mut cursor, offset_bytes);
         let mut offsets = Vec::with_capacity(header.not_null_count() as usize);
-        let mut previous = 0_u32;
-        for (index, bytes) in offsets_raw.chunks_exact(offset_width).enumerate() {
+        for bytes in offsets_raw.chunks_exact(offset_width) {
             let offset = if offset_width == 2 {
                 u16::from_le_bytes(bytes.try_into().expect("two-byte offset")) as u32
             } else {
                 u32::from_le_bytes(bytes.try_into().expect("four-byte offset"))
             };
-            if offset < previous {
-                return Err(RowCodecError::InvalidOffset {
-                    index,
-                    value: offset,
-                });
-            }
             offsets.push(offset);
-            previous = offset;
         }
 
         let data_len = offsets.last().copied().unwrap_or(0) as usize;
-        let data = take(&mut cursor, data_len, "row data")?;
+        let data = take(&mut cursor, data_len);
         let checksum = if header.has_checksum() {
             Some(parse_checksum(&mut cursor)?)
         } else {
@@ -297,13 +282,7 @@ impl<'a> RowLayout<'a> {
 
     /// Returns one not-null value's byte range.
     pub fn value_range(&self, index: usize) -> Result<Range<usize>, RowCodecError> {
-        let end = *self
-            .offsets
-            .get(index)
-            .ok_or(RowCodecError::ValueIndexOutOfRange {
-                index,
-                count: self.offsets.len(),
-            })? as usize;
+        let end = self.offsets[index] as usize;
         let start = if index == 0 {
             0
         } else {
@@ -320,9 +299,8 @@ impl<'a> RowLayout<'a> {
 }
 
 /// Returns whether a row begins with the new-format version byte.
-#[must_use]
 pub fn is_new_format(row_data: &[u8]) -> bool {
-    row_data.first() == Some(&ROW_CODEC_VERSION)
+    row_data[0] == ROW_CODEC_VERSION
 }
 
 /// Returns whether a key has the complete legacy table-record row prefix.
@@ -330,7 +308,6 @@ pub fn is_new_format(row_data: &[u8]) -> bool {
 /// The length check intentionally mirrors `pkg/util/rowcodec/common.go`:
 /// this is not a general table-key parser and does not validate the table ID
 /// or handle bytes.
-#[must_use]
 pub fn is_row_key(key: &[u8]) -> bool {
     key.len() >= 19 && key.first() == Some(&b't') && key.get(10) == Some(&b'r')
 }
@@ -338,15 +315,6 @@ pub fn is_row_key(key: &[u8]) -> bool {
 /// Errors raised while parsing row metadata and value boundaries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RowCodecError {
-    /// A declared section does not fit in the input.
-    InsufficientBytes {
-        /// Logical section that ended early.
-        section: &'static str,
-        /// Bytes required by the section.
-        needed: usize,
-        /// Bytes available at the section boundary.
-        available: usize,
-    },
     /// The row version byte is not the new-format version.
     InvalidCodecVersion {
         /// Version byte observed in the input.
@@ -357,47 +325,16 @@ pub enum RowCodecError {
         /// Version bits observed in the checksum header.
         version: u8,
     },
-    /// An offset decreased relative to the preceding end offset.
-    InvalidOffset {
-        /// Offset index in the not-null value table.
-        index: usize,
-        /// Invalid offset value.
-        value: u32,
-    },
-    /// A value accessor named a non-existent not-null value.
-    ValueIndexOutOfRange {
-        /// Requested value index.
-        index: usize,
-        /// Number of not-null values.
-        count: usize,
-    },
 }
 
 impl fmt::Display for RowCodecError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InsufficientBytes {
-                section,
-                needed,
-                available,
-            } => write!(
-                formatter,
-                "row {section} needs {needed} bytes, but only {available} remain"
-            ),
             Self::InvalidCodecVersion { found } => {
                 write!(formatter, "invalid row codec version {found}")
             }
             Self::InvalidChecksumVersion { version } => {
                 write!(formatter, "invalid row checksum version {version}")
-            }
-            Self::InvalidOffset { index, value } => {
-                write!(formatter, "row offset {value} decreases at index {index}")
-            }
-            Self::ValueIndexOutOfRange { index, count } => {
-                write!(
-                    formatter,
-                    "row value index {index} is outside {count} values"
-                )
             }
         }
     }
@@ -405,44 +342,21 @@ impl fmt::Display for RowCodecError {
 
 impl std::error::Error for RowCodecError {}
 
-fn checked_len(count: usize, width: usize, section: &'static str) -> Result<usize, RowCodecError> {
-    count
-        .checked_mul(width)
-        .ok_or(RowCodecError::InsufficientBytes {
-            section,
-            needed: usize::MAX,
-            available: 0,
-        })
-}
-
-fn take<'a>(
-    input: &mut &'a [u8],
-    needed: usize,
-    section: &'static str,
-) -> Result<&'a [u8], RowCodecError> {
-    let (taken, remainder) =
-        input
-            .split_at_checked(needed)
-            .ok_or(RowCodecError::InsufficientBytes {
-                section,
-                needed,
-                available: input.len(),
-            })?;
+fn take<'a>(input: &mut &'a [u8], needed: usize) -> &'a [u8] {
+    let (taken, remainder) = input.split_at(needed);
     *input = remainder;
-    Ok(taken)
+    taken
 }
 
 fn parse_checksum(input: &mut &[u8]) -> Result<RowChecksum, RowCodecError> {
-    let header = take(input, 1, "checksum header")?[0];
+    let header = take(input, 1)[0];
     let version = header & CHECKSUM_VERSION_MASK;
     if !matches!(version, 0..=2) {
         return Err(RowCodecError::InvalidChecksumVersion { version });
     }
-    let checksum = u32::from_le_bytes(take(input, 4, "checksum")?.try_into().unwrap());
+    let checksum = u32::from_le_bytes(take(input, 4).try_into().unwrap());
     let extra_checksum = if header & CHECKSUM_FLAG_EXTRA != 0 {
-        Some(u32::from_le_bytes(
-            take(input, 4, "extra checksum")?.try_into().unwrap(),
-        ))
+        Some(u32::from_le_bytes(take(input, 4).try_into().unwrap()))
     } else {
         None
     };

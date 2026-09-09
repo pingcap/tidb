@@ -22,13 +22,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
+use tidb_distsql::CancelHandle;
 use tidb_exec::cluster_catalog::LoadedTableRefusal;
 use tidb_exec::{
     configured_inner_join::ConfiguredInnerJoinRecordSet,
     configured_ordered_query::{
-        ConfiguredOrderedQueryEvidence, ConfiguredOrderedQueryRecordSet,
-        PreparedConfiguredOrderedQueryTail,
+        ConfiguredOrderedQueryRecordSet, PreparedConfiguredOrderedQueryTail,
     },
     real_tikv_read::{
         prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -37,29 +36,28 @@ use tidb_exec::{
     },
 };
 use tidb_planner::{
-    configured_join_plan::ConfiguredJoinPlan,
-    configured_order_limit::{ConfiguredOrderLimit, ConfiguredOrderedJoinPlan},
-    configured_order_limit_contract::ConfiguredLimitWindow,
+    configured_join_plan::ConfiguredJoinPlan, configured_order_limit::ConfiguredOrderedJoinPlan,
     prepared_dml::PreparedBindValue,
 };
+use tidb_session::process::{ProcessGuard, ProcessRegistry};
 
 use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
-    aggregate_result_columns, aggregate_result_field_types, configured_catalog,
-    default_cursor_memory, emit_connections_startup_failure, execute_cluster_ddl,
-    install_remote_publication_observer, lightweight_ddl_statement_context,
-    observe_real_tikv_query, parse_set_time_zone, point_read_result_field_types,
-    refusal_aware_error, run_with_process_shutdown, served_table_descriptor,
-    shape_prepared_point_read_result, time_zone_sql_error, QueryActivity, QueryCompletion,
+    aggregate_result_columns, aggregate_result_field_types, complete_real_tikv_query,
+    configured_catalog, default_cursor_memory, emit_connections_startup_failure,
+    execute_cluster_ddl, lightweight_ddl_statement_context, parse_set_time_zone,
+    point_read_result_field_types, prepared_bind_sql_error, read_error_sql_error,
+    refusal_aware_error, refusal_aware_prepared_plan_error, run_with_process_shutdown,
+    served_table_descriptor, shape_prepared_point_read_result, time_zone_sql_error,
     RealTiKvSessionTimeZone, RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
-    PreparedWrite, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
-    WriteOutcome,
+    configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode, ConnectionKillTarget,
+    PreparedPointRead, PreparedWrite, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, SqlQueryError, WriteOutcome,
 };
 use tidb_exec::real_tikv_dml::{
     commit_configured_write, prepare_configured_write, ConfiguredWriteWarning,
@@ -73,7 +71,6 @@ pub struct RealTiKvMultiSessionFactory {
     opener: RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>,
     transaction_opener: RealOptimisticTransactionOpener,
     tables: [tidb_planner::read_only_scan::ConfiguredTable; 2],
-    activity: Arc<QueryActivity>,
     read_authority_id: u64,
     max_topn_rows: usize,
     /// Loaded tables the cluster really has, at the same schema-version
@@ -84,8 +81,9 @@ pub struct RealTiKvMultiSessionFactory {
     /// The etcd client a catalog change committed here announces itself
     /// through, so peers reload without waiting out their lease.
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    processes: ProcessRegistry,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -135,19 +133,19 @@ impl RealTiKvMultiSessionFactory {
             opener: authority.opener(),
             transaction_opener: authority.transaction_opener(),
             tables,
-            activity: Arc::new(QueryActivity::default()),
             read_authority_id: authority.read_authority_id(),
             max_topn_rows,
             table_refusals: Arc::new(table_refusals),
             schema_notifier,
             spill_storage: None,
             mem_arbitrator: None,
+            processes: ProcessRegistry::default(),
         }
     }
 
     pub(crate) fn with_spill_storage(
         mut self,
-        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -214,19 +212,39 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             self.spill_storage.as_ref(),
             self.mem_arbitrator.as_ref(),
         );
+        let process = self.processes.register(
+            context.connection_id,
+            context.identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            String::new(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        process.set_trackers(
+            Arc::clone(cursor_memory.session_tracker()),
+            Arc::clone(cursor_memory.session_disk_tracker()),
+        );
         Ok(RealTiKvMultiServerSession {
             reader,
             transaction_opener: self.transaction_opener.clone(),
             table_refusals: Arc::clone(&self.table_refusals),
             schema_notifier: self.schema_notifier.clone(),
             context,
-            activity: Arc::clone(&self.activity),
-            next_query_id: 1,
             max_topn_rows: self.max_topn_rows,
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            statement_message: None,
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
+            last_affected_rows: 0,
+            _process: process,
         })
+    }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
     }
 }
 
@@ -240,8 +258,6 @@ pub struct RealTiKvMultiServerSession {
     /// announces itself the way Go's DDL owner does.
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
     context: SessionContext,
-    activity: Arc<QueryActivity>,
-    next_query_id: u64,
     max_topn_rows: usize,
     /// This session's `time_zone`, threaded into both relations' DAG reads
     /// and into `TIMESTAMP` write literals, mirroring the single-table
@@ -249,31 +265,55 @@ pub struct RealTiKvMultiServerSession {
     time_zone: RealTiKvSessionTimeZone,
     cursor_memory: tidb_executor::SessionMemory,
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    /// The OK-packet info text the most recently completed write composed
+    /// (Go `StmtCtx.SetMessage`). INSERT/REPLACE fill it once the statement
+    /// attempted more than one row, mirroring `setMessage`'s own gate.
+    statement_message: Option<String>,
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
+    last_affected_rows: u64,
+    _process: ProcessGuard,
 }
 
 impl QuerySession for RealTiKvMultiServerSession {
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        self.write_sli
+            .finish_execute_stmt(cost, self.last_affected_rows, false);
+    }
+
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        if bytes <= 0 {
+            return true;
+        }
+        let quota = self.cursor_memory.session_tracker().get_bytes_limit();
+        let consumed = self.cursor_memory.bytes_consumed();
+        if quota > 0 && consumed.saturating_add(bytes) >= quota {
+            return false;
+        }
+        self.cursor_memory.session_tracker().consume(bytes);
+        true
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        if bytes > 0 {
+            self.cursor_memory.session_tracker().consume(-bytes);
+        }
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.context.connection_id
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let process_statement = self._process.statement_started(sql, "", "autocommit");
         self.statement_warnings.clear();
-        let query_id = self.next_query_id;
-        self.next_query_id = self
-            .next_query_id
-            .checked_add(1)
-            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
-        let activity = self.activity.begin(self.context.connection_id, query_id);
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_registration: Arc<dyn ActiveQueryCancellation> = cancellation.clone();
         let cancellation_lease = self.context.cancellation.install(cancellation_registration);
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let route = prepare_configured_query(sql, &catalog, self.max_topn_rows)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.message))?;
-        if let Some((receipt, input_required)) = route.ordered_plan() {
-            emit_ordered_query_plan(
-                self.context.connection_id,
-                query_id,
-                receipt,
-                input_required,
-            );
-        }
         if let ConfiguredQueryRoute::LocalEmpty { plan, .. } = route {
             let inner = ConfiguredOrderedQueryRecordSet::local_empty(
                 &plan,
@@ -282,97 +322,38 @@ impl QuerySession for RealTiKvMultiServerSession {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             return Ok(QueryResult::new(Box::new(OrderedMultiJoinResultSet {
                 inner,
-                evidence: None,
-                _completion: QueryCompletion::new(cancellation_lease, activity),
-            })));
+                _cancellation_lease: cancellation_lease,
+            }))
+            .with_process_statement(process_statement));
         }
         let ConfiguredQueryRoute::Join { plan, tail, .. } = route else {
             unreachable!("local empty route returned above")
         };
-        let scans = [plan.left_scan().clone(), plan.right_scan().clone()];
-        let table_ids = scans.each_ref().map(|scan| scan.table_id());
-        let equality_offsets = plan
-            .equality()
-            .map(|equality| (equality.left().full_index(), equality.right().full_index()));
         let join = self
             .reader
             .execute_configured_inner_join_with_cancellation(plan, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let snapshot_ts = join.snapshot_ts();
         let inner = match tail {
             Some(tail) => tail
                 .attach(join)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
             None => {
-                return self.finish_unordered_query(
-                    join,
-                    scans,
-                    table_ids,
-                    equality_offsets,
-                    query_id,
-                    cancellation_lease,
-                    activity,
-                );
+                return self
+                    .finish_unordered_query(join, cancellation_lease)
+                    .map(|result| result.with_process_statement(process_statement));
             }
         };
-        let identity = self.reader.readers()[0].identity();
-        let evidence = std::array::from_fn(|relation| {
-            self.reader.readers()[relation].transport_evidence_handle()
-        });
-        let connection_id = self.context.connection_id;
-        let authority_id = identity.authority_id();
-        let session_id = identity.session_id();
-        install_remote_publication_observer(snapshot_ts, || {
-            for (relation, handle) in evidence.iter().enumerate() {
-                let table_id = table_ids[relation];
-                handle
-                    .set_publication_observer(move |published| {
-                        emit_multi_query_transport_publication(
-                            connection_id,
-                            query_id,
-                            authority_id,
-                            session_id,
-                            relation,
-                            table_id,
-                            published,
-                        );
-                    })
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            }
-            Ok::<(), SqlQueryError>(())
-        })?;
-        emit_multi_query_snapshot(MultiQuerySnapshot {
-            connection_id,
-            query_id,
-            authority_id,
-            session_id,
-            cluster_id: self.reader.readers()[0].cluster_id(),
-            snapshot_ts,
-            table_ids,
-            scans: scans.each_ref(),
-            equality_offsets,
-            user: self.context.identity.username(),
-            host: self.context.identity.host(),
-        });
         Ok(QueryResult::new(Box::new(OrderedMultiJoinResultSet {
             inner,
-            evidence: Some(MultiJoinEvidence {
-                evidence,
-                connection_id,
-                query_id,
-                authority_id,
-                session_id,
-                table_ids,
-                emitted: false,
-            }),
-            _completion: QueryCompletion::new(cancellation_lease, activity),
-        })))
+            _cancellation_lease: cancellation_lease,
+        }))
+        .with_process_statement(process_statement))
     }
 
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+            .map_err(|error| refusal_aware_prepared_plan_error(&self.table_refusals, error))?;
         let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
             (
                 aggregate_result_columns(aggregate),
@@ -383,7 +364,7 @@ impl QuerySession for RealTiKvMultiServerSession {
             // metadata; a range template needs one placeholder per marker.
             let metadata_plan = template
                 .bind(&vec![0; template.parameter_count()])
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                .map_err(|error| prepared_bind_sql_error(&error))?;
             let result_field_types = point_read_result_field_types(&metadata_plan);
             let result_columns = self
                 .reader
@@ -391,7 +372,7 @@ impl QuerySession for RealTiKvMultiServerSession {
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             (result_columns, result_field_types)
         };
-        PreparedPointRead::new(template, result_columns, result_field_types)
+        PreparedPointRead::new(sql.to_owned(), template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -399,6 +380,10 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         let field_types = statement.result_field_types().to_vec();
         let authority = tidb_session::ResultMaterializationAuthority::new(
             self.cursor_memory.statement(),
@@ -408,50 +393,35 @@ impl QuerySession for RealTiKvMultiServerSession {
         let plan = statement
             .template()
             .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let physical_reader = self
+            .map_err(|error| prepared_bind_sql_error(&error))?;
+        let configured = self
             .reader
             .readers()
             .iter()
-            .find(|reader| reader.configured_table().table_id() == plan.table_id())
-            .ok_or_else(|| {
-                SqlQueryError::unknown(
-                    "prepared point-read plan does not belong to a configured relation",
-                )
-            })?;
-        let cluster_id = physical_reader.cluster_id();
-        let evidence = physical_reader.transport_evidence_handle();
-        let query_id = self.next_query_id;
-        self.next_query_id = self
-            .next_query_id
-            .checked_add(1)
-            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
-        let activity = self.activity.begin(self.context.connection_id, query_id);
+            .any(|reader| reader.configured_table().table_id() == plan.table_id());
+        if !configured {
+            return Err(SqlQueryError::unknown(
+                "prepared point-read plan does not belong to a configured relation",
+            ));
+        }
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_registration: Arc<dyn ActiveQueryCancellation> = cancellation.clone();
         let cancellation_lease = self.context.cancellation.install(cancellation_registration);
         let query = self
             .reader
             .execute_point_read_plan_with_cancellation(plan, cancellation)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let result = observe_real_tikv_query(
-            &self.context,
-            query,
-            query_id,
-            cancellation_lease,
-            activity,
-            cluster_id,
-            evidence,
-        )?;
+            .map_err(read_error_sql_error)?;
+        let result = complete_real_tikv_query(query, cancellation_lease);
         Ok(shape_prepared_point_read_result(result, statement)
-            .with_cursor_materialization(field_types, authority))
+            .with_cursor_materialization(field_types, authority)
+            .with_process_statement(process_statement))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_write(sql, &catalog)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        Ok(PreparedWrite::new(template))
+        Ok(PreparedWrite::new(sql.to_owned(), template))
     }
 
     fn execute_prepared_write(
@@ -459,7 +429,11 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let _process_statement = self
+            ._process
+            .statement_started(statement.sql(), "", "autocommit");
         self.statement_warnings.clear();
+        self.statement_message = None;
         let bound = statement
             .template()
             .bind(parameters)
@@ -471,7 +445,18 @@ impl QuerySession for RealTiKvMultiServerSession {
             CONTROL_PLANE_TIMEOUT,
             &session_tz,
         )
-        .map_err(|error| configured_write_error(&error))?;
+        .map_err(|error| configured_write_error(&error))?
+        .with_client_found_rows(self.context.client_found_rows);
+        if report.write_size > 0 {
+            self.write_sli
+                .add_txn_write_size(report.write_size, report.write_keys);
+        }
+        if report.processed_keys > 0 && report.affected_rows > 0 {
+            self.write_sli.add_read_keys(report.processed_keys);
+        }
+        self.last_affected_rows = report.affected_rows;
+        self.statement_message =
+            tidb_exec::real_tikv_dml::compose_configured_write_message(&bound, &report);
         self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
@@ -484,6 +469,20 @@ impl QuerySession for RealTiKvMultiServerSession {
         u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
     }
 
+    fn warning_codes(&self) -> Vec<u16> {
+        self.statement_warnings
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.statement_message
+            .clone()
+            .unwrap_or_default()
+            .into_bytes()
+    }
+
     /// A catalog change is the only text-protocol OK-packet statement this
     /// multi-relation surface answers: DML over a joined pair is not lowered
     /// here, so anything else falls through to the query path unchanged.
@@ -491,6 +490,8 @@ impl QuerySession for RealTiKvMultiServerSession {
     /// The default schema is the first served table's, which is the same
     /// relation the command line named first.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.last_affected_rows = 0;
+        let _process_statement = self._process.statement_started(sql, "", "autocommit");
         // `SET time_zone` updates this session's own zone rather than reaching
         // storage: every subsequent read from either relation and every
         // `TIMESTAMP` write literal consult it from here on, mirroring
@@ -521,67 +522,14 @@ impl QuerySession for RealTiKvMultiServerSession {
 }
 
 impl RealTiKvMultiServerSession {
-    #[allow(clippy::too_many_arguments)]
     fn finish_unordered_query<'a>(
         &'a self,
         join: ConfiguredInnerJoinRecordSet,
-        scans: [tidb_planner::read_only_scan::ReadOnlyScanPlan; 2],
-        table_ids: [i64; 2],
-        equality_offsets: Option<(usize, usize)>,
-        query_id: u64,
         cancellation_lease: crate::sql_node::QueryCancellationLease,
-        activity: crate::real_tikv_node::QueryActivityLease,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
-        let identity = self.reader.readers()[0].identity();
-        let evidence = std::array::from_fn(|relation| {
-            self.reader.readers()[relation].transport_evidence_handle()
-        });
-        let connection_id = self.context.connection_id;
-        let authority_id = identity.authority_id();
-        let session_id = identity.session_id();
-        let snapshot_ts = join.snapshot_ts();
-        install_remote_publication_observer(snapshot_ts, || {
-            for (relation, handle) in evidence.iter().enumerate() {
-                let table_id = table_ids[relation];
-                handle
-                    .set_publication_observer(move |published| {
-                        emit_multi_query_transport_publication(
-                            connection_id,
-                            query_id,
-                            authority_id,
-                            session_id,
-                            relation,
-                            table_id,
-                            published,
-                        );
-                    })
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            }
-            Ok::<(), SqlQueryError>(())
-        })?;
-        emit_multi_query_snapshot(MultiQuerySnapshot {
-            connection_id,
-            query_id,
-            authority_id,
-            session_id,
-            cluster_id: self.reader.readers()[0].cluster_id(),
-            snapshot_ts,
-            table_ids,
-            scans: scans.each_ref(),
-            equality_offsets,
-            user: self.context.identity.username(),
-            host: self.context.identity.host(),
-        });
         Ok(QueryResult::new(Box::new(MultiJoinResultSet {
             inner: join,
-            evidence,
-            connection_id,
-            query_id,
-            authority_id,
-            session_id,
-            table_ids,
-            emitted: false,
-            _completion: QueryCompletion::new(cancellation_lease, activity),
+            _cancellation_lease: cancellation_lease,
         })))
     }
 }
@@ -597,82 +545,12 @@ fn configured_catalog_from_tables(
 
 enum ConfiguredQueryRoute {
     /// LIMIT 0 has ordinary metadata but must not open a TiKV query.
-    LocalEmpty {
-        plan: ConfiguredJoinPlan,
-        ordered_plan: OrderedQueryPlanReceipt,
-    },
+    LocalEmpty { plan: ConfiguredJoinPlan },
     /// The terminal tail, if present, was fully admitted before reader execution.
     Join {
         plan: ConfiguredJoinPlan,
         tail: Option<PreparedConfiguredOrderedQueryTail>,
-        ordered_plan: Option<OrderedQueryPlanReceipt>,
     },
-}
-
-impl ConfiguredQueryRoute {
-    /// Returns the immutable tail receipt and whether this query opens input.
-    ///
-    /// Keeping this alongside the prepared tail makes the planner's typed
-    /// offsets and checked window observable before any PD/TiKV side effect.
-    fn ordered_plan(&self) -> Option<(&OrderedQueryPlanReceipt, bool)> {
-        match self {
-            Self::LocalEmpty { ordered_plan, .. } => Some((ordered_plan, false)),
-            Self::Join {
-                ordered_plan: Some(ordered_plan),
-                ..
-            } => Some((ordered_plan, true)),
-            Self::Join {
-                ordered_plan: None, ..
-            } => None,
-        }
-    }
-}
-
-/// Planner-resolved terminal metadata retained solely for the pre-I/O receipt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct OrderedQueryPlanReceipt {
-    mode: OrderedQueryPlanMode,
-    limit: ConfiguredLimitWindow,
-    /// The process admission cap. It is binding for TopN and retained on
-    /// LIMIT-only receipts so every ordered-plan record has one policy value.
-    capacity: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum OrderedQueryPlanMode {
-    Limit,
-    TopN(Vec<OrderedQueryPlanKey>),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct OrderedQueryPlanKey {
-    full_schema_offset: usize,
-    descending: bool,
-}
-
-impl OrderedQueryPlanReceipt {
-    fn from_tail(tail: &ConfiguredOrderLimit, max_topn_rows: usize) -> Self {
-        match tail {
-            ConfiguredOrderLimit::Limit(limit) => Self {
-                mode: OrderedQueryPlanMode::Limit,
-                limit: *limit,
-                capacity: max_topn_rows,
-            },
-            ConfiguredOrderLimit::TopN(spec) => Self {
-                mode: OrderedQueryPlanMode::TopN(
-                    spec.order_keys()
-                        .iter()
-                        .map(|key| OrderedQueryPlanKey {
-                            full_schema_offset: key.full_offset(),
-                            descending: key.direction().is_descending(),
-                        })
-                        .collect(),
-                ),
-                limit: spec.limit(),
-                capacity: max_topn_rows,
-            },
-        }
-    }
 }
 
 fn prepare_configured_query(
@@ -683,22 +561,14 @@ fn prepare_configured_query(
     let plan = ConfiguredOrderedJoinPlan::lower(sql, catalog)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     if plan.is_empty() {
-        let ordered_plan = plan
-            .order_limit()
-            .map(|tail| OrderedQueryPlanReceipt::from_tail(tail, max_topn_rows))
-            .expect("planner-known empty configured query has a typed LIMIT tail");
         return Ok(ConfiguredQueryRoute::LocalEmpty {
             plan: plan.metadata_join().clone(),
-            ordered_plan,
         });
     }
     let join = plan
         .join()
         .expect("nonempty configured ordered plan retains its join")
         .clone();
-    let ordered_plan = plan
-        .order_limit()
-        .map(|tail| OrderedQueryPlanReceipt::from_tail(tail, max_topn_rows));
     let tail = plan
         .order_limit()
         .cloned()
@@ -711,100 +581,12 @@ fn prepare_configured_query(
             .map_err(|error| SqlQueryError::unknown(error.to_string()))
         })
         .transpose()?;
-    Ok(ConfiguredQueryRoute::Join {
-        plan: join,
-        tail,
-        ordered_plan,
-    })
-}
-
-fn emit_ordered_query_plan(
-    connection_id: u64,
-    query_id: u64,
-    receipt: &OrderedQueryPlanReceipt,
-    input_required: bool,
-) {
-    eprintln!(
-        "{}",
-        ordered_query_plan_json(connection_id, query_id, receipt, input_required)
-    );
-}
-
-fn ordered_query_plan_json(
-    connection_id: u64,
-    query_id: u64,
-    receipt: &OrderedQueryPlanReceipt,
-    input_required: bool,
-) -> String {
-    let (mode, order_keys) = match &receipt.mode {
-        OrderedQueryPlanMode::Limit => ("limit", String::new()),
-        OrderedQueryPlanMode::TopN(keys) => (
-            "topn",
-            keys.iter()
-                .map(|key| {
-                    let direction = if key.descending { "desc" } else { "asc" };
-                    format!(
-                        "{{\"full_schema_offset\":{},\"direction\":\"{direction}\"}}",
-                        key.full_schema_offset
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(","),
-        ),
-    };
-    format!(
-        "{{\"event\":\"query_ordered_plan\",\"connection_id\":{connection_id},\"query_id\":{query_id},\"mode\":\"{mode}\",\"order_keys\":[{order_keys}],\"limit_offset\":{},\"limit_count\":{},\"limit_end_exclusive\":{},\"capacity\":{capacity},\"input_required\":{input_required}}}",
-        receipt.limit.offset(),
-        receipt.limit.count(),
-        receipt.limit.end_exclusive(),
-        capacity = receipt.capacity,
-    )
+    Ok(ConfiguredQueryRoute::Join { plan: join, tail })
 }
 
 struct MultiJoinResultSet {
     inner: ConfiguredInnerJoinRecordSet,
-    evidence: [DirectUnaryTransportEvidenceHandle; 2],
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    table_ids: [i64; 2],
-    emitted: bool,
-    _completion: QueryCompletion,
-}
-
-impl MultiJoinResultSet {
-    fn emit_evidence(&mut self) {
-        if self.emitted {
-            return;
-        }
-        self.emitted = true;
-        for (relation, handle) in self.evidence.iter().enumerate() {
-            let evidence = handle.snapshot();
-            let located_regions = evidence
-                .located_region_ids
-                .iter()
-                .map(u64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            let dispatched_regions = evidence
-                .dispatched_region_ids
-                .iter()
-                .map(u64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "{{\"event\":\"query_multi_transport\",\"connection_id\":{},\"query_id\":{},\"authority_id\":{},\"session_id\":{},\"relation\":{relation},\"table_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
-                self.connection_id,
-                self.query_id,
-                self.authority_id,
-                self.session_id,
-                self.table_ids[relation],
-                evidence.batch_attempts,
-                evidence.unary_attempts,
-            );
-        }
-    }
+    _cancellation_lease: crate::sql_node::QueryCancellationLease,
 }
 
 impl ResultSetSource for MultiJoinResultSet {
@@ -819,26 +601,12 @@ impl ResultSetSource for MultiJoinResultSet {
     }
 
     fn finish(&mut self) -> Result<(), String> {
-        let result = self.inner.finish().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
+        self.inner.finish().map_err(|error| error.to_string())
     }
 
     fn close(&mut self) -> Result<(), String> {
-        let result = self.inner.close().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
+        self.inner.close().map_err(|error| error.to_string())
     }
-}
-
-struct MultiJoinEvidence {
-    evidence: [DirectUnaryTransportEvidenceHandle; 2],
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    table_ids: [i64; 2],
-    emitted: bool,
 }
 
 /// Result-set wrapper for ordered, limited, and planner-known-empty joins.
@@ -847,67 +615,7 @@ struct MultiJoinEvidence {
 /// wrapper changes only the terminal pull operator beneath it.
 struct OrderedMultiJoinResultSet {
     inner: ConfiguredOrderedQueryRecordSet,
-    evidence: Option<MultiJoinEvidence>,
-    _completion: QueryCompletion,
-}
-
-impl OrderedMultiJoinResultSet {
-    fn emit_evidence(&mut self) {
-        let Some(evidence) = &mut self.evidence else {
-            return;
-        };
-        if evidence.emitted {
-            return;
-        }
-        evidence.emitted = true;
-        for (relation, handle) in evidence.evidence.iter().enumerate() {
-            let transport = handle.snapshot();
-            let located_regions = transport
-                .located_region_ids
-                .iter()
-                .map(u64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            let dispatched_regions = transport
-                .dispatched_region_ids
-                .iter()
-                .map(u64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "{{\"event\":\"query_multi_transport\",\"connection_id\":{},\"query_id\":{},\"authority_id\":{},\"session_id\":{},\"relation\":{relation},\"table_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
-                evidence.connection_id,
-                evidence.query_id,
-                evidence.authority_id,
-                evidence.session_id,
-                evidence.table_ids[relation],
-                transport.batch_attempts,
-                transport.unary_attempts,
-            );
-        }
-        if let Some(accounting) = self.inner.completed_evidence() {
-            match accounting {
-                ConfiguredOrderedQueryEvidence::TopN(topn) => eprintln!(
-                    "{{\"event\":\"query_ordered_topn\",\"connection_id\":{},\"query_id\":{},\"capacity\":{},\"high_water_candidates\":{},\"rows_consumed\":{},\"rows_emitted\":{}}}",
-                    evidence.connection_id,
-                    evidence.query_id,
-                    topn.capacity(),
-                    topn.high_water_candidates(),
-                    topn.rows_consumed(),
-                    topn.rows_emitted(),
-                ),
-                ConfiguredOrderedQueryEvidence::Limit(limit) => eprintln!(
-                    "{{\"event\":\"query_ordered_limit\",\"connection_id\":{},\"query_id\":{},\"rows_requested\":{},\"rows_skipped\":{},\"rows_emitted\":{},\"source_closed\":{}}}",
-                    evidence.connection_id,
-                    evidence.query_id,
-                    limit.rows_requested(),
-                    limit.rows_skipped(),
-                    limit.rows_emitted(),
-                    limit.source_closed(),
-                ),
-            }
-        }
-    }
+    _cancellation_lease: crate::sql_node::QueryCancellationLease,
 }
 
 impl ResultSetSource for OrderedMultiJoinResultSet {
@@ -922,113 +630,12 @@ impl ResultSetSource for OrderedMultiJoinResultSet {
     }
 
     fn finish(&mut self) -> Result<(), String> {
-        let result = self.inner.finish().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
+        self.inner.finish().map_err(|error| error.to_string())
     }
 
     fn close(&mut self) -> Result<(), String> {
-        let result = self.inner.close().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
+        self.inner.close().map_err(|error| error.to_string())
     }
-}
-
-struct MultiQuerySnapshot<'a> {
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    cluster_id: u64,
-    snapshot_ts: Option<u64>,
-    table_ids: [i64; 2],
-    scans: [&'a tidb_planner::read_only_scan::ReadOnlyScanPlan; 2],
-    equality_offsets: Option<(usize, usize)>,
-    user: &'a str,
-    host: &'a str,
-}
-
-fn emit_multi_query_snapshot(snapshot: MultiQuerySnapshot<'_>) {
-    let snapshot_ts = snapshot
-        .snapshot_ts
-        .map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
-    let relations = snapshot.scans.map(scan_evidence_json).join(",");
-    let join_equality = snapshot.equality_offsets.map_or_else(
-        || "null".to_owned(),
-        |(left, right)| format!("{{\"left_full_offset\":{left},\"right_full_offset\":{right}}}"),
-    );
-    eprintln!(
-        "{{\"event\":\"query_multi_snapshot\",\"connection_id\":{},\"query_id\":{},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{},\"snapshot_ts\":{snapshot_ts},\"relations\":[{relations}],\"join_equality\":{join_equality},\"user\":{:?},\"host\":{:?}}}",
-        snapshot.connection_id,
-        snapshot.query_id,
-        snapshot.authority_id,
-        snapshot.session_id,
-        snapshot.cluster_id,
-        snapshot.user,
-        snapshot.host,
-    );
-    debug_assert_eq!(
-        snapshot.table_ids,
-        snapshot
-            .scans
-            .map(tidb_planner::read_only_scan::ReadOnlyScanPlan::table_id)
-    );
-}
-
-fn scan_evidence_json(scan: &tidb_planner::read_only_scan::ReadOnlyScanPlan) -> String {
-    let predicate_count = scan
-        .selection()
-        .map_or(0, |selection| selection.conditions().len());
-    let executor_kinds = if predicate_count == 0 {
-        "[\"TableScan\"]"
-    } else {
-        "[\"TableScan\",\"Selection\"]"
-    };
-    let offsets = scan
-        .projection_output_offsets()
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let ranges = scan
-        .handle_ranges()
-        .iter()
-        .map(|range| {
-            format!(
-                "{{\"low\":{},\"high\":{},\"low_exclude\":false,\"high_exclude\":false}}",
-                range.start(),
-                range.end()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "{{\"table_id\":{},\"executor_kinds\":{executor_kinds},\"predicate_count\":{predicate_count},\"output_offsets\":[{offsets}],\"handle_range_count\":{},\"handle_ranges\":[{ranges}]}}",
-        scan.table_id(),
-        scan.handle_ranges().len(),
-    )
-}
-
-fn emit_multi_query_transport_publication(
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    relation: usize,
-    table_id: i64,
-    published: &PublishedDispatchEvidence,
-) {
-    let publication = &published.publication;
-    let forwarded_host = publication
-        .forwarded_host()
-        .map_or_else(|| "null".to_owned(), |host| format!("{host:?}"));
-    eprintln!(
-        "{{\"event\":\"query_multi_transport_published\",\"connection_id\":{connection_id},\"query_id\":{query_id},\"authority_id\":{authority_id},\"session_id\":{session_id},\"relation\":{relation},\"table_id\":{table_id},\"region_id\":{},\"physical_address\":{:?},\"physical_channel_version\":{},\"stream_generation\":{},\"forwarded_host\":{forwarded_host}}}",
-        published.region_id,
-        publication.physical_address(),
-        publication.physical_channel_version(),
-        publication.batch_stream_generation(),
-    );
 }
 
 /// Starts the existing listener/lifecycle against the two-relation factory.
@@ -1040,7 +647,7 @@ pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfigured
 
 pub(crate) fn run_configured_multi_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = crate::real_tikv_node::configured_account_store(&config)?;
@@ -1070,7 +677,7 @@ pub(crate) fn run_bound_multi_node(
     factory: RealTiKvMultiSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
@@ -1142,10 +749,7 @@ pub(crate) fn run_bound_multi_node(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        configured_catalog, ordered_query_plan_json, prepare_configured_query,
-        ConfiguredQueryRoute, NodeConfig,
-    };
+    use super::{configured_catalog, prepare_configured_query, ConfiguredQueryRoute, NodeConfig};
 
     fn config() -> NodeConfig {
         NodeConfig::parse([
@@ -1199,42 +803,5 @@ mod tests {
             .expect("LIMIT 0 is local"),
             ConfiguredQueryRoute::LocalEmpty { .. }
         ));
-    }
-
-    #[test]
-    fn ordered_plan_receipt_retains_topn_metadata_before_input_and_for_local_limit_zero() {
-        let config = config();
-        let catalog = configured_catalog(&config).expect("catalog is local configuration only");
-        let topn = prepare_configured_query(
-            "SELECT a.balance FROM accounts a JOIN orders o ON a.id=o.account_id \
-             ORDER BY o.amount DESC, a.id ASC LIMIT 1,2",
-            &catalog,
-            7,
-        )
-        .expect("admitted TopN");
-        let (receipt, input_required) = topn
-            .ordered_plan()
-            .expect("typed ordered route retains a receipt");
-        assert!(input_required);
-        assert_eq!(
-            ordered_query_plan_json(9, 12, receipt, input_required),
-            "{\"event\":\"query_ordered_plan\",\"connection_id\":9,\"query_id\":12,\"mode\":\"topn\",\"order_keys\":[{\"full_schema_offset\":4,\"direction\":\"desc\"},{\"full_schema_offset\":0,\"direction\":\"asc\"}],\"limit_offset\":1,\"limit_count\":2,\"limit_end_exclusive\":3,\"capacity\":7,\"input_required\":true}"
-        );
-
-        let local = prepare_configured_query(
-            "SELECT a.balance FROM accounts a JOIN orders o ON a.id=o.account_id \
-             ORDER BY o.amount LIMIT 0",
-            &catalog,
-            7,
-        )
-        .expect("LIMIT 0 is local");
-        let (receipt, input_required) = local
-            .ordered_plan()
-            .expect("local LIMIT 0 retains its typed receipt");
-        assert!(!input_required);
-        assert_eq!(
-            ordered_query_plan_json(9, 13, receipt, input_required),
-            "{\"event\":\"query_ordered_plan\",\"connection_id\":9,\"query_id\":13,\"mode\":\"topn\",\"order_keys\":[{\"full_schema_offset\":4,\"direction\":\"asc\"}],\"limit_offset\":0,\"limit_count\":0,\"limit_end_exclusive\":0,\"capacity\":7,\"input_required\":false}"
-        );
     }
 }

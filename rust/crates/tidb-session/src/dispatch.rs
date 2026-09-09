@@ -26,43 +26,154 @@ use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
-    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
+    infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
+    StmtOutput, WarningLevel,
 };
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
-/// Returns the one table privilege needed by the refusal-admitted prepared
-/// fast paths.  Complex statements deliberately fall back to the ordinary
-/// AST privilege collector so authorization cannot be weakened by an
-/// optimization refusal.
-fn fast_table_privilege_target(stmt: &Stmt) -> Option<(&[String], privilege::GlobalPriv)> {
-    match stmt {
-        Stmt::Query(query) => {
-            let tidb_ast::QueryStmt::Select(select) = &**query else {
-                return None;
-            };
-            let join = select.from.as_ref()?;
-            if join.right.is_some() {
-                return None;
-            }
-            let tidb_ast::JoinNode::Table(table) = &join.left else {
-                return None;
-            };
-            Some((table.name.as_slice(), privilege::GlobalPriv::Select))
+fn sem_table_option(option: &tidb_ast::TableOption) -> tidb_util::sem_v2::TableOptionType {
+    match option {
+        tidb_ast::TableOption::Ttl { .. } => tidb_util::sem_v2::TableOptionType::Ttl,
+        tidb_ast::TableOption::TtlEnable(_) => tidb_util::sem_v2::TableOptionType::TtlEnable,
+        tidb_ast::TableOption::TtlJobInterval(_) => {
+            tidb_util::sem_v2::TableOptionType::TtlJobInterval
         }
-        Stmt::Dml(dml) => match &**dml {
-            DmlStmt::Insert(insert) => {
-                Some((insert.table.as_slice(), privilege::GlobalPriv::Insert))
-            }
-            DmlStmt::Update(update) => match &update.kind {
-                tidb_ast::UpdateKind::Single(table) => {
-                    Some((table.name.as_slice(), privilege::GlobalPriv::Update))
-                }
-                tidb_ast::UpdateKind::Multi { .. } => None,
-            },
-            _ => None,
-        },
-        _ => None,
+        _ => tidb_util::sem_v2::TableOptionType::Other,
     }
+}
+
+fn sem_stmt_kind(stmt: &Stmt) -> tidb_util::sem_v2::StmtKind {
+    use tidb_util::sem_v2::{AlterTableSpec, AlterTableType, StmtKind};
+
+    match stmt {
+        Stmt::Query(query) => match query.as_ref() {
+            tidb_ast::QueryStmt::Select(select) => StmtKind::Select {
+                select_into: select.into_outfile.is_some(),
+            },
+            tidb_ast::QueryStmt::SetOpr(_) => StmtKind::Other,
+        },
+        Stmt::Dml(dml) => {
+            let mut dml = dml.as_ref();
+            while let tidb_ast::DmlStmt::With { statement, .. } = dml {
+                dml = statement;
+            }
+            match dml {
+                tidb_ast::DmlStmt::ImportInto(import) => match &import.source {
+                    tidb_ast::ImportSource::File { path, .. } => StmtKind::ImportInto {
+                        from_select: false,
+                        path: path.clone(),
+                    },
+                    tidb_ast::ImportSource::Select { .. } => StmtKind::ImportInto {
+                        from_select: true,
+                        path: String::new(),
+                    },
+                },
+                tidb_ast::DmlStmt::LoadData(load) => StmtKind::LoadData {
+                    file_loc_client: load.local,
+                    path: load.path.clone(),
+                },
+                _ => StmtKind::Other,
+            }
+        }
+        Stmt::Ddl(ddl) => match ddl.as_ref() {
+            tidb_ast::DdlStmt::CreateTable(create) => StmtKind::CreateTable {
+                options: create.table_options.iter().map(sem_table_option).collect(),
+            },
+            tidb_ast::DdlStmt::AlterTable(alter) => StmtKind::AlterTable {
+                specs: alter
+                    .actions
+                    .iter()
+                    .map(|action| match action {
+                        tidb_ast::AlterTableAction::RemoveTtl(_) => AlterTableSpec {
+                            tp: AlterTableType::RemoveTtl,
+                            options: Vec::new(),
+                        },
+                        tidb_ast::AlterTableAction::SetTableOptions { options } => AlterTableSpec {
+                            tp: AlterTableType::Option,
+                            options: options.iter().map(sem_table_option).collect(),
+                        },
+                        tidb_ast::AlterTableAction::SetAttributes(_) => AlterTableSpec {
+                            tp: AlterTableType::Attributes,
+                            options: Vec::new(),
+                        },
+                        tidb_ast::AlterTableAction::Partition(
+                            tidb_ast::AlterPartitionAction::SetAttributes { .. },
+                        ) => AlterTableSpec {
+                            tp: AlterTableType::PartitionAttributes,
+                            options: Vec::new(),
+                        },
+                        _ => AlterTableSpec {
+                            tp: AlterTableType::Other,
+                            options: Vec::new(),
+                        },
+                    })
+                    .collect(),
+            },
+            _ => StmtKind::Other,
+        },
+        Stmt::Admin(_) | Stmt::Session(_) => StmtKind::Other,
+    }
+}
+
+fn sem_stmt_view(stmt: &Stmt) -> tidb_util::sem_v2::StmtView {
+    tidb_util::sem_v2::StmtView {
+        sem_command: stmt.sem_command().to_owned(),
+        kind: sem_stmt_kind(stmt),
+    }
+}
+
+pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
+    struct Filter {
+        warnings: Vec<String>,
+    }
+
+    impl Filter {
+        fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
+            hints.retain(|hint| {
+                match tidb_util::sem_v2::is_restricted_hint(&hint.name.to_ascii_lowercase()) {
+                    Ok(()) => true,
+                    Err(warning) => {
+                        self.warnings.push(warning);
+                        false
+                    }
+                }
+            });
+        }
+    }
+
+    impl tidb_ast::Visitor for Filter {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                self.retain(&mut select.hints);
+            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                self.retain(&mut insert.hints);
+            } else if let Some(update) = node.downcast_mut::<tidb_ast::UpdateStmt>() {
+                self.retain(&mut update.hints);
+            } else if let Some(delete) = node.downcast_mut::<tidb_ast::DeleteStmt>() {
+                self.retain(&mut delete.hints);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut filter = Filter {
+        warnings: Vec::new(),
+    };
+    tidb_ast::Visitable::accept(stmt, &mut filter);
+    filter.warnings
+}
+
+/// A planner-owned SELECT tree offered to the ordinary statement executor.
+/// `used` records whether the schema still matched while the catalog was
+/// locked; a moved schema falls through to ordinary physical planning.
+struct RetainedSelectPlan<'a> {
+    physical: &'a mut tidb_planner::physical::PhysicalPlan,
+    schema_version: u64,
+    used: &'a mut bool,
 }
 
 /// Every `information_schema` base table a top-level join tree references.
@@ -174,6 +285,27 @@ pub(crate) fn stmt_kind_name(stmt: &Stmt) -> String {
     }
 }
 
+fn cached_dml_plan<'a>(
+    plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
+    operator: &str,
+) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
+    let Some(plan) = plan else {
+        return Ok(None);
+    };
+    let tidb_planner::physical::PhysicalPlan::Dml(dml) = &*plan else {
+        return Err(DriverError::unsupported(
+            "prepared DML execution received a non-DML physical root",
+        ));
+    };
+    if !dml.go_operator.eq_ignore_ascii_case(operator) {
+        return Err(DriverError::unsupported(format!(
+            "prepared {operator} execution received a {} physical root",
+            dml.go_operator
+        )));
+    }
+    Ok(Some(plan))
+}
+
 impl Session {
     /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
     /// and `SHOW TABLES`.
@@ -197,12 +329,24 @@ impl Session {
         &mut self,
         stmt: &Stmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        if matches!(stmt, Stmt::Ddl(_)) {
-            // Go commits the open transaction before running any DDL
+        let local_temporary_create = matches!(
+            stmt,
+            Stmt::Ddl(ddl)
+                if matches!(
+                    ddl.as_ref(),
+                    tidb_ast::DdlStmt::CreateTable(create)
+                        if create.temporary == tidb_ast::CreateTableTemporary::Local
+                )
+        );
+        if matches!(stmt, Stmt::Ddl(_)) && !local_temporary_create {
+            // Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
-            // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node), so the
-            // DDL and everything staged before it are already durable when
-            // it starts. Captured from TiDB: after
+            // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node). LOCAL
+            // `CREATE TEMPORARY TABLE` is the exception: `DDLExec.Next`
+            // returns through `createSessionTemporaryTable` before
+            // `NewTxnInStmt`, retaining the user's transaction. For ordinary
+            // DDL, everything staged before it is already durable when it
+            // starts. Captured from TiDB: after
             // `INSERT; BEGIN; INSERT; TRUNCATE TABLE d; ROLLBACK` the table
             // is EMPTY -- the ROLLBACK takes nothing back, because the
             // TRUNCATE committed the insert that preceded it -- and the same
@@ -264,6 +408,24 @@ impl Session {
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
+                    // Go protects the bootstrap `mysql` schema before the
+                    // drop executor sees IF EXISTS or foreign-key checks.
+                    // The guard is unconditional: both `DROP DATABASE
+                    // mysql` and its IF EXISTS form report ErrForbiddenDDL.
+                    if name.eq_ignore_ascii_case("mysql") {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrForbiddenDDL,
+                            message: "Drop 'mysql' database is forbidden".to_owned(),
+                        });
+                    }
+                    let foreign_key_checks = self.foreign_key_checks();
+                    if foreign_key_checks {
+                        if let Some(error) = self.with_catalog_mut(|catalog| {
+                            Ok(tidb_executor::find_database_referred(catalog, name))
+                        })? {
+                            return Err(error);
+                        }
+                    }
                     let dropped =
                         self.with_catalog_mut(|catalog| Ok(catalog.drop_database(name)))?;
                     // Go raises ErrDBDropExists unless IF EXISTS.
@@ -343,10 +505,13 @@ impl Session {
                 return Ok(None);
             }
             let ctx = self.statement_context(false);
-            let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
             let current_db = self.current_db.clone();
-            let (columns, rows) =
-                tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+            let (columns, rows) = self.run_information_schema_query(
+                &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+                table_names,
+                &current_db,
+                &ctx,
+            )?;
             self.drain_eval_warnings(&ctx);
             return Ok(Some(StmtOutput::Rows { columns, rows }));
         };
@@ -364,12 +529,81 @@ impl Session {
             return Ok(None);
         }
         let ctx = self.statement_context(false);
-        let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
         let current_db = self.current_db.clone();
-        let (columns, rows) =
-            tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+        let (columns, rows) = self.run_information_schema_query(
+            &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+            table_names,
+            &current_db,
+            &ctx,
+        )?;
         self.drain_eval_warnings(&ctx);
         Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    fn run_information_schema_query(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        mut table_names: Vec<String>,
+        current_db: &str,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<tidb_executor::SelectMeta, DriverError> {
+        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+
+        // Go resolves and prunes the memory-table scan before its executor
+        // performs the restricted statistics reads. Plan against schema-only
+        // virtual tables so the real rows are generated exactly once below.
+        let planning_catalog = self.information_schema_planning_catalog(&table_names)?;
+        let mut physical =
+            tidb_executor::plan_query_meta_stmt(query, &planning_catalog, current_db, ctx)?;
+        let needs_storage_stats =
+            tidb_executor::physical_plan_needs_table_storage_statistics(&physical);
+        let needs_column_lengths =
+            tidb_executor::physical_plan_needs_table_storage_column_lengths(&physical);
+        let scratch = self.materialize_information_schema_catalog(
+            table_names,
+            ctx,
+            needs_storage_stats,
+            needs_column_lengths,
+        )?;
+        tidb_executor::run_query_meta_stmt_with_physical(
+            query,
+            Some(&mut physical),
+            &scratch,
+            current_db,
+            ctx,
+        )
+    }
+
+    fn information_schema_planning_catalog(
+        &mut self,
+        table_names: &[String],
+    ) -> Result<Catalog, DriverError> {
+        let mut schemas = Vec::with_capacity(table_names.len());
+        for table_name in table_names {
+            let Some(columns) = infoschema::table_schema(table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{}.{}",
+                    infoschema::INFORMATION_SCHEMA,
+                    table_name
+                ))));
+            };
+            schemas.push((table_name.clone(), columns));
+        }
+        self.with_catalog_mut(|catalog| {
+            let mut scratch = catalog.clone();
+            for (table_name, columns) in schemas {
+                scratch.register_mem_in(
+                    infoschema::INFORMATION_SCHEMA,
+                    &table_name,
+                    tidb_executor::MemTable {
+                        columns,
+                        rows: Vec::new(),
+                    },
+                );
+            }
+            Ok(scratch)
+        })
     }
 
     /// Clones this statement's real catalog and overlays each referenced
@@ -380,9 +614,53 @@ impl Session {
         &mut self,
         mut table_names: Vec<String>,
         ctx: &tidb_executor::StmtContext,
+        needs_storage_stats: bool,
+        needs_column_lengths: bool,
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        let mut storage_statistics = None;
+        let mut storage_statistics_failed = false;
+        if needs_storage_stats
+            && table_names.iter().any(|name| {
+                name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
+            })
+        {
+            if let Some(provider) = &self.table_storage_stats {
+                match provider.load_table_storage_statistics(
+                    &self.active_resource_group,
+                    needs_column_lengths,
+                ) {
+                    Ok(statistics) => storage_statistics = Some(statistics),
+                    // The production provider already mirrors Go's
+                    // warn-and-serve-cache refresh, so it never returns Err;
+                    // a seam provider that does is served with zero size
+                    // columns for this statement rather than failing the
+                    // query, matching Go's reader never failing on a stats
+                    // refresh error.
+                    Err(error) => {
+                        storage_statistics_failed = true;
+                        eprintln!(
+                        "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                        )
+                    }
+                }
+            }
+        }
+        let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
+        if storage_statistics_failed {
+            scratch.clear_table_storage_statistics();
+        } else if let Some(statistics) = storage_statistics {
+            for table in statistics {
+                scratch.set_table_storage_statistics(
+                    table.table_id,
+                    table.table,
+                    &table.partitions,
+                );
+            }
+        }
         let mut materialized = Vec::with_capacity(table_names.len());
         for table_name in table_names {
             let Some(columns) = infoschema::table_schema(&table_name) else {
@@ -394,6 +672,25 @@ impl Session {
             };
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
+            } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
+                let visibility = self.schema_visibility();
+                let collector = std::sync::Arc::clone(&self.index_usage_collector);
+                infoschema::tidb_index_usage_rows(&scratch, &visibility, collector.as_ref())
+            } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS") {
+                self.tidb_statements_stats_table_rows(&columns)
+            } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
+                self.tidb_trx_table_rows()
+            } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
+                self.data_lock_waits_table_rows()?
+            } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_USER")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST")
+            {
+                self.client_errors_summary_table_rows(&table_name)?
+            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE") {
+                memory_usage_table_rows()
+            } else if table_name.eq_ignore_ascii_case("MEMORY_USAGE_OPS_HISTORY") {
+                tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
                 if !self.has_process_privilege() {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
@@ -401,130 +698,426 @@ impl Session {
                 self.deadlock_history_table_rows()?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
+            } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
+                self.user_attributes_table_rows(&scratch, ctx)
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
                 self.tidb_servers_info_table_rows()
             } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {
                 self.cluster_info_table_rows()
             } else {
                 let visibility = self.schema_visibility();
-                self.with_catalog_mut(|catalog| {
-                    Ok(
-                        infoschema::table_rows(&table_name, catalog, &visibility, ctx)
-                            .unwrap_or_default(),
-                    )
-                })?
+                infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()
             };
             materialized.push((table_name, columns, rows));
         }
-        self.with_catalog_mut(|catalog| {
-            let mut scratch = catalog.clone();
-            for (table_name, columns, rows) in materialized {
-                scratch.register_mem_in(
-                    infoschema::INFORMATION_SCHEMA,
-                    &table_name,
-                    tidb_executor::MemTable { columns, rows },
+        for (table_name, columns, rows) in materialized {
+            scratch.register_mem_in(
+                infoschema::INFORMATION_SCHEMA,
+                &table_name,
+                tidb_executor::MemTable { columns, rows },
+            );
+        }
+        Ok(scratch)
+    }
+
+    /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
+    /// object from the real `mysql.user` table, then apply MySQL 8.0.22's
+    /// account-visibility rules before exposing the virtual rows. The query
+    /// runs against the statement's catalog snapshot, so account DML and
+    /// `INFORMATION_SCHEMA.USER_ATTRIBUTES` cannot observe different rows.
+    fn user_attributes_table_rows(
+        &self,
+        catalog: &Catalog,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        let Ok((_columns, rows)) = tidb_executor::run_select_meta_in(
+            "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
+             FROM mysql.user",
+            catalog,
+            "mysql",
+            ctx,
+        ) else {
+            // A bare in-process catalog has no bootstrapped mysql.user table.
+            // Go's restricted reader returns no rows in that shape rather than
+            // fabricating account metadata.
+            return Vec::new();
+        };
+
+        let Some((viewer_user, viewer_host)) = self.current_identity() else {
+            return rows;
+        };
+        let Some(registry) = self.privileges.as_ref() else {
+            return rows;
+        };
+        if self.privilege_bypassed {
+            return rows;
+        }
+
+        let can_read_all = registry.has_priv_mask_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            tidb_mysql::consts::SystemDB,
+            "user",
+            privilege::GlobalPriv::Select.bit() | privilege::GlobalPriv::Update.bit(),
+        );
+        let can_create_user = registry.has_priv_mask_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            "",
+            "",
+            privilege::GlobalPriv::CreateUser.bit(),
+        );
+        let caller_is_system_user = registry.has_dynamic_priv_with_roles(
+            viewer_user,
+            viewer_host,
+            self.active_roles(),
+            "SYSTEM_USER",
+            false,
+        );
+
+        rows.into_iter()
+            .filter(|row| {
+                if row.len() != 3 || can_read_all {
+                    return row.len() == 3;
+                }
+                let Some(user) = crate::datum_text(&row[0]) else {
+                    return false;
+                };
+                let Some(host) = crate::datum_text(&row[1]) else {
+                    return false;
+                };
+                // `record.match(viewer)` in Go selects a stored account row
+                // whose host pattern matches the viewer. The registry's
+                // account matcher is the same host-pattern implementation.
+                let is_self = registry.account_matches(
+                    &(user.clone(), host.clone()),
+                    viewer_user,
+                    viewer_host,
                 );
+                if is_self {
+                    return true;
+                }
+                if !can_create_user {
+                    return false;
+                }
+                if caller_is_system_user {
+                    return true;
+                }
+                // `SYSTEM_USER` is a dynamic privilege with SUPER fallback,
+                // so a CREATE USER caller cannot inspect a protected target.
+                !registry.has_dynamic_priv(&user, &host, "SYSTEM_USER", false)
+            })
+            .collect()
+    }
+
+    /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
+    /// `TIDB_STATEMENTS_STATS` table used by the workload repository.
+    fn tidb_statements_stats_table_rows(
+        &self,
+        columns: &[(String, tidb_datatype::FieldType)],
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_ast::CiString;
+        use tidb_model::ColumnInfo;
+        use tidb_parser::auth::UserIdentity;
+        use tidb_stmtsummary::reader::StmtSummaryReader;
+
+        let columns = columns
+            .iter()
+            .enumerate()
+            .map(|(offset, (name, _))| ColumnInfo {
+                id: i64::try_from(offset).expect("information-schema column count fits i64"),
+                name: CiString::new(name),
+                offset: i64::try_from(offset).expect("information-schema column count fits i64"),
+                ..ColumnInfo::default()
+            })
+            .collect();
+        let user = self.login_user.as_deref().map(|login| {
+            let (username, hostname) = login.split_once('@').unwrap_or((login, ""));
+            let (auth_username, auth_hostname) = self.current_identity().unwrap_or(("", ""));
+            UserIdentity {
+                username: username.to_owned(),
+                hostname: hostname.to_owned(),
+                current_user: false,
+                auth_username: auth_username.to_owned(),
+                auth_hostname: auth_hostname.to_owned(),
+                auth_plugin: String::new(),
             }
-            Ok(scratch)
-        })
+        });
+        StmtSummaryReader::new(
+            user,
+            self.has_process_privilege(),
+            columns,
+            String::new(),
+            self.session_time_zone(),
+        )
+        .get_stmt_summary_cumulative_rows()
+    }
+
+    /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
+    fn tidb_trx_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        use chrono::{DateTime, Local};
+        use tidb_datatype::{core_time_from_datetime, Collation, Datum, MysqlEnum, Time, TimeType};
+
+        let Some(process) = self.process.as_ref() else {
+            return Vec::new();
+        };
+        let login_username = self
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
+        let has_process = self.has_process_privilege();
+        process
+            .registry()
+            .transaction_snapshot()
+            .into_iter()
+            .filter(|transaction| {
+                has_process
+                    || login_username.is_none_or(|username| username == transaction.user.as_str())
+            })
+            .map(|transaction| {
+                let current_sql_digest_text =
+                    transaction
+                        .current_sql_digest
+                        .as_deref()
+                        .and_then(|digest| {
+                            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
+                                .normalized_sql_for_digest(digest)
+                        });
+                let start = DateTime::from_timestamp_millis((transaction.start_ts >> 18) as i64)
+                    .map(DateTime::<Local>::from)
+                    .map(|value| {
+                        Datum::new_time(
+                            Time::new(core_time_from_datetime(value), TimeType::Timestamp, 6)
+                                .expect("fsp 6 is valid"),
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let waiting_start = transaction
+                    .waiting_start
+                    .map(DateTime::<Local>::from)
+                    .map(|value| {
+                        Datum::new_time(
+                            Time::new(core_time_from_datetime(value), TimeType::Timestamp, 6)
+                                .expect("fsp 6 is valid"),
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let waiting_time = transaction
+                    .waiting_start
+                    .map(|started| {
+                        Datum::Real(
+                            chrono::Utc::now()
+                                .signed_duration_since(started)
+                                .num_microseconds()
+                                .unwrap_or(0) as f64
+                                / 1_000_000.0,
+                        )
+                    })
+                    .unwrap_or(Datum::Null);
+                let state_index = match transaction.state {
+                    "Idle" => 1,
+                    "Running" => 2,
+                    "LockWaiting" => 3,
+                    "Committing" => 4,
+                    "RollingBack" => 5,
+                    _ => 1,
+                };
+                vec![
+                    Datum::UInt(transaction.start_ts),
+                    start,
+                    transaction
+                        .current_sql_digest
+                        .clone()
+                        .map(Datum::new_string)
+                        .unwrap_or(Datum::Null),
+                    current_sql_digest_text
+                        .map(Datum::new_string)
+                        .unwrap_or(Datum::Null),
+                    Datum::new_enum(
+                        MysqlEnum::new(transaction.state, state_index),
+                        Collation::Utf8Mb4Bin,
+                    ),
+                    waiting_start,
+                    Datum::UInt(transaction.mem_buffer_keys),
+                    Datum::Int(transaction.mem_buffer_bytes),
+                    Datum::UInt(transaction.session_id),
+                    Datum::new_string(transaction.user),
+                    Datum::new_string(transaction.db),
+                    Datum::new_string(
+                        serde_json::to_string(&transaction.all_sql_digests)
+                            .expect("SQL digest strings serialize"),
+                    ),
+                    Datum::new_string(
+                        transaction
+                            .related_table_ids
+                            .iter()
+                            .map(i64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
+                    waiting_time,
+                ]
+            })
+            .collect()
+    }
+
+    /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
+    fn data_lock_waits_table_rows(
+        &mut self,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use std::fmt::Write as _;
+        use tidb_datatype::Datum;
+        use tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
+
+        if !self.has_process_privilege() {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+        }
+        let Some(provider) = self.data_lock_waits.as_ref().map(std::sync::Arc::clone) else {
+            return Ok(Vec::new());
+        };
+        let waits = provider.lock_waits().map_err(DriverError::unsupported)?;
+        let key_info = self.with_catalog_mut(|catalog| {
+            Ok(waits
+                .iter()
+                .map(|wait| {
+                    tidb_executor::keydecoder::decode_key(&wait.key, catalog)
+                        .ok()
+                        .and_then(|decoded| serde_json::to_vec(&decoded).ok())
+                        .map(Datum::Bytes)
+                        .unwrap_or(Datum::Null)
+                })
+                .collect::<Vec<_>>())
+        })?;
+
+        Ok(waits
+            .into_iter()
+            .zip(key_info)
+            .map(|(wait, key_info)| {
+                let mut key_hex = String::with_capacity(wait.key.len() * 2);
+                for byte in &wait.key {
+                    write!(&mut key_hex, "{byte:02X}")
+                        .expect("writing hexadecimal to String cannot fail");
+                }
+                let digest = tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        let mut hex = String::with_capacity(bytes.len() * 2);
+                        for byte in bytes {
+                            write!(&mut hex, "{byte:02x}")
+                                .expect("writing hexadecimal to String cannot fail");
+                        }
+                        hex
+                    });
+                let digest_text = digest
+                    .as_deref()
+                    .and_then(|digest| STMT_SUMMARY_BY_DIGEST_MAP.normalized_sql_for_digest(digest))
+                    .map(Datum::new_string)
+                    .unwrap_or(Datum::Null);
+                vec![
+                    Datum::new_string(key_hex),
+                    key_info,
+                    Datum::UInt(wait.txn),
+                    Datum::UInt(wait.wait_for_txn),
+                    digest.map(Datum::new_string).unwrap_or(Datum::Null),
+                    digest_text,
+                ]
+            })
+            .collect())
+    }
+
+    /// Pinned Go `memtableRetriever.setDataForClientErrorsSummary`.
+    fn client_errors_summary_table_rows(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use chrono::{DateTime, Local};
+        use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
+        use tidb_error::tidb::infoschema::{self, ErrorStats};
+
+        fn text(value: &str) -> Datum {
+            Datum::new_string(value.as_bytes())
+        }
+
+        fn count(value: isize) -> Datum {
+            Datum::Int(i64::try_from(value).expect("client error count fits i64"))
+        }
+
+        fn timestamp(value: Option<std::time::SystemTime>) -> Datum {
+            let time = match value {
+                Some(value) => {
+                    let local: DateTime<Local> = value.into();
+                    Time::new(core_time_from_datetime(local), TimeType::Timestamp, 0)
+                }
+                None => Time::new(CoreTime::from_raw(0), TimeType::Timestamp, 0),
+            }
+            .expect("fsp 0 is valid for client-error timestamps");
+            Datum::new_time(time)
+        }
+
+        fn message(code: u16) -> &'static str {
+            tidb_error::mysql::message_by_code(code)
+                .or_else(|| tidb_error::tidb::message_by_code(code))
+                .map_or("", |message| message.raw)
+        }
+
+        fn summary_cells(code: u16, summary: &infoschema::ErrorSummary) -> Vec<Datum> {
+            vec![
+                Datum::Int(i64::from(code)),
+                text(message(code)),
+                count(summary.error_count),
+                count(summary.warning_count),
+                timestamp(Some(summary.first_seen)),
+                timestamp(summary.last_seen),
+            ]
+        }
+
+        fn append_scoped(rows: &mut Vec<Vec<Datum>>, scope: &str, stats: ErrorStats) {
+            for (code, summary) in stats {
+                let mut row = Vec::with_capacity(7);
+                row.push(text(scope));
+                row.extend(summary_cells(code, &summary));
+                rows.push(row);
+            }
+        }
+
+        let has_process = self.has_process_privilege();
+        if !has_process
+            && (table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST"))
+        {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+        }
+
+        let mut rows = Vec::new();
+        if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL") {
+            for (code, summary) in infoschema::global_stats() {
+                rows.push(summary_cells(code, &summary));
+            }
+        } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST") {
+            for (host, stats) in infoschema::host_stats() {
+                append_scoped(&mut rows, &host, stats);
+            }
+        } else {
+            let login_username = self
+                .login_user
+                .as_deref()
+                .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
+            for (user, stats) in infoschema::user_stats() {
+                if !has_process && login_username.is_some_and(|login| login != user) {
+                    continue;
+                }
+                append_scoped(&mut rows, &user, stats);
+            }
+        }
+        Ok(rows)
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = self.parse_at_statement_boundary(sql)?;
         self.execute_parsed_statement(sql, stmt, false)
-    }
-
-    /// Executes the conservative one-row prepared INSERT path.  A refusal
-    /// returns `None`, allowing the complete bound AST path to answer it.
-    pub fn execute_fast_prepared_insert(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Dml(dml) = stmt else {
-            return Ok(None);
-        };
-        let DmlStmt::Insert(insert) = &**dml else {
-            return Ok(None);
-        };
-        // The ordinary funnel records every touched table on the transaction
-        // metadata-lock map from its single preprocess walk. This arm skips
-        // that walk, so it records its one target here -- a write is never
-        // exempt (only an autocommit READ is), and skipping the record would
-        // let a DDL slip past a live transaction writer.
-        let (db, table) = match insert.table.as_slice() {
-            [table] => (String::new(), table.clone()),
-            [db, table] => (db.clone(), table.clone()),
-            slice => (String::new(), slice.last().cloned().unwrap_or_default()),
-        };
-        self.record_mdl_related_table_names(&[(db, table)]);
-        let current_db = self.current_db.clone();
-        let ctx = self
-            .fast_statement_context(true, insert.ignore)
-            .with_statement_class(tidb_executor::StatementClass::Insert);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_insert(insert, params, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        let Some((affected, _)) = result else {
-            return Ok(None);
-        };
-        self.statement_insert_id = ctx
-            .published_last_insert_id()
-            .unwrap_or_else(|| ctx.given_insert_id());
-        Ok(Some(StmtOutput::Affected(affected)))
-    }
-
-    /// Executes the conservative one-row prepared UPDATE path.  A refusal
-    /// returns `None`, allowing the complete bound AST path to answer it.
-    pub fn execute_fast_prepared_update(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Dml(dml) = stmt else {
-            return Ok(None);
-        };
-        let DmlStmt::Update(update) = &**dml else {
-            return Ok(None);
-        };
-        // Same MDL duty as the insert arm above: this fast path skips the
-        // preprocess walk that would otherwise record the target table.
-        if let tidb_ast::UpdateKind::Single(table_ref) = &update.kind {
-            let (db, table) = match table_ref.name.as_slice() {
-                [table] => (String::new(), table.clone()),
-                [db, table] => (db.clone(), table.clone()),
-                slice => (String::new(), slice.last().cloned().unwrap_or_default()),
-            };
-            self.record_mdl_related_table_names(&[(db, table)]);
-        }
-        let current_db = self.current_db.clone();
-        let ctx = self
-            .fast_statement_context(true, update.ignore)
-            .with_statement_class(tidb_executor::StatementClass::Update);
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_update(update, params, catalog, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        Ok(result.map(StmtOutput::Affected))
     }
 
     /// Executes a statement tree already parsed and bound by the prepared
@@ -541,49 +1134,133 @@ impl Session {
     pub(crate) fn execute_prepared_ast(
         &mut self,
         sql: &str,
-        stmt: Stmt,
+        mut stmt: Stmt,
     ) -> Result<StmtOutput, DriverError> {
-        self.begin_prepared_statement_boundary(&stmt);
+        let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
+        self.begin_prepared_statement_boundary(&stmt, parameters);
         self.execute_parsed_statement(sql, stmt, true)
     }
 
-    /// Executes the subset Go serves through `ExecStmt.PointGet`: the cached
-    /// plan has already passed the statement-shape, schema, autocommit,
-    /// stale-read, binding, and hint gates. Go skips rebuilding visitInfo for
-    /// this reused executor; this path likewise avoids revisiting the AST.
-    /// A stale identity returns `None` before any row is read, so the session
-    /// can replan the retained AST within the same statement lifecycle.
-    pub(crate) fn try_execute_cached_prepared_point_get(
+    /// Executes the subset Go serves through a prepared `PointGetPlan`. The
+    /// plan has already passed the statement-shape, schema, stale-read,
+    /// binding, and hint gates, and each call creates fresh mutable execution
+    /// state. The execution carries the complete binding-aware cache-key hit
+    /// result rather than receiving a protocol-local readiness flag.
+    pub fn execute_prepared_point_get(
         &mut self,
-        cached: tidb_executor::PreparedPointGetExecution,
+        execution: tidb_executor::PreparedPointGetExecution,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        if !self.can_reuse_prepared_point_get(cached.plan()) {
-            return Ok(None);
-        }
+        let cache_hit = execution.cache_hit();
+        self.active_resource_group.clone_from(&self.resource_group);
         self.begin_cached_prepared_query_boundary();
+        let plan = execution.plan();
+        self.require_named_table_privilege(
+            plan.names().0,
+            plan.names().1,
+            privilege::GlobalPriv::Select,
+        )?;
         // `dirty_content` only gates scan/access-path planning. This cached
         // executor owns one handle read and the admission gate already refuses
         // an open transaction, so walking every catalog table cannot affect
         // its result.
-        self.refuse_pinned_historical_read()?;
         self.statement_insert_id = 0;
         self.statement_kind = StatementKind::Select;
 
         if self.in_transaction() {
-            let plan = cached.plan();
             let names = [(plan.names().0.to_owned(), plan.names().1.to_owned())];
             self.record_mdl_related_table_names(&names);
         }
         let current_db = self.current_db.clone();
         let ctx = self.prepared_point_get_context();
+        let stmt_ctx = self.statement_context(false);
         let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_prepared_point_get(&cached, catalog, &current_db, &ctx)
+            tidb_executor::run_prepared_point_get(&execution, catalog, &current_db, &ctx, &stmt_ctx)
         })?;
         let Some((columns, rows)) = result else {
             return Ok(None);
         };
-        self.found_in_plan_cache = true;
+        self.found_in_plan_cache = cache_hit;
         Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Executes a prepared SELECT through the ordinary statement and
+    /// executor funnel, offering the retained physical tree at the same seam
+    /// where a fresh plan is handed to the executor builder.
+    pub fn execute_prepared_select(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        let mut used = false;
+        let output = execution
+            .with_plan(|statement, physical| {
+                self.run_with_columns_using(sql, false, |session| {
+                    session
+                        .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
+                    for (level, code, message) in execution.take_planning_warnings() {
+                        session.append_warning(
+                            crate::WarningLevel::from_executor(level),
+                            code,
+                            message,
+                        );
+                    }
+                    session.execute_parsed_statement_with_select_plan(
+                        sql,
+                        statement.clone(),
+                        true,
+                        physical,
+                        execution.schema_version(),
+                        &mut used,
+                    )
+                })
+                .map(|(output, _)| output)
+            })
+            .ok_or_else(|| {
+                DriverError::unsupported(
+                    "prepared SELECT plan generation changed before executor construction",
+                )
+            })??;
+        self.found_in_plan_cache = execution.cache_hit() && used;
+        Ok(output)
+    }
+
+    /// Executes a bound prepared DML statement through the ordinary statement
+    /// funnel, then publishes whether Go's complete cache key was reused.
+    /// Cache hits and misses therefore share privilege checks, metadata locks,
+    /// resource-group selection, statement context, and the DML executor.
+    pub fn execute_cached_prepared_dml(
+        &mut self,
+        execution: &tidb_executor::PreparedDmlExecution,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        let output = execution
+            .with_plan(|statement, physical| {
+                self.run_with_columns_using(sql, false, |session| {
+                    session
+                        .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
+                    for (level, code, message) in execution.take_planning_warnings() {
+                        session.append_warning(
+                            crate::WarningLevel::from_executor(level),
+                            code,
+                            message,
+                        );
+                    }
+                    session.execute_parsed_statement_with_dml_plan(
+                        sql,
+                        statement.clone(),
+                        true,
+                        physical,
+                    )
+                })
+                .map(|(output, _)| output)
+            })
+            .ok_or_else(|| {
+                DriverError::unsupported(
+                    "cached DML plan generation changed before executor construction",
+                )
+            })??;
+        self.found_in_plan_cache = execution.cache_hit();
+        Ok(output)
     }
 
     /// Records one cached point read's table on the transaction's metadata-
@@ -631,7 +1308,14 @@ impl Session {
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.stored_table_id(db, table) {
-                Some(table_id) => sink.record_table(table_id, version),
+                Some(table_id) => {
+                    sink.record_table(table_id, version);
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_related_table(process.id(), table_id);
+                    }
+                }
                 None => sink.record_unresolved(),
             }
         }
@@ -661,7 +1345,14 @@ impl Session {
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
             match catalog.stored_table_id(db, table) {
-                Some(table_id) => sink.record_table(table_id, version),
+                Some(table_id) => {
+                    sink.record_table(table_id, version);
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_related_table(process.id(), table_id);
+                    }
+                }
                 None => sink.record_unresolved(),
             }
         }
@@ -738,7 +1429,7 @@ impl Session {
     /// the stale execution itself (its statement is already stripped and its
     /// transaction already open).
     fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_inner("", stmt, false)
+        self.execute_parsed_statement_inner("", stmt, false, None, None)
     }
 
     fn execute_parsed_statement(
@@ -747,11 +1438,73 @@ impl Session {
         stmt: Stmt,
         prepared: bool,
     ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(sql, stmt, prepared, None, None)
+    }
+
+    fn execute_parsed_statement_with_select_plan(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        physical: &mut tidb_planner::physical::PhysicalPlan,
+        schema_version: u64,
+        used: &mut bool,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            prepared,
+            Some(RetainedSelectPlan {
+                physical,
+                schema_version,
+                used,
+            }),
+            None,
+        )
+    }
+
+    fn execute_parsed_statement_with_dml_plan(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        prepared: bool,
+        physical: &mut tidb_planner::physical::PhysicalPlan,
+    ) -> Result<StmtOutput, DriverError> {
+        self.execute_parsed_statement_with_optional_physical_plan(
+            sql,
+            stmt,
+            prepared,
+            None,
+            Some(physical),
+        )
+    }
+
+    fn execute_parsed_statement_with_optional_physical_plan(
+        &mut self,
+        sql: &str,
+        mut stmt: Stmt,
+        prepared: bool,
+        select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    ) -> Result<StmtOutput, DriverError> {
+        if tidb_util::sem_v2::is_enabled()
+            && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(&stmt))
+            && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
+        {
+            let statement = if stmt.text().is_empty() {
+                sql.to_owned()
+            } else {
+                String::from_utf8_lossy(stmt.text()).into_owned()
+            };
+            return Err(DriverError::NotSupportedWithSem(statement));
+        }
+        for warning in filter_sem_restricted_hints(&mut stmt) {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
         // Go's `Preprocess` walks the AST once per statement and answers
         // every table-shaped question from that pass (`preprocess.go`); the
         // three consumers below share this one walk instead of each cloning
         // and re-walking the statement.
-        let mut stmt = stmt;
         let scan = crate::binding::scan_statement_tables(&mut stmt);
         self.record_mdl_related_tables(&stmt, &scan.names);
         // A statement whose table references carry `AS OF TIMESTAMP` runs
@@ -779,7 +1532,8 @@ impl Session {
                 }
             };
         let was_autocommit_statement = !self.in_transaction();
-        let output = self.execute_parsed_statement_inner(sql, stmt, prepared)?;
+        let output =
+            self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan)?;
         // Go's autocommit statement is its own transaction; its end writes
         // `LastTxnInfo` exactly as an explicit one's would -- the full
         // commit record for a statement that published, the start-only one
@@ -806,11 +1560,59 @@ impl Session {
         Ok(output)
     }
 
+    /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
+    /// cache misses and ordinary statements both call this method, so the
+    /// cache retains the same rewritten tree the normal executor receives.
+    pub(crate) fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) {
+        let enabled = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        if !enabled {
+            return;
+        }
+
+        let current_db = self.current_db.clone();
+        // The context takes its catalog-backed snapshots, so construct it
+        // before holding the catalog guard used by every resolved-type probe.
+        let ctx = self.statement_context(false);
+        let Ok(catalog) = self.lock_catalog() else {
+            return;
+        };
+        let columns_are_strings = |select: &tidb_ast::SelectStmt, columns: &[Vec<String>]| {
+            tidb_executor::fts_columns_are_strings(select, columns, &catalog, &current_db, &ctx)
+        };
+        struct FtsRewriter<'a> {
+            columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
+        }
+        impl tidb_ast::Visitor for FtsRewriter<'_> {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                    tidb_executor::fts_like_rewrite::rewrite_select_fts(
+                        select,
+                        self.columns_are_strings,
+                    );
+                }
+                false
+            }
+
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+        use tidb_ast::Visitable as _;
+        stmt.accept(&mut FtsRewriter {
+            columns_are_strings: &columns_are_strings,
+        });
+    }
+
     fn execute_parsed_statement_inner(
         &mut self,
         sql: &str,
         mut stmt: Stmt,
         prepared: bool,
+        mut select_plan: Option<RetainedSelectPlan<'_>>,
+        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
@@ -822,8 +1624,7 @@ impl Session {
             if let tidb_ast::QueryStmt::Select(select) = &mut **query {
                 if !select.into_vars.is_empty() {
                     let names = std::mem::take(&mut select.into_vars);
-                    let output =
-                        self.execute_parsed_statement(sql, stmt, prepared)?;
+                    let output = self.execute_parsed_statement(sql, stmt, prepared)?;
                     let StmtOutput::Rows { rows, .. } = output else {
                         return Err(DriverError::unsupported(
                             "SELECT INTO expected a row-producing query",
@@ -869,12 +1670,18 @@ impl Session {
             // ended, and a `BEGIN` arriving here starts from empty.
             self.discard_global_temporary_rows();
         }
-        // The non-prepared plan cache reads the SAME parse every door below
-        // uses. It only decides whether this statement's plan would already
-        // have been there; it never replaces the planning that follows.
-        if !prepared {
-            self.probe_non_prepared_plan_cache(&stmt);
-        }
+        // Go parameterizes a non-prepared statement before optimization, then
+        // sends the retained marker-bearing statement through the same plan
+        // cache as PREPARE. Keep the candidate beside this ordinary statement
+        // funnel; privilege, binding, transaction, and context setup below
+        // remain shared whether the physical plan hits or misses.
+        // Unsupported-statement counting lives inside
+        // `parameterize_non_prepared_select` (Go's
+        // `GetNonPrepPlanCacheUnsupportedCounter`), which distinguishes
+        // counted checker-walk refusals from clause-level fast-check ones.
+        let non_prepared = (!prepared)
+            .then(|| self.parameterize_non_prepared_select(&stmt))
+            .flatten();
         // `apply_schema_stmt` dispatches administrative statements early.
         // EXPLAIN is the one such wrapper whose inner query/DML can own
         // `SET_VAR`, so install that direct-AST overlay before the early
@@ -882,7 +1689,7 @@ impl Session {
         // applies its own hints after its early control-statement doors.
         if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(_)))
         {
-            self.apply_set_var_hints(&stmt);
+            self.apply_set_var_hints(&stmt)?;
         }
         // Database DDL is answered by `apply_schema_stmt` below, before the
         // ordinary planner door. Its Go visitInfo must therefore be checked
@@ -941,7 +1748,27 @@ impl Session {
         // variable, which is where Go applies it too: the optimizer installs
         // it, and expression rewriting -- the `@@x` reads below -- happens
         // after.
-        self.apply_set_var_hints(&stmt);
+        self.apply_set_var_hints(&stmt)?;
+        // Go first applies the statement's own StmtHints, then tries the
+        // matched binding and applies that binding's StmtHints before
+        // optimizing the replacement tree. Prepared execution has already
+        // performed this match in order to construct its binding-aware cache
+        // key, so only an ordinary statement matches here.
+        let binding_sql = if !prepared && matches!(stmt, Stmt::Query(_) | Stmt::Dml(_)) {
+            if let Some((bound, bind_sql)) = self.bind_statement_hints_with_sql(&stmt) {
+                self.apply_set_var_hints(&bound)?;
+                stmt = bound;
+                Some(bind_sql)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Go applies the effective statement's RESOURCE_GROUP hint only
+        // after binding selection.  Activating the original tree first can
+        // leak its group (and warning) when a binding supplies another hint.
+        self.activate_statement_resource_group(&stmt);
         self.bind_variables(&mut stmt)?;
         self.try_add_extra_limit(&mut stmt);
         // The mode the DDL arms below re-parse under: the one in force NOW,
@@ -951,93 +1778,16 @@ impl Session {
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
-        self
-            .planned_apply
+        self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        // Go's `matchAgainstToLike` rewrites a direct-boolean-context
-        // `MATCH ... AGAINST` into ILIKE predicates inside the expression
-        // rewriter, so every query block gets it -- subqueries, EXPLAIN
-        // targets and prepared bodies included. The one seam every parsed
-        // statement passes here plays that role: walk the statement and
-        // rewrite each SELECT's boolean roots in place.
-        // Gated exactly as Go gates the fallback machinery:
-        // `tidb_opt_enable_alternative_logical_plans`, default OFF -- without
-        // it only the native builtin exists, which errors here as it errors
-        // there with no FTS replica. The corpus flips the variable both ways.
-        let fts_rewrite_enabled = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        if fts_rewrite_enabled {
-            // Go checks the RESOLVED column's eval type; the closure answers
-            // it from this session's catalog for the one FROM shape the
-            // rewrite reaches through the AST alone -- a single named table.
-            // A join or derived FROM stays unrewritten, which is NARROWER
-            // than Go (a string column there would rewrite) and is the
-            // refusal path rather than a wrong answer.
-            let current_db = self.current_db.clone();
-            let catalog = std::sync::Arc::clone(&self.catalog);
-            let columns_are_strings = move |select: &tidb_ast::SelectStmt,
-                                            columns: &[Vec<String>]|
-                  -> bool {
-                let Some(join) = select.from.as_ref() else {
-                    return false;
-                };
-                let (tidb_ast::JoinNode::Table(table), None) = (&join.left, &join.right) else {
-                    return false;
-                };
-                let name = match table.name.as_slice() {
-                    [name] => name.clone(),
-                    [_, name] => name.clone(),
-                    _ => return false,
-                };
-                let Ok(guard) = catalog.lock() else {
-                    return false;
-                };
-                let Some(tidb_executor::TableEntry::Kv(kv)) = guard.table_in(&current_db, &name)
-                else {
-                    return false;
-                };
-                columns.iter().all(|path| {
-                    let Some(column_name) = path.last() else {
-                        return false;
-                    };
-                    kv.visible_columns().iter().any(|column| {
-                        column.name.eq_ignore_ascii_case(column_name)
-                            && column.field_type.eval_type() == tidb_datatype::EvalType::String
-                    })
-                })
-            };
-            struct FtsRewriter<'a> {
-                columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
-            }
-            impl tidb_ast::Visitor for FtsRewriter<'_> {
-                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                    if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-                        tidb_executor::fts_like_rewrite::rewrite_select_fts(
-                            select,
-                            self.columns_are_strings,
-                        );
-                    }
-                    false
-                }
-                fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-                    true
-                }
-            }
-            use tidb_ast::Visitable as _;
-            stmt.accept(&mut FtsRewriter {
-                columns_are_strings: &columns_are_strings,
-            });
-        }
+        self.rewrite_fts_for_planning(&mut stmt);
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,
         // which is what makes `tidb_shard_allocate_step` count rows rather
         // than statements.
         if !self.in_transaction() {
-            self
-                .row_id_shards
+            self.row_id_shards
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .end_run();
@@ -1074,8 +1824,7 @@ impl Session {
         match &stmt {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    // A set operation runs through its own fold.
-                    let tidb_ast::QueryStmt::SetOpr(set_opr) = &**query else {
+                    let tidb_ast::QueryStmt::SetOpr(_) = &**query else {
                         unreachable!("a query is a SELECT or a set operation")
                     };
                     let current_db = self.current_db.clone();
@@ -1084,12 +1833,22 @@ impl Session {
                     information_schema_tables_in_query(query, &current_db, &mut table_names);
                     let (columns, rows) = if table_names.is_empty() {
                         self.with_catalog_mut(|catalog| {
-                            tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db, &ctx)
+                            let physical = select_plan.as_mut().and_then(|retained| {
+                                (retained.schema_version == catalog.metadata_version()).then(|| {
+                                    *retained.used = true;
+                                    &mut *retained.physical
+                                })
+                            });
+                            tidb_executor::run_query_meta_stmt_with_physical(
+                                query,
+                                physical,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                            )
                         })?
                     } else {
-                        let scratch =
-                            self.materialize_information_schema_catalog(table_names, &ctx)?;
-                        tidb_executor::run_set_opr_stmt(set_opr, &scratch, &current_db, &ctx)?
+                        self.run_information_schema_query(query, table_names, &current_db, &ctx)?
                     };
                     self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });
@@ -1099,144 +1858,273 @@ impl Session {
                 if let Some(output) = self.run_information_schema_select(select)? {
                     return Ok(output);
                 }
-                // Go plans a matched SQL binding's hints onto the statement
-                // before optimizing it (`planner.optimize`), so the binding
-                // decides the access path the same way a hint written in the
-                // query would. See `crate::binding`.
-                let bound = self.bind_statement_hints(&stmt);
-                let select = match &bound {
-                    Some(Stmt::Query(query)) => match query.as_ref() {
-                        tidb_ast::QueryStmt::Select(bound) => bound,
-                        tidb_ast::QueryStmt::SetOpr(_) => select,
-                    },
-                    _ => select,
-                };
-                // Try the bounded clustered-key reader before constructing
-                // the ordinary executor tree. Admission may inspect literals
-                // and parameters but must not evaluate computed endpoints.
-                // Both paths retain this statement's context and snapshot.
                 let current_db = self.current_db.clone();
-                let ctx = self.statement_context(false);
-                let fast_range = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_fast_single_row_scan(select, catalog, &current_db, &ctx)
-                })?;
-                if let Some((columns, rows)) = fast_range {
-                    self.drain_eval_warnings(&ctx);
-                    return Ok(StmtOutput::Rows { columns, rows });
+                // Go `ResetContextOfStmt`'s `*ast.SelectStmt` arm copies the
+                // statement's own priority and `SQL_NO_CACHE` onto the
+                // statement context before anything reads storage.
+                let ctx = self.statement_context_for_stmt(&stmt, false);
+                if let Some(parameterized) = non_prepared.as_ref() {
+                    let mut effective_parameterized = parameterized.statement.clone();
+                    if binding_sql.is_some() {
+                        let binding_hints = crate::binding::collect_hints(&stmt);
+                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                    }
+                    if let Some(execution) = self.bind_non_prepared_select(
+                        parameterized,
+                        &effective_parameterized,
+                        binding_sql.as_deref(),
+                    ) {
+                        let cache_hit = execution.cache_hit();
+                        let schema_version = execution.schema_version();
+                        let result = execution.with_plan(|statement, physical| {
+                            let Stmt::Query(query) = statement else {
+                                unreachable!("a retained SELECT owns a query statement")
+                            };
+                            let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+                                unreachable!("a retained SELECT owns a SELECT query")
+                            };
+                            self.with_catalog_mut(|catalog| {
+                                (schema_version == catalog.metadata_version())
+                                    .then(|| {
+                                        tidb_executor::run_select_meta_stmt_with_physical(
+                                            select,
+                                            Some(physical),
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                        )
+                                    })
+                                    .transpose()
+                            })
+                        });
+                        if let Some(Some((columns, rows))) = result.transpose()? {
+                            self.found_in_plan_cache = cache_hit;
+                            self.drain_eval_warnings(&ctx);
+                            return Ok(StmtOutput::Rows { columns, rows });
+                        }
+                    }
                 }
-                // Admission and ordinary execution belong to one statement:
-                // do not register a second live memory-arbitrator context.
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
+                    let physical = select_plan.as_mut().and_then(|retained| {
+                        (retained.schema_version == catalog.metadata_version()).then(|| {
+                            *retained.used = true;
+                            &mut *retained.physical
+                        })
+                    });
+                    tidb_executor::run_select_meta_stmt_with_physical(
+                        select,
+                        physical,
+                        catalog,
+                        &current_db,
+                        &ctx,
+                    )
                 })?;
                 self.drain_eval_warnings(&ctx);
                 Ok(StmtOutput::Rows { columns, rows })
             }
-            Stmt::Dml(dml) => match &**dml {
-                DmlStmt::Insert(insert) => {
-                    let current_db = self.current_db.clone();
-                    let enable_strict_not_null_check = !matches!(
-                        self.vars
-                            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK)
-                            .as_deref(),
-                        Ok("OFF" | "off" | "0")
-                    );
-                    // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
-                    // is what `StmtContext::push_down_flags` turns into the
-                    // statement-kind bit of any coprocessor request this
-                    // statement's read half issues, and `IgnoreErr` is the
-                    // `IGNORE` modifier Go reads off this same AST to downgrade
-                    // every value-level error to a warning.
-                    let ctx = self
-                        .statement_context_ignoring(true, insert.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::Insert)
-                        .with_single_insert_bad_null_policy(
-                            insert.rows.len() == 1,
-                            enable_strict_not_null_check,
+            Stmt::Dml(dml) => {
+                // Go parameterizes a non-prepared DML statement too (the
+                // `tidb_enable_non_prepared_plan_cache_for_dml` switch, true
+                // by default) and sends the retained marker-bearing statement
+                // through the same plan cache as PREPARE.
+                let non_prepared_dml = (!prepared)
+                    .then(|| self.parameterize_non_prepared_dml(&stmt))
+                    .flatten();
+                if let Some(parameterized) = non_prepared_dml.as_ref() {
+                    let mut effective_parameterized = parameterized.statement.clone();
+                    if binding_sql.is_some() {
+                        let binding_hints = crate::binding::collect_hints(&stmt);
+                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                    }
+                    if let Some(execution) = self.bind_non_prepared_dml(
+                        &parameterized,
+                        &effective_parameterized,
+                        binding_sql.as_deref(),
+                    ) {
+                        return self.execute_cached_prepared_dml(&execution, sql);
+                    }
+                }
+                match &**dml {
+                    DmlStmt::Insert(insert) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Insert")?;
+                        let current_db = self.current_db.clone();
+                        let enable_strict_not_null_check = !matches!(
+                            self.vars
+                                .get_system(
+                                    tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK
+                                )
+                                .as_deref(),
+                            Ok("OFF" | "off" | "0")
                         );
-                    let result = self.with_staged_catalog(|catalog| {
-                        // Go executes the statement the protocol BOUND
-                        // (`pkg/server`'s `statement`/`executableParams`
-                        // carry the values): re-parsing `sql` here would run
-                        // a tree whose markers never met their execute-time
-                        // values, which is a wrong answer for every binary-
-                        // protocol write.
-                        tidb_executor::run_insert_stmt(insert, catalog, &current_db, &ctx)
-                    });
-                    self.drain_eval_warnings(&ctx);
-                    // Go `session.LastInsertID()`, the OK packet's field:
-                    // `StmtCtx.LastInsertID` when the statement PUBLISHED an
-                    // allocated id, `StmtCtx.InsertID` -- the last explicit
-                    // value -- otherwise. Both come off the same context the
-                    // publication above reads, so the wire and
-                    // `LAST_INSERT_ID()` cannot drift apart: what differs is
-                    // only the fallback Go itself applies.
-                    //
-                    // Captured from TiDB: an allocating insert reports the id
-                    // on both; `INSERT INTO t (id,v) VALUES (50,2)` reports 50
-                    // on the wire while `LAST_INSERT_ID()` stays where it was;
-                    // an `INSERT IGNORE` whose only row is a duplicate burns
-                    // an id but reports 0 on the wire.
-                    // The publication itself is promoted at the statement
-                    // boundary by `publish_statement_status`, off the same
-                    // cell this reads -- one channel, two readers.
-                    self.statement_insert_id = ctx
-                        .published_last_insert_id()
-                        .unwrap_or_else(|| ctx.given_insert_id());
-                    let (affected, _) = result?;
-                    Ok(StmtOutput::Affected(affected))
-                }
-                DmlStmt::Update(update) => {
-                    let current_db = self.current_db.clone();
-                    // Go `ResetUpdateStmtCtx`, which applies the same
-                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                    // does; the class is what `StmtContext::push_down_flags`
-                    // turns into the statement-kind bit of any coprocessor
-                    // request this statement's read half issues.
-                    let ctx = self
-                        .statement_context_ignoring(true, update.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::Update);
-                    let output = self.with_staged_catalog(|catalog| {
-                        // Bound AST, not SQL text: the text still carries the
-                        // markers the binary protocol already replaced. See
-                        // the INSERT arm above.
-                        Ok(StmtOutput::Affected(tidb_executor::run_update_stmt(
-                            update,
-                            catalog,
+                        // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
+                        // is what `StmtContext::push_down_flags` turns into the
+                        // statement-kind bit of any coprocessor request this
+                        // statement's read half issues, and `IgnoreErr` is the
+                        // `IGNORE` modifier Go reads off this same AST to downgrade
+                        // every value-level error to a warning.
+                        let ctx = self
+                            .statement_context_ignoring(true, insert.ignore)
+                            // Go's `*ast.InsertStmt` arm sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
+                            .with_statement_class(tidb_executor::StatementClass::Insert)
+                            .with_single_insert_bad_null_policy(
+                                insert.rows.len() == 1,
+                                enable_strict_not_null_check,
+                            );
+                        if insert.source.is_some() {
+                            self.write_sli.set_invalid();
+                        }
+                        let result = self.with_staged_catalog_for_path(
+                            &insert.table,
                             &current_db,
-                            &ctx,
-                        )?))
-                    });
-                    self.drain_eval_warnings(&ctx);
-                    output
+                            |catalog| {
+                                // Go executes the statement the protocol BOUND
+                                // (`pkg/server`'s `statement`/`executableParams`
+                                // carry the values): re-parsing `sql` here would run
+                                // a tree whose markers never met their execute-time
+                                // values, which is a wrong answer for every binary-
+                                // protocol write.
+                                tidb_executor::run_insert_stmt_with_physical(
+                                    insert,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan,
+                                )
+                            },
+                        );
+                        self.drain_eval_warnings(&ctx);
+                        // Go `session.LastInsertID()`, the OK packet's field:
+                        // `StmtCtx.LastInsertID` when the statement PUBLISHED an
+                        // allocated id, `StmtCtx.InsertID` -- the last explicit
+                        // value -- otherwise. Both come off the same context the
+                        // publication above reads, so the wire and
+                        // `LAST_INSERT_ID()` cannot drift apart: what differs is
+                        // only the fallback Go itself applies.
+                        //
+                        // Captured from TiDB: an allocating insert reports the id
+                        // on both; `INSERT INTO t (id,v) VALUES (50,2)` reports 50
+                        // on the wire while `LAST_INSERT_ID()` stays where it was;
+                        // an `INSERT IGNORE` whose only row is a duplicate burns
+                        // an id but reports 0 on the wire.
+                        // The publication itself is promoted at the statement
+                        // boundary by `publish_statement_status`, off the same
+                        // cell this reads -- one channel, two readers.
+                        self.statement_insert_id = ctx
+                            .published_last_insert_id()
+                            .unwrap_or_else(|| ctx.given_insert_id());
+                        let (affected, _) = result?;
+                        Ok(StmtOutput::Affected(affected))
+                    }
+                    DmlStmt::Update(update) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Update")?;
+                        let current_db = self.current_db.clone();
+                        // Go `ResetUpdateStmtCtx`, which applies the same
+                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                        // does; the class is what `StmtContext::push_down_flags`
+                        // turns into the statement-kind bit of any coprocessor
+                        // request this statement's read half issues.
+                        let ctx = self
+                            .statement_context_for_update_read(update.ignore)
+                            // Go `ResetUpdateStmtCtx` sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
+                            .with_statement_class(tidb_executor::StatementClass::Update);
+                        let output = match &update.kind {
+                            tidb_ast::UpdateKind::Single(table_ref) => self
+                                .with_staged_catalog_for_path(
+                                    &table_ref.name,
+                                    &current_db,
+                                    |catalog| {
+                                        // Bound AST, not SQL text: the text still
+                                        // carries the markers the binary protocol
+                                        // already replaced. See the INSERT arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_update_stmt_with_physical(
+                                                update,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan,
+                                            )?,
+                                        ))
+                                    },
+                                ),
+                            tidb_ast::UpdateKind::Multi { .. } => {
+                                self.with_staged_catalog(|catalog| {
+                                    Ok(StmtOutput::Affected(
+                                        tidb_executor::run_update_stmt_with_physical(
+                                            update,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            physical_plan,
+                                        )?,
+                                    ))
+                                })
+                            }
+                        };
+                        self.drain_eval_warnings(&ctx);
+                        self.statement_message = ctx.message();
+                        output
+                    }
+                    DmlStmt::Delete(delete) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
+                        let current_db = self.current_db.clone();
+                        // Go `ResetDeleteStmtCtx`, which applies the same
+                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                        // does; the class is what `StmtContext::push_down_flags`
+                        // turns into the statement-kind bit of any coprocessor
+                        // request this statement's read half issues.
+                        let ctx = self
+                            .statement_context_for_update_read(delete.ignore)
+                            // Go `ResetDeleteStmtCtx` sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
+                            .with_statement_class(tidb_executor::StatementClass::Delete);
+                        let output = match &delete.kind {
+                            tidb_ast::DeleteKind::Single(table_ref) => self
+                                .with_staged_catalog_for_path(
+                                    &table_ref.name,
+                                    &current_db,
+                                    |catalog| {
+                                        // Bound AST, not SQL text -- see the
+                                        // UPDATE arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_delete_stmt_with_physical(
+                                                delete,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan,
+                                            )?,
+                                        ))
+                                    },
+                                ),
+                            tidb_ast::DeleteKind::Multi { .. } => {
+                                self.with_staged_catalog(|catalog| {
+                                    Ok(StmtOutput::Affected(
+                                        tidb_executor::run_delete_stmt_with_physical(
+                                            delete,
+                                            catalog,
+                                            &current_db,
+                                            &ctx,
+                                            physical_plan,
+                                        )?,
+                                    ))
+                                })
+                            }
+                        };
+                        self.drain_eval_warnings(&ctx);
+                        output
+                    }
+                    other => Err(DriverError::unsupported(format!(
+                        "this DML statement kind ({}) is not supported yet",
+                        variant_name(other)
+                    ))),
                 }
-                DmlStmt::Delete(delete) => {
-                    let current_db = self.current_db.clone();
-                    // Go `ResetDeleteStmtCtx`, which applies the same
-                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                    // does; the class is what `StmtContext::push_down_flags`
-                    // turns into the statement-kind bit of any coprocessor
-                    // request this statement's read half issues.
-                    let ctx = self
-                        .statement_context_ignoring(true, delete.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::Delete);
-                    let output = self.with_staged_catalog(|catalog| {
-                        // Bound AST, not SQL text -- see the UPDATE arm.
-                        Ok(StmtOutput::Affected(tidb_executor::run_delete_stmt(
-                            delete,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                        )?))
-                    });
-                    self.drain_eval_warnings(&ctx);
-                    output
-                }
-                other => Err(DriverError::unsupported(format!(
-                    "this DML statement kind ({}) is not supported yet",
-                    variant_name(other)
-                ))),
-            },
+            }
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
                     let current_db = self.current_db.clone();
@@ -1247,8 +2135,15 @@ impl Session {
                 }
                 DdlStmt::TruncateTable(_) => {
                     let current_db = self.current_db.clone();
+                    let foreign_key_checks = self.foreign_key_checks();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_truncate_table_in(sql, catalog, &current_db, sql_mode)?;
+                        tidb_executor::run_truncate_table_in_with_foreign_key_checks(
+                            sql,
+                            catalog,
+                            &current_db,
+                            sql_mode,
+                            foreign_key_checks,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -1313,33 +2208,14 @@ impl Session {
                     result
                 }
                 DdlStmt::AlterTable(alter) => {
-                    // `CHECK` constraints reach ALTER TABLE through the same
-                    // `tidb_enable_check_constraint` model CREATE TABLE uses
-                    // (see `tidb_executor::run_create_table_in`): with the
-                    // variable ON, Go STORES and enforces an added
-                    // constraint, none of which is modelled, so it is refused
-                    // with the same reason rather than silently discarded.
-                    // `ALTER CONSTRAINT` is NOT in that gate: Go answers 3940
-                    // for it when the variable is on, which this tier can
-                    // always say honestly because no table here holds one.
-                    let discarded_checks = tidb_executor::discarded_check_constraint_actions(alter);
-                    if self.enable_check_constraint() {
-                        if tidb_executor::added_check_constraint_actions(alter) > 0 {
-                            return Err(DriverError::unsupported(
-                                "CHECK constraints are only modelled with \
-                                 tidb_enable_check_constraint off",
-                            ));
-                        }
-                        if let Some(name) = alter.actions.iter().find_map(|action| match action {
-                            tidb_ast::AlterTableAction::AlterCheck(alter) => Some(&alter.name),
-                            _ => None,
-                        }) {
-                            return Err(DriverError::CheckConstraintNotExists(name.clone()));
-                        }
-                    }
+                    let discarded_checks = if self.enable_check_constraint() {
+                        0
+                    } else {
+                        tidb_executor::discarded_check_constraint_actions(alter)
+                    };
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
-                    let ctx = self.statement_context(true);
+                    let ctx = self.statement_context(true).with_ddl_query(sql);
                     let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
@@ -1425,17 +2301,6 @@ impl Session {
                             &ctx,
                         )?))
                     });
-                    // `Done(false)` is `IF NOT EXISTS` finding the table
-                    // already there. Go does not pass over that silently: it
-                    // files the `ErrTableExists` it did not raise as a note --
-                    // `Note | 1050 | Table 'test.tt' already exists`, captured
-                    // from `gorun`.
-                    if let Ok(StmtOutput::Done(false)) = &done {
-                        let (database, name) = self.split_table_path(&create.name)?;
-                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::TableExists(
-                            format!("{database}.{name}"),
-                        )));
-                    }
                     if done.is_ok() {
                         for _ in 0..discarded_checks {
                             self.append_warning(
@@ -1586,6 +2451,55 @@ impl Session {
         }
         Ok(())
     }
+}
+
+fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
+    use std::sync::atomic::Ordering;
+
+    use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
+
+    let stats = tidb_util::memory::read_mem_stats();
+    let current_ops = tidb_util::servermemorylimit::IS_KILLING
+        .load(Ordering::SeqCst)
+        .then(|| Datum::new_string("shrink"))
+        .unwrap_or(Datum::Null);
+    let session_kill_last = tidb_util::servermemorylimit::SESSION_KILL_LAST
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .map(|value| {
+            Datum::new_time(
+                Time::new(core_time_from_datetime(value), TimeType::DateTime, 0)
+                    .expect("fsp 0 is valid"),
+            )
+        })
+        .unwrap_or(Datum::Null);
+    let zero_datetime = Datum::new_time(
+        Time::new(CoreTime::default(), TimeType::DateTime, 0).expect("fsp 0 is valid"),
+    );
+    vec![vec![
+        Datum::new_int(
+            tidb_util::memory::mem_total()
+                .ok()
+                .and_then(|value| i64::try_from(value).ok())
+                .unwrap_or(0),
+        ),
+        Datum::new_int(
+            i64::try_from(tidb_util::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst))
+                .unwrap_or(i64::MAX),
+        ),
+        Datum::new_int(stats.heap_inuse),
+        Datum::new_int(
+            i64::try_from(tidb_util::servermemorylimit::MEMORY_MAX_USED.load(Ordering::SeqCst))
+                .unwrap_or(i64::MAX),
+        ),
+        current_ops,
+        session_kill_last,
+        Datum::new_int(tidb_util::servermemorylimit::SESSION_KILL_TOTAL.load(Ordering::SeqCst)),
+        zero_datetime,
+        Datum::new_int(0),
+        Datum::new_int(0),
+        Datum::new_int(0),
+    ]]
 }
 
 impl Session {

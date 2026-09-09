@@ -70,7 +70,7 @@ fn test_decode_range_distinguishes_payload_bytes_from_terminal_sentinels() {
     let ordinary = Datum::new_bytes(b"abc".to_vec());
     let mut encoded = encode_key(std::slice::from_ref(&ordinary)).unwrap();
     encoded.push(BYTES_FLAG);
-    let (values, remain) = decode_range(&encoded, 2).unwrap();
+    let (values, remain) = decode_range(&encoded, 2, None, None).unwrap();
     assert!(remain.is_empty());
     assert_eq!(values, [ordinary, Datum::min_not_null()]);
 
@@ -81,7 +81,7 @@ fn test_decode_range_distinguishes_payload_bytes_from_terminal_sentinels() {
         (MAX_FLAG + 1, Datum::max_value()),
     ] {
         let encoded = [flag];
-        let (values, remain) = decode_range(&encoded, 1).unwrap();
+        let (values, remain) = decode_range(&encoded, 1, None, None).unwrap();
         assert!(remain.is_empty());
         assert_eq!(values, [expected]);
     }
@@ -101,18 +101,19 @@ fn test_cut_one_error_source_rows_and_owned_failure_modes() {
     );
 
     let invalid_marker = [BYTES_FLAG, 0, 0, 0, 0, 0, 0, 0, 0, 246];
-    assert_eq!(
-        cut_one(&invalid_marker),
-        Err(CodecError::InvalidEncoding("invalid bytes marker"))
-    );
+    assert_eq!(cut_one(&invalid_marker), Ok((&invalid_marker[..], &[][..])));
     let invalid_padding = [BYTES_FLAG, 1, 0, 0, 0, 0, 0, 0, 1, 249];
     assert_eq!(
         cut_one(&invalid_padding),
-        Err(CodecError::InvalidEncoding("invalid bytes padding"))
+        Ok((&invalid_padding[..], &[][..]))
+    );
+    assert_eq!(
+        cut_one(&[VARINT_FLAG, 0x80]),
+        Ok((&[VARINT_FLAG][..], &[0x80][..]))
     );
     assert_eq!(
         cut_one(&[DECIMAL_FLAG, 0, 0]),
-        Err(CodecError::DecimalOutOfRange)
+        Ok((&[DECIMAL_FLAG, 0, 0][..], &[][..]))
     );
     assert_eq!(
         cut_one(&[MAX_FLAG]),

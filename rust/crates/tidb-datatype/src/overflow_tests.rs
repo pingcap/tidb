@@ -124,6 +124,15 @@ fn test_sub() {
 }
 
 #[test]
+fn sub_int64_min_rhs_positive_lhs_wraps_like_go() {
+    // Go's SubInt64 negates MinInt64 before checking the positive-minus-
+    // negative overflow case. The negation wraps back to MinInt64, so a
+    // positive lhs is accepted and the final subtraction wraps as well.
+    assert_eq!(sub_int64(1, i64::MIN).unwrap(), i64::MIN + 1);
+    assert_eq!(sub_int64(i64::MAX, i64::MIN).unwrap(), -1);
+}
+
+#[test]
 fn test_mul() {
     for (lhs, rhs, want, overflow) in [
         (u64::MAX, 1, u64::MAX, false),

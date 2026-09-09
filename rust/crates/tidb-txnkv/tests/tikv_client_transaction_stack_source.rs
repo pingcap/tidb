@@ -34,6 +34,26 @@ use tikv_client::testutils::{bootstrap_with_single_store, new_mock_tikv};
 use tikv_client::transaction::Transaction;
 use tikv_client::TransactionOptions;
 
+/// The stack a client-rust transaction future is driven on in PRODUCTION.
+///
+/// `tidb-server` gives its SQL workers 32 MiB (`sql_node::SQL_WORKER_STACK_BYTES`)
+/// because these futures are large async state machines, not because they
+/// recurse. A test thread gets Rust's 2 MiB default, so driving the same
+/// future with `block_on` on the test thread overflows -- which is a property
+/// of the harness, not of the code under test.
+const TRANSACTION_FUTURE_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+/// Runs `body` on a thread with the production stack, returning its value.
+fn on_worker_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .name("txn-future".to_owned())
+        .stack_size(TRANSACTION_FUTURE_STACK_BYTES)
+        .spawn(body)
+        .expect("spawn a worker-stack thread")
+        .join()
+        .expect("worker-stack thread completes")
+}
+
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -63,7 +83,7 @@ async fn begin_optimistic(pd: &Arc<MockPdClient>) -> Transaction<MockPdClient> {
 
 #[test]
 fn optimistic_two_phase_commit_round_trips_over_mocktikv() {
-    runtime().block_on(async {
+    on_worker_stack(|| runtime().block_on(async {
         let pd = mock_store();
 
         let mut txn = begin_optimistic(&pd).await;
@@ -89,12 +109,12 @@ fn optimistic_two_phase_commit_round_trips_over_mocktikv() {
         );
         assert_eq!(reader.get("absent".to_owned()).await.unwrap(), None);
         reader.rollback().await.unwrap();
-    });
+    }));
 }
 
 #[test]
 fn rolled_back_writes_never_become_visible() {
-    runtime().block_on(async {
+    on_worker_stack(|| runtime().block_on(async {
         let pd = mock_store();
 
         let mut txn = begin_optimistic(&pd).await;
@@ -106,12 +126,12 @@ fn rolled_back_writes_never_become_visible() {
         let mut reader = begin_optimistic(&pd).await;
         assert_eq!(reader.get("doomed".to_owned()).await.unwrap(), None);
         reader.rollback().await.unwrap();
-    });
+    }));
 }
 
 #[test]
 fn first_committer_wins_on_a_write_conflict() {
-    runtime().block_on(async {
+    on_worker_stack(|| runtime().block_on(async {
         let pd = mock_store();
 
         // Seed a committed baseline value.
@@ -146,12 +166,12 @@ fn first_committer_wins_on_a_write_conflict() {
             Some(b"winner".to_vec())
         );
         reader.rollback().await.unwrap();
-    });
+    }));
 }
 
 #[test]
 fn pessimistic_lock_write_commit_and_unlock_after_rollback() {
-    runtime().block_on(async {
+    on_worker_stack(|| runtime().block_on(async {
         let pd = mock_store();
 
         // A pessimistic transaction locks at statement time, writes, commits.
@@ -204,12 +224,12 @@ fn pessimistic_lock_write_commit_and_unlock_after_rollback() {
             .await
             .unwrap();
         successor.commit().await.expect("successor lock acquisition and commit succeed");
-    });
+    }));
 }
 
 #[test]
 fn snapshot_scans_return_ordered_committed_pairs() {
-    runtime().block_on(async {
+    on_worker_stack(|| runtime().block_on(async {
         let pd = mock_store();
 
         let mut seed = begin_optimistic(&pd).await;
@@ -234,5 +254,5 @@ fn snapshot_scans_return_ordered_committed_pairs() {
             ]
         );
         reader.rollback().await.unwrap();
-    });
+    }));
 }

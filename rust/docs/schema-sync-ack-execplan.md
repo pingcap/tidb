@@ -30,10 +30,8 @@ whose old schema no live local work still uses — PUT the ack key.
   `UpdateSelfVersion(jobID, ver)`, with a per-job cache so an ack is sent
   once.
 - `pkg/ddl/schemaver/syncer.go` `UpdateSelfVersion` (MDL on, the default):
-  PUT `/tidb/ddl/all_schema_by_job_versions/<jobID>/<ddlID>` = version
-  (`PutKVToEtcdMono`; the mono guard only defends the key against the same
-  node's own out-of-order writers, and this port has exactly one writer
-  thread, so a plain PUT carries the same meaning). MDL off: PUT
+  PUT `/tidb/ddl/all_schema_by_job_versions/<jobID>/<ddlID>` = version through
+  the transcreated `PutKVToEtcdMono` revision-CAS loop. MDL off: PUT
   `/tidb/ddl/all_schema_versions/<ddlID>` = version under a 90-second
   session lease (`util.SessionTTL`); `Init` writes `"0"` there at startup.
 - The `ddlID` is the server-info uuid — the same id the owner names in its
@@ -45,15 +43,13 @@ whose old schema no live local work still uses — PUT the ack key.
    `SystemTableView` on a read-only transaction (the account/stats loaders'
    exact shape), returning `(job_id, version)` rows.
 2. `tidb-server` `cluster_session_node/schema_sync.rs`:
-   - `SchemaPinRegistry`: live work registers (connection id, catalog
-     version) while a statement or an explicit transaction is running;
-     `oldest_pinned()` is the MDL gate. Conservative against Go: Go blocks
-     only jobs touching pinned TABLES; this blocks on any older pin, which
-     acks later, never earlier.
+   - `SchemaPinRegistry`: live work registers the table ids and first-use
+     schema versions Go's MDL gate reads.
    - the ack decision as a pure function over (loaded version, mdl rows,
      oldest pin, acked cache) — unit-testable without etcd or TiKV.
    - `SchemaSyncAck` runner thread: on the catalog reload cadence, read the
-     rows, decide, PUT acks; maintain the leased non-MDL self key.
+     rows, decide, and call the shared `tidb-schemaver::Syncer`; that package
+     owns the session, watches, monotonic writes, and leased non-MDL key.
 3. Wire pins in `cluster_session_node/mod.rs`: statement scope in
    `with_bound_statement`, transaction scope in `open_explicit` →
    `commit_explicit`/`discard_explicit`, guard-dropped on disconnect.
@@ -78,19 +74,20 @@ whose old schema no live local work still uses — PUT the ack key.
 - The node was already VISIBLE but mute: server-info registration (landed
   earlier for `TIDB_SERVERS_INFO`) is what put it into the owner's wait set.
   Registering without acking is strictly worse than not registering.
-- `EtcdClient` has no Txn support, so Go's `PutKVToEtcdMono` compare-and-put
-  cannot be copied literally; single-writer-per-key makes the plain PUT
-  equivalent (recorded in the Decision Log).
+- The original direct writer duplicated `pkg/ddl/schemaver` and lacked its
+  revision-CAS and general owner wait. The production etcd adapter now
+  exposes range revision, compare-and-put, and exact/prefix watches so the
+  server uses the package implementation directly.
 - `mysql.tidb_mdl_info` is fully readable through the existing
   `SystemTableView` machinery: `job_id` is the clustered int handle, and
   `version` sits in the row value; no new decode surface was needed.
 
 ## Decision Log
 
-- Decision: ack keys are written with plain `put`, not a mod-revision
-  compare. Rationale: Go's mono guard protects one node's key from that
-  node's own concurrent writers; this port has one ack thread, and versions
-  only grow. Date/Author: 2026-08-23 / session c4d12b28.
+- Decision: SUPERSEDED 2026-08-31 -- ack keys use the transcreated
+  `PutKVToEtcdMono` mod-revision compare-and-put loop. The former plain PUT
+  and duplicate owner wait/session were removed. Date/Author: 2026-08-31 /
+  Codex.
 - Decision: the old-schema gate is "no live statement or transaction pins a
   version below the job's", not Go's per-table check. Rationale: strictly
   conservative (acks later, never earlier), needs no table-id plumbing, and
@@ -112,11 +109,10 @@ whose old schema no live local work still uses — PUT the ack key.
   39s under the whole-transaction gate now lands in 0-5s, Go's own pace,
   across two full clean ladders. Date/Author: 2026-08-23 / session
   c4d12b28.
-- Decision: the leased `/tidb/ddl/all_schema_versions/<id>` key is kept
-  CURRENT on every reload, where Go updates it only when MDL is off.
-  Rationale: the key is read only by MDL-off owners; keeping it fresh serves
-  them in both modes, and a stale-but-present key is the one shape that can
-  block a cluster. Date/Author: 2026-08-23 / session c4d12b28.
+- Decision: SUPERSEDED 2026-08-31 -- the leased
+  `/tidb/ddl/all_schema_versions/<id>` key follows Go exactly: `Init` writes
+  `0`, and `UpdateSelfVersion` updates it only with MDL disabled. Date/Author:
+  2026-08-31 / Codex.
 
 ## Outcomes & Retrospective
 

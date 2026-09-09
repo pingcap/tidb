@@ -90,6 +90,14 @@ fn table_eq(a: &Table, b: &Table) -> bool {
     format!("{a:?}") == format!("{b:?}")
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn go_table_api_returns_may_be_ignored_like_go() {
+    encode(&to_table_info("CREATE TABLE t (a INT)"));
+    let table = encode(&to_table_info("CREATE TABLE t (a INT)"));
+    decode_column_field_types(&table);
+}
+
 struct Case {
     name: &'static str,
     a: &'static str,

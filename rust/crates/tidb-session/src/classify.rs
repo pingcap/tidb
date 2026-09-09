@@ -31,7 +31,7 @@
 //! and rewrites stored accounts, `INSERT` is `Write`-shaped and changes nothing
 //! stored outside this process.
 
-use tidb_ast::{DmlStmt, Stmt};
+use tidb_ast::{DmlStmt, QueryStmt, StatementPriority, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::DriverError;
@@ -67,8 +67,11 @@ pub enum StoredStateChange {
     /// The stored `SET GLOBAL` overrides: `mysql.global_variables`.
     GlobalVars,
     /// The stored statistics: `mysql.stats_meta` and its histogram tables.
-    /// `ANALYZE TABLE` is the only statement that writes them.
+    /// `ANALYZE TABLE` and `LOAD STATS` write them.
     Statistics,
+    /// The persisted statistics-lock state and the deltas unlocked into
+    /// `mysql.stats_meta`.
+    StatsLock,
 }
 
 /// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
@@ -128,6 +131,44 @@ pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
     }
 }
 
+/// Go `ResetContextOfStmt`'s `sc.Priority` assignment: the statement's own
+/// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier. SELECT reads it from
+/// `SelectStmtOpts`, UPDATE/DELETE from `ResetUpdateStmtCtx`/`ResetDeleteStmtCtx`,
+/// and INSERT from its own arm; every other statement leaves the zero value.
+/// A `WITH` prefix is unwrapped because Go sets the priority on the mutation
+/// the CTE belongs to.
+pub(crate) fn statement_priority_of(stmt: &Stmt) -> StatementPriority {
+    fn dml_priority(dml: &DmlStmt) -> StatementPriority {
+        match dml {
+            DmlStmt::With { statement, .. } => dml_priority(statement),
+            DmlStmt::Insert(insert) => insert.priority,
+            DmlStmt::Update(update) => update.priority,
+            DmlStmt::Delete(delete) => delete.priority,
+            // Go's `*ast.LoadDataStmt` arm has a dedicated `LowPriority` word
+            // rather than the shared `stmt.Priority` field.
+            DmlStmt::LoadData(load) if load.low_priority => StatementPriority::Low,
+            _ => StatementPriority::None,
+        }
+    }
+    match stmt {
+        Stmt::Query(query) => match &**query {
+            QueryStmt::Select(select) => select.priority,
+            QueryStmt::SetOpr(_) => StatementPriority::None,
+        },
+        Stmt::Dml(dml) => dml_priority(dml),
+        _ => StatementPriority::None,
+    }
+}
+
+/// Go `ResetContextOfStmt`'s `sc.NotFillCache = !SelectStmtOpts.SQLCache`.
+/// Only a SELECT carries the modifier; every other statement leaves it false.
+pub(crate) fn statement_not_fill_cache(stmt: &Stmt) -> bool {
+    matches!(
+        stmt,
+        Stmt::Query(query) if matches!(&**query, QueryStmt::Select(select) if select.sql_no_cache)
+    )
+}
+
 impl Session {
     /// What this statement's WHOLE read is, decided by parsing alone, so a
     /// front end that binds a read snapshot can tell it before the statement
@@ -166,44 +207,28 @@ impl Session {
         self.statement_read_shape_bound(&stmt)
     }
 
-    /// Classify a prepared statement from the AST retained at PREPARE time.
-    ///
-    /// Binary-protocol EXECUTE already has this tree, so reparsing the SQL
-    /// text here only adds latency before the statement can start. Bind a
-    /// clone of the template for the same access-path decision without
-    /// changing the template stored in the prepared handle.
-    #[must_use]
-    pub fn statement_read_shape_parsed(
-        &self,
-        statement: &Stmt,
-        params: &[Datum],
-    ) -> StatementReadShape {
-        let stmt = if params.is_empty() {
-            statement.clone()
-        } else {
-            match tidb_executor::bind_statement(statement.clone(), params) {
-                Ok(stmt) => stmt,
-                Err(_) => return StatementReadShape::Unknown,
-            }
-        };
-        self.statement_read_shape_bound(&stmt)
-    }
-
     /// Classifies an already-bound prepared statement without replacing its
     /// markers again. This is the fast path used by the cluster-session wire
     /// executor, which binds once and shares the resulting tree with planning.
     #[must_use]
     pub fn statement_read_shape_bound(&self, stmt: &Stmt) -> StatementReadShape {
+        let disable_point_get =
+            crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control());
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::statement_read_shape(
+        let shape = tidb_executor::access_path::statement_read_shape(
             stmt,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),
-        )
+        );
+        if disable_point_get && shape == StatementReadShape::AutocommitPointGet {
+            StatementReadShape::Unknown
+        } else {
+            shape
+        }
     }
 
     /// The record keys a text-protocol statement locks BEFORE it runs: both
@@ -216,15 +241,16 @@ impl Session {
         let Ok(stmt) = self.parse(sql) else {
             return Vec::new();
         };
-        self.statement_prelock_keys(&stmt)
+        self.statement_prelock_keys(&stmt, &[])
     }
 
-    /// Pre-lock keys from a retained EXECUTE template. Classify its shape
-    /// before touching the catalog, then bind only its key predicate. The
-    /// execute protocol validates the full parameter count before this call.
+    /// [`Self::text_statement_prelock_keys`] over an already-parsed statement
+    /// or prepared template. `params` resolves the latter's marker values;
+    /// an already-bound or text tree passes an empty slice.
     #[must_use]
-    pub fn prepared_statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let Some(prelock) = tidb_executor::access_path::PessimisticPrelock::from_statement(stmt) else {
+    pub fn statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
+        let Some(prelock) = tidb_executor::access_path::PessimisticPrelock::from_statement(stmt)
+        else {
             return Vec::new();
         };
         // Go BatchPointGet locks all named keys before reading under RR,
@@ -243,12 +269,6 @@ impl Session {
             self.current_database(),
             &self.session_time_zone(),
         )
-    }
-
-    /// [`Self::text_statement_prelock_keys`] over an already-bound statement.
-    #[must_use]
-    pub fn statement_prelock_keys(&self, stmt: &Stmt) -> Vec<Vec<u8>> {
-        self.prepared_statement_prelock_keys(stmt, &[])
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can
@@ -312,6 +332,24 @@ impl Session {
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) => StmtKind::Write,
         }
+    }
+
+    /// Whether this is Go's session-owned LOCAL temporary-table create.
+    ///
+    /// `DDLExec.Next` gives this one statement an early return before opening
+    /// a DDL transaction. Other DDL shapes, including mixed `DROP TABLE`,
+    /// have their own splitting and transaction rules and must not be swept
+    /// into this route merely because one resolved name is temporary.
+    pub fn is_local_temporary_create(&mut self, sql: &str) -> Result<bool, DriverError> {
+        let stmt = self.parse(sql)?;
+        let Stmt::Ddl(ddl) = &stmt else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            ddl.as_ref(),
+            tidb_ast::DdlStmt::CreateTable(create)
+                if create.temporary == tidb_ast::CreateTableTemporary::Local
+        ))
     }
 
     /// Which persistent state `sql` would change: the stored schema (Go's
@@ -406,17 +444,29 @@ impl Session {
             // `LOAD STATS` writes the same `mysql.stats_*` tables an
             // `ANALYZE` does (Go's `loadStatsFromJSON` ends in
             // `SaveColOrIdxStatsToStorage` + `SaveMetaToStorage`), so it
-            // classifies with it: routed at a cluster node when the tables
-            // live in the cluster, run by `crate::load_stats_arm` in-process.
+            // classifies with it and is routed to the cluster statistics
+            // writer.
             Stmt::Admin(admin)
                 if matches!(
                     admin.as_ref(),
                     tidb_ast::AdminStmt::AnalyzeTable(_)
                         | tidb_ast::AdminStmt::AnalyzeIncremental(_)
                         | tidb_ast::AdminStmt::LoadStats(_)
+                ) || matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::Flush(flush)
+                        if matches!(flush.target, tidb_ast::FlushTarget::StatsDelta { .. })
                 ) =>
             {
                 StoredStateChange::Statistics
+            }
+            Stmt::Admin(admin)
+                if matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::LockStats(_) | tidb_ast::AdminStmt::UnlockStats(_)
+                ) =>
+            {
+                StoredStateChange::StatsLock
             }
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None

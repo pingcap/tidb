@@ -22,6 +22,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use tidb_proto::KvrpcWaitForEntry;
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 
 use crate::region::StoreLiveness;
@@ -262,6 +263,33 @@ pub trait DirectUnaryClient {
 
     /// Permanently closes the client. Later sends must fail closed.
     fn close(&mut self) -> Result<(), DirectUnaryClientError>;
+}
+
+/// Address-directed TiKV `GetLockWaitInfo` capability used by
+/// `information_schema.DATA_LOCK_WAITS`.
+pub trait LockWaitInfoClient {
+    /// Returns the wait-for entries currently reported by one TiKV store.
+    fn get_lock_wait_info(
+        &mut self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<Vec<KvrpcWaitForEntry>, DirectUnaryClientError>;
+}
+
+/// Synchronous BatchCommands attempt used by client-go `SendRequest`.
+///
+/// This remains separate from [`DirectUnaryClient`] because the latter is the
+/// raw unary fallback used when BatchCommands cannot represent a command.
+pub trait SynchronousBatchRequestDispatcher {
+    /// Sends one already-routed Coprocessor command through BatchCommands and
+    /// waits on the entry's response channel.
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
 }
 
 /// Trace identity attached by TiDB's `injectTraceClient`.

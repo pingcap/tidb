@@ -36,7 +36,6 @@ pub(in crate::rpc) use transport::{
     BatchStreamEvent, BatchSubmission, BatchTransportState, MAX_BATCH_COMMANDS,
 };
 
-pub use completion::BatchCommandCompletion;
 pub(in crate::rpc) use completion::{reply_pair, BatchReply};
 pub use coprocessor::BatchCoprocessorPending;
 
@@ -50,6 +49,7 @@ pub(in crate::rpc) use prewrite::entry as prewrite_entry;
 pub(in crate::rpc) use scan::entry as scan_entry;
 pub(in crate::rpc) use txn_heart_beat::entry as txn_heart_beat_entry;
 
+pub use completion::BatchCommandCompletion;
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,
     PendingBatchCommand,

@@ -250,18 +250,23 @@ pub(crate) fn ssl_type_of(
 impl Session {
     pub(crate) fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
         let globals = SessionPasswordGlobals(&self.vars);
-        if !password_validation::validation_enabled(&globals).map_err(password_validation_error)? {
+        let enabled = globals
+            .get_global_sys_var("validate_password.enable")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        if !enabled {
             return Ok(());
         }
         let user = self.current_user.as_deref().map(|current| PasswordUser {
-            auth_username: identity_username(current),
+            auth_username: identity_username(current).into(),
             username: self
                 .login_user
                 .as_deref()
                 .map(identity_username)
-                .unwrap_or_else(|| identity_username(current)),
+                .unwrap_or_else(|| identity_username(current))
+                .into(),
         });
-        password_validation::validate_password(password, user, &globals)
+        let password = tidb_datatype::GoString::from(password);
+        password_validation::validate_password(&password, user.as_ref(), &globals)
             .map_err(password_validation_error)
     }
 
@@ -421,6 +426,24 @@ impl Session {
             return Err(denied(privilege::GlobalPriv::GrantOption));
         }
         Ok(())
+    }
+
+    fn require_sem_restricted_privilege_admin(
+        &self,
+        privileges: &[tidb_ast::GrantPrivilege],
+    ) -> Result<(), DriverError> {
+        if tidb_util::sem_v2::is_enabled()
+            && privileges.iter().any(|privilege| {
+                tidb_util::sem_v2::is_restricted_privilege(&privilege.name.to_ascii_uppercase())
+            })
+            && !self.has_dynamic_privilege("RESTRICTED_PRIV_ADMIN", false)
+        {
+            Err(DriverError::SpecificAccessDenied(
+                "RESTRICTED_PRIV_ADMIN".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Whether `(user, host)` is the account this session authenticated as --
@@ -684,7 +707,7 @@ impl Session {
         if let Some((user, host)) = self.current_identity() {
             let account = (user.to_owned(), host.to_owned());
             if grantees.contains(&account) {
-                self.active_roles.retain(|role| !roles.contains(role));
+                Arc::make_mut(&mut self.active_roles).retain(|role| !roles.contains(role));
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -728,7 +751,7 @@ impl Session {
                 self.granted_roles_or_error(&registry, &account, roles)?
             }
         };
-        self.active_roles = active;
+        self.active_roles = Arc::new(active);
         Ok(StmtOutput::Affected(0))
     }
 
@@ -1099,7 +1122,7 @@ impl Session {
         // A dropped role stops being active in THIS session too; the edge it
         // was activated through is gone, so keeping it would confer
         // privileges from a row that no longer exists.
-        self.active_roles.retain(|(role, host)| {
+        Arc::make_mut(&mut self.active_roles).retain(|(role, host)| {
             !users
                 .iter()
                 .any(|spec| &spec.user == role && &spec.host == host)
@@ -1120,6 +1143,7 @@ impl Session {
         &mut self,
         grant: &tidb_ast::GrantStmt,
     ) -> Result<StmtOutput, DriverError> {
+        self.require_sem_restricted_privilege_admin(&grant.privileges)?;
         if grant.object_type.is_some() {
             return Err(DriverError::unsupported(
                 "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
@@ -1264,6 +1288,7 @@ impl Session {
         &mut self,
         revoke: &tidb_ast::RevokeStmt,
     ) -> Result<StmtOutput, DriverError> {
+        self.require_sem_restricted_privilege_admin(&revoke.privileges)?;
         if revoke.object_type.is_some() {
             return Err(DriverError::unsupported(
                 "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",
@@ -1731,7 +1756,7 @@ impl Session {
         };
         let roles = if show.roles.is_empty() {
             if is_own {
-                self.active_roles.clone()
+                self.active_roles.to_vec()
             } else {
                 Vec::new()
             }

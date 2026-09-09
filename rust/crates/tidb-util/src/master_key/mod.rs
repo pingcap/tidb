@@ -39,8 +39,8 @@
 //!   depends on — the same layering `crate::encrypt` uses for CBC/CTR/OFB/CFB.
 //!   No cipher primitive is hand-written. See that module for the NIST test
 //!   vectors it is pinned against. Go's `cipher.NewGCM` panics on a nonce that
-//!   is not 12 bytes; this port returns an error instead, which is reachable
-//!   because `NewIVFromSlice` also accepts 16-byte CTR IVs.
+//!   is not 12 bytes; this port preserves that panic boundary, which is
+//!   reachable because `NewIVFromSlice` also accepts 16-byte CTR IVs.
 //! - **`github.com/pingcap/kvproto/pkg/encryptionpb`** — [`pb`] redeclares
 //!   `EncryptedContent`, `MasterKey` and `MasterKeyKms` as plain structs. They
 //!   are flat messages; nothing here needs the protobuf codec.

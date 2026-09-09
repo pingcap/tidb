@@ -1169,7 +1169,8 @@ func TestRemoveAllowAllFiles(t *testing.T) {
 	cfg.Checkpoint.Driver = CheckpointDriverMySQL
 	cfg.Checkpoint.DSN = "guest:12345@tcp(172.16.30.11:4001)/?tls=false&allowAllFiles=true&charset=utf8mb4"
 	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?tls=false&charset=utf8mb4", cfg.Checkpoint.DSN)
+	// url.Values.Encode sorts query keys lexicographically.
+	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&tls=false", cfg.Checkpoint.DSN)
 }
 
 func TestDataCharacterSet(t *testing.T) {

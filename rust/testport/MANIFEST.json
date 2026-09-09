@@ -5,7 +5,7 @@
   {
    "crate": "tidb-config",
    "gopath": "pkg/config",
-   "nfuncs": 46,
+   "nfuncs": 39,
    "testdata": 0
   },
   {
@@ -42,12 +42,6 @@
    "crate": "tidb-metadef",
    "gopath": "pkg/meta/model",
    "nfuncs": 75,
-   "testdata": 0
-  },
-  {
-   "crate": "tidb-funcdep",
-   "gopath": "pkg/planner/funcdep",
-   "nfuncs": 12,
    "testdata": 0
   },
   {
@@ -167,7 +161,7 @@
   {
    "crate": "tidb-tablecodec",
    "gopath": "pkg/tablecodec",
-   "nfuncs": 37,
+   "nfuncs": 36,
    "testdata": 0
   },
   {
@@ -201,21 +195,9 @@
    "testdata": 0
   },
   {
-   "crate": "tidb-lexer",
-   "gopath": "pkg/parser",
-   "nfuncs": 332,
-   "testdata": 0
-  },
-  {
    "crate": "tidb-ast",
    "gopath": "pkg/parser/ast",
    "nfuncs": 128,
-   "testdata": 0
-  },
-  {
-   "crate": "tidb-proto",
-   "gopath": "pkg/planner/property",
-   "nfuncs": 1,
    "testdata": 0
   },
   {
@@ -225,7 +207,7 @@
    "testdata": 0
   },
   {
-   "crate": "tidb-protocol",
+   "crate": "tidb-codec",
    "gopath": "pkg/util/rowcodec",
    "nfuncs": 21,
    "testdata": 0
@@ -291,7 +273,7 @@
    "testdata": 0
   }
  ],
- "total_funcs": 7025,
+ "total_funcs": 7018,
  "total_batches": 151,
  "batches": [
   {
@@ -299,34 +281,7 @@
    "gopath": "pkg/config",
    "base_gopath": "pkg/config",
    "crate": "tidb-config",
-   "funcs": 46,
-   "tier": 1,
-   "pod": "pod1"
-  },
-  {
-   "id": "b002",
-   "gopath": "pkg/parser/mysql",
-   "base_gopath": "pkg/parser/mysql",
-   "crate": "tidb-mysql",
-   "funcs": 11,
-   "tier": 1,
-   "pod": "pod2"
-  },
-  {
-   "id": "b003",
-   "gopath": "pkg/parser/terror",
-   "base_gopath": "pkg/parser/terror",
-   "crate": "tidb-error",
-   "funcs": 6,
-   "tier": 1,
-   "pod": "pod3"
-  },
-  {
-   "id": "b004",
-   "gopath": "pkg/util/hack",
-   "base_gopath": "pkg/util/hack",
-   "crate": "tidb-hack",
-   "funcs": 7,
+   "funcs": 39,
    "tier": 1,
    "pod": "pod1"
   },
@@ -338,15 +293,6 @@
    "funcs": 9,
    "tier": 1,
    "pod": "pod2"
-  },
-  {
-   "id": "b006",
-   "gopath": "pkg/meta/metadef",
-   "base_gopath": "pkg/meta/metadef",
-   "crate": "tidb-metadef",
-   "funcs": 4,
-   "tier": 2,
-   "pod": "pod3"
   },
   {
    "id": "b007",
@@ -365,15 +311,6 @@
    "funcs": 15,
    "tier": 2,
    "pod": "pod2"
-  },
-  {
-   "id": "b009",
-   "gopath": "pkg/planner/funcdep",
-   "base_gopath": "pkg/planner/funcdep",
-   "crate": "tidb-funcdep",
-   "funcs": 12,
-   "tier": 2,
-   "pod": "pod3"
   },
   {
    "id": "b010",
@@ -410,15 +347,6 @@
    "funcs": 1,
    "tier": 2,
    "pod": "pod1"
-  },
-  {
-   "id": "b014",
-   "gopath": "pkg/util/checksum",
-   "base_gopath": "pkg/util/checksum",
-   "crate": "tidb-util",
-   "funcs": 11,
-   "tier": 2,
-   "pod": "pod2"
   },
   {
    "id": "b015",
@@ -461,7 +389,7 @@
    "gopath": "pkg/util/dbterror",
    "base_gopath": "pkg/util/dbterror",
    "crate": "tidb-util",
-   "funcs": 3,
+   "funcs": 1,
    "tier": 2,
    "pod": "pod1"
   },
@@ -484,33 +412,6 @@
    "pod": "pod3"
   },
   {
-   "id": "b022",
-   "gopath": "pkg/util/fastrand",
-   "base_gopath": "pkg/util/fastrand",
-   "crate": "tidb-util",
-   "funcs": 6,
-   "tier": 2,
-   "pod": "pod1"
-  },
-  {
-   "id": "b023",
-   "gopath": "pkg/util/intest",
-   "base_gopath": "pkg/util/intest",
-   "crate": "tidb-util",
-   "funcs": 1,
-   "tier": 2,
-   "pod": "pod2"
-  },
-  {
-   "id": "b024",
-   "gopath": "pkg/util/mathutil",
-   "base_gopath": "pkg/util/mathutil",
-   "crate": "tidb-util",
-   "funcs": 9,
-   "tier": 2,
-   "pod": "pod3"
-  },
-  {
    "id": "b025",
    "gopath": "pkg/util/memory",
    "base_gopath": "pkg/util/memory",
@@ -520,74 +421,11 @@
    "pod": "pod1"
   },
   {
-   "id": "b026",
-   "gopath": "pkg/util/naming",
-   "base_gopath": "pkg/util/naming",
-   "crate": "tidb-util",
-   "funcs": 1,
-   "tier": 2,
-   "pod": "pod2"
-  },
-  {
-   "id": "b027",
-   "gopath": "pkg/util/redact",
-   "base_gopath": "pkg/util/redact",
-   "crate": "tidb-util",
-   "funcs": 3,
-   "tier": 2,
-   "pod": "pod3"
-  },
-  {
-   "id": "b028",
-   "gopath": "pkg/util/schemacmp",
-   "base_gopath": "pkg/util/schemacmp",
-   "crate": "tidb-schemacmp",
-   "funcs": 9,
-   "tier": 2,
-   "pod": "pod1"
-  },
-  {
-   "id": "b029",
-   "gopath": "pkg/util/slice",
-   "base_gopath": "pkg/util/slice",
-   "crate": "tidb-util",
-   "funcs": 2,
-   "tier": 2,
-   "pod": "pod2"
-  },
-  {
-   "id": "b030",
-   "gopath": "pkg/util/sqlescape",
-   "base_gopath": "pkg/util/sqlescape",
-   "crate": "tidb-util",
-   "funcs": 9,
-   "tier": 2,
-   "pod": "pod3"
-  },
-  {
-   "id": "b031",
-   "gopath": "pkg/util/zeropool",
-   "base_gopath": "pkg/util/zeropool",
-   "crate": "tidb-util",
-   "funcs": 5,
-   "tier": 2,
-   "pod": "pod1"
-  },
-  {
-   "id": "b032",
-   "gopath": "pkg/parser/charset",
-   "base_gopath": "pkg/parser/charset",
-   "crate": "tidb-datatype",
-   "funcs": 10,
-   "tier": 3,
-   "pod": "pod2"
-  },
-  {
    "id": "b033",
    "gopath": "pkg/tablecodec",
    "base_gopath": "pkg/tablecodec",
    "crate": "tidb-tablecodec",
-   "funcs": 37,
+   "funcs": 36,
    "tier": 3,
    "pod": "pod3"
   },
@@ -745,60 +583,6 @@
    "pod": "pod2"
   },
   {
-   "id": "b051",
-   "gopath": "pkg/parser.part1",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 60,
-   "tier": 5,
-   "pod": "pod3"
-  },
-  {
-   "id": "b052",
-   "gopath": "pkg/parser.part2",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 60,
-   "tier": 5,
-   "pod": "pod1"
-  },
-  {
-   "id": "b053",
-   "gopath": "pkg/parser.part3",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 60,
-   "tier": 5,
-   "pod": "pod2"
-  },
-  {
-   "id": "b054",
-   "gopath": "pkg/parser.part4",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 60,
-   "tier": 5,
-   "pod": "pod3"
-  },
-  {
-   "id": "b055",
-   "gopath": "pkg/parser.part5",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 60,
-   "tier": 5,
-   "pod": "pod1"
-  },
-  {
-   "id": "b056",
-   "gopath": "pkg/parser.part6",
-   "base_gopath": "pkg/parser",
-   "crate": "tidb-lexer",
-   "funcs": 32,
-   "tier": 5,
-   "pod": "pod2"
-  },
-  {
    "id": "b057",
    "gopath": "pkg/parser/ast.part1",
    "base_gopath": "pkg/parser/ast",
@@ -826,15 +610,6 @@
    "pod": "pod2"
   },
   {
-   "id": "b060",
-   "gopath": "pkg/planner/property",
-   "base_gopath": "pkg/planner/property",
-   "crate": "tidb-proto",
-   "funcs": 1,
-   "tier": 5,
-   "pod": "pod3"
-  },
-  {
    "id": "b061",
    "gopath": "pkg/store/mockstore.part1",
    "base_gopath": "pkg/store/mockstore",
@@ -851,15 +626,6 @@
    "funcs": 5,
    "tier": 5,
    "pod": "pod2"
-  },
-  {
-   "id": "b063",
-   "gopath": "pkg/util/rowcodec",
-   "base_gopath": "pkg/util/rowcodec",
-   "crate": "tidb-protocol",
-   "funcs": 21,
-   "tier": 5,
-   "pod": "pod3"
   },
   {
    "id": "b064",
@@ -1159,15 +925,6 @@
    "pod": "pod3"
   },
   {
-   "id": "b097",
-   "gopath": "pkg/planner.part20",
-   "base_gopath": "pkg/planner",
-   "crate": "tidb-planner",
-   "funcs": 60,
-   "tier": 8,
-   "pod": "pod1"
-  },
-  {
    "id": "b098",
    "gopath": "pkg/planner.part21",
    "base_gopath": "pkg/planner",
@@ -1175,15 +932,6 @@
    "funcs": 60,
    "tier": 8,
    "pod": "pod2"
-  },
-  {
-   "id": "b099",
-   "gopath": "pkg/planner.part22",
-   "base_gopath": "pkg/planner",
-   "crate": "tidb-planner",
-   "funcs": 18,
-   "tier": 8,
-   "pod": "pod3"
   },
   {
    "id": "b100",
@@ -1195,15 +943,6 @@
    "pod": "pod1"
   },
   {
-   "id": "b101",
-   "gopath": "pkg/ddl.part2",
-   "base_gopath": "pkg/ddl",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
    "id": "b102",
    "gopath": "pkg/ddl.part3",
    "base_gopath": "pkg/ddl",
@@ -1211,15 +950,6 @@
    "funcs": 60,
    "tier": 9,
    "pod": "pod3"
-  },
-  {
-   "id": "b103",
-   "gopath": "pkg/ddl.part4",
-   "base_gopath": "pkg/ddl",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
   },
   {
    "id": "b104",
@@ -1249,24 +979,6 @@
    "pod": "pod1"
   },
   {
-   "id": "b107",
-   "gopath": "pkg/ddl.part8",
-   "base_gopath": "pkg/ddl",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b108",
-   "gopath": "pkg/ddl.part9",
-   "base_gopath": "pkg/ddl",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
    "id": "b109",
    "gopath": "pkg/ddl.part10",
    "base_gopath": "pkg/ddl",
@@ -1292,15 +1004,6 @@
    "funcs": 60,
    "tier": 9,
    "pod": "pod3"
-  },
-  {
-   "id": "b112",
-   "gopath": "pkg/ddl.part13",
-   "base_gopath": "pkg/ddl",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
   },
   {
    "id": "b113",
@@ -1355,231 +1058,6 @@
    "funcs": 13,
    "tier": 9,
    "pod": "pod1"
-  },
-  {
-   "id": "b119",
-   "gopath": "pkg/executor.part1",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b120",
-   "gopath": "pkg/executor.part2",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b121",
-   "gopath": "pkg/executor.part3",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b122",
-   "gopath": "pkg/executor.part4",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b123",
-   "gopath": "pkg/executor.part5",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b124",
-   "gopath": "pkg/executor.part6",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b125",
-   "gopath": "pkg/executor.part7",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b126",
-   "gopath": "pkg/executor.part8",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b127",
-   "gopath": "pkg/executor.part9",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b128",
-   "gopath": "pkg/executor.part10",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b129",
-   "gopath": "pkg/executor.part11",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b130",
-   "gopath": "pkg/executor.part12",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b131",
-   "gopath": "pkg/executor.part13",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b132",
-   "gopath": "pkg/executor.part14",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b133",
-   "gopath": "pkg/executor.part15",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b134",
-   "gopath": "pkg/executor.part16",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b135",
-   "gopath": "pkg/executor.part17",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b136",
-   "gopath": "pkg/executor.part18",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b137",
-   "gopath": "pkg/executor.part19",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b138",
-   "gopath": "pkg/executor.part20",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b139",
-   "gopath": "pkg/executor.part21",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b140",
-   "gopath": "pkg/executor.part22",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod2"
-  },
-  {
-   "id": "b141",
-   "gopath": "pkg/executor.part23",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 60,
-   "tier": 9,
-   "pod": "pod3"
-  },
-  {
-   "id": "b142",
-   "gopath": "pkg/executor.part24",
-   "base_gopath": "pkg/executor",
-   "crate": "tidb-executor",
-   "funcs": 9,
-   "tier": 9,
-   "pod": "pod1"
-  },
-  {
-   "id": "b143",
-   "gopath": "pkg/executor/internal",
-   "base_gopath": "pkg/executor/internal",
-   "crate": "tidb-executor",
-   "funcs": 25,
-   "tier": 9,
-   "pod": "pod2"
   },
   {
    "id": "b144",

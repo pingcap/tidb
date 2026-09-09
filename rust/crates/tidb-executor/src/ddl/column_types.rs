@@ -71,6 +71,17 @@ fn charset_named(name: &str) -> Result<Charset, DriverError> {
 
 /// Parses a collation name, rejecting one this tier does not carry.
 fn collation_named(name: &str) -> Result<Collation, DriverError> {
+    // Go's `collate.ErrUnsupportedCollation` rejects these collations when
+    // `new_collation_enabled` is on, even though the charset registry knows
+    // their names. Keep the DDL refusal distinct from an actually unknown
+    // collation: callers receive errno 1273 and Go's exact message.
+    let normalized = name.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "utf8_roman_ci" | "utf8mb4_roman_ci") {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+            message: format!("Unsupported collation when new collation is enabled: '{normalized}'"),
+        });
+    }
     Collation::from_name(name).ok_or(DriverError::unsupported("unknown collation"))
 }
 
@@ -137,6 +148,7 @@ pub(crate) fn database_charset_of(
 pub(crate) fn field_type_of(
     def: &ColumnDef,
     table: TableCharset,
+    enable_enum_length_limit: bool,
 ) -> Result<FieldType, DriverError> {
     let written_charset = def.ty.charset.as_deref().map(charset_named).transpose()?;
     let written_collation = def
@@ -175,27 +187,34 @@ pub(crate) fn field_type_of(
     // Go `checkColumnAttributes`: the parser stores what was written and the
     // DDL builder is what refuses it, which is why these are coded errors and
     // not parse failures.
-    column_field_type::check_column_attributes(&field_type).map_err(|error| match error {
-        column_field_type::ColumnAttributeError::MBiggerThanD => {
-            DriverError::MBiggerThanD(def.name.clone())
-        }
-        column_field_type::ColumnAttributeError::TooBigPrecision { precision, maximum } => {
-            DriverError::TooBigPrecision {
-                precision,
-                column: def.name.clone(),
-                maximum,
+    column_field_type::check_column_attributes(&field_type, enable_enum_length_limit).map_err(
+        |error| match error {
+            column_field_type::ColumnAttributeError::MBiggerThanD => {
+                DriverError::MBiggerThanD(def.name.clone())
             }
-        }
-        column_field_type::ColumnAttributeError::DuplicatedValueInType { value, type_name } => {
-            DriverError::DuplicatedValueInType {
-                column: def.name.clone(),
-                value,
-                type_name,
+            column_field_type::ColumnAttributeError::TooBigPrecision { precision, maximum } => {
+                DriverError::TooBigPrecision {
+                    precision,
+                    column: def.name.clone(),
+                    maximum,
+                }
             }
-        }
-        column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
-            DriverError::unsupported(message)
-        }
-    })?;
+            column_field_type::ColumnAttributeError::DuplicatedValueInType { value, type_name } => {
+                DriverError::DuplicatedValueInType {
+                    column: def.name.clone(),
+                    value,
+                    type_name,
+                }
+            }
+            column_field_type::ColumnAttributeError::TooLongEnumSetValue => {
+                DriverError::TooLongEnumSetValue {
+                    column: def.name.clone(),
+                }
+            }
+            column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
+                DriverError::unsupported(message)
+            }
+        },
+    )?;
     Ok(field_type)
 }

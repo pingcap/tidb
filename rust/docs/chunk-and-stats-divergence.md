@@ -67,23 +67,24 @@ are the same byte run between the same offsets, and the bitmap is bit-identical.
 
 ### Ranked divergences
 
-**A-1 (rank 2 — panic reachable from ordinary data).**
+**A-1 (rank 2 — fixed 2026-09-04).**
 Go `pkg/util/chunk/chunk.go:670` (`case types.KindMysqlDecimal:
 c.AppendMyDecimal(colIdx, d.GetMysqlDecimal())`) appends the `*types.MyDecimal`
 the datum already holds — there is no conversion and no failure mode.
-Rust `rust/crates/tidb-chunk/src/chunk.rs:290-298` instead formats
-`Datum::Decimal` to text, re-parses it with `MyDecimal::from_string`, and
-`assert!(err.is_none(), ...)`.
-Distinguishing case: any `Datum::Decimal` whose canonical text `MyDecimal`
-cannot represent exactly — e.g. a literal with more than 30 fractional digits,
-`0.` followed by 40 digits. Go stores the (truncated) `MyDecimal` cell and the
-query proceeds; Rust aborts the statement with a panic.
-Caveat: reachability depends on whether `tidb_datatype::Decimal` admits more
-digits than `MyDecimal` does. I did not verify that bound, so this is
-"panic exists on a path Go cannot fail on", not "panic confirmed reachable".
-Not fixed — the correct repair is to append the `MyDecimal` without a text
-round trip, which needs the datum representation decision that
-`tidb-datatype` owns.
+Rust now keeps the exact conversion for representable values and adds
+`Decimal::to_chunk_my_decimal_lossy` for values wider than the fixed buffer.
+That fallback asks `MyDecimal::from_string` for Go's ordinary prefix/truncation
+result, then `Chunk::append_datum`, `MutRow::from_datums`, `SetValue`, and
+`SetDatum` copy the resulting 40-byte cell without introducing a new panic.
+The focused regression covers a value with ten fractional base-1e9 words and
+checks all four datum-to-cell entry points against Go's parsed cell.
+Follow-up (2026-09-04, `receipts/chunk_a1_readback_parity.md`): the clamped
+cell's `resultFrac` is now pinned to `min(visible scale, kept fraction)` —
+`FromString`'s own `resultFrac = digitsFrac` tail leaked hidden words past a
+value's visible scale on chunk read-backs, diverging from the exact path's
+and Go producers' visible-scale convention; the integer-overflow clamp and
+the all-zero sign normalization (`mydecimal.go:531-543`) are pinned
+byte-equal to Go's `FromString` output.
 
 **A-2 (rank 3 — wire/decode strictness).**
 `rust/crates/tidb-codec/src/column.rs:807-821` rejects an offset table whose
@@ -95,22 +96,43 @@ Distinguishing case: a producer that re-encodes a partially consumed
 intermediate chunk emits `offsets = [40, 45, 51]`; Go decodes it and rebases,
 Rust returns `InvalidOffset`. TiKV's coprocessor and Go's own `Codec.Encode`
 always start at 0, so this is a latent difference, not an observed one.
-Rust is the stricter side. Not fixed — `tidb-codec` belongs to another unit.
+Rust is the stricter side.
 
-**A-3 (rank 3 — panic where Go returns NULL).**
+FIXED (2026-09-03): the Rust `decode_columns` offset-table loop no longer
+validates first-zero or monotonicity — matching Go `decodeColumn`
+(`codec.go:130-133`) verbatim, including preserving a non-zero-based table
+verbatim for the `Decoder.ReuseIntermChk` rebase path. Regressions in
+`column_source.rs` pin the decreasing-table decode and the non-zero-first
+decode (both proven to fail against the stricter checks). A negative LAST
+offset still maps to the crate's `InvalidOffset` error where Go's slice
+bounds would panic — the established error-for-panic representation.
+
+**A-3 — STALE (verified 2026-09-04).** The cited `row.rs:247-249` no longer
+exists: the row decoder was reworked into `row_decoder.rs`, whose
+`ColumnLookup` enum models Go's zero-value NULL explicitly
+(`ColumnLookup::Missing`/`::Null` arms, pinned by
+`row_decoder_source.rs:61-62`). The datum-level conversion still owes a
+per-type audit, but the referenced panic site is gone.
+
+**A-3 (ORIGINAL TEXT) (rank 3 — panic where Go returns NULL). FIXED (verified 2026-09-05).**
 Go's `Row.DatumWithBuffer` (`row.go:152-197`) is a `switch` with **no default
 arm**: an unlisted `tp.GetType()` leaves the caller's buffer at its zero value,
-i.e. a NULL datum. Rust `row.rs:247-249` panics.
+i.e. a NULL datum. The Rust `datum_with_buffer` now has the same contract —
+its unlisted-type arm simply returns and leaves the caller's datum untouched,
+exactly what Go's absent default arm does — and the checked
+`try_datum_with_buffer` boundary turns malformed cells into typed errors
+instead of panics. The audit's original `row.rs:247-249` panic no longer
+exists.
 Distinguishing case: a non-null cell in a column typed `TypeGeometry` or
-`TypeNull`. Go yields NULL; Rust aborts. TiDB does not produce non-null cells
-of those types, so this is defensive-only.
+`TypeNull`. Go yields NULL; the former Rust panic is gone.
 
-**A-4 (rank 3 — documented deferral, affects printed/encoded decimals).**
-`row.rs:233-246` notes that Go additionally calls `d.SetLength(tp.GetFlen())`
-and `d.SetFrac(tp.GetDecimal())` (`row.go:176-185`) and that the explicit
-`SetFrac` override is deferred. Distinguishing case: a `DECIMAL(10,2)` column
-whose cell carries `digitsFrac = 4`; Go's datum reports frac 2, Rust's reports
-the stored 4, changing the re-encoded/printed text. Already tracked in-code.
+**A-4 (ORIGINAL TEXT) (rank 3 — documented deferral, affects printed/encoded decimals). FIXED (verified 2026-09-05).**
+Go additionally calls `d.SetLength(tp.GetFlen())` and `d.SetFrac(...)`
+(`row.go:176-185`). The Rust NewDecimal arm now stamps the same shape:
+`Decimal::from_my_decimal(&stored).with_declared_shape(flen, fraction)`
+where `fraction` is Go's unspecified-decimal rule verbatim — the cell's
+`digitsFrac` when `tp.decimal` is unspecified, else `tp.decimal`
+(`row.rs` `datum_with_buffer`). The former SetFrac deferral is closed.
 
 **A-5 (informational — not representable).**
 Go's `Chunk.Reset` (`chunk.go:301-310`) returns early when `c.columns == nil`,
@@ -266,6 +288,9 @@ public parameter is outside "small and certain".
   is the missing case.
 * A-1's reachability (whether `tidb_datatype::Decimal` can hold a value
   `MyDecimal` rejects) was not checked.
+  RESOLVED (2026-09-04): it can and does (`from_literal`, exact `mul`); the
+  boundary now clamps like Go — see A-1, `testport/receipts/chunk_a1_datum.md`,
+  and `testport/receipts/chunk_a1_readback_parity.md`.
 * `tidb-stats/src/builder.rs`, TopN/global-stats merging, and index row
   counting beyond the equality path were not compared.
 * Collation handling inside `Histogram::locate_bucket` was compared

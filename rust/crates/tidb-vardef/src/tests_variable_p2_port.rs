@@ -40,11 +40,10 @@
 use super::defaults::{
     DEF_AUTO_ANALYZE_RATIO, DEF_ENABLE_WINDOW_FUNCTION, DEF_OPT_SELECTIVITY_FACTOR,
     DEF_TIDB_AUTO_ANALYZE_CONCURRENCY, DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO,
-    DEF_TIDB_ENABLE_RESOURCE_CONTROL,
-    DEF_TIDB_ENABLE_ROW_LEVEL_CHECKSUM, DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK,
-    DEF_TIDB_HASH_JOIN_VERSION, DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL,
-    DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE, DEF_TIDB_SCHEMA_CACHE_SIZE,
-    DEF_TIDB_SKIP_ISOLATION_LEVEL_CHECK, DEF_TIDB_TXN_MODE,
+    DEF_TIDB_ENABLE_RESOURCE_CONTROL, DEF_TIDB_ENABLE_ROW_LEVEL_CHECKSUM,
+    DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK, DEF_TIDB_HASH_JOIN_VERSION,
+    DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL, DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE,
+    DEF_TIDB_SCHEMA_CACHE_SIZE, DEF_TIDB_SKIP_ISOLATION_LEVEL_CHECK, DEF_TIDB_TXN_MODE,
     DEF_TIFLASH_REPLICA_READ, HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED,
 };
 use super::global_sysvar_initial::{global_system_variable_initial_value, GlobalSysvarEnvironment};
@@ -226,12 +225,6 @@ fn foreign_key_check_in_shared_lock_default_off() {
     assert!(!DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK);
 }
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBOptTxnAutoRetry`.
-// go-parity-gap: SysVar.Validate deprecation-warning path (ErrErrDeprecatedTipNoWrittenToLog via vars.StmtCtx warnings) not ported to this crate
-#[test]
-#[ignore]
-fn tidb_opt_txn_auto_retry_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBLowResTSOUpdateInterval`.
 ///
 /// Partial port: the declared default (2000ms) that anchors the Go test's
@@ -290,15 +283,11 @@ fn hash_join_version_default_is_optimized() {
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBEnableFullOuterJoin`.
 ///
 /// Partial port: `DefTiDBEnableFullOuterJoin == false` initial-value half
-/// (value re-derived from `origin/master:pkg/sessionctx/vardef/tidb_vars.go`,
-/// where `DefTiDBEnableFullOuterJoin = false`; the constant is not yet in
-/// this crate's defaults module so it is pinned locally). SetSystemVar
-/// round-trips need SessionVars.
+/// (value re-derived from `origin/master:pkg/sessionctx/vardef/tidb_vars.go`).
+/// SetSystemVar round-trips need SessionVars.
 #[test]
 fn enable_full_outer_join_default_false() {
-    // Pinned from master until DefTiDBEnableFullOuterJoin lands in defaults:
-    const DEF_TIDB_ENABLE_FULL_OUTER_JOIN: bool = false;
-    assert!(!DEF_TIDB_ENABLE_FULL_OUTER_JOIN);
+    assert!(!super::defaults::DEF_TIDB_ENABLE_FULL_OUTER_JOIN);
 }
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBAutoAnalyzeConcurrencyValidation`.
@@ -342,16 +331,95 @@ fn analyze_default_num_buckets_topn_bounds() {
 ///
 /// Partial port: `DefTiDBAnalyzeStoreBatchSize == 4` and
 /// `MaxTiDBAnalyzeStoreBatchSize == 8`, re-derived from
-/// `origin/master:pkg/sessionctx/vardef/tidb_vars.go`; not yet in this
-/// crate's defaults module so they are pinned locally. The SessionVars field
+/// `origin/master:pkg/sessionctx/vardef/tidb_vars.go`. The SessionVars field
 /// and Has{Session,Global}Scope assertions need the unported layers.
 #[test]
 fn analyze_store_batch_size_defaults_and_bounds() {
-    // Pinned from master until they land in defaults:
-    const DEF_TIDB_ANALYZE_STORE_BATCH_SIZE: i64 = 4;
-    const MAX_TIDB_ANALYZE_STORE_BATCH_SIZE: u64 = 8;
-    assert_eq!(DEF_TIDB_ANALYZE_STORE_BATCH_SIZE, 4);
-    assert_eq!(MAX_TIDB_ANALYZE_STORE_BATCH_SIZE, 8);
+    assert_eq!(
+        super::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
+        "tidb_analyze_store_batch_size"
+    );
+    assert_eq!(super::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE, 4);
+    assert_eq!(super::bounds::MAX_TIDB_ANALYZE_STORE_BATCH_SIZE, 8);
+}
+
+/// Go master `pkg/sessionctx/vardef/tidb_vars.go` additions after the Rust
+/// constants extraction. These names must remain available to the parser,
+/// planner, and session layers even while the full SysVar registry is pending.
+#[test]
+fn recent_go_master_vardef_names_are_present() {
+    let names = [
+        (
+            super::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+            "tidb_plan_replayer_file_retention_time",
+        ),
+        (
+            super::tidb_vars::TIDB_ENABLE_FULL_OUTER_JOIN,
+            "tidb_enable_full_outer_join",
+        ),
+        (
+            super::tidb_vars::TIDB_ENABLE_TXN_FILE,
+            "tidb_enable_txn_file",
+        ),
+        (
+            super::tidb_vars::TIDB_TXN_FILE_MIN_MUTATION_SIZE,
+            "tidb_txn_file_min_mutation_size",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_JINA_AI_API_KEY,
+            "tidb_exp_embed_jina_ai_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_KEY,
+            "tidb_exp_embed_openai_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_BASE,
+            "tidb_exp_embed_openai_api_base",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_COHERE_API_KEY,
+            "tidb_exp_embed_cohere_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_HUGGINGFACE_API_KEY,
+            "tidb_exp_embed_huggingface_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY,
+            "tidb_exp_embed_nvidia_nim_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_EXP_EMBED_GEMINI_API_KEY,
+            "tidb_exp_embed_gemini_api_key",
+        ),
+        (
+            super::tidb_vars::TIDB_ENABLE_CONNECTION_EVENT_LOG,
+            "tidb_enable_connection_event_log",
+        ),
+    ];
+    for (actual, expected) in names {
+        assert_eq!(actual, expected);
+    }
+}
+
+/// Go master defaults added with the same vardef update must preserve their
+/// literal types and values in Rust (duration defaults are nanoseconds).
+#[test]
+fn recent_go_master_vardef_defaults_are_present() {
+    assert_eq!(
+        super::defaults::DEF_TIDB_EMBED_OPENAI_API_BASE,
+        "https://api.openai.com/v1"
+    );
+    assert_eq!(
+        super::defaults::DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+        604_800_000_000_000
+    );
+    assert!(!super::defaults::DEF_TIDB_ENABLE_FULL_OUTER_JOIN);
+    assert!(!super::defaults::DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG);
+    assert!(!super::defaults::DEF_TIDB_ENABLE_TXN_FILE);
+    assert_eq!(super::defaults::DEF_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 0);
+    assert_eq!(super::bounds::MIN_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 1 << 20);
 }
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBOptSelectivityFactor`.
@@ -414,18 +482,6 @@ fn set_system_variable_unported() {}
 #[test]
 #[ignore]
 fn session_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSlowLogFormat`.
-// go-parity-gap: slow-log rendering over execdetails/stmtctx/testkit needs the full kernel; not portable to this leaf crate
-#[test]
-#[ignore]
-fn slow_log_format_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics`.
-// go-parity-gap: slow-log rendering with TiFlash RUv2 metrics needs executor + resource-group runtime; not portable to this leaf crate
-#[test]
-#[ignore]
-fn slow_log_format_includes_ti_flash_ru_in_ruv2_metrics_unported() {}
 
 /// Go `pkg/sessionctx/variable/tests/session_test.go::TestIsolationRead`.
 // go-parity-gap: session-level isolation-read enforcement via testkit SQL execution; not portable to this leaf crate

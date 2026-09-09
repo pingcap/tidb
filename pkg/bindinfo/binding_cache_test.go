@@ -210,6 +210,35 @@ func TestExtractTableName(t *testing.T) {
 	}
 }
 
+func TestMayHaveSQLBinding(t *testing.T) {
+	require.False(t, mayHaveSQLBinding(nil))
+	require.True(t, mayHaveSQLBinding(&ast.ExplainStmt{}))
+
+	tests := []struct {
+		sql  string
+		want bool
+	}{
+		{"insert into t values (1)", false},
+		{"insert into t values (1) on duplicate key update a = values(a)", false},
+		{"insert into t set a = 1", false},
+		{"replace into t values (1)", false},
+		{"explain insert into t values (1)", false},
+		{"insert into t select * from s", true},
+		{"replace into t select * from s", true},
+		{"explain insert into t select * from s", true},
+		{"select * from t", true},
+		{"update t set a = 1", true},
+		{"delete from t where a = 1", true},
+	}
+
+	p := parser.New()
+	for _, tt := range tests {
+		stmt, err := p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
+		require.Equal(t, tt.want, mayHaveSQLBinding(stmt), tt.sql)
+	}
+}
+
 func getTableName(n []*ast.TableName) ([]string, error) {
 	result := make([]string, 0, len(n))
 	for _, v := range n {

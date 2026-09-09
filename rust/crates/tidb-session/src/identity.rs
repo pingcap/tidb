@@ -22,26 +22,22 @@
 //! with no front end has none of it, which is why every check falls back to
 //! "unrestricted" rather than "denied".
 
+use std::sync::Arc;
+
 use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 
 use crate::{privilege, process, vars, DriverError, Session};
+use tidb_util::stringutil::go_to_lower;
 
 impl Session {
-    /// Checks the one table privilege needed by a retained, refusal-admitted
-    /// prepared statement without walking (and cloning) its immutable AST.
-    /// The ordinary statement gate still uses [`required_table_privileges`]
-    /// for every shape that is not admitted by a fast executor arm.
-    pub(crate) fn require_fast_table_privilege(
+    /// Checks one already-resolved table name without rebuilding an AST path.
+    pub(crate) fn require_named_table_privilege(
         &self,
-        path: &[String],
+        database: &str,
+        table: &str,
         privilege: privilege::GlobalPriv,
     ) -> Result<(), DriverError> {
-        let (database, table) = match path {
-            [table] if !self.current_db.is_empty() => (self.current_db.as_str(), table.as_str()),
-            [database, table] => (database.as_str(), table.as_str()),
-            _ => return Ok(()),
-        };
         let granted = match crate::table_privilege::mem_db_verdict_mask(database, privilege.bit()) {
             Some(verdict) => verdict,
             None => self.has_scoped_privilege(database, table, privilege),
@@ -56,7 +52,7 @@ impl Session {
             privilege: privilege.print_name(),
             user: user.to_owned(),
             host: host.to_owned(),
-            table: table.to_lowercase(),
+            table: go_to_lower(table),
         })
     }
 
@@ -241,7 +237,7 @@ impl Session {
         table: &str,
         mask: u64,
     ) -> Option<bool> {
-        if !tidb_util::sem::is_enabled() {
+        if !tidb_util::sem_compat::is_enabled() {
             return None;
         }
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
@@ -256,8 +252,8 @@ impl Session {
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
         let name = name.to_ascii_lowercase();
-        tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_sys_var(&name)
+        tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_sys_var(&name)
             && self
                 .privilege_context()
                 .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
@@ -273,10 +269,26 @@ impl Session {
         }
     }
 
+    pub(crate) fn require_sem_writable_sysvar(&self, name: &str) -> Result<(), DriverError> {
+        self.require_sem_visible_sysvar(name)?;
+        if tidb_util::sem_v2::is_enabled()
+            && tidb_util::sem_v2::is_read_only_variable(&name.to_ascii_lowercase())
+            && self
+                .privilege_context()
+                .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
+        {
+            Err(DriverError::SpecificAccessDenied(
+                "RESTRICTED_VARIABLES_ADMIN".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
         !self.privilege_checks_bypassed()
-            && tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_status_var(name)
+            && tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_status_var(name)
             && self
                 .privilege_context()
                 .is_none_or(|_| !self.has_dynamic_privilege("RESTRICTED_STATUS_ADMIN", false))
@@ -339,7 +351,7 @@ impl Session {
                     privilege: request.privilege.print_name(),
                     user,
                     host,
-                    table: request.table.to_lowercase(),
+                    table: go_to_lower(request.table),
                 }
             } else {
                 DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())
@@ -381,7 +393,22 @@ impl Session {
     /// session removes the row.
     pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
         self.connection_id = Some(connection_id);
+        guard.set_trackers(
+            std::sync::Arc::clone(self.session_memory.session_tracker()),
+            std::sync::Arc::clone(self.session_memory.session_disk_tracker()),
+        );
+        guard.set_process_plan_info(std::sync::Arc::clone(&self.process_plan_info));
         self.process = Some(guard);
+    }
+
+    /// Retains the running statement in the process list until the server has
+    /// drained its result set. Go resets `ProcessInfo` to `ComSleep` in the
+    /// command-loop defer, after `writeResultSet` returns.
+    #[must_use]
+    pub fn retain_process_statement(&self, sql: &str) -> Option<process::ProcessStatementGuard> {
+        self.process
+            .as_ref()
+            .map(|guard| guard.statement_started(sql, self.current_db.clone(), self.status_text()))
     }
 
     /// Joins this session to the server's account/global-privilege registry.
@@ -411,7 +438,8 @@ impl Session {
         // first and the registry second.
         if !self.privilege_bypassed {
             if let Some((user, host)) = self.current_identity() {
-                self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
+                self.active_roles =
+                    Arc::new(registry.default_roles(&(user.to_owned(), host.to_owned())));
             }
         }
         self.privileges = Some(registry);
@@ -422,7 +450,7 @@ impl Session {
     /// verification and role activation are bypassed.
     pub fn enable_privilege_bypass(&mut self) {
         self.privilege_bypassed = true;
-        self.active_roles.clear();
+        Arc::make_mut(&mut self.active_roles).clear();
     }
 
     /// Records that this connection completed a secure transport handshake.
@@ -508,22 +536,7 @@ impl Session {
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
     /// `CURRENT_ROLE()` builtin.
     pub(crate) fn active_roles(&self) -> &[privilege::Account] {
-        &self.active_roles
-    }
-
-    /// The text `CURRENT_ROLE()` reports: Go's `builtinCurrentRoleSig` joins
-    /// each active role's `RoleIdentity.String()` (backtick-quoted
-    /// ``\`role\`@\`host\```) with a bare comma, and answers the literal
-    /// `NONE` when no role is active (captured, both forms).
-    pub(crate) fn current_role_text(&self) -> String {
-        if self.active_roles.is_empty() {
-            return "NONE".to_owned();
-        }
-        self.active_roles
-            .iter()
-            .map(|(role, host)| format!("`{role}`@`{host}`"))
-            .collect::<Vec<_>>()
-            .join(",")
+        self.active_roles.as_slice()
     }
 
     /// Splits the `CURRENT_USER()` identity (`user@host`) this session
@@ -542,6 +555,56 @@ impl Session {
         self.connection_id = Some(connection_id);
         self.session_memory.set_connection_id(connection_id);
         self.advisory_locks.set_owner(connection_id);
+    }
+
+    /// Charges bytes retained by `COM_STMT_SEND_LONG_DATA` against the same
+    /// persistent session tracker Go stores in `SessionVars.MemTracker`.
+    ///
+    /// The tracker is reconfigured from the live `tidb_mem_quota_query` value
+    /// before every chunk, matching Go's statement-boundary refresh while
+    /// keeping long data (which arrives between statements) on the session
+    /// root. Equality is refused as in `AppendParam`: a chunk that would make
+    /// consumption reach the limit is rejected before it is copied.
+    #[must_use]
+    pub fn try_consume_long_data(&self, bytes: i64) -> bool {
+        if bytes <= 0 {
+            return true;
+        }
+        let quota = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        self.session_memory
+            .configure(quota, oom_action, tmp_storage_on_oom);
+        let tracker = self.session_memory.session_tracker();
+        if quota > 0 && tracker.bytes_consumed().saturating_add(bytes) >= quota {
+            return false;
+        }
+        tracker.consume(bytes);
+        true
+    }
+
+    /// Releases bytes previously retained by `COM_STMT_SEND_LONG_DATA`.
+    pub fn release_long_data(&self, bytes: i64) {
+        if bytes > 0 {
+            self.session_memory.session_tracker().consume(-bytes);
+        }
+    }
+
+    /// Current bytes retained by this connection's session memory root.
+    #[must_use]
+    pub fn session_memory_bytes_consumed(&self) -> i64 {
+        self.session_memory.bytes_consumed()
+    }
+
+    /// Records whether the MySQL front end negotiated `CLIENT_FOUND_ROWS`.
+    /// Go stores the complete client capability word on `SessionVars`; this
+    /// session currently consumes only the affected-row bit.
+    pub fn set_client_found_rows(&mut self, enabled: bool) {
+        self.client_found_rows = enabled;
     }
 
     /// Installs the server/domain advisory-lock authority before this session

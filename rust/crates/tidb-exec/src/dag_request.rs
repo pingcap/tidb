@@ -24,13 +24,14 @@ use std::{error::Error, fmt};
 
 use tidb_ast::BinaryOp;
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
-use tidb_expr::pb_predicate::{
-    bigint_column_field_type, int_comparison_to_pb, IntPbOperand, PbPredicateError,
+use tidb_expr::{
+    expression::Expression,
+    pb_predicate::{bigint_column_field_type, int_comparison_to_pb, IntPbOperand},
+    pushdown_catalog::ColumnDescriptor,
 };
 use tidb_planner::{
-    physical_index_scan::PhysicalIndexScanPlan,
-    physical_selection::{ComparisonOp, ComparisonOperand, PhysicalSelectionPlan},
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{PhysicalIndexScan, PhysicalSelection, PhysicalTableScan},
+    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
     tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
         UnsupportedScanFeature,
@@ -85,9 +86,9 @@ impl DagRequestContext {
 #[derive(Clone, Copy, Debug)]
 pub enum TiKvScanPlan<'a> {
     /// Ordinary table scan.
-    Table(&'a PhysicalTableScanPlan),
+    Table(&'a PhysicalTableScan),
     /// Ordinary index scan.
-    Index(&'a PhysicalIndexScanPlan),
+    Index(&'a PhysicalIndexScan),
 }
 
 /// Why a physical scan cannot enter the bounded TiKV DAG request.
@@ -98,6 +99,8 @@ pub enum DagRequestBuildError {
         /// Number of plans supplied by the caller.
         actual: usize,
     },
+    /// The table scan has not received schema-resolved ToPB metadata.
+    MissingTablePushdown,
     /// The live index task has not received schema-resolved ToPB metadata.
     MissingIndexPushdown,
     /// A scan feature belongs to a deliberately external planner/store owner.
@@ -127,8 +130,9 @@ pub enum DagRequestBuildError {
     EmptySelection,
     /// A metadata-only Aggregation cannot enter the executable TiKV DAG.
     EmptyAggregation,
-    /// The bounded expression owner rejected a condition.
-    Expression(PbPredicateError),
+    /// The wired expression cannot be encoded by the shared TiKV expression
+    /// encoders.
+    UnsupportedSelectionExpression,
 }
 
 impl fmt::Display for DagRequestBuildError {
@@ -136,6 +140,9 @@ impl fmt::Display for DagRequestBuildError {
         match self {
             Self::PlanCount { actual } => {
                 write!(f, "TiKV scan DAG requires exactly one plan, got {actual}")
+            }
+            Self::MissingTablePushdown => {
+                f.write_str("physical table scan lacks pre-resolved TiKV pushdown metadata")
             }
             Self::MissingIndexPushdown => {
                 f.write_str("physical index scan lacks pre-resolved TiKV pushdown metadata")
@@ -163,18 +170,14 @@ impl fmt::Display for DagRequestBuildError {
             Self::EmptyAggregation => {
                 f.write_str("TiKV Aggregation requires at least one resolved function")
             }
-            Self::Expression(error) => write!(f, "cannot lower TiKV Selection expression: {error}"),
+            Self::UnsupportedSelectionExpression => {
+                f.write_str("cannot lower physical Selection expression to TiKV")
+            }
         }
     }
 }
 
 impl Error for DagRequestBuildError {}
-
-impl From<PbPredicateError> for DagRequestBuildError {
-    fn from(error: PbPredicateError) -> Self {
-        Self::Expression(error)
-    }
-}
 
 /// Ports the TiKV list branch of Go `ConstructDAGReq` for one physical scan.
 pub fn construct_dag_req(
@@ -223,7 +226,7 @@ pub fn limit_to_pb(limit: u64) -> Executor {
 pub fn construct_read_only_dag_req(
     context: &DagRequestContext,
     scan: TiKvScanPlan<'_>,
-    selection: Option<&PhysicalSelectionPlan>,
+    selection: Option<&PhysicalSelection>,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
     construct_dag_req_inner(
@@ -240,16 +243,16 @@ pub fn construct_read_only_dag_req(
 
 /// Where a DAG's Selection conditions come from.
 ///
-/// The bounded [`PhysicalSelectionPlan`] describes signed-`BIGINT`
-/// comparisons and is lowered here; a caller that already lowered a wider
-/// predicate (the wide SQL path, over the whole integer family plus `OR`,
-/// `NOT`, `IS NULL` and `IN`) hands the TiPB conditions in directly.
+/// A wired [`PhysicalSelection`] is lowered through the shared expression
+/// pushdown catalog; a caller that already lowered a wider predicate (the wide
+/// SQL path, over the whole integer family plus `OR`, `NOT`, `IS NULL` and
+/// `IN`) hands the TiPB conditions in directly.
 #[derive(Clone, Copy, Debug)]
 enum SelectionSource<'a> {
     /// No Selection executor at all.
     None,
-    /// The bounded resolved-comparison plan.
-    Bounded(&'a PhysicalSelectionPlan),
+    /// The wired physical Selection used by the bounded read tier.
+    Bounded(&'a PhysicalSelection),
     /// Already-lowered conditions, in `WHERE` order.
     Conditions(&'a [Expr]),
 }
@@ -287,6 +290,7 @@ pub fn construct_aggregate_read_only_dag_req_with_conditions(
     scan: TiKvScanPlan<'_>,
     conditions: &[Expr],
     aggregate_functions: &[Expr],
+    streamed: bool,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
     construct_dag_req_inner(
@@ -300,7 +304,7 @@ pub fn construct_aggregate_read_only_dag_req_with_conditions(
         Some(output_offsets),
         Some(aggregate_functions),
         None,
-        false,
+        streamed,
         None,
     )
 }
@@ -339,7 +343,7 @@ pub fn construct_grouped_aggregate_read_only_dag_req_with_conditions(
 pub fn construct_capped_read_only_dag_req(
     context: &DagRequestContext,
     scan: TiKvScanPlan<'_>,
-    selection: Option<&PhysicalSelectionPlan>,
+    selection: Option<&PhysicalSelection>,
     limit: Option<u64>,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
@@ -397,16 +401,16 @@ pub fn construct_index_aggregated_dag_req(
     aggregation_width: usize,
 ) -> Result<DagRequest, DagRequestBuildError> {
     let mut executors = vec![Executor {
-            tp: Some(ExecType::TypeIndexScan as i32),
-            tbl_scan: None,
-            idx_scan: Some(index_scan),
-            selection: None,
-            aggregation: None,
-            top_n: None,
-            limit: None,
-            executor_id: None,
-            parent_idx: None,
-        }];
+        tp: Some(ExecType::TypeIndexScan as i32),
+        tbl_scan: None,
+        idx_scan: Some(index_scan),
+        selection: None,
+        aggregation: None,
+        top_n: None,
+        limit: None,
+        executor_id: None,
+        parent_idx: None,
+    }];
     if !conditions.is_empty() {
         executors.push(selection_executor(conditions)?);
     }
@@ -504,10 +508,12 @@ fn construct_dag_req_assembled(
     };
 
     let (scan_executor, scan_columns) = match plan {
-        TiKvScanPlan::Table(plan) => (
-            table_scan_to_pb(plan.pushdown())?,
-            plan.pushdown().columns.as_slice(),
-        ),
+        TiKvScanPlan::Table(plan) => {
+            let spec = plan
+                .pushdown()
+                .ok_or(DagRequestBuildError::MissingTablePushdown)?;
+            (table_scan_to_pb(spec)?, spec.columns.as_slice())
+        }
         TiKvScanPlan::Index(plan) => (
             index_scan_to_pb(plan)?,
             plan.pushdown()
@@ -603,23 +609,127 @@ fn validate_output_offsets(offsets: &[u32], width: usize) -> Result<(), DagReque
 }
 
 fn selection_to_pb(
-    plan: &PhysicalSelectionPlan,
+    plan: &PhysicalSelection,
     scan_columns: &[ScanColumnInfo],
 ) -> Result<Executor, DagRequestBuildError> {
-    if plan.conditions().is_empty() {
+    if plan.conditions.is_empty() {
         return Err(DagRequestBuildError::EmptySelection);
     }
     let conditions = plan
-        .conditions()
+        .conditions
         .iter()
         .map(|condition| {
-            let left = comparison_operand_to_pb(condition.lhs(), scan_columns)?;
-            let right = comparison_operand_to_pb(condition.rhs(), scan_columns)?;
-            int_comparison_to_pb(comparison_op(condition.op()), left, right)
-                .map_err(DagRequestBuildError::from)
+            validate_selection_columns(condition, scan_columns)?;
+            if let Some(encoded) =
+                tidb_expr::pushdown_catalog::expression_to_pb(condition, &|offset| {
+                    scan_column_descriptor(scan_columns, offset)
+                })
+            {
+                return Ok(encoded);
+            }
+            let comparison = BigIntComparison::from_expression(condition)
+                .ok_or(DagRequestBuildError::UnsupportedSelectionExpression)?;
+            let left = comparison_operand_to_pb(comparison.lhs(), scan_columns)?;
+            let right = comparison_operand_to_pb(comparison.rhs(), scan_columns)?;
+            int_comparison_to_pb(comparison_op(comparison.op()), left, right)
+                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)
         })
         .collect::<Result<Vec<_>, _>>()?;
     selection_executor(conditions)
+}
+
+const fn comparison_op(operator: ComparisonOp) -> BinaryOp {
+    match operator {
+        ComparisonOp::Lt => BinaryOp::Lt,
+        ComparisonOp::Le => BinaryOp::Le,
+        ComparisonOp::Gt => BinaryOp::Gt,
+        ComparisonOp::Ge => BinaryOp::Ge,
+        ComparisonOp::Eq => BinaryOp::Eq,
+        ComparisonOp::Ne => BinaryOp::Ne,
+    }
+}
+
+fn comparison_operand_to_pb(
+    operand: ComparisonOperand,
+    scan_columns: &[ScanColumnInfo],
+) -> Result<IntPbOperand, DagRequestBuildError> {
+    match operand {
+        ComparisonOperand::Int(value) => Ok(IntPbOperand::Literal(value)),
+        ComparisonOperand::InputOffset(offset) => {
+            let column = scan_columns.get(offset as usize).ok_or(
+                DagRequestBuildError::ConditionInputOffsetOutOfRange {
+                    offset,
+                    width: scan_columns.len(),
+                },
+            )?;
+            let flags = u32::try_from(column.flag).map_err(|_| {
+                DagRequestBuildError::InvalidColumnFlags {
+                    offset,
+                    flags: column.flag,
+                }
+            })?;
+            Ok(IntPbOperand::Column {
+                offset: offset as usize,
+                field_type: bigint_column_field_type(flags),
+            })
+        }
+    }
+}
+
+fn validate_selection_columns(
+    expression: &Expression,
+    scan_columns: &[ScanColumnInfo],
+) -> Result<(), DagRequestBuildError> {
+    match expression {
+        Expression::Column(column) => {
+            let offset = u32::try_from(column.index).map_err(|_| {
+                DagRequestBuildError::ConditionInputOffsetOutOfRange {
+                    offset: u32::MAX,
+                    width: scan_columns.len(),
+                }
+            })?;
+            let scan_column = scan_columns.get(offset as usize).ok_or(
+                DagRequestBuildError::ConditionInputOffsetOutOfRange {
+                    offset,
+                    width: scan_columns.len(),
+                },
+            )?;
+            u32::try_from(scan_column.flag).map_err(|_| {
+                DagRequestBuildError::InvalidColumnFlags {
+                    offset,
+                    flags: scan_column.flag,
+                }
+            })?;
+            Ok(())
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &function.args {
+                validate_selection_columns(argument, scan_columns)?;
+            }
+            Ok(())
+        }
+        Expression::Constant(_) => Ok(()),
+        Expression::CorrelatedColumn(_) => {
+            Err(DagRequestBuildError::UnsupportedSelectionExpression)
+        }
+    }
+}
+
+fn scan_column_descriptor(columns: &[ScanColumnInfo], offset: u32) -> Option<ColumnDescriptor> {
+    let column = columns.get(offset as usize)?;
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
+    Some(ColumnDescriptor {
+        tp: column.tp,
+        flag: u32::try_from(column.flag).ok()?,
+        flen: column.column_len,
+        decimal: column.decimal,
+        charset,
+        collation,
+        elems: column.elems.clone(),
+        array: column.array,
+    })
 }
 
 fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuildError> {
@@ -673,47 +783,6 @@ fn aggregation_to_pb(
     })
 }
 
-const fn comparison_op(operator: ComparisonOp) -> BinaryOp {
-    match operator {
-        ComparisonOp::Lt => BinaryOp::Lt,
-        ComparisonOp::Le => BinaryOp::Le,
-        ComparisonOp::Gt => BinaryOp::Gt,
-        ComparisonOp::Ge => BinaryOp::Ge,
-        ComparisonOp::Eq => BinaryOp::Eq,
-        ComparisonOp::Ne => BinaryOp::Ne,
-    }
-}
-
-fn comparison_operand_to_pb(
-    operand: ComparisonOperand,
-    scan_columns: &[ScanColumnInfo],
-) -> Result<IntPbOperand, DagRequestBuildError> {
-    match operand {
-        ComparisonOperand::Int(value) => Ok(IntPbOperand::Literal(value)),
-        ComparisonOperand::InputOffset(offset) => {
-            let column = scan_columns.get(offset as usize).ok_or(
-                DagRequestBuildError::ConditionInputOffsetOutOfRange {
-                    offset,
-                    width: scan_columns.len(),
-                },
-            )?;
-            let flags = u32::try_from(column.flag).map_err(|_| {
-                DagRequestBuildError::InvalidColumnFlags {
-                    offset,
-                    flags: column.flag,
-                }
-            })?;
-            Ok(IntPbOperand::Column {
-                offset: offset as usize,
-                // The bounded plan admits signed `BIGINT` columns only, so the
-                // scan descriptor's own width and scale carry no information
-                // this leaf does not already know.
-                field_type: bigint_column_field_type(flags),
-            })
-        }
-    }
-}
-
 fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuildError> {
     if let Some(feature) = spec.unsupported {
         return Err(DagRequestBuildError::UnsupportedScanFeature(feature));
@@ -748,7 +817,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
     })
 }
 
-fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequestBuildError> {
+fn index_scan_to_pb(plan: &PhysicalIndexScan) -> Result<Executor, DagRequestBuildError> {
     let spec = plan
         .pushdown()
         .ok_or(DagRequestBuildError::MissingIndexPushdown)?;
@@ -773,7 +842,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
     })
 }
 
-fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScanPlan) -> IndexScan {
+fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScan) -> IndexScan {
     IndexScan {
         table_id: Some(spec.table_id),
         index_id: Some(spec.index_id),

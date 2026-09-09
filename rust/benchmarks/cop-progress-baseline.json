@@ -1,5 +1,28 @@
 {
   "date": "2026-09-10",
+  "measurement_scope": "The measurements below describe the immutable pre-merge candidate, not the current upstream integration worktree.",
+  "integration_validation": {
+    "status": "WIP semantic merge; no merged-code performance acceptance or Ready completion",
+    "local_parent": "59700b3180dfb00747c0f18114428f1b0d7cfbdd",
+    "upstream_parent": "cf6990b012e5c5390b97402dcf5f8c6c50727a51",
+    "worktree": "/private/tmp/tidb-upstream-merge.nzY42N",
+    "original_conflicted_files": 144,
+    "unresolved_files": 15,
+    "bazel_prepare": "Passed with twelve jobs after aligning the WORKSPACE Go pin to go.mod 1.25.12 and formatting metrics/memory.go",
+    "release_tests": "Expression 1188 passed (99 ignored), planner 1192 passed (1071 ignored), transaction KV 641 passed (10 ignored). Combined executor/session/server release compilation and all their test-target type checks pass. Three retained Go tests passed: statement memory cleanup, sort spilling and session-variable state.",
+    "merge_blocker": "Approval resolved. Remaining work is semantic integration, current-context cache rebuilding, physical ResolveIndices/locking, newer remote integration and SQL validation.",
+    "latest_observed_remote": "b77c90cde62c3857278bbad20584cf9dd56faf70",
+    "publication": "Not pushed; destination is origin/hparser-integration only",
+    "test_cleanup": "Removed 52 identified Rust-only tests plus obsolete helpers. No Rust source-text include_str guards remain under rust/crates. Repository-wide Go-test provenance audit is not complete.",
+    "ready_lint": "Passed: GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+  },
+  "counter_visibility_diagnostic": {
+    "path": "/private/tmp/tidb-counter-window.jbkXVN/probe.json",
+    "performance_accepted": false,
+    "finding": "TiKV counters continue publishing after query completion. Settled eight-client windows are approximately 10 gets and 400 cop keys per transaction for both Go and Rust; immediate deltas do not prove row overread.",
+    "unattributed": "Rust coprocessor response bytes are approximately 3.8 percent higher in these diagnostic windows",
+    "services": "Stopped; data and raw evidence preserved"
+  },
   "status": "WIP. Co-located transport command and I/O ownership removes the named send-to-driver wake path and reduces SQL CPU 8.07 percent versus the previous experiment. Throughput remains -0.39 percent and p95 unchanged versus that predecessor; still slower than the faster control. No throughput/latency acceptance or whole-package completion.",
   "branch": "hparser-integration",
   "git_head": "431d637dec5a894f7eb435caa767dab03aefaba8",

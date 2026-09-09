@@ -174,16 +174,16 @@ fn avg_and_sum_spill_pairs_round_trip_all_original_vectors() {
     for (value, count) in [(0_i64, 0_i64), (12_345, 123), (87_654, -123)] {
         let decimal = Decimal::from_int(value);
         let bytes = serializer.serialize_decimal_pair(&decimal, count).to_vec();
-        assert_eq!(deserialize_decimal_pair(&bytes).unwrap(), (decimal, count));
+        assert_eq!(deserialize_decimal_pair(&bytes), (decimal, count));
     }
 
     for (value, count) in [(0.0, 0), (123.123, 123), (-123.123, -123)] {
         let avg = AvgFloat64State::from_parts(value, count);
         let bytes = serializer.serialize_avg_float64(avg).to_vec();
-        assert_eq!(deserialize_avg_float64(&bytes).unwrap(), avg);
+        assert_eq!(deserialize_avg_float64(&bytes), avg);
         let sum = SumFloat64State::from_parts(value, count);
         let bytes = serializer.serialize_sum_float64(sum).to_vec();
-        assert_eq!(deserialize_sum_float64(&bytes).unwrap(), sum);
+        assert_eq!(deserialize_sum_float64(&bytes), sum);
     }
 }
 
@@ -198,7 +198,7 @@ fn hidden_decimal_precision_survives_spill_round_trip() {
     let mut serializer = SpillSerializer::new();
     let bytes = serializer.serialize_decimal_pair(&decimal, 3).to_vec();
     assert_eq!(bytes.len(), 40 + std::mem::size_of::<i64>());
-    let (decoded, count) = deserialize_decimal_pair(&bytes).unwrap();
+    let (decoded, count) = deserialize_decimal_pair(&bytes);
     assert_eq!(count, 3);
     assert_eq!(decoded, decimal);
     assert_eq!(decoded.scale(), 7);

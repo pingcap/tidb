@@ -19,9 +19,9 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use tidb_codec::{
-    decode, decode_decimal, decode_one_typed, decode_row_to_datums, encode_bytes,
-    encode_decimal_fixed, encode_int, encode_row, encode_row_from_old, encode_value, ColumnInfo,
-    DatumColumn, DecodeRowOptions, RowData, BYTES_FLAG,
+    decode, decode_decimal, decode_one, decode_one_typed, decode_row_to_datums, encode_bytes,
+    encode_decimal_fixed, encode_int, encode_row, encode_value, ColumnInfo, DatumColumn,
+    DecodeRowOptions, RowData, BYTES_FLAG,
 };
 use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode};
 
@@ -83,7 +83,18 @@ fn benchmark_row_encode(values: &[Datum], output: &mut Vec<u8>) {
 
 fn benchmark_encode_from_old_row(old_row: &[u8], output: &mut Vec<u8>) {
     output.clear();
-    encode_row_from_old(None, old_row, output).unwrap();
+    let mut input = old_row;
+    let mut column_ids = Vec::new();
+    let mut values = Vec::new();
+    while input.len() > 1 {
+        let (remainder, column_id) = decode_one(input).unwrap();
+        input = remainder;
+        column_ids.push(column_id.as_int().unwrap());
+        let (remainder, value) = decode_one(input).unwrap();
+        input = remainder;
+        values.push(value);
+    }
+    encode_row(None, &column_ids, &values, output).unwrap();
     black_box(&output);
 }
 

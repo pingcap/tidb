@@ -44,8 +44,7 @@ use tidb_datatype::SessionTimeZone;
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
     signed_handle_ranges_to_kv_ranges, CancelHandle, CoprCache, CoprCacheConfig,
-    DirectUnaryQueryTransport, DirectUnaryRuntimeConfig, DirectUnaryTransportEvidence,
-    DirectUnaryTransportEvidenceHandle, EncodeType, ExecutorKind, ExecutorShape,
+    DirectUnaryQueryTransport, DirectUnaryRuntimeConfig, EncodeType, ExecutorKind, ExecutorShape,
     InjectedQueryRuntime, QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope,
     ResponseChannel, SelectInput, SignedHandleRange, TimestampSource, WarningCollector,
 };
@@ -872,144 +871,20 @@ pub struct RealTiKvQuery {
     snapshot_ts: Option<u64>,
     table_id: i64,
     session_identity: RealTiKvReadSessionIdentity,
-    plan_evidence: RealTiKvQueryPlanEvidence,
     cancellation: Arc<CancelHandle>,
 }
 
-/// One physical executor kind frozen before a real query is published.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RealTiKvPlanExecutorKind {
-    /// The configured table scan at executor-list position zero.
-    TableScan,
-    /// A TiKV Selection containing the planner's resolved predicates.
-    Selection,
-}
-
-impl RealTiKvPlanExecutorKind {
-    /// Returns the stable source-facing executor name used by live evidence.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TableScan => "TableScan",
-            Self::Selection => "Selection",
-        }
+fn request_envelope(plan: &ReadOnlyScanPlan) -> RequestEnvelope {
+    let mut executors = vec![ExecutorShape::new(ExecutorKind::TableScan)];
+    if plan
+        .selection()
+        .is_some_and(|selection| !selection.conditions.is_empty())
+    {
+        // Selection is `Other` in the request builder's concurrency-only
+        // shape model. The encoded DAG carries its exact physical identity.
+        executors.push(ExecutorShape::new(ExecutorKind::Other));
     }
-
-    const fn request_envelope_kind(self) -> ExecutorKind {
-        match self {
-            Self::TableScan => ExecutorKind::TableScan,
-            // Selection is deliberately `Other` in the request-builder's
-            // concurrency-only shape model. The immutable query evidence and
-            // encoded DAG retain its exact physical identity.
-            Self::Selection => ExecutorKind::Other,
-        }
-    }
-}
-
-/// Immutable physical-plan evidence attached to an admitted real query.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RealTiKvQueryPlanEvidence {
-    executor_kinds: Vec<RealTiKvPlanExecutorKind>,
-    predicate_count: usize,
-    output_offsets: Vec<u32>,
-    handle_ranges: Vec<RealTiKvHandleRangeEvidence>,
-}
-
-/// One immutable inclusive signed-handle boundary published with a query.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RealTiKvHandleRangeEvidence {
-    low: i64,
-    high: i64,
-}
-
-impl RealTiKvHandleRangeEvidence {
-    /// Returns the inclusive signed low handle.
-    #[must_use]
-    pub const fn low(self) -> i64 {
-        self.low
-    }
-
-    /// Returns the inclusive signed high handle.
-    #[must_use]
-    pub const fn high(self) -> i64 {
-        self.high
-    }
-
-    /// Planner normalization converts strict bounds to adjacent integers.
-    #[must_use]
-    pub const fn low_exclude(self) -> bool {
-        false
-    }
-
-    /// Planner normalization converts strict bounds to adjacent integers.
-    #[must_use]
-    pub const fn high_exclude(self) -> bool {
-        false
-    }
-}
-
-impl RealTiKvQueryPlanEvidence {
-    fn from_plan(plan: &ReadOnlyScanPlan) -> Self {
-        let predicate_count = plan
-            .selection()
-            .map_or(0, |selection| selection.conditions().len());
-        let mut executor_kinds = vec![RealTiKvPlanExecutorKind::TableScan];
-        if predicate_count != 0 {
-            executor_kinds.push(RealTiKvPlanExecutorKind::Selection);
-        }
-        Self {
-            executor_kinds,
-            predicate_count,
-            output_offsets: plan.projection_output_offsets().to_vec(),
-            handle_ranges: plan
-                .handle_ranges()
-                .iter()
-                .map(|range| RealTiKvHandleRangeEvidence {
-                    low: range.start(),
-                    high: range.end(),
-                })
-                .collect(),
-        }
-    }
-
-    /// Returns executor kinds in exact TiKV list-DAG order.
-    #[must_use]
-    pub fn executor_kinds(&self) -> &[RealTiKvPlanExecutorKind] {
-        &self.executor_kinds
-    }
-
-    /// Returns the number of flattened Selection conditions.
-    #[must_use]
-    pub const fn predicate_count(&self) -> usize {
-        self.predicate_count
-    }
-
-    /// Returns the final reader projection over the scan input.
-    #[must_use]
-    pub fn output_offsets(&self) -> &[u32] {
-        &self.output_offsets
-    }
-
-    /// Returns the number of physical table-handle ranges in the request.
-    #[must_use]
-    pub fn handle_range_count(&self) -> usize {
-        self.handle_ranges.len()
-    }
-
-    /// Returns immutable inclusive handle boundaries in request order.
-    #[must_use]
-    pub fn handle_ranges(&self) -> &[RealTiKvHandleRangeEvidence] {
-        &self.handle_ranges
-    }
-
-    fn request_envelope(&self) -> RequestEnvelope {
-        RequestEnvelope::new(
-            self.executor_kinds
-                .iter()
-                .map(|kind| ExecutorShape::new(kind.request_envelope_kind()))
-                .collect(),
-        )
-    }
+    RequestEnvelope::new(executors)
 }
 
 impl RealTiKvQuery {
@@ -1032,12 +907,6 @@ impl RealTiKvQuery {
     #[must_use]
     pub const fn session_identity(&self) -> RealTiKvReadSessionIdentity {
         self.session_identity
-    }
-
-    /// Returns immutable physical-plan evidence before response completion.
-    #[must_use]
-    pub const fn plan_evidence(&self) -> &RealTiKvQueryPlanEvidence {
-        &self.plan_evidence
     }
 
     /// Cancels only this query and its transport-owned request children.
@@ -1138,43 +1007,12 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     /// over this tier (the read half of `INSERT ... SELECT`) states it with
     /// [`Self::set_push_down_flags`].
     push_down_flags: u64,
+    /// `DAGRequest.div_precision_increment`, Go `builder_utils.go:73-76`: the
+    /// statement's `div_precision_increment` session variable, omitted from
+    /// the request at its default. [`Self::set_div_precision_increment`].
+    div_precision_increment: u32,
     /// The statement's warning sink; see [`Self::set_warning_sink`].
     warnings: WarningCollector,
-}
-
-/// Physical-transport observability, offered by any DirectUnary-shaped
-/// transport regardless of which client/loader pair drives it. The generic
-/// server session demands this instead of naming the production transport.
-pub trait TransportEvidenceSource {
-    /// Real region and physical transport observations for the most recently
-    /// bound query.
-    fn evidence(&self) -> DirectUnaryTransportEvidence;
-    /// A read-only handle that can observe the lazy physical attempt.
-    fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle;
-}
-
-impl<C, L> TransportEvidenceSource for DirectUnaryQueryTransport<C, L> {
-    fn evidence(&self) -> DirectUnaryTransportEvidence {
-        DirectUnaryQueryTransport::evidence(self)
-    }
-    fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle {
-        DirectUnaryQueryTransport::evidence_handle(self)
-    }
-}
-
-impl<T: TransportEvidenceSource, S> RealTiKvReadSession<T, S> {
-    /// Returns real region and physical transport observations for the most
-    /// recently bound query.
-    #[must_use]
-    pub fn transport_evidence(&self) -> DirectUnaryTransportEvidence {
-        self.transport.evidence()
-    }
-
-    /// Returns a read-only handle that can observe the lazy physical attempt.
-    #[must_use]
-    pub fn transport_evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle {
-        self.transport.evidence_handle()
-    }
 }
 
 impl<T, S> RealTiKvReadSession<T, S>
@@ -1200,6 +1038,7 @@ where
             _lease: None,
             time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
+            div_precision_increment: crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT,
             warnings: WarningCollector::new(),
         }
     }
@@ -1222,6 +1061,7 @@ where
             _lease: lease,
             time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
+            div_precision_increment: crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT,
             warnings: WarningCollector::new(),
         }
     }
@@ -1230,6 +1070,12 @@ where
     /// as [`Self::set_time_zone`] does for the zone.
     pub const fn set_push_down_flags(&mut self, flags: u64) {
         self.push_down_flags = flags;
+    }
+
+    /// Sets `DAGRequest.div_precision_increment` for every request from this
+    /// point on, Go `builder_utils.go:73-76`.
+    pub const fn set_div_precision_increment(&mut self, increment: u32) {
+        self.div_precision_increment = increment;
     }
 
     /// Installs the statement's warning sink, so the warnings TiKV reports
@@ -1420,7 +1266,6 @@ where
         snapshot_ts: Option<u64>,
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
-        let plan_evidence = RealTiKvQueryPlanEvidence::from_plan(&plan);
         // Drives coprocessor chunk decode from each projected column's actual
         // configured scalar type instead of assuming every result column is a
         // signed `BIGINT`. A `Char`/`Double`/unsigned-`BIGINT` column decoded
@@ -1455,7 +1300,6 @@ where
                 snapshot_ts: None,
                 table_id: plan.table_id(),
                 session_identity: self.identity,
-                plan_evidence,
                 cancellation,
             });
         }
@@ -1471,13 +1315,17 @@ where
         let snapshot_ts = snapshot_ts.expect("nonempty plans require a supplied snapshot");
 
         let (time_zone_name, time_zone_offset) = self.time_zone.dag_zone();
+        let mut dag_context = DagRequestContext::new(
+            time_zone_name,
+            time_zone_offset,
+            self.push_down_flags,
+            EncodeType::Default,
+        );
+        // Go `builder_utils.go:73-76`: the statement's division scale reaches
+        // every DAG; the lowering omits the field at its default.
+        dag_context.div_precision_increment = self.div_precision_increment;
         let dag = construct_read_only_dag_req(
-            &DagRequestContext::new(
-                time_zone_name,
-                time_zone_offset,
-                self.push_down_flags,
-                EncodeType::Default,
-            ),
+            &dag_context,
             TiKvScanPlan::Table(plan.table_scan()),
             plan.selection(),
             plan.projection_output_offsets(),
@@ -1491,7 +1339,7 @@ where
             .set_keep_order(false)
             .set_allow_unordered_response(true)
             .set_non_partitioned_key_ranges(key_ranges)
-            .set_dag_request(plan_evidence.request_envelope(), dag_data);
+            .set_dag_request(request_envelope(&plan), dag_data);
         let request = builder
             .build_transport_request(Arc::clone(&cancellation))
             .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
@@ -1516,7 +1364,6 @@ where
             snapshot_ts: Some(snapshot_ts),
             table_id,
             session_identity: self.identity,
-            plan_evidence,
             cancellation,
         })
     }

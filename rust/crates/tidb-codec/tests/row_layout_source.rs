@@ -59,10 +59,6 @@ fn row_header_metadata_offsets_and_column_lookup_follow_source_layout() {
     assert!(!row.column_is_null(7, false));
     assert_eq!(row.value(0), Ok(&b"ab"[..]));
     assert_eq!(row.value(1), Ok(&b"cd"[..]));
-    assert_eq!(
-        row.value_range(2),
-        Err(RowCodecError::ValueIndexOutOfRange { index: 2, count: 2 })
-    );
 }
 
 #[test]
@@ -98,7 +94,6 @@ fn large_row_and_checksum_metadata_preserve_width_and_trailer_boundaries() {
 #[test]
 fn common_row_format_predicates_and_malformed_boundaries_are_explicit() {
     assert!(is_new_format(&[ROW_CODEC_VERSION]));
-    assert!(!is_new_format(&[]));
     assert!(!is_new_format(&[ROW_CODEC_VERSION - 1]));
     assert!(!is_row_key(b"bt"));
     assert!(!is_row_key(b"tr"));
@@ -114,24 +109,14 @@ fn common_row_format_predicates_and_malformed_boundaries_are_explicit() {
             found: ROW_CODEC_VERSION - 1
         })
     );
-    assert!(matches!(
-        RowLayout::parse(&[ROW_CODEC_VERSION, 0, 1, 0, 0]),
-        Err(RowCodecError::InsufficientBytes {
-            section: "row header",
-            ..
-        })
-    ));
-
     let mut decreasing = vec![ROW_CODEC_VERSION, 0];
     put_u16(&mut decreasing, 2);
     put_u16(&mut decreasing, 0);
     decreasing.extend_from_slice(&[1, 2]);
     put_u16(&mut decreasing, 3);
     put_u16(&mut decreasing, 2);
-    assert_eq!(
-        RowLayout::parse(&decreasing),
-        Err(RowCodecError::InvalidOffset { index: 1, value: 2 })
-    );
+    decreasing.extend_from_slice(b"ab");
+    assert!(RowLayout::parse(&decreasing).is_ok());
 
     let mut bad_checksum = vec![ROW_CODEC_VERSION, ROW_FLAG_CHECKSUM, 0, 0, 0, 0];
     bad_checksum.push(3);
@@ -139,4 +124,38 @@ fn common_row_format_predicates_and_malformed_boundaries_are_explicit() {
         RowLayout::parse(&bad_checksum),
         Err(RowCodecError::InvalidChecksumVersion { version: 3 })
     );
+}
+
+#[test]
+#[should_panic]
+fn is_new_format_panics_on_empty_input_like_go() {
+    let _ = is_new_format(&[]);
+}
+
+#[test]
+#[should_panic]
+fn truncated_row_header_panics_like_go() {
+    let _ = RowLayout::parse(&[ROW_CODEC_VERSION, 0, 1, 0, 0]);
+}
+
+#[test]
+#[should_panic]
+fn out_of_range_value_index_panics_like_go() {
+    let encoded = [ROW_CODEC_VERSION, 0, 0, 0, 0, 0];
+    let (row, _) = RowLayout::parse(&encoded).unwrap();
+    let _ = row.value_range(0);
+}
+
+#[test]
+#[should_panic]
+fn decreasing_offsets_panic_when_go_slices_the_value() {
+    let mut decreasing = vec![ROW_CODEC_VERSION, 0];
+    put_u16(&mut decreasing, 2);
+    put_u16(&mut decreasing, 0);
+    decreasing.extend_from_slice(&[1, 2]);
+    put_u16(&mut decreasing, 3);
+    put_u16(&mut decreasing, 2);
+    decreasing.extend_from_slice(b"abc");
+    let (row, _) = RowLayout::parse(&decreasing).unwrap();
+    let _ = row.value(1);
 }

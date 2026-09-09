@@ -481,13 +481,12 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
         run("SELECT a FROM ht HAVING (SELECT count(*) FROM hs) > 0").unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
     );
-    // The correlation resolves against the PROJECTION, so the underlying
-    // column's name is NOT what it answers to.
-    //
-    // DEFERRED, the other side of that same rule: a correlation to the ALIAS
-    // (`hs.x = bb`, which TiDB answers `10`) is refused rather than answered
-    // -- see `bind_having_correlations`. It is an error, not a wrong row set.
-    assert!(run("SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = bb) > 0").is_err());
+    // The correlation resolves against the PROJECTION, so the ALIAS is what it
+    // answers to -- `bb`, not the underlying `b`.
+    assert_eq!(
+        run("SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = bb) > 0").unwrap(),
+        vec![vec![Datum::Int(10)]]
+    );
     for (sql, name) in [
         (
             "SELECT a FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
@@ -517,20 +516,143 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
     }
 }
 
-/// Go's `findBestTask4LogicalDataSource` routes `ds.SampleInfo != nil` to
-/// `convertToSampleTable`; it never treats the clause as an ordinary scan.
-/// Rust parses the same syntax but has no TiKV region-sampling model, so the
-/// honest boundary is a refusal. The control query proves the table remains a
-/// normal readable table and that the error belongs to `TABLESAMPLE` itself.
+/// A correlated scalar subquery in HAVING is lowered into an `Apply` whose
+/// inner column widens the plan schema WITHOUT appending a select field. Go's
+/// trailing `buildProjection` trims the output back to the select list, and
+/// the Rust trim was gated on the field count alone, so the subquery value
+/// leaked as a third result column (`1 | 10 | 5`).
 #[test]
-fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
+fn a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO ht VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hs VALUES (10, 5)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1), Datum::Int(10)]]
+    );
+}
+
+/// Go's non-TiKV `splitIntoMultiRanges` fallback produces one full table-key
+/// range, and `TableSampleExecutor` returns that range's first record.
+#[test]
+fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE smp (a BIGINT PRIMARY KEY)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on("INSERT INTO smp VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
 
+    assert_eq!(
+        run_select_on("SELECT a FROM smp TABLESAMPLE REGIONS()", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+    // Sampling precedes WHERE evaluation; a predicate must not turn the
+    // sample source back into an ordinary filtered scan.
+    assert!(run_select_on(
+        "SELECT a FROM smp TABLESAMPLE REGIONS() WHERE a = 2",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .is_empty());
+    assert_eq!(
+        run_select_on(
+            "SELECT count(*) FROM smp TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    crate::run_create_table_on("CREATE TABLE empty_sample (a BIGINT)", &mut catalog).unwrap();
+    assert!(run_select_on(
+        "SELECT a FROM empty_sample TABLESAMPLE REGIONS()",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .is_empty());
+
+    crate::run_create_table_on("CREATE TABLE generated_sample (a BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO generated_sample VALUES (0), (1000)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    crate::run_alter_table_in(
+        "ALTER TABLE generated_sample ADD COLUMN b BIGINT NOT NULL DEFAULT 9",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    crate::run_alter_table_in(
+        "ALTER TABLE generated_sample ADD COLUMN c BIGINT AS (a + 1)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT b, c, _tidb_rowid FROM generated_sample TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(9), Datum::Int(1), Datum::Int(1)]],
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE partition_sample (a BIGINT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO partition_sample VALUES (2), (1), (12), (11)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM partition_sample TABLESAMPLE REGIONS() ORDER BY a",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)], vec![Datum::Int(12)]],
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM partition_sample PARTITION (p1) TABLESAMPLE REGIONS()",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(12)]],
+    );
+
     for sql in [
-        "SELECT a FROM smp TABLESAMPLE REGIONS()",
         "SELECT a FROM smp TABLESAMPLE BERNOULLI (10 PERCENT)",
         "SELECT a FROM smp TABLESAMPLE SYSTEM (2 ROWS) REPEATABLE(7)",
     ] {
@@ -539,7 +661,7 @@ fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
                 run_select_on(sql, &catalog, &ctx),
                 Err(DriverError::Unsupported(_))
             ),
-            "{sql} must refuse rather than answer the whole table",
+            "{sql} must reject the sampling method",
         );
     }
 

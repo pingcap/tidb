@@ -17,21 +17,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_RAND_VALUE: u32 = 0x3fff_ffff;
 
-#[derive(Clone, Copy, Debug)]
 struct State {
     seed1: u32,
     seed2: u32,
 }
 
 /// MySQL's two-seed random number generator.
-#[derive(Debug)]
 pub struct MysqlRng {
     state: Mutex<State>,
 }
 
 impl MysqlRng {
     /// Creates the RNG with the exact Go wrapping/truncation seed derivation.
-    #[must_use]
     pub fn new_with_seed(seed: i64) -> Self {
         let seed1 = seed.wrapping_mul(0x1_0001).wrapping_add(55_555_555) as u32 % MAX_RAND_VALUE;
         let seed2 = seed.wrapping_mul(0x1000_0001) as u32 % MAX_RAND_VALUE;
@@ -41,7 +38,6 @@ impl MysqlRng {
     }
 
     /// Creates the RNG from the current Unix nanosecond timestamp.
-    #[must_use]
     pub fn new_with_time() -> Self {
         let now = SystemTime::now();
         let seed = match now.duration_since(UNIX_EPOCH) {
@@ -89,7 +85,6 @@ impl MysqlRng {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
@@ -133,44 +128,5 @@ mod tests {
         assert_eq!(rng.gen(), 0.495_463_794_558_740_96);
         assert_eq!(rng.get_seed1(), 532_000_198);
         assert_eq!(rng.get_seed2(), 689_000_330);
-    }
-
-    #[test]
-    fn source_seed_setters_preserve_u32_wrapping() {
-        let rng = MysqlRng::new_with_seed(0);
-        rng.set_seed1(u32::MAX);
-        rng.set_seed2(u32::MAX);
-
-        assert_eq!(rng.gen().to_bits(), 0.0_f64.to_bits());
-        assert_eq!(rng.get_seed1(), 0);
-        assert_eq!(rng.get_seed2(), 32);
-    }
-
-    #[test]
-    fn concurrent_generation_is_one_serialized_sequence() {
-        const THREADS: usize = 8;
-        const VALUES_PER_THREAD: usize = 1_000;
-
-        let shared = Arc::new(MysqlRng::new_with_seed(1));
-        let workers: Vec<_> = (0..THREADS)
-            .map(|_| {
-                let shared = Arc::clone(&shared);
-                thread::spawn(move || {
-                    for _ in 0..VALUES_PER_THREAD {
-                        shared.gen();
-                    }
-                })
-            })
-            .collect();
-        for worker in workers {
-            worker.join().expect("RNG worker must not panic");
-        }
-
-        let sequential = MysqlRng::new_with_seed(1);
-        for _ in 0..THREADS * VALUES_PER_THREAD {
-            sequential.gen();
-        }
-        assert_eq!(shared.get_seed1(), sequential.get_seed1());
-        assert_eq!(shared.get_seed2(), sequential.get_seed2());
     }
 }

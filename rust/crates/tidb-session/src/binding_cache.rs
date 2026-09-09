@@ -73,8 +73,6 @@
 //!   because ristretto is probabilistic -- is pinned here to the exact
 //!   surviving pair.
 //!
-//!   Neither ported cache in the workspace fits: `tidb_util::sieve::Sieve` is
-//!   the SIEVE policy with no reject-on-oversize and no per-drop callback, and
 //!   `tidb_util::kvcache` is only a memory-tracker surface, not a store.
 //! * **Locking.** Cache construction takes `&mut self`. Cluster sessions pin
 //!   immutable images through [`SharedBindingCache`]; the storage owner

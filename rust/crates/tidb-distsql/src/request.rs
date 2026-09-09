@@ -20,9 +20,7 @@
 
 use std::sync::{atomic::AtomicU64, Arc};
 
-use crate::{
-    DistSqlContext, PagingConfig, Priority, ReplicaReadType, RequestContext, TiFlashReplicaRead,
-};
+use crate::{DistSqlContext, PagingConfig, Priority, ReplicaRead, ReplicaReadType, RequestContext};
 use tidb_txnkv::{IsolationLevel, Priority as KvPriority, RequestSource};
 
 /// The immutable, dependency-closed request metadata produced by the builder.
@@ -41,13 +39,17 @@ pub struct ReadRequestMetadata {
     /// Effective replica routing preference.
     pub replica_read: ReplicaReadType,
     /// TiFlash node-selection policy copied into the client-send boundary.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
     /// Paging controls copied without dropping byte size when disabled.
     pub paging: PagingConfig,
     /// Request source metadata.
     pub request_source: RequestSource,
     /// Store batch size.
     pub store_batch_size: u64,
+    /// Whether unhinted store batching may merge child data into the main response.
+    pub allow_batch_task_data_merge: bool,
+    /// Whether batched store tasks should execute serially.
+    pub execute_batch_tasks_serially: bool,
     /// Resource group name.
     pub resource_group_name: String,
     /// Load-based replica-read threshold in milliseconds.
@@ -60,6 +62,8 @@ pub struct ReadRequestMetadata {
     pub max_keys_read: u64,
     /// Shared statement-wide accumulator, when enabled.
     pub max_keys_read_counter: Option<Arc<AtomicU64>>,
+    /// Query-scoped per-store coprocessor limiter.
+    pub query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl ReadRequestMetadata {
@@ -151,12 +155,15 @@ impl ReadRequestBuilder {
             explicit_source_type: context.explicit_request_source_type.clone(),
         };
         self.request.store_batch_size = context.store_batch_size;
+        self.request.allow_batch_task_data_merge = context.allow_batch_task_data_merge;
+        self.request.execute_batch_tasks_serially = context.execute_batch_tasks_serially;
         self.request.resource_group_name = context.resource_group_name.clone();
         self.request.store_busy_threshold_ms = context.load_based_replica_read_threshold_ms;
         self.request.tikv_client_read_timeout_ms = context.tikv_client_read_timeout_ms;
         self.request.max_execution_time_ms = context.max_execution_time_ms;
         self.request.max_keys_read = context.max_keys_read;
         self.request.max_keys_read_counter = max_keys_read_counter.clone();
+        self.request.query_cop_store_limiter = context.query_cop_store_limiter.clone();
     }
 }
 

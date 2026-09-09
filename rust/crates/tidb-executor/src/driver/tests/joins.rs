@@ -245,7 +245,11 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE anti_l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
-    crate::run_create_table_on("CREATE TABLE anti_r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE anti_r (id BIGINT, w BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
     crate::run_create_table_on("CREATE TABLE anti_d (id BIGINT)", &mut catalog).unwrap();
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -326,25 +330,68 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
         "the nested anti filter must leave no unnegated Selection: {nested_plan:#?}",
     );
 
-    // This first port deliberately implements only Go's no-projection branch.
-    // Reading an inner column needs generateProjectForConvertAntiJoin to add a
-    // typed NULL, so it remains a left outer join until that branch is ported.
+    // Go also accepts a non-join inner column whose originating schema proves
+    // it NOT NULL.
+    let non_join_not_null = "SELECT anti_l.id FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id=anti_r.id WHERE anti_r.w IS NULL";
+    assert_eq!(
+        run_select_on(non_join_not_null, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let non_join_plan = explain(non_join_not_null, &catalog);
+    assert!(
+        non_join_plan
+            .iter()
+            .any(|line| line.contains("anti semi join")),
+        "a NOT NULL inner column is an anti-join witness: {non_join_plan:#?}",
+    );
+
+    // A right outer join is normalized by swapping children and equality
+    // arguments before changing the join kind.
+    let right_outer = "SELECT anti_l.id FROM anti_r RIGHT JOIN anti_l \
+        ON anti_r.id=anti_l.id WHERE anti_r.id IS NULL";
+    assert_eq!(
+        run_select_on(right_outer, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let right_plan = explain(right_outer, &catalog);
+    assert!(
+        right_plan
+            .iter()
+            .any(|line| line.contains("anti semi join")),
+        "right outer conversion must produce an anti join: {right_plan:#?}",
+    );
+
+    // Null-safe equality is deliberately excluded by Go because it does not
+    // null-reject the inner key.
+    let null_safe = "SELECT anti_l.id FROM anti_l LEFT JOIN anti_r \
+        ON anti_l.id <=> anti_r.id WHERE anti_r.id IS NULL";
+    let null_safe_plan = explain(null_safe, &catalog);
+    assert!(
+        null_safe_plan
+            .iter()
+            .any(|line| line.contains("left outer join")),
+        "NullEQ must not be rewritten as an anti join: {null_safe_plan:#?}",
+    );
+
+    // Reading an inner column takes Go's `generateProjectForConvertAntiJoin`
+    // branch: a typed NULL projection preserves the outer-join result schema.
     let inner_output = "SELECT anti_l.id, anti_r.w FROM anti_l LEFT JOIN anti_r \
         ON anti_l.id=anti_r.id WHERE anti_r.id IS NULL";
     assert_eq!(
         run_select_on(inner_output, &catalog, &ctx).unwrap(),
         vec![vec![Datum::Int(2), Datum::Null]],
     );
-    let refused = explain(inner_output, &catalog);
+    let converted = explain(inner_output, &catalog);
     assert!(
-        refused.iter().any(|line| line.contains("left outer join")),
-        "an inner output requires Go's NULL-restoring projection: {refused:#?}",
+        converted.iter().any(|line| line.contains("anti semi join")),
+        "the NULL-restoring projection must retain the anti join: {converted:#?}",
     );
     assert!(
-        refused
-            .iter()
-            .any(|line| line.contains("isnull(test.anti_r.id)")),
-        "the unconverted join must retain its Selection: {refused:#?}",
+        !converted.iter().any(|line| {
+            line.contains("isnull(test.anti_r.id)") && !line.contains("not(isnull(")
+        }),
+        "the anti join must consume the unnegated Selection: {converted:#?}",
     );
 }
 
@@ -367,20 +414,24 @@ fn tpcc_check_five_keeps_only_the_cross_leaf_residual() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 2,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 2,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let sql = "SELECT count(*) FROM orders LEFT JOIN new_order ON no_w_id=o_w_id AND o_d_id=no_d_id AND o_id=no_o_id WHERE o_w_id=1 AND ((o_carrier_id IS NULL and no_o_id IS NULL) OR (o_carrier_id IS NOT NULL and no_o_id IS NOT NULL))";
     let stmt = tidb_parser::parse(sql).unwrap();
@@ -463,20 +514,24 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -501,22 +556,6 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not select")
     };
-    let rows = crate::driver::join_reorder::row_source(
-        select.from.as_ref().expect("FROM"),
-        select.where_clause.as_ref(),
-        &catalog,
-        "test",
-        &crate::StmtContext::for_query(),
-    )
-    .expect("the TPCC join group is modelled");
-    let order_line = rows.filters_for("order_line").expect("order_line leaf");
-    assert!(
-        order_line.iter().any(|filter| {
-            let restored = filter.restore();
-            restored.contains("`order_line`.`ol_w_id`=1") || restored.contains("`ol_w_id`=1")
-        }),
-        "o_w_id=1 must propagate through the equality edge: {order_line:?}",
-    );
     assert_eq!(
         run_select_on(sql, &catalog, &ctx).unwrap(),
         vec![vec![Datum::Int(2)]],
@@ -620,6 +659,147 @@ fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
                 )
         }),
         "Go retains physical key order while sorting equality display: {analyzed:?}",
+    );
+}
+
+/// Go `DeriveStats4DataSource` derives a data source's statistics from ITS
+/// own `PushedDownConds`, so a cross-table equality is charged to neither
+/// side. Before the per-source split, the pre-push-down `InitStats` pass
+/// applied the whole `WHERE` to every source and the equality scaled both
+/// profiles by an extra `SelectionFactor`, which flipped the join order.
+#[test]
+fn a_join_filter_is_charged_only_to_the_filtered_side() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    // The scaled histogram keeps the ANALYZEd bucket bounds, so the fixture
+    // needs a real spread for the range predicate to land inside them.
+    let a_rows: Vec<String> = (1..=100).map(|v| format!("({v}, {v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO a VALUES {}", a_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let b_rows: Vec<String> = (1..=100).map(|v| format!("({v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO b VALUES {}", b_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(&mut catalog, "a", 100, &[("x", 100), ("y", 100)], &ctx);
+    scale_analyzed_tpcc_table(&mut catalog, "b", 100, &[("x", 100)], &ctx);
+    catalog.clear_dirty_content();
+    let sql = "SELECT * FROM a, b WHERE a.x = b.x AND a.y > 50";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let estimate = |table: &str| {
+        let scan = rows
+            .iter()
+            .position(|row| text(row, 3) == format!("table:{table}"))
+            .unwrap_or_else(|| panic!("no scan for {table}: {rows:#?}"));
+        let reader = (0..scan)
+            .rev()
+            .find(|&index| text(&rows[index], 0).contains("TableReader"))
+            .unwrap_or_else(|| panic!("no reader above {table}: {rows:#?}"));
+        text(&rows[reader], 1)
+    };
+    assert_eq!(
+        estimate("a"),
+        "51.00",
+        "only the y > 50 range may scale table a: {rows:#?}",
+    );
+    assert_eq!(
+        estimate("b"),
+        "100.00",
+        "the cross-table equality must not scale table b: {rows:#?}",
+    );
+}
+
+/// Go `PropagateConstantForJoin`: `a.x = b.x AND b.x = 7` also filters
+/// `a.x = 7`, so `a`'s point estimate must see the complete key. The
+/// pre-push-down `InitStats` split runs before that rule, so it derives the
+/// same constant from the statement predicate.
+#[test]
+fn a_join_equality_propagates_its_constant_to_the_other_side() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let a_rows: Vec<String> = (1..=100).map(|v| format!("({v}, {v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO a VALUES {}", a_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let b_rows: Vec<String> = (1..=100).map(|v| format!("({v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO b VALUES {}", b_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(&mut catalog, "a", 100, &[("x", 100), ("y", 100)], &ctx);
+    scale_analyzed_tpcc_table(&mut catalog, "b", 100, &[("x", 100)], &ctx);
+    catalog.clear_dirty_content();
+    let sql = "SELECT * FROM a, b WHERE a.x = b.x AND b.x = 7 AND a.y > 50";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let estimate = |table: &str| {
+        let scan = rows
+            .iter()
+            .position(|row| text(row, 3) == format!("table:{table}"))
+            .unwrap_or_else(|| panic!("no scan for {table}: {rows:#?}"));
+        let reader = (0..scan)
+            .rev()
+            .find(|&index| text(&rows[index], 0).contains("TableReader"))
+            .unwrap_or_else(|| panic!("no reader above {table}: {rows:#?}"));
+        text(&rows[reader], 1)
+    };
+    // Go's `testkit` plan for the same fixture (`analyze table a, b`) shows
+    // `Selection(eq(test.a.x, 7), gt(test.a.y, 50))` with a 1.00 estimate, so
+    // both the displayed condition and the row count are pinned.
+    let a_selection = rows
+        .iter()
+        .find(|row| text(row, 0).contains("Selection") && text(row, 4).contains("test.a.y"))
+        .unwrap_or_else(|| panic!("no a-side Selection: {rows:#?}"));
+    assert!(
+        text(a_selection, 4).contains("eq(test.a.x, 7)"),
+        "the join equality's constant must propagate to a: {rows:#?}",
+    );
+    assert_eq!(
+        estimate("a"),
+        "1.00",
+        "Go estimates the propagated point range at one row: {rows:#?}",
     );
 }
 
@@ -831,20 +1011,24 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
         };
-        table.add_index(crate::kv_table::KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                column_offsets.len()
-            ],
-            column_offsets,
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
     }
     let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
         COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
@@ -966,6 +1150,190 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
     );
 }
 
+/// Go `GetEstimatedProbeCntFromProbeParents` (`plan.go:178`) scales every
+/// index-join INNER operator's displayed row count by the outer child's row
+/// count. The stock-level probe's inner scan holds the clamped one-row
+/// statistics, so its `EXPLAIN` estimate is `1 * 1.25 = 1.25` (and the
+/// Selection above it keeps that scale).
+#[test]
+fn an_index_join_probe_displays_the_outer_probe_count() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (\
+            ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, \
+            ol_number INT NOT NULL, ol_i_id INT NOT NULL, \
+            PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE stock (\
+            s_i_id INT NOT NULL, s_w_id INT NOT NULL, s_quantity INT, \
+            PRIMARY KEY (s_w_id, s_i_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (3627, 7, 1, 1, 100), (3630, 7, 1, 1, 101), \
+            (3647, 7, 1, 1, 102), (3630, 8, 1, 1, 101)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO stock VALUES \
+            (100, 1, 10), (101, 1, 20), (102, 1, 5), (100, 2, 5)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (table_name, column_offsets) in [("order_line", vec![2, 1, 0, 3]), ("stock", vec![1, 0])] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+    }
+    let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
+        COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
+        FROM (`order_line`) JOIN `stock` \
+        WHERE `ol_w_id`=1 AND `ol_d_id`=7 \
+        AND `ol_o_id`<3647 AND `ol_o_id`>=3647-20 \
+        AND `s_w_id`=1 AND `s_i_id`=`ol_i_id` AND `s_quantity`<18";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect();
+    let probe_scan = plan
+        .iter()
+        .find(|line| line.contains("TableRangeScan") && line.contains("table:stock"))
+        .unwrap_or_else(|| panic!("no stock probe scan: {plan:?}"));
+    assert_eq!(
+        probe_scan.split('\t').nth(1),
+        Some("1.25"),
+        "the inner scan must display its one clamped row times the 1.25 outer probes: {plan:?}",
+    );
+    // Go `constructDS2TableScanTask`: `selStats =
+    // ts.StatsInfo().Scale(selectivity)` over the RESIDUAL filters only
+    // (`lt(s_quantity, 18)`; the `s_w_id = 1` access condition is re-attached
+    // afterwards), so the probe's post-filter estimate is
+    // `0.332333 * 1.25 = 0.42`.
+    let probe_reader = plan
+        .iter()
+        .find(|line| line.contains("TableReader") && line.contains("(Probe)"))
+        .unwrap_or_else(|| panic!("no probe reader: {plan:?}"));
+    assert_eq!(
+        probe_reader.split('\t').nth(1),
+        Some("0.42"),
+        "the probe Selection must apply its residual quantity selectivity: {plan:?}",
+    );
+}
+
+/// A complete equality on every column of a clustered common handle is a
+/// `Point_Get`, not a `TableRangeScan`: Go's `canConvertPointGet`
+/// (`find_best_task.go:2199`) admits a non-prefix UNIQUE index whose range
+/// covers every key column. The `c_w_id = w_id` join equality propagates the
+/// constant into the composite primary key, so the customer side is a point
+/// get even though `c_w_id` is not written as a constant.
+#[test]
+fn a_complete_common_handle_equality_is_a_point_get() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (\
+            c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
+            c_last VARCHAR(16), \
+            PRIMARY KEY (c_w_id, c_d_id, c_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT NOT NULL, PRIMARY KEY (w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES (629, 6, 1, 'Smith')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO warehouse VALUES (1)", &mut catalog, &ctx).unwrap();
+    let stmt = tidb_parser::parse(
+        "SELECT c_last FROM customer, warehouse \
+         WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 6 AND c_id = 629",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\\t")
+        })
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("Point_Get") && line.contains("table:customer")),
+        "a complete common-handle equality must be a point get: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|line| line.contains("TableRangeScan")),
+        "no range scan remains: {plan:?}"
+    );
+}
+
 /// The TPCC NewOrder customer/warehouse lookup over go-tpc's complete table
 /// schemas and analyzed ten-warehouse cardinalities. A constant on the
 /// warehouse join key propagates to the customer's clustered composite
@@ -992,17 +1360,21 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
     let TableEntry::Kv(customer) = catalog.get_mut_in("test", "customer").unwrap() else {
         panic!("customer is not a KV table");
     };
-    customer.add_index(crate::kv_table::KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    customer.add_index(
+        crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        },
+        false,
+    );
     crate::run_create_table_on(
         "CREATE TABLE warehouse (\
             w_id INT NOT NULL, w_name VARCHAR(10), w_street_1 VARCHAR(20), \
@@ -1191,11 +1563,9 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
         .is_empty());
 }
 
-/// THE ROW-DROP PIN: a parent merge join over a child join that HASHES.
+/// A parent must not consume an order that its physical child does not deliver.
 ///
-/// This is the exact hazard `crate::driver::merge_decision`'s narrowing once
-/// existed to prevent, and the reason the narrowing could be removed. The
-/// shape:
+/// The shape is:
 ///
 /// ```text
 ///   mid JOIN top ON mid.a = top.a         -- promise says mid.a is ordered
@@ -1210,13 +1580,11 @@ fn tpcc_customer_warehouse_join_uses_two_point_gets() {
 /// merge join over that stream would advance past groups the input never
 /// separated and silently DROP rows.
 ///
-/// The VERIFY step is what stops it: both children are built first, each
-/// reports what it actually delivers, and the bottom join reports nothing --
-/// so the parent falls back to hashing. The assertion below is the full,
-/// correct row set. Delete the `merge.filter(...)` in
-/// `crate::driver::from::build_join` and this test loses rows.
+/// The shared planner must therefore choose a physical tree whose required
+/// properties are satisfied. The executor verifies that receipt before
+/// lowering it. The assertion below pins the complete row set.
 #[test]
-fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
+fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
     let mut catalog = Catalog::default();
     for ddl in [
         "CREATE TABLE bot (a BIGINT PRIMARY KEY, k BIGINT)",
@@ -1414,6 +1782,90 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
     );
 }
 
+/// Go's `DataSource.findBestTask` compares a naturally ordered access path
+/// with an unordered scan plus `EnforceProperty` whenever the child property
+/// has `CanAddEnforcer`. For this pseudo-statistics shape, Go chooses the two
+/// full table scans and puts one physical Sort below each MergeJoin child.
+/// Lowering only the join property while discarding those Sort nodes leaves
+/// the scans unordered and makes the selected merge plan unexecutable.
+#[test]
+fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE ncl (k BIGINT NOT NULL, o BIGINT NOT NULL, payload BIGINT, \
+         PRIMARY KEY (k, o) NONCLUSTERED)",
+        "CREATE TABLE ncr (k BIGINT NOT NULL, o BIGINT NOT NULL, payload BIGINT, \
+         PRIMARY KEY (k, o) NONCLUSTERED)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO ncl VALUES (1, 1, 10), (2, 1, 20)",
+        "INSERT INTO ncr VALUES (1, 1, 100), (2, 1, 200)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+
+    let sql = "SELECT /*+ TIDB_SMJ(l, r) */ l.payload, r.payload \
+               FROM ncl l JOIN ncr r ON l.k = r.k AND l.o = r.o";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        plan.iter().any(|line| line.contains("MergeJoin")),
+        "the two ordered PRIMARY double reads must feed the forced merge join: {plan:#?}"
+    );
+    for (side, keys) in [
+        ("table:l", "test.ncl.k, test.ncl.o"),
+        ("table:r", "test.ncr.k, test.ncr.o"),
+    ] {
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("Sort") && line.contains(keys)),
+            "{side} must be ordered by the selected physical Sort: {plan:#?}"
+        );
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("TableFullScan")
+                    && line.contains(side)
+                    && line.contains("keep order:false")
+            }),
+            "{side} must retain Go's unordered table scan below the Sort: {plan:#?}"
+        );
+    }
+
+    let mut got = run_select_on(sql, &catalog, &ctx).unwrap();
+    got.sort_by_key(|row| format!("{row:?}"));
+    assert_eq!(
+        got,
+        vec![
+            vec![Datum::Int(10), Datum::Int(100)],
+            vec![Datum::Int(20), Datum::Int(200)],
+        ]
+    );
+}
+
 /// THE HINT PIN: the same three statements, separated by nothing but their
 /// join hint, plan three different joins -- which is Go's
 /// `exhaustPhysicalPlans4LogicalJoin` reading `PreferJoinType` BEFORE it costs
@@ -1422,8 +1874,7 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
 /// Reduced from `tests/integrationtest/t/topn_push_down.test`, where TiDB
 /// records a `MergeJoin` for `TIDB_SMJ`, a `HashJoin` for `TIDB_HJ` and an
 /// `IndexJoin` for `TIDB_INLJ` over the very same `t t1 join t t2 on t1.a =
-/// t2.a`. Without the gate in [`crate::driver::join_method_hints`] all three
-/// merge here, which the `join_shape` casetest counts as EXTRA merge pairs.
+/// t2.a`. The shared planner must preserve those three physical receipts.
 #[test]
 fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
@@ -1505,20 +1956,16 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 }
 
 /// The clustered primary key can build a range from only `k1`, while the
-/// secondary index can use both equality keys. Costing both paths from the
-/// complete join output incorrectly makes the broad primary-key prefix look
-/// like a one-row probe.
+/// secondary index can use both equality keys. Go's `fixcontrol.Fix44855`
+/// raises the prefix path's probe row count to the average rows per leading
+/// key value; only with that floor does the complete-key secondary index win.
+/// Go reads the fix with `GetBoolWithDefault(..., false)`, so the DEFAULT
+/// session prices the broad clustered prefix as a one-row probe and keeps
+/// `TableRangeScan`; enabling `44855:ON` selects `idx_k1_k2` instead.
 ///
-/// CITATION CORRECTED: this named a Go test
-/// `TestIndexJoinInnerRowCountUsesUsableJoinKeys` "from #70176". No such
-/// test, and no such function, exists anywhere in the Go tree; the
-/// expectation below was not captured from Go. The CONCERN is real and Go
-/// does hold the quantity it turns on -- `rowCountUpperBound`,
-/// `exhaust_physical_plans.go:1123` -- but as an UPPER bound on the inner
-/// INDEX-scan task, behind `fixcontrol.Fix44855`, which defaults to false.
-/// See `IndexJoinDecision::probe_access_rows_floor` for what that means for
-/// the mechanism this guards. Until the same statement is captured from a
-/// running Go TiDB, this test pins Rust's own behaviour, not Go's.
+/// The shared planner must select the path the fix control asks for. Executor
+/// lowering receives that exact `inner_access_index_id`; it must not compare
+/// the broad clustered prefix against it a second time.
 #[test]
 fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
@@ -1564,24 +2011,42 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let (_, plan) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
-    let plan = plan
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|datum| match datum {
-                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                    other => format!("{other:?}"),
-                })
-                .collect::<Vec<_>>()
-                .join("\t")
-        })
-        .collect::<Vec<_>>();
-    assert!(
+    let explain = |ctx: &crate::StmtContext| {
+        let (_, plan) =
+            explain_select_stmt(select, &catalog, "test", ctx, ExplainFormat::Brief).unwrap();
         plan.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|datum| match datum {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // Default session: `44855` is OFF, so the broad clustered prefix stays a
+    // one-row probe and the index join reads the primary range scan.
+    let default_plan = explain(&ctx);
+    assert!(
+        !default_plan.iter().any(|line| line.contains("idx_k1_k2")),
+        "the default session must price the broad primary-key prefix as Go does: {default_plan:#?}"
+    );
+
+    // `44855:ON` raises the prefix probe to `rows / NDV(k1) = 1000`, so the
+    // complete-key secondary index becomes the cheaper inner access.
+    let (fix_control, warnings) =
+        tidb_planner::fix_control::OptimizerFixControl::parse("44855:ON").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let fix_on = ctx.clone().with_optimizer_fix_control(fix_control);
+    let fixed_plan = explain(&fix_on);
+    assert!(
+        fixed_plan
+            .iter()
             .any(|line| line.contains("index:idx_k1_k2(k1, k2)")),
-        "the complete-key index must beat the broad primary-key prefix: {plan:#?}"
+        "with 44855:ON the complete-key index must beat the broad primary-key prefix: {fixed_plan:#?}"
     );
 }
 
@@ -1608,8 +2073,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
     .unwrap();
     // The in-memory DDL catalog stores only the clustered handle; mirror the
     // parity fixture's metadata by also exposing PRIMARY as an access path.
-    for (table_name, column_offsets) in
-        [("district", vec![1, 0]), ("order_line", vec![2, 1, 0, 3])]
+    for (table_name, column_offsets) in [("district", vec![1, 0]), ("order_line", vec![2, 1, 0, 3])]
     {
         let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
             panic!("{table_name} is not a KV table");
@@ -1627,6 +2091,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
                 column_offsets,
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,
@@ -1674,7 +2139,11 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
     let result: Vec<Vec<Datum>> = ids.into_iter().map(Datum::Int).map(|v| vec![v]).collect();
     assert_eq!(
         result,
-        vec![vec![Datum::Int(10)], vec![Datum::Int(11)], vec![Datum::Int(29)]],
+        vec![
+            vec![Datum::Int(10)],
+            vec![Datum::Int(11)],
+            vec![Datum::Int(29)]
+        ],
         "the window [d_next_o_id-20, d_next_o_id) holds 10, 11 and 29; \
          9/30/31/40 sit outside it and the NULL district matches nothing",
     );
@@ -1692,9 +2161,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         .map(|row| {
             row.iter()
                 .map(|datum| match datum {
-                    Datum::Bytes(bytes) => {
-                        String::from_utf8_lossy(bytes).into_owned()
-                    }
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
                     other => format!("{other:?}"),
                 })
                 .collect::<Vec<_>>()
@@ -1709,13 +2176,14 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         plan.iter().any(|line| {
             line.contains("TableRangeScan")
                 && line.contains("table:order_line")
-                && line.contains(
-                    "ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))",
-                )
+                && line.contains("eq(test.order_line.ol_w_id, test.district.d_w_id)")
+                && line.contains("eq(test.order_line.ol_d_id, test.district.d_id)")
+                && line
+                    .contains("ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))")
                 && line.contains("lt(test.order_line.ol_o_id, test.district.d_next_o_id)")
         }),
-        "the inner range must carry both outer-derived bounds exactly as Go \
-         prints them inside `range: decided by [...]`: {plan:#?}",
+        "the inner range must carry Go's `eq(inner, outer)` pairs and both \
+         outer-derived bounds inside `range: decided by [...]`: {plan:#?}",
     );
 }
 
@@ -1836,9 +2304,7 @@ fn a_join_leaf_limit_counts_after_its_residual_selection() {
         .collect::<Vec<_>>()
         .join(", ");
     run_insert_on(
-        &format!(
-            "INSERT INTO jr_core (pk, mi, m, country) VALUES {core_values}"
-        ),
+        &format!("INSERT INTO jr_core (pk, mi, m, country) VALUES {core_values}"),
         &mut catalog,
         &ctx,
     )
@@ -1875,10 +2341,16 @@ fn a_join_leaf_limit_counts_after_its_residual_selection() {
     // The residual keeps 30 of the 60 entries. A limit past the surviving
     // cardinality must return ALL of them -- a raw-entry cap would stop at
     // half.
-    assert_eq!(pks_of(&format!("{base} 50")), (1..=30).map(|i| i * 2).collect::<Vec<_>>());
+    assert_eq!(
+        pks_of(&format!("{base} 50")),
+        (1..=30).map(|i| i * 2).collect::<Vec<_>>()
+    );
     // And a limit inside it must keep the FIRST 20 qualifying rows in index
     // order, not the qualifying subset of the first 20 entries.
-    assert_eq!(pks_of(&format!("{base} 20")), (1..=20).map(|i| i * 2).collect::<Vec<_>>());
+    assert_eq!(
+        pks_of(&format!("{base} 20")),
+        (1..=20).map(|i| i * 2).collect::<Vec<_>>()
+    );
 
     // The control: without the residual predicate there is nothing above the
     // capped read, so the same join answers the plain index-order prefix.

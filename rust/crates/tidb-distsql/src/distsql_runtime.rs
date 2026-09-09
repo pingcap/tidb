@@ -108,6 +108,35 @@ impl SelectResultMetadata {
     }
 }
 
+/// Aggregated blocking time from the Go coprocessor request limiter.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LimiterWaitStats {
+    /// Total nanoseconds spent waiting for request permits.
+    pub total_ns: u64,
+    /// Longest single permit wait in nanoseconds.
+    pub max_ns: u64,
+}
+
+impl LimiterWaitStats {
+    /// Records one blocking wait, preserving the source total/max contract.
+    pub fn record(&mut self, wait_ns: u64) {
+        self.total_ns = self.total_ns.saturating_add(wait_ns);
+        self.max_ns = self.max_ns.max(wait_ns);
+    }
+
+    /// Merges another aggregate into this one.
+    pub fn merge(&mut self, other: Self) {
+        self.total_ns = self.total_ns.saturating_add(other.total_ns);
+        self.max_ns = self.max_ns.max(other.max_ns);
+    }
+
+    /// Reports whether no blocking wait was recorded.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.total_ns == 0
+    }
+}
+
 /// The bounded runtime statistics updated while consuming select responses.
 ///
 /// Durations are nanoseconds, matching the checked-in tipb summary contract.
@@ -117,6 +146,8 @@ impl SelectResultMetadata {
 pub struct SelectResultRuntimeStats {
     backoff_sleep_ns: BTreeMap<String, u64>,
     plan_summaries: BTreeMap<isize, Vec<ExecutorExecutionSummary>>,
+    /// Request-limiter wait aggregate, equivalent to Go's `limiterWait`.
+    pub limiter_wait: LimiterWaitStats,
 }
 
 impl SelectResultRuntimeStats {
@@ -184,6 +215,61 @@ impl SelectResultRuntimeStats {
     #[must_use]
     pub fn plan_summaries(&self, plan_id: isize) -> &[ExecutorExecutionSummary] {
         self.plan_summaries.get(&plan_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Go `RuntimeStatsColl.GetCopCountAndRows`.
+    #[must_use]
+    pub fn cop_count_and_rows(&self, plan_id: isize) -> (u64, u64) {
+        let summaries = self.plan_summaries(plan_id);
+        (
+            summaries.len() as u64,
+            summaries.iter().fold(0_u64, |rows, summary| {
+                rows.wrapping_add(summary.num_produced_rows.unwrap_or_default())
+            }),
+        )
+    }
+
+    /// Records one request-limiter wait from a coprocessor response.
+    pub fn record_limiter_wait(&mut self, wait_ns: u64) {
+        self.limiter_wait.record(wait_ns);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cop_count_and_rows_matches_runtime_stats_collection() {
+        let mut stats = SelectResultRuntimeStats::default();
+        let metadata = SelectResultMetadata {
+            label: "dag",
+            sql_type: None,
+            store_type: StoreType::TiKv,
+            row_len: 1,
+            mem_tracker_bound: false,
+            paging: false,
+            dist_sql_concurrency: 1,
+            cop_plan_ids: vec![7],
+            root_plan_id: Some(9),
+        };
+        for rows in [3, 5] {
+            stats.update(
+                &metadata,
+                true,
+                "store",
+                false,
+                [],
+                &[ExecutorExecutionSummary {
+                    time_processed_ns: Some(1),
+                    num_produced_rows: Some(rows),
+                    num_iterations: Some(1),
+                    ..ExecutorExecutionSummary::default()
+                }],
+            );
+        }
+        assert_eq!(stats.cop_count_and_rows(7), (2, 8));
+        assert_eq!(stats.cop_count_and_rows(8), (0, 0));
     }
 }
 

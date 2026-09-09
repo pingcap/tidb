@@ -27,14 +27,19 @@
 //! therefore kills a peer without knowing anything about sockets.
 //!
 //! NOT MODELLED (Go has these on `ProcessInfo`, and inventing values would be
-//! worse than omitting them): the `PROCESS` privilege filter that hides other
-//! users' rows, plan/digest/memory/disk columns of
-//! `information_schema.processlist`, resource groups, session alias, and
-//! global-kill's server-id-routed `KILL` across instances.
+//! worse than omitting them): plan and resource-consumption columns of
+//! `information_schema.processlist`, and global-kill's server-id-routed
+//! `KILL` across instances.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+use chrono::{DateTime, Utc};
+use tidb_util::memory::Tracker;
+use tidb_util::memoryusagealarm::{OOMAlarmVariablesInfo, ProcessInfo, SessionManager};
+
+const MAX_TRANSACTION_STMT_HISTORY: usize = 50;
 
 /// One live connection's kill mechanism, owned by the server front end.
 ///
@@ -74,6 +79,44 @@ pub struct ProcessRow {
     pub info: Option<String>,
 }
 
+/// One live transaction exposed by `information_schema.TIDB_TRX`.
+#[derive(Clone, Debug)]
+pub struct TransactionRow {
+    /// Transaction start timestamp (TSO).
+    pub start_ts: u64,
+    /// Digest of the statement currently running, if any.
+    pub current_sql_digest: Option<String>,
+    /// Source transaction-running-state label.
+    pub state: &'static str,
+    /// Lock-wait start, absent outside `LockWaiting`.
+    pub waiting_start: Option<DateTime<Utc>>,
+    /// Number of entries in the transaction memory buffer.
+    pub mem_buffer_keys: u64,
+    /// Bytes consumed by the transaction memory buffer.
+    pub mem_buffer_bytes: i64,
+    /// Owning connection ID.
+    pub session_id: u64,
+    /// Login username.
+    pub user: String,
+    /// Current schema.
+    pub db: String,
+    /// Digests executed by this transaction.
+    pub all_sql_digests: Vec<String>,
+    /// Physical table IDs touched by this transaction.
+    pub related_table_ids: Vec<i64>,
+}
+
+struct TransactionEntry {
+    start_ts: u64,
+    current_sql_digest: Option<String>,
+    state: &'static str,
+    waiting_start: Option<DateTime<Utc>>,
+    mem_buffer_keys: u64,
+    mem_buffer_bytes: i64,
+    all_sql_digests: Vec<String>,
+    related_table_ids: std::collections::HashSet<i64>,
+}
+
 /// Go `ProcessInfo.ToRowForShow`: without `FULL`, `Info` is truncated with
 /// `fmt.Sprintf("%.100v", pi.Info)`, i.e. to its first 100 characters.
 pub const PROCESS_INFO_SHOW_LIMIT: usize = 100;
@@ -98,9 +141,26 @@ struct ProcessEntry {
     db: String,
     state: String,
     info: Option<String>,
+    digest: String,
+    digest_text: String,
     /// When the current command started, which `Time` counts from.
     since: Instant,
+    started_at: DateTime<Utc>,
+    mem_tracker: Option<Arc<Tracker>>,
+    disk_tracker: Option<Arc<Tracker>>,
+    cur_txn_start_ts: u64,
+    resource_group_name: String,
+    session_alias: String,
+    redact_sql: tidb_parser::RedactMode,
+    affected_rows: u64,
+    oom_alarm_variables_info: OOMAlarmVariablesInfo,
     kill: Option<Arc<dyn ProcessKillTarget>>,
+    transaction: Option<TransactionEntry>,
+    process_plan_info: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
+    /// Result-set owners retaining the current command after execution has
+    /// returned. Go clears `ProcessInfo` only when the server command ends,
+    /// after `writeResultSet` has drained the executor.
+    statement_holds: usize,
 }
 
 /// The server's live connection registry, shared by every connection thread.
@@ -147,8 +207,22 @@ impl ProcessRegistry {
                 db,
                 state: String::new(),
                 info: None,
+                digest: String::new(),
+                digest_text: String::new(),
                 since: Instant::now(),
+                started_at: Utc::now(),
+                mem_tracker: None,
+                disk_tracker: None,
+                cur_txn_start_ts: 0,
+                resource_group_name: "default".to_owned(),
+                session_alias: String::new(),
+                redact_sql: tidb_parser::RedactMode::Disabled,
+                affected_rows: 0,
+                oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
                 kill,
+                transaction: None,
+                process_plan_info: None,
+                statement_holds: 0,
             },
         );
         ProcessGuard {
@@ -161,9 +235,52 @@ impl ProcessRegistry {
     /// `Info` and restarts its `Time`.
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
         if let Some(entry) = self.lock().get_mut(&id) {
+            let same_held_statement =
+                entry.statement_holds > 0 && entry.info.as_deref() == Some(sql);
             entry.info = Some(sql.to_owned());
-            entry.since = Instant::now();
+            let (normalized, digest) = tidb_parser::normalize_digest(sql);
+            entry.digest = digest.to_string();
+            entry.digest_text = normalized;
+            if !same_held_statement {
+                entry.since = Instant::now();
+                entry.started_at = Utc::now();
+            }
             entry.state = state.to_owned();
+            entry.affected_rows = 0;
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.state = "Running";
+                let digest = entry.digest.clone();
+                transaction.current_sql_digest = (!digest.is_empty()).then(|| digest.clone());
+                if !digest.is_empty()
+                    && transaction.all_sql_digests.len() < MAX_TRANSACTION_STMT_HISTORY
+                {
+                    transaction.all_sql_digests.push(digest);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn statement_metadata(
+        &self,
+        id: u64,
+        cur_txn_start_ts: u64,
+        resource_group_name: String,
+        session_alias: String,
+        redact_sql: tidb_parser::RedactMode,
+        oom_alarm_variables_info: OOMAlarmVariablesInfo,
+    ) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.cur_txn_start_ts = cur_txn_start_ts;
+            entry.resource_group_name = resource_group_name;
+            entry.session_alias = session_alias;
+            entry.redact_sql = redact_sql;
+            entry.oom_alarm_variables_info = oom_alarm_variables_info;
+        }
+    }
+
+    pub(crate) fn statement_affected_rows(&self, id: u64, affected_rows: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.affected_rows = affected_rows;
         }
     }
 
@@ -172,11 +289,142 @@ impl ProcessRegistry {
     /// the schema and the statement may have opened or closed a transaction.
     pub fn statement_finished(&self, id: u64, db: &str, state: &str) {
         if let Some(entry) = self.lock().get_mut(&id) {
+            if entry.statement_holds > 0 {
+                return;
+            }
             entry.info = None;
+            entry.digest.clear();
+            entry.digest_text.clear();
             entry.since = Instant::now();
+            entry.started_at = Utc::now();
             entry.db = db.to_owned();
             entry.state = state.to_owned();
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.state = "Idle";
+                transaction.current_sql_digest = None;
+                transaction.waiting_start = None;
+            }
         }
+    }
+
+    fn hold_statement(&self, id: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.statement_holds = entry.statement_holds.saturating_add(1);
+        }
+    }
+
+    fn release_statement(&self, id: u64, db: &str, state: &str) {
+        let mut entries = self.lock();
+        let Some(entry) = entries.get_mut(&id) else {
+            return;
+        };
+        entry.statement_holds = entry.statement_holds.saturating_sub(1);
+        if entry.statement_holds > 0 {
+            return;
+        }
+        entry.info = None;
+        entry.digest.clear();
+        entry.digest_text.clear();
+        entry.since = Instant::now();
+        entry.started_at = Utc::now();
+        entry.db = db.to_owned();
+        entry.state = state.to_owned();
+        if let Some(transaction) = &mut entry.transaction {
+            transaction.state = "Idle";
+            transaction.current_sql_digest = None;
+            transaction.waiting_start = None;
+        }
+    }
+
+    /// Publishes a newly activated transaction for `TIDB_TRX`.
+    pub fn transaction_started(&self, id: u64, start_ts: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            let running = entry.info.is_some();
+            let digest = (!entry.digest.is_empty()).then(|| entry.digest.clone());
+            entry.transaction = Some(TransactionEntry {
+                start_ts,
+                current_sql_digest: digest.clone(),
+                state: if running { "Running" } else { "Idle" },
+                waiting_start: None,
+                mem_buffer_keys: 0,
+                mem_buffer_bytes: 0,
+                all_sql_digests: digest.into_iter().collect(),
+                related_table_ids: std::collections::HashSet::new(),
+            });
+            entry.cur_txn_start_ts = start_ts;
+        }
+    }
+
+    /// Removes the transaction after commit or rollback.
+    pub fn transaction_finished(&self, id: u64) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.transaction = None;
+            entry.cur_txn_start_ts = 0;
+        }
+    }
+
+    /// Changes the source transaction-running-state label.
+    pub fn transaction_state(&self, id: u64, state: &'static str) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.state = state;
+            transaction.waiting_start = (state == "LockWaiting").then(chrono::Utc::now);
+        }
+    }
+
+    /// Publishes the current transaction MemBuffer length and native memory
+    /// footprint. Go updates these from `LazyTxn.Len` and the MemDB footprint
+    /// hook while the transaction remains active.
+    pub fn transaction_buffer_metrics(&self, id: u64, keys: u64, bytes: i64) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.mem_buffer_keys = keys;
+            transaction.mem_buffer_bytes = bytes;
+        }
+    }
+
+    /// Records one physical table used by the live transaction.
+    pub fn transaction_related_table(&self, id: u64, table_id: i64) {
+        if let Some(transaction) = self
+            .lock()
+            .get_mut(&id)
+            .and_then(|entry| entry.transaction.as_mut())
+        {
+            transaction.related_table_ids.insert(table_id);
+        }
+    }
+
+    /// Returns every live transaction in stable connection-ID order.
+    #[must_use]
+    pub fn transaction_snapshot(&self) -> Vec<TransactionRow> {
+        let mut rows = self
+            .lock()
+            .iter()
+            .filter_map(|(id, entry)| {
+                let transaction = entry.transaction.as_ref()?;
+                Some(TransactionRow {
+                    start_ts: transaction.start_ts,
+                    current_sql_digest: transaction.current_sql_digest.clone(),
+                    state: transaction.state,
+                    waiting_start: transaction.waiting_start,
+                    mem_buffer_keys: transaction.mem_buffer_keys,
+                    mem_buffer_bytes: transaction.mem_buffer_bytes,
+                    session_id: *id,
+                    user: entry.user.clone(),
+                    db: entry.db.clone(),
+                    all_sql_digests: transaction.all_sql_digests.clone(),
+                    related_table_ids: transaction.related_table_ids.iter().copied().collect(),
+                })
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by_key(|row| row.session_id);
+        rows
     }
 
     /// Every live connection, ordered by identity so the list is stable.
@@ -229,12 +477,102 @@ impl ProcessRegistry {
         }
         true
     }
+
+    fn set_trackers(&self, id: u64, mem: Arc<Tracker>, disk: Arc<Tracker>) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.mem_tracker = Some(mem);
+            entry.disk_tracker = Some(disk);
+        }
+    }
+
+    fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {
+        if let Some(entry) = self.lock().get_mut(&id) {
+            entry.process_plan_info = Some(plan);
+        }
+    }
+
+    fn process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
+        self.lock().get(&id).map(|entry| {
+            let plan_info = entry
+                .process_plan_info
+                .as_ref()
+                .map(|plan| {
+                    plan.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone()
+                })
+                .unwrap_or_default();
+            Arc::new(ProcessInfo {
+                id,
+                user: entry.user.clone(),
+                host: entry.host.clone(),
+                db: entry.db.clone(),
+                digest: entry.digest.clone(),
+                info: entry.info.clone().unwrap_or_default(),
+                redact_sql: entry.redact_sql,
+                time: entry.started_at,
+                started_instant: Some(entry.since),
+                mem_tracker: entry.mem_tracker.as_ref().map(Arc::clone),
+                disk_tracker: entry.disk_tracker.as_ref().map(Arc::clone),
+                cur_txn_start_ts: entry.cur_txn_start_ts,
+                resource_group_name: entry.resource_group_name.clone(),
+                session_alias: entry.session_alias.clone(),
+                affected_rows: entry.affected_rows,
+                oom_alarm_variables_info: entry.oom_alarm_variables_info,
+                brief_binary_plan: plan_info.brief_binary_plan,
+                table_ids: plan_info.table_ids,
+                index_names: plan_info.index_names,
+                stats_info: plan_info.stats_info,
+                ..ProcessInfo::default()
+            })
+        })
+    }
+}
+
+impl SessionManager for ProcessRegistry {
+    fn show_process_list(&self) -> Vec<Arc<ProcessInfo>> {
+        let ids = self.lock().keys().copied().collect::<Vec<_>>();
+        ids.into_iter()
+            .filter_map(|id| self.process_info(id))
+            .collect()
+    }
+
+    fn get_process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
+        self.process_info(id)
+    }
 }
 
 /// Removes one connection from the process list when its session is dropped.
 pub struct ProcessGuard {
     registry: ProcessRegistry,
     id: u64,
+}
+
+/// Keeps one process-list statement active until its result set is finished.
+pub struct ProcessStatementGuard {
+    registry: ProcessRegistry,
+    id: u64,
+    db: String,
+    state: String,
+    finished: bool,
+}
+
+impl ProcessStatementGuard {
+    /// Finishes the statement now. Dropping an unfinished guard does the same.
+    pub fn finish(mut self) {
+        self.registry
+            .release_statement(self.id, &self.db, &self.state);
+        self.finished = true;
+    }
+}
+
+impl Drop for ProcessStatementGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.registry
+                .release_statement(self.id, &self.db, &self.state);
+        }
+    }
 }
 
 impl ProcessGuard {
@@ -248,6 +586,36 @@ impl ProcessGuard {
     #[must_use]
     pub const fn registry(&self) -> &ProcessRegistry {
         &self.registry
+    }
+
+    /// Installs the session memory and disk trackers exposed by ProcessInfo.
+    pub fn set_trackers(&self, mem: Arc<Tracker>, disk: Arc<Tracker>) {
+        self.registry.set_trackers(self.id, mem, disk);
+    }
+
+    /// Installs the session's live `BriefBinaryPlan` publication cell.
+    pub fn set_process_plan_info(&self, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {
+        self.registry.set_process_plan_info(self.id, plan);
+    }
+
+    /// Publishes one running statement for the lifetime of the returned guard.
+    #[must_use]
+    pub fn statement_started(
+        &self,
+        sql: &str,
+        db: impl Into<String>,
+        state: impl Into<String>,
+    ) -> ProcessStatementGuard {
+        let state = state.into();
+        self.registry.statement_started(self.id, sql, &state);
+        self.registry.hold_statement(self.id);
+        ProcessStatementGuard {
+            registry: self.registry.clone(),
+            id: self.id,
+            db: db.into(),
+            state,
+            finished: false,
+        }
     }
 }
 
@@ -308,7 +676,7 @@ mod tests {
     #[test]
     fn running_statement_becomes_info_and_is_cleared_again() {
         let registry = ProcessRegistry::default();
-        let _guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
+        let guard = registry.register(1, String::new(), String::new(), "test".to_owned(), None);
         registry.statement_started(1, "select 1", "autocommit");
         let rows = registry.snapshot();
         assert_eq!(rows[0].info.as_deref(), Some("select 1"));
@@ -317,6 +685,18 @@ mod tests {
         let rows = registry.snapshot();
         assert_eq!(rows[0].info, None);
         assert_eq!(rows[0].db, "mysql");
+
+        {
+            let _statement = guard.statement_started("select 2", "test", "autocommit");
+            assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
+            // The ordinary session publishes and finishes the same statement
+            // while the server still owns its result set. Go keeps the
+            // command visible until `writeResultSet` returns.
+            registry.statement_started(1, "select 2", "autocommit");
+            registry.statement_finished(1, "test", "autocommit");
+            assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
+        }
+        assert_eq!(registry.snapshot()[0].info, None);
     }
 
     #[test]

@@ -233,7 +233,17 @@ impl AggFuncDesc {
                 };
             }
             _ => {
-                let mut args = vec![intermediate(ordinal[0], self.base.ret_type.clone())];
+                let arg_ret_type =
+                    if matches!(self.base.name.as_str(), names::MAX_COUNT | names::MIN_COUNT) {
+                        self.base
+                            .args
+                            .first()
+                            .map(super::wrap_cast::type_of)
+                            .unwrap_or_else(|| self.base.ret_type.clone())
+                    } else {
+                        self.base.ret_type.clone()
+                    };
+                let mut args = vec![intermediate(ordinal[0], arg_ret_type)];
                 if matches!(
                     final_desc.base.name.as_str(),
                     names::GROUP_CONCAT | names::APPROX_PERCENTILE
@@ -263,7 +273,7 @@ impl AggFuncDesc {
         schema: &Schema,
     ) -> Result<(Datum, bool), AggDescError> {
         match self.base.name.as_str() {
-            names::COUNT => {
+            names::COUNT | names::MAX_COUNT | names::MIN_COUNT => {
                 for arg in &self.base.args {
                     let (value, ok) = self.const_of_null_input(ctx, schema, arg)?;
                     if !ok || value.is_null() {
@@ -339,6 +349,8 @@ impl AggFuncDesc {
     ) -> Result<(), AggDescError> {
         let remove_not_null = match self.base.name.as_str() {
             names::COUNT
+            | names::MAX_COUNT
+            | names::MIN_COUNT
             | names::APPROX_COUNT_DISTINCT
             | names::APPROX_PERCENTILE
             | names::BIT_AND

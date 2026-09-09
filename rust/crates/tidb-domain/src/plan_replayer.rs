@@ -17,9 +17,12 @@
 //! finished, what gets written into `mysql.plan_replayer_status`, and the
 //! periodic GC of dump files on external storage.
 //!
-//! It does *not* include the dumping itself, which is
-//! `plan_replayer_dump.go` (`DumpPlanReplayerInfo`, 1,004 lines) and is not
-//! ported; it is reached here through one named boundary method.
+//! The dumping itself is `plan_replayer_dump.go` (`DumpPlanReplayerInfo`,
+//! 1,004 lines) and is not ported whole; it is reached here through one
+//! named boundary method. A seed slice of that file landed anyway: its
+//! archive file-name constants, its sql-meta TOML keys, and the
+//! `dumpSQLMeta` record builder ([`build_sql_meta_records`]) — see the
+//! seed modules at the end of this file.
 //!
 //! ## Symbols ported
 //!
@@ -38,21 +41,18 @@
 //! ([`PlanReplayerTaskCollectorHandle`]) with `CollectPlanReplayerTask`,
 //! `GetTasks`, `setupTasks`, `removeTask` and `collectAllPlanReplayerTask`,
 //! `planReplayerDumpTaskStatus` ([`PlanReplayerDumpTaskStatus`]) with all
-//! seven of its methods, `planReplayerTaskDumpWorker`
+//! eight of its methods, `planReplayerTaskDumpWorker`
 //! ([`PlanReplayerTaskDumpWorker`]) with `run`, `handleTask` and
 //! `HandleTask`, `planReplayerTaskDumpHandle`
-//! ([`PlanReplayerTaskDumpHandle`]) with `GetTaskStatus`, `GetWorker`,
-//! `Close` and `DrainTask`, `checkUnHandledReplayerTask`
+//! ([`PlanReplayerTaskDumpHandle`]) with `GetTaskStatus`,
+//! `take_receiver` (standing in for Go `GetWorker`), `Close` and
+//! `DrainTask`, `checkUnHandledReplayerTask`
 //! ([`check_unhandled_replayer_task`]), `CheckPlanReplayerTaskExists`
 //! ([`check_plan_replayer_task_exists`]), `PlanReplayerStatusRecord`, and
 //! `PlanReplayerDumpTask`.
 //!
 //! ## Narrowings, all named
 //!
-//! - `// boundary:` Go `pkg/util/replayer.PlanReplayerTaskKey` →
-//!   [`PlanReplayerTaskKey`]. `pkg/util/replayer` has no Rust home yet; the
-//!   key is two strings and is reproduced here rather than left dangling, so
-//!   the collapse is a re-export when that package lands.
 //! - `// boundary:` Go `PlanReplayerDumpTask`'s dump payload — `TblStats`,
 //!   `StartTS`, `SessionBindings`, `EncodedPlan`, `SessionVars`,
 //!   `ExecStmts`, `Analyze`, `HistoricalStatsTS`, `DebugTrace` and `Zf
@@ -99,12 +99,11 @@
 //!   rather than a global read, so the worker stays testable.
 //! - `// boundary:` Go `pkg/domain/metrics` — `PlanReplayerCaptureTaskSendCounter`,
 //!   `PlanReplayerCaptureTaskDiscardCounter` and `PlanReplayerRegisterTaskGauge`
-//!   are dropped; no result depends on them. Each is named at its site.
+//!   are reproduced against the workspace registry, not the Go prometheus
+//!   metrics package. Each is named at its site.
 //! - `// boundary:` Go `pkg/util.Recover(metrics.LabelDomain, ...)` in
 //!   `handleTask` — Go swallows a panic in the worker so the loop survives.
-//!   Rust has no equivalent to install here; a panicking dumper propagates.
-//!   Named at the site so the `domain.go` batch can decide where the
-//!   catch-unwind belongs.
+//!   `run` reproduces that with `catch_unwind` around `handle_task`.
 //! - `// boundary:` Go `logutil.BgLogger()` — dropped throughout.
 //!
 //! ## Go behaviors reproduced rather than tidied
@@ -159,11 +158,17 @@
 //!   [`DumpFileGcChecker`] takes the two together as one
 //!   [`GcStatusHook`], so that state is unrepresentable.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use tidb_ast::{SelectStmt, Stmt, TableRef, Visitable as _, Visitor};
+use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_stats_handle_metrics::domain_metrics;
+
+use crate::replayer::PlanReplayerTaskKey;
 
 /// Go `"select sql_digest, plan_digest from mysql.plan_replayer_task"`
 /// (`plan_replayer.go:305`).
@@ -219,27 +224,6 @@ impl std::fmt::Display for PlanReplayerError {
 
 impl std::error::Error for PlanReplayerError {}
 
-/// Go `replayer.PlanReplayerTaskKey` (`pkg/util/replayer/replayer.go:36`).
-///
-/// boundary: `pkg/util/replayer` has no Rust home yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PlanReplayerTaskKey {
-    /// Go `PlanReplayerTaskKey.SQLDigest`.
-    pub sql_digest: String,
-    /// Go `PlanReplayerTaskKey.PlanDigest`.
-    pub plan_digest: String,
-}
-
-impl PlanReplayerTaskKey {
-    /// Build a key from its two digests.
-    pub fn new(sql_digest: impl Into<String>, plan_digest: impl Into<String>) -> Self {
-        Self {
-            sql_digest: sql_digest.into(),
-            plan_digest: plan_digest.into(),
-        }
-    }
-}
-
 /// Go `PlanReplayerStatusRecord` (`plan_replayer.go:563`): one row of
 /// `mysql.plan_replayer_status`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -275,6 +259,14 @@ pub struct PlanReplayerDumpTask {
     pub is_capture: bool,
     /// Go `PlanReplayerDumpTask.IsContinuesCapture`.
     pub is_continues_capture: bool,
+    /// Go `PlanReplayerDumpTask.StartTS`.
+    pub start_ts: u64,
+    /// Go `PlanReplayerDumpTask.SQLDigest`.
+    pub sql_digest: String,
+    /// Go `PlanReplayerDumpTask.PlanDigest`.
+    pub plan_digest: String,
+    /// Go `PlanReplayerDumpTask.HistoricalStatsTS`.
+    pub historical_stats_ts: u64,
 }
 
 /// Go `infosync.ServerInfo`'s two fields that reach the `instance` column.
@@ -844,8 +836,9 @@ impl<E: InternalSqlExecutor> PlanReplayerTaskCollectorHandle<E> {
                 tasks.push(key);
             }
         }
-        // boundary: Go `domain_metrics.PlanReplayerRegisterTaskGauge.Set(len(tasks))`.
+        let task_count = tasks.len();
         self.setup_tasks(tasks);
+        domain_metrics::plan_replayer_register_task_gauge().set(task_count as f64);
         Ok(())
     }
 
@@ -934,7 +927,14 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
     /// boundary: Go logs "planReplayerTaskDumpWorker started./exited.".
     pub fn run(&self, task_ch: &Receiver<PlanReplayerDumpTask>) {
         while let Ok(task) = task_ch.recv() {
-            self.handle_task(&task);
+            // Go defers `util.Recover(metrics.LabelDomain,
+            // "PlanReplayerTaskDumpWorker", ...)` inside handleTask: a
+            // panicking dump is swallowed and the worker loop survives.
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle_task(&task)));
+            if result.is_err() {
+                eprintln!("PlanReplayerTaskDumpWorker recovered from a panicking dump");
+            }
         }
     }
 
@@ -1006,8 +1006,15 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
         // Go assigns `task.Zf` and `task.FileName` before dumping.
         let mut dumped = task.clone();
         dumped.file_name = Some(file_name);
-        // boundary: Go logs "dump task result failed".
-        self.dumper.dump_plan_replayer_info(&dumped).is_ok()
+        // Go's dump routine increments exactly one result counter after the
+        // dump attempt; failures before this call do not affect either child.
+        let success = self.dumper.dump_plan_replayer_info(&dumped).is_ok();
+        if success {
+            domain_metrics::plan_replayer_dump_task_success().inc();
+        } else {
+            domain_metrics::plan_replayer_dump_task_failed().inc();
+        }
+        success
     }
 
     /// boundary: Go `vardef.EnableHistoricalStatsForCapture.Load()`. There is
@@ -1124,12 +1131,12 @@ impl<E: InternalSqlExecutor> PlanReplayerHandle<E> {
                 if !task.is_continues_capture {
                     self.collector.remove_task(&task.key);
                 }
-                // boundary: Go `domain_metrics.PlanReplayerCaptureTaskSendCounter.Inc()`.
+                domain_metrics::plan_replayer_capture_task_send_counter().inc();
                 true
             }
             Err(TrySendError::Full(_)) => {
-                // boundary: Go `PlanReplayerCaptureTaskDiscardCounter.Inc()`
-                // and a "discard one plan replayer dump task" warning.
+                domain_metrics::plan_replayer_capture_task_discard_counter().inc();
+                // Go also logs a "discard one plan replayer dump task" warning.
                 false
             }
             Err(TrySendError::Disconnected(_)) => {
@@ -1145,6 +1152,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::replayer::generate_plan_replayer_file_name;
 
     /// Upstream `plan_replayer_test.go` is reachable in part:
     /// `TestDumpGCFileParseTime` and `TestPlanReplayerDifferentGC` are
@@ -1257,8 +1265,15 @@ mod tests {
         t.timestamp_nanos_opt().unwrap()
     }
 
+    fn task_key(sql_digest: &str, plan_digest: &str) -> PlanReplayerTaskKey {
+        PlanReplayerTaskKey {
+            sql_digest: sql_digest.to_owned(),
+            plan_digest: plan_digest.to_owned(),
+        }
+    }
+
     /// TRANSCREATED from `TestDumpGCFileParseTime`
-    /// (`plan_replayer_test.go:98`), including its four named file shapes.
+    /// (`plan_replayer_test.go:98`), including all eight generator calls.
     #[test]
     fn dump_gc_file_parse_time() {
         let now = Utc::now();
@@ -1276,15 +1291,18 @@ mod tests {
         let name4 = "extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip";
         assert!(parse_time(name4).is_ok());
 
-        // The four generated shapes of `replayer.generatePlanReplayerFileName`.
-        for prefix in [
-            "replayer",
-            "capture_replayer",
-            "capture_normal_replayer",
-            "extract",
-        ] {
-            let name = format!("{prefix}_-brq6zKMarD9ayaifkHc4A==_{}.zip", nanos(now));
-            assert_eq!(parse_time(&name).unwrap(), now, "{name}");
+        for is_capture in [false, true] {
+            for is_continues_capture in [false, true] {
+                for enable_historical_stats_for_capture in [false, true] {
+                    let name = generate_plan_replayer_file_name(
+                        is_capture,
+                        is_continues_capture,
+                        enable_historical_stats_for_capture,
+                    )
+                    .unwrap();
+                    assert!(parse_time(&name).is_ok(), "{name}");
+                }
+            }
         }
     }
 
@@ -1392,7 +1410,7 @@ mod tests {
         };
         let status = Arc::new(PlanReplayerDumpTaskStatus::new());
         status.set_task_finished(&PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("a", "b"),
+            key: task_key("a", "b"),
             ..PlanReplayerDumpTask::default()
         });
         let mut checker: DumpFileGcChecker<MockExec> =
@@ -1620,7 +1638,7 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("a", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(false));
@@ -1634,11 +1652,11 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("a", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
             Ok(false)
         );
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &PlanReplayerTaskKey::new("z", "b")),
+            check_unhandled_replayer_task(&exec, &task_key("z", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(true));
@@ -1660,10 +1678,7 @@ mod tests {
         };
         let handle = PlanReplayerTaskCollectorHandle::new(exec);
         handle.collect_plan_replayer_task().unwrap();
-        assert_eq!(
-            handle.get_tasks(),
-            vec![PlanReplayerTaskKey::new("345", "345")]
-        );
+        assert_eq!(handle.get_tasks(), vec![task_key("345", "345")]);
 
         let empty = PlanReplayerTaskCollectorHandle::new(MockExec {
             task_rows: Some(vec![]),
@@ -1686,12 +1701,9 @@ mod tests {
             fail_query: true,
             ..MockExec::default()
         });
-        handle.setup_tasks(vec![PlanReplayerTaskKey::new("old", "old")]);
+        handle.setup_tasks(vec![task_key("old", "old")]);
         assert!(handle.collect_plan_replayer_task().is_err());
-        assert_eq!(
-            handle.get_tasks(),
-            vec![PlanReplayerTaskKey::new("old", "old")]
-        );
+        assert_eq!(handle.get_tasks(), vec![task_key("old", "old")]);
     }
 
     /// WRITTEN. The task set is replaced wholesale, and `remove_task` takes
@@ -1699,15 +1711,12 @@ mod tests {
     #[test]
     fn setup_replaces_the_task_set_and_remove_takes_one_key() {
         let handle = PlanReplayerTaskCollectorHandle::new(MockExec::default());
-        handle.setup_tasks(vec![
-            PlanReplayerTaskKey::new("a", "a"),
-            PlanReplayerTaskKey::new("b", "b"),
-        ]);
+        handle.setup_tasks(vec![task_key("a", "a"), task_key("b", "b")]);
         assert_eq!(handle.get_tasks().len(), 2);
-        handle.remove_task(&PlanReplayerTaskKey::new("a", "a"));
-        assert_eq!(handle.get_tasks(), vec![PlanReplayerTaskKey::new("b", "b")]);
-        handle.setup_tasks(vec![PlanReplayerTaskKey::new("c", "c")]);
-        assert_eq!(handle.get_tasks(), vec![PlanReplayerTaskKey::new("c", "c")]);
+        handle.remove_task(&task_key("a", "a"));
+        assert_eq!(handle.get_tasks(), vec![task_key("b", "b")]);
+        handle.setup_tasks(vec![task_key("c", "c")]);
+        assert_eq!(handle.get_tasks(), vec![task_key("c", "c")]);
     }
 
     /// WRITTEN. The running set is a claim: the second occupant is refused
@@ -1716,7 +1725,7 @@ mod tests {
     fn a_running_task_key_can_only_be_occupied_once() {
         let status = PlanReplayerDumpTaskStatus::new();
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(status.occupy_running_task_key(&task));
@@ -1732,7 +1741,7 @@ mod tests {
     fn the_finished_set_records_and_clears() {
         let status = PlanReplayerDumpTaskStatus::new();
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(!status.check_task_key_finished_before(&task));
@@ -1807,7 +1816,7 @@ mod tests {
     fn a_finished_continuous_capture_is_skipped_before_occupying() {
         let w = worker(MockExec::default(), MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1823,7 +1832,7 @@ mod tests {
     fn an_occupied_key_is_left_to_its_owner() {
         let w = worker(MockExec::default(), MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             ..PlanReplayerDumpTask::default()
         };
         assert!(w.status.occupy_running_task_key(&task));
@@ -1837,7 +1846,7 @@ mod tests {
     fn only_a_continuous_capture_is_marked_finished() {
         let w = worker(MockExec::default(), MockDumper::default());
         let one_shot = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1846,7 +1855,7 @@ mod tests {
         assert_eq!(w.status.running_task_status_len(), 0);
 
         let continuous = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s2", "p2"),
+            key: task_key("s2", "p2"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1864,7 +1873,7 @@ mod tests {
         };
         let w = worker(exec, MockDumper::default());
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_continues_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1902,7 +1911,7 @@ mod tests {
         ] {
             let w = worker(exec, dumper);
             let task = PlanReplayerDumpTask {
-                key: PlanReplayerTaskKey::new("s", "p"),
+                key: task_key("s", "p"),
                 is_continues_capture: true,
                 ..PlanReplayerDumpTask::default()
             };
@@ -1919,7 +1928,7 @@ mod tests {
         let mut w = worker(MockExec::default(), MockDumper::default());
         w.set_enable_historical_stats_for_capture(true);
         let task = PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("s", "p"),
+            key: task_key("s", "p"),
             is_capture: true,
             ..PlanReplayerDumpTask::default()
         };
@@ -1947,8 +1956,8 @@ mod tests {
     fn only_a_non_continuous_task_is_removed_from_the_collector() {
         let h =
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 4);
-        let one_shot = PlanReplayerTaskKey::new("a", "a");
-        let continuous = PlanReplayerTaskKey::new("b", "b");
+        let one_shot = task_key("a", "a");
+        let continuous = task_key("b", "b");
         h.collector
             .setup_tasks(vec![one_shot.clone(), continuous.clone()]);
 
@@ -1968,7 +1977,7 @@ mod tests {
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 1);
         full.collector.setup_tasks(vec![one_shot.clone()]);
         assert!(full.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("z", "z"),
+            key: task_key("z", "z"),
             ..PlanReplayerDumpTask::default()
         }));
         assert!(!full.send_task(PlanReplayerDumpTask {
@@ -1984,21 +1993,15 @@ mod tests {
         let h =
             PlanReplayerHandle::new(PlanReplayerTaskCollectorHandle::new(MockExec::default()), 2);
         h.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("1", "1"),
+            key: task_key("1", "1"),
             ..PlanReplayerDumpTask::default()
         });
         h.send_task(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("2", "2"),
+            key: task_key("2", "2"),
             ..PlanReplayerDumpTask::default()
         });
-        assert_eq!(
-            h.dump_handle.drain_task().unwrap().key,
-            PlanReplayerTaskKey::new("1", "1")
-        );
-        assert_eq!(
-            h.dump_handle.drain_task().unwrap().key,
-            PlanReplayerTaskKey::new("2", "2")
-        );
+        assert_eq!(h.dump_handle.drain_task().unwrap().key, task_key("1", "1"));
+        assert_eq!(h.dump_handle.drain_task().unwrap().key, task_key("2", "2"));
     }
 
     /// WRITTEN. A closed handle panics on send, as Go does.
@@ -2016,12 +2019,12 @@ mod tests {
     fn the_worker_loop_drains_the_channel_and_exits_on_close() {
         let (tx, rx) = std::sync::mpsc::sync_channel(2);
         tx.send(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("a", "a"),
+            key: task_key("a", "a"),
             ..PlanReplayerDumpTask::default()
         })
         .unwrap();
         tx.send(PlanReplayerDumpTask {
-            key: PlanReplayerTaskKey::new("b", "b"),
+            key: task_key("b", "b"),
             ..PlanReplayerDumpTask::default()
         })
         .unwrap();
@@ -2036,5 +2039,1499 @@ mod tests {
     fn base_name_takes_the_last_segment() {
         assert_eq!(base_name("replayer/replayer_k_1.zip"), "replayer_k_1.zip");
         assert_eq!(base_name("replayer_k_1.zip"), "replayer_k_1.zip");
+    }
+}
+
+/* `plan_replayer_dump.go` seed slice: the archive file names, the sql-meta
+ * TOML keys, and the `dumpSQLMeta` record builder. The dump routine itself
+ * (zip assembly, session gathering, presign) is not ported yet. */
+
+/// Go `plan_replayer_dump.go`'s archive file names.
+pub mod dump_file {
+    pub const PLAN_REPLAYER_SQL_META_FILE: &str = "sql_meta.toml";
+    pub const PLAN_REPLAYER_CONFIG_FILE: &str = "config.toml";
+    pub const PLAN_REPLAYER_META_FILE: &str = "meta.txt";
+    pub const PLAN_REPLAYER_VARIABLES_FILE: &str = "variables.toml";
+    pub const PLAN_REPLAYER_TIFLASH_REPLICAS_FILE: &str = "table_tiflash_replica.txt";
+    pub const PLAN_REPLAYER_SESSION_BINDING_FILE: &str = "session_bindings.sql";
+    pub const PLAN_REPLAYER_GLOBAL_BINDING_FILE: &str = "global_bindings.sql";
+    pub const PLAN_REPLAYER_SCHEMA_META_FILE: &str = "schema_meta.txt";
+    pub const PLAN_REPLAYER_ERROR_MESSAGE_FILE: &str = "errors.txt";
+}
+
+/// Go `plan_replayer_dump.go`'s sql-meta TOML keys.
+pub mod sql_meta_key {
+    pub const START_TS: &str = "startTS";
+    pub const IS_CAPTURE: &str = "isCapture";
+    pub const IS_CONTINUES: &str = "isContinues";
+    pub const SQL_DIGEST: &str = "sqlDigest";
+    pub const PLAN_DIGEST: &str = "planDigest";
+    pub const ENABLE_HISTORICAL_STATS: &str = "enableHistoricalStats";
+    pub const HISTORICAL_STATS_TS: &str = "historicalStatsTS";
+}
+
+/// Go `dumpSQLMeta`'s record set: the `sql_meta.toml` key/value pairs for
+/// one task. `enable_historical_stats_for_capture` reads the process-global
+/// switch (`vardef.EnableHistoricalStatsForCapture.Load()`) in Go and is
+/// passed explicitly here. A Go `toml` encoder writes the map with
+/// alphabetically sorted keys, which the `BTreeMap` reproduces.
+#[must_use]
+pub fn build_sql_meta_records(
+    task: &PlanReplayerDumpTask,
+    enable_historical_stats_for_capture: bool,
+) -> std::collections::BTreeMap<String, String> {
+    let mut records = std::collections::BTreeMap::new();
+    records.insert(sql_meta_key::START_TS.to_owned(), task.start_ts.to_string());
+    records.insert(
+        sql_meta_key::IS_CAPTURE.to_owned(),
+        task.is_capture.to_string(),
+    );
+    records.insert(
+        sql_meta_key::IS_CONTINUES.to_owned(),
+        task.is_continues_capture.to_string(),
+    );
+    records.insert(sql_meta_key::SQL_DIGEST.to_owned(), task.sql_digest.clone());
+    records.insert(
+        sql_meta_key::PLAN_DIGEST.to_owned(),
+        task.plan_digest.clone(),
+    );
+    records.insert(
+        sql_meta_key::ENABLE_HISTORICAL_STATS.to_owned(),
+        enable_historical_stats_for_capture.to_string(),
+    );
+    if task.historical_stats_ts > 0 {
+        records.insert(
+            sql_meta_key::HISTORICAL_STATS_TS.to_owned(),
+            task.historical_stats_ts.to_string(),
+        );
+    }
+    records
+}
+
+#[cfg(test)]
+mod dump_seed_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Go `dumpSQLMeta`: every task field lands in `sql_meta.toml` under its
+    /// pinned key, with the historical-stats pair present only when the task
+    /// carries a TS.
+    #[test]
+    fn sql_meta_records_cover_every_field() {
+        let task = PlanReplayerDumpTask {
+            start_ts: 4_377_391_814_500_000_000,
+            is_capture: true,
+            is_continues_capture: false,
+            sql_digest: "dig".to_owned(),
+            plan_digest: "pdig".to_owned(),
+            historical_stats_ts: 4_377_391_814_600_000_000,
+            ..PlanReplayerDumpTask::default()
+        };
+        let records = build_sql_meta_records(&task, true);
+        assert_eq!(
+            records.get(sql_meta_key::START_TS).map(String::as_str),
+            Some("4377391814500000000")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::IS_CAPTURE).map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::IS_CONTINUES).map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::SQL_DIGEST).map(String::as_str),
+            Some("dig")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::PLAN_DIGEST).map(String::as_str),
+            Some("pdig")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::HISTORICAL_STATS_TS)
+                .map(String::as_str),
+            Some("4377391814600000000")
+        );
+    }
+
+    /// Without a historical-stats TS the pair is absent; the capture flags
+    /// still render as booleans.
+    #[test]
+    fn sql_meta_records_omit_absent_ts() {
+        let task = PlanReplayerDumpTask::default();
+        let records = build_sql_meta_records(&task, false);
+        assert!(!records.contains_key(sql_meta_key::HISTORICAL_STATS_TS));
+        assert_eq!(
+            records.get(sql_meta_key::IS_CAPTURE).map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
+                .map(String::as_str),
+            Some("false")
+        );
+    }
+}
+
+/// Go `dumpConfig`'s file body: the global config serialized as TOML
+/// (`toml.NewEncoder(cf).Encode(config.GetGlobalConfig())`).
+///
+/// # Errors
+/// Whatever the TOML serializer reports.
+pub fn build_config_toml() -> Result<String, toml::ser::Error> {
+    toml::to_string(&tidb_config::config_tree::config::get_global_config())
+}
+
+/// Go `dumpMeta`'s file body: `printer.GetTiDBInfo()` verbatim.
+#[must_use]
+pub fn build_meta_txt() -> String {
+    tidb_util::printer::get_tidb_info()
+}
+
+#[cfg(test)]
+mod dump_body_tests {
+    use super::*;
+
+    /// Go `dumpConfig`: `config.toml` carries the global config as TOML.
+    #[test]
+    fn build_config_toml_serializes_the_global_config() {
+        let toml_text = build_config_toml().unwrap();
+        assert!(
+            toml_text.contains("port") || !toml_text.is_empty(),
+            "the serialized config must not be empty"
+        );
+        // It must parse back as a TOML document.
+        assert!(toml::from_str::<toml::Value>(&toml_text).is_ok());
+    }
+
+    /// Go `dumpMeta`: `meta.txt` carries `printer.GetTiDBInfo()` verbatim.
+    #[test]
+    fn build_meta_txt_carries_the_server_info() {
+        let meta = build_meta_txt();
+        // Go's GetTiDBInfo emits "Release Version" as its first line.
+        assert!(meta.contains("Release Version"), "meta.txt head: {meta}");
+    }
+}
+
+/* `plan_replayer_dump.go`'s table-name extractor (`tableNameExtractor`,
+ * `findFK`, `handleIsView`): the AST walk that turns one statement into the
+ * full set of databases/tables the dump must carry — views keep their flag,
+ * CTE names are skipped, and foreign keys pull in the referenced tables. */
+
+/// One entry of the extractor's result: a lowercased `db.table` pair plus
+/// whether it is a view. Go `tableNamePair`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TableNamePair {
+    /// Lowercased schema name (`DBName.L`).
+    pub db_name: String,
+    /// Lowercased table name (`TableName.L`).
+    pub table_name: String,
+    /// Whether the table is a view.
+    pub is_view: bool,
+}
+
+/// The two probes the extractor makes against the info schema, mirroring
+/// `infoschema.InfoSchema`'s `TableExists` / `TableByName` + `Meta()` usage.
+pub trait ExtractSchemaSource {
+    /// Go `infoschema.TableExists`.
+    fn table_exists(&self, db: &str, table: &str) -> bool;
+    /// Go `infoschema.TableIsView`.
+    fn is_view(&self, db: &str, table: &str) -> bool;
+    /// Go `is.TableByName(...).Meta().View.SelectStmt` for a view.
+    fn view_select_stmt(&self, db: &str, table: &str) -> Option<String>;
+    /// Go `tblInfo.Meta().ForeignKeys`, as the lowercased
+    /// `(ref_schema, ref_table)` pairs.
+    fn foreign_keys(&self, db: &str, table: &str) -> Vec<(String, String)>;
+}
+
+/// Go `tne.executor.ParseWithParams(ctx, sql)` followed by
+/// `ast.Walk(node, tne)`: parse a view's SELECT and walk it with the same
+/// extractor.
+pub trait ExtractViewParser {
+    /// Parses a view's SELECT into a walkable statement.
+    ///
+    /// # Errors
+    /// Whatever the parse reports; the extractor records it and stops.
+    fn parse(&self, sql: &str) -> Result<Stmt, PlanReplayerError>;
+}
+
+/// Go `tableNameExtractor`.
+pub struct TableNameExtractor<'a> {
+    /// Go `tne.is` — the info-schema probes.
+    pub schema: &'a dyn ExtractSchemaSource,
+    /// Go `tne.executor` — parses a view's SELECT for the recursive walk.
+    pub parser: &'a dyn ExtractViewParser,
+    /// Go `tne.curDB`.
+    pub cur_db: String,
+    /// Go `tne.names`.
+    pub names: BTreeSet<TableNamePair>,
+    /// Go `tne.cteNames`.
+    pub cte_names: HashSet<String>,
+    /// Go `tne.err`.
+    pub err: Option<PlanReplayerError>,
+}
+
+impl TableNameExtractor<'_> {
+    /// Go `(*tableNameExtractor).getTablesAndViews`: views pass through,
+    /// CTE-named tables are skipped, and every foreign key pulls its
+    /// referenced table into the result.
+    pub fn get_tables_and_views(&mut self) -> Result<BTreeSet<TableNamePair>, PlanReplayerError> {
+        let mut result = BTreeSet::new();
+        for pair in std::mem::take(&mut self.names) {
+            if pair.is_view {
+                result.insert(pair);
+                continue;
+            }
+            // remove cte in table names
+            if !self.cte_names.contains(&pair.table_name) {
+                result.insert(pair.clone());
+            }
+            // if the table has a foreign key, we need to add the referenced
+            // table to the list
+            self.find_fk(&pair.db_name, &pair.table_name, &mut result)?;
+        }
+        Ok(result)
+    }
+
+    /// Go `findFK`: the recursive foreign-key walk. The visited set is the
+    /// result itself, so a table already collected stops that branch.
+    fn find_fk(
+        &self,
+        db: &str,
+        table: &str,
+        result: &mut BTreeSet<TableNamePair>,
+    ) -> Result<(), PlanReplayerError> {
+        for (ref_schema, ref_table) in self.schema.foreign_keys(db, table) {
+            let key = TableNamePair {
+                db_name: ref_schema.clone(),
+                table_name: ref_table.clone(),
+                is_view: false,
+            };
+            // Skip already visited tables to prevent infinite recursion in
+            // case of circular foreign key definitions.
+            if result.contains(&key) {
+                continue;
+            }
+            result.insert(key);
+            self.find_fk(&ref_schema, &ref_table, result)?;
+        }
+        Ok(())
+    }
+
+    /// Go `handleIsView`: for a view, parse its SELECT and walk it with this
+    /// same extractor; returns whether the table is a view.
+    fn handle_is_view(&mut self, t: &TableRef) -> Result<bool, PlanReplayerError> {
+        let (schema, table) = resolve_schema_table(t, &self.cur_db);
+        if !self.schema.is_view(&schema, &table) {
+            return Ok(false);
+        }
+        let Some(sql) = self.schema.view_select_stmt(&schema, &table) else {
+            return Ok(false);
+        };
+        let mut stmt = self.parser.parse(&sql)?;
+        stmt.accept(self);
+        Ok(true)
+    }
+}
+
+/// Go `t.Schema`/`t.Name` with the empty-schema default to the current db.
+fn resolve_schema_table(t: &TableRef, cur_db: &str) -> (String, String) {
+    match t.name.as_slice() {
+        [db, table] => (db.clone(), table.clone()),
+        [table] => (cur_db.to_owned(), table.clone()),
+        _ => (String::new(), String::new()),
+    }
+}
+
+/// Go `(*tableNameExtractor).Leave` (the `Enter` half returns `false` to
+/// walk children): TableName nodes resolve against the info schema and
+/// SelectStmt nodes contribute their CTE names.
+impl Visitor for TableNameExtractor<'_> {
+    fn enter(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        false
+    }
+
+    fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if self.err.is_some() {
+            return true;
+        }
+        if let Some(t) = node.downcast_ref::<TableRef>() {
+            let (schema, table) = resolve_schema_table(t, &self.cur_db);
+            let is_view = match self.handle_is_view(t) {
+                Ok(is_view) => is_view,
+                Err(error) => {
+                    self.err = Some(error);
+                    return true;
+                }
+            };
+            let schema = go_simple_lowercase(&schema);
+            let table = go_simple_lowercase(&table);
+            if self.schema.table_exists(&schema, &table) {
+                self.names.insert(TableNamePair {
+                    db_name: schema,
+                    table_name: table,
+                    is_view,
+                });
+            }
+            return true;
+        }
+        if let Some(select) = node.downcast_mut::<SelectStmt>() {
+            if let Some(with) = &select.with {
+                for cte in &with.ctes {
+                    self.cte_names.insert(go_simple_lowercase(&cte.name));
+                }
+            }
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod table_name_extractor_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeSchema {
+        tables: Vec<(String, String)>,              // (db, table), lowercased
+        views: Vec<(String, String, String)>,       // (db, table, view select sql)
+        fks: Vec<(String, String, String, String)>, // (db, table, ref_db, ref_table)
+    }
+
+    impl ExtractSchemaSource for FakeSchema {
+        fn table_exists(&self, db: &str, table: &str) -> bool {
+            self.has_table(db, table)
+        }
+        fn is_view(&self, db: &str, table: &str) -> bool {
+            self.views.iter().any(|(d, t, _)| d == db && t == table)
+        }
+        fn view_select_stmt(&self, db: &str, table: &str) -> Option<String> {
+            self.views
+                .iter()
+                .find(|(d, t, _)| d == db && t == table)
+                .map(|(_, _, sql)| sql.clone())
+        }
+        fn foreign_keys(&self, db: &str, table: &str) -> Vec<(String, String)> {
+            self.fks
+                .iter()
+                .filter(|(d, t, _, _)| d == db && t == table)
+                .map(|(_, _, rd, rt)| (rd.clone(), rt.clone()))
+                .collect()
+        }
+    }
+
+    impl FakeSchema {
+        fn has_table(&self, db: &str, table: &str) -> bool {
+            self.tables.iter().any(|(d, t)| d == db && t == table)
+                || self.views.iter().any(|(d, t, _)| d == db && t == table)
+        }
+    }
+
+    /// Parses real SQL and walks it, exactly the production wiring.
+    pub(crate) struct RealParser;
+
+    impl ExtractViewParser for RealParser {
+        fn parse(&self, sql: &str) -> Result<Stmt, PlanReplayerError> {
+            use tidb_ast::Visitable as _;
+            tidb_parser::parse(sql)
+                .map_err(|error| PlanReplayerError::Other(error.compatibility_message(sql)))
+        }
+    }
+
+    /// Adapts `&mut dyn Visitor` into the AST walker's visitor argument.
+    fn stmt_visit<'a>(visitor: &'a mut (dyn Visitor)) -> StmtWalk<'a> {
+        StmtWalk(visitor)
+    }
+
+    struct StmtWalk<'a>(&'a mut (dyn Visitor));
+
+    impl Visitor for StmtWalk<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            self.0.enter(node)
+        }
+        fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+            self.0.leave(node)
+        }
+    }
+
+    fn extractor<'a>(
+        schema: &'a FakeSchema,
+        parser: &'a RealParser,
+        cur_db: &str,
+    ) -> TableNameExtractor<'a> {
+        TableNameExtractor {
+            schema,
+            parser,
+            cur_db: cur_db.to_owned(),
+            names: BTreeSet::new(),
+            cte_names: HashSet::new(),
+            err: None,
+        }
+    }
+
+    fn walk_sql(schema: &FakeSchema, sql: &str) -> BTreeSet<TableNamePair> {
+        let parser = RealParser;
+        let mut extractor = extractor(schema, &parser, "db1");
+        let mut stmt = tidb_parser::parse(sql).unwrap();
+        stmt.accept(&mut extractor);
+        extractor.get_tables_and_views().unwrap()
+    }
+
+    #[test]
+    fn names_views_and_follows_foreign_keys() {
+        let schema = FakeSchema {
+            tables: vec![
+                ("db1".to_owned(), "t1".to_owned()),
+                ("db1".to_owned(), "t2".to_owned()),
+                ("db2".to_owned(), "t3".to_owned()),
+            ],
+            views: vec![(
+                "db1".to_owned(),
+                "v1".to_owned(),
+                "select * from db2.t3".to_owned(),
+            )],
+            fks: vec![(
+                "db1".to_owned(),
+                "t2".to_owned(),
+                "db2".to_owned(),
+                "t3".to_owned(),
+            )],
+        };
+        let result = walk_sql(&schema, "select * from db1.v1, db1.t2");
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "v1".to_owned(),
+            is_view: true
+        }));
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false
+        }));
+        // The view's body pulls in db2.t3 through the recursive walk.
+        assert!(result.contains(&TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t3".to_owned(),
+            is_view: false
+        }));
+    }
+
+    #[test]
+    fn cte_names_are_skipped() {
+        let schema = FakeSchema {
+            tables: vec![("db1".to_owned(), "t1".to_owned())],
+            views: vec![],
+            fks: vec![],
+        };
+        let result = walk_sql(
+            &schema,
+            "with c as (select * from db1.t1) select * from c, db1.t1",
+        );
+        // The CTE reference `c` is skipped; the real table stays.
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false
+        }));
+    }
+}
+
+/// The archive-writer seam the dump assembly writes through: Go creates one
+/// `zip.Writer` entry per file; implementations receive the file name and
+/// its full contents.
+pub trait DumpArchiveWriter {
+    /// # Errors
+    /// Whatever the underlying archive reports.
+    fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError>;
+}
+
+/// Go `dumpSQLs`: one `sql/sqlN.sql` file per statement, in order.
+pub fn dump_sqls(sqls: &[String], zw: &mut dyn DumpArchiveWriter) -> Result<(), PlanReplayerError> {
+    for (index, sql) in sqls.iter().enumerate() {
+        zw.create_file(&format!("sql/sql{index}.sql"), sql.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Go `dumpSessionBindRecords`' file body: every binding becomes one
+/// tab-joined row of the nine columns Go selects, rows newline-terminated.
+#[must_use]
+pub fn build_session_bindings_sql(records: &[Vec<Vec<String>>]) -> String {
+    let mut out = String::new();
+    for record in records {
+        for binding in record {
+            // Go selects: OriginalSQL, BindSQL, Db, Status, CreateTime,
+            // UpdateTime, Charset, Collation, Source.
+            let row: Vec<String> = vec![
+                binding[0].clone(),
+                binding[1].clone(),
+                binding[2].clone(),
+                binding[3].clone(),
+                binding[4].clone(),
+                binding[5].clone(),
+                binding[6].clone(),
+                binding[7].clone(),
+                binding[8].clone(),
+            ];
+            out.push_str(&row.join("\t"));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod dump_archive_tests {
+    use super::*;
+
+    struct CollectingWriter {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+
+    impl DumpArchiveWriter for CollectingWriter {
+        fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError> {
+            self.files.insert(name.to_owned(), contents.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Go `dumpSQLs`: one `sql/sqlN.sql` per statement, in order.
+    #[test]
+    fn dump_sqls_writes_one_file_per_statement() {
+        let mut writer = CollectingWriter {
+            files: std::collections::BTreeMap::new(),
+        };
+        dump_sqls(&["select 1".to_owned(), "select 2".to_owned()], &mut writer).unwrap();
+        assert_eq!(
+            writer.files.get("sql/sql0.sql").map(Vec::as_slice),
+            Some(b"select 1".as_slice())
+        );
+        assert_eq!(
+            writer.files.get("sql/sql1.sql").map(Vec::as_slice),
+            Some(b"select 2".as_slice())
+        );
+    }
+
+    /// Go `dumpSessionBindRecords`: nine tab-joined columns per binding row.
+    #[test]
+    fn build_session_bindings_sql_joins_with_tabs() {
+        let row: Vec<String> = [
+            "select * from t",
+            "select * from t use index(i)",
+            "test",
+            "using",
+            "2026-09-06 00:00:00",
+            "2026-09-06 00:00:00",
+            "utf8mb4",
+            "utf8mb4_bin",
+            "manual",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let text = build_session_bindings_sql(&[vec![row]]);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(1, lines.len());
+        assert_eq!(9, lines[0].split('\t').count());
+    }
+}
+
+/// Go `dumpVariables`' variable source: the sys-var registry with the
+/// noop/SEM filters and the per-session value read.
+pub trait VariablesDumpSource {
+    /// The registry's variable names, in registry order.
+    fn variable_names(&self) -> Vec<String>;
+    /// Go `SysVar.IsNoop`.
+    fn is_noop(&self, name: &str) -> bool;
+    /// Go `infoschema.SysVarHiddenForSem(sctx, v.Name)`.
+    fn hidden_for_sem(&self, name: &str) -> bool;
+    /// Go `sessionVars.GetSessionOrGlobalSystemVar(ctx, name)`.
+    fn session_or_global_value(&self, name: &str) -> Result<String, String>;
+    /// Go `vardef.EnableNoopVariables.Load()`.
+    fn enable_noop_variables(&self) -> bool;
+}
+
+/// Go `dumpVariables`' record set: the `variables.toml` key/value pairs.
+/// Noop variables are skipped unless noop variables are enabled, SEM-hidden
+/// variables are skipped, and the rest take the session-or-global value.
+///
+/// # Errors
+/// Whatever the value read reports; Go aborts the whole file.
+pub fn build_variables_records(
+    source: &dyn VariablesDumpSource,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut records = std::collections::BTreeMap::new();
+    for name in source.variable_names() {
+        if source.is_noop(&name) && !source.enable_noop_variables() {
+            continue;
+        }
+        if source.hidden_for_sem(&name) {
+            continue;
+        }
+        records.insert(name.clone(), source.session_or_global_value(&name)?);
+    }
+    Ok(records)
+}
+
+#[cfg(test)]
+mod variables_dump_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeVars {
+        values: HashMap<String, String>,
+        noop: HashSet<String>,
+        hidden: HashSet<String>,
+        enable_noop: bool,
+    }
+
+    impl VariablesDumpSource for FakeVars {
+        fn variable_names(&self) -> Vec<String> {
+            self.values.keys().cloned().collect()
+        }
+        fn is_noop(&self, name: &str) -> bool {
+            self.noop.contains(name)
+        }
+        fn hidden_for_sem(&self, name: &str) -> bool {
+            self.hidden.contains(name)
+        }
+        fn session_or_global_value(&self, name: &str) -> Result<String, String> {
+            self.values
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown variable {name}"))
+        }
+        fn enable_noop_variables(&self) -> bool {
+            self.enable_noop
+        }
+    }
+
+    /// Go `dumpVariables`: noop variables drop unless noop variables are
+    /// enabled, SEM-hidden variables always drop, and the rest carry the
+    /// session-or-global value.
+    #[test]
+    fn variables_records_apply_the_filters() {
+        let mut values = HashMap::new();
+        values.insert("windowing_use_high_precision".to_owned(), "ON".to_owned());
+        values.insert("tidb_enable_noop_func".to_owned(), "OFF".to_owned());
+        let mut vars = FakeVars {
+            values,
+            noop: HashSet::from(["tidb_enable_noop_func".to_owned()]),
+            hidden: HashSet::from(["hidden_one".to_owned()]),
+            enable_noop: false,
+        };
+        vars.values.insert("hidden_one".to_owned(), "x".to_owned());
+        let records = build_variables_records(&vars).unwrap();
+        assert!(!records.contains_key("tidb_enable_noop_func"));
+        assert!(!records.contains_key("hidden_one"));
+        assert_eq!(
+            records
+                .get("windowing_use_high_precision")
+                .map(String::as_str),
+            Some("ON")
+        );
+        let _ = &vars.noop;
+    }
+}
+
+/// Go `PlanReplayerPresignExpire`: a plan replayer presigned download URL
+/// stays valid for one hour.
+pub const PLAN_REPLAYER_PRESIGN_EXPIRE: Duration = Duration::from_secs(60 * 60);
+
+/// Go `getPresignedURL`'s storage probe: presign one dump file under the
+/// replayer directory for the expire window.
+pub trait PresignSource {
+    /// Go `extstore.GetGlobalExtStorage(ctx)` reporting no configured
+    /// storage: captures and dumps then keep an empty URL.
+    fn has_global_storage(&self) -> bool;
+    /// Go `storage.PresignFile(ctx, path, expire)`.
+    ///
+    /// # Errors
+    /// Whatever the external storage reports.
+    fn presign_file(&self, path: &str, expire: Duration) -> Result<String, String>;
+}
+
+/// Go `setTaskPresignedURL`: captures keep no URL; a failed presign only
+/// logs (dropped here) and leaves the URL empty.
+pub fn set_task_presigned_url(presign: &dyn PresignSource, task: &mut PlanReplayerDumpTask) {
+    if task.is_capture {
+        return;
+    }
+    if !presign.has_global_storage() {
+        return;
+    }
+    let path = format!(
+        "{}/{}",
+        crate::replayer::PLAN_REPLAYER_DIR_NAME,
+        task.file_name.clone().unwrap_or_default()
+    );
+    if let Ok(url) = presign.presign_file(&path, PLAN_REPLAYER_PRESIGN_EXPIRE) {
+        task.presigned_url = Some(url);
+    }
+}
+
+/// Go `generateRecords`: presign first (captures skip it), then one status
+/// record per executed statement with the file name as the token.
+pub fn generate_status_records(
+    presign: &dyn PresignSource,
+    task: &mut PlanReplayerDumpTask,
+    exec_stmts: &[String],
+) -> Vec<PlanReplayerStatusRecord> {
+    set_task_presigned_url(presign, task);
+    let mut records = Vec::new();
+    for exec_stmt in exec_stmts {
+        records.push(PlanReplayerStatusRecord {
+            sql_digest: task.sql_digest.clone(),
+            plan_digest: task.plan_digest.clone(),
+            origin_sql: exec_stmt.clone(),
+            token: task.file_name.clone().unwrap_or_default(),
+            failed_reason: String::new(),
+        });
+    }
+    records
+}
+
+#[cfg(test)]
+mod presign_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct FakePresign {
+        storage: bool,
+        urls: RefCell<Vec<String>>,
+        paths: RefCell<Vec<String>>,
+    }
+
+    impl PresignSource for FakePresign {
+        fn has_global_storage(&self) -> bool {
+            self.storage
+        }
+        fn presign_file(&self, path: &str, expire: Duration) -> Result<String, String> {
+            assert_eq!(expire, PLAN_REPLAYER_PRESIGN_EXPIRE);
+            self.paths.borrow_mut().push(path.to_owned());
+            let url = format!("https://presigned/{path}");
+            self.urls.borrow_mut().push(url.clone());
+            Ok(url)
+        }
+    }
+
+    /// Go `setTaskPresignedURL` + `generateRecords`: captures skip the
+    /// presign; non-captures presign under the replayer dir and get one
+    /// status record per statement with the file name as the token.
+    #[test]
+    fn presign_and_records_follow_go_order() {
+        let presign = FakePresign {
+            storage: true,
+            urls: RefCell::new(Vec::new()),
+            paths: RefCell::new(Vec::new()),
+        };
+        let mut capture = PlanReplayerDumpTask {
+            is_capture: true,
+            file_name: Some("capture_normal_replayer_x.zip".to_owned()),
+            sql_digest: "sdig".to_owned(),
+            ..PlanReplayerDumpTask::default()
+        };
+        assert!(
+            generate_status_records(&presign, &mut capture, &["select 1".to_owned()],).is_empty()
+                == false
+        );
+        // Capture: no presign attempted for it.
+        assert!(capture.presigned_url.is_none());
+
+        let mut dump = PlanReplayerDumpTask {
+            is_capture: false,
+            file_name: Some("replayer_y.zip".to_owned()),
+            sql_digest: "sdig".to_owned(),
+            ..PlanReplayerDumpTask::default()
+        };
+        let records = generate_status_records(
+            &presign,
+            &mut dump,
+            &["select 1".to_owned(), "select 2".to_owned()],
+        );
+        // The dump was presigned under the replayer dir.
+        assert!(dump.presigned_url.is_some());
+        assert_eq!(2, records.len());
+        for record in &records {
+            assert_eq!("sdig", record.sql_digest);
+            assert_eq!("replayer_y.zip", record.token);
+            assert_eq!("sdig", record.sql_digest);
+        }
+    }
+}
+
+/// Go `dumpTiFlashReplica`'s probe: the table's TiFlash replica count, or
+/// `None` when the table is missing (logged + skipped) or has no replica
+/// configured.
+pub trait TiFlashReplicaSource {
+    fn tiflash_replica_count(&self, db: &str, table: &str) -> Option<u64>;
+}
+
+/// Go `dumpTiFlashReplica`'s file body: one `db\ttable\tcount` line per
+/// pair that has a replica configured.
+#[must_use]
+pub fn build_tiflash_replica_file(
+    source: &dyn TiFlashReplicaSource,
+    pairs: &BTreeSet<TableNamePair>,
+) -> String {
+    let mut out = String::new();
+    for pair in pairs {
+        if let Some(count) = source.tiflash_replica_count(&pair.db_name, &pair.table_name) {
+            out.push_str(&format!(
+                "{}\t{}\t{}\n",
+                pair.db_name, pair.table_name, count
+            ));
+        }
+    }
+    out
+}
+
+/// Go `dumpSchemaMeta`'s file body: `db.table;` per non-view table.
+#[must_use]
+pub fn build_schema_meta_file(tables: &BTreeSet<TableNamePair>) -> String {
+    let mut out = String::new();
+    for table in tables {
+        out.push_str(&format!("{}.{};", table.db_name, table.table_name));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tiflash_replica_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeReplica {
+        counts: HashMap<(String, String), u64>,
+    }
+
+    impl TiFlashReplicaSource for FakeReplica {
+        fn tiflash_replica_count(&self, db: &str, table: &str) -> Option<u64> {
+            self.counts.get(&(db.to_owned(), table.to_owned())).copied()
+        }
+    }
+
+    /// Go `dumpTiFlashReplica`: only pairs with a configured replica produce
+    /// a `db\ttable\tcount` line, in sorted pair order.
+    #[test]
+    fn tiflash_replica_file_lists_configured_pairs() {
+        let mut counts = HashMap::new();
+        counts.insert(("db1".to_owned(), "t1".to_owned()), 1_u64);
+        counts.insert(("db2".to_owned(), "t2".to_owned()), 2_u64);
+        let source = FakeReplica { counts };
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db3".to_owned(),
+            table_name: "t4".to_owned(),
+            is_view: false,
+        });
+        let text = build_tiflash_replica_file(&source, &pairs);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(2, lines.len());
+        assert_eq!("db1\tt1\t1", lines[0]);
+        assert_eq!("db2\tt2\t2", lines[1]);
+    }
+
+    /// Go `dumpSchemaMeta`: `db.table;` per non-view table, in sorted order.
+    #[test]
+    fn schema_meta_file_lists_tables_with_semicolons() {
+        let mut tables = BTreeSet::new();
+        tables.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false,
+        });
+        tables.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        let text = build_schema_meta_file(&tables);
+        assert_eq!("db1.t1;db1.t2;", text);
+    }
+}
+
+/// The stats-provider probes the two stats file bodies use.
+pub trait StatsDumpSource {
+    /// The table's in-memory stats sections (`dumpStatsMemStatus`):
+    /// `[INDEX]` lines then `[COLUMN]` lines, `None` when the table has no
+    /// in-memory stats.
+    ///
+    /// # Errors
+    /// The `TableByName` failure Go aborts the whole file with.
+    fn stats_mem_sections(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError>;
+
+    /// Go `getStatsForTable`: the table's stats JSON plus the fallback
+    /// table names whose historical stats were unavailable.
+    ///
+    /// # Errors
+    /// Whatever the stats provider reports.
+    fn stats_json_for_table(
+        &self,
+        db: &str,
+        table: &str,
+        history_stats_ts: u64,
+    ) -> Result<(String, Vec<String>), PlanReplayerError>;
+}
+
+/// Go `dumpStatsMemStatus`: one `statsMem/<db>.<table>.txt` per non-view
+/// table, `[INDEX]` lines then `[COLUMN]` lines.
+pub fn dump_stats_mem_status(
+    source: &dyn StatsDumpSource,
+    pairs: &BTreeSet<TableNamePair>,
+    zw: &mut dyn DumpArchiveWriter,
+) -> Result<(), PlanReplayerError> {
+    for pair in pairs {
+        if pair.is_view {
+            continue;
+        }
+        let Some((index_lines, column_lines)) =
+            source.stats_mem_sections(&pair.db_name, &pair.table_name)?
+        else {
+            continue;
+        };
+        let mut body = String::from("[INDEX]\n");
+        for line in &index_lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+        body.push_str("[COLUMN]\n");
+        for line in &column_lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+        zw.create_file(
+            &format!("statsMem/{}.{}.txt", pair.db_name, pair.table_name),
+            body.as_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Go `dumpStats`: one `stats/<db>.<table>.json` per non-view table and the
+/// aggregated fallback message when historical stats were unavailable for
+/// any of them (`"Historical stats for t1, t2 are unavailable, fallback to
+/// latest stats"`).
+pub fn dump_stats(
+    source: &dyn StatsDumpSource,
+    pairs: &BTreeSet<TableNamePair>,
+    history_stats_ts: u64,
+    zw: &mut dyn DumpArchiveWriter,
+) -> Result<String, PlanReplayerError> {
+    let mut all_fallback: Vec<String> = Vec::new();
+    for pair in pairs {
+        if pair.is_view {
+            continue;
+        }
+        let (json, fallbacks) =
+            source.stats_json_for_table(&pair.db_name, &pair.table_name, history_stats_ts)?;
+        zw.create_file(
+            &format!("stats/{}.{}.json", pair.db_name, pair.table_name),
+            json.as_bytes(),
+        )?;
+        all_fallback.extend(fallbacks);
+    }
+    let msg = if all_fallback.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Historical stats for {} are unavailable, fallback to latest stats",
+            all_fallback.join(", ")
+        )
+    };
+    Ok(msg)
+}
+
+#[cfg(test)]
+mod stats_dump_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeStats {
+        json: HashMap<(String, String), String>,
+        fallbacks: HashMap<(String, String), Vec<String>>,
+        mem: HashMap<(String, String), (Vec<String>, Vec<String>)>,
+    }
+
+    impl StatsDumpSource for FakeStats {
+        fn stats_mem_sections(
+            &self,
+            db: &str,
+            table: &str,
+        ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError> {
+            Ok(self.mem.get(&(db.to_owned(), table.to_owned())).cloned())
+        }
+        fn stats_json_for_table(
+            &self,
+            db: &str,
+            table: &str,
+            _history_stats_ts: u64,
+        ) -> Result<(String, Vec<String>), PlanReplayerError> {
+            match self.json.get(&(db.to_owned(), table.to_owned())) {
+                Some(json) => {
+                    let fallbacks = self
+                        .fallbacks
+                        .get(&(db.to_owned(), table.to_owned()))
+                        .cloned()
+                        .unwrap_or_default();
+                    Ok((json.clone(), fallbacks))
+                }
+                None => Err(PlanReplayerError::Other(format!(
+                    "no stats for {db}.{table}"
+                ))),
+            }
+        }
+    }
+
+    struct Collecting {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+
+    impl DumpArchiveWriter for Collecting {
+        fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError> {
+            self.files.insert(name.to_owned(), contents.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Go `dumpStats`: one JSON file per non-view table plus the aggregated
+    /// fallback message.
+    #[test]
+    fn dump_stats_writes_json_files_and_joins_fallbacks() {
+        let mut json = HashMap::new();
+        json.insert(("db1".to_owned(), "t1".to_owned()), "{\"t1\":1}".to_owned());
+        json.insert(("db2".to_owned(), "t2".to_owned()), "{\"t2\":2}".to_owned());
+        let mut fallbacks = HashMap::new();
+        fallbacks.insert(("db1".to_owned(), "t1".to_owned()), vec!["t1".to_owned()]);
+        fallbacks.insert(("db2".to_owned(), "t2".to_owned()), vec!["t2".to_owned()]);
+        let source = FakeStats {
+            json,
+            fallbacks,
+            mem: HashMap::new(),
+        };
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: true,
+        });
+        let mut writer = Collecting {
+            files: std::collections::BTreeMap::new(),
+        };
+        let msg = dump_stats(&source, &pairs, 0, &mut writer).unwrap();
+        assert_eq!(
+            "Historical stats for t1 are unavailable, fallback to latest stats",
+            msg
+        );
+        // db2.t2 is a view in this fixture: views produce no JSON file.
+        assert!(writer.files.contains_key("stats/db1.t1.json"));
+        assert!(!writer.files.contains_key("stats/db2.t2.json"));
+    }
+
+    /// Go `dumpStatsMemStatus`: one `statsMem/<db>.<table>.txt` per
+    /// non-view table with the `[INDEX]`/`[COLUMN]` sections.
+    #[test]
+    fn dump_stats_mem_status_writes_sectioned_files() {
+        let mut mem = HashMap::new();
+        mem.insert(
+            ("db1".to_owned(), "t1".to_owned()),
+            (
+                vec!["idx_a=analyzed".to_owned()],
+                vec!["col_b=allEvicted".to_owned()],
+            ),
+        );
+        let mut source = FakeStats {
+            json: HashMap::new(),
+            fallbacks: HashMap::new(),
+            mem,
+        };
+        source
+            .mem
+            .insert(("db1".to_owned(), "skip_view".to_owned()), (vec![], vec![]));
+        // A view pair must be skipped entirely.
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "v9".to_owned(),
+            is_view: true,
+        });
+        let mut writer = Collecting {
+            files: std::collections::BTreeMap::new(),
+        };
+        dump_stats_mem_status(&source, &pairs, &mut writer).unwrap();
+        assert!(writer.files.contains_key("statsMem/db1.t1.txt"));
+        let body = writer.files.get("statsMem/db1.t1.txt").unwrap();
+        let text = std::str::from_utf8(body).unwrap();
+        assert!(text.starts_with("[INDEX]\n"));
+        assert!(text.contains("idx_a=analyzed"));
+        assert!(text.contains("[COLUMN]\n"));
+        assert!(text.contains("col_b=allEvicted"));
+        source.mem.remove(&("db1".to_owned(), "t1".to_owned()));
+    }
+}
+
+/// The seams `DumpPlanReplayerInfo` needs, gathered once (Go reaches them
+/// through `sessionctx`, `Domain` and the info schema).
+pub struct DumpSeams<'a> {
+    pub extract_schema: &'a dyn ExtractSchemaSource,
+    pub view_parser: &'a dyn ExtractViewParser,
+    pub stats: &'a dyn StatsDumpSource,
+    pub mem_stats: &'a dyn StatsDumpSource,
+    pub tiflash: &'a dyn TiFlashReplicaSource,
+    pub variables: &'a dyn VariablesDumpSource,
+    pub presign: &'a dyn PresignSource,
+    pub cur_db: String,
+    pub enable_historical_stats_for_capture: bool,
+}
+
+/// The observable outcome of one dump: the status records the caller
+/// inserts, plus the error Go would have returned (the defer stamps every
+/// record's `failed_reason` with it).
+pub struct DumpOutcome {
+    pub records: Vec<PlanReplayerStatusRecord>,
+    pub error: Option<PlanReplayerError>,
+}
+
+/// A flat `map[string]string` as Go's `toml.NewEncoder(...).Encode(map)`
+/// renders it: alphabetically sorted `key = "value"` lines.
+#[must_use]
+pub fn flat_toml(records: &std::collections::BTreeMap<String, String>) -> String {
+    let mut out = String::new();
+    for (key, value) in records {
+        out.push_str(key);
+        out.push_str(" = \"");
+        out.push_str(value);
+        out.push_str("\"\n");
+    }
+    out
+}
+
+/// Go `DumpPlanReplayerInfo`: the ordered assembly of every dump file into
+/// the archive, the presigned URL, and the status records.
+#[allow(clippy::too_many_lines)]
+pub fn dump_plan_replayer_info(
+    seams: &DumpSeams<'_>,
+    task: &mut PlanReplayerDumpTask,
+    exec_stmts: &[String],
+    zw: &mut dyn DumpArchiveWriter,
+) -> DumpOutcome {
+    let mut records = Vec::new();
+    let mut error: Option<PlanReplayerError> = None;
+
+    // Dump SQLMeta
+    if let Err(e) = zw.create_file(
+        dump_file::PLAN_REPLAYER_SQL_META_FILE,
+        flat_toml(&build_sql_meta_records(
+            task,
+            seams.enable_historical_stats_for_capture,
+        ))
+        .as_bytes(),
+    ) {
+        error = Some(e);
+    }
+    // Dump config
+    if error.is_none() {
+        if let Err(e) = zw.create_file(
+            dump_file::PLAN_REPLAYER_CONFIG_FILE,
+            build_config_toml().unwrap_or_default().as_bytes(),
+        ) {
+            error = Some(e);
+        }
+    }
+    // Dump meta
+    if error.is_none() {
+        if let Err(e) = zw.create_file(
+            dump_file::PLAN_REPLAYER_META_FILE,
+            build_meta_txt().as_bytes(),
+        ) {
+            error = Some(e);
+        }
+    }
+    // Retrieve all tables: one extractor over every statement, then the
+    // FK walk pulls the referenced tables in.
+    let mut pairs = BTreeSet::new();
+    if error.is_none() {
+        let mut extractor = TableNameExtractor {
+            schema: seams.extract_schema,
+            parser: seams.view_parser,
+            cur_db: seams.cur_db.clone(),
+            names: BTreeSet::new(),
+            cte_names: HashSet::new(),
+            err: None,
+        };
+        for sql in exec_stmts {
+            match seams.view_parser.parse(sql) {
+                Ok(mut stmt) => {
+                    stmt.accept(&mut extractor);
+                }
+                Err(e) => {
+                    error = Some(PlanReplayerError::Other(format!(
+                        "plan replayer: invalid SQL text, err: {e}"
+                    )));
+                    break;
+                }
+            }
+        }
+        if error.is_none() {
+            match extractor.get_tables_and_views() {
+                Ok(extracted) => pairs = extracted,
+                Err(e) => {
+                    error = Some(PlanReplayerError::Other(format!(
+                        "plan replayer: invalid SQL text, err: {e}"
+                    )));
+                }
+            }
+        }
+    }
+    // Dump tables tiflash replicas
+    if error.is_none() {
+        let body = build_tiflash_replica_file(seams.tiflash, &pairs);
+        if !body.is_empty() {
+            if let Err(e) = zw.create_file(
+                dump_file::PLAN_REPLAYER_TIFLASH_REPLICAS_FILE,
+                body.as_bytes(),
+            ) {
+                error = Some(e);
+            }
+        }
+    }
+    // Stats: continuous captures dump storage stats only when the
+    // historical-stats-for-capture switch is off.
+    let dump_storage_stats = !(task.is_capture && task.is_continues_capture)
+        || !seams.enable_historical_stats_for_capture;
+    if error.is_none() && dump_storage_stats {
+        if let Err(e) = dump_stats(seams.stats, &pairs, task.historical_stats_ts, zw) {
+            error = Some(e);
+        }
+    }
+    if let Err(e) = dump_stats_mem_status(seams.mem_stats, &pairs, zw) {
+        error = error.or(Some(e));
+    }
+    // Dump variables
+    if error.is_none() {
+        match build_variables_records(seams.variables) {
+            Ok(records_map) => {
+                let body = flat_toml(&records_map);
+                if let Err(e) =
+                    zw.create_file(dump_file::PLAN_REPLAYER_VARIABLES_FILE, body.as_bytes())
+                {
+                    error = Some(e);
+                }
+            }
+            Err(e) => error = Some(PlanReplayerError::Other(e)),
+        }
+    }
+    // Dump sql
+    if error.is_none() {
+        if let Err(e) = dump_sqls(exec_stmts, zw) {
+            error = Some(e);
+        }
+    }
+    // Presign + records
+    set_task_presigned_url(seams.presign, task);
+    for exec_stmt in exec_stmts {
+        records.push(PlanReplayerStatusRecord {
+            sql_digest: task.sql_digest.clone(),
+            plan_digest: task.plan_digest.clone(),
+            origin_sql: exec_stmt.clone(),
+            token: task.file_name.clone().unwrap_or_default(),
+            failed_reason: String::new(),
+        });
+    }
+    if let Some(e) = error {
+        for record in &mut records {
+            record.failed_reason = e.to_string();
+        }
+        return DumpOutcome {
+            records,
+            error: Some(e),
+        };
+    }
+    DumpOutcome {
+        records,
+        error: None,
+    }
+}
+
+#[cfg(test)]
+mod dump_assembly_tests {
+    use super::table_name_extractor_tests::RealParser;
+    use super::*;
+    use std::collections::HashMap;
+
+    struct EmptySchema;
+
+    impl ExtractSchemaSource for EmptySchema {
+        fn table_exists(&self, _db: &str, _table: &str) -> bool {
+            true
+        }
+        fn is_view(&self, _db: &str, _table: &str) -> bool {
+            false
+        }
+        fn view_select_stmt(&self, _db: &str, _table: &str) -> Option<String> {
+            None
+        }
+        fn foreign_keys(&self, _db: &str, _table: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+    }
+
+    struct EmptyStats;
+
+    impl StatsDumpSource for EmptyStats {
+        fn stats_mem_sections(
+            &self,
+            _db: &str,
+            _table: &str,
+        ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError> {
+            Ok(None)
+        }
+        fn stats_json_for_table(
+            &self,
+            db: &str,
+            table: &str,
+            _ts: u64,
+        ) -> Result<(String, Vec<String>), PlanReplayerError> {
+            Ok((format!("json-for-{db}.{table}"), Vec::new()))
+        }
+    }
+
+    struct NoReplica;
+
+    impl TiFlashReplicaSource for NoReplica {
+        fn tiflash_replica_count(&self, _db: &str, _table: &str) -> Option<u64> {
+            None
+        }
+    }
+
+    struct FixedVars(HashMap<String, String>);
+
+    impl VariablesDumpSource for FixedVars {
+        fn variable_names(&self) -> Vec<String> {
+            let mut names: Vec<String> = self.0.keys().cloned().collect();
+            names.sort();
+            names
+        }
+        fn is_noop(&self, _name: &str) -> bool {
+            false
+        }
+        fn hidden_for_sem(&self, _name: &str) -> bool {
+            false
+        }
+        fn session_or_global_value(&self, name: &str) -> Result<String, String> {
+            self.0
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown {name}"))
+        }
+        fn enable_noop_variables(&self) -> bool {
+            false
+        }
+    }
+
+    struct NoPresign;
+
+    impl PresignSource for NoPresign {
+        fn has_global_storage(&self) -> bool {
+            false
+        }
+        fn presign_file(&self, _path: &str, _expire: Duration) -> Result<String, String> {
+            Err("no storage".to_owned())
+        }
+    }
+
+    struct Collecting {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+
+    impl DumpArchiveWriter for Collecting {
+        fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError> {
+            self.files.insert(name.to_owned(), contents.to_vec());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dump_plan_replayer_info_assembles_the_archive() {
+        let empty_schema = EmptySchema;
+        let view_parser = RealParser;
+        let stats = EmptyStats;
+        let mem_stats = EmptyStats;
+        let tiflash = NoReplica;
+        let mut vars = HashMap::new();
+        vars.insert("sql_mode".to_owned(), "STRICT".to_owned());
+        let variables = FixedVars(vars);
+        let presign = NoPresign;
+        let seams = DumpSeams {
+            extract_schema: &empty_schema,
+            view_parser: &view_parser,
+            stats: &stats,
+            mem_stats: &mem_stats,
+            tiflash: &tiflash,
+            variables: &variables,
+            presign: &presign,
+            cur_db: "db1".to_owned(),
+            enable_historical_stats_for_capture: false,
+        };
+        let mut task = PlanReplayerDumpTask {
+            sql_digest: "sdig".to_owned(),
+            ..PlanReplayerDumpTask::default()
+        };
+        let mut writer = Collecting {
+            files: std::collections::BTreeMap::new(),
+        };
+        let outcome = dump_plan_replayer_info(
+            &seams,
+            &mut task,
+            &["select * from db1.t1".to_owned()],
+            &mut writer,
+        );
+        assert!(outcome.error.is_none());
+        assert_eq!(1, outcome.records.len());
+        for name in [
+            "sql_meta.toml",
+            "config.toml",
+            "meta.txt",
+            "stats/db1.t1.json",
+            "variables.toml",
+            "sql/sql0.sql",
+        ] {
+            assert!(writer.files.contains_key(name), "missing {name}");
+        }
+        assert!(writer.files.contains_key("variables.toml"));
     }
 }

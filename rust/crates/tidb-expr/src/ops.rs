@@ -128,6 +128,13 @@ pub(crate) fn eval_unary(
             BitNeg => Datum::UInt(!i),
             Not | NotKeyword => unreachable!("handled above"),
         }),
+        // Go's unary-minus type inference promotes hybrid values to ETReal;
+        // only DECIMAL and temporal values take the decimal signature. Keep
+        // the REAL result for ENUM/SET ordinals and binary literals instead
+        // of letting the generic numeric conversion fall through to DECIMAL.
+        Datum::BinaryLiteral(_) | Datum::Enum(_, _) | Datum::Set(_, _) if matches!(op, Minus) => {
+            Ok(Datum::Real(-to_f64(v)))
+        }
         Datum::Null => unreachable!("handled above"),
         Datum::MinNotNull | Datum::MaxValue => unreachable!("rejected above"),
         other => {
@@ -208,11 +215,14 @@ pub(crate) const DERIVATION_FREE_COLLATION: tidb_datatype::Collation =
 /// bytes, lossily decoded here for the same reason [`bytes_to_f64`] scans
 /// them raw -- the message is diagnostic text, not a value.
 fn string_operand_text(d: &Datum) -> String {
-    match d {
+    // The subject of the 1292 message is byte-capped at 128 by Go's
+    // `ErrTruncatedWrongVal` template (`'%-.128s'`).
+    let text = match d {
         Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
         Datum::Bytes(s) => String::from_utf8_lossy(s).into_owned(),
         _ => String::new(),
-    }
+    };
+    tidb_datatype::warning_subject_byte_cap(&text).to_owned()
 }
 
 pub(crate) fn eval_binary_full(
@@ -484,6 +494,16 @@ pub(crate) fn eval_binary_full(
     let duration_vs_constant = (operands.lhs.is_duration_column() && operands.rhs.is_constant())
         || (operands.rhs.is_duration_column() && operands.lhs.is_constant());
     if duration_vs_constant && matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+        if l == Datum::Null || r == Datum::Null {
+            return Ok(if op == NullEq {
+                Datum::Int(0)
+            } else {
+                Datum::Null
+            });
+        }
+        if let (Datum::Duration(a), Datum::Duration(b)) = (&l, &r) {
+            return Ok(ordering_to_bool(op, a.compare(*b)));
+        }
         let text_side = |value: &Datum| match value {
             Datum::String(value) => Some(String::from_utf8_lossy(value.bytes()).into_owned()),
             Datum::Bytes(value) => Some(String::from_utf8_lossy(value).into_owned()),
@@ -740,9 +760,15 @@ pub(crate) fn eval_binary_full(
             return Ok(Datum::Null);
         }
         let target_scale = a.scale() + effective_div_precision_increment(div_precision_increment);
-        let quotient = a
-            .true_div(&b, target_scale)
+        let (quotient, warning) = a
+            .true_div_with_warning(&b, target_scale)
             .ok_or(EvalError::DecimalOverflow)?;
+        if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+            return Err(EvalError::DecimalOverflow);
+        }
+        if warning == Some(tidb_datatype::DecimalCodecWarning::Truncated) {
+            ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{quotient}'"))?;
+        }
         let (precision, fraction) = quotient.precision_and_frac();
         // Go MyDecimal has nine base-1e9 words. Fractional words may be
         // rounded/truncated, but an integer part needing a tenth word is
@@ -830,8 +856,7 @@ pub(crate) fn integer_binary_typed(
     // records neither -- see `ops::operand`. A CONSTANT binary literal
     // (`0x1234`, `b'11'`) carries its signedness in its own `FieldType`, so
     // the same conversion the generic entry applies runs here first.
-    let (l, r) =
-        crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
+    let (l, r) = crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
     if l == Datum::Null || r == Datum::Null {
         return Ok(Some(Datum::Null));
     }
@@ -925,35 +950,38 @@ fn decimal_binary(
         Lt => bool_int(a < b),
         Ne => bool_int(a != b),
         Div => unreachable!("handled above"),
-        // `div_rem` answers `None` for two unrelated conditions: a zero divisor
-        // and a quotient too wide for `i64`. Go
+        // `div_rem_unbounded` answers `None` only for a zero divisor. Go
         // (`builtinArithmeticIntDivideDecimalSig.evalInt`,
-        // `builtin_arithmetic.go:926`) keeps them apart — a zero divisor comes
-        // back from `DecimalDiv` as `ErrDivByZero` and goes to the
-        // division-by-zero handler, while an out-of-`BIGINT` quotient is caught
-        // later by `ToInt`/`ToUint` and raised as an unconditional
-        // `ErrOverflow`, never downgraded to a warning. Testing the divisor
-        // here is what lets the remaining `None` mean overflow and only
-        // overflow.
+        // `builtin_arithmetic.go:926`) runs `DecimalDiv` first, then catches
+        // an out-of-`BIGINT` quotient in `ToInt`/`ToUint` as an unconditional
+        // `ErrOverflow`, never downgraded to a warning.
         IntDiv => {
             if b.is_zero() {
                 ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
-                match a.div_rem(&b) {
-                    // Go reads the quotient back through `ToUint` when EITHER
-                    // argument carries `UnsignedFlag`
-                    // (`builtin_arithmetic.go:952-967`), and `ToUint` REFUSES a
-                    // negative value rather than wrapping it -- so
-                    // `double_unsigned_col DIV -1` is `ErrOverflow "BIGINT
-                    // UNSIGNED"`, not the two's-complement 18446744073709551609
-                    // this returned. The one negative quotient that survives is
-                    // Go's own `(-1, 0]` exception, and `div_rem` has already
-                    // truncated that to 0.
-                    Some((q, _)) if unsigned_pair && q < 0 => return Err(EvalError::IntOverflow),
-                    Some((q, _)) if unsigned_pair => Datum::UInt(q as u64),
-                    Some((q, _)) => Datum::Int(q),
-                    None => return Err(EvalError::IntOverflow),
+                match a.div_rem_unbounded(&b) {
+                    Some((q, _)) if unsigned_pair => {
+                        // Go reads the quotient through `ToUint` when EITHER
+                        // argument carries `UnsignedFlag`
+                        // (`builtin_arithmetic.go:952-967`). It accepts the
+                        // complete `[0, u64::MAX]` range, rejects negative
+                        // quotients, and leaves the truncated `(-1, 0]`
+                        // quotient as zero.
+                        let (value, warning) = q.to_u64_trunc();
+                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+                            return Err(EvalError::IntOverflow);
+                        }
+                        Datum::UInt(value)
+                    }
+                    Some((q, _)) => {
+                        let (value, warning) = q.to_i64_trunc();
+                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+                            return Err(EvalError::IntOverflow);
+                        }
+                        Datum::Int(value)
+                    }
+                    None => unreachable!("nonzero decimal divisor was checked above"),
                 }
             }
         }
@@ -1104,9 +1132,14 @@ fn time_compare_ordering(
             ))
         }
     };
-    // The session zone only matters for a Timestamp reading, which this
-    // comparison does not shift; UTC keeps the parse deterministic.
-    match time.compare_string(&text, true, true, &chrono_tz::Tz::UTC) {
+    let modes = ctx.date_modes();
+    let timezone = ctx.time_zone();
+    match time.compare_string(
+        &text,
+        !modes.no_zero_in_date,
+        modes.allow_invalid_dates,
+        &timezone,
+    ) {
         Ok(ordering) => Ok(Some(ordering)),
         Err(_) => {
             ctx.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
@@ -1385,6 +1418,144 @@ mod tests {
         fn taken(&self) -> Vec<(u16, String)> {
             self.0.take()
         }
+    }
+
+    struct TemporalContext {
+        modes: tidb_datatype::DateModes,
+        zone: tidb_datatype::SessionTimeZone,
+        warnings: std::cell::RefCell<Vec<(u16, String)>>,
+    }
+
+    impl TemporalContext {
+        fn new(modes: tidb_datatype::DateModes, zone: tidb_datatype::SessionTimeZone) -> Self {
+            Self {
+                modes,
+                zone,
+                warnings: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn warnings(&self) -> Vec<(u16, String)> {
+            self.warnings.borrow().clone()
+        }
+    }
+
+    impl crate::Columns for TemporalContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            self.modes
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            self.zone.clone()
+        }
+    }
+
+    #[test]
+    fn time_comparison_uses_statement_date_modes_and_warning_sink() {
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let left = Datum::new_time(
+            tidb_datatype::parse_datetime("2020-02-28", &zone, true, true)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-02-31");
+        let strict = TemporalContext::new(
+            tidb_datatype::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: false,
+            },
+            zone.clone(),
+        );
+
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Lt,
+                left.clone(),
+                right.clone(),
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &strict,
+            ),
+            Ok(Datum::Null)
+        );
+        assert_eq!(
+            strict.warnings(),
+            vec![(1292, "Incorrect datetime value: '2020-02-31'".to_owned())]
+        );
+
+        let relaxed = TemporalContext::new(
+            tidb_datatype::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: true,
+            },
+            zone,
+        );
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Lt,
+                left,
+                right,
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &relaxed,
+            ),
+            Ok(Datum::Int(1))
+        );
+        assert!(relaxed.warnings().is_empty());
+    }
+
+    #[test]
+    fn time_comparison_uses_statement_timezone_for_offset_text() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let plus_two = tidb_datatype::SessionTimeZone::Fixed {
+            name: "+02:00".to_owned(),
+            offset_secs: 2 * 60 * 60,
+        };
+        let left = Datum::new_time(
+            tidb_datatype::parse_datetime("2020-01-01 00:00:00", &utc, true, false)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-01-01 00:00:00+01:00");
+        let utc_ctx = TemporalContext::new(tidb_datatype::DateModes::default(), utc);
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Gt,
+                left.clone(),
+                right.clone(),
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &utc_ctx,
+            ),
+            Ok(Datum::Int(1))
+        );
+
+        let plus_two_ctx = TemporalContext::new(tidb_datatype::DateModes::default(), plus_two);
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Gt,
+                left,
+                right,
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &plus_two_ctx,
+            ),
+            Ok(Datum::Int(0))
+        );
     }
 
     fn truncated(text: &str) -> (u16, String) {
@@ -1927,6 +2098,27 @@ mod tests {
         assert_eq!(div(Datum::Int(1), Datum::Int(0)), "NULL".to_owned());
     }
 
+    /// Go's decimal division keeps the quotient but sends a nine-word
+    /// fractional-buffer truncation through `HandleTruncate`.
+    #[test]
+    fn decimal_division_reports_codec_truncation_warning() {
+        let left = Datum::Decimal(Decimal::from_literal(
+            "10000000000000000000.000000000000000000000000000000",
+        ));
+        let right = Datum::Decimal(Decimal::from_literal("3.000000000000000000000000000000"));
+        let warnings = WarningLog::default();
+        let result =
+            super::eval_binary_with_div_precision(BinaryOp::Div, left, right, 4, &warnings)
+                .expect("decimal division remains a value with a warning");
+        assert!(matches!(result, Datum::Decimal(_)));
+        let warnings = warnings.taken();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 1292);
+        assert!(warnings[0]
+            .1
+            .starts_with("Truncated incorrect DECIMAL value: '"));
+    }
+
     // Go TestDecimalErrOverflow. The executor layer maps this error class to
     // errno 1690 / SQLSTATE 22003; this value tier pins which arithmetic
     // operations must raise it.
@@ -1959,6 +2151,33 @@ mod tests {
         assert_eq!(
             eval_binary(BinaryOp::Mod, Datum::Int(i64::MIN), Datum::Int(-1)),
             Ok(Datum::Int(0))
+        );
+    }
+
+    /// Go `builtinUnaryMinusIntSig.evalInt` (`builtin_op.go:1116,1121`)
+    /// reports the overflow through `GenWithStackByArgs("BIGINT",
+    /// fmt.Sprintf("-%v", val))`: the quoted operand is the NEGATED value,
+    /// not the source expression. The wire text therefore carries
+    /// `in '-9223372036854775808'`, which a bare `IntOverflow` loses.
+    #[test]
+    fn unary_minus_overflow_quotes_the_negated_value() {
+        let column = crate::expression::Expression::Column(crate::expression::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ));
+        let error = super::eval_unary(
+            tidb_ast::UnaryOp::Minus,
+            Datum::Int(i64::MIN),
+            super::Operand::Expr(&column),
+            &crate::NoColumns,
+        )
+        .expect_err("-MININT on a column must overflow");
+        assert_eq!(
+            error,
+            EvalError::DataOutOfRange {
+                value: "BIGINT",
+                expression: "--9223372036854775808".to_string(),
+            }
         );
     }
 

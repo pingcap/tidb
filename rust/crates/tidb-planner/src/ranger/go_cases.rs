@@ -151,7 +151,8 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
         ([5, 6], ["[(5 6,5 +inf]]", "[(3 4,3 +inf] (5 6,5 +inf]]"]),
     ] {
         ctx.params = values.map(Datum::Int).to_vec();
-        let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+        let evaluate =
+            |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
         for (expression, expected) in expressions.iter().zip(expected) {
             let conditions = split_cnf_items(expression);
             let result = super::detacher::detach_cond_and_build_range_for_index_in(
@@ -169,7 +170,8 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
     let predicate = compile("SELECT * FROM t WHERE a >= ?", &ctx);
     for value in [9, 2] {
         ctx.params = vec![Datum::Int(value)];
-        let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+        let evaluate =
+            |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
         let conditions = std::slice::from_ref(&predicate);
         let tp = cols[0].ret_type.as_ref().unwrap();
         let table = super::ranger::build_table_range_in(conditions, tp, 0, &evaluate).unwrap();
@@ -203,7 +205,7 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
     // consume that Constant; they cannot repeat the original division.
     let predicate = compile("SELECT * FROM t WHERE a >= 1 / 0", &ctx);
     assert_eq!(ctx.warnings.get(), 1);
-    let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+    let evaluate = |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
     for _ in 0..7 {
         let result = super::detacher::detach_cond_and_build_range_for_index_in(
             std::slice::from_ref(&predicate),
@@ -659,6 +661,7 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
                 }
             }
             if matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq") {
+                refine_integer_string_comparison(&mut rewritten.args);
                 let real_column = rewritten.args.iter().any(|arg| {
                     matches!(arg, Expression::Column(col)
                     if col.ret_type.as_ref().is_some_and(|ft| {
@@ -678,6 +681,63 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
             Expression::ScalarFunction(rewritten)
         }
         other => other.clone(),
+    }
+}
+
+/// Go `compareFunctionClass.refineArgs` runs before `generateCmpSigs` casts a
+/// mixed integer/string comparison to DOUBLE. `rewrite_expr_resolved` has the
+/// opposite construction order today, so this ranger fixture stage restores
+/// the source planner's input: an exact integral string becomes the integer
+/// column's own datum type and the implicit `cast_double(column)` disappears.
+fn refine_integer_string_comparison(args: &mut [Expression]) {
+    if args.len() != 2 {
+        return;
+    }
+    for column_index in 0..2 {
+        let constant_index = 1 - column_index;
+        let Expression::ScalarFunction(cast) = &args[column_index] else {
+            continue;
+        };
+        if cast.func_name.lowercase() != "cast_double" || cast.args.len() != 1 {
+            continue;
+        }
+        let Expression::Column(column) = &cast.args[0] else {
+            continue;
+        };
+        let Some(field_type) = column.ret_type.as_ref() else {
+            continue;
+        };
+        if field_type.eval_type() != tidb_datatype::EvalType::Int {
+            continue;
+        }
+        let Expression::Constant(constant) = &args[constant_index] else {
+            continue;
+        };
+        let Datum::Real(value) = constant.value else {
+            continue;
+        };
+        const MAX_EXACT_F64_INTEGER: f64 = 9_007_199_254_740_992.0;
+        if !value.is_finite() || value.fract() != 0.0 || value.abs() > MAX_EXACT_F64_INTEGER {
+            continue;
+        }
+        let refined = if field_type.is_unsigned() {
+            if !(0.0..=u64::MAX as f64).contains(&value) {
+                continue;
+            }
+            Datum::UInt(value as u64)
+        } else {
+            if value < i64::MIN as f64 || value > i64::MAX as f64 {
+                continue;
+            }
+            Datum::Int(value as i64)
+        };
+        let column = column.clone();
+        let mut constant = constant.clone();
+        constant.value = refined;
+        constant.ret_type = Some(field_type.clone());
+        args[column_index] = Expression::Column(column);
+        args[constant_index] = Expression::Constant(constant);
+        return;
     }
 }
 
@@ -1671,7 +1731,19 @@ fn issue_40997_dnf_ranges_match_go() {
     };
     let rewritten =
         rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
-    let conds = split_cnf_items(&rewritten);
+    let ctx = tidb_expr::NoColumns;
+    let builder = RealFunctionBuilder::new(&ctx);
+    let conds: Vec<Expression> = split_cnf_items(&rewritten)
+        .iter()
+        .map(planner_rewriter_stage)
+        .map(|cond| push_down_not(&cond, &builder))
+        .map(|mut cond| {
+            tidb_expr::rewriter::derive_tree_collation(&mut cond)
+                .map(|()| cond)
+                .map_err(|error| format!("collation: {error:?}"))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .expect("rewrites conditions");
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
     let result =
         super::detacher::detach_cond_and_build_range_for_index(&conds, &table.columns, &lengths, 0)
@@ -2094,6 +2166,163 @@ fn range_fallback_ladder_matches_go() {
     );
 }
 
+#[test]
+fn range_quota_events_reach_shared_handler() {
+    use std::sync::Arc;
+    use tidb_util::context::{
+        PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
+    };
+    let table = MinAccessTable::new();
+    let stmt = tidb_parser::parse("select * from t1 where a in (10,20,30)").unwrap();
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        panic!("query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("select")
+    };
+    let expression = rewrite_expr_resolved(&select.where_clause.unwrap(), &table).unwrap();
+    let conds = split_cnf_items(&expression);
+    let cols = vec![table.columns[0].clone()];
+    let warnings = Arc::new(StaticWarnHandler::new(0));
+    let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+    tracker.set_cache_type(PlanCacheType::SessionPrepared);
+    tracker.enable_plan_cache();
+    let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+    let result = super::detacher::detach_index_range_with_fallback_handler(
+        &conds,
+        &cols,
+        &[-1],
+        1,
+        &handler,
+    )
+    .unwrap();
+    assert!(result.access_conds.is_empty());
+    assert!(!result.remained_conds.is_empty());
+    assert!(
+        !tracker.use_cache(),
+        "quota fallback must prevent cache admission"
+    );
+    assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
+    let messages = warnings
+        .copy_warnings()
+        .into_iter()
+        .map(|w| w.err.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0], "skip prepared plan-cache: in-list is too long");
+    assert!(messages[1].contains("Memory capacity of 1 bytes"));
+
+    // Forced cache keeps admission enabled and repeats the risk warning, while
+    // the capacity warning remains once per shared handler, as in Go.
+    let warnings = Arc::new(StaticWarnHandler::new(0));
+    let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+    tracker.set_cache_type(PlanCacheType::SessionPrepared);
+    tracker.enable_plan_cache();
+    tracker.set_force_plan_cache(true);
+    let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+    for _ in 0..2 {
+        super::detacher::detach_index_range_with_fallback_handler(
+            &conds,
+            &cols,
+            &[-1],
+            1,
+            &handler,
+        )
+        .unwrap();
+    }
+    assert!(tracker.use_cache());
+    let messages = warnings
+        .copy_warnings()
+        .into_iter()
+        .map(|w| w.err.to_string())
+        .collect::<Vec<_>>();
+    // Each build first attempts the IN prefix, then retries it as a column
+    // condition (Go detacher.go:410 and :550). Both attempts report fallback.
+    assert_eq!(messages.len(), 5);
+    assert_eq!(
+        messages[0],
+        "force plan-cache: may use risky cached plan: in-list is too long"
+    );
+    assert!(messages[1].contains("Memory capacity of 1 bytes"));
+    for message in &messages[2..] {
+        assert_eq!(message, &messages[0]);
+    }
+}
+
+#[test]
+fn range_quota_events_cover_recursive_and_dnf_builds() {
+    use std::sync::Arc;
+    use tidb_util::context::{
+        PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
+    };
+    let table = MinAccessTable::new();
+    for (predicate, column_count, expect_fallback) in [
+        ("a = 10 or a = 20 or a = 30", 1, true),
+        ("(a = 10 and b = 40) or (a = 20 and b = 50)", 2, true),
+        ("a in (10,20,30) and b in (40,50,60)", 2, true),
+        ("a = 10 or b = 20", 1, false),
+    ] {
+        let stmt = tidb_parser::parse(&format!("select * from t1 where {predicate}")).unwrap();
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("select")
+        };
+        let expression = rewrite_expr_resolved(&select.where_clause.unwrap(), &table).unwrap();
+        let conds = split_cnf_items(&expression);
+        let cols = table.columns[..column_count].to_vec();
+        let lengths = vec![-1; column_count];
+        let full =
+            super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                .unwrap();
+        let quota = if expect_fallback {
+            super::types::ranges_mem_usage(&full.ranges) - 1
+        } else {
+            10_000
+        };
+        let warnings = Arc::new(StaticWarnHandler::new(0));
+        let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+        tracker.set_cache_type(PlanCacheType::SessionPrepared);
+        tracker.enable_plan_cache();
+        let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+        // Unlimited builds must never report quota fallback, including residual DNF.
+        super::detacher::detach_index_range_with_fallback_handler(
+            &conds, &cols, &lengths, 0, &handler,
+        )
+        .unwrap();
+        assert!(tracker.use_cache(), "{predicate}");
+        assert_eq!(warnings.warning_count(), 0, "{predicate}");
+        if expect_fallback {
+            // Go falls back only above the budget, not at equality.
+            let exact = super::detacher::detach_index_range_with_fallback_handler(
+                &conds,
+                &cols,
+                &lengths,
+                quota + 1,
+                &handler,
+            )
+            .unwrap();
+            assert!(exact.remained_conds.is_empty(), "{predicate}");
+            assert!(tracker.use_cache(), "{predicate}");
+            assert_eq!(warnings.warning_count(), 0, "{predicate}");
+        }
+        for _ in 0..2 {
+            let result = super::detacher::detach_index_range_with_fallback_handler(
+                &conds, &cols, &lengths, quota, &handler,
+            )
+            .unwrap();
+            assert!(!result.remained_conds.is_empty(), "{predicate}");
+        }
+        assert_eq!(!tracker.use_cache(), expect_fallback, "{predicate}");
+        assert_eq!(
+            warnings.warning_count(),
+            if expect_fallback { 2 } else { 0 },
+            "{predicate}"
+        );
+    }
+}
+
 /// Go `TestRangeFallbackForBuildTableRange` (`ranger_test.go:2246`) and
 /// `TestRangeFallbackForBuildColumnRange` (`:2282`): under quota the
 /// table path answers `[[-inf,+inf]]` and the column path `[[NULL,+inf]]`
@@ -2514,7 +2743,6 @@ fn range_mem_usage_matches_go() {
     assert_eq!(ranges_mem_usage(&ranges), mem1 + mem2);
 }
 
-
 /// The taobench `edges` write shape: a three-arm DNF over
 /// PRIMARY(id1, id2, type) where EVERY arm shares `id1 = const` and two
 /// arms extend it with `(id2, type)` conjuncts. The live go baseline
@@ -2527,7 +2755,8 @@ fn taobench_edge_dnf_index_ranges_match_go() {
     struct EdgesTable;
     impl EdgesTable {
         fn columns() -> Vec<Column> {
-            let big = |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
+            let big =
+                |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
             let mut varchar = FieldType::new(FieldTypeCode::Varchar);
             varchar.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
             varchar.add_flags(FieldTypeFlags::NOT_NULL);
@@ -2544,7 +2773,11 @@ fn taobench_edge_dnf_index_ranges_match_go() {
                 _ => return None,
             };
             let columns = Self::columns();
-            Some((offset, columns[offset].ret_type.clone().expect("typed"), columns[offset].unique_id))
+            Some((
+                offset,
+                columns[offset].ret_type.clone().expect("typed"),
+                columns[offset].unique_id,
+            ))
         }
         fn resolve_column(&self, path: &[String]) -> Option<Column> {
             let name = path.last()?;
@@ -2566,13 +2799,14 @@ fn taobench_edge_dnf_index_ranges_match_go() {
 
     let run = |sql: &str| -> Result<String, String> {
         let stmt = tidb_parser::parse(sql).map_err(|error| format!("parse: {error:?}"))?;
-        let tidb_ast::Stmt::Query(query) = stmt else { return Err("not query".to_owned()) };
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            return Err("not query".to_owned());
+        };
         let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             return Err("not select".to_owned());
         };
-        let rewritten =
-            rewrite_expr_resolved(&select.where_clause.expect("where"), &EdgesTable)
-                .map_err(|error| format!("rewrite: {error:?}"))?;
+        let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &EdgesTable)
+            .map_err(|error| format!("rewrite: {error:?}"))?;
         let ctx = tidb_expr::NoColumns;
         let builder = RealFunctionBuilder::new(&ctx);
         let conds: Vec<Expression> = split_cnf_items(&rewritten)
@@ -2583,7 +2817,10 @@ fn taobench_edge_dnf_index_ranges_match_go() {
         let index_cols = EdgesTable::columns();
         let lengths = vec![super::checker::UNSPECIFIED_LENGTH; index_cols.len()];
         let result = super::detacher::detach_cond_and_build_range_for_index(
-            &conds, &index_cols, &lengths, 0,
+            &conds,
+            &index_cols,
+            &lengths,
+            0,
         )
         .map_err(|error| format!("detach: {error:?}"))?;
         Ok(ranges_to_go_string(&result.ranges))
@@ -2591,20 +2828,15 @@ fn taobench_edge_dnf_index_ranges_match_go() {
 
     // Every arm shares id1; the (id2, type) arms are covered by the
     // id1 point. Go unions this into ONE point range.
-    let shared_id1 = run(
-        "select * from t where id1 = 999999999001 \
+    let shared_id1 = run("select * from t where id1 = 999999999001 \
          or id1 = 999999999001 and id2 = 1947761684552 and type = '3' \
-         or id1 = 999999999001 and id2 = 1947761684552 and type = '0'",
-    )
+         or id1 = 999999999001 and id2 = 1947761684552 and type = '0'")
     .expect("detaches");
     assert_eq!(shared_id1, "[[999999999001,999999999001]]");
 
     // Two plain id2 arms under one id1 behave the same way.
-    let two_id2_arms = run(
-        "select * from t where id1 = 999999999001 \
-         or id1 = 999999999001 and id2 = 1947761684552",
-    )
+    let two_id2_arms = run("select * from t where id1 = 999999999001 \
+         or id1 = 999999999001 and id2 = 1947761684552")
     .expect("detaches");
     assert_eq!(two_id2_arms, "[[999999999001,999999999001]]");
 }
-

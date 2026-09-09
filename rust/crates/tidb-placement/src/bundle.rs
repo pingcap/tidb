@@ -16,6 +16,7 @@
 //! the shape PD schedules best.
 
 use std::fmt;
+use tidb_hack::GoToLower;
 
 use serde::Serialize;
 use tidb_codec::encode_bytes;
@@ -65,7 +66,6 @@ pub struct Bundle {
 /// Go `NewBundle`: creates a bundle with the provided ID.
 ///
 /// Note that you should never pass a negative id.
-#[must_use]
 pub fn new_bundle(id: i64) -> Bundle {
     Bundle {
         id: group_id(id),
@@ -169,11 +169,13 @@ pub fn new_bundle_from_constraints_options(
     // Create follower rules.
     // If no constraints, we need create default follower rules.
     if follower_replicas > 0 {
-        let builder = RuleBuilder::new()
-            .set_role(PeerRoleType::VOTER)
-            .set_replicas_num(follower_replicas)
-            .set_skip_check_replicas_consistent(need_create_default && explicit_follower_count == 0)
-            .set_constraint_str(follower_constraints);
+        let mut builder = RuleBuilder::new();
+        builder.set_role(PeerRoleType::VOTER);
+        builder.set_replicas_num(follower_replicas);
+        builder.set_skip_check_replicas_consistent(
+            need_create_default && explicit_follower_count == 0,
+        );
+        builder.set_constraint_str(follower_constraints);
         let mut follower_rules = builder
             .build_rules()
             .map_err(|err| err.wrapping("invalid FollowerConstraints"))?;
@@ -188,10 +190,10 @@ pub fn new_bundle_from_constraints_options(
     }
 
     // Create learner rules.
-    let builder = RuleBuilder::new()
-        .set_role(PeerRoleType::LEARNER)
-        .set_replicas_num(explicit_learner_count)
-        .set_constraint_str(learner_constraints);
+    let mut builder = RuleBuilder::new();
+    builder.set_role(PeerRoleType::LEARNER);
+    builder.set_replicas_num(explicit_learner_count);
+    builder.set_constraint_str(learner_constraints);
     let mut learner_rules = builder
         .build_rules()
         .map_err(|err| err.wrapping("invalid LearnerConstraints"))?;
@@ -295,7 +297,7 @@ pub fn new_bundle_from_sugar_options(
 
     // primaryCount only makes sense when len(regions) > 0, but we compute it
     // here anyway to reuse code.
-    let primary_count = match schedule.to_lowercase().as_str() {
+    let primary_count = match schedule.go_to_lower().as_str() {
         "" | "even" => (followers + 1).div_ceil(regions.len() as u64),
         "majority_in_primary" => {
             // Calculate how many replicas need to be in the primary region for
@@ -610,7 +612,6 @@ fn encode_bytes_owned(input: &[u8]) -> Vec<u8> {
 
 /// Go `GetRangeStartAndEndKeyHex`: gets the startKeyHex and endKeyHex of the
 /// range identified by `range_bundle_id`.
-#[must_use]
 pub fn get_range_start_and_end_key_hex(range_bundle_id: &str) -> (String, String) {
     let (mut start_key, mut end_key) = (String::new(), String::new());
     if range_bundle_id == TIDB_BUNDLE_RANGE_PREFIX_FOR_META {
@@ -689,7 +690,7 @@ impl Bundle {
         let mut new_rules = Vec::with_capacity(self.rules.len());
         for (index, rule) in self.rules.iter().enumerate() {
             let mut copied = rule.clone_rule();
-            copied.id = format!("{}_rule_{index}", policy_name.to_lowercase());
+            copied.id = format!("{}_rule_{index}", policy_name.go_to_lower());
             copied.group_id.clone_from(&self.id);
             copied.start_key_hex.clone_from(&start_key);
             copied.end_key_hex.clone_from(&end_key);
@@ -763,13 +764,11 @@ impl Bundle {
     }
 
     /// Go `(*Bundle).Clone`: duplicates a bundle.
-    #[must_use]
     pub fn clone_bundle(&self) -> Self {
         self.clone()
     }
 
     /// Go `(*Bundle).IsEmpty`: checks if a bundle is empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty() && self.index == 0 && !self.r#override
     }

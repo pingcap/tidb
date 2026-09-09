@@ -396,3 +396,32 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 	close(store.releaseCh)
 	require.NoError(t, <-errCh)
 }
+
+func TestGetAllFileNamesMatchesMultipleNonPartitionedDirs(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	for _, path := range []string{
+		"30001/plan/meta.json",
+		"30002/plan/meta.json",
+		"p00000001/30001/7/data",
+		"p00000010/30002/7/data",
+		"p00000003/40000/7/ignored",
+	} {
+		writer, err := store.Create(ctx, path, nil)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close(ctx))
+	}
+
+	names, err := GetAllFileNames(ctx, store, "30001", "30002")
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"30001/plan/meta.json",
+		"30002/plan/meta.json",
+		"p00000001/30001/7/data",
+		"p00000010/30002/7/data",
+	}, names)
+
+	names, err = GetAllFileNames(ctx, store)
+	require.NoError(t, err)
+	require.Nil(t, names)
+}

@@ -115,31 +115,17 @@
 //! `@@max_connections`, a subquery) along with functions simply not ported
 //! yet.
 //!
-//! # The substitution rule, and why its obstacle turned out not to exist
+//! # Planner substitution
 //!
 //! Go rewrites a predicate like `a+1=3` into the indexed virtual generated
 //! column that stores `a+1`, so the index can serve the query
-//! (`pkg/planner/core/rule_generate_column_substitute.go`). The predicate
-//! half of that rule is now ported, in
-//! [`crate::generated_column_substitute`].
-//!
-//! This section used to record an obstacle, and it was the wrong one, so read
-//! it as a correction rather than a status: the two expressions to compare
-//! DO live in different column namespaces -- a [`GeneratedColumn::expr`]'s
-//! `Column` nodes index [`GeneratedColumn::dependencies`], the expression's
-//! OWN name list, while a `WHERE` condition's columns index the query -- and
-//! the conclusion drawn from that, that an explicit mapping between the two
-//! had to be built and kept honest across pruning and derived tables, was
-//! wrong.
-//!
-//! The two never have to meet in a positional namespace at all. The consumer
-//! of the rewrite is the access-path choice, and that consumes the `WHERE` as
-//! an `tidb_ast::Expr` with column NAMES -- not as a resolved `Expression`.
-//! The table side already carries [`GeneratedColumn::expr_text`], the
-//! canonically restored text of the same AST. Reducing both sides with the
-//! one flag set they are already stored under ([`generated_restore_flags`])
-//! gives a single equality with no mapping and no second comparison mode. The
-//! compiled [`GeneratedColumn::expr`] is not consulted by the rule at all.
+//! (`pkg/planner/core/rule_generate_column_substitute.go`). The catalog bridge
+//! retains each virtual generated column's AST; `PlanBuilder` resolves that
+//! AST against the complete newborn `DataSource` schema and attaches the
+//! resulting expression to the planner column. The ordinary
+//! `GcSubstituter` rule then performs Go's typed expression comparison and
+//! schema-presence checks. Execution does not carry a second substitution
+//! path.
 
 use std::cell::{Cell, RefCell};
 
@@ -687,14 +673,14 @@ pub fn build_generated_columns_with_like_default_escape(
 }
 
 /// Builds ONE generated column for `ALTER TABLE ... ADD COLUMN <name> <type>
-/// AS (expr) VIRTUAL`, against the columns that will PRECEDE it.
+/// AS (expr) VIRTUAL`, against the supplied existing-column namespace.
 ///
-/// `names`/`types` are the preceding columns in table order and
-/// `generated_at` says which of them are themselves generated -- the same
-/// three inputs [`build_generated_columns`] derives per position, except that
-/// here every candidate really is earlier, so Go's
-/// `verifyColumnGeneration` prior-order rule can only be satisfied and is
-/// carried by construction rather than re-tested.
+/// `names`/`types` are normally the table's complete current columns. The
+/// caller performs Go's position-sensitive `verifyColumnGenerationSingle`
+/// check after this build, because resolving against the full namespace is
+/// what preserves Go's 1054-before-3107 validation order. Unit callers that
+/// intentionally provide only preceding columns still get the same builder
+/// behavior and can rely on construction to make prior-order valid.
 ///
 /// STORED is the caller's refusal, not this function's: Go answers 3106
 /// `'Adding generated stored column through ALTER TABLE' is not supported for
@@ -763,9 +749,8 @@ pub fn build_added_generated_column_with_like_default_escape(
 /// back-quoted names, spaces around binary operations, and no schema or table
 /// qualifier -- which is why `SHOW CREATE TABLE` prints `` (`a` + 1) ``.
 ///
-/// This is also the canonical form the substitution rule compares under, on
-/// BOTH sides -- see [`crate::generated_column_substitute`] for why that is
-/// the whole of its namespace problem.
+/// This is also the canonical form a generated-column substitution rule can
+/// compare against once the wired planner implements `GcSubstituter`.
 pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE

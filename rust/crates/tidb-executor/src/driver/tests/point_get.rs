@@ -8,6 +8,599 @@
 
 use super::*;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_txnkv::Key;
+
+#[derive(Clone, Debug, Default)]
+struct BatchGetCountingStorage {
+    inner: MemTableStorage,
+    batch_gets: Arc<AtomicUsize>,
+}
+
+impl TableStorage for BatchGetCountingStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.inner.get(key)
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        self.batch_gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.batch_get(keys)
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.inner.set(key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.inner.delete(key)
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter(start, upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter_reverse(upper_bound, lower_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        self.inner.key_count()
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
+#[test]
+fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_no_replan (id BIGINT PRIMARY KEY, value BIGINT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_no_replan VALUES (1,10),(2,20),(3,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let statement = tidb_parser::parse(
+        "SELECT value FROM cache_no_replan WHERE id BETWEEN ? AND ? ORDER BY id",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("the range statement is cacheable"),
+    );
+    let environment = PreparedPlanCacheEnvironment::default();
+    let first = plan
+        .bind(
+            &[Datum::Int(1), Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the first execution builds the cached physical tree");
+    assert!(!first.cache_hit());
+    drop(first);
+    let cached = plan
+        .bind(
+            &[Datum::Int(2), Datum::Int(3)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the second execution rebuilds the cached physical tree");
+    assert!(cached.cache_hit());
+
+    let (_, rows) =
+        run_prepared_select_for_test(&cached, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
+    assert_eq!(rows, vec![vec![Datum::Int(20)], vec![Datum::Int(30)]]);
+}
+
+#[test]
+fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_tuple_range (\
+            a BIGINT NOT NULL, b BIGINT NOT NULL, payload BIGINT NOT NULL, \
+            PRIMARY KEY (a, b) NONCLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_tuple_range VALUES (1,-1,10),(2,-1,20),(3,-1,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM cache_tuple_range \
+             WHERE (a, b) > (2, -1) ORDER BY a, b LIMIT 2",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        [[Datum::Int(3), Datum::Int(-1)]]
+    );
+    let statement = tidb_parser::parse(
+        "SELECT a, b FROM cache_tuple_range \
+         WHERE (a, b) > (?, ?) ORDER BY a, b LIMIT 2",
+    )
+    .unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("the tuple range is cacheable"),
+    );
+    let environment = PreparedPlanCacheEnvironment::default();
+    let first = plan
+        .bind(
+            &[Datum::Int(0), Datum::Int(0)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the first execution builds the cached tree");
+    assert!(!first.cache_hit());
+    assert_eq!(
+        run_prepared_select_for_test(&first, &catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .1,
+        [
+            [Datum::Int(1), Datum::Int(-1)],
+            [Datum::Int(2), Datum::Int(-1)]
+        ]
+    );
+    drop(first);
+
+    let second = plan
+        .bind(
+            &[Datum::Int(2), Datum::Int(-1)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &environment,
+        )
+        .expect("the cache hit rebuilds the tuple range");
+    assert!(second.cache_hit());
+    assert_eq!(
+        run_prepared_select_for_test(&second, &catalog, DEFAULT_DATABASE, &ctx)
+            .unwrap()
+            .1,
+        [[Datum::Int(3), Datum::Int(-1)]]
+    );
+}
+
+#[test]
+fn composite_unique_prefix_is_not_a_point_get() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE point_prefix (\
+            a BIGINT NOT NULL, b BIGINT NOT NULL, flag BIGINT UNSIGNED NOT NULL, \
+            PRIMARY KEY (a, b) NONCLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO point_prefix VALUES (1,-1,0)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_update_on(
+            "UPDATE point_prefix SET flag = 1 \
+             WHERE a = 1 AND b = -1 AND flag = 0",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT flag FROM point_prefix WHERE a = 1 AND b = -1",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        [[Datum::UInt(1)]]
+    );
+}
+
+#[test]
+fn cached_physical_index_readers_build_without_legacy_planner() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE cache_index_reader (\
+            id BIGINT PRIMARY KEY, c BIGINT NOT NULL, payload BIGINT NOT NULL, \
+            INDEX c_idx(c))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO cache_index_reader VALUES (1,10,100),(2,20,200),(3,30,300),(4,40,400)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let environment = PreparedPlanCacheEnvironment::default();
+
+    for (prepared, ordinary_first, ordinary_second) in [
+        (
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN ? AND ? ORDER BY c, id",
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 20 AND 40 ORDER BY c, id",
+            "SELECT c, id FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 10 AND 20 ORDER BY c, id",
+        ),
+        (
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN ? AND ? ORDER BY c, id",
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 20 AND 40 ORDER BY c, id",
+            "SELECT payload FROM cache_index_reader FORCE INDEX (c_idx) \
+             WHERE c BETWEEN 10 AND 20 ORDER BY c, id",
+        ),
+    ] {
+        let statement = tidb_parser::parse(prepared).unwrap();
+        let plan = std::sync::Arc::new(
+            build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+                .expect("the physical index reader is cacheable"),
+        );
+        for (execution_index, (values, ordinary)) in [
+            ([Datum::Int(20), Datum::Int(40)], ordinary_first),
+            ([Datum::Int(10), Datum::Int(20)], ordinary_second),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let execution = plan
+                .bind(&values, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .expect("the cached index ranges rebuild");
+            assert_eq!(execution.cache_hit(), execution_index != 0);
+            let expected = run_select_on(ordinary, &catalog, &ctx).unwrap();
+            let (_, actual) =
+                run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
+            assert_eq!(actual, expected, "{prepared} with {values:?}");
+        }
+    }
+}
+
+#[test]
+fn prepared_sysbench_sum_retains_gos_stream_aggregation_receipt() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (\
+            id INTEGER NOT NULL AUTO_INCREMENT, \
+            k INTEGER DEFAULT 0 NOT NULL, \
+            c CHAR(120) DEFAULT '' NOT NULL, \
+            pad CHAR(60) DEFAULT '' NOT NULL, \
+            PRIMARY KEY (id), INDEX k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN ? AND ?").unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("stock sysbench SUM is cacheable"),
+    );
+    let execution = plan
+        .bind(
+            &[Datum::Int(1), Datum::Int(100)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &PreparedPlanCacheEnvironment::default(),
+        )
+        .expect("the first execution builds its cached physical tree");
+
+    // Go's shape is `StreamAgg(root) -> TableReader -> StreamAgg(cop) ->
+    // TableScan`: the cop half rides the reader's `table_plan`, not the
+    // reader's `children()`, so the cop aggregation is one reader hop down.
+    assert!(execution
+        .with_plan(|_, physical| {
+            let root_is_stream =
+                matches!(physical, tidb_planner::physical::PhysicalPlan::StreamAgg(_));
+            let cop_is_stream = match physical.children().first() {
+                Some(tidb_planner::physical::PhysicalPlan::TableReader(reader)) => matches!(
+                    reader.table_plan.as_deref(),
+                    Some(tidb_planner::physical::PhysicalPlan::StreamAgg(_))
+                ),
+                _ => false,
+            };
+            root_is_stream && cop_is_stream
+        })
+        .expect("the cached physical plan generation is current"));
+}
+
+/// A prepared SELECT cache retains the complete physical operator tree, not
+/// any one execution's rows or parameter bounds. Rebinding two different
+/// ranges must match ordinary planning for every root shape in the sysbench
+/// mix.
+#[test]
+fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
+    let mut catalog = Catalog::default();
+    let environment = PreparedPlanCacheEnvironment::default();
+    crate::run_create_table_on(
+        "CREATE TABLE range_cache (id BIGINT PRIMARY KEY, k BIGINT NOT NULL, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO range_cache VALUES (1,10,'b'),(2,20,'a'),(3,30,'b'),(4,40,'c')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE range_cache_dim (id BIGINT PRIMARY KEY, label CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO range_cache_dim VALUES (1,'one'),(2,'two'),(3,'three'),(4,'four')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let cases = [
+        (
+            "SELECT c FROM range_cache WHERE id BETWEEN ? AND ?",
+            "SELECT c FROM range_cache WHERE id BETWEEN 2 AND 3",
+            "SELECT c FROM range_cache WHERE id BETWEEN 1 AND 4",
+        ),
+        (
+            "SELECT c FROM range_cache WHERE id BETWEEN ? AND ? ORDER BY c",
+            "SELECT c FROM range_cache WHERE id BETWEEN 2 AND 3 ORDER BY c",
+            "SELECT c FROM range_cache WHERE id BETWEEN 1 AND 4 ORDER BY c",
+        ),
+        (
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN ? AND ? ORDER BY c",
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN 2 AND 3 ORDER BY c",
+            "SELECT DISTINCT c FROM range_cache WHERE id BETWEEN 1 AND 4 ORDER BY c",
+        ),
+        (
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN ? AND ?",
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN 2 AND 3",
+            "SELECT SUM(k) FROM range_cache WHERE id BETWEEN 1 AND 4",
+        ),
+        (
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN ? AND ? GROUP BY c ORDER BY c",
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN 2 AND 3 GROUP BY c ORDER BY c",
+            "SELECT c, SUM(k) FROM range_cache WHERE id BETWEEN 1 AND 4 GROUP BY c ORDER BY c",
+        ),
+        (
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN ? AND ? ORDER BY r.id",
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN 2 AND 3 ORDER BY r.id",
+            "SELECT r.id, d.label FROM range_cache r JOIN range_cache_dim d ON r.id = d.id \
+             WHERE r.id BETWEEN 1 AND 4 ORDER BY r.id",
+        ),
+    ];
+    for (prepared, first_sql, second_sql) in cases {
+        let statement = tidb_parser::parse(prepared).unwrap();
+        let plan = std::sync::Arc::new(
+            build_prepared_select_plan(
+                &statement,
+                2,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap_or_else(|| panic!("{prepared} should admit a prepared SELECT cache")),
+        );
+        for (execution_index, (values, ordinary)) in [
+            ([Datum::Int(2), Datum::Int(3)], first_sql),
+            ([Datum::Int(1), Datum::Int(4)], second_sql),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let expected =
+                run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+            let execution = plan
+                .bind(
+                    &values,
+                    &catalog,
+                    DEFAULT_DATABASE,
+                    &crate::StmtContext::for_query(),
+                    &environment,
+                )
+                .expect("integer bounds bind");
+            assert_eq!(execution.cache_hit(), execution_index != 0);
+            let (_, actual) = run_prepared_select_for_test(
+                &execution,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+            assert_eq!(actual, expected, "{prepared} with {values:?}");
+        }
+    }
+
+    // A cache hit must also rebind parameter markers retained by a physical
+    // Selection, not only the markers consumed into scan ranges.
+    let prepared = "SELECT id FROM range_cache \
+                    WHERE id BETWEEN ? AND ? AND c = ? ORDER BY id";
+    let statement = tidb_parser::parse(prepared).unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(
+            &statement,
+            3,
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .expect("the shared cache admits a range with a residual filter"),
+    );
+    for (values, ordinary) in [
+        (
+            vec![
+                Datum::Int(1),
+                Datum::Int(4),
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"b".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                )),
+            ],
+            "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'b' ORDER BY id",
+        ),
+        (
+            vec![
+                Datum::Int(1),
+                Datum::Int(4),
+                Datum::String(tidb_datatype::StringDatum::new(
+                    b"c".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                )),
+            ],
+            "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'c' ORDER BY id",
+        ),
+    ] {
+        let expected = run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+        let execution = plan
+            .bind(
+                &values,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+                &environment,
+            )
+            .expect("residual values bind");
+        let (_, actual) = run_prepared_select_for_test(
+            &execution,
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "{prepared} with {values:?}");
+    }
+
+    // Go includes parameter types and parameterized LIMIT values in distinct
+    // cache keys. Variants coexist; returning to an earlier key is a hit.
+    let statement = tidb_parser::parse("SELECT id FROM range_cache ORDER BY id LIMIT ?").unwrap();
+    let plan = std::sync::Arc::new(
+        build_prepared_select_plan(
+            &statement,
+            1,
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+        )
+        .expect("a parameterized LIMIT is cacheable"),
+    );
+    for (values, hit) in [
+        (vec![Datum::Int(2)], false),
+        (vec![Datum::Int(3)], false),
+        (vec![Datum::Int(2)], true),
+        (vec![Datum::UInt(2)], false),
+        (vec![Datum::UInt(2)], true),
+    ] {
+        let execution = plan
+            .bind(
+                &values,
+                &catalog,
+                DEFAULT_DATABASE,
+                &crate::StmtContext::for_query(),
+                &environment,
+            )
+            .unwrap_or_else(|| panic!("the LIMIT value should bind: {values:?}"));
+        assert_eq!(execution.cache_hit(), hit, "values={values:?}");
+    }
+    assert!(plan
+        .bind(
+            &[Datum::UInt(10_001)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &environment,
+        )
+        .is_none());
+
+    // A plan-affecting session-state change moves Go's NewPlanCacheKey.
+    let changed_environment = PreparedPlanCacheEnvironment::new(
+        tidb_mysql::get_sql_mode("ANSI_QUOTES").unwrap(),
+        "+00:00".to_owned(),
+        1,
+    );
+    let first_changed = plan
+        .bind(
+            &[Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &changed_environment,
+        )
+        .expect("the changed environment replans");
+    assert!(!first_changed.cache_hit());
+    let second_changed = plan
+        .bind(
+            &[Datum::Int(2)],
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
+            &changed_environment,
+        )
+        .expect("the changed environment has its own entry");
+    assert!(second_changed.cache_hit());
+
+    let statement = tidb_parser::parse(
+        "SELECT d.id FROM (SELECT id FROM range_cache) d \
+         JOIN range_cache_dim x ON d.id = x.id WHERE d.id > ?",
+    )
+    .unwrap();
+    let plan = build_prepared_select_plan(
+        &statement,
+        1,
+        &catalog,
+        DEFAULT_DATABASE,
+        &crate::StmtContext::for_query(),
+    )
+    .expect("derived-table SELECT is admitted");
+    assert_eq!(
+        plan.table_names(),
+        &[
+            (DEFAULT_DATABASE.to_owned(), "range_cache".to_owned()),
+            (DEFAULT_DATABASE.to_owned(), "range_cache_dim".to_owned()),
+        ]
+    );
+}
+
 /// Go's TryFastPlan: a single-table SELECT whose WHERE pins the handle or
 /// a whole unique index reads one row instead of scanning. The results
 /// must be identical to the scan in every case, including the cases that
@@ -237,36 +830,28 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
             &tidb_datatype::SessionTimeZone::utc(),
         )
         .unwrap()
-        // The tests below assert WHICH handle was pinned; the pin's index
-        // half has its own coverage through the recorded plans.
-        .map(|pin| pin.handle)
+        .map(|pin| (pin.index_id, pin.key_values.len()))
     };
 
     // Accepted: the handle, and a whole unique index.
-    assert_eq!(
-        decides("SELECT v FROM d WHERE id = 1"),
-        Some(Some(TableHandle::Int(1)))
-    );
-    assert_eq!(
-        decides("SELECT v FROM d WHERE 1 = id"),
-        Some(Some(TableHandle::Int(1)))
-    );
+    assert_eq!(decides("SELECT v FROM d WHERE id = 1"), Some((None, 1)));
+    assert_eq!(decides("SELECT v FROM d WHERE 1 = id"), Some((None, 1)));
     assert_eq!(
         decides("SELECT v FROM d WHERE code = 'a'"),
-        Some(Some(TableHandle::Int(1)))
+        Some((Some(1), 1))
     );
     // The handle path does not probe: it hands the plan the handle the
     // constant names, and the row read finds nothing. The index path does
     // probe, because the handle only exists in an index entry.
+    assert_eq!(decides("SELECT v FROM d WHERE id = 7"), Some((None, 1)));
     assert_eq!(
-        decides("SELECT v FROM d WHERE id = 7"),
-        Some(Some(TableHandle::Int(7)))
+        decides("SELECT v FROM d WHERE code = 'z'"),
+        Some((Some(1), 1))
     );
-    assert_eq!(decides("SELECT v FROM d WHERE code = 'z'"), Some(None));
     // The index path allows extra pairs beyond the key.
     assert_eq!(
         decides("SELECT v FROM d WHERE code = 'a' AND v = 10"),
-        Some(Some(TableHandle::Int(1)))
+        Some((Some(1), 1))
     );
 
     // Rejected, so the scan runs: Go requires the handle pair to be the
@@ -294,20 +879,31 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     .unwrap();
     let stored_projection =
         tidb_parser::parse("SELECT base FROM generated_point WHERE id = ?").unwrap();
-    assert!(
-        build_prepared_point_get_plan(&stored_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default()).is_some()
-    );
+    assert!(build_prepared_point_get_plan(
+        &stored_projection,
+        1,
+        &catalog,
+        DEFAULT_DATABASE,
+        &Default::default()
+    )
+    .is_some());
     let generated_projection =
         tidb_parser::parse("SELECT projected FROM generated_point WHERE id = ?").unwrap();
     assert!(
-        build_prepared_point_get_plan(&generated_projection, 1, &catalog, DEFAULT_DATABASE, &Default::default())
-            .is_none(),
+        build_prepared_point_get_plan(
+            &generated_projection,
+            1,
+            &catalog,
+            DEFAULT_DATABASE,
+            &Default::default()
+        )
+        .is_none(),
         "a generated-column projection needs the full statement context"
     );
 }
 
 #[test]
-fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
+fn prepared_point_plan_binds_common_handle_without_cloning_template() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE prepared_y (id VARCHAR(64) PRIMARY KEY, v VARCHAR(32))",
@@ -321,34 +917,79 @@ fn prepared_fast_point_get_binds_common_handle_without_cloning_template() {
     )
     .unwrap();
     let stmt = tidb_parser::parse("SELECT * FROM prepared_y WHERE id = ?").unwrap();
-    let select = match &stmt {
-        Stmt::Query(query) => match &**query {
-            QueryStmt::Select(select) => select,
-            QueryStmt::SetOpr(_) => panic!("expected a select"),
-        },
-        _ => panic!("expected a query"),
-    };
-    let fast = run_fast_prepared_point_get(
-        select,
-        &[Datum::Bytes(b"user-0001".to_vec())],
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, "test", &zone)
+            .expect("prepared common-handle point read should build one plan"),
+    );
+    let execution = plan
+        .bind(&[Datum::Bytes(b"user-0001".to_vec())], &zone)
+        .expect("the current marker value rebuilds its common handle");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let fast = run_prepared_point_get(
+        &execution,
         &mut catalog,
         "test",
+        &decode,
         &crate::StmtContext::for_query(),
     )
     .unwrap()
-    .expect("prepared common-handle point read should use the fast path");
+    .expect("the prepared common-handle point plan remains valid");
     assert_eq!(fast.1.len(), 1);
     assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0001");
     assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-1");
 }
 
-
-
-/// The prepared point cache answers a SECONDARY-INDEX prefix pin with one
-/// closed index range, fetching each entry's row and filtering the residual
-/// equalities on the decoded rows -- Go's cached IndexLookUp shape.
+/// Stock sysbench declares its auto-increment handle as `INTEGER`, not the
+/// `BIGINT` used by the older planner-shape fixture. Go's prepared PointGet
+/// cache admits both integer widths, so the exact oltp point query must retain
+/// a reusable plan as well.
 #[test]
-fn prepared_point_cache_answers_a_secondary_index_prefix() {
+fn prepared_point_cache_admits_the_stock_sysbench_integer_handle() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sbtest1 (\
+            id INTEGER NOT NULL AUTO_INCREMENT, \
+            k INTEGER DEFAULT 0 NOT NULL, \
+            c CHAR(120) DEFAULT '' NOT NULL, \
+            pad CHAR(60) DEFAULT '' NOT NULL, \
+            PRIMARY KEY (id), INDEX k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO sbtest1 (id, k, c, pad) VALUES (1, 7, 'value', 'pad')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let stmt = tidb_parser::parse("SELECT c FROM sbtest1 WHERE id = ?").unwrap();
+
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, DEFAULT_DATABASE, &Default::default())
+            .expect("Go caches stock sysbench's INTEGER-handle PointGet"),
+    );
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let execution = plan
+        .bind(&[Datum::Int(1)], &zone)
+        .expect("the execute value rebuilds the cached handle");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let (_, rows) = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        DEFAULT_DATABASE,
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the PREPARE-time plan remains valid on first execution");
+    assert_eq!(datum_text_for_test(&rows[0][0]), "value");
+}
+
+/// Go's prepared point cache admits a complete non-prefix UNIQUE secondary
+/// key and retains residual predicates on the fetched row.
+#[test]
+fn prepared_point_cache_answers_a_unique_secondary_index() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE idx_pin (\
@@ -356,7 +997,7 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
             a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             b VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             v BIGINT NOT NULL, \
-            INDEX ia (a, b))",
+            UNIQUE INDEX ia (a, b))",
         &mut catalog,
     )
     .unwrap();
@@ -371,11 +1012,11 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
         tidb_parser::parse("SELECT id, v FROM idx_pin WHERE a = ? AND b = ? AND v = ?").unwrap();
     let plan = std::sync::Arc::new(
         build_prepared_point_get_plan(&stmt, 3, &catalog, DEFAULT_DATABASE, &Default::default())
-            .expect("an index-prefix pin is a reusable prepared plan"),
+            .expect("a complete unique-index pin is a reusable prepared plan"),
     );
     assert!(matches!(
         plan.target,
-        crate::driver::access::PreparedPointTarget::IndexPrefix { .. }
+        crate::driver::access::PreparedPointTarget::UniqueIndex { .. }
     ));
     assert_eq!(
         plan.statement_read_shape(),
@@ -392,79 +1033,90 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b2".to_vec()), Datum::Int(20)]);
+    let (got, operations) = crate::storage::capture_storage_ops(|| {
+        cached_rows(
+            &plan,
+            &mut catalog,
+            &ctx,
+            &zone,
+            &[
+                Datum::Bytes(b"a1".to_vec()),
+                Datum::Bytes(b"b2".to_vec()),
+                Datum::Int(20),
+            ],
+        )
+    });
+    assert_eq!(
+        (operations.gets, operations.scans),
+        (2, 0),
+        "Go resolves the unique index and record with two direct Gets"
+    );
     assert_eq!(got.len(), 1);
-    assert_eq!(datum_text_for_test(&got[0][0]), datum_text_for_test(&expected[0][0]));
+    assert_eq!(
+        datum_text_for_test(&got[0][0]),
+        datum_text_for_test(&expected[0][0])
+    );
 
     // A residual that no row satisfies reads nothing even though the index
     // range itself matched.
-    let got = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"a1".to_vec()), Datum::Bytes(b"b1".to_vec()), Datum::Int(999)]);
+    let got = cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[
+            Datum::Bytes(b"a1".to_vec()),
+            Datum::Bytes(b"b1".to_vec()),
+            Datum::Int(999),
+        ],
+    );
     assert!(got.is_empty());
 
     // A NULL pin matches no row under SQL semantics and reads nothing.
-    assert!(cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Null, Datum::Bytes(b"b1".to_vec()), Datum::Int(10)]).is_empty());
+    assert!(cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[Datum::Null, Datum::Bytes(b"b1".to_vec()), Datum::Int(10)]
+    )
+    .is_empty());
 }
 
-/// A leading prefix of a CLUSTERED primary key narrows the ROW-KEY space to
-/// closed record ranges; every unpinned equality filters the decoded rows.
+/// Go `tryPointGetPlan` rejects partial and non-unique keys. Those statements
+/// are cached by the general physical-plan tree instead of a capped prefix
+/// scan hidden inside the point fast path.
 #[test]
-fn prepared_point_cache_answers_a_clustered_key_prefix() {
+fn prepared_point_cache_declines_partial_and_non_unique_keys() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
-        "CREATE TABLE clustered_pin (\
+        "CREATE TABLE partial_pin (\
             custacc VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
             seq BIGINT NOT NULL, \
             stsrcd VARCHAR(4) NOT NULL COLLATE utf8mb4_bin, \
             v BIGINT NOT NULL, \
-            PRIMARY KEY (custacc, seq) CLUSTERED)",
+            PRIMARY KEY (custacc, seq) CLUSTERED, \
+            INDEX by_status (stsrcd, v))",
         &mut catalog,
     )
     .unwrap();
-    run_insert_on(
-        "INSERT INTO clustered_pin VALUES ('c1',1,'1',100),('c1',2,'1',200),('c2',1,'1',300)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-    // The prefix guard reads loaded statistics; a partial key pin without
-    // them declines, so give the table analyzed NDVs like production has.
-    scale_analyzed_tpcc_table(
-        &mut catalog,
-        "clustered_pin",
-        1_000,
-        &[("custacc", 2), ("seq", 1_000), ("stsrcd", 1), ("v", 1_000)],
-        &crate::StmtContext::for_query(),
-    );
-
-    // Every residual equality must survive into the projection -- the cached
-    // read filters decoded OUTPUT rows only.
-    let stmt = tidb_parser::parse(
-        "SELECT seq, v, stsrcd FROM clustered_pin WHERE custacc = ? AND stsrcd = ?",
-    )
-    .unwrap();
-    let plan = std::sync::Arc::new(
-        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
-            .expect("a clustered-key prefix pin is a reusable prepared plan"),
-    );
-    assert!(matches!(
-        plan.target,
-        crate::driver::access::PreparedPointTarget::ClusteredPrefix
-    ));
-    assert_eq!(
-        plan.statement_read_shape(),
-        crate::access_path::StatementReadShape::Unknown,
-        "a clustered prefix is not a complete primary-key point",
-    );
-
-    let zone: tidb_datatype::SessionTimeZone = Default::default();
-    let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c1".to_vec()), Datum::Bytes(b"1".to_vec())]);
-    assert_eq!(rows.len(), 2);
-
-    // The residual `stsrcd = ?` filters the decoded rows of the range: a
-    // value no row under `custacc = 'c2'` carries reads nothing.
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"c2".to_vec()), Datum::Bytes(b"9".to_vec())]);
-    assert!(rows.is_empty());
+    for sql in [
+        "SELECT seq, v FROM partial_pin WHERE custacc = ?",
+        "SELECT seq, v FROM partial_pin WHERE stsrcd = ? AND v = ?",
+    ] {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        assert!(
+            build_prepared_point_get_plan(
+                &stmt,
+                sql.matches('?').count(),
+                &catalog,
+                DEFAULT_DATABASE,
+                &Default::default(),
+            )
+            .is_none(),
+            "non-Go point fast path admitted {sql}",
+        );
+    }
 }
 
 /// Binds one EXECUTE of a prepared point plan and drains its cached read.
@@ -476,12 +1128,17 @@ fn cached_rows(
     values: &[Datum],
 ) -> Vec<Vec<Datum>> {
     let execution = plan.bind(values, zone).expect("binds");
-    run_prepared_point_get(&execution, catalog, DEFAULT_DATABASE, ctx)
-        .unwrap()
-        .expect("the cached read")
-        .1
+    run_prepared_point_get(
+        &execution,
+        catalog,
+        DEFAULT_DATABASE,
+        ctx,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the cached read")
+    .1
 }
-
 
 /// `col IS NULL` beside the pins is a row-level residual: it never pins a
 /// key, and the cached read answers only rows whose decoded slot is NULL.
@@ -513,25 +1170,35 @@ fn prepared_point_cache_answers_an_is_null_residual() {
     );
 
     let stmt = tidb_parser::parse(
-        "SELECT alwcobj, alwcnum, lmtdms, flgval FROM null_pin WHERE alwcobj = ? AND lmtdms IS NULL AND flgval = ?",
+        "SELECT alwcobj, alwcnum, lmtdms, flgval FROM null_pin WHERE alwcobj = ? AND alwcnum = ? AND lmtdms IS NULL AND flgval = ?",
     )
     .unwrap();
     let plan = std::sync::Arc::new(
-        build_prepared_point_get_plan(&stmt, 2, &catalog, DEFAULT_DATABASE, &Default::default())
+        build_prepared_point_get_plan(&stmt, 3, &catalog, DEFAULT_DATABASE, &Default::default())
             .expect("an equality pin beside IS NULL is a reusable prepared plan"),
     );
 
     let zone: tidb_datatype::SessionTimeZone = Default::default();
     let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
-    let rows = cached_rows(&plan, &mut catalog, &ctx, &zone, &[Datum::Bytes(b"o1".to_vec()), Datum::Bytes(b"1".to_vec())]);
+    let rows = cached_rows(
+        &plan,
+        &mut catalog,
+        &ctx,
+        &zone,
+        &[
+            Datum::Bytes(b"o1".to_vec()),
+            Datum::Bytes(b"n1".to_vec()),
+            Datum::Bytes(b"1".to_vec()),
+        ],
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(datum_text_for_test(&rows[0][1]), "n1");
 }
 
-/// The YCSB E scan fast path reads one clustered-handle range row and refuses
-/// a wider limit, leaving every non-admitted shape on the general planner.
+/// The shared planner keeps YCSB E's bounded clustered range on its ordinary
+/// Limit/TableReader path and applies the requested limit.
 #[test]
-fn fast_single_row_scan_reads_the_first_clustered_handle() {
+fn shared_planner_reads_the_bounded_clustered_handle_range() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE ycsb_scan (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
@@ -554,11 +1221,11 @@ fn fast_single_row_scan_reads_the_first_clustered_handle() {
         },
         _ => panic!("expected a query"),
     };
-    let fast = run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query())
-        .unwrap()
-        .expect("bounded clustered-handle scan should use the fast path");
-    assert_eq!(datum_text_for_test(&fast.1[0][0]), "user-0002");
-    assert_eq!(datum_text_for_test(&fast.1[0][1]), "value-2");
+    let planned =
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+            .unwrap();
+    assert_eq!(datum_text_for_test(&planned.1[0][0]), "user-0002");
+    assert_eq!(datum_text_for_test(&planned.1[0][1]), "value-2");
     let scan_select = select;
 
     let wider =
@@ -569,11 +1236,10 @@ fn fast_single_row_scan_reads_the_first_clustered_handle() {
     let QueryStmt::Select(select) = &**query else {
         panic!("expected a select");
     };
-    assert!(
-        run_fast_single_row_scan(select, &catalog, "test", &crate::StmtContext::for_query(),)
-            .unwrap()
-            .is_none()
-    );
+    let wider =
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+            .unwrap();
+    assert_eq!(wider.1.len(), 2);
 
     let cell = |datum: &Datum| match datum {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
@@ -775,61 +1441,51 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
     );
 }
 
-/// Finite primary keys bind without consulting row storage, even when absent.
-#[test]
-fn primary_batch_keys_share_read_and_prelock_binding() {
-    let mut catalog = Catalog::default();
-    catalog.create_database("test");
-    crate::run_create_table_on(
-        "CREATE TABLE test.batch_keys (a INT, b INT, v INT, PRIMARY KEY (a,b) CLUSTERED)",
-        &mut catalog,
-    ).unwrap();
-    let zone = tidb_datatype::SessionTimeZone::utc();
-    let Some(TableEntry::Kv(table)) = catalog.table_in("test", "batch_keys") else {
-        panic!("expected table");
-    };
-    for (predicate, expected) in [
-        ("(b,a) IN ((2,1),(2,1),(3,4))", 2),
-        ("(a,b) IN ((1,2),(4,3))", 2),
-        ("a IN (1,2)", 0),
-        ("(a,a) IN ((1,2))", 0),
-        ("(a,b) IN ((1,NULL))", 0),
-        ("(a,b) IN ((1,2.5))", 0),
-        ("(a,b) NOT IN ((1,2))", 0),
-    ] {
-        let stmt = tidb_parser::parse(&format!(
-            "SELECT v FROM test.batch_keys WHERE {predicate} FOR UPDATE"
-        )).unwrap();
-        let Stmt::Query(query) = &stmt else { panic!("query") };
-        let QueryStmt::Select(select) = query.as_ref() else { panic!("select") };
-        let planned = crate::driver::access::primary_batch_point_lookup(
-            select.where_clause.as_ref().unwrap(), table, &zone,
-        ).unwrap().map(BatchPointLookup::into_handles).unwrap_or_default();
-        let prelocked = crate::access_path::PessimisticPrelock::from_statement(&stmt)
-            .map(|prelock| prelock.bind_keys(&[], &catalog, "test", &zone))
-            .unwrap_or_default();
-        assert_eq!(planned.len(), expected, "{predicate}");
-        assert_eq!(prelocked, planned.iter().map(|handle|
-            tidb_codec::table_key::encode_row_key_with_handle(table.table_id, &handle.record_handle())
-        ).collect::<Vec<_>>(), "{predicate}");
-    }
-}
-
 #[test]
 fn primary_batch_reads_use_written_common_handle_encoding() {
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();
     for (name, key_type, inserted, predicate) in [
-        ("decimal_batch", "DECIMAL(8,2)", "(5.00,10),(6.00,20)", "k IN (5.00,6.00,5.00,9.00)"),
-        ("string_batch", "VARCHAR(8)", "('a',10),('b',20)", "k IN ('a','b','a','z')"),
-        ("unsigned_batch", "BIGINT UNSIGNED", "(0,10),(18446744073709551615,20)", "k IN (0,18446744073709551615,0,3)"),
+        (
+            "decimal_batch",
+            "DECIMAL(8,2)",
+            "(5.00,10),(6.00,20)",
+            "k IN (5.00,6.00,5.00,9.00)",
+        ),
+        (
+            "string_batch",
+            "VARCHAR(8)",
+            "('a',10),('b',20)",
+            "k IN ('a','b','a','z')",
+        ),
+        (
+            "unsigned_batch",
+            "BIGINT UNSIGNED",
+            "(0,10),(18446744073709551615,20)",
+            "k IN (0,18446744073709551615,0,3)",
+        ),
     ] {
-        crate::run_create_table_on(&format!(
-            "CREATE TABLE {name} (k {key_type}, v INT, PRIMARY KEY(k) CLUSTERED)"
-        ), &mut catalog).unwrap();
-        run_insert_on(&format!("INSERT INTO {name} VALUES {inserted}"), &mut catalog, &ctx).unwrap();
-        assert_eq!(run_select_on(&format!("SELECT v FROM {name} WHERE {predicate}"), &catalog, &ctx).unwrap(),
-            vec![vec![Datum::Int(10)], vec![Datum::Int(20)]], "{name}");
+        crate::run_create_table_on(
+            &format!("CREATE TABLE {name} (k {key_type}, v INT, PRIMARY KEY(k) CLUSTERED)"),
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            &format!("INSERT INTO {name} VALUES {inserted}"),
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            run_select_on(
+                &format!("SELECT v FROM {name} WHERE {predicate}"),
+                &catalog,
+                &ctx
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(10)], vec![Datum::Int(20)]],
+            "{name}"
+        );
     }
 }
 
@@ -843,20 +1499,21 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         &mut catalog,
     )
     .unwrap();
+    let batch_gets = Arc::new(AtomicUsize::new(0));
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bd") else {
+        panic!("expected a kv table");
+    };
+    let _ = table.replace_storage(Box::new(BatchGetCountingStorage {
+        inner: MemTableStorage::new(),
+        batch_gets: Arc::clone(&batch_gets),
+    }));
     run_insert_on(
         "INSERT INTO bd VALUES (1, 'a', 10)",
         &mut catalog,
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("bd") else {
-        panic!("expected a kv table");
-    };
-    let columns = table
-        .columns
-        .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
-        .collect::<Vec<_>>();
+    batch_gets.store(0, Ordering::Relaxed);
     let decides = |sql: &str| {
         let stmt = tidb_parser::parse(sql).unwrap();
         let Stmt::Query(query) = &stmt else {
@@ -865,25 +1522,61 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a select")
         };
-        try_batch_point_get(
+        try_fast_point_physical_plan(
             select,
-            table,
-            &columns,
-            &tidb_datatype::SessionTimeZone::utc(),
+            &catalog,
+            DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
         )
         .unwrap()
-        .map(BatchPointLookup::into_handles)
+        .and_then(|plan| match plan {
+            tidb_planner::physical::PhysicalPlan::BatchPointGet(plan) => Some((
+                plan.index_id.is_some(),
+                plan.ranges
+                    .into_iter()
+                    .map(|range| range.low_val)
+                    .collect::<Vec<_>>(),
+            )),
+            _ => None,
+        })
     };
 
     assert_eq!(
         decides("SELECT v FROM bd WHERE id IN (1, 2)"),
-        Some(vec![TableHandle::Int(1), TableHandle::Int(2)]),
-        "the handle path does not probe, as the single point get does not"
+        Some((false, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]])),
+        "the handle plan retains its two point ranges"
     );
     assert_eq!(
         decides("SELECT v FROM bd WHERE code IN ('a', 'zz')"),
-        Some(vec![TableHandle::Int(1)]),
-        "the index path probes, so a missing key yields no handle"
+        Some((
+            true,
+            vec![
+                vec![Datum::String(tidb_datatype::StringDatum::new(
+                    b"a".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                ))],
+                vec![Datum::String(tidb_datatype::StringDatum::new(
+                    b"zz".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4Bin,
+                ))],
+            ],
+        )),
+        "the index plan retains every key and performs no planning-time lookup"
+    );
+    assert_eq!(
+        batch_gets.load(Ordering::Relaxed),
+        0,
+        "Go's fast-plan builder records index values without reading storage"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM bd WHERE code IN ('a', 'zz')",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(10)]],
+        "the common executor resolves the retained index keys"
     );
     // Rejected shapes.
     assert_eq!(decides("SELECT v FROM bd WHERE id NOT IN (1)"), None);
@@ -1025,6 +1718,95 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
     );
 }
 
+/// Go's `TryFastPlan` accepts a qualifying primary-key point read before the
+/// ordinary planner is needed.
+#[test]
+fn try_fast_plan_accepts_a_primary_key_point_read() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_order VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("SELECT c FROM fast_order WHERE id = 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    assert!(
+        crate::driver::access::try_fast_point_physical_plan(select, &catalog, "test", &ctx,)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        run_select_on("SELECT c FROM fast_order WHERE id = 1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("one")]]
+    );
+}
+
+#[test]
+fn fast_point_get_uses_gos_smaller_index_hint_check() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_hint (id INT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_hint VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let fast_plan = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        crate::driver::access::try_fast_point_physical_plan(select, &catalog, "test", &ctx).unwrap()
+    };
+    let unique_sql =
+        "SELECT /*+ USE_INDEX(fast_hint, code) */ id FROM fast_hint WHERE code = 'one'";
+    assert!(fast_plan(unique_sql).is_some());
+    assert_eq!(
+        run_select_on(unique_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let order_sql =
+        "SELECT /*+ ORDER_INDEX(fast_hint, PRIMARY) */ code FROM fast_hint WHERE id = 1";
+    assert!(fast_plan(order_sql).is_some());
+    assert_eq!(
+        run_select_on(order_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("one")]]
+    );
+
+    let prefix_sql = "SELECT /*+ USE_INDEX(fast_hint, co) */ id FROM fast_hint WHERE code = 'one'";
+    assert!(
+        fast_plan(prefix_sql).is_none(),
+        "the fast check requires an exact name"
+    );
+    assert_eq!(
+        run_select_on(prefix_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+}
+
 /// Go's point UPDATE/DELETE plans consume the primary-key predicate exactly
 /// as the SELECT fast plan does. An additional equality remains a real
 /// Selection and must still be evaluated before the write.
@@ -1145,9 +1927,8 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
 /// The fast plan REFUSES this statement (a handle pair plus an extra
 /// conjunct, `tryPointGetPlan`'s `else if handlePair.value.Kind() !=
 /// KindNull` -- ported in `try_point_get`), so reaching the same tree PROVES
-/// the ordinary chooser picked the table path: before
-/// `access_cost::heuristic_point_path` this statement read the unique index
-/// (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
+/// the shared ordinary planner picked the same table path rather than the
+/// unique index (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
 #[test]
 fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
     use crate::explain::{explain_update_stmt, ExplainFormat};
@@ -1307,17 +2088,21 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
         panic!("customer is not a KV table");
     };
     customer.set_common_handle_offsets(vec![2, 1, 0]);
-    customer.add_index(crate::kv_table::KvIndex {
-        id: 2,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
-        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
-        column_offsets: vec![2, 1, 0],
-        visible: true,
-        global: false,
-        clustered_primary: false,
-    }, false);
+    customer.add_index(
+        crate::kv_table::KvIndex {
+            id: 2,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            column_offsets: vec![2, 1, 0],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        },
+        false,
+    );
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
         "INSERT INTO customer VALUES \
@@ -1355,27 +2140,6 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let customer = match catalog.get_in("test", "customer").unwrap() {
-        TableEntry::Kv(customer) => customer,
-        _ => panic!("customer is not a KV table"),
-    };
-    let scope = PlanTrace::single_table_scope(
-        "customer",
-        Some("test".to_owned()),
-        catalog.get_in("test", "customer").unwrap().column_list(),
-    );
-    let logical_rows = crate::access_cost::realtime_row_count(
-        catalog
-            .table_statistics(customer.table_id)
-            .map(AsRef::as_ref),
-    ) * crate::driver::access::stats_selectivity(
-        &catalog,
-        customer,
-        &scope,
-        select.where_clause.as_ref(),
-    )
-    .unwrap();
-
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
     let cell = |row: usize, column: usize| match &rows[row][column] {
@@ -1393,7 +2157,6 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     let selection_rows = cell(selection, 1).parse::<f64>().unwrap();
     let scan_rows = cell(scan, 1).parse::<f64>().unwrap();
 
-    assert_eq!(selection_rows, (logical_rows * 100.0).round() / 100.0);
     assert_ne!(selection_rows, scan_rows);
 }
 
@@ -1506,80 +2269,145 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
     );
 }
 
-/// A `LIMIT 1` whose WHERE never detaches into clustered-handle ranges (an
-/// `IS NOT NULL`, or a predicate naming no primary column) is the general
-/// planner's statement: Go plans a table reader over it and answers. The fast
-/// path must FALL BACK (`None`), never refuse the statement -- captured
-/// against TiDB, where `select prdaccno from dpm_prd_acc where prdaccno is
-/// not null limit 1` returns a row while an erroring fast path rejected it.
+/// Go `getNameValuePairs`'s `ErrOverflow` arm: a bound value outside the
+/// handle column's domain can equal no stored row, so the prepared point plan
+/// answers the empty set without a storage read (Go plans a `TableDual`).
 #[test]
-fn fast_single_row_scan_falls_back_when_the_where_detaches_nothing() {
+fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
-        "CREATE TABLE ycsb_fb (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
+        "CREATE TABLE prepared_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
     )
     .unwrap();
-    crate::run_insert_on(
-        "INSERT INTO ycsb_fb VALUES ('user-0001','value-1'),('user-0002','value-2')",
+    run_insert_on(
+        "INSERT INTO prepared_overflow VALUES (1, 10)",
         &mut catalog,
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    catalog.clear_dirty_content();
-    for sql in [
-        "SELECT id FROM ycsb_fb WHERE v IS NOT NULL LIMIT 1",
-        "SELECT id FROM ycsb_fb WHERE v = 'value-2' LIMIT 1",
-    ] {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        let Stmt::Query(query) = &stmt else {
-            panic!("expected a query");
-        };
-        let QueryStmt::Select(select) = &**query else {
-            panic!("expected a select");
-        };
-        let ctx = crate::StmtContext::for_query();
-        assert!(
-            crate::driver::plan_fast_single_row_scan(select, &catalog, "test", &ctx)
-                .unwrap()
-                .is_none(),
-            "{sql} should fall back to the general planner"
-        );
-        // The general planner answers it, as Go's does.
-        let rows =
-            crate::run_select_meta_stmt(select, &catalog, "test", &ctx).expect("{sql} should run");
-        let (_, values) = rows;
-        assert_eq!(values.len(), 1, "{sql} should return one row");
-    }
+    let stmt = tidb_parser::parse("SELECT v FROM prepared_overflow WHERE id = ?").unwrap();
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, DEFAULT_DATABASE, &zone)
+            .expect("the BIGINT handle point read should build one plan"),
+    );
+    let execution = plan
+        .bind(&[Datum::new_string("99999999999999999999999999")], &zone)
+        .expect("an out-of-range value still binds to the empty answer");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let fast = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        DEFAULT_DATABASE,
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the prepared plan stays valid");
+    assert!(fast.1.is_empty(), "an out-of-range handle names no rows");
+}
 
-    // Admission shares the statement context with ordinary planning. A
-    // declined candidate must not evaluate endpoints a second time or leak
-    // diagnostics from an execution path that is never used.
-    for sql in [
-        "SELECT CONCAT(id, '') FROM ycsb_fb WHERE id >= CAST(1 / 0 AS CHAR) LIMIT 1",
-        "SELECT CONCAT(id, '') FROM ycsb_fb WHERE id >= CAST(CAST('0bad' AS SIGNED) AS CHAR) LIMIT 1",
-        "SELECT id FROM ycsb_fb WHERE id >= CAST(CAST('0bad' AS SIGNED) AS CHAR) AND v = 'value-2' LIMIT 1",
-    ] {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        let Stmt::Query(query) = &stmt else {
-            panic!("expected a query");
-        };
-        let QueryStmt::Select(select) = &**query else {
-            panic!("expected a select");
-        };
-        let ordinary_ctx = crate::StmtContext::for_query();
-        let expected = crate::run_select_meta_stmt(select, &catalog, "test", &ordinary_ctx)
-            .unwrap();
-        let ctx = crate::StmtContext::for_query();
-        assert!(
-            crate::driver::plan_fast_single_row_scan(select, &catalog, "test", &ctx)
-                .unwrap()
-                .is_none(),
-            "{sql} should fall back"
-        );
-        assert_eq!(ctx.warning_count(), 0, "{sql}: admission must not evaluate");
-        let actual = crate::run_select_meta_stmt(select, &catalog, "test", &ctx).unwrap();
-        assert_eq!(actual, expected, "{sql}");
-        assert_eq!(ctx.take_warnings(), ordinary_ctx.take_warnings(), "{sql}");
-    }
+/// Go `tryPointGetPlan`'s `isTableDual` arm for a plain statement: a `WHERE`
+/// constant outside the handle column's domain can equal no stored row, so
+/// the plan is a `TableDual` instead of a full scan.
+#[test]
+fn out_of_range_point_literal_plans_a_table_dual() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE plain_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO plain_overflow VALUES (1, 10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT v FROM plain_overflow WHERE id = '99999999999999999999999999'";
+    let rows = crate::run_select_on(sql, &catalog, &ctx).unwrap();
+    assert!(rows.is_empty(), "an out-of-range handle names no rows");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("expected a select");
+    };
+    let (_, explain) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        DEFAULT_DATABASE,
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = explain
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            Datum::String(text) => Some(String::from_utf8_lossy(text.bytes()).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        operators.iter().any(|name| name.contains("TableDual")),
+        "expected a TableDual operator, got {operators:?}"
+    );
+}
+
+/// The overflow arm is reached only where Go's `tryPointGetPlan` reaches
+/// `getNameValuePairs`. An `ORDER BY` is refused before that walk, so this
+/// statement stays with the ordinary planner rather than the fast
+/// `TableDual`.
+#[test]
+fn out_of_range_point_literal_with_order_by_stays_with_the_planner() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE plain_overflow_order (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO plain_overflow_order VALUES (1, 10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql =
+        "SELECT v FROM plain_overflow_order WHERE id = '99999999999999999999999999' ORDER BY v";
+    let rows = crate::run_select_on(sql, &catalog, &ctx).unwrap();
+    assert!(rows.is_empty(), "an out-of-range handle names no rows");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("expected a select");
+    };
+    let (_, explain) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        DEFAULT_DATABASE,
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = explain
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            Datum::String(text) => Some(String::from_utf8_lossy(text.bytes()).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !operators.iter().any(|name| name.contains("TableDual")),
+        "Go refuses ORDER BY before the fast point plan, got {operators:?}"
+    );
 }

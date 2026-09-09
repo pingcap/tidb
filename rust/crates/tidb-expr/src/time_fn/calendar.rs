@@ -915,6 +915,7 @@ fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
         // rejecting here what Go accepts here.
         true,
         false,
+        true,
         &chrono_tz::Tz::UTC,
     ) else {
         return Ok(None);
@@ -1234,10 +1235,9 @@ fn date_add_composite(
 /// date separators, confirmed via `pkg/executor` capture with
 /// `'-01:02:03'`) uses `ExtractDurationNum`'s formulas instead, which drop
 /// the day component entirely and apply the duration's own sign to the
-/// WHOLE composite result rather than per-field. This crate's temporal
-/// values carry no fractional-second component, so every `*_MICROSECOND`
-/// result's microsecond digits are always `000000` — correct for any value
-/// this crate can itself represent.
+/// WHOLE composite result rather than per-field. Fractional seconds on string
+/// inputs are retained as six-digit microseconds, matching the source's
+/// `ExtractDatetimeNum`/`ExtractDurationNum` behavior.
 pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
@@ -1246,8 +1246,8 @@ pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, Eva
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
-    if let Some((neg, h, mi, sec)) = parse_signed_duration_hms(trimmed) {
-        let value = duration_composite_value(unit, h, mi, sec);
+    if let Some((neg, h, mi, sec, microsecond)) = parse_signed_duration_hms(trimmed) {
+        let value = duration_composite_value(unit, h, mi, sec, microsecond);
         return Ok(Datum::Int(if neg { -value } else { value }));
     }
     let (date_str, time_suffix) = trimmed
@@ -1256,12 +1256,16 @@ pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, Eva
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
         return Ok(Datum::Null);
     };
-    let (h, mi, sec) = match time_suffix {
-        Some(t) => parse_time_hms(t).unwrap_or((0, 0, 0)),
-        None => (0, 0, 0),
-    };
+    let (h, mi, sec, microsecond) = time_parts_with_micros(time_suffix).unwrap_or((0, 0, 0, 0));
     Ok(Datum::Int(datetime_composite_value(
-        unit, y, m, d, h, mi, sec,
+        unit,
+        y,
+        m,
+        d,
+        h,
+        mi,
+        sec,
+        microsecond,
     )))
 }
 
@@ -1269,63 +1273,122 @@ pub(crate) fn extract_composite(unit: &str, vals: &[Datum]) -> Result<Datum, Eva
 /// unlike a wall-clock hour) has no date part at all — recognized here by
 /// the ABSENCE of a `-` date separator alongside the PRESENCE of a `:`,
 /// distinguishing it from a `YYYY-MM-DD ...` DATETIME string. Returns
-/// `(negative, hour, minute, second)`, dropping any fractional-second
-/// suffix (this crate's temporal domain has none).
-fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32)> {
+/// `(negative, hour, minute, second, microsecond)`, retaining up to six
+/// fractional-second digits.
+fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32, u32)> {
     let (neg, body) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s),
     };
-    if body.contains('-') || !body.contains(':') {
+    if body.contains('-') {
         return None;
     }
-    let mut parts = body.splitn(3, ':');
-    let h: u32 = parts.next()?.trim().parse().ok()?;
-    let mi: u32 = parts.next()?.trim().parse().ok()?;
-    let sec_field = parts.next()?.trim();
-    let sec_digits = sec_field.split('.').next().unwrap_or(sec_field);
-    let sec: u32 = sec_digits.parse().ok()?;
+    // Go `ParseDurationValue` distributes the `:`-separated groups onto the
+    // unit's fields from the RIGHT: three groups cover h/mi/sec, two cover
+    // mi/sec, one covers sec alone. The last group may carry the fraction.
+    let mut groups: Vec<&str> = body.split(':').collect();
+    let sec_field = groups.last_mut()?;
+    let (sec_digits, fraction) = sec_field.split_once('.').unwrap_or((*sec_field, ""));
+    *sec_field = sec_digits;
+    if groups.iter().any(|group| group.is_empty()) || fraction.is_empty() && groups.is_empty() {
+        return None;
+    }
+    if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let fraction = fraction.chars().take(6).collect::<String>();
+    let microsecond = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse::<u32>().ok()? * 10u32.pow(6 - fraction.len() as u32)
+    };
+    let parse_field = |field: &str| -> Option<u32> {
+        if field.is_empty() {
+            return None;
+        }
+        field.trim().parse().ok()
+    };
+    let (h, mi, sec) = match groups.len() {
+        3 => (
+            parse_field(groups[0].trim())?,
+            parse_field(groups[1].trim())?,
+            parse_field(groups[2].trim())?,
+        ),
+        2 => (
+            0,
+            parse_field(groups[0].trim())?,
+            parse_field(groups[1].trim())?,
+        ),
+        1 => (0, 0, parse_field(groups[0].trim())?),
+        _ => return None,
+    };
     if mi > 59 || sec > 59 {
         return None;
     }
-    Some((neg, h, mi, sec))
+    Some((neg, h, mi, sec, microsecond))
 }
 
 /// `ExtractDurationNum`'s composite formulas: no day-of-month component
 /// (a `Duration` has none), the sign applies to the whole result at the
 /// call site instead.
-fn duration_composite_value(unit: &str, h: u32, mi: u32, sec: u32) -> i64 {
-    let (h, mi, sec) = (i64::from(h), i64::from(mi), i64::from(sec));
+fn duration_composite_value(unit: &str, h: u32, mi: u32, sec: u32, microsecond: u32) -> i64 {
+    let (h, mi, sec, microsecond) = (
+        i64::from(h),
+        i64::from(mi),
+        i64::from(sec),
+        i64::from(microsecond),
+    );
     match unit.to_ascii_uppercase().as_str() {
         "HOUR_MINUTE" => h * 100 + mi,
         "HOUR_SECOND" => h * 10_000 + mi * 100 + sec,
-        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000 + microsecond,
         "MINUTE_SECOND" => mi * 100 + sec,
-        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000,
-        "SECOND_MICROSECOND" => sec * 1_000_000,
+        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000 + microsecond,
+        "SECOND_MICROSECOND" => sec * 1_000_000 + microsecond,
         "DAY_HOUR" => h,
         "DAY_MINUTE" => h * 100 + mi,
         "DAY_SECOND" => h * 10_000 + mi * 100 + sec,
-        "DAY_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "DAY_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000 + microsecond,
         _ => 0,
     }
 }
 
 /// `ExtractDatetimeNum`'s composite formulas: `DAY_*` variants use the
 /// actual day-of-month, and `YEAR_MONTH` is `year * 100 + month`.
-fn datetime_composite_value(unit: &str, y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32) -> i64 {
-    let (d, h, mi, sec) = (i64::from(d), i64::from(h), i64::from(mi), i64::from(sec));
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors Go's composite-unit extraction signature"
+)]
+fn datetime_composite_value(
+    unit: &str,
+    y: i64,
+    m: u32,
+    d: u32,
+    h: u32,
+    mi: u32,
+    sec: u32,
+    microsecond: u32,
+) -> i64 {
+    let (d, h, mi, sec, microsecond) = (
+        i64::from(d),
+        i64::from(h),
+        i64::from(mi),
+        i64::from(sec),
+        i64::from(microsecond),
+    );
     match unit.to_ascii_uppercase().as_str() {
         "HOUR_MINUTE" => h * 100 + mi,
         "HOUR_SECOND" => h * 10_000 + mi * 100 + sec,
-        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "HOUR_MICROSECOND" => (h * 10_000 + mi * 100 + sec) * 1_000_000 + microsecond,
         "MINUTE_SECOND" => mi * 100 + sec,
-        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000,
-        "SECOND_MICROSECOND" => sec * 1_000_000,
+        "MINUTE_MICROSECOND" => (mi * 100 + sec) * 1_000_000 + microsecond,
+        "SECOND_MICROSECOND" => sec * 1_000_000 + microsecond,
         "DAY_HOUR" => d * 100 + h,
         "DAY_MINUTE" => d * 10_000 + h * 100 + mi,
         "DAY_SECOND" => d * 1_000_000 + h * 10_000 + mi * 100 + sec,
-        "DAY_MICROSECOND" => (d * 1_000_000 + h * 10_000 + mi * 100 + sec) * 1_000_000,
+        "DAY_MICROSECOND" => {
+            (d * 1_000_000 + h * 10_000 + mi * 100 + sec) * 1_000_000 + microsecond
+        }
         "YEAR_MONTH" => y * 100 + i64::from(m),
         _ => 0,
     }
@@ -1355,11 +1418,15 @@ pub(crate) fn parse_time_hms(s: &str) -> Option<(u32, u32, u32)> {
 /// this to `types.Time.DateFormat` (`pkg/types/time.go`); retaining the
 /// written fraction here is enough for the evaluator's string-only domain.
 pub(crate) fn parse_time_with_fraction(s: &str) -> Option<(u32, u32, u32, String)> {
+    if !s.contains('.') {
+        let (hour, minute, second) = parse_time_hms(s)?;
+        return Some((hour, minute, second, String::new()));
+    }
     let mut parts = s.splitn(3, ':');
     let h: u32 = parts.next()?.parse().ok()?;
     let mi: u32 = parts.next()?.parse().ok()?;
     let sec_part = parts.next()?;
-    let (sec_part, fraction) = sec_part.split_once('.').map_or((sec_part, ""), |pair| pair);
+    let (sec_part, fraction) = sec_part.split_once('.').unwrap_or((sec_part, ""));
     let sec: u32 = sec_part.parse().ok()?;
     if h > 23 || mi > 59 || sec > 59 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
         return None;
@@ -1470,6 +1537,30 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
             return Ok(Datum::Null);
         };
         format_pos += 1;
+        if date_pos >= date.len() {
+            // Go's `strToDate` records the current token with value zero and
+            // stops when the input is exhausted. `mysqlTimeFix` relies on the
+            // presence of `%p` and `%H` to reject that pairing; an absent `%p`
+            // after a 12-hour clock is treated as AM.
+            match specifier {
+                'p' => {
+                    value.am_pm = Some(false);
+                    break;
+                }
+                'H' | 'k' => {
+                    value.saw_24_hour = true;
+                    break;
+                }
+                'h' | 'I' | 'l' => {
+                    value.saw_12_hour = true;
+                    break;
+                }
+                // `%f` accepts an empty digit run, and the skip classes are
+                // no-ops on an exhausted input; retain their source behavior.
+                'f' | '@' | '#' | '.' => {}
+                _ => break,
+            }
+        }
         match specifier {
             'Y' => {
                 let Some((raw, consumed)) = parse_ascii_digits(&date[date_pos..], 4) else {
@@ -1603,7 +1694,7 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
             }
             '@' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_alphabetic()),
             '#' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_digit()),
-            '.' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_punctuation()),
+            '.' => skip_parser_class(&date, &mut date_pos, tidb_datatype::is_go_punctuation),
             _ => return Ok(Datum::Null),
         }
     }
@@ -1985,6 +2076,15 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
             _ => "th",
         }
     };
+    // Go's `convertDateFormat` writes a negative week-year through
+    // `uint32`, exposing MaxUint32 rather than a signed year such as `-001`.
+    let format_week_year = |year: i64| {
+        if year < 0 {
+            u32::MAX.to_string()
+        } else {
+            format!("{year:04}")
+        }
+    };
 
     let mut out = String::new();
     let mut chars = fmt.chars().peekable();
@@ -2030,8 +2130,8 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
             Some('u') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 1, false).1)),
             Some('V') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 2, false).1)),
             Some('v') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 3, false).1)),
-            Some('X') => out.push_str(&format!("{:04}", week_of_year(y, m, d, 2, true).0)),
-            Some('x') => out.push_str(&format!("{:04}", week_of_year(y, m, d, 3, true).0)),
+            Some('X') => out.push_str(&format_week_year(week_of_year(y, m, d, 2, true).0)),
+            Some('x') => out.push_str(&format_week_year(week_of_year(y, m, d, 3, true).0)),
             Some('%') => out.push('%'),
             // An unknown specifier emits the letter verbatim (MySQL rule).
             Some(other) => out.push(other),
@@ -2186,5 +2286,73 @@ mod week_tests {
             assert_eq!(week_of_year(y, m, d, 2, true).0, xu, "%X {y}-{m}-{d}");
             assert_eq!(week_of_year(y, m, d, 3, true).0, xl, "%x {y}-{m}-{d}");
         }
+    }
+}
+
+#[cfg(test)]
+mod composite_extract_tests {
+    use super::*;
+
+    /// Go `ExtractDatetimeNum`/`ExtractDurationNum` per composite unit
+    /// (`pkg/types/time.go`): the compound extraction concatenates the fields
+    /// WITHOUT separators — the fractional-second compounds retain six-digit
+    /// microseconds from string inputs, and a negative duration applies its sign
+    /// to the WHOLE composite result rather than per-field.
+    #[test]
+    fn composite_extracts_concatenate_fields_like_go() {
+        // DAY_MICROSECOND over a datetime: day 1 + 01:02:03.456700.
+        let date = Datum::new_string("2023-03-14 01:02:03.4567".to_string());
+        assert_eq!(
+            extract_composite("DAY_MICROSECOND", &[date]).unwrap(),
+            Datum::Int(14_010_203_456_700)
+        );
+        // HOUR_MICROSECOND over a duration string.
+        assert_eq!(
+            extract_composite(
+                "HOUR_MICROSECOND",
+                &[Datum::new_string("01:02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(102_034_567_00)
+        );
+        // MINUTE_MICROSECOND over `02:03.4567`: Go's `ParseDurationValue`
+        // distributes TWO groups onto (mi, sec), yielding 203456700
+        // (`pkg/types/time.go`).
+        // ALSO pinned: HOUR_MICROSECOND over the same two-group shape
+        // (h=0 implied), and the seconds-only single-group form.
+        assert_eq!(
+            extract_composite(
+                "MINUTE_MICROSECOND",
+                &[Datum::new_string("02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(20_345_670_0)
+        );
+        // SECOND_MICROSECOND.
+        assert_eq!(
+            extract_composite(
+                "SECOND_MICROSECOND",
+                &[Datum::new_string("03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(3_456_700)
+        );
+        // The two-group shape also serves HOUR_MICROSECOND (h=0 implied).
+        assert_eq!(
+            extract_composite(
+                "HOUR_MICROSECOND",
+                &[Datum::new_string("02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(20_345_670_0)
+        );
+        // A negative duration applies its sign to the WHOLE composite result.
+        let dur = Datum::new_string("-01:02:03.4567".to_string());
+        assert_eq!(
+            extract_composite("DAY_MICROSECOND", &[dur]).unwrap(),
+            // A Duration has no day field: DAY_MICROSECOND degenerates to the
+            // h/mi/s/us composite, sign applied to the whole result.
+            Datum::Int(-10_203_456_700)
+        );
     }
 }

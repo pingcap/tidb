@@ -24,7 +24,7 @@ use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResult
 use tidb_distsql::{QueryDispatch, QueryTransport, TimestampSource, TransportRequest};
 use tidb_exec::{
     configured_ordered_query::{
-        ConfiguredOrderedQueryEvidence, ConfiguredOrderedQueryRecordSet,
+        ConfiguredOrderedQueryRecordSet,
         PreparedConfiguredOrderedQueryTail,
     },
     real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory},
@@ -265,14 +265,6 @@ fn configured_topn_orders_full_schema_then_projects_hidden_keys_away() {
         "later output batches drain only the bounded TopN result, never the join again"
     );
     assert!(fixture.result.next_batch(1).unwrap().is_empty());
-    let Some(ConfiguredOrderedQueryEvidence::TopN(evidence)) = fixture.result.completed_evidence()
-    else {
-        panic!("completed TopN exposes bounded execution accounting");
-    };
-    assert_eq!(evidence.capacity(), 4);
-    assert_eq!(evidence.high_water_candidates(), 4);
-    assert_eq!(evidence.rows_consumed(), 5);
-    assert_eq!(evidence.rows_emitted(), 3);
     fixture.result.close().unwrap();
     assert_eq!(fixture.probes[0].close_calls(), 1);
     assert_eq!(fixture.probes[1].close_calls(), 1);
@@ -309,14 +301,6 @@ fn configured_limit_uses_the_one_join_reader_and_closes_without_a_hidden_pull() 
     assert_eq!(fixture.probes[0].close_calls(), 1);
     assert_eq!(fixture.probes[1].close_calls(), 1);
     assert!(fixture.result.lifecycle().is_closed());
-    let Some(ConfiguredOrderedQueryEvidence::Limit(evidence)) = fixture.result.completed_evidence()
-    else {
-        panic!("completed LIMIT exposes exact source consumption");
-    };
-    assert_eq!(evidence.rows_requested(), 3);
-    assert_eq!(evidence.rows_skipped(), 1);
-    assert_eq!(evidence.rows_emitted(), 2);
-    assert!(evidence.source_closed());
 }
 
 #[test]
@@ -379,7 +363,7 @@ fn local_empty_preserves_opened_join_metadata_without_readers() {
 }
 
 #[test]
-fn early_limit_close_is_non_pulling_and_reports_closed_accounting() {
+fn early_limit_close_is_non_pulling() {
     let mut fixture = execute(
         "SELECT a.Balance, o.Amount FROM Accounts a CROSS JOIN Orders o LIMIT 10",
         response(&[&[1, 10], &[2, 20]]),
@@ -406,12 +390,4 @@ fn early_limit_close_is_non_pulling_and_reports_closed_accounting() {
     );
     assert_eq!(fixture.probes[0].close_calls(), 1);
     assert_eq!(fixture.probes[1].close_calls(), 1);
-    let Some(ConfiguredOrderedQueryEvidence::Limit(evidence)) = fixture.result.completed_evidence()
-    else {
-        panic!("early record-set close exposes LIMIT accounting");
-    };
-    assert_eq!(evidence.rows_requested(), 1);
-    assert_eq!(evidence.rows_skipped(), 0);
-    assert_eq!(evidence.rows_emitted(), 1);
-    assert!(evidence.source_closed());
 }

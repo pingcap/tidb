@@ -32,56 +32,525 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
 }
 
 #[test]
-fn builtin_globals_stay_live_under_the_statement_selected_owner() {
-    let (mut writer, mut reader, globals) = two_sessions_sharing_globals();
-    let query = reader.statement_context(false);
-    let dml = reader.statement_context(true);
-    let score = |ctx: &tidb_executor::StmtContext| {
-        tidb_executor::driver::run_select_on(
-            "SELECT VALIDATE_PASSWORD_STRENGTH('!Abc87654321')",
-            &Catalog::default(),
-            ctx,
+fn ttl_job_enable_global_hook_updates_the_process_switch() {
+    struct RestoreTtlJobEnable(bool);
+    impl Drop for RestoreTtlJobEnable {
+        fn drop(&mut self) {
+            tidb_vardef::ENABLE_TTL_JOB.store(self.0, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore =
+        RestoreTtlJobEnable(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+    let globals = vars::GlobalSysvars::new();
+
+    globals
+        .set(
+            tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE,
+            "OFF".to_owned(),
         )
-        .unwrap()
-    };
-    assert_eq!(score(&query), vec![vec![Datum::Int(0)]]);
-    writer
-        .run("SET GLOBAL validate_password.enable = ON")
         .unwrap();
-    for ctx in [&query, &dml, &query.clone()] {
+    assert!(!tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        globals
+            .get(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE)
+            .unwrap(),
+        "OFF"
+    );
+
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE, "ON".to_owned())
+        .unwrap();
+    assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+
+    globals
+        .reset(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE)
+        .unwrap();
+    assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+// Transcreated from pinned Go `pkg/util/workloadrepo.TestSettingSQLVariables`.
+#[test]
+fn test_setting_sql_variables() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let worker = tidb_workloadrepo::Worker::new(None, None, None, "worker");
+    session.set_workload_repository(std::sync::Arc::clone(&worker));
+
+    for (statement, expected) in [
+        (
+            "SET GLOBAL tidb_workload_repository_active_sampling_interval = -1",
+            "0",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_snapshot_interval = 899",
+            "900",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_retention_days = -1",
+            "0",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_active_sampling_interval = 601",
+            "600",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_snapshot_interval = 7201",
+            "7200",
+        ),
+        (
+            "SET GLOBAL tidb_workload_repository_retention_days = 366",
+            "365",
+        ),
+    ] {
+        session.run(statement).unwrap();
+        let name = statement
+            .split_ascii_whitespace()
+            .nth(2)
+            .expect("SET GLOBAL variable name");
         assert_eq!(
-            score(ctx),
-            vec![vec![Datum::Int(100)]],
-            "Go evaluates through the live accessor"
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some(expected.to_owned())
         );
     }
 
-    let scratch = vars::GlobalSysvars::from_cluster_rows(globals.overrides());
-    scratch
-        .set("validate_password.dictionary", "8765".to_owned())
+    for name in [
+        "tidb_workload_repository_active_sampling_interval",
+        "tidb_workload_repository_snapshot_interval",
+        "tidb_workload_repository_retention_days",
+    ] {
+        assert!(session
+            .run(&format!("SET GLOBAL {name} = 'invalid'"))
+            .is_err());
+    }
+
+    session
+        .run("SET GLOBAL tidb_workload_repository_dest = 'table'")
         .unwrap();
-    let live = reader.swap_globals(scratch.clone());
-    let staged = reader.statement_context(false);
-    reader.swap_globals(live);
-    assert_eq!(score(&staged), vec![vec![Datum::Int(75)]]);
+    assert!(worker.enabled());
+    session
+        .run("SET GLOBAL tidb_workload_repository_dest = ''")
+        .unwrap();
+    assert!(!worker.enabled());
+    assert!(session
+        .run("SET GLOBAL tidb_workload_repository_dest = 'invalid'")
+        .is_err());
+}
+
+/// Transcreated from Go `TestRemovedOpt` and the executor's removed-variable
+/// compatibility path: SET accepts removed names as parse-but-ignore shims,
+/// while a SELECT read identifies the option and its replacement guidance.
+#[test]
+fn removed_system_variables_ignore_set_and_explain_reads() {
+    assert!(sysvar::is_removed_sys_var("tidb_enable_alter_placement"));
+    assert!(sysvar::is_removed_sys_var("TIDB_ENABLE_ALTER_PLACEMENT"));
+    assert!(!sysvar::is_removed_sys_var(
+        tidb_vardef::tidb_vars::TIDB_ENABLE1_PC
+    ));
+
+    let mut session = Session::new();
+    session
+        .run("SET tidb_enable_alter_placement = ON")
+        .expect("removed SET is parse-but-ignore");
+    session
+        .run("SET GLOBAL TIDB_ENABLE_ALTER_PLACEMENT = OFF")
+        .expect("removed SET GLOBAL is parse-but-ignore before privilege checks");
+
+    let error = session
+        .run("SELECT @@TIDB_ENABLE_ALTER_PLACEMENT")
+        .expect_err("removed reads must not return a dummy value")
+        .to_mysql_error();
+    assert_eq!(error.code, 8136);
     assert_eq!(
-        score(&reader.statement_context(false)),
-        vec![vec![Datum::Int(100)]]
+        error.message,
+        "option 'tidb_enable_alter_placement' is no longer supported. Reason: alter placement is now always enabled"
+    );
+}
+
+/// Transcreated from Go `TestSetTIDBDistributeReorg`: the global distribution
+/// switch accepts both boolean values through the shared global accessor.
+#[test]
+fn distribute_reorg_global_switch_round_trips() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_dist_task = OFF")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_dist_task"),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_enable_dist_task = ON")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_dist_task"),
+        Some("1".to_owned())
+    );
+}
+
+/// Transcreated from Go `TestIndexMergeSwitcher`, `TestSetTIDBFastDDL`,
+/// `TestSetTIDBDiskQuota`, `TestSetAggPushDownGlobally`, and
+/// `TestSetDeriveTopNGlobally`: these GLOBAL registry entries expose their
+/// Go defaults and retain the validated value in the shared accessor after a
+/// write. Bool reads use the native `1`/`0` domain, while the byte quota stays
+/// an unsigned decimal string.
+#[test]
+fn optimizer_and_ddl_global_switches_round_trip_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_index_merge"),
+        Some("1".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_enable_index_merge = OFF")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_index_merge"),
+        Some("0".to_owned())
     );
 
-    writer
-        .run("SET GLOBAL validate_password.enable = OFF")
-        .unwrap();
-    assert_eq!(score(&query), vec![vec![Datum::Int(0)]]);
     assert_eq!(
-        score(&staged),
-        vec![vec![Datum::Int(75)]],
-        "the scratch statement did not capture the live table"
+        scalar_text(&mut session, "SELECT @@global.tidb_ddl_enable_fast_reorg"),
+        Some("1".to_owned())
     );
-    scratch
-        .set("validate_password.enable", "OFF".to_owned())
+    session
+        .run("SET GLOBAL tidb_ddl_enable_fast_reorg = OFF")
         .unwrap();
-    assert_eq!(score(&staged), vec![vec![Datum::Int(0)]]);
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_ddl_enable_fast_reorg"),
+        Some("0".to_owned())
+    );
+
+    let gb = 1024_i64 * 1024 * 1024;
+    let pb = gb * 1024 * 1024;
+    let quota = |session: &mut Session| scalar_text(session, "SELECT @@global.tidb_ddl_disk_quota");
+    assert_eq!(quota(&mut session), Some((100 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 50 * gb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some((100 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 200 * gb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some((200 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 2 * pb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some(pb.to_string()));
+
+    for (name, default) in [
+        ("tidb_opt_agg_push_down", "0"),
+        ("tidb_opt_derive_topn", "0"),
+    ] {
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some(default.to_owned())
+        );
+        session.run(&format!("SET GLOBAL {name} = ON")).unwrap();
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("1".to_owned())
+        );
+    }
+}
+
+/// Go's `tidb_opt_partial_ordered_index_for_topn` Validation accepts only
+/// DISABLE/COST (case-insensitively), stores the uppercase mode, and refuses
+/// enum ordinals or unknown text with ErrWrongValueForVar (1231).
+#[test]
+fn partial_ordered_index_for_topn_validation_matches_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET SESSION tidb_opt_partial_ordered_index_for_topn = 'cost'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("COST".to_owned())
+    );
+
+    let error = session
+        .run("SET SESSION tidb_opt_partial_ordered_index_for_topn = 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1231);
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("COST".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_opt_partial_ordered_index_for_topn = 'disable'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("DISABLE".to_owned())
+    );
+}
+
+/// Go's retired partition-statistics concurrency variable accepts assignments
+/// for compatibility, warns for non-1 values, and always reads back `1` from
+/// both SESSION and GLOBAL getters.
+#[test]
+fn merge_partition_stats_concurrency_is_fixed_at_one_like_go() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET SESSION tidb_merge_partition_stats_concurrency = 4")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_merge_partition_stats_concurrency"
+        ),
+        Some("1".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_merge_partition_stats_concurrency = 8")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_merge_partition_stats_concurrency"
+        ),
+        Some("1".to_owned())
+    );
+
+    // Startup/upgrade images may contain an old persisted value; Go's fixed
+    // GetGlobal hook still masks it on read.
+    globals.set_startup("tidb_merge_partition_stats_concurrency", "99".to_owned());
+    assert_eq!(
+        globals
+            .get("tidb_merge_partition_stats_concurrency")
+            .unwrap(),
+        "1"
+    );
+}
+
+/// Transcreated from Go `TestTiDBServerMemoryLimitSessMinSize` and
+/// `TestTiDBServerMemoryLimitGCTrigger`: GLOBAL writes store the canonical
+/// byte/fraction representation that subsequent `@@global` reads expose.
+/// The process-wide memory tuner atomics are intentionally outside this SQL
+/// registry's ownership and are covered as a receipt boundary.
+#[test]
+fn memory_limit_global_values_are_canonicalized_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+
+    let old_server_limit =
+        tidb_util::memory::SERVER_MEMORY_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '100MB'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("512MB".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '0'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '18446744073709551615'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("18446744073709551615".to_owned())
+    );
+    for (input, expected) in [
+        ("1234", "512MB"),
+        ("1234567890123", "1234567890123"),
+        ("10KB", "512MB"),
+        ("12345678KB", "12345678KB"),
+        ("10MB", "512MB"),
+        ("700MB", "700MB"),
+        ("20GB", "20GB"),
+        ("2TB", "2TB"),
+    ] {
+        session
+            .run(&format!("SET GLOBAL tidb_server_memory_limit = '{input}'"))
+            .unwrap();
+        assert_eq!(
+            scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+            Some(expected.to_owned()),
+            "{input}"
+        );
+    }
+    tidb_util::memory::SERVER_MEMORY_LIMIT
+        .store(old_server_limit, std::sync::atomic::Ordering::SeqCst);
+
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_sess_min_size = '123MB'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_sess_min_size"
+        ),
+        Some("128974848".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_sess_min_size = '100'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_sess_min_size"
+        ),
+        Some("128".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_gc_trigger = '90%'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_gc_trigger"
+        ),
+        Some("0.9".to_owned())
+    );
+    let error = session
+        .run("SET GLOBAL tidb_server_memory_limit_gc_trigger = '100%'")
+        .expect_err("Go rejects the percent parser's 100% boundary");
+    assert_eq!(error.to_mysql_error().code, 1231);
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_gc_trigger"
+        ),
+        Some("0.9".to_owned())
+    );
+}
+
+/// Transcreated from Go `TestDefaultPartitionPruneMode` and
+/// `TestTiDBIgnoreInlistPlanDigest`: the registry defaults are visible through
+/// the same session/global read paths used by the Go mock accessor.
+#[test]
+fn remaining_optimizer_defaults_match_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_partition_prune_mode"),
+        Some("dynamic".to_owned())
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_ignore_inlist_plan_digest"
+        ),
+        Some("1".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_ignore_inlist_plan_digest = ON")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_ignore_inlist_plan_digest"
+        ),
+        Some("1".to_owned())
+    );
+}
+
+/// Transcreated from Go `TestTiDBTraceEventSysVar`: a valid JSON GLOBAL
+/// assignment starts the process recorder with the requested categories and
+/// sampling trigger, while an empty assignment closes it.
+#[test]
+fn trace_event_global_sysvar_controls_the_flight_recorder() {
+    if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
+        recorder.close();
+    }
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session
+        .run(
+            r#"SET GLOBAL tidb_trace_event = '{"enabled_categories":["*"],"dump_trigger":{"type":"sampling","sampling":1}}'"#,
+        )
+        .unwrap();
+    let recorder = tidb_util::traceevent::get_flight_recorder().expect("recorder started");
+    assert_eq!(
+        recorder.config,
+        tidb_util::traceevent::FlightRecorderConfig {
+            enabled_categories: vec!["*".to_owned()],
+            dump_trigger: tidb_util::traceevent::DumpTriggerConfig {
+                kind: "sampling".to_owned(),
+                sampling: 1,
+                ..Default::default()
+            },
+        }
+    );
+    session.run("SET GLOBAL tidb_trace_event = ''").unwrap();
+    assert!(tidb_util::traceevent::get_flight_recorder().is_none());
+}
+
+/// Transcreated from the real sysvar portion of Go `TestMockAPI`: the
+/// default-authentication-plugin enum rejects unknown names and accepts a
+/// supported plugin through the GLOBAL setter.
+#[test]
+fn default_authentication_plugin_global_validation_matches_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let error = session
+        .run("SET GLOBAL default_authentication_plugin = 'invalidvalue'")
+        .expect_err("unknown authentication plugins must be rejected");
+    assert_eq!(error.to_mysql_error().code, 1231);
+    session
+        .run("SET GLOBAL default_authentication_plugin = 'mysql_native_password'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.default_authentication_plugin"
+        ),
+        Some("mysql_native_password".to_owned())
+    );
+}
+
+#[test]
+fn statement_context_reads_global_sysvars_through_the_live_accessor() {
+    let globals = vars::GlobalSysvars::new();
+    let mut session = Session::new();
+    session.attach_globals(globals.clone()).unwrap();
+    let context = session.statement_context(false);
+    let read = || {
+        tidb_executor::Columns::sysvar(
+            &context,
+            Some(tidb_ast::SysVarScope::Global),
+            "validate_password.enable",
+        )
+    };
+
+    assert_eq!(read(), Some(Datum::Bytes(b"OFF".to_vec())));
+    globals
+        .set("validate_password.enable", "ON".to_owned())
+        .unwrap();
+    assert_eq!(read(), Some(Datum::Bytes(b"ON".to_vec())));
 }
 
 /// The MySQL inheritance rule, captured end to end through `SET`/`SELECT`
@@ -122,6 +591,97 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
         fresh.run("SELECT @@autocommit").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
     );
+}
+
+/// Go `TestTiDBEnableSharedLockUpgradeGate`: the new transaction switch is a
+/// normal GLOBAL|SESSION boolean, defaults OFF, and keeps the session/global
+/// copies independent after either tier is changed. Classic builds reject
+/// enabling the switch; NextGen builds accept it, matching Go's kernel gate.
+#[test]
+fn shared_lock_upgrade_variable_has_go_scope_and_default() {
+    let (mut first, mut second, globals) = two_sessions_sharing_globals();
+
+    assert!(!first.vars().shared_lock_upgrade_enabled());
+    assert!(!second.vars().shared_lock_upgrade_enabled());
+
+    assert_eq!(
+        first
+            .run("SELECT @@tidb_enable_shared_lock_upgrade")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(0)]])
+    );
+    if tidb_config::kerneltype::is_next_gen() {
+        first
+            .run("SET tidb_enable_shared_lock_upgrade = ON")
+            .unwrap();
+        assert_eq!(
+            first
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert!(first.vars().shared_lock_upgrade_enabled());
+        assert!(!second.vars().shared_lock_upgrade_enabled());
+        assert_eq!(
+            second
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+        assert!(!second.vars().shared_lock_upgrade_enabled());
+
+        first
+            .run("SET GLOBAL tidb_enable_shared_lock_upgrade = ON")
+            .unwrap();
+        assert_eq!(
+            second
+                .run("SELECT @@global.tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        // A connected session keeps its own copy until reconnect, matching
+        // Go's NewSessionVars inheritance rule.
+        assert_eq!(
+            second
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+
+        let mut fresh = Session::new();
+        fresh.attach_globals(globals).unwrap();
+        assert!(fresh.vars().shared_lock_upgrade_enabled());
+        assert_eq!(
+            fresh
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+    } else {
+        for value in ["ON", "1"] {
+            let error = first
+                .run(&format!("SET tidb_enable_shared_lock_upgrade = {value}"))
+                .unwrap_err();
+            assert_eq!(error.to_mysql_error().code, 1231);
+            assert!(!first.vars().shared_lock_upgrade_enabled());
+            assert_eq!(
+                first
+                    .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                    .unwrap(),
+                StmtResult::Rows(vec![vec![Datum::Int(0)]])
+            );
+        }
+        let error = first
+            .run("SET GLOBAL tidb_enable_shared_lock_upgrade = ON")
+            .unwrap_err();
+        assert_eq!(error.to_mysql_error().code, 1231);
+        assert_eq!(
+            second
+                .run("SELECT @@global.tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+    }
 }
 
 /// Go's transport-sensitive validator runs only on SQL `SET GLOBAL`: a
@@ -330,6 +890,673 @@ fn the_partition_switches_are_always_on() {
     );
 }
 
+/// Pinned Go's validation closure warns on every assignment to the async
+/// global-statistics merge switch, for both session and global scope.
+#[test]
+fn async_global_stats_switch_warns_on_every_assignment() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let expected = vec![vec![
+        "Warning".to_owned(),
+        "1105".to_owned(),
+        "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future \
+         release; changing it is discouraged."
+            .to_owned(),
+    ]];
+
+    session
+        .run("SET SESSION tidb_enable_async_merge_global_stats = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET GLOBAL tidb_enable_async_merge_global_stats = ON")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET SESSION tidb_enable_async_merge_global_stats = DEFAULT")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET GLOBAL tidb_enable_async_merge_global_stats = DEFAULT")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+}
+
+/// Go's statement-summary GLOBAL setters update the process-wide summary map
+/// immediately; storing the SQL value alone is not sufficient for readers and
+/// collectors that use the map directly.
+#[test]
+fn stmt_summary_global_hooks_update_runtime_map() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let map = &tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
+    let old_enabled = tidb_stmtsummary::v2::stmtsummary::enabled();
+    let old_internal = tidb_stmtsummary::v2::stmtsummary::enabled_internal();
+    let old_refresh = map.refresh_interval();
+    let old_history = map.history_size();
+    let old_max_stmt_count = map.max_stmt_count();
+    let old_max_sql_length = map.max_sql_length();
+    let old_group_by_user = map.group_by_user();
+
+    session
+        .run("SET GLOBAL tidb_enable_stmt_summary = OFF")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_internal_query = ON")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_refresh_interval = 77")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_history_size = 9")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_max_stmt_count = 41")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_max_sql_length = 1234")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_group_by_user = ON")
+        .unwrap();
+
+    assert!(!tidb_stmtsummary::v2::stmtsummary::enabled());
+    assert!(tidb_stmtsummary::v2::stmtsummary::enabled_internal());
+    assert_eq!(map.refresh_interval(), 77);
+    assert_eq!(map.history_size(), 9);
+    assert_eq!(map.max_stmt_count(), 41);
+    assert_eq!(map.max_sql_length(), 1234);
+    assert!(map.group_by_user());
+
+    tidb_stmtsummary::v2::stmtsummary::set_enabled(old_enabled);
+    tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(old_internal);
+    tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(old_refresh);
+    tidb_stmtsummary::v2::stmtsummary::set_history_size(old_history as i32);
+    tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(old_max_stmt_count as i64);
+    tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(old_max_sql_length as i32);
+    tidb_stmtsummary::v2::stmtsummary::set_group_by_user(old_group_by_user);
+}
+
+/// Go `TestTiDBOptTxnAutoRetry`: OFF is a deprecated compatibility spelling
+/// that warns and remains ON for both SESSION and GLOBAL assignments.
+#[test]
+fn disable_txn_auto_retry_off_warns_and_stays_on() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let expected = vec![vec![
+        "Warning".to_owned(),
+        "1287".to_owned(),
+        "'OFF' is deprecated and will be removed in a future release. Please use ON instead"
+            .to_owned(),
+    ]];
+
+    session
+        .run("SET SESSION tidb_disable_txn_auto_retry = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'tidb_disable_txn_auto_retry'")),
+        vec![vec![
+            "tidb_disable_txn_auto_retry".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+    session
+        .run("SET GLOBAL tidb_disable_txn_auto_retry = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_disable_txn_auto_retry'")),
+        vec![vec![
+            "tidb_disable_txn_auto_retry".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+}
+
+/// Go `TestDeprecation`: executor-concurrency compatibility variables accept
+/// their value but append the replacement warning with MySQL code 1287.
+#[test]
+fn deprecated_index_lookup_concurrency_warns_like_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET SESSION tidb_index_lookup_concurrency = 123")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1287".to_owned(),
+            "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead".to_owned(),
+        ]]
+    );
+}
+
+/// Go `TestTiDBLowResTSOUpdateInterval`: GLOBAL integer bounds clamp to the
+/// declared range and report the original value with warning 1292.
+#[test]
+fn low_resolution_tso_update_interval_clamps_and_warns() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 0")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_low_resolution_tso_update_interval value: '0'".to_owned()
+        ]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")
+        ),
+        vec![vec![
+            "tidb_low_resolution_tso_update_interval".to_owned(),
+            "10".to_owned()
+        ]]
+    );
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 100000")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_low_resolution_tso_update_interval value: '100000'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")
+        ),
+        vec![vec![
+            "tidb_low_resolution_tso_update_interval".to_owned(),
+            "60000".to_owned()
+        ]]
+    );
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 1000")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
+/// Go `TestTiDBSchemaCacheSize`: byte-size GLOBAL values preserve their
+/// origin spelling while publishing the parsed byte count used by the cache.
+#[test]
+fn schema_cache_size_global_hook_publishes_bytes() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = '10KB'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_schema_cache_size'")),
+        vec![vec!["tidb_schema_cache_size".to_owned(), "64MB".to_owned()]]
+    );
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        64 << 20
+    );
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = '700MB'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_schema_cache_size'")),
+        vec![vec![
+            "tidb_schema_cache_size".to_owned(),
+            "700MB".to_owned()
+        ]]
+    );
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        700 << 20
+    );
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64
+    );
+}
+
+/// Go `TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio`: GLOBAL
+/// writes clamp the ratio to [0, 1], report warning 1292 for out-of-range
+/// inputs, and publish the validated float to the process-wide circuit
+/// breaker state consumed by PD metadata requests.
+#[test]
+fn circuit_breaker_pd_metadata_ratio_global_hook_publishes_float() {
+    struct RestoreRatio(f64);
+    impl Drop for RestoreRatio {
+        fn drop(&mut self) {
+            tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(self.0);
+        }
+    }
+
+    let _restore =
+        RestoreRatio(tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio());
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = -1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_cb_pd_metadata_error_rate_threshold_ratio"
+        ),
+        Some("0".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        0.0
+    );
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = 1.1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_cb_pd_metadata_error_rate_threshold_ratio"
+        ),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        1.0
+    );
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = 0.9")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        0.9
+    );
+}
+
+/// Go `TestEnableWindowFunction`: the session bool is initialized from the
+/// default and updated by the SetSession hook for ON/0/1 spellings while the
+/// normalized SQL value remains available to SHOW/@@ reads.
+#[test]
+fn enable_window_function_session_hook_updates_typed_state() {
+    let mut session = Session::new();
+    assert!(session.vars().window_function_enabled());
+
+    session.run("SET tidb_enable_window_function = ON").unwrap();
+    assert!(session.vars().window_function_enabled());
+
+    session.run("SET tidb_enable_window_function = 0").unwrap();
+    assert!(!session.vars().window_function_enabled());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_enable_window_function"),
+        Some("0".to_owned())
+    );
+
+    session.run("SET tidb_enable_window_function = 1").unwrap();
+    assert!(session.vars().window_function_enabled());
+}
+
+/// Go `TestTiDBAutoAnalyzeConcurrencyValidation`: concurrency writes require
+/// both process-wide auto-analyze switches, then publish the validated value
+/// to the scheduler-facing atomic when the prerequisites are enabled.
+#[test]
+fn auto_analyze_concurrency_requires_enabled_scheduler() {
+    struct RestoreAutoAnalyze {
+        run: bool,
+        priority_queue: bool,
+        concurrency: i64,
+    }
+    impl Drop for RestoreAutoAnalyze {
+        fn drop(&mut self) {
+            tidb_vardef::RUN_AUTO_ANALYZE.store(self.run, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                .store(self.priority_queue, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+                .store(self.concurrency, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = RestoreAutoAnalyze {
+        run: tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst),
+        priority_queue: tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+            .load(std::sync::atomic::Ordering::SeqCst),
+        concurrency: tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+            .load(std::sync::atomic::Ordering::SeqCst),
+    };
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_enable_auto_analyze = OFF")
+        .unwrap();
+    assert!(!tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst));
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+        .expect_err("disabled auto-analyze must reject concurrency changes");
+    assert!(error.to_mysql_error().message.contains(
+        "requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue"
+    ));
+
+    session
+        .run("SET GLOBAL tidb_enable_auto_analyze = ON")
+        .unwrap();
+    tidb_vardef::RUN_AUTO_ANALYZE.store(true, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let error = sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY)
+        .expect("auto-analyze concurrency is registered")
+        .validate_in_scope("10", sysvar::SCOPE_GLOBAL)
+        .expect_err("disabled priority queue must reject concurrency changes");
+    assert!(
+        matches!(error, sysvar::ValidationError::Refused(message) if message.contains("tidb_enable_auto_analyze_priority_queue=false"))
+    );
+
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    session
+        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+        .unwrap();
+    assert_eq!(
+        tidb_vardef::AUTO_ANALYZE_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
+        10
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_auto_analyze_concurrency"
+        ),
+        Some("10".to_owned())
+    );
+}
+
+/// Go `TestTiDBEnableResourceControl` and
+/// `TestTiDBResourceControlStrictMode`: the GLOBAL hooks publish the
+/// process-wide switches consumed by resource-group hint admission, while
+/// SQL reads retain the normalized ON/OFF values.
+#[test]
+fn resource_control_global_hooks_publish_process_switches() {
+    struct RestoreResourceControl {
+        enabled: bool,
+        strict: bool,
+    }
+    impl Drop for RestoreResourceControl {
+        fn drop(&mut self) {
+            tidb_vardef::ENABLE_RESOURCE_CONTROL
+                .store(self.enabled, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+                .store(self.strict, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = RestoreResourceControl {
+        enabled: tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst),
+        strict: tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+            .load(std::sync::atomic::Ordering::SeqCst),
+    };
+    tidb_vardef::ENABLE_RESOURCE_CONTROL.store(false, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    assert!(session.vars().resource_control_enabled());
+    assert!(!tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(session.vars().resource_control_strict_mode());
+
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = ON")
+        .unwrap();
+    assert!(session.vars().resource_control_enabled());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_resource_control"),
+        Some("1".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_resource_control_strict_mode = OFF")
+        .unwrap();
+    assert!(!session.vars().resource_control_strict_mode());
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_resource_control_strict_mode"
+        ),
+        Some("0".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = OFF")
+        .unwrap();
+    assert!(!session.vars().resource_control_enabled());
+}
+
+/// Go `TestTiDBAutoAnalyzeRatio`: values greater than one remain valid, while
+/// tiny positive ratios are refused at 0.00001 and leave the prior GLOBAL
+/// value unchanged.
+#[test]
+fn auto_analyze_ratio_validation_matches_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 1.1")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("1.1".to_owned())
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0")
+        .expect_err("zero ratio must be refused");
+    assert_eq!(error.to_mysql_error().code, 1105);
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("1.1".to_owned())
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0.0000000001")
+        .expect_err("tiny ratio must be refused");
+    assert_eq!(error.to_mysql_error().code, 1105);
+    session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0.00001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("0.00001".to_owned())
+    );
+}
+
+/// Go `TestTiDBAnalyzeStoreBatchSize`: the SetSession hook stores the
+/// normalized unsigned value, including the zero disable sentinel and the
+/// configured upper bound, and fresh sessions inherit GLOBAL state.
+#[test]
+fn analyze_store_batch_size_uses_go_typed_session_hook() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        session.vars().analyze_store_batch_size(),
+        tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE
+    );
+    session
+        .run("SET tidb_analyze_store_batch_size = 0")
+        .unwrap();
+    assert_eq!(session.vars().analyze_store_batch_size(), 0);
+
+    session
+        .run("SET tidb_analyze_store_batch_size = 9")
+        .unwrap();
+    assert_eq!(session.vars().analyze_store_batch_size(), 8);
+
+    session
+        .run("SET GLOBAL tidb_analyze_store_batch_size = 6")
+        .unwrap();
+    let mut fresh = vars::SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.analyze_store_batch_size(), 6);
+}
+
+/// Go `TestTiDBOptSelectivityFactor`: the typed optimizer factor follows
+/// SESSION writes, statement snapshots, and GLOBAL inheritance, while the
+/// generic float validator clamps values above one to the source maximum.
+#[test]
+fn opt_selectivity_factor_uses_go_typed_session_hook() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        session.vars().selectivity_factor(),
+        tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR
+    );
+    session
+        .run("SET tidb_opt_selectivity_factor = 0.7")
+        .unwrap();
+    assert_eq!(session.vars().selectivity_factor(), 0.7);
+    assert_eq!(session.ddl_statement_context().selectivity_factor(), 0.7);
+
+    session
+        .run("SET GLOBAL tidb_opt_selectivity_factor = 1.1")
+        .unwrap();
+    assert_eq!(globals.get("tidb_opt_selectivity_factor").unwrap(), "1");
+    let mut fresh = vars::SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.selectivity_factor(), 1.0);
+}
+
+/// Go `TestTiDBAnalyzeDefaultBucketAndTopNOptions`: GLOBAL writes publish the
+/// validated unsigned values and clamp out-of-range input to each configured
+/// boundary instead of refusing the assignment.
+#[test]
+fn analyze_default_bucket_and_topn_global_hooks_match_go() {
+    struct Restore {
+        buckets: u64,
+        top_n: u64,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .store(self.buckets, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+                .store(self.top_n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = Restore {
+        buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+    };
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 100")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
+        Some("100".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        100
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 0")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 100001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
+        Some("100000".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        100_000
+    );
+
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 50")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
+        Some("50".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+        50
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 0")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 100001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
+        Some("100000".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+        100_000
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.
@@ -454,11 +1681,12 @@ fn committer_concurrency_updates_the_process_authority() {
 
     impl Drop for Restore {
         fn drop(&mut self) {
-            tidb_tikvutil::set_committer_concurrency(self.0);
+            tidb_tikvutil::COMMITTER_CONCURRENCY.store(self.0, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
-    let _restore = Restore(tidb_tikvutil::committer_concurrency());
+    let _restore =
+        Restore(tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst));
     let (mut first, mut second, globals) = two_sessions_sharing_globals();
 
     globals.load_from_cluster([(
@@ -466,7 +1694,7 @@ fn committer_concurrency_updates_the_process_authority() {
         "256".to_owned(),
     )]);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         256,
         "loading the live cluster table must initialize the process authority"
     );
@@ -479,7 +1707,7 @@ fn committer_concurrency_updates_the_process_authority() {
         Some("1024".to_owned())
     );
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "the live atomic must follow the accepted GLOBAL assignment"
     );
@@ -489,7 +1717,7 @@ fn committer_concurrency_updates_the_process_authority() {
         "2048".to_owned(),
     )]);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "loading transaction scratch state must not publish it"
     );
@@ -500,14 +1728,14 @@ fn committer_concurrency_updates_the_process_authority() {
         )
         .unwrap();
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         1024,
         "validated but uncommitted scratch state must remain private"
     );
 
     globals.replace_from(&scratch);
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
         4096,
         "committed cluster state must publish atomically with the live table"
     );
@@ -515,8 +1743,9 @@ fn committer_concurrency_updates_the_process_authority() {
         .reset(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
         .unwrap();
     assert_eq!(
-        tidb_tikvutil::committer_concurrency(),
-        tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY
+        tidb_tikvutil::COMMITTER_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
+        i32::try_from(tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY)
+            .expect("committer concurrency default fits i32")
     );
 }
 
@@ -677,6 +1906,168 @@ fn an_accepted_isolation_level_still_stores_and_reads_back() {
         Some("READ-COMMITTED".to_owned())
     );
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
+/// Go `TestTxnIsolation`: a GLOBAL skip switch does not mutate the current
+/// session, but a connection seeded after that GLOBAL write inherits it. The
+/// inherited session accepts the unsupported level with the same 8048 warning
+/// that Go's `checkIsolationLevel` appends after the relaxed validation path.
+#[test]
+fn global_isolation_skip_waits_for_the_next_session() {
+    let (mut current, _peer, globals) = two_sessions_sharing_globals();
+
+    let error = current
+        .run("SET SESSION transaction_isolation = 'on'")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1231);
+
+    current
+        .run("SET GLOBAL tidb_skip_isolation_level_check = ON")
+        .unwrap();
+    // The GLOBAL write is cluster state only; the writer's session copy stays
+    // OFF until a new session explicitly changes it.
+    let error = current
+        .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 8048);
+
+    let mut inherited = Session::new();
+    inherited.attach_globals(globals).unwrap();
+    inherited
+        .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+        .unwrap();
+    assert_eq!(
+        row_text(inherited.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8048",
+            "The isolation level 'SERIALIZABLE' is not supported. Set \
+             tidb_skip_isolation_level_check=1 to skip this error"
+        ]]
+    );
+    assert_eq!(
+        scalar_text(&mut inherited, "SELECT @@transaction_isolation"),
+        Some("SERIALIZABLE".to_owned())
+    );
+}
+
+/// Go `TestReadOnlyNoop`: GLOBAL writes consult the GLOBAL copy of
+/// `tidb_enable_noop_functions`, and all five `noop.go` variables refuse ON
+/// with 1235 until that gate is enabled. A refused write leaves the global
+/// value OFF; once enabled, each variable stores ON and can be reset.
+#[test]
+fn global_read_only_noop_variables_need_the_global_gate() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    for (name, clause) in [
+        ("tx_read_only", "READ ONLY"),
+        ("transaction_read_only", "READ ONLY"),
+        ("offline_mode", "OFFLINE MODE"),
+        ("super_read_only", "READ ONLY"),
+        ("read_only", "READ ONLY"),
+    ] {
+        let error = session
+            .run(&format!("SET GLOBAL {name} = ON"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1235, "{name}");
+        assert!(error.message.contains(clause), "{error:?}");
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("0".to_owned()),
+            "a refused global write must keep {name}=OFF"
+        );
+
+        session
+            .run("SET GLOBAL tidb_enable_noop_functions = ON")
+            .unwrap();
+        session.run(&format!("SET GLOBAL {name} = ON")).unwrap();
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("1".to_owned()),
+            "the global gate must allow {name}=ON"
+        );
+        session.run(&format!("SET GLOBAL {name} = OFF")).unwrap();
+        session
+            .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+            .unwrap();
+    }
+}
+
+/// Go's `tidb_enable_noop_functions` Validation rejects disabling the GLOBAL
+/// gate while a same-scope no-op read-only variable is still ON.
+#[test]
+fn global_noop_gate_cannot_be_disabled_while_read_only_is_on() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = ON")
+        .unwrap();
+    session.run("SET GLOBAL tx_read_only = ON").unwrap();
+
+    let error = session
+        .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1235);
+    assert_eq!(
+        error.message,
+        "tidb_enable_noop_functions = OFF is not supported when tx_read_only = ON"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_noop_functions"),
+        Some("ON".to_owned())
+    );
+
+    session.run("SET GLOBAL tx_read_only = OFF").unwrap();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+        .unwrap();
+}
+
+/// Go `SysVar.SkipInit` includes `IsNoop` variables: a fresh session keeps the
+/// compatibility default even when the shared GLOBAL no-op row is ON.
+#[test]
+fn noop_globals_are_not_copied_into_new_sessions() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = ON")
+        .unwrap();
+    session.run("SET GLOBAL tx_read_only = ON").unwrap();
+    let mut fresh = SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.system_value("tx_read_only").unwrap(), "OFF");
+    assert_eq!(
+        fresh.system_value("tidb_enable_noop_functions").unwrap(),
+        "ON"
+    );
+}
+
+/// Go `TestSecureAuth`: the global compatibility switch cannot be disabled;
+/// the rejected OFF write leaves the default ON intact, while ON remains a
+/// valid global assignment.
+#[test]
+fn secure_auth_global_write_rejects_off() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    let error = session
+        .run("SET GLOBAL secure_auth = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1231);
+    assert_eq!(
+        error.message,
+        "Variable 'secure_auth' can't be set to the value of 'OFF'"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.secure_auth"),
+        Some("1".to_owned())
+    );
+
+    session.run("SET GLOBAL secure_auth = ON").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.secure_auth"),
+        Some("1".to_owned())
+    );
 }
 
 /// Go's `max_allowed_packet` `Validation`: a SESSION write is `ErrReadOnly`
@@ -983,8 +2374,14 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         .unwrap();
 
     for (sql, folded_expression) in [
-        ("SELECT 9223372036854775807 + 1", "(9223372036854775807 + 1)"),
-        ("SELECT 9223372036854775807 * 2", "(9223372036854775807 * 2)"),
+        (
+            "SELECT 9223372036854775807 + 1",
+            "(9223372036854775807 + 1)",
+        ),
+        (
+            "SELECT 9223372036854775807 * 2",
+            "(9223372036854775807 * 2)",
+        ),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");
@@ -998,14 +2395,21 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         );
     }
 
-    // DIVERGENCE (#181, open): runtime column arithmetic still reports the
-    // class only; Go renders the qualified expression, e.g.
-    // BIGINT value is out of range in '(ovx.t.a + ovx.t.b)'.
-    for sql in ["SELECT a + b FROM t", "SELECT a + 1 FROM t"] {
+    // Go renders the qualified expression for runtime column arithmetic
+    // (`ErrOverflow.GenWithStackByArgs("BIGINT", "(a + b)")`), which the
+    // runtime now mirrors.
+    for (sql, expression) in [
+        ("SELECT a + b FROM t", "(test.t.a + test.t.b)"),
+        ("SELECT a + 1 FROM t", "(test.t.a + 1)"),
+    ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");
         assert_eq!(&error.state, b"22003", "{sql}");
-        assert_eq!(error.message, "BIGINT value is out of range", "{sql}");
+        assert_eq!(
+            error.message,
+            format!("BIGINT value is out of range in '{expression}'"),
+            "{sql}"
+        );
     }
 
     let error = session
@@ -1013,10 +2417,12 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         .unwrap_err()
         .to_mysql_error();
     assert_eq!(error.code, 1690);
-    // DIVERGENCE (#181, open) on the DOUBLE arm too: Go says DOUBLE value is
-    // out of range in '(1e+308 + 1e+308)' -- the VALUE spelling `1e+308`, not
-    // the statement's `1e308`. This tier still reports the class alone.
-    assert_eq!(error.message, "DOUBLE value is out of range");
+    // Go spells the VALUE `1e+308` (not the statement's `1e308`) inside the
+    // qualified expression, and the runtime mirrors that spelling.
+    assert_eq!(
+        error.message,
+        "DOUBLE value is out of range in '(1e+308 + 1e+308)'"
+    );
 }
 
 /// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
@@ -1122,4 +2528,77 @@ fn set_default_resolves_the_new_install_initial_value() {
         scalar_text(&mut session, "SELECT @@autocommit").as_deref(),
         Some("1")
     );
+}
+
+/// Go's `validate_password.*` Validation closures (`sysvar.go:717-790`) keep
+/// the five settings coupled: raising a count raises the sibling `length` to
+/// `number + special + 2 * mixed_case`, and setting `length` below that
+/// minimum adjusts it up instead of storing the too-small value.
+#[test]
+fn validate_password_count_sets_couple_the_length_sibling_like_go() {
+    let globals = vars::GlobalSysvars::new();
+
+    // Stock counts are number 1 / special 1 / mixed 1 and length 8: raising
+    // mixed_case to 5 moves length to 1 + 1 + 2*5 = 12.
+    globals
+        .set("validate_password.mixed_case_count", "5".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "12");
+
+    // With mixed 5 the required minimum stays 12, so a too-small length is
+    // adjusted up rather than stored.
+    globals
+        .set("validate_password.length", "2".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "12");
+
+    // A length above the requirement passes through untouched.
+    globals
+        .set("validate_password.length", "20".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "20");
+
+    // Dropping the number count to 0 lowers the required floor to
+    // 0 + 1 + 2*5 = 11, which the current length 20 already exceeds, so the
+    // length is untouched; the next length set enforces the new floor.
+    globals
+        .set("validate_password.number_count", "0".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "20");
+    globals
+        .set("validate_password.length", "11".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "11");
+    globals
+        .set("validate_password.length", "5".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "11");
+}
+
+/// Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning the
+/// flag OFF through a user SET is refused while `tidb_restricted_read_only`
+/// is ON.
+#[test]
+fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
+    let globals = vars::GlobalSysvars::new();
+    globals
+        .set("tidb_restricted_read_only", "ON".to_owned())
+        .unwrap();
+    assert_eq!(
+        globals.get("tidb_super_read_only").unwrap(),
+        "ON",
+        "restricted read-only must promote super read-only"
+    );
+
+    let refused = globals.set("tidb_super_read_only", "OFF".to_owned());
+    assert!(refused.is_err(), "the OFF set must be refused");
+
+    // With the sibling off, the OFF set goes through.
+    globals
+        .set("tidb_restricted_read_only", "OFF".to_owned())
+        .unwrap();
+    globals
+        .set("tidb_super_read_only", "OFF".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("tidb_super_read_only").unwrap(), "OFF");
 }

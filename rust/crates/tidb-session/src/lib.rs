@@ -27,7 +27,6 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -238,6 +237,86 @@ pub enum StmtOutput {
     Done(bool),
 }
 
+/// One pessimistic wait-for edge returned by the active storage backend.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DataLockWait {
+    /// Transaction waiting for the lock.
+    pub txn: u64,
+    /// Transaction currently holding the lock.
+    pub wait_for_txn: u64,
+    /// Encoded locked key.
+    pub key: Vec<u8>,
+    /// Encoded TopSQL resource-group tag.
+    pub resource_group_tag: Vec<u8>,
+}
+
+/// Storage boundary for `information_schema.DATA_LOCK_WAITS`.
+pub trait DataLockWaitsProvider: Send + Sync {
+    /// Reads the current wait-for edges from the backend.
+    fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
+}
+
+/// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
+pub trait ColumnStatsUsageProvider: Send + Sync {
+    /// Loads the complete shared usage table at a fresh statement snapshot.
+    fn load_column_stats_usage(
+        &self,
+        location: &tidb_datatype::SessionTimeZone,
+        resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    >;
+}
+
+/// Storage-backed reader used by pinned Go `SHOW ANALYZE STATUS`.
+pub trait AnalyzeStatusProvider: Send + Sync {
+    /// Runs Go's fresh restricted read of the thirty newest persisted jobs.
+    fn load_analyze_status(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String>;
+
+    /// Go `GlobalPDHelper.GetApproximateTableCountFromStorage`. Errors and a
+    /// backend without PD both produce zero, as its caller ignores `hasPD`.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> i64;
+}
+
+/// Go `TableSizeStats` values consumed by one logical table's
+/// `information_schema.TABLES` and `information_schema.PARTITIONS` rows.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableStorageStatistics {
+    /// Logical table ID.
+    pub table_id: i64,
+    /// Logical/aggregate `(rows, average row length, data length, index length)`.
+    pub table: (u64, u64, u64, u64),
+    /// The same tuple for each physical partition ID.
+    pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
+}
+
+/// Fresh restricted-storage boundary used by Go's information-schema
+/// `TableSizeStats` reader.
+pub trait TableStorageStatsProvider: Send + Sync {
+    /// Runs the pinned restricted reads and returns estimates for the current
+    /// schema image. The histogram-size read is skipped when only
+    /// `TABLE_ROWS` is requested. A read failure is warning-only at the caller.
+    fn load_table_storage_statistics(
+        &self,
+        resource_group: &str,
+        need_column_lengths: bool,
+    ) -> Result<Vec<TableStorageStatistics>, String>;
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -274,6 +353,12 @@ impl ResultMaterializationAuthority {
     #[must_use]
     pub fn into_parts(self) -> (tidb_executor::StatementMemory, usize, usize) {
         (self.memory, self.init_chunk_size, self.max_chunk_size)
+    }
+
+    /// The statement tracker retained by this authority.
+    #[must_use]
+    pub(crate) fn statement_memory(&self) -> tidb_executor::StatementMemory {
+        self.memory.clone()
     }
 }
 
@@ -347,6 +432,15 @@ pub trait MdlRelatedTableSink: Send + Sync {
 
 pub struct Session {
     catalog: SharedCatalog,
+    /// Go `session.values`: heterogeneous values addressed by session-context
+    /// stringer keys. Values must be thread-safe because the native session
+    /// moves between connection workers.
+    context_values: HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
+    /// Shared with every executor context built for the current attempt.
+    executor_first_run_breakpoint: Arc<std::sync::atomic::AtomicBool>,
+    /// The cluster transaction layer owns the attempt boundary while this is
+    /// true, so inner pessimistic retries do not re-arm the first-run hook.
+    external_executor_breakpoint_scope: bool,
     /// Go `infosync.ServerInfo.StartTimestamp`: when the hosting server
     /// process started, which the server-tier `Statistics` provider turns
     /// into the `Uptime` status variable (`pkg/server/stat.go:87`). `None`
@@ -354,16 +448,24 @@ pub struct Session {
     /// session with no registered server provider.
     server_start_timestamp: Option<i64>,
     /// Metadata snapshot cache keyed by the catalog mutation version.
-    tidb_decode_key_cache: std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
-    /// Suppresses the metadata snapshot while a narrow fast path builds a
-    /// statement context that cannot evaluate `TIDB_DECODE_KEY`.
-    skip_tidb_decode_key_snapshot: Cell<bool>,
+    tidb_decode_key_cache:
+        std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
     session_memory: tidb_executor::SessionMemory,
+    /// The current statement's actual result-retention authority.
+    ///
+    /// Go retains `SessionVars.StmtCtx` until the next statement reset and a
+    /// cursor keeps that context's tracker. Rust used to construct a second
+    /// statement tracker after execution; this slot lets the result keep the
+    /// same tracker the executor used.
+    statement_result_authority: std::cell::RefCell<Option<ResultMaterializationAuthority>>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
+    /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
+    /// every statement until the transaction ends.
+    write_sli: tidb_util::sli::TxnWriteThroughputSli,
     /// Go `SessionVars.LocalTemporaryTables` (an `infoschema.SessionTables`):
     /// the LOCAL temporary tables this connection created, as
     /// `(folded schema, folded name, table)`.
@@ -406,6 +508,19 @@ pub struct Session {
         std::collections::HashMap<i64, Box<dyn tidb_executor::storage::TableStorage>>,
     /// The session's system and user variables.
     vars: SessionVars,
+    /// Go `SessionVars.ResourceGroupName`: the connection's selected resource
+    /// group. A statement-level `RESOURCE_GROUP` hint may override this value
+    /// for one statement, but never mutates it.
+    resource_group: String,
+    /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for
+    /// the statement currently executing. It is reset at every statement
+    /// boundary and replaced after `hint.ParseStmtHints`.
+    stmt_hints: tidb_hint::StmtHints,
+    /// Go `StmtCtx.ResourceGroupName`: the group selected for the statement
+    /// currently passing through the session funnel. It starts from
+    /// [`Self::resource_group`] at every statement boundary and may be
+    /// replaced by that statement's last `RESOURCE_GROUP` hint.
+    active_resource_group: String,
     /// The warnings the last statement produced, which Go keeps in
     /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
     warnings: Vec<SqlWarning>,
@@ -438,11 +553,14 @@ pub struct Session {
     /// which every privilege check widens through and which `CURRENT_ROLE()`
     /// reports. A fresh session starts with its account's DEFAULT roles
     /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
-    active_roles: Vec<privilege::Account>,
+    active_roles: Arc<Vec<privilege::Account>>,
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
     connection_id: Option<u64>,
+    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: negotiated
+    /// once by the front end and copied into every statement context.
+    client_found_rows: bool,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
@@ -452,6 +570,9 @@ pub struct Session {
     /// The id the last statement allocated, which the OK packet carries and
     /// which is 0 for a statement that allocated nothing.
     statement_insert_id: u64,
+    /// Go's `StatementContext.LastMessage`, retained until the next statement
+    /// so the MySQL OK/EOF writer can publish UPDATE's summary text.
+    statement_message: String,
     /// Go `StmtCtx.AddSetVarHintRestore`: the session overrides a `SET_VAR`
     /// hint overwrote for the duration of ONE statement, put back when that
     /// statement finishes whether it succeeded or failed.
@@ -487,6 +608,28 @@ pub struct Session {
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
     cluster_schema_version: Option<std::sync::Arc<dyn Fn() -> i64 + Send + Sync>>,
+    /// Go's process-global `workloadrepo.workerCtx`, installed by Domain.
+    workload_repository: Option<std::sync::Arc<tidb_workloadrepo::Worker>>,
+    /// Go Domain's node-global index-usage collector, read by
+    /// `information_schema.TIDB_INDEX_USAGE`.
+    index_usage_collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
+    /// Go session `idxUsageCollector`, present only while Domain statistics
+    /// updating and execution-info collection are both enabled.
+    session_index_usage_collector:
+        Option<Arc<Mutex<tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector>>>,
+    /// The node's storage-backed current lock-wait reader.
+    data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
+    /// The statistics handle's persisted predicate-column usage reader.
+    column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
+    /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
+    analyze_status: Option<std::sync::Arc<dyn AnalyzeStatusProvider>>,
+    /// Pinned Go's fresh information-schema table-size reader.
+    table_storage_stats: Option<std::sync::Arc<dyn TableStorageStatsProvider>>,
+    /// Go's session-local `SessionStatsItem`, swept into the statistics
+    /// handle independently of statement execution.
+    stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `SessionVars.TxnCtx.TableDeltaMap`, published only after commit.
+    transaction_table_delta: std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap>,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -494,16 +637,23 @@ pub struct Session {
     /// through string lookups; the generation stamp buys the same read cost
     /// without a hook per variable. Measured before the cache: the two were
     /// the hottest user-code frames under sysbench, ahead of the parser.
-    scanner_sql_mode_cache: std::cell::Cell<Option<(u64, tidb_parser::SqlMode)>>,
     statement_var_cache:
-        std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
-    cost_env_cache: std::cell::RefCell<Option<(u64, Arc<tidb_planner::candidate_cost::CostEnv>, f64)>>,
+        std::cell::RefCell<Option<std::sync::Arc<crate::stmt_ctx::StatementVarSnapshot>>>,
+    cost_env_cache:
+        std::cell::RefCell<Option<(u64, Arc<tidb_planner::find_best_task::coster::CostEnv>)>>,
+    prepared_plan_cache_environment_cache:
+        std::cell::RefCell<Option<crate::prepared_ast::PreparedPlanCacheEnvironmentCache>>,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
     /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
     /// full (with `commit_ts`) after a commit, start-only otherwise, and
     /// untouched by a statement that never took a timestamp (`SELECT 1`).
     /// Empty until the first one, as Go's is.
     last_txn_info: std::cell::RefCell<String>,
+    /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
+    /// `tidb_last_query_info` getter. The zero value is still useful before a
+    /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
+    /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
+    last_query_info: std::cell::RefCell<String>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -522,10 +672,10 @@ pub struct Session {
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>>,
-    /// The session's non-prepared plan cache
-    /// (`tidb_enable_non_prepared_plan_cache`). See
-    /// [`non_prepared_plan_cache`] for what it does and does not store.
+    /// The session's non-prepared physical-plan cache
+    /// (`tidb_enable_non_prepared_plan_cache`).
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
+    non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache,
     /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
     /// found its plan in the cache. Reset for every statement.
     found_in_plan_cache: bool,
@@ -598,6 +748,8 @@ pub struct Session {
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
     prepared_statements: prepared_statements::PreparedStore,
+    /// Go PlanCacheParams, shared by contexts belonging to the current execution.
+    prepared_params: Option<Arc<[Datum]>>,
     /// Go's `sessionBindingHandle` (`pkg/bindinfo/session_handle.go`): the
     /// SQL bindings created with `CREATE [SESSION] BINDING`. Session-scoped
     /// and unshared. Cluster GLOBAL bindings use the node cache below.
@@ -616,15 +768,9 @@ pub struct Session {
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
     planned_apply: Arc<std::sync::atomic::AtomicBool>,
-    /// Prepared plan cache, the reusable half: each entry is one prepared
-    /// statement's committed access-path shapes with the key they were
-    /// planned under. See [`crate::prepared_path_pins`].
-    prepared_plan_pins:
-        std::cell::RefCell<HashMap<String, crate::prepared_path_pins::PreparedPathPinEntry>>,
-    /// The in-flight statement's pin state, opened by the prepared funnel
-    /// and consumed while its statement context is built.
-    active_prepared_pin:
-        std::cell::RefCell<Option<crate::prepared_path_pins::ActivePreparedPinState>>,
+    /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
+    /// tree before executor construction.
+    process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -635,30 +781,32 @@ pub struct Session {
     prev_found_in_binding: bool,
 }
 
-impl Default for Session {
-    /// A session on its own empty catalog, with `test` selected as a fresh
-    /// TiDB connection has.
-    ///
-    /// This is the ONE place a [`Session`] is built. Everything a front end
-    /// installs afterwards -- a shared catalog, an identity, a process
-    /// registration, a privilege registry, a globals table -- arrives through a
-    /// setter, so a field added to `Session` has exactly one construction site
-    /// that must name it.
-    fn default() -> Self {
-        let mut session = Session {
-            catalog: SharedCatalog::default(),
+impl Session {
+    /// Builds the Go `createSessionWithOpt` state over an already selected
+    /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
+    /// session opened on it.
+    fn unbootstrapped(catalog: SharedCatalog) -> Self {
+        Session {
+            catalog,
+            context_values: HashMap::new(),
+            executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            external_executor_breakpoint_scope: false,
             server_start_timestamp: None,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
-            skip_tidb_decode_key_snapshot: Cell::new(false),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,
                 0,
             ),
+            statement_result_authority: std::cell::RefCell::new(None),
             txn: None,
+            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
+            resource_group: "default".to_owned(),
+            stmt_hints: tidb_hint::StmtHints::default(),
+            active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
             in_show_warning: false,
@@ -666,12 +814,14 @@ impl Default for Session {
             sys_error_count: 0,
             current_user: None,
             login_user: None,
-            active_roles: Vec::new(),
+            active_roles: Arc::new(Vec::new()),
             connection_id: None,
+            client_found_rows: false,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             selected_lock_keys: None,
             last_insert_id: 0,
             statement_insert_id: 0,
+            statement_message: String::new(),
             set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
             last_found_rows: 0,
@@ -679,15 +829,31 @@ impl Default for Session {
             current_tso: tidb_executor::CurrentTso::default(),
             server_info_syncer: None,
             cluster_schema_version: None,
+            workload_repository: None,
+            index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
+            session_index_usage_collector: None,
+            data_lock_waits: None,
+            column_stats_usage: None,
+            analyze_status: None,
+            table_storage_stats: None,
+            stats_collector: None,
+            transaction_table_delta: std::sync::Arc::new(
+                tidb_stats_handle_usage::TableDeltaMap::new(),
+            ),
             mdl_related_tables: None,
-            scanner_sql_mode_cache: std::cell::Cell::new(None),
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
+            prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
+            last_query_info: std::cell::RefCell::new(
+                "{\"txn_scope\":\"\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+                    .to_owned(),
+            ),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
+            non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache::default(),
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
             user_vars: Arc::default(),
@@ -702,16 +868,83 @@ impl Default for Session {
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
+            prepared_params: None,
             session_bindings: binding::SessionBindings::default(),
             global_binding_cache: None,
             global_binding_writer: None,
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
-            prepared_plan_pins: std::cell::RefCell::default(),
-            active_prepared_pin: std::cell::RefCell::default(),
+            process_plan_info: Arc::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
-        };
+        }
+    }
+
+    fn breakpoint_notify_func(&self) -> Option<Arc<dyn Fn(String) + Send + Sync + 'static>> {
+        self.context_values
+            .get(tidb_util::breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
+            .and_then(|value| value.downcast_ref::<Arc<dyn Fn(String) + Send + Sync + 'static>>())
+            .cloned()
+    }
+
+    /// Starts one server-owned execution attempt. `notify` is false for a
+    /// PREPARE metadata probe, which builds no executor in Go.
+    #[doc(hidden)]
+    pub fn begin_external_executor_breakpoint_scope(&mut self, notify: bool) {
+        self.external_executor_breakpoint_scope = true;
+        self.executor_first_run_breakpoint
+            .store(!notify, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Ends the server-owned execution-attempt scope.
+    #[doc(hidden)]
+    pub fn end_external_executor_breakpoint_scope(&mut self) {
+        self.external_executor_breakpoint_scope = false;
+    }
+
+    /// Notifies at a cluster pre-lock, which is executor execution in Go but
+    /// must precede the fused Rust session runner to carry the locked value.
+    #[doc(hidden)]
+    pub fn notify_before_executor_first_run(&self) {
+        if self
+            .executor_first_run_breakpoint
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return;
+        }
+        tidb_util::breakpoint::inject(self, "beforeExecutorFirstRun");
+    }
+}
+
+impl tidb_util::context::ValueStoreContext for Session {
+    type Key = str;
+
+    fn set_value(&mut self, key: &Self::Key, value: Box<dyn std::any::Any + Send + Sync>) {
+        self.context_values.insert(key.to_owned(), value);
+    }
+
+    fn value(&self, key: &Self::Key) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.context_values.get(key).map(Box::as_ref)
+    }
+
+    fn clear_value(&mut self, key: &Self::Key) {
+        self.context_values.remove(key);
+    }
+
+    fn get_domain(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+}
+
+impl Default for Session {
+    /// A session on its own empty catalog, with `test` selected as a fresh
+    /// TiDB connection has.
+    ///
+    /// The standalone in-memory session owns its fresh store, so it performs
+    /// the one store bootstrap that Go's `BootstrapSession` performs before
+    /// serving connections.
+    fn default() -> Self {
+        let mut session = Session::unbootstrapped(SharedCatalog::default());
         // Go bootstraps the system tables the first time a store comes up
         // (`pkg/session/bootstrap.go`); this catalog is born here, so its
         // bootstrap runs here. See `crate::bootstrap`.
@@ -722,6 +955,15 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if let Some(collector) = &self.session_index_usage_collector {
+            collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flush();
+        }
+        if let Some(collector) = &self.stats_collector {
+            collector.delete();
+        }
         self.advisory_locks.release_all();
     }
 }
@@ -749,14 +991,14 @@ mod bootstrap;
 mod classify;
 pub mod cursor;
 mod dispatch;
+pub mod embedding;
 mod explain_arm;
+mod gcutil;
 mod identity;
 pub mod infoschema;
-mod load_stats_arm;
 mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
-mod prepared_path_pins;
 mod prepared_plan_cache;
 mod prepared_statements;
 pub mod session_vars;
@@ -764,12 +1006,15 @@ mod stmt_ctx;
 mod table_privilege;
 mod txn;
 mod user_table;
+pub mod util_config;
 mod variables;
 pub mod varsutil;
 mod warnings;
-pub(crate) use classify::{statement_kind_of, StatementKind};
+pub(crate) use classify::{
+    statement_kind_of, statement_not_fill_cache, statement_priority_of, StatementKind,
+};
 pub use classify::{StmtKind, StoredStateChange};
-pub use prepared_ast::{BoundPreparedAst, PreparedAst};
+pub use prepared_ast::PreparedAst;
 pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
@@ -782,9 +1027,13 @@ mod show_admin;
 mod show_create_database;
 mod show_create_placement_policy;
 mod show_index;
+mod stats_lock_arm;
 pub mod sysvar;
 pub mod vars;
-pub use vars::{GlobalSysvars, SessionVars, VarError};
+pub use vars::{
+    capture_m_view_execution_session_vars, m_view_execution_session_vars_from_job, GlobalSysvars,
+    SessionVars, VarError,
+};
 
 impl Session {
     /// Starts the cancellation lifetime for the next wire command.
@@ -799,6 +1048,31 @@ impl Session {
         self.current_tso.clone()
     }
 
+    /// Updates the live `TIDB_TRX` row from the cluster transaction's native
+    /// MemBuffer authority.
+    pub fn publish_transaction_buffer_metrics(&self, keys: usize, bytes: u64) {
+        let Some(process) = self.process.as_ref() else {
+            return;
+        };
+        process.registry().transaction_buffer_metrics(
+            process.id(),
+            u64::try_from(keys).unwrap_or(u64::MAX),
+            i64::try_from(bytes).unwrap_or(i64::MAX),
+        );
+    }
+
+    /// Enters or leaves Go's `TxnLockAcquiring` state around one synchronous
+    /// pessimistic `LockKeys` call.
+    pub fn publish_transaction_lock_waiting(&self, waiting: bool) {
+        let Some(process) = self.process.as_ref() else {
+            return;
+        };
+        process.registry().transaction_state(
+            process.id(),
+            if waiting { "LockWaiting" } else { "Running" },
+        );
+    }
+
     /// Binds the node's server-info syncer, which is what
     /// `information_schema.TIDB_SERVERS_INFO` reads.
     pub fn set_server_info_syncer(
@@ -806,6 +1080,22 @@ impl Session {
         syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
     ) {
         self.server_info_syncer = Some(syncer);
+    }
+
+    /// The `host:port` Go persists as an analyze job's instance, or
+    /// `unknown` when server-info discovery is unavailable.
+    #[must_use]
+    pub fn analyze_job_instance(&self) -> String {
+        self.server_info_syncer.as_ref().map_or_else(
+            || "unknown".to_owned(),
+            |syncer| {
+                let info = syncer.local_server_info();
+                tidb_domain::serverinfo_syncer::join_host_port(
+                    &info.static_info.ip,
+                    info.static_info.port,
+                )
+            },
+        )
     }
 
     /// The node's followed cluster schema version, or 0 for a tier with no
@@ -845,6 +1135,10 @@ impl Session {
         self.last_txn_info.borrow().clone()
     }
 
+    pub(crate) fn last_query_info_value(&self) -> String {
+        self.last_query_info.borrow().clone()
+    }
+
     /// Binds where this session reports the tables its statements bind --
     /// Go `GetRelatedTableForMDL()` (`pkg/sessionctx/variable/session.go`),
     /// filled by the planner at table resolution
@@ -862,6 +1156,104 @@ impl Session {
         source: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
     ) {
         self.cluster_schema_version = Some(source);
+    }
+
+    /// Binds the process workload-repository worker used by its sysvars and
+    /// `ADMIN CREATE WORKLOAD SNAPSHOT`.
+    pub fn set_workload_repository(&mut self, worker: std::sync::Arc<tidb_workloadrepo::Worker>) {
+        self.workload_repository = Some(worker);
+    }
+
+    /// Installs the Domain-owned index-usage collector shared by every
+    /// session on the node.
+    pub fn set_index_usage_collector(
+        &mut self,
+        collector: Arc<tidb_stats_handle_usage_indexusage::Collector>,
+    ) {
+        self.index_usage_collector = collector;
+    }
+
+    /// Installs Go's Domain-owned session index-usage collector.
+    pub fn set_session_index_usage_collector(
+        &mut self,
+        collector: tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector,
+    ) {
+        self.session_index_usage_collector = Some(Arc::new(Mutex::new(collector)));
+    }
+
+    /// Installs Go's Domain-owned session statistics collector.
+    pub fn set_stats_collector(
+        &mut self,
+        collector: std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>,
+    ) {
+        self.stats_collector = Some(collector);
+    }
+
+    /// Publishes Go's committed `TxnCtx.TableDeltaMap` to the session collector.
+    pub fn publish_table_delta(&self) {
+        let delta = self.transaction_table_delta.get_delta_and_reset();
+        if let Some(collector) = &self.stats_collector {
+            for (table_id, item) in delta {
+                if table_id > 0 {
+                    collector.update(table_id, item.delta, item.count);
+                }
+            }
+        }
+    }
+
+    /// Discards Go's rolled-back `TxnCtx.TableDeltaMap`.
+    pub fn clear_table_delta(&self) {
+        self.transaction_table_delta.reset();
+    }
+
+    /// Clones Go's table-delta part of one transaction savepoint.
+    #[must_use]
+    pub fn table_delta_savepoint(
+        &self,
+    ) -> std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta> {
+        self.transaction_table_delta.snapshot()
+    }
+
+    /// Restores Go's table-delta part of one transaction savepoint.
+    pub fn restore_table_delta_savepoint(
+        &self,
+        savepoint: std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
+    ) {
+        self.transaction_table_delta.restore(savepoint);
+    }
+
+    /// Installs the same storage authority `kv.Storage.GetLockWaits` reads in
+    /// Go for `information_schema.DATA_LOCK_WAITS`.
+    pub fn set_data_lock_waits_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn DataLockWaitsProvider>,
+    ) {
+        self.data_lock_waits = Some(provider);
+    }
+
+    /// Installs the node-global persisted predicate-column usage reader.
+    pub fn set_column_stats_usage_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn ColumnStatsUsageProvider>,
+    ) {
+        self.column_stats_usage = Some(provider);
+    }
+
+    /// Installs the node-global persisted analyze-job reader.
+    pub fn set_analyze_status_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn AnalyzeStatusProvider>,
+    ) {
+        self.analyze_status = Some(provider);
+    }
+
+    /// Installs the node-global restricted reader used by
+    /// `information_schema.TABLES` and `PARTITIONS`.
+    pub fn set_table_storage_stats_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn TableStorageStatsProvider>,
+    ) {
+        self.table_storage_stats = Some(provider);
     }
 
     /// Go `ShowDDLExec.Next` (`executor/show_ddl.go`): one row describing the
@@ -990,8 +1382,8 @@ impl Session {
                 vec![
                     text(&info.static_info.id),
                     text(&info.static_info.ip),
-                    Datum::Int(i64::from(info.static_info.port)),
-                    Datum::Int(i64::from(info.static_info.status_port)),
+                    Datum::Int(info.static_info.port as i64),
+                    Datum::Int(info.static_info.status_port as i64),
                     text(&info.static_info.lease),
                     text(&info.static_info.version_info.version),
                     text(&info.static_info.version_info.git_hash),
@@ -1098,21 +1490,43 @@ impl Session {
         self.statement_insert_id
     }
 
+    /// The info string produced by the statement most recently executed.
+    #[must_use]
+    pub fn statement_message(&self) -> &str {
+        &self.statement_message
+    }
+
+    /// Clears the statement info for command paths that do not enter the
+    /// normal executor lifecycle (for example `SET` and routed DDL).
+    pub fn clear_statement_message(&mut self) {
+        self.statement_message.clear();
+    }
+
     /// The session's variables.
     #[must_use]
     pub fn vars(&self) -> &SessionVars {
         &self.vars
     }
 
-    /// Installs the immutable build identity captured by the SQL server.
+    /// Applies one already-validated internal-session variable update.
+    ///
+    /// Go's statistics session reset writes the typed `SessionVars` fields
+    /// directly before handing a pooled session to its caller. Keeping this
+    /// narrow entry point on the session preserves that ownership boundary:
+    /// server-side system sessions do not manufacture a client `SET`
+    /// statement merely to synchronize their state.
+    pub fn set_internal_system_var(
+        &mut self,
+        name: &str,
+        value: impl Into<String>,
+    ) -> Result<(), VarError> {
+        self.vars.set_system(name, value.into()).map(|_| ())
+    }
+
     /// Installs the hosting server's start timestamp (Go
     /// `ServerInfo.StartTimestamp`), the `Uptime` provider's input.
     pub fn set_server_start_timestamp(&mut self, unix_seconds: i64) {
         self.server_start_timestamp = Some(unix_seconds);
-    }
-
-    pub fn set_version_info(&mut self, version_info: tidb_util::versioninfo::VersionInfo) {
-        self.vars.set_version_info(version_info);
     }
 
     /// The live `@@wait_timeout` used by the MySQL connection before reading
@@ -1124,27 +1538,29 @@ impl Session {
     pub fn wait_timeout(&self) -> Duration {
         let seconds = self
             .vars
-            .get_system("wait_timeout")
+            .system_value("wait_timeout")
             .expect("wait_timeout is a registered session variable")
             .parse::<u64>()
             .expect("wait_timeout validation stores unsigned decimal seconds");
         Duration::from_secs(seconds)
     }
 
+    /// Go's typed `SessionVars.MaxAllowedPacket`, used directly by the packet
+    /// reader and expression builtins.
+    #[must_use]
+    pub const fn max_allowed_packet(&self) -> u64 {
+        self.vars.max_allowed_packet()
+    }
+
     /// A session sharing `catalog` with its peers.
-    ///
-    /// Every other field comes from [`Session::default`], which is the crate's
-    /// one `Session` construction site -- see its doc.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        let mut session = Session::default();
-        session.catalog = catalog;
-        session
+        Session::unbootstrapped(catalog)
     }
 
     /// Installs the server-owned spill policy for every statement created by
     /// this session.
-    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::disk::SpillStorage>) {
+    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::spill_storage::SpillStorage>) {
         self.session_memory.set_spill_storage(storage);
     }
 
@@ -1207,23 +1623,48 @@ impl Session {
         self.run_with_columns_internal(&bound, true)
     }
 
-    /// Executes one bound clone of a PREPARE-retained AST and replans it
-    /// against the session's current catalog and settings.
-    pub fn run_bound_prepared(
+    /// Executes the retained PREPARE tree and captures its result policy
+    /// before the statement lifecycle restores session hints.
+    pub fn run_prepared_with_result_authority(
         &mut self,
-        bound: BoundPreparedAst,
-    ) -> Result<StmtOutput, DriverError> {
-        self.run_bound_prepared_internal(bound, false)
-            .map(|(output, _)| output)
+        prepared: &PreparedAst,
+        params: &[Datum],
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        let statement = prepared.bind(params)?;
+        self.run_with_columns_using(prepared.sql(), true, |session| {
+            session.execute_prepared_ast(prepared.sql(), statement)
+        })
     }
 
-    /// [`Self::run_bound_prepared`] with the authority needed to retain a row
-    /// result after the cluster statement lifecycle completes.
-    pub fn run_bound_prepared_with_result_authority(
+    /// Plans a bound prepared query for its result metadata without opening
+    /// or draining a storage reader. Go's `PrepareExec` builds the
+    /// `PlanCacheStmt` and takes its schema from the plan; it does not execute
+    /// the query with NULL marker values merely to discover the columns.
+    /// Keeping this operation separate from statement execution
+    /// prevents a large range such as sysbench's `BETWEEN ? AND ?` from
+    /// scanning its table during `COM_STMT_PREPARE`.
+    pub fn plan_bound_prepared_columns(
         &mut self,
-        bound: BoundPreparedAst,
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        self.run_bound_prepared_internal(bound, true)
+        mut statement: Stmt,
+    ) -> Result<Vec<(String, FieldType)>, DriverError> {
+        let parameters = tidb_executor::bound_parameter_values(&mut statement)?;
+        let Stmt::Query(query) = statement else {
+            return Err(DriverError::unsupported(
+                "prepared metadata requires a query statement",
+            ));
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            return Err(DriverError::unsupported(
+                "prepared metadata for set operations is not supported here",
+            ));
+        };
+        let current_db = self.current_db.clone();
+        let ctx = self
+            .statement_context(false)
+            .with_prepared_params(parameters.unwrap_or_default());
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::plan_select_meta_stmt(&select, catalog, &current_db, &ctx)
+        })
     }
 
     /// Resolves PREPARE result metadata with NULL markers without publishing
@@ -1242,53 +1683,13 @@ impl Session {
     /// merely to obtain text would add work to every execute.
     pub fn run_parsed_bound_owned_with_sql(
         &mut self,
-        mut bound: tidb_ast::Stmt,
+        bound: tidb_ast::Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        // Prepared plan cache, the reusable half (Go `GetPlanFromPlanCache`
-        // narrowed to access-path shapes): open pins for a cacheable query,
-        // run, then store what a successful miss captured. The PREPARE-time
-        // probe never enters here -- it calls `probe_prepared`, which
-        // has no pin state -- so NULL-marker probing cannot poison pins.
-        let pin_state = self.begin_prepared_path_pins(&mut bound, sql);
-        *self.active_prepared_pin.borrow_mut() = pin_state;
-        let result = self.run_with_columns_using(sql, false, move |session| {
+        self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_parsed(bound, sql)
-        });
-        self.finish_prepared_path_pins(sql, result.is_ok());
-        result.map(|(output, _)| output)
-    }
-
-    fn run_bound_prepared_internal(
-        &mut self,
-        bound: BoundPreparedAst,
-        capture_result_authority: bool,
-    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        let (execution_sql, input, cached_point_get, cache_candidate, cache_ready) =
-            bound.into_parts();
-        let sql = execution_sql.as_str();
-        let result = self.run_with_columns_using(sql, capture_result_authority, move |session| {
-            if let Some(cached) = cached_point_get {
-                if let Some(output) = session.try_execute_cached_prepared_point_get(cached)? {
-                    return Ok(output);
-                }
-            }
-            let mut statement = input.into_statement()?;
-            let pin_state = session.begin_prepared_path_pins(&mut statement, sql);
-            *session.active_prepared_pin.borrow_mut() = pin_state;
-            session.execute_prepared_ast(sql, statement)
-        });
-        self.finish_prepared_path_pins(sql, result.is_ok());
-        if result
-            .as_ref()
-            .is_ok_and(|(output, _)| matches!(output, StmtOutput::Rows { .. }))
-            && cache_candidate
-                .as_ref()
-                .is_some_and(|execution| self.can_reuse_prepared_point_get(execution.plan()))
-        {
-            cache_ready.store(true, std::sync::atomic::Ordering::Release);
-        }
-        result
+        })
+        .map(|(output, _)| output)
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
@@ -1323,9 +1724,7 @@ impl Session {
         if tidb_parser::is_sole_statement(sql) {
             return Ok(vec![sql.to_owned()]);
         }
-        let mode = crate::stmt_ctx::scanner_sql_mode_of(
-            &self.vars().get_system("sql_mode").unwrap_or_default(),
-        );
+        let mode = self.scanner_sql_mode();
         let Ok(statements) = tidb_parser::parse_multi_with_sql_mode(sql, mode) else {
             return Ok(vec![sql.to_owned()]);
         };
@@ -1339,23 +1738,15 @@ impl Session {
             return Ok(vec![sql.to_owned()]);
         }
         if !client_multi_statements {
-            match self
-                .vars()
-                .get_system("tidb_multi_statement_mode")
-                .unwrap_or_default()
-                .to_uppercase()
-                .as_str()
-            {
-                "OFF" => {
+            match self.vars().multi_statement_mode() {
+                0 => {
                     return Err(DriverError::ParseCoded {
                         errno: 8130,
                         message: DISABLED.to_owned(),
                     })
                 }
-                "ON" => {}
-                _ => {
-                    self.deferred_multi_statement_warning = true;
-                }
+                1 => {}
+                _ => self.deferred_multi_statement_warning = true,
             }
         }
         Ok(statements
@@ -1391,6 +1782,21 @@ impl Session {
         })
     }
 
+    /// Go `GetTxnWriteThroughputSLI`: returns the session's transaction-wide
+    /// SLI accumulator.
+    pub fn txn_write_throughput_sli(&mut self) -> &mut tidb_util::sli::TxnWriteThroughputSli {
+        &mut self.write_sli
+    }
+
+    /// Go server `addQueryMetrics`' SLI call at the end of one SQL command.
+    pub fn finish_txn_write_throughput(&mut self, cost: Duration) {
+        let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
+        let affected_rows = u64::try_from(self.prev_row_count.max(0)).unwrap_or(0);
+        let in_txn = self.in_transaction();
+        self.write_sli
+            .finish_execute_stmt(cost, affected_rows, in_txn);
+    }
+
     /// Like [`Session::run`], but a query result also carries its column
     /// metadata (`(name, type)` per column) for wire-protocol fronts.
     ///
@@ -1418,24 +1824,70 @@ impl Session {
         capture_result_authority: bool,
         execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        if !self.external_executor_breakpoint_scope {
+            self.executor_first_run_breakpoint
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+        self.statement_result_authority.get_mut().take();
+        self.stmt_hints = tidb_hint::StmtHints::default();
+        *self
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            tidb_executor::ProcessPlanInfo::default();
         self.check_sandbox_mode(sql)?;
-        self.with_catalog_mut(|catalog| {
-            catalog.advance_statistics_loads();
-            Ok(())
-        })?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
         // than in one front end's command loop.
         if let Some(guard) = &self.process {
-            guard
-                .registry()
-                .statement_started(guard.id(), sql, &self.status_text());
+            let registry = guard.registry();
+            registry.statement_started(guard.id(), sql, &self.status_text());
+            let redact_sql = match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+                .as_deref()
+            {
+                Ok("ON") => tidb_parser::RedactMode::Enabled,
+                Ok("MARKER") => tidb_parser::RedactMode::Marker,
+                _ => tidb_parser::RedactMode::Disabled,
+            };
+            let session_analyze_version = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or_default();
+            let session_enabled_rate_limit_action = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_RATE_LIMIT_ACTION)
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
+            let session_mem_quota_query = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+            registry.statement_metadata(
+                guard.id(),
+                u64::try_from(self.current_tso().value()).unwrap_or_default(),
+                self.active_resource_group.clone(),
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
+                    .unwrap_or_default(),
+                redact_sql,
+                tidb_util::memoryusagealarm::OOMAlarmVariablesInfo {
+                    session_analyze_version,
+                    session_enabled_rate_limit_action,
+                    session_mem_quota_query,
+                },
+            );
         }
         // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
+        self.statement_message.clear();
         *self
             .published_last_insert_id
             .lock()
@@ -1461,6 +1913,21 @@ impl Session {
         self.vars.restore_system(restore);
         self.publish_statement_status(&result);
         if let Some(guard) = &self.process {
+            let affected_rows = match &result {
+                Ok(StmtOutput::Affected(count)) => *count,
+                _ => 0,
+            };
+            guard
+                .registry()
+                .statement_affected_rows(guard.id(), affected_rows);
+        }
+        if let Some(collector) = &self.session_index_usage_collector {
+            collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .report();
+        }
+        if let Some(guard) = &self.process {
             guard
                 .registry()
                 .statement_finished(guard.id(), &self.current_db, &self.status_text());
@@ -1476,7 +1943,8 @@ impl Session {
 #[cfg(test)]
 mod session_source_tests {
     use super::{
-        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap, NoAvailableDomain,
+        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap,
+        NoAvailableDomain, Session,
     };
 
     // Go pkg/session/tidb_test.go::TestDomapHandleNil.
@@ -1535,6 +2003,32 @@ mod session_source_tests {
             3
         );
     }
+
+    #[test]
+    fn statement_index_usage_collector_is_session_owned_and_flushed_on_close() {
+        let global = tidb_stats_handle_usage_indexusage::Collector::new();
+        global.start_worker();
+        let mut session = Session::default();
+        session.set_session_index_usage_collector(global.spawn_session_collector());
+
+        let context = session.statement_context(false);
+        context
+            .index_usage_collector()
+            .expect("positive stats updating installs a statement collector")
+            .update(
+                41,
+                7,
+                tidb_stats_handle_usage_indexusage::new_sample(0, 2, 3, 10),
+            );
+        drop(context);
+        drop(session);
+
+        let sample = global.get_index_usage(41, 7);
+        assert_eq!(sample.query_total, 1);
+        assert_eq!(sample.kv_req_total, 2);
+        assert_eq!(sample.row_access_total, 3);
+        global.close();
+    }
 }
 
 #[cfg(test)]
@@ -1584,6 +2078,40 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
+mod tests_domain_affinity_manager_source;
+#[cfg(test)]
+mod tests_domain_crossks_source;
+#[cfg(test)]
+mod tests_domain_db_session_pool_source;
+#[cfg(test)]
+mod tests_domain_domain_source;
+#[cfg(test)]
+mod tests_domain_domain_utils_source;
+#[cfg(test)]
+mod tests_domain_domainctx_source;
+#[cfg(test)]
+mod tests_domain_extract_source;
+#[cfg(test)]
+mod tests_domain_globalconfigsync_source;
+#[cfg(test)]
+mod tests_domain_infosync_source;
+#[cfg(test)]
+mod tests_domain_plan_replayer_handle_source;
+#[cfg(test)]
+mod tests_domain_plan_replayer_slow_log_source;
+#[cfg(test)]
+mod tests_domain_plan_replayer_source;
+#[cfg(test)]
+mod tests_domain_ru_stats_source;
+#[cfg(test)]
+mod tests_domain_schema_checker_source;
+#[cfg(test)]
+mod tests_domain_serverinfo_info_source;
+#[cfg(test)]
+mod tests_domain_serverinfo_syncer_source;
+#[cfg(test)]
+mod tests_domain_topn_slow_query_source;
+#[cfg(test)]
 mod tests_enum_index_range;
 #[cfg(test)]
 mod tests_eval_bool;
@@ -1616,9 +2144,6 @@ mod tests_index_join_inner_pattern;
 mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_key_cast;
-mod tests_merge_join_mixed_key_types;
-mod tests_mixed_sign_index_join;
-mod tests_union_all_predicate_push_down;
 #[cfg(test)]
 mod tests_join_predicate_placement;
 #[cfg(test)]
@@ -1626,12 +2151,14 @@ mod tests_join_reorder_cost;
 #[cfg(test)]
 mod tests_json;
 #[cfg(test)]
-mod tests_load_stats;
-#[cfg(test)]
 mod tests_mem_quota;
+mod tests_merge_join_mixed_key_types;
+mod tests_mixed_sign_index_join;
 #[cfg(test)]
 mod tests_modify_column_null;
 mod tests_multi_table_dml;
+#[cfg(test)]
+mod tests_mview_session_vars;
 #[cfg(test)]
 mod tests_non_prepared_plan_cache;
 #[cfg(test)]
@@ -1649,8 +2176,6 @@ mod tests_planner_core_rewriter;
 #[cfg(test)]
 mod tests_positional_orderby;
 #[cfg(test)]
-mod tests_prepared_path_pins;
-#[cfg(test)]
 mod tests_prepared_plan_cache;
 #[cfg(test)]
 mod tests_prepared_statements;
@@ -1660,11 +2185,23 @@ mod tests_read_cast;
 mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_savepoint;
+#[cfg(test)]
+mod tests_sem_v2;
 mod tests_sequence;
+#[cfg(test)]
+mod tests_session_bootstrap_common_source;
+#[cfg(test)]
+mod tests_session_embedding_source;
+#[cfg(test)]
+mod tests_session_part1_source;
+#[cfg(test)]
+mod tests_session_part2_source;
 #[cfg(test)]
 mod tests_session_var_hooks;
 mod tests_show;
 mod tests_show_admin;
+#[cfg(test)]
+mod tests_skew_distinct_agg;
 #[cfg(test)]
 mod tests_sql_mode_scanner;
 #[cfg(test)]
@@ -1686,6 +2223,7 @@ mod tests_timestamp_range;
 mod tests_timezone_storage;
 #[cfg(test)]
 mod tests_topn;
+mod tests_union_all_predicate_push_down;
 #[cfg(test)]
 mod tests_union_scan;
 #[cfg(test)]

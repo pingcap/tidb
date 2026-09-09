@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "serialization",
@@ -12,5 +12,17 @@ go_library(
     deps = [
         "//pkg/types",
         "//pkg/util/chunk",
+    ],
+)
+
+go_test(
+    name = "serialization_test",
+    timeout = "short",
+    srcs = ["serialization_util_test.go"],
+    embed = [":serialization"],
+    flaky = True,
+    deps = [
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
     ],
 )

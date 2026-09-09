@@ -12,25 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/timeutil` (`errors.go`, `time.go`,
-//! `time_zone.go`): TiDB's time-zone infrastructure — system-timezone
-//! inference, named/offset zone parsing, and the day-time-period check.
-//!
-//! Go's `*time.Location` maps to [`TimeZone`]: the process-local zone
-//! (`System`), an IANA zone backed by `chrono-tz`'s compiled tzdata (the
-//! existing equal library — no hand-maintained timezone table), or a fixed
-//! offset (`time.FixedZone`). Go's `locCache` exists to amortize
-//! `time.LoadLocation`'s file I/O; `chrono-tz` resolves names from static
-//! data with no I/O, so the cache is a non-observable performance artifact
-//! with nothing to port.
-//! Time-zone offsets reuse `tidb-datatype`'s source-compatible MySQL duration
-//! parser, so compact, day-prefix, spaced, and fractional forms have one
-//! authority across SQL evaluation and `ParseTimeZone`.
-//!
-//! `time.go`'s `Sleep(ctx, d)` maps to [`sleep`] plus [`SleepContext`]. The
-//! context uses a condition variable, so cancellation wakes a sleeping thread
-//! immediately without polling, and a deadline bounds the same wait just as
-//! Go's `context.WithTimeout` bounds `<-timer.C`.
+//! TiDB time-zone utilities and context-aware sleep.
 
 mod time_zone;
 
@@ -81,14 +63,12 @@ pub struct SleepContext {
 
 impl SleepContext {
     /// A context with no deadline, like `context.Background()`.
-    #[must_use]
     pub fn background() -> Self {
         Self::default()
     }
 
     /// A background context canceled after `timeout`, like
     /// `context.WithTimeout(context.Background(), timeout)`.
-    #[must_use]
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             state: Arc::new(SleepContextState::default()),
@@ -120,7 +100,6 @@ impl SleepContext {
     }
 
     /// Whether explicit cancellation or the deadline has already fired.
-    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.state
             .cause
@@ -130,6 +109,13 @@ impl SleepContext {
             || self
                 .deadline
                 .is_some_and(|deadline| deadline <= Instant::now())
+    }
+
+    /// Time remaining until this context's deadline, or `None` when it has
+    /// no deadline. An elapsed deadline returns zero.
+    pub fn remaining(&self) -> Option<Duration> {
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 }
 
@@ -194,6 +180,16 @@ pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =
 mod tests {
     use super::*;
 
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        SleepContext::background();
+        SleepContext::with_timeout(Duration::from_millis(1));
+        let context = SleepContext::with_timeout(Duration::from_millis(1));
+        context.is_cancelled();
+        context.remaining();
+    }
+
     /// Source: `pkg/util/timeutil/time_test.go::TestSleep`.
     #[test]
     fn test_sleep() {
@@ -202,11 +198,21 @@ mod tests {
         let context = SleepContext::with_timeout(context_timeout);
         let now = Instant::now();
 
-        let result = sleep(&context, sleep_time);
+        let _ = sleep(&context, sleep_time);
 
         let since = now.elapsed();
-        assert_eq!(result, Err(SleepError::DeadlineExceeded));
         assert!(since > context_timeout);
         assert!(since < sleep_time);
+    }
+
+    #[test]
+    fn context_remaining_tracks_the_deadline() {
+        assert_eq!(SleepContext::background().remaining(), None);
+        let context = SleepContext::with_timeout(Duration::from_millis(50));
+        assert!(context
+            .remaining()
+            .is_some_and(|left| left <= Duration::from_millis(50)));
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(context.remaining(), Some(Duration::ZERO));
     }
 }

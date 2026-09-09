@@ -16,8 +16,159 @@
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use crate::{Datum, EvalError};
-    use tidb_datatype::{FieldTypeCode, VectorFloat32};
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, VectorFloat32};
+
+    #[derive(Default)]
+    struct WarningContext(RefCell<Vec<(u16, String)>>);
+
+    impl crate::Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn union_unsigned_integer_cast_clamps_negative_values() {
+        let (name, result_type) =
+            crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::UnsignedInUnion)
+                .expect("internal UNION cast target");
+        assert_eq!(name, "cast_unsigned_in_union");
+        assert!(result_type.is_unsigned());
+
+        let mut source_type = FieldType::new(FieldTypeCode::LongLong);
+        source_type.add_flags(FieldTypeFlags::NOT_NULL);
+        let source = crate::expression::Expression::Constant(crate::constant::Constant::new(
+            Datum::Int(-1),
+            source_type,
+        ));
+        let target =
+            FieldType::new(FieldTypeCode::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED);
+
+        let ordinary = crate::aggregation::wrap_cast::build_cast_to(source.clone(), target.clone())
+            .expect("ordinary cast builds");
+        let crate::expression::Expression::ScalarFunction(ordinary) = ordinary else {
+            panic!("ordinary cast should be a scalar function");
+        };
+        assert_eq!(ordinary.func_name.original(), "cast_unsigned");
+        assert_eq!(
+            ordinary
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("ordinary cast evaluates"),
+            Datum::UInt(u64::MAX)
+        );
+
+        let in_union = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target)
+            .expect("UNION cast builds");
+        let crate::expression::Expression::ScalarFunction(in_union) = in_union else {
+            panic!("UNION cast should be a scalar function");
+        };
+        assert_eq!(in_union.func_name.original(), "cast_unsigned_in_union");
+        assert_eq!(
+            in_union
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("UNION cast evaluates"),
+            Datum::UInt(0)
+        );
+
+        // The same carrier also selects Go's string-as-int `inUnion` branch:
+        // a negative string is discarded before the ordinary 8031 advisory
+        // can be appended.
+        let string_source =
+            crate::expression::Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string("-1"),
+                FieldType::new(FieldTypeCode::VarString),
+            ));
+        let string_cast = crate::aggregation::wrap_cast::build_cast_to_in_union(
+            string_source,
+            FieldType::new(FieldTypeCode::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED),
+        )
+        .expect("string UNION cast builds");
+        let warnings = WarningContext::default();
+        assert_eq!(
+            string_cast
+                .eval(&warnings, tidb_chunk::row::Row::empty())
+                .expect("string UNION cast evaluates"),
+            Datum::UInt(0)
+        );
+        assert!(warnings.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn union_unsigned_string_decimal_cast_discards_negative_before_parse() {
+        let mut source_type = FieldType::new(FieldTypeCode::VarString);
+        source_type.add_flags(FieldTypeFlags::NOT_NULL);
+        let source = |text: &str| {
+            crate::expression::Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string(text),
+                source_type.clone(),
+            ))
+        };
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(10);
+        target.set_decimal(2);
+        target.add_flags(FieldTypeFlags::UNSIGNED);
+
+        let negative =
+            crate::aggregation::wrap_cast::build_cast_to_in_union(source("-1.25"), target.clone())
+                .expect("string UNION decimal cast builds");
+        let crate::expression::Expression::ScalarFunction(negative_fn) = &negative else {
+            panic!("UNION decimal cast should be a scalar function");
+        };
+        assert_eq!(
+            negative_fn.func_name.original(),
+            "cast_string_to_decimal_in_union"
+        );
+        let warnings = WarningContext::default();
+        assert_eq!(
+            negative
+                .eval(&warnings, tidb_chunk::row::Row::empty())
+                .expect("negative string UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
+        assert!(warnings.0.borrow().is_empty());
+
+        let positive =
+            crate::aggregation::wrap_cast::build_cast_to_in_union(source("1.256"), target)
+                .expect("positive string UNION decimal cast builds");
+        assert_eq!(
+            positive
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("positive string UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("1.26"))
+        );
+    }
+
+    #[test]
+    fn union_signed_integer_decimal_cast_preserves_negative_values() {
+        let source_type = FieldType::new(FieldTypeCode::LongLong);
+        let source = crate::expression::Expression::Constant(crate::constant::Constant::new(
+            Datum::Int(-12),
+            source_type,
+        ));
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(10);
+        target.set_decimal(2);
+
+        let wrapped = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target)
+            .expect("signed integer UNION decimal cast builds");
+        let crate::expression::Expression::ScalarFunction(function) = &wrapped else {
+            panic!("UNION decimal cast should be a scalar function");
+        };
+        assert_eq!(function.func_name.original(), "cast_decimal");
+        assert_eq!(
+            wrapped
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("signed integer UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("-12.00"))
+        );
+    }
 
     #[test]
     fn cast_result_types_keep_json_native_and_temporal_fsp() {
@@ -125,4 +276,47 @@ mod tests {
             }
         );
     }
+}
+
+/// Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
+/// `ProduceStrWithSpecifiedTp` truncates in BYTES (`chs == CharsetBin`
+/// branch, `pkg/types/datum.go:1264-1270`) and `padZeroForBinaryType`
+/// refuses to pad (its gate is the FIXED `TypeString` code). The default
+/// utf8mb4 CHAR keeps character-oriented truncation.
+#[test]
+fn cast_char_binary_charset_truncates_bytes_not_chars() {
+    use tidb_ast::CastType;
+    use tidb_datatype::FieldType;
+
+    fn eval_char(len: Option<u32>, charset: Option<&str>, value: &str) -> crate::Datum {
+        crate::cast::eval_cast(
+            &CastType::Char {
+                len,
+                charset: charset.map(str::to_owned),
+            },
+            crate::Datum::new_string(value),
+            None,
+            &crate::context::NoColumns,
+        )
+        .unwrap()
+    }
+
+    // 2 bytes of 6: a full `你` byte-truncates to the first 3 bytes.
+    let crate::Datum::Bytes(truncated) = eval_char(Some(3), Some("BINARY"), "你好") else {
+        panic!("a binary-charset CHAR result is raw bytes")
+    };
+    assert_eq!(truncated, "你".as_bytes());
+
+    // A value already shorter than the target: NO NUL padding (the
+    // TypeString gate), unlike CAST AS BINARY(5).
+    let crate::Datum::Bytes(unpadded) = eval_char(Some(5), Some("BINARY"), "hi") else {
+        panic!("expected raw bytes")
+    };
+    assert_eq!(unpadded, b"hi");
+
+    // The default (utf8mb4) CHAR keeps character-oriented truncation.
+    let crate::Datum::String(text) = eval_char(Some(1), None, "你好") else {
+        panic!("expected a collation string")
+    };
+    assert_eq!(text.as_utf8().unwrap(), "你");
 }

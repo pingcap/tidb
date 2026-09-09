@@ -57,7 +57,13 @@ fn list_basics() {
     l.add(n_chunk);
     let ptr = l.append_row(src_chunk.get_row(0));
     assert_eq!(l.num_chunks(), 2);
-    assert_eq!(ptr, RowPtr { chk_idx: 1, row_idx: 0 });
+    assert_eq!(
+        ptr,
+        RowPtr {
+            chk_idx: 1,
+            row_idx: 0
+        }
+    );
     let row = l.get_row(ptr);
     assert_eq!(row.get_int64(0), 1);
 

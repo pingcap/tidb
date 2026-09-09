@@ -13,12 +13,16 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
@@ -28,7 +32,11 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }

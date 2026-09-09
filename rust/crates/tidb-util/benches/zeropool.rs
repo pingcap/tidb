@@ -17,6 +17,7 @@
 
 #![allow(non_snake_case)]
 
+use std::any::Any;
 use std::hint::black_box;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -43,11 +44,16 @@ fn BenchmarkZeropoolPool() {
 }
 
 fn BenchmarkSyncPoolValue() {
-    let pool = Mutex::new(vec![vec![0_u8; 1024]]);
+    let pool: Mutex<Vec<Box<dyn Any + Send>>> = Mutex::new(vec![Box::new(vec![0_u8; 1024])]);
     measure("BenchmarkSyncPoolValue", || {
-        let item = pool.lock().expect("value pool").pop().unwrap_or_default();
+        let item = pool
+            .lock()
+            .expect("value pool")
+            .pop()
+            .unwrap_or_else(|| Box::new(Vec::<u8>::new()));
+        let item = *item.downcast::<Vec<u8>>().expect("pooled byte vector");
         black_box(&item);
-        pool.lock().expect("value pool").push(item);
+        pool.lock().expect("value pool").push(Box::new(item));
     });
 }
 

@@ -12,169 +12,272 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reusable gzip encoders and decoders from Go `pkg/util/compress`.
+//! Reusable gzip streams from Go's `pkg/util/compress` package.
+//!
+//! Go exposes two process-wide `sync.Pool` values. Rust keeps the same
+//! ownership boundary with the native [`zeropool::Pool`], while the pooled
+//! stream wrappers erase the caller's reader/writer type at the pool boundary.
+//! A caller resets a stream before use and returns it after the normal close or
+//! read lifecycle, just as the Go consumers do.
 
-use std::io::{self, Cursor, Read, Write};
-use std::sync::{Mutex, OnceLock};
+use std::io::{self, BufReader, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use flate2::bufread::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
-#[derive(Default)]
-struct WriterCore {
-    plaintext: Vec<u8>,
+use crate::zeropool::Pool;
+
+struct WriterTarget {
+    writer: Box<dyn Write + Send>,
+    active: Arc<AtomicBool>,
 }
 
-fn writer_pool() -> &'static Mutex<Vec<WriterCore>> {
-    static POOL: OnceLock<Mutex<Vec<WriterCore>>> = OnceLock::new();
-    POOL.get_or_init(|| Mutex::new(Vec::new()))
+impl WriterTarget {
+    fn new<W>(writer: W) -> (Self, Arc<AtomicBool>)
+    where
+        W: Write + Send + 'static,
+    {
+        let active = Arc::new(AtomicBool::new(true));
+        (
+            Self {
+                writer: Box::new(writer),
+                active: Arc::clone(&active),
+            },
+            active,
+        )
+    }
 }
 
-/// A reusable gzip encoder lease.
+impl Write for WriterTarget {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.active.load(Ordering::Relaxed) {
+            self.writer.write(bytes)
+        } else {
+            Ok(bytes.len())
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.active.load(Ordering::Relaxed) {
+            self.writer.flush()
+        } else {
+            Ok(())
+        }
+    }
+}
+
+type ReaderSource = BufReader<Box<dyn Read + Send>>;
+
+/// A pooled gzip writer.
 ///
-/// This is the ownership-native form of borrowing an item from Go's
-/// `GzipWriterPool`: write the plaintext, call [`finish`](Self::finish), and
-/// dropping the lease returns its reusable staging storage to the pool.
+/// The caller owns the target writer and must call [`Self::reset`] before
+/// writing. `Write` forwards to the gzip stream; [`Self::close`] emits the
+/// gzip trailer without closing the caller's target.
 pub struct GzipWriter {
-    core: Option<WriterCore>,
+    inner: GzEncoder<WriterTarget>,
+    active: Arc<AtomicBool>,
 }
 
 impl GzipWriter {
     fn new() -> Self {
-        let core = writer_pool()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pop()
-            .unwrap_or_default();
-        Self { core: Some(core) }
+        let (target, active) = WriterTarget::new(io::sink());
+        Self {
+            inner: GzEncoder::new(target, Compression::default()),
+            active,
+        }
     }
 
-    fn core(&mut self) -> &mut WriterCore {
-        self.core
-            .as_mut()
-            .expect("gzip writer is always returned only at drop")
-    }
-
-    /// Appends plaintext to the current gzip stream.
-    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.core().plaintext.write_all(bytes)
-    }
-
-    /// Finalizes the current stream and returns its gzip bytes.
+    /// Rebinds this stream to `writer` and resets its compression state.
     ///
-    /// The lease is reset immediately, so another stream may be written before
-    /// it returns to the pool.
-    pub fn finish(&mut self) -> io::Result<Vec<u8>> {
-        let mut plaintext = std::mem::take(&mut self.core().plaintext);
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        let result = encoder
-            .write_all(&plaintext)
-            .and_then(|()| encoder.finish());
-        plaintext.clear();
-        self.core().plaintext = plaintext;
+    /// Go's `gzip.Writer.Reset` does not report an error. The Rust encoder is
+    /// replaced in the same operation; any unfinished bytes from the prior
+    /// target are discarded with the pooled object.
+    pub fn reset<W>(&mut self, writer: W)
+    where
+        W: Write + Send + 'static,
+    {
+        // `GzEncoder`'s Drop implementation attempts to finish the old
+        // stream. Disable forwarding first so Reset discards that state just
+        // like Go's gzip.Writer.Reset instead of appending a stale trailer.
+        self.active.store(false, Ordering::Relaxed);
+        let (target, active) = WriterTarget::new(writer);
+        self.inner = GzEncoder::new(target, Compression::default());
+        self.active = active;
+    }
+
+    /// Finishes the gzip member, matching Go's `gzip.Writer.Close`.
+    pub fn close(&mut self) -> io::Result<()> {
+        let result = self.inner.try_finish();
+        if result.is_ok() {
+            self.active.store(false, Ordering::Relaxed);
+        }
         result
     }
 }
 
-impl Drop for GzipWriter {
-    fn drop(&mut self) {
-        let Some(mut core) = self.core.take() else {
-            return;
-        };
-        core.plaintext.clear();
-        writer_pool()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(core);
+impl Write for GzipWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.inner.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
-/// Borrows a reusable gzip writer, matching Go `GzipWriterPool.Get`/`Put`.
-#[must_use]
-pub fn gzip_writer() -> GzipWriter {
-    GzipWriter::new()
-}
-
-/// A reusable gzip decoder lease.
+/// A pooled gzip reader.
 ///
-/// Go's reader pool holds resettable readers. Rust's decoder source is owned,
-/// so this lease reuses the public operation boundary: each call decodes one
-/// complete gzip stream and does not retain its input after return.
-#[derive(Default)]
-struct ReaderCore {
-    scratch: Vec<u8>,
-}
-
-fn reader_pool() -> &'static Mutex<Vec<ReaderCore>> {
-    static POOL: OnceLock<Mutex<Vec<ReaderCore>>> = OnceLock::new();
-    POOL.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// A reusable gzip decoder lease.
+/// `reset` validates the gzip header when possible, while checksum and body
+/// errors are returned by the normal `Read` implementation. `close` is a
+/// no-op, matching Go's reader, which never closes the caller's reader.
 pub struct GzipReader {
-    core: Option<ReaderCore>,
+    inner: GzDecoder<ReaderSource>,
 }
 
 impl GzipReader {
-    fn core(&mut self) -> &mut ReaderCore {
-        self.core
-            .as_mut()
-            .expect("gzip reader is always returned only at drop")
+    fn new() -> Self {
+        Self {
+            inner: GzDecoder::new(BufReader::new(Box::new(io::empty()))),
+        }
     }
 
-    /// Decodes one gzip stream.
-    pub fn read_to_end(&mut self, compressed: &[u8]) -> io::Result<&[u8]> {
-        let core = self.core();
-        core.scratch.clear();
-        GzDecoder::new(Cursor::new(compressed)).read_to_end(&mut core.scratch)?;
-        Ok(&core.scratch)
+    /// Rebinds this reader to `reader` and resets its decompression state.
+    pub fn reset<R>(&mut self, reader: R) -> io::Result<()>
+    where
+        R: Read + Send + 'static,
+    {
+        self.inner = GzDecoder::new(BufReader::new(Box::new(reader)));
+        let mut empty = [];
+        self.inner.read(&mut empty).map(|_| ())
     }
-}
 
-impl Drop for GzipReader {
-    fn drop(&mut self) {
-        let Some(mut reader) = self.core.take() else {
-            return;
-        };
-        reader.scratch.clear();
-        reader_pool()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(reader);
+    /// Leaves the caller's reader open, as Go's `gzip.Reader.Close` does.
+    pub fn close(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
-/// Borrows a reusable gzip reader, matching Go `GzipReaderPool.Get`/`Put`.
-#[must_use]
-pub fn gzip_reader() -> GzipReader {
-    let core = reader_pool()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .pop()
-        .unwrap_or_default();
-    GzipReader { core: Some(core) }
+impl Read for GzipReader {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(bytes)
+    }
 }
+
+/// Go `GzipWriterPool`, initialized with a discard-bound gzip writer.
+#[allow(non_upper_case_globals)]
+pub static GzipWriterPool: LazyLock<Pool<GzipWriter>> =
+    LazyLock::new(|| Pool::new(GzipWriter::new));
+
+/// Go `GzipReaderPool`, initialized with an empty gzip reader.
+#[allow(non_upper_case_globals)]
+pub static GzipReaderPool: LazyLock<Pool<GzipReader>> =
+    LazyLock::new(|| Pool::new(GzipReader::new));
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{GzipReaderPool, GzipWriterPool};
+    use std::io::{Cursor, Read, Write};
+    use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn writer_and_reader_round_trip_and_reuse() {
-        let mut writer = gzip_writer();
-        writer.write_all(b"first").unwrap();
-        let first = writer.finish().unwrap();
-        writer.write_all(b"second").unwrap();
-        let second = writer.finish().unwrap();
-        assert_ne!(first, second);
+    #[derive(Clone)]
+    struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
 
-        let mut reader = gzip_reader();
-        assert_eq!(reader.read_to_end(&first).unwrap(), b"first");
-        assert_eq!(reader.read_to_end(&second).unwrap(), b"second");
+    impl Write for SharedBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
-    fn invalid_gzip_returns_the_decoder_error() {
-        let mut reader = gzip_reader();
-        assert!(reader.read_to_end(b"not gzip").is_err());
+    fn pooled_streams_reset_and_round_trip() {
+        let compressed = Arc::new(Mutex::new(Vec::new()));
+        let mut writer = GzipWriterPool.get();
+        writer.reset(SharedBuffer(Arc::clone(&compressed)));
+        writer.write_all(b"go-owned gzip payload").unwrap();
+        writer.close().unwrap();
+        GzipWriterPool.put(writer);
+
+        let mut reader = GzipReaderPool.get();
+        reader
+            .reset(Cursor::new(
+                compressed
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ))
+            .unwrap();
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+        reader.close().unwrap();
+        GzipReaderPool.put(reader);
+        assert_eq!(decoded, b"go-owned gzip payload");
+    }
+
+    #[test]
+    fn reader_reset_rejects_an_invalid_header() {
+        let mut reader = GzipReaderPool.get();
+        let result = reader.reset(Cursor::new(b"not gzip".to_vec()));
+        GzipReaderPool.put(reader);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn writer_pool_reuses_a_closed_stream_for_a_new_target() {
+        let first = Arc::new(Mutex::new(Vec::new()));
+        let second = Arc::new(Mutex::new(Vec::new()));
+        let mut writer = GzipWriterPool.get();
+        writer.reset(SharedBuffer(Arc::clone(&first)));
+        writer.write_all(b"first").unwrap();
+        writer.close().unwrap();
+        writer.reset(SharedBuffer(Arc::clone(&second)));
+        writer.write_all(b"second").unwrap();
+        writer.close().unwrap();
+        GzipWriterPool.put(writer);
+
+        let mut reader = GzipReaderPool.get();
+        reader
+            .reset(Cursor::new(
+                second
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ))
+            .unwrap();
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+        GzipReaderPool.put(reader);
+        assert_eq!(decoded, b"second");
+    }
+
+    #[test]
+    fn writer_reset_discards_unfinished_stream_state() {
+        let first = Arc::new(Mutex::new(Vec::new()));
+        let second = Arc::new(Mutex::new(Vec::new()));
+        let mut writer = GzipWriterPool.get();
+        writer.reset(SharedBuffer(Arc::clone(&first)));
+        writer.write_all(b"unfinished").unwrap();
+        let bytes_before_reset = first
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        writer.reset(SharedBuffer(Arc::clone(&second)));
+        let bytes_after_reset = first
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        writer.close().unwrap();
+        GzipWriterPool.put(writer);
+        assert_eq!(bytes_after_reset, bytes_before_reset);
     }
 }

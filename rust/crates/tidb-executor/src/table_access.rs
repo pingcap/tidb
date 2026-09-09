@@ -101,6 +101,11 @@ pub trait TableAccess {
         false
     }
 
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for a live remote reader.
+    fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// Records the physical scan estimate selected by the access-path coster.
     /// It changes no rows and exists so later operator negotiation can make
     /// the same partial/final aggregation choice as the optimizer.
@@ -327,6 +332,20 @@ pub trait TableAccess {
     /// The default refuses, which leaves the leaf to decline the column
     /// rather than answer a slot nothing fills.
     fn accept_extra_handle(&mut self, slot: usize) -> bool {
+        let _ = slot;
+        false
+    }
+
+    /// Offers this source the output slot that must carry `_tidb_commit_ts`.
+    ///
+    /// Go's `buildDataSource` appends `NewExtraCommitTSSchemaCol` to every
+    /// non-cluster table's schema, and a plan that never projects it away
+    /// (an `EXISTS` child whose projection was popped, for example) asks the
+    /// scan to answer the slot. The local storage seam has no MVCC version,
+    /// so the value is the zero version, exactly as table sampling reports
+    /// it. The default refuses, which leaves the leaf to decline the column
+    /// rather than answer a slot nothing fills.
+    fn accept_extra_commit_ts(&mut self, slot: usize) -> bool {
         let _ = slot;
         false
     }

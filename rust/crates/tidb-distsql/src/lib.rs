@@ -29,6 +29,7 @@ mod chunk_decode;
 mod context;
 pub mod cop_paging;
 mod copr_cache;
+mod copr_cache_metrics;
 mod coprocessor_request;
 mod distsql_runtime;
 mod envelope;
@@ -63,24 +64,24 @@ pub use cop_paging::{
     paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome,
     CopPagingState, CopIterator, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
     DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
-    DirectUnaryTransportError, DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle,
-    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
-    OptimisticLockRecovery, PublicationObserverAlreadyInstalled, PublishedDispatchEvidence,
-    ReadEngineGeneration, RegionRetryWaiter,
+    DirectUnaryTransportError, LockedResponseAction, LockedResponseDelegate,
+    LockedResponseObservation, OptimisticLockRecovery, ReadEngineGeneration, RegionRetryWaiter,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
     CoprCacheLookup, CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome,
     CoprCacheValue,
 };
+pub use copr_cache_metrics::{copr_cache_metric_snapshot, CoprCacheMetricSnapshot};
 pub use coprocessor_request::CoprocessorRequestEnvelope;
 pub use distsql_runtime::{
     analyze_request_source, analyze_result_metadata, can_use_chunk_rpc, checksum_result_metadata,
     mpp_result_metadata, select_result_metadata, select_with_runtime_stats, set_encode_type,
     system_endian, tiflash_conf_metadata, with_sql_kv_exec_counter_interceptor, EncodeType,
-    OutgoingMetadata, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian,
-    TiFlashSettings, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL,
-    GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
+    LimiterWaitStats, OutgoingMetadata, SelectInput, SelectResultMetadata,
+    SelectResultRuntimeStats, SystemEndian, TiFlashSettings, ANALYZE_RESULT_LABEL,
+    CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE,
+    INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
 };
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CancelHandle, CpuUsage, ExecutionState, KillHandle, KvVariables};
@@ -119,9 +120,9 @@ pub use table_handle_ranges::table_handles_to_kv_ranges;
 pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
 pub use tidb_txnkv::region;
 pub use tidb_txnkv::{
-    IsolationLevel, Priority as KvPriority, ReplicaReadType, RequestSource, RequestType,
-    StoreLabel, StoreType, TiFlashReplicaRead, UnaryCallContext, ALL_REPLICAS, CLOSEST_ADAPTIVE,
-    CLOSEST_REPLICAS, MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
+    IsolationLevel, Priority as KvPriority, ReplicaRead, ReplicaReadType, RequestSource,
+    RequestType, StoreLabel, StoreType, UnaryCallContext,
+    MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use tidb_util::paging::{
     calculate_seek_cnt as calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE,

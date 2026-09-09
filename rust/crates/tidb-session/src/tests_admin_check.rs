@@ -91,6 +91,22 @@ fn clustered_primary_key_with_two_indexes() {
     assert_check_passes(&mut session, "admin check index t idx_1");
 }
 
+/// Go's physical ADMIN CHECK reader skips a clustered PRIMARY KEY because its
+/// key is the record key, not a stored `_i` entry. Naming that key directly
+/// still succeeds, but it must not report a missing index entry.
+#[test]
+fn clustered_primary_key_is_not_scanned_as_an_index() {
+    let mut session = Session::new();
+    session.run("drop table if exists t").unwrap();
+    session
+        .run("create table t (a bigint, b varchar(255), primary key (a, b))")
+        .unwrap();
+    session.run("insert into t values (1, '1')").unwrap();
+
+    assert_check_passes(&mut session, "admin check table t");
+    assert_check_passes(&mut session, "admin check index t `PRIMARY`");
+}
+
 /// `tests/integrationtest/t/executor/admin.test`: a unique index that holds
 /// NULLs, which MySQL allows any number of. A NULL-bearing entry is stored
 /// the NON-distinct way (handle appended to the key), so this is the case

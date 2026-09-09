@@ -207,6 +207,10 @@ impl ActionType {
     pub const ACTION_DROP_MASKING_POLICY: ActionType = ActionType(83);
     /// Go `ActionAlterTableSetRegionSplitPolicy`.
     pub const ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY: ActionType = ActionType(84);
+    /// Go `ActionCreateMaterializedViewLog`.
+    pub const ACTION_CREATE_MATERIALIZED_VIEW_LOG: ActionType = ActionType(85);
+    /// Go `ActionCreateMaterializedView`.
+    pub const ACTION_CREATE_MATERIALIZED_VIEW: ActionType = ActionType(86);
 }
 
 /// Go `ActionMap`: the display name of each DDL action.
@@ -411,6 +415,14 @@ pub const ACTION_MAP: &[(ActionType, &str)] = &[
         "alter table set region split policy",
     ),
     (
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+        "create materialized view log",
+    ),
+    (
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+        "create materialized view",
+    ),
+    (
         ActionType::DEPRECATEDACTION_ALTER_TABLE_ALTER_PARTITION,
         "alter partition",
     ),
@@ -519,8 +531,10 @@ mod tests {
             ActionType::ACTION_ALTER_MASKING_POLICY,
             ActionType::ACTION_DROP_MASKING_POLICY,
             ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
         ];
-        assert_eq!(declared.len(), 84);
+        assert_eq!(declared.len(), 86);
         assert!(declared
             .iter()
             .all(|action| !(200..256).contains(&u16::from(action.0))));

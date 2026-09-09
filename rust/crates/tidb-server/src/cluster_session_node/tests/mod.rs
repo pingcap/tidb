@@ -18,3 +18,18 @@ mod statistics;
 mod transactions;
 mod unistore_cop;
 mod wide_sql;
+
+#[test]
+fn analyze_process_sql_detection_matches_go() {
+    for sql in [
+        "analyze table test.t",
+        " analyze table test.t ",
+        " ANALYZE TABLE test.t ",
+        "/* axxxx */ analyze table test.t",
+        "/*\n/*> this is a\n/*> multiple-line comment\n/*> */ analyze table test.t",
+        "/*+ hint */ analyze table test.t",
+        "/*+ hint */analyze table test.t",
+    ] {
+        assert!(super::is_analyze_table_sql(sql), "{sql:?}");
+    }
+}

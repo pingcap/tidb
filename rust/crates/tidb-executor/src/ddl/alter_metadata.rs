@@ -35,12 +35,10 @@
 //! exactly what invalidates those, which is why
 //! [`rename_column_action`] refuses rather than renames whenever
 //! [`crate::kv_table::KvTable::column_dependent`] reports one of the first
-//! three (Go's 3837 / 3108 / 3855). The fourth is refused a step earlier and
-//! more broadly: `ALTER TABLE` on any table participating in a foreign key is
-//! unsupported (`crate::ddl::alter_table`), so no rename reaches an `FKInfo`.
-//! Go instead REWRITES `fk.Cols` on this path
-//! (`pkg/ddl/modify_column.go` `updateFKInfoWhenModifyColumn`), which is the
-//! graduation path for that refusal.
+//! three (Go's 3837 / 3108 / 3855). Foreign-key metadata is handled separately:
+//! a rename rewrites this table's `fk.cols` and every child's `fk.ref_cols`,
+//! matching Go's `updateFKInfoWhenModifyColumn` and
+//! `adjustForeignKeyChildTableInfoAfterModifyColumn`.
 //!
 //! Mirrors Go `pkg/ddl/executor.go`'s `AlterTable` arms
 //! `ast.AlterTableRenameColumn`, `ast.AlterTableRenameIndex`,
@@ -71,10 +69,10 @@ fn table_of<'a>(
 /// `ALTER TABLE ... RENAME COLUMN old TO new`.
 ///
 /// Go `RenameColumn` in this exact order, which the error a statement gets
-/// depends on: the OLD column must exist (1054, even when old and new are the
-/// same name), renaming a column to the name it already has is a no-op, the
-/// new name may not be `_tidb_rowid` (1166), and the new name may not already
-/// be taken (1060).
+/// depends on: the OLD column must exist (1054), a CHECK dependency is 3959
+/// even for a same-name rename, otherwise renaming a column to itself is a
+/// no-op, the new name may not be `_tidb_rowid` (1166), and the new name may
+/// not already be taken (1060).
 ///
 /// The rename is a name assignment and nothing else: the column keeps its id
 /// and its offset, so every index over it, every stored row and the handle
@@ -97,6 +95,19 @@ pub(crate) fn rename_column_action(
             table: table_name.to_owned(),
         });
     };
+    // Go asks this before its same-name early return. Thus even
+    // `RENAME COLUMN a TO a` is 3959 when a CHECK references `a`.
+    if let Some(info) = table
+        .check_constraint_infos()
+        .iter()
+        .find(|info| super::check_constraint::uses_column(info, from))
+    {
+        let error = super::check_constraint::column_dependency_error(info.name.original(), from);
+        return Err(DriverError::DdlCoded {
+            errno: error.code,
+            message: error.message,
+        });
+    }
     // Go returns nil BEFORE the duplicate check when the two names are the
     // same column, so `rename column c1 to c1` succeeds while
     // `rename column c2 to id` is 1060.
@@ -121,15 +132,15 @@ pub(crate) fn rename_column_action(
     // `checkDropColumnWithPartitionConstraint`, which is exactly the order
     // `column_dependent` reports in.
     //
-    // Nothing below this line rewrites metadata, and that is the point: with
-    // the columns' names keying the generated expressions and the partition
-    // expression, a rename that got through would leave those reading a name
-    // no column has. Go refuses rather than rewriting for the same reason,
-    // and `dependency_offsets` may therefore treat a missing name as a bug.
+    // The foreign-key names are rewritten after the column itself changes.
+    // `rewrite_column_name` takes a fresh catalog borrow and updates both the
+    // table's declared columns and every child's referenced columns.
     if let Some(dependent) = table.column_dependent(offset) {
         return Err(super::column_dependent_error(dependent, from));
     }
     table.columns_mut()[offset].name = to.to_owned();
+    let _ = table;
+    crate::foreign_key::rewrite_column_name(catalog, database, table_name, from, to);
     Ok(())
 }
 

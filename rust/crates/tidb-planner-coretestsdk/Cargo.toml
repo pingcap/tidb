@@ -1,0 +1,18 @@
+[package]
+name = "tidb-planner-coretestsdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Test support matching TiDB planner util coretestsdk."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-planner = { path = "../tidb-planner" }

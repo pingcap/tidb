@@ -335,14 +335,64 @@ fn foreign_key_checks_rejects_a_non_boolean_value() {
 }
 
 /// `DROP TABLE` is refused while a table OUTSIDE the statement still
-/// references the parent, all-or-nothing over the whole statement -- and
-/// dropping the pair together succeeds whichever order they are listed in.
+/// references the parent with Go's dedicated 3730 diagnostic, all-or-nothing
+/// over the whole statement -- and dropping the pair together succeeds
+/// whichever order they are listed in.
 #[test]
 fn drop_table_is_refused_while_a_foreign_key_still_points_at_it() {
     let mut session = pair("");
-    assert_eq!(code(&mut session, "DROP TABLE p"), Some(1451));
+    let error = session
+        .run("DROP TABLE p")
+        .expect_err("a referenced parent cannot be dropped");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 3730);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot drop table 'p' referenced by a foreign key constraint 'fk_1' on table 'c'."
+    );
     assert!(session.run("SELECT id FROM p").is_ok());
     assert_eq!(code(&mut session, "DROP TABLE p, c"), None);
+}
+
+/// `TRUNCATE TABLE` uses the DDL owner error (1701), not the row-level
+/// parent-mutation error (1451), and leaves both tables untouched. A
+/// self-reference is safe because truncation removes the parent and child
+/// rows together; turning the session switch off also bypasses the check.
+#[test]
+fn truncate_table_is_refused_while_a_foreign_key_still_points_at_it() {
+    let mut session = pair("");
+    let error = session
+        .run("TRUNCATE TABLE p")
+        .expect_err("a referenced parent cannot be truncated");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1701);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot truncate a table referenced in a foreign key constraint (`test`.`c` CONSTRAINT `fk_1`)"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM p ORDER BY id"),
+        vec![vec!["1"], vec!["2"]]
+    );
+
+    session.run("SET foreign_key_checks = 0").unwrap();
+    assert_eq!(code(&mut session, "TRUNCATE TABLE p"), None);
+    assert!(rows(&mut session, "SELECT id FROM p").is_empty());
+    // The child row remains when checks are disabled, matching Go's owner
+    // gate: no DDL-time referral validation is performed in this mode.
+    assert_eq!(rows(&mut session, "SELECT id FROM c"), vec![vec!["10"]]);
+
+    let mut self_reference = Session::new();
+    self_reference
+        .run("CREATE TABLE tree (id INT PRIMARY KEY, parent INT)")
+        .unwrap();
+    self_reference
+        .run("ALTER TABLE tree ADD FOREIGN KEY (parent) REFERENCES tree(id)")
+        .unwrap();
+    self_reference
+        .run("INSERT INTO tree VALUES (1, NULL)")
+        .unwrap();
+    assert_eq!(code(&mut self_reference, "TRUNCATE TABLE tree"), None);
 }
 
 /// With the checks off, `DROP TABLE` of a referenced parent is allowed --
@@ -352,6 +402,54 @@ fn foreign_key_checks_off_allows_dropping_a_referenced_parent() {
     let mut session = pair("");
     session.run("SET foreign_key_checks = 0").unwrap();
     assert_eq!(code(&mut session, "DROP TABLE p"), None);
+}
+
+/// `DROP DATABASE` uses Go's cross-schema 3730 owner error and does not
+/// remove anything until every outside-schema referral is gone. Children in
+/// the database being dropped together are not a referral blocker.
+#[test]
+fn drop_database_is_refused_by_an_outside_schema_foreign_key() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, b INT, INDEX (b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (id INT PRIMARY KEY, b INT, FOREIGN KEY fk_b (b) REFERENCES t1(id))")
+        .unwrap();
+    session.run("CREATE DATABASE test2").unwrap();
+    session
+        .run("CREATE TABLE test2.t3 (id INT PRIMARY KEY, b INT, FOREIGN KEY fk_b (b) REFERENCES test.t2(id))")
+        .unwrap();
+
+    let error = session
+        .run("DROP DATABASE test")
+        .expect_err("the outside-schema child must block the drop");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 3730);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'."
+    );
+    assert!(session.run("SELECT id FROM t2").is_ok());
+
+    session.run("DROP TABLE test2.t3").unwrap();
+    assert_eq!(code(&mut session, "DROP DATABASE test"), None);
+}
+
+#[test]
+fn foreign_key_checks_off_allows_dropping_database_with_external_reference() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE DATABASE child_db").unwrap();
+    session
+        .run("CREATE TABLE child_db.child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY fk_parent (parent_id) REFERENCES test.parent(id))")
+        .unwrap();
+
+    session.run("SET FOREIGN_KEY_CHECKS=0").unwrap();
+    assert_eq!(code(&mut session, "DROP DATABASE test"), None);
+    assert!(session.run("SELECT id FROM child_db.child").is_ok());
 }
 
 /// `CREATE TABLE` resolves the `REFERENCES` clause while the checks are on,
@@ -448,10 +546,10 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
 }
 
 /// A constraint names the other side by TABLE name and its own side by COLUMN
-/// name, so a drop or a rename of either would leave it naming something that
-/// is gone. Those are REFUSED on a participating table rather than corrupting
-/// it. (Real TiDB rewrites the affected `FKInfo`s instead; this is the honest
-/// refusal until that lands.)
+/// name, so dropping a constrained column would leave it naming something
+/// that is gone. That operation is REFUSED on a participating table rather
+/// than corrupting it. Whole-table renames are handled separately and rewrite
+/// the stored table reference, matching Go.
 ///
 /// This test USED TO assert that `ADD COLUMN` and a repositioning `MODIFY`
 /// were refused too, which encoded the old blanket refusal as if it were the
@@ -462,13 +560,7 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
 /// below as the statements that must keep working.
 #[test]
 fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
-    for statement in [
-        "ALTER TABLE c DROP COLUMN id",
-        "ALTER TABLE c RENAME TO cc",
-        "ALTER TABLE p RENAME TO pp",
-        "RENAME TABLE c TO cc",
-        "RENAME TABLE p TO pp",
-    ] {
+    for statement in ["ALTER TABLE c DROP COLUMN id"] {
         let mut session = pair("");
         assert!(
             session.run(statement).is_err(),
@@ -499,6 +591,82 @@ fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
     session.run("CREATE TABLE plain (a INT)").unwrap();
     session.run("ALTER TABLE plain ADD COLUMN b INT").unwrap();
     session.run("RENAME TABLE plain TO plainer").unwrap();
+}
+
+/// Go rewrites foreign-key table references when either side is renamed,
+/// including a self-reference moved across schemas.
+#[test]
+fn rename_table_rewrites_foreign_key_references() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE test2").unwrap();
+    session.run("CREATE DATABASE test3").unwrap();
+
+    session.run("SET foreign_key_checks=0").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, a INT, FOREIGN KEY fk(a) REFERENCES t1(id))")
+        .unwrap();
+    session.run("RENAME TABLE test.t1 TO test2.t2").unwrap();
+    let self_ref = rows(&mut session, "SHOW CREATE TABLE test2.t2")[0][1].clone();
+    assert!(self_ref.contains("REFERENCES `t2` (`id`)") && self_ref.contains("CONSTRAINT `fk`"));
+
+    session.run("DROP TABLE test2.t2").unwrap();
+    session.run("SET foreign_key_checks=1").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (id INT PRIMARY KEY, b INT, FOREIGN KEY fk_b(b) REFERENCES test.t1(id))")
+        .unwrap();
+    session.run("RENAME TABLE test.t2 TO test2.tt2").unwrap();
+    session
+        .run("ALTER TABLE test2.tt2 RENAME TO test2.tt3")
+        .unwrap();
+    let child_ref = rows(&mut session, "SHOW CREATE TABLE test2.tt3")[0][1].clone();
+    assert!(
+        child_ref.contains("REFERENCES `test`.`t1` (`id`)")
+            || child_ref.contains("REFERENCES `t1` (`id`)")
+    );
+    session.run("RENAME TABLE test.t1 TO test3.tt1").unwrap();
+    let moved_parent_ref = rows(&mut session, "SHOW CREATE TABLE test2.tt3")[0][1].clone();
+    assert!(moved_parent_ref.contains("REFERENCES `test3`.`tt1` (`id`)"));
+}
+
+/// Go carries FKInfo column names through `RENAME COLUMN` on either side of a
+/// constraint, including a self-reference and multiple children.
+#[test]
+fn rename_column_rewrites_foreign_key_references() {
+    let mut session = Session::new();
+    session.run("SET foreign_key_checks=0").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b INT, FOREIGN KEY fk(a) REFERENCES t1(id))")
+        .unwrap();
+    session
+        .run("ALTER TABLE t1 RENAME COLUMN id TO kid")
+        .unwrap();
+    session.run("ALTER TABLE t1 RENAME COLUMN a TO aa").unwrap();
+    session.run("SET foreign_key_checks=1").unwrap();
+    let self_ref = rows(&mut session, "SHOW CREATE TABLE t1")[0][1].clone();
+    assert!(
+        self_ref.contains("FOREIGN KEY (`aa`)") && self_ref.contains("REFERENCES `t1` (`kid`)")
+    );
+
+    session.run("DROP TABLE t1").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, b INT, INDEX(b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a INT, b INT, FOREIGN KEY fk_1(a) REFERENCES t1(b), FOREIGN KEY fk_2(b) REFERENCES t1(b))")
+        .unwrap();
+    session.run("ALTER TABLE t2 RENAME COLUMN a TO aa").unwrap();
+    session.run("ALTER TABLE t1 RENAME COLUMN b TO bb").unwrap();
+    session.run("ALTER TABLE t2 RENAME COLUMN b TO bb").unwrap();
+    let child = rows(&mut session, "SHOW CREATE TABLE t2")[0][1].clone();
+    assert!(child.contains("FOREIGN KEY (`aa`)") && child.contains("FOREIGN KEY (`bb`)"));
+    assert_eq!(
+        child.matches("REFERENCES `t1` (`bb`)").count(),
+        2,
+        "{child}"
+    );
 }
 
 /// A parent whose REFERENCED column is a STORED GENERATED column, with a
@@ -727,6 +895,27 @@ fn the_clustered_handle_exemption_does_not_reach_the_child_index() {
         code(&mut session, "ALTER TABLE t2 DROP INDEX fk"),
         Some(1553)
     );
+}
+
+/// Go applies the clustered-handle exemption through the CHILD branch too:
+/// dropping an explicit secondary cover is legal when the single referencing
+/// column is itself the child's integer primary handle.
+#[test]
+fn the_clustered_handle_exemption_allows_the_child_cover_drop() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (id INT PRIMARY KEY, b INT, INDEX idxb (b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE c (a INT, b INT PRIMARY KEY, INDEX idxa (a), INDEX idxb (b), \
+             CONSTRAINT fk FOREIGN KEY (b) REFERENCES p(id))",
+        )
+        .unwrap();
+    session.run("ALTER TABLE c DROP INDEX idxb").unwrap();
+    let indexes = rows(&mut session, "SHOW INDEX FROM c");
+    assert!(indexes.iter().all(|row| row[2] != "idxb"));
+    assert!(rows(&mut session, "SHOW CREATE TABLE c")[0][1].contains("CONSTRAINT `fk`"));
 }
 
 /// Go's 3733: a constraint may not name a VIRTUAL generated column, on
@@ -1071,6 +1260,44 @@ fn adding_a_foreign_key_with_the_checks_off_blesses_the_rows_it_did_not_check() 
         code(&mut session, "INSERT INTO c VALUES (11, 88)"),
         Some(1452)
     );
+}
+
+/// ALTER-side owner validation requires a covering index on the referenced
+/// columns and rejects a same-column self-reference, matching Go's 1822/1215
+/// checks before metadata is staged.
+#[test]
+fn alter_add_foreign_key_checks_parent_index_and_self_reference() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (id INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (id INT PRIMARY KEY, b INT, INDEX (b))")
+        .unwrap();
+
+    let error = session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES p(b)")
+        .expect_err("the parent b column has no covering index");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1822);
+    assert_eq!(
+        mysql_error.message,
+        "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 'p'"
+    );
+    assert!(rows(&mut session, "SHOW CREATE TABLE c")[0][1]
+        .find("CONSTRAINT")
+        .is_none());
+
+    session.run("ALTER TABLE p ADD INDEX (b)").unwrap();
+    session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES p(b)")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES c(b)")
+        .expect_err("same-column self-reference is unsupported");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1215);
+    assert_eq!(mysql_error.message, "Cannot add foreign key constraint");
 }
 
 /// Go `checkFKDupName` (1826), and Go `ErrForeignKeyNotExists`, which is
@@ -1469,19 +1696,17 @@ fn adding_a_column_to_a_constrained_table_is_accepted() {
     );
 }
 
-/// A PIN on the three column/table changes this tier still refuses on a
-/// constrained table, so the refusal is a KNOWN gap rather than a silent one.
+/// DROP COLUMN remains refused on a constrained table, while both Go and this
+/// tier now rewrite metadata for column renames.
 ///
-/// Go accepts all three and rewrites the affected `FKInfo`s; captured:
-/// `alter table c rename column b to bb` and `alter table c rename to c2`
-/// both succeed and carry the constraint, and `alter table c drop column b`
+/// Go accepts `alter table c rename column b to bb` and carries the constraint;
+/// `alter table c drop column b`
 /// is Go's `[ddl:1828] Cannot drop column 'b': needed in a foreign key
 /// constraint 'fk'` -- a REFUSAL, but under a different code than the 1105
 /// this tier raises.
 ///
-/// Each assertion below flips the day the corresponding rewrite lands.
 #[test]
-fn drop_column_and_the_two_renames_are_still_refused_on_a_constrained_table() {
+fn drop_column_is_still_refused_on_a_constrained_table() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, z INT)")
@@ -1489,13 +1714,10 @@ fn drop_column_and_the_two_renames_are_still_refused_on_a_constrained_table() {
     session
         .run("CREATE TABLE c (b VARCHAR(20), z INT, FOREIGN KEY fk (b) REFERENCES p(a))")
         .unwrap();
-    for statement in [
-        "ALTER TABLE c DROP COLUMN b",
-        "ALTER TABLE c RENAME COLUMN b TO bb",
-        "ALTER TABLE c RENAME TO c2",
-    ] {
-        assert_eq!(code(&mut session, statement), Some(1105), "{statement}");
-    }
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c DROP COLUMN b"),
+        Some(1105)
+    );
     // The UNCONSTRAINED column is not covered by the refusal's blast radius
     // in Go, but it is here: this line records the WIDTH of the gap.
     assert_eq!(

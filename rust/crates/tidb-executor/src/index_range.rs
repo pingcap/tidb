@@ -50,7 +50,7 @@
 //!   * `chooseBetweenRangeAndPoint`: intersections/non-point preferences
 //!     controlled by Go's optimizer fix controls. Composite point-prefix
 //!     extraction inside CNF uses the shared range algebra below.
-//!   * `handleUnsignedCol`'s signedness clamping.
+//!   * the remaining `RefineCompareArgs` rewrites for widened comparisons.
 //!   * `convertToSortKey` for the builders whose endpoints are VALUES: they
 //!     stay text and the key codec collates them into exactly the bytes Go's
 //!     conversion produced, so the ENCODED range is Go's even though the
@@ -68,6 +68,30 @@ use tidb_ast::{BinaryOp, Expr, IsTarget};
 use tidb_datatype::{Collation, Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+
+/// Session range budget shared by recursive statistics range builders.
+#[derive(Clone, Copy)]
+pub(crate) struct RangeContext<'a> {
+    pub max_size: i64,
+    pub fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+}
+
+impl Default for RangeContext<'_> {
+    fn default() -> Self {
+        Self {
+            max_size: 64 * 1024 * 1024,
+            fallback_handler: None,
+        }
+    }
+}
+
+impl RangeContext<'_> {
+    fn record_fallback(self) {
+        if let Some(handler) = self.fallback_handler {
+            handler.record_range_fallback(self.max_size);
+        }
+    }
+}
 
 /// One index key part as the ranger sees it: the column it names, its type,
 /// and how much of it the index actually stores.
@@ -370,12 +394,28 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
     // because its `newTp` has no flen). The padded endpoint then compared
     // ABOVE the original, the exclusivity repair closed the high bound, and
     // `u = 'a'` over a CHAR-keyed index planned `TableDual rows:0` -- rows
-    // missing, measured on `mysql.user`'s `KEY i_user (User)`. Integer
-    // widening (Go's LongLong arm) is deliberately NOT mirrored: the
-    // saturate-and-repair below is this tier's equivalent (see the doc
-    // above).
+    // missing, measured on `mysql.user`'s `KEY i_user (User)`.
+    let widened;
     let unlimited;
     let target = if matches!(
+        target.code(),
+        tidb_datatype::FieldTypeCode::Tiny
+            | tidb_datatype::FieldTypeCode::Short
+            | tidb_datatype::FieldTypeCode::Int24
+            | tidb_datatype::FieldTypeCode::Long
+            | tidb_datatype::FieldTypeCode::LongLong
+    ) {
+        // Go's `newFieldType` widens every integer endpoint to BIGINT while
+        // retaining signedness. A large unsigned literal in a `NOT IN` list
+        // must not be clamped to the declared SMALLINT before the gap is
+        // built.
+        widened = {
+            let mut clone = target.clone();
+            clone.set_code(tidb_datatype::FieldTypeCode::LongLong);
+            clone
+        };
+        &widened
+    } else if matches!(
         target.code(),
         tidb_datatype::FieldTypeCode::Float
             | tidb_datatype::FieldTypeCode::Double
@@ -893,6 +933,12 @@ fn handle_bound_col(
         FieldTypeCode::Float => {
             let as_f64 = match &value {
                 Datum::Real(v) | Datum::Float32(v) => Some(*v),
+                // Large SQL numeric literals are represented as DECIMAL by
+                // the parser. Go's `val.GetFloat64()` handles that datum
+                // kind in `handleBoundCol` too; omitting it would saturate a
+                // `FLOAT` endpoint instead of recognizing an impossible
+                // comparison and returning an empty range.
+                Datum::Decimal(v) => Some(v.to_f64()),
                 _ => None,
             };
             if let Some(v) = as_f64 {
@@ -984,18 +1030,13 @@ fn points_from_in(
     // ordering/equality key. Sorting the owned values directly avoids one key
     // allocation per IN item; collations with weight tables keep the keyed
     // path below because their keys are not byte-identical.
-    let raw_binary_key = matches!(
-        collation,
-        Collation::Binary | Collation::Utf8Mb40900Bin
-    ) || (matches!(
-        collation,
-        Collation::AsciiBin
-            | Collation::Latin1Bin
-            | Collation::Utf8Bin
-            | Collation::Utf8Mb4Bin
-    ) && values.iter().all(|value| {
-        matches!(value, Datum::String(string) if string.bytes().last() != Some(&b' '))
-    }));
+    let raw_binary_key = matches!(collation, Collation::Binary | Collation::Utf8Mb40900Bin)
+        || (matches!(
+            collation,
+            Collation::AsciiBin | Collation::Latin1Bin | Collation::Utf8Bin | Collation::Utf8Mb4Bin
+        ) && values.iter().all(
+            |value| matches!(value, Datum::String(string) if string.bytes().last() != Some(&b' ')),
+        ));
     if raw_binary_key && values.iter().all(|value| matches!(value, Datum::String(_))) {
         values.sort_unstable_by(|left, right| {
             let (Datum::String(left), Datum::String(right)) = (left, right) else {
@@ -1085,11 +1126,41 @@ fn points_from_not_in(
     list: &[Expr],
     resolver: &dyn ColumnResolver,
     collation: Collation,
+    field_type: &FieldType,
 ) -> Option<Vec<Point>> {
     let (points, has_null) = points_from_in(list, resolver, collation)?;
     // `a NOT IN (1, NULL)` is never true, so Go builds no points at all.
     if has_null {
         return Some(Vec::new());
+    }
+
+    // `buildFromNot` drops negative list points for unsigned integer columns
+    // before constructing the gaps.  Keeping those points would create an
+    // extra `[0,0)`/`(0,1)` interval after endpoint conversion, which is a
+    // strictly different access range from Go's `(NULL,1)`.
+    let points = if field_type.is_unsigned()
+        && matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Tiny
+                | tidb_datatype::FieldTypeCode::Short
+                | tidb_datatype::FieldTypeCode::Int24
+                | tidb_datatype::FieldTypeCode::Long
+                | tidb_datatype::FieldTypeCode::LongLong
+        ) {
+        points
+            .chunks_exact(2)
+            .filter(|pair| !matches!(pair[0].value, Datum::Int(value) if value < 0))
+            .flat_map(|pair| pair.iter().cloned())
+            .collect::<Vec<_>>()
+    } else {
+        points
+    };
+    // Go's `builder.buildFromNot` treats a one-element `NOT IN` as the
+    // equivalent `!=` predicate *after* the unsigned negative-point trim.
+    // Besides avoiding a redundant pair of adjacent endpoints, that preserves
+    // Go's `(NULL,+inf]` result for `unsigned_col NOT IN (-1)`.
+    if points.len() == 2 {
+        return Some(points_from_bin_op(BinaryOp::Ne, points[0].value.clone())?);
     }
     let mut out = Vec::with_capacity(points.len() + 2);
     let mut previous = Datum::Null;
@@ -1191,8 +1262,13 @@ fn points_for_condition(
     like_default_escape: u8,
     convert_to_sort_key: bool,
 ) -> Option<ColumnPoints> {
-    let mut column_points =
-        points_on_column(condition, column, resolver, like_default_escape, convert_to_sort_key)?;
+    let mut column_points = points_on_column(
+        condition,
+        column,
+        resolver,
+        like_default_escape,
+        convert_to_sort_key,
+    )?;
     // Go cuts and converts at the tail of each `build` arm; the one arm that
     // does both itself says so, and is left alone here. Cutting an already
     // converted point a second time reads a SORT KEY as text -- for
@@ -1207,12 +1283,14 @@ fn points_for_condition(
             convert_points_to_sort_key(&mut column_points.points, &column.field_type);
         }
     }
-    // Go's `conditionChecker` rejects a condition that bounds nothing --- a
-    // LIKE with no literal prefix, an IS NOT NULL --- and `points.go` signals
-    // the same by returning the full range. A range spanning the whole index
-    // is no better than a full scan, so such a condition stays a filter
-    // rather than turning a scan into a range scan over everything.
-    if column_points.points == full_range() || column_points.points == not_null_full_range() {
+    // Go's `conditionChecker` accepts IS NOT NULL as an access condition for
+    // a prefix key part (the resulting full range is still useful to keep the
+    // composite walk aligned and is what `TestPrefixIndexRange` records).
+    // For an ordinary full-length key it remains a filter: a full range buys
+    // no narrower scan and Go declines that shape as well.
+    if (column_points.points == full_range() || column_points.points == not_null_full_range())
+        && column.prefix_len == UNSPECIFIED_LENGTH
+    {
         return None;
     }
     Some(column_points)
@@ -1233,11 +1311,7 @@ fn points_for_condition(
 fn enum_compares_as_int(value: &Datum) -> bool {
     matches!(
         value,
-        Datum::Int(_)
-            | Datum::UInt(_)
-            | Datum::Bit(_)
-            | Datum::Enum(_, _)
-            | Datum::Set(_, _)
+        Datum::Int(_) | Datum::UInt(_) | Datum::Bit(_) | Datum::Enum(_, _) | Datum::Set(_, _)
     )
 }
 
@@ -1314,9 +1388,13 @@ fn points_on_column(
 ) -> Option<ColumnPoints> {
     let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => {
-            points_on_column(inner, column, resolver, like_default_escape, convert_to_sort_key)
-        }
+        Expr::Paren(inner) => points_on_column(
+            inner,
+            column,
+            resolver,
+            like_default_escape,
+            convert_to_sort_key,
+        ),
         // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
         // boolean connective over ONE index column is still a point set on
         // that column: `b = 1 OR b = 2` is the union of the two, and
@@ -1330,10 +1408,40 @@ fn points_on_column(
         // is not merely a lost opportunity but a WRONG range -- keeping only
         // the side that parsed would exclude rows the other side admits.
         Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
-            let lhs =
-                points_on_column(lhs, column, resolver, like_default_escape, convert_to_sort_key)?;
-            let rhs =
-                points_on_column(rhs, column, resolver, like_default_escape, convert_to_sort_key)?;
+            // Go's expression rewriter keeps `ISNULL(col) AND col IN (...)`
+            // on the NULL branch: the IN predicate is retained as a residual
+            // filter, while the prefix index is probed at the NULL key. The
+            // raw Rust AST does not carry the implicit numeric cast that Go
+            // introduces for this shape, so recognize it before recursively
+            // turning the IN list into non-NULL points.
+            if matches!(op, BinaryOp::LogicAnd)
+                && ((is_isnull_function_on_column(lhs, name) && is_in_on_column(rhs, name))
+                    || (is_isnull_function_on_column(rhs, name) && is_in_on_column(lhs, name)))
+            {
+                return Some(ColumnPoints {
+                    points: vec![
+                        Point::start(Datum::Null, false),
+                        Point::end(Datum::Null, false),
+                    ],
+                    eq_or_in: false,
+                    reserve: true,
+                    finished: false,
+                });
+            }
+            let lhs = points_on_column(
+                lhs,
+                column,
+                resolver,
+                like_default_escape,
+                convert_to_sort_key,
+            )?;
+            let rhs = points_on_column(
+                rhs,
+                column,
+                resolver,
+                like_default_escape,
+                convert_to_sort_key,
+            )?;
             let collation = column.field_type.collation();
             let points = if matches!(op, BinaryOp::LogicAnd) {
                 intersection(&lhs.points, &rhs.points, collation)
@@ -1458,7 +1566,12 @@ fn points_on_column(
                 return None;
             }
             let points = if *not {
-                points_from_not_in(list, resolver, column.field_type.collation())?
+                points_from_not_in(
+                    list,
+                    resolver,
+                    column.field_type.collation(),
+                    &column.field_type,
+                )?
             } else {
                 points_from_in(list, resolver, column.field_type.collation())?.0
             };
@@ -1608,8 +1721,45 @@ fn points_on_column(
                 finished: false,
             })
         }
+        Expr::Func {
+            name: function_name,
+            args,
+            ..
+        } if function_name.eq_ignore_ascii_case("isnull")
+            && args.len() == 1
+            && is_column(&args[0], name) =>
+        {
+            // Go's builtin ISNULL is lowered to the same ast.IsNull scalar
+            // function as the SQL `IS NULL` form. Its expression-level
+            // rewrite can carry an implicit cast (for example when combined
+            // with a numeric IN list), so keep the conservative full range
+            // here rather than narrowing a prefix scan on the raw AST.
+            Some(ColumnPoints {
+                points: full_range(),
+                eq_or_in: false,
+                reserve: true,
+                finished: false,
+            })
+        }
         _ => None,
     }
+}
+
+fn is_isnull_function_on_column(expr: &Expr, name: &str) -> bool {
+    matches!(
+        expr,
+        Expr::Func {
+            name: function_name,
+            args,
+            ..
+        } if function_name.eq_ignore_ascii_case("isnull")
+            && args.len() == 1
+            && is_column(&args[0], name)
+    )
+}
+
+fn is_in_on_column(expr: &Expr, name: &str) -> bool {
+    matches!(expr, Expr::In { expr, .. } if is_column(expr, name))
 }
 
 /// The access ranges of one CNF conjunct list over one index, with the
@@ -1665,16 +1815,29 @@ fn build_cnf_ranges<'a>(
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(
+            let Some(mut column) = points_for_condition(
                 condition,
                 key_part,
                 resolver,
                 like_default_escape,
                 convert_to_sort_key,
-            )
-            else {
+            ) else {
                 continue;
             };
+            // `ISNULL(col) AND col IN (...)` is represented as two CNF
+            // conjuncts after `collect_conjuncts`. Match Go's detached range
+            // here as well as in the nested-expression path above: keep the
+            // NULL point and leave the IN predicate to the residual filter.
+            if is_in_on_column(condition, &key_part.name)
+                && conditions
+                    .iter()
+                    .any(|other| is_isnull_function_on_column(other, &key_part.name))
+            {
+                column.points = vec![
+                    Point::start(Datum::Null, false),
+                    Point::end(Datum::Null, false),
+                ];
+            }
             if !column.eq_or_in {
                 continue;
             }
@@ -1718,8 +1881,7 @@ fn build_cnf_ranges<'a>(
                 resolver,
                 like_default_escape,
                 convert_to_sort_key,
-            )
-            else {
+            ) else {
                 continue;
             };
             tail = Some(intersection(
@@ -1915,7 +2077,11 @@ fn build_dnf_ranges<'a>(
         // The DNF branch is taken when the WHOLE `WHERE` is one `OR`; a
         // partial branch leaves nothing beside the disjunction itself, but
         // the whole disjunction must stay among the filters.
-        residual: if has_residual { vec![disjunct] } else { Vec::new() },
+        residual: if has_residual {
+            vec![disjunct]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -1970,12 +2136,12 @@ fn conjunct_points_on_first_column<'a>(
             let collation = column.field_type.collation();
             if matches!(op, BinaryOp::LogicAnd) {
                 match (left, right) {
-                    (Some((mut lp, lr)), Some((mut rp, rr))) => {
+                    (Some((mut lp, lr)), Some((rp, rr))) => {
                         lp = intersection(&lp, &rp, collation);
                         Some((lp, lr || rr))
                     }
-                    (Some((lp, lr)), None) => Some((lp, true)),
-                    (None, Some((rp, rr))) => Some((rp, true)),
+                    (Some((lp, _)), None) => Some((lp, true)),
+                    (None, Some((rp, _))) => Some((rp, true)),
                     (None, None) => None,
                 }
             } else {
@@ -1999,20 +2165,21 @@ fn conjunct_points_on_first_column<'a>(
             op @ (BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le),
             lhs,
             rhs,
-        ) if row_items(lhs).is_some_and(|items| {
-            !items.is_empty() && is_column(&items[0], &column.name)
-        }) && row_items(lhs).map(|l| l.len()) == row_items(rhs).map(|r| r.len()) => {
+        ) if row_items(lhs)
+            .is_some_and(|items| !items.is_empty() && is_column(&items[0], &column.name))
+            && row_items(lhs).map(|l| l.len()) == row_items(rhs).map(|r| r.len()) =>
+        {
             let items = row_items(lhs).unwrap_or(&[]);
             let values = row_items(rhs).unwrap_or(&[]);
-            let head = Expr::Binary(
-                *op,
-                Box::new(items[0].clone()),
-                Box::new(values[0].clone()),
-            );
-            let Some(head_points) =
-                points_for_condition(&head, column, resolver, like_default_escape, convert_to_sort_key)
-                    .map(|column_points| typed_points(column_points.points, column))
-            else {
+            let head = Expr::Binary(*op, Box::new(items[0].clone()), Box::new(values[0].clone()));
+            let Some(head_points) = points_for_condition(
+                &head,
+                column,
+                resolver,
+                like_default_escape,
+                convert_to_sort_key,
+            )
+            .map(|column_points| typed_points(column_points.points, column)) else {
                 return None;
             };
             if items.len() == 1 {
@@ -2030,17 +2197,12 @@ fn conjunct_points_on_first_column<'a>(
                 like_default_escape,
                 convert_to_sort_key,
             )
-            .map(|column_points| typed_points(column_points.points, column))
-            else {
+            .map(|column_points| typed_points(column_points.points, column)) else {
                 // The leading equality holds nothing here (a NULL literal,
                 // say): the whole comparison degrades to its filter.
                 return None;
             };
-            let points = union_points(
-                &head_points,
-                &tail_points,
-                column.field_type.collation(),
-            );
+            let points = union_points(&head_points, &tail_points, column.field_type.collation());
             Some((points, true))
         }
         other => points_for_condition(
@@ -2175,6 +2337,15 @@ pub(crate) fn detach_conds_for_column<'a>(
     conditions: &[&'a Expr],
     resolver: &dyn ColumnResolver,
 ) -> IndexRanges<'a> {
+    detach_conds_for_column_with_context(column, conditions, resolver, RangeContext::default()).0
+}
+
+pub(crate) fn detach_conds_for_column_with_context<'a>(
+    column: &RangeColumn,
+    conditions: &[&'a Expr],
+    resolver: &dyn ColumnResolver,
+    context: RangeContext<'_>,
+) -> (IndexRanges<'a>, bool) {
     // `buildColumnRange` (`ranger.go:491-526`) intersects the point set of
     // EVERY condition it took, with no equality prefix and no per-column walk
     // -- there is only one column, so `a IN (1,2,3) AND a > 1` narrows to
@@ -2218,25 +2389,83 @@ pub(crate) fn detach_conds_for_column<'a>(
     let mut ranges = Vec::new();
     if access_count > 0 {
         convert_points_in_place(&mut points, &column.field_type);
-        ranges = points_to_ranges(&points, column);
+        // Reuse Go's conversion and budget check before materializing ranges.
+        // Column histograms use raw values, so no index sort-key conversion.
+        let native_points = points
+            .iter()
+            .map(|point| tidb_planner::ranger::points::Point {
+                value: point.value.clone(),
+                excl: point.excl,
+                start: point.start,
+            })
+            .collect();
+        let native = tidb_planner::ranger::ranger::points_to_ranges(
+            native_points,
+            &column.field_type,
+            context.max_size,
+            &mut None,
+        );
+        let (built, fallback) = match native {
+            Ok(result) => result,
+            // An unsupported conversion contributes no statistics node.
+            Err(_) => {
+                return (
+                    IndexRanges {
+                        ranges: Vec::new(),
+                        access_count: 0,
+                        column_count: 0,
+                        access_columns: Vec::new(),
+                        eq_or_in_count: 0,
+                        residual: conditions.to_vec(),
+                    },
+                    false,
+                )
+            }
+        };
+        if fallback {
+            context.record_fallback();
+            return (
+                IndexRanges {
+                    ranges: Vec::new(),
+                    access_count: 0,
+                    column_count: 0,
+                    access_columns: Vec::new(),
+                    eq_or_in_count: 0,
+                    residual: conditions.to_vec(),
+                },
+                true,
+            );
+        }
+        ranges = built
+            .into_iter()
+            .map(|range| IndexRange {
+                low: range.low_val,
+                high: range.high_val,
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+            .collect();
         if column.prefix_len != UNSPECIFIED_LENGTH {
             ranges = union_ranges(ranges, true);
         }
     }
-    IndexRanges {
-        ranges,
-        access_count,
-        column_count: usize::from(access_count > 0),
-        access_columns: if access_count > 0 {
-            vec![0]
-        } else {
-            Vec::new()
+    (
+        IndexRanges {
+            ranges,
+            access_count,
+            column_count: usize::from(access_count > 0),
+            access_columns: if access_count > 0 {
+                vec![0]
+            } else {
+                Vec::new()
+            },
+            // `BuildColumnRange` has no equality prefix to report; the selectivity
+            // caller is the only user of this entry point and never reads it.
+            eq_or_in_count: 0,
+            residual,
         },
-        // `BuildColumnRange` has no equality prefix to report; the selectivity
-        // caller is the only user of this entry point and never reads it.
-        eq_or_in_count: 0,
-        residual,
-    }
+        false,
+    )
 }
 
 /// Builds the ranges for a row-valued `IN` over the leading index columns.
@@ -2326,11 +2555,20 @@ fn build_row_in_ranges<'a>(
         .reduce(|left, right| Expr::Binary(BinaryOp::LogicOr, Box::new(left), Box::new(right)))
         .expect("the empty branch set returned above");
     let built = build_dnf_ranges(
-        index_columns, &dnf, resolver, b'\\', convert_to_sort_key, merge_consecutive,
+        index_columns,
+        &dnf,
+        resolver,
+        b'\\',
+        convert_to_sort_key,
+        merge_consecutive,
     )?;
     // The temporary DNF cannot lend its residual references to the caller.
     // A prefix index or partially lowered arm still requires the written IN.
-    let residual = if built.residual.is_empty() { Vec::new() } else { vec![condition] };
+    let residual = if built.residual.is_empty() {
+        Vec::new()
+    } else {
+        vec![condition]
+    };
     Some(IndexRanges {
         ranges: built.ranges,
         access_count: 1,
@@ -2355,20 +2593,34 @@ fn best_cnf_point_prefix<'a>(
     let mut best = None;
     let mut best_columns = minimum_columns;
     for (offset, condition) in conditions.iter().enumerate() {
-        let candidate = build_row_in_ranges(columns, condition, resolver, convert_to_sort_key, false)
-            .or_else(|| {
-                is_or(condition).then(|| {
-                    build_dnf_ranges(columns, condition, resolver, like_default_escape, convert_to_sort_key, false)
-                }).flatten()
-            });
+        let candidate =
+            build_row_in_ranges(columns, condition, resolver, convert_to_sort_key, false).or_else(
+                || {
+                    is_or(condition)
+                        .then(|| {
+                            build_dnf_ranges(
+                                columns,
+                                condition,
+                                resolver,
+                                like_default_escape,
+                                convert_to_sort_key,
+                                false,
+                            )
+                        })
+                        .flatten()
+                },
+            );
         let Some(candidate) = candidate else { continue };
         let Some(first) = candidate.ranges.first() else {
             return Some((offset, candidate));
         };
         let count = first.low.len();
-        if count > best_columns && candidate.ranges.iter().all(|range| {
-            is_point_range(range) && range.low.len() == count
-        }) {
+        if count > best_columns
+            && candidate
+                .ranges
+                .iter()
+                .all(|range| is_point_range(range) && range.low.len() == count)
+        {
             best_columns = count;
             best = Some((offset, candidate));
         }
@@ -2393,29 +2645,6 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
         resolver,
         resolver.like_default_escape(),
         true,
-    )
-}
-
-/// Go `DetachCondAndBuildRangeForPartition`, the one entry that does NOT
-/// convert its points to sort keys (`detachCondAndBuildRange(..., false,
-/// false)`).
-///
-/// A partition bound is a written VALUE, compared under the partition
-/// column's collation by `ForRangeColumnsPruning`/`ForListColumnPruning`. An
-/// index range is the index's stored form, which for a non-binary collation
-/// is the sort key -- so the two cannot share one representation, and Go
-/// keeps them apart with this flag rather than converting twice.
-pub(crate) fn detach_cond_and_build_range_for_partition<'a>(
-    columns: &[RangeColumn],
-    where_clause: &'a Expr,
-    resolver: &dyn ColumnResolver,
-) -> Option<IndexRanges<'a>> {
-    detach_cond_and_build_range_for_index_with_like_default_escape(
-        columns,
-        where_clause,
-        resolver,
-        resolver.like_default_escape(),
-        false,
     )
 }
 
@@ -2462,6 +2691,140 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index<'a>(
     )
 }
 
+/// Statistics entry carrying the statement range budget.
+pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
+    index_columns: &[RangeColumn],
+    conjuncts: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+    context: RangeContext<'_>,
+    schema_columns: &[RangeColumn],
+) -> Option<(IndexRanges<'a>, bool, i32)> {
+    struct Resolver<'a> {
+        columns: &'a [RangeColumn],
+        zone: &'a tidb_datatype::SessionTimeZone,
+    }
+    impl tidb_expr::rewriter::ColumnResolver for Resolver<'_> {
+        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+            self.zone.clone()
+        }
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            let name = path.last()?;
+            let position = self
+                .columns
+                .iter()
+                .position(|column| column.name.eq_ignore_ascii_case(name))?;
+            Some((
+                position,
+                self.columns[position].field_type.clone(),
+                position as i64 + 1,
+            ))
+        }
+    }
+    let resolver = Resolver {
+        columns: schema_columns,
+        zone,
+    };
+    let rewritten = conjuncts
+        .iter()
+        .map(|condition| rewrite_expr_resolved(condition, &resolver).ok())
+        .collect::<Vec<_>>();
+    let conditions = rewritten.iter().flatten().cloned().collect::<Vec<_>>();
+    let columns = index_columns
+        .iter()
+        .map(|column| {
+            let position = schema_columns
+                .iter()
+                .position(|candidate| candidate.name.eq_ignore_ascii_case(&column.name))?;
+            let mut result = tidb_expr::column::Column::default();
+            result.unique_id = position as i64 + 1;
+            result.index = position as i64;
+            result.ret_type = Some(column.field_type.clone());
+            Some(result)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let lengths = index_columns
+        .iter()
+        .map(|column| column.prefix_len)
+        .collect::<Vec<_>>();
+    let detached = match context.fallback_handler {
+        Some(handler) => tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler(
+            &conditions,
+            &columns,
+            &lengths,
+            context.max_size,
+            handler,
+        ),
+        None => tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index(
+            &conditions,
+            &columns,
+            &lengths,
+            context.max_size,
+        ),
+    }
+    .ok()?;
+    if detached.access_conds.is_empty() {
+        return None;
+    }
+    let residual = conjuncts
+        .iter()
+        .zip(&rewritten)
+        .filter_map(|(original, expression)| match expression {
+            Some(expression)
+                if detached
+                    .access_conds
+                    .iter()
+                    .any(|access| access.equal(expression))
+                    && !detached
+                        .remained_conds
+                        .iter()
+                        .any(|residual| residual.equal(expression)) =>
+            {
+                None
+            }
+            _ => Some(*original),
+        })
+        .collect();
+    let access_columns = detached
+        .access_conds
+        .iter()
+        .flat_map(tidb_expr::simple_expr::extract_columns)
+        .filter_map(|column| {
+            columns
+                .iter()
+                .position(|index_column| index_column.unique_id == column.unique_id)
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let column_count = detached
+        .ranges
+        .iter()
+        .map(|range| range.low_val.len())
+        .max()
+        .unwrap_or(0);
+    Some((
+        IndexRanges {
+            ranges: detached
+                .ranges
+                .into_iter()
+                .map(|range| IndexRange {
+                    low: range.low_val,
+                    high: range.high_val,
+                    low_exclusive: range.low_exclude,
+                    high_exclusive: range.high_exclude,
+                })
+                .collect(),
+            access_count: detached.access_conds.len(),
+            column_count,
+            access_columns,
+            eq_or_in_count: detached.eq_or_in_count,
+            residual,
+        },
+        detached.is_dnf_cond,
+        i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
+    ))
+}
+
 fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     index_columns: &[RangeColumn],
     conjuncts: &[&'a Expr],
@@ -2470,7 +2833,13 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     convert_to_sort_key: bool,
 ) -> Option<IndexRanges<'a>> {
     if let [condition] = conjuncts {
-        if let Some(built) = build_row_in_ranges(index_columns, condition, resolver, convert_to_sort_key, true) {
+        if let Some(built) = build_row_in_ranges(
+            index_columns,
+            condition,
+            resolver,
+            convert_to_sort_key,
+            true,
+        ) {
             return Some(built);
         }
     }
@@ -2500,16 +2869,29 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     }
     if conjuncts.len() > 1 {
         if let Some((offset, mut prefix)) = best_cnf_point_prefix(
-            index_columns, conjuncts, built.eq_or_in_count, resolver,
-            like_default_escape, convert_to_sort_key,
+            index_columns,
+            conjuncts,
+            built.eq_or_in_count,
+            resolver,
+            like_default_escape,
+            convert_to_sort_key,
         ) {
-            let Some(first) = prefix.ranges.first() else { return Some(prefix) };
+            let Some(first) = prefix.ranges.first() else {
+                return Some(prefix);
+            };
             let prefix_len = first.low.len();
-            let remaining: Vec<_> = conjuncts.iter().enumerate()
-                .filter(|(index, _)| *index != offset).map(|(_, condition)| *condition).collect();
+            let remaining: Vec<_> = conjuncts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != offset)
+                .map(|(_, condition)| *condition)
+                .collect();
             let tail = detach_conjuncts_and_build_range_for_index_with_like_default_escape(
-                &index_columns[prefix_len..], &remaining, resolver,
-                like_default_escape, convert_to_sort_key,
+                &index_columns[prefix_len..],
+                &remaining,
+                resolver,
+                like_default_escape,
+                convert_to_sort_key,
             );
             if let Some(tail) = tail {
                 let mut ranges = Vec::new();
@@ -2526,7 +2908,9 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
                 prefix.ranges = union_ranges(ranges, true);
                 prefix.access_count += tail.access_count;
                 prefix.column_count = prefix_len + tail.column_count;
-                prefix.access_columns.extend(tail.access_columns.iter().map(|column| prefix_len + column));
+                prefix
+                    .access_columns
+                    .extend(tail.access_columns.iter().map(|column| prefix_len + column));
                 prefix.eq_or_in_count += tail.eq_or_in_count;
                 prefix.residual.extend(tail.residual);
             } else {
@@ -2553,141 +2937,86 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     (projected.access_count > 0).then_some(projected)
 }
 
-/// Go's `PredicateSimplification` / `unsatisfiable`
-/// (`pkg/planner/core/rule/rule_predicate_simplification.go`): a `WHERE` reads
-/// no row on ANY access path when some column carries an equality `col = c`
-/// that another binary comparison on the same column contradicts.
-///
-/// This is the index-INDEPENDENT `TableDual`: `b = 1 AND b = 2` reads nothing
-/// no matter which columns are indexed, so Go plans `TableDual rows:0` before
-/// any path is costed, and does the same for a partition key
-/// (`a = 2 AND a = 3` over a partitioned table). It is distinct from the
-/// empty-range short-circuit in [`detach_cond_and_build_range_for_index`],
-/// which fires only for the column an access path was chosen on.
-///
-/// The EQUALITY gate is Go's own. `unsatisfiable` pairs an equality
-/// (`equalPredicate`) only with another BINARY COMPARISON
-/// (`binaryComparisonPredicate`: `=`, `<>`, `<`, `>`, `<=`, `>=`) -- never with
-/// an `IN`, a `BETWEEN` or an `OR` -- and requires one side of the pair to be
-/// an equality. So `b > 10 AND b < 1` (no equality) stays an ordinary filter,
-/// matching Go which leaves it a `TableFullScan` on a non-indexed column, and
-/// `b = 1 AND b IN (2, 3)` is not proven contradictory because the other side
-/// is an `IN` rather than a binary comparison.
-///
-/// Intersecting the equality's single point with each other comparison's point
-/// set and asking whether the result is empty is exactly Go's pairwise check:
-/// the intersection drops the equality's value iff some `c1 <op> c2` is false.
-/// Go `logicalop.IsConstFalse` (`expression_util.go:55`), the test
-/// `Conds2TableDual` applies to a single condition: the predicate is a
-/// CONSTANT, and it is either NULL or converts to boolean false.
-///
-/// Go reaches this through `AddSelection` (`logical_plans_misc.go:85`), which
-/// replaces the child with a zero-row `LogicalTableDual` rather than building
-/// a `LogicalSelection` that admits nothing. `a = 1 AND a = 2` never arrives
-/// here -- the ranger proves that contradiction and
-/// [`where_is_unsatisfiable`] reports it -- but a predicate that constant
-/// folding has already reduced to a literal does, most often after a
-/// projected constant was substituted into it (`0 > 0` from
-/// `registration_num > 0` over a `0 registration_num` union term).
-pub(crate) fn where_is_constant_false(
-    where_clause: &Expr,
-    resolver: &dyn ColumnResolver,
-) -> bool {
-    // Go reaches the dual through TWO steps, and both matter here.
-    // `shortCircuitLogicalConstants` (`rule_predicate_simplification.go:535`)
-    // walks the CONJUNCT list and, on the first false one, returns THAT
-    // predicate alone as the whole list; `Conds2TableDual` then sees a
-    // single const-false condition and answers a dual. So a false conjunct
-    // anywhere in an `AND` chain is enough -- which is the shape a
-    // substituted constant arrives in (`period = 1 AND ... AND 0`).
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    conjuncts.iter().any(|conjunct| {
-        let Some(value) = constant_value(conjunct, resolver) else {
-            return false;
-        };
-        match value {
-            // Go: `con.Value.IsNull()` is const-false outright.
-            Datum::Null => true,
-            // Go: `con.Value.ToBool(...) == 0`; an error is NOT const-false.
-            other => matches!(tidb_expr::truthy_of(&other), Ok(Some(false))),
-        }
-    })
-}
-
-pub(crate) fn where_is_unsatisfiable(
-    columns: &[(String, FieldType)],
-    where_clause: &Expr,
-    resolver: &dyn ColumnResolver,
-) -> bool {
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    // A lone top-level OR is a disjunction, so a contradictory branch does not
-    // make the whole predicate false. A top-level AND is already flattened into
-    // several conjuncts by `collect_conjuncts`.
-    if conjuncts.len() == 1 && is_or(conjuncts[0]) {
-        return false;
-    }
-    columns
-        .iter()
-        .any(|(name, field_type)| column_conjuncts_contradict(name, field_type, &conjuncts, resolver))
-}
-
-/// Whether the binary-comparison conjuncts on one column, taken together with
-/// at least one equality among them, admit no value.
-fn column_conjuncts_contradict(
-    name: &str,
-    field_type: &FieldType,
-    conjuncts: &[&Expr],
-    resolver: &dyn ColumnResolver,
-) -> bool {
-    let column = RangeColumn::whole(name.to_owned(), field_type.clone());
-    let mut points = full_range();
-    let mut has_equality = false;
-    let mut access = false;
-    for condition in conjuncts {
-        let Some(column_points) = simple_comparison_points(condition, &column, resolver) else {
-            continue;
-        };
-        points = intersection(
-            &points,
-            &column_points.points,
-            column.field_type.collation(),
-        );
-        has_equality |= column_points.eq_or_in;
-        access = true;
-    }
-    if !(access && has_equality) {
-        return false;
-    }
-    convert_points_in_place(&mut points, &column.field_type);
-    points_to_ranges(&points, &column).is_empty()
-}
-
-/// The points a TOP-LEVEL binary comparison (`=`, `<>`, `<`, `>`, `<=`, `>=`)
-/// on `column` puts on it, with `eq_or_in` set only for the `=` Go's
-/// `unsatisfiable` requires. `None` for every other shape -- an `IN`, a
-/// `BETWEEN`, an `OR`, a `LIKE`, an `IS NULL` -- because Go's pairwise check
-/// never uses those as the contradicting side.
-fn simple_comparison_points(
-    condition: &Expr,
-    column: &RangeColumn,
-    resolver: &dyn ColumnResolver,
-) -> Option<ColumnPoints> {
-    match condition {
-        Expr::Paren(inner) => simple_comparison_points(inner, column, resolver),
-        Expr::Binary(
-            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge,
-            ..,
-        ) => points_on_column(condition, column, resolver, b'\\', true),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plan_trace::range_text;
+
+    #[test]
+    fn dnf_range_quota_checks_the_accumulated_union() {
+        for sql in [
+            "SELECT * FROM t WHERE (a=1 AND b=2) OR (a=3 AND b=4)",
+            "SELECT * FROM t WHERE (a,b) IN ((1,2),(3,4))",
+        ] {
+            let statement = tidb_parser::parse(sql).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let predicate = select.where_clause.as_ref().unwrap();
+            let index = columns(&["a", "b"]);
+            for quota in [1, 512, 0] {
+                let built = detach_conjuncts_and_build_range_for_index_with_context(
+                    &index,
+                    &[predicate],
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    RangeContext {
+                        max_size: quota,
+                        fallback_handler: None,
+                    },
+                    &index,
+                )
+                .map(|(built, _, _)| built);
+                if quota == 0 {
+                    let built = built.unwrap();
+                    assert_eq!(built.ranges.len(), 2);
+                    assert!(built.residual.is_empty());
+                } else {
+                    // Each two-column point fits512bytes; their union does not.
+                    assert!(built.is_none(), "quota={quota}: {built:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composite_range_quota_preserves_prefix_and_residual() {
+        let statement =
+            tidb_parser::parse("SELECT * FROM t WHERE a IN (1,3) AND b IN (2,4)").unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("select")
+        };
+        let predicate = select.where_clause.as_ref().unwrap();
+        let mut conjuncts = Vec::new();
+        collect_conjuncts(&predicate, &mut conjuncts);
+        let index = columns(&["a", "b"]);
+        // Two integer ranges fit512bytes; the four two-column products do not.
+        for (quota, columns_used, residuals) in [(512, 1, 1), (0, 2, 0)] {
+            let built = detach_conjuncts_and_build_range_for_index_with_context(
+                &index,
+                &conjuncts,
+                &tidb_datatype::SessionTimeZone::utc(),
+                RangeContext {
+                    max_size: quota,
+                    fallback_handler: None,
+                },
+                &index,
+            )
+            .map(|(built, _, _)| built)
+            .unwrap();
+            assert_eq!(built.column_count, columns_used, "quota={quota}");
+            assert_eq!(built.residual.len(), residuals, "quota={quota}");
+            if quota != 0 {
+                assert!(std::ptr::eq(built.residual[0], conjuncts[1]));
+                assert_eq!(built.ranges.len(), 2);
+            }
+        }
+    }
 
     /// The `range:` cell EXPLAIN would print for a derived range list, which
     /// is the exact text the Go corpus below was captured from.
@@ -2802,9 +3131,18 @@ mod tests {
     #[test]
     fn dnf_branch_with_residual_conjunct_keeps_its_ranges() {
         let typed: Vec<RangeColumn> = vec![
-            RangeColumn::whole("id1".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-            RangeColumn::whole("id2".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-            RangeColumn::whole("tp".to_owned(), FieldType::new(tidb_datatype::FieldTypeCode::VarString)),
+            RangeColumn::whole(
+                "id1".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            RangeColumn::whole(
+                "id2".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            RangeColumn::whole(
+                "tp".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+            ),
         ];
         // String-literal arms detach fully; the union collapses onto the
         // shared `id1` point exactly as go prints it.
@@ -2836,14 +3174,29 @@ mod tests {
         // Go extractBestCNFItemRanges keeps adjacent points separate until
         // suffix constraints have been appended to each correlated prefix.
         for (predicate, expected) in [
-            ("(a,b) IN ((1,1),(1,2)) AND c=7", "[1 1 7,1 1 7], [1 2 7,1 2 7]"),
-            ("c=7 AND (a,b) IN ((1,1),(2,2))", "[1 1 7,1 1 7], [2 2 7,2 2 7]"),
-            ("((a=1 AND b=1) OR (a=2 AND b=2)) AND c>7", "(1 1 7,1 1 +inf], (2 2 7,2 2 +inf]"),
-            ("(a,b) IN ((1,1),(2,2)) AND c IN (7,9)", "[1 1 7,1 1 7], [1 1 9,1 1 9], [2 2 7,2 2 7], [2 2 9,2 2 9]"),
+            (
+                "(a,b) IN ((1,1),(1,2)) AND c=7",
+                "[1 1 7,1 1 7], [1 2 7,1 2 7]",
+            ),
+            (
+                "c=7 AND (a,b) IN ((1,1),(2,2))",
+                "[1 1 7,1 1 7], [2 2 7,2 2 7]",
+            ),
+            (
+                "((a=1 AND b=1) OR (a=2 AND b=2)) AND c>7",
+                "(1 1 7,1 1 +inf], (2 2 7,2 2 +inf]",
+            ),
+            (
+                "(a,b) IN ((1,1),(2,2)) AND c IN (7,9)",
+                "[1 1 7,1 1 7], [1 1 9,1 1 9], [2 2 7,2 2 7], [2 2 9,2 2 9]",
+            ),
             ("(a,b) IN ((1,1),(NULL,2),(1,1)) AND c=7", "[1 1 7,1 1 7]"),
             ("(a,b) IN ((NULL,1),(2,NULL)) AND c=7", ""),
             ("(a,b) IN ((1,1),(2,2)) AND c>9 AND c<7", ""),
-            ("(a,b) IN ((1,1),(2,2)) AND s='residual'", "[1 1,1 1], [2 2,2 2]"),
+            (
+                "(a,b) IN ((1,1),(2,2)) AND s='residual'",
+                "[1 1,1 1], [2 2,2 2]",
+            ),
         ] {
             assert_eq!(derive(&["a", "b", "c"], predicate), expected, "{predicate}");
         }
@@ -2853,9 +3206,14 @@ mod tests {
     fn composite_cnf_prefix_index_retains_written_residuals() {
         let statement = tidb_parser::parse(
             "SELECT * FROM t WHERE (s,b) IN (('abcd',1),('abce',2)) AND c=7 AND a>0",
-        ).unwrap();
-        let tidb_ast::Stmt::Query(query) = &statement else { panic!("query") };
-        let tidb_ast::QueryStmt::Select(select) = &**query else { panic!("select") };
+        )
+        .unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
         let predicate = select.where_clause.as_ref().unwrap();
         let mut conjuncts = Vec::new();
         collect_conjuncts(predicate, &mut conjuncts);
@@ -2863,11 +3221,20 @@ mod tests {
         index[0].field_type.set_flen(255);
         index[0].prefix_len = 3;
         let built = detach_cond_and_build_range_for_index(
-            &index, predicate, &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()),
-        ).unwrap();
-        assert_eq!(render(&built.ranges), "[\"abc\" 1 7,\"abc\" 1 7], [\"abc\" 2 7,\"abc\" 2 7]");
-        assert_eq!(built.residual, vec![conjuncts[0], conjuncts[2]],
-            "a prefix key cannot prove the complete row-IN; unrelated residuals also remain");
+            &index,
+            predicate,
+            &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()),
+        )
+        .unwrap();
+        assert_eq!(
+            render(&built.ranges),
+            "[\"abc\" 1 7,\"abc\" 1 7], [\"abc\" 2 7,\"abc\" 2 7]"
+        );
+        assert_eq!(
+            built.residual,
+            vec![conjuncts[0], conjuncts[2]],
+            "a prefix key cannot prove the complete row-IN; unrelated residuals also remain"
+        );
         assert_eq!(built.access_count, 2);
         assert_eq!(built.access_columns, vec![0, 1, 2]);
     }
@@ -3105,12 +3472,10 @@ mod tests {
     /// brackets dropped, ranges joined by `", "`), and `""` is Go's empty
     /// range list.
     ///
-    /// Every row here turns on `convertPointInPlace`: Go converts each range
-    /// endpoint to the indexed column's type before building, so `a >= -2147483648`
-    /// on an UNSIGNED column collapses to `[0,+inf]` rather than keeping the
-    /// negative bound. Rust now reproduces 13 rows; the six remaining rows
-    /// stay `#[ignore]`d below with Go's answer asserted as the next unit's
-    /// specification.
+    /// Every row here exercises Go's comparison-domain handling: integer
+    /// endpoints are widened to BIGINT before conversion, unsigned negative
+    /// list values are removed from `NOT IN`, and FLOAT overflow is rejected
+    /// before a saturated endpoint can be emitted.
     /// One index column of a corpus row: name, type code, and whether the
     /// column is UNSIGNED.
     type IndexColumnSpec = (&'static str, tidb_datatype::FieldTypeCode, bool);
@@ -3233,11 +3598,9 @@ mod tests {
         derive_typed(&cols, where_sql)
     }
 
-    /// How many of [`GO_UNSIGNED_AND_OVERFLOW`]'s rows this derivation
-    /// reproduces today. A ratchet, not a pass: the full table is asserted by
-    /// the `#[ignore]`d test below, which names every row that is still wrong.
+    /// Every row in [`GO_UNSIGNED_AND_OVERFLOW`] must reproduce Go's output.
     #[test]
-    fn unsigned_and_overflow_rows_that_already_match_go() {
+    fn unsigned_and_overflow_rows_match_go() {
         let mut matched = 0;
         let mut diverged = Vec::new();
         for (index, where_sql, expected) in GO_UNSIGNED_AND_OVERFLOW {
@@ -3248,21 +3611,18 @@ mod tests {
                 diverged.push(format!("  {where_sql:<50} go={expected:<40} rust={got}"));
             }
         }
-        // This assertion is a ratchet, not a pass: it records how many of Go's
-        // 19 rows this derivation reproduces today. It must never fall.
+        // Keep the per-row diagnostics so a future comparison-domain change
+        // names the exact Go case that regressed.
         assert!(
-            matched >= 13,
+            matched == GO_UNSIGNED_AND_OVERFLOW.len(),
             "only {matched} of {} Go rows match; diverging rows:\n{}",
             GO_UNSIGNED_AND_OVERFLOW.len(),
             diverged.join("\n")
         );
     }
 
-    /// The full Go table asserted verbatim. This fails until endpoint type
-    /// conversion (`convertPointInPlace`) lands, and the failure message names
-    /// every row that is still wrong -- that list is the work item.
+    /// The full Go table asserted verbatim.
     #[test]
-    #[ignore = "6 of 19 rows still need Go's handleUnsignedCol signedness clamping and expression-level RefineCompareArgs for out-of-domain constants"]
     fn unsigned_and_overflow_ranges_match_go() {
         let mut mismatches = Vec::new();
         for (index, where_sql, expected) in GO_UNSIGNED_AND_OVERFLOW {
@@ -3303,6 +3663,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn prefix_index_is_not_null_remains_an_access_condition() {
+        assert_eq!(
+            derive_prefixed(
+                &[("a", ft(tidb_datatype::FieldTypeCode::VarString), 2)],
+                "a is not null",
+            ),
+            "[-inf,+inf]"
+        );
+        assert_eq!(
+            derive_prefixed(
+                &[
+                    ("a", ft(tidb_datatype::FieldTypeCode::VarString), 2),
+                    ("b", ft(tidb_datatype::FieldTypeCode::VarString), 2),
+                ],
+                "a = 'a' and b is not null",
+            ),
+            "[\"a\" -inf,\"a\" +inf]"
+        );
+        assert_eq!(
+            derive_prefixed(
+                &[("a", ft(tidb_datatype::FieldTypeCode::VarString), 2)],
+                "isnull(a) or a in (1,2,3,4)",
+            ),
+            "[NULL,+inf]"
+        );
+    }
+
     /// Go `TestPrefixIndexRange` (`pkg/util/ranger/ranger_test.go:2342`), all
     /// 10 rows, against
     ///
@@ -3314,14 +3702,9 @@ mod tests {
     ///
     /// with `tidb_opt_prefix_index_single_scan = 1`.
     ///
-    /// The declared `(2)` reaches the builder now, and 4 of these 10 rows
-    /// pass. The other 6 diverge for a reason that has nothing to do with the
-    /// prefix: this crate does not turn `IS NOT NULL` (or an `isnull(...)`
-    /// call) into an ACCESS condition at all -- `points_for_condition` drops
-    /// any condition whose points span the full range -- so Go's
-    /// `[-inf,+inf]` and `[NULL,+inf]` come back as "no range". That is the
-    /// same gap the module doc lists, and closing it is a different unit, so
-    /// the row set stays recorded rather than half-asserted.
+    /// The declared `(2)` reaches the builder now. The `IS NOT NULL` cases
+    /// remain access conditions, and the `ISNULL(a) AND a IN (...)` shape is
+    /// kept on its NULL branch while the list remains a residual filter.
     const GO_PREFIX_INDEX_RANGE: &[(&[&str], &str, &str)] = &[
         (&["a"], "a is null", "[NULL,NULL]"),
         // accessConds is empty here: Go detaches nothing and falls back to the
@@ -3346,7 +3729,6 @@ mod tests {
     ];
 
     #[test]
-    #[ignore = "6 of 10 rows need IS NOT NULL as an access condition, which this crate does not build; Go's answers are recorded above as that unit's spec"]
     fn prefix_index_ranges_match_go() {
         let mut mismatches = Vec::new();
         for (index, where_sql, expected) in GO_PREFIX_INDEX_RANGE {
@@ -3456,71 +3838,5 @@ mod tests {
                 "{where_sql}"
             );
         }
-    }
-
-    /// `where_is_unsatisfiable` fires exactly on Go's `unsatisfiable`: an
-    /// equality contradicted by another BINARY comparison on the same column,
-    /// on ANY column of the table -- and never on the shapes Go leaves a
-    /// filter (a range pair with no equality, an equality vs an `IN`, a lone
-    /// disjunction).
-    #[test]
-    fn where_is_unsatisfiable_matches_go_predicate_simplification() {
-        // The table is `t(a int, b int, c int)`; the contradiction may be on
-        // any of them, indexed or not.
-        let table: Vec<(String, FieldType)> = ["a", "b", "c"]
-            .iter()
-            .map(|name| {
-                (
-                    (*name).to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )
-            })
-            .collect();
-        let unsat = |where_sql: &str| {
-            let sql = format!("SELECT * FROM t WHERE {where_sql}");
-            let stmt = tidb_parser::parse(&sql).expect("parses");
-            let tidb_ast::Stmt::Query(query) = &stmt else {
-                panic!("not a query")
-            };
-            let tidb_ast::QueryStmt::Select(select) = &**query else {
-                panic!("not a select")
-            };
-            let where_clause = select.where_clause.as_ref().expect("has a WHERE");
-            where_is_unsatisfiable(&table, where_clause, &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()))
-        };
-
-        // Contradictory: an equality no other comparison on the column admits.
-        // The column need not be the leading one, nor indexed at all -- this is
-        // the whole point of the index-independent dual.
-        assert!(unsat("b = 1 and b = 2"), "two conflicting equalities on b");
-        assert!(unsat("a = 2 and a = 3"), "the partition-key shape");
-        assert!(unsat("a = 1 and a > 2"), "equality below a lower bound");
-        assert!(unsat("a = 1 and a < 1"), "equality at an excluded bound");
-        assert!(unsat("a = 1 and a <> 1"), "equality against its own <>");
-        assert!(
-            unsat("c > 0 and b = 1 and b = 2"),
-            "a satisfiable conjunct on another column does not hide it"
-        );
-
-        // Satisfiable / not proven false by Go's rule:
-        assert!(!unsat("a = 1 and a = 1"), "the same equality twice");
-        assert!(!unsat("a = 1 and a < 2"), "equality inside the bound");
-        assert!(
-            !unsat("b > 10 and b < 1"),
-            "no equality: Go keeps it a filter, not a dual"
-        );
-        assert!(
-            !unsat("b = 1 and b in (2, 3)"),
-            "the other side is an IN, not a binary comparison"
-        );
-        assert!(
-            !unsat("(b = 1 and b = 2) or c = 5"),
-            "a lone top-level OR is a disjunction"
-        );
-        assert!(!unsat("a = 1"), "a single equality constrains nothing else");
-        assert!(
-            !unsat("a = b"),
-            "a column-to-column equality is not a point"
-        );
     }
 }

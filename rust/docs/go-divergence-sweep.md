@@ -12,7 +12,7 @@ documents. What follows is the part that predicts where the next one is.
 
 | Surface | Document | Result |
 | --- | --- | --- |
-| Encoding (`tablecodec`, `codec`) | [codec-divergence-inventory.md](codec-divergence-inventory.md) | 27 findings, 10 rank‑1 |
+| Encoding (`tablecodec`, `codec`) | [codec-divergence-inventory.md](codec-divergence-inventory.md) | **0 current findings at the pinned package audits** |
 | Types (`pkg/types`) | [types-datatype-divergence-audit.md](types-datatype-divergence-audit.md) | 31 findings, 16 rank‑1 |
 | Wire protocol (`pkg/server`) | [wire-protocol-divergence.md](wire-protocol-divergence.md) | 12 findings, 2 rank‑1 |
 | Sysvars / stmtctx | [architecture/sysvar-and-stmtctx-divergence.md](architecture/sysvar-and-stmtctx-divergence.md) | 14 findings; **948/948 names, 0 declarative divergences** |
@@ -47,8 +47,8 @@ The same shape, elsewhere:
   unobservable from plan text;
 - the mock's snapshot is a clone of the committed store, so it **cannot express
   a read‑ts/write‑ts split** — which is why a silent lost update lived for weeks;
-- decimal fixtures all enter through the *parse* path, where Go normalises too,
-  so negative zero diverges only when a value arrives **as bytes**.
+- decimal fixtures historically entered only through the *parse* path; the
+  byte-input fixture now covers Go's preserved negative-zero representation.
 
 **The lesson is about fixture style, not fixture count.** A test that consults
 only our own code proves internal consistency, which is exactly the property

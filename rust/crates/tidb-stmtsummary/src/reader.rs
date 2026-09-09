@@ -19,8 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone};
-use chrono_tz::Tz;
-use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_datatype::{core_time_from_datetime, Datum, SessionTimeZone, Time, TimeType};
 use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
@@ -54,7 +53,7 @@ pub struct StmtSummaryReader<'a> {
     /// Go `checker`.
     checker: Option<StmtSummaryChecker>,
     /// Go `tz *time.Location`.
-    tz: Tz,
+    tz: SessionTimeZone,
 }
 
 impl std::fmt::Debug for StmtSummaryReader<'_> {
@@ -76,13 +75,12 @@ impl StmtSummaryReader<'static> {
     /// # Panics
     ///
     /// Go panics when a column has no registered factory; so does this.
-    #[must_use]
     pub fn new(
         user: Option<UserIdentity>,
         has_process_priv: bool,
         cols: Vec<ColumnInfo>,
         instance_addr: String,
-        tz: Tz,
+        tz: SessionTimeZone,
     ) -> Self {
         // initialize column value factories.
         let column_value_factories = cols
@@ -111,7 +109,6 @@ impl StmtSummaryReader<'static> {
 
 impl StmtSummaryReader<'_> {
     /// The `Name.O` of every column this reader was built for.
-    #[must_use]
     pub fn column_names(&self) -> Vec<&str> {
         self.columns.iter().map(|col| col.name.original()).collect()
     }
@@ -127,7 +124,6 @@ impl StmtSummaryReader<'_> {
     /// Go takes `ssMap`'s lock once around reading `summaryMap.Values()`; the
     /// ported map exposes that read as its own locked accessor, so the lock is
     /// taken and released inside the call.
-    #[must_use]
     pub fn get_stmt_summary_cumulative_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
 
@@ -152,7 +148,6 @@ impl StmtSummaryReader<'_> {
     /// Go reads `summaryMap.Values()`, `beginTimeForCurInterval` and `other`
     /// under one `ssMap` lock; here each is its own locked accessor, so a
     /// concurrent `AddStatement` can interleave between them.
-    #[must_use]
     pub fn get_stmt_summary_current_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
         let begin_time = self.ss_map.begin_time_for_cur_interval();
@@ -172,7 +167,7 @@ impl StmtSummaryReader<'_> {
             }
         }
         if self.checker.is_none() {
-            if let Some(other_datum) = self.get_stmt_evicted_other_row() {
+            if let Some(other_datum) = self.get_stmt_evicted_other_row(begin_time) {
                 rows.push(other_datum);
             }
         }
@@ -181,7 +176,6 @@ impl StmtSummaryReader<'_> {
 
     /// Go `(*stmtSummaryReader).GetStmtSummaryHistoryRows`: gets all history
     /// statement summaries rows.
-    #[must_use]
     pub fn get_stmt_summary_history_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
 
@@ -292,11 +286,17 @@ impl StmtSummaryReader<'_> {
     ///
     /// Go reads `ssMap.other`, which is always the `evicted.go` rollup; a map
     /// built by [`StmtSummaryByDigestMap::with_sinks`] with a different sink
-    /// has no rollup to read and yields no row.
-    fn get_stmt_evicted_other_row(&self) -> Option<Vec<Datum>> {
+    /// has no rollup to read and yields no row. Evicted summaries are lazy
+    /// expired just like regular summaries, so a rollup whose interval
+    /// predates `begin_time_for_cur_interval` is not exposed (Go
+    /// reader.go:214-220).
+    fn get_stmt_evicted_other_row(&self, begin_time_for_cur_interval: i64) -> Option<Vec<Datum>> {
         let ssbde = self.ss_map.evicted()?;
         let ssbde = ssbde.lock().unwrap();
         let se_element = ssbde.history().back()?;
+        if se_element.begin_time < begin_time_for_cur_interval {
+            return None;
+        }
 
         self.get_stmt_by_digest_element_row(
             &se_element.other_summary,
@@ -336,13 +336,11 @@ pub struct StmtSummaryChecker {
 
 impl StmtSummaryChecker {
     /// Go `NewStmtSummaryChecker`: returns a new statement summaries checker.
-    #[must_use]
     pub fn new(digests: HashSet<String>) -> Self {
         Self { digests }
     }
 
     /// Go `(*stmtSummaryChecker).isDigestValid`.
-    #[must_use]
     pub fn is_digest_valid(&self, digest: &str) -> bool {
         self.digests.contains(digest)
     }
@@ -442,6 +440,8 @@ pub const MAX_ROCKSDB_BLOCK_READ_COUNT_STR: &str = "MAX_ROCKSDB_BLOCK_READ_COUNT
 pub const AVG_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "AVG_ROCKSDB_BLOCK_READ_BYTE";
 /// Go `MaxRocksdbBlockReadByteStr`.
 pub const MAX_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "MAX_ROCKSDB_BLOCK_READ_BYTE";
+/// Go `IAExecCountStr`.
+pub const IA_EXEC_COUNT_STR: &str = "IA_REMOTE_EXEC_COUNT";
 /// Go `AvgIARemoteReadSegmentCountStr`.
 pub const AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR: &str = "AVG_IA_REMOTE_READ_SEGMENT_COUNT";
 /// Go `MaxIARemoteReadSegmentCountStr`.
@@ -762,10 +762,10 @@ fn timestamp_datum<TZ: TimeZone>(instant: DateTime<TZ>) -> Datum {
 }
 
 /// Go `time.Unix(seconds, 0).In(tz)`.
-fn unix_seconds_in(seconds: i64, tz: Tz) -> DateTime<Tz> {
+fn unix_seconds_in(seconds: i64, tz: &SessionTimeZone) -> DateTime<SessionTimeZone> {
     DateTime::from_timestamp(seconds, 0)
         .unwrap_or_else(|| DateTime::from_timestamp_nanos(0))
-        .with_timezone(&tz)
+        .with_timezone(tz)
 }
 
 /// The element a column factory needs, which Go dereferences without a nil
@@ -794,13 +794,13 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         SUMMARY_BEGIN_TIME_STR => |reader, ss_element, _, _| {
             timestamp_datum(unix_seconds_in(
                 require_element(ss_element).begin_time,
-                reader.tz,
+                &reader.tz,
             ))
         },
         SUMMARY_END_TIME_STR => |reader, ss_element, _, _| {
             timestamp_datum(unix_seconds_in(
                 require_element(ss_element).end_time,
-                reader.tz,
+                &reader.tz,
             ))
         },
         STMT_TYPE_STR => |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).stmt_type.as_bytes()),
@@ -953,6 +953,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         MAX_ROCKSDB_BLOCK_READ_BYTE_STR => {
             |_, _, _, stats| Datum::new_uint(stats.max_rocksdb_block_read_byte)
         }
+        IA_EXEC_COUNT_STR => |_, _, _, stats| Datum::new_int(stats.ia_exec_count),
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR => |_, _, _, stats| {
             Datum::new_real(avg_float4_uint(
                 stats.sum_ia_remote_read_segment_count,
@@ -1073,15 +1074,15 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         MAX_DISK_STR => |_, _, _, stats| Datum::new_int(stats.max_disk),
         KV_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_kv_total)),
         AVG_KV_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_kv_total), stats.commit_count))
+            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_kv_total), stats.exec_count))
         }
         PD_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_pd_total)),
         AVG_PD_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_pd_total), stats.commit_count))
+            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_pd_total), stats.exec_count))
         }
         BACKOFF_TOTAL_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_backoff_total)),
         AVG_BACKOFF_TOTAL_TIME_STR => |_, _, _, stats| {
-            Datum::new_int(avg_int(nanos(stats.sum_backoff_total), stats.commit_count))
+            Datum::new_int(avg_int(nanos(stats.sum_backoff_total), stats.exec_count))
         },
         WRITE_SQL_RESP_TIME_STR => {
             |_, _, _, stats| Datum::new_int(nanos(stats.sum_write_sql_resp_total))
@@ -1089,14 +1090,14 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         AVG_WRITE_SQL_RESP_TIME_STR => |_, _, _, stats| {
             Datum::new_int(avg_int(
                 nanos(stats.sum_write_sql_resp_total),
-                stats.commit_count,
+                stats.exec_count,
             ))
         },
         AVG_TIDB_CPU_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_tidb_cpu), stats.exec_count))
+            |_, _, _, stats| Datum::new_int(avg_int(stats.sum_tidb_cpu, stats.exec_count))
         }
         AVG_TIKV_CPU_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_tikv_cpu), stats.exec_count))
+            |_, _, _, stats| Datum::new_int(avg_int(stats.sum_tikv_cpu, stats.exec_count))
         }
         RESULT_ROWS_STR => |_, _, _, stats| Datum::new_int(stats.sum_result_rows),
         MAX_RESULT_ROWS_STR => |_, _, _, stats| Datum::new_int(stats.max_result_rows),
@@ -1216,7 +1217,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::statement_summary::tests::generate_any_exec_info;
-    use crate::statement_summary::StmtExecInfo;
+    use crate::statement_summary::{StmtDigestKey, StmtExecInfo, TableEntry};
 
     /// Go `boTxnLockName`.
     const BO_TXN_LOCK_NAME: &str = "txnlock";
@@ -1241,7 +1242,7 @@ pub(crate) mod tests {
             })
             .collect();
         let mut reader: StmtSummaryReader<'a> =
-            StmtSummaryReader::new(None, true, cols, String::new(), Tz::UTC);
+            StmtSummaryReader::new(None, true, cols, String::new(), SessionTimeZone::utc());
         reader.ss_map = ss_map;
         reader
     }
@@ -1364,6 +1365,29 @@ pub(crate) mod tests {
         new_stmt_summary_reader_with_column_names_for_test(ss_map, &column_names)
     }
 
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_reader_returns_can_be_ignored() {
+        StmtSummaryReader::new(
+            None,
+            true,
+            Vec::new(),
+            String::new(),
+            SessionTimeZone::utc(),
+        );
+        let map = StmtSummaryByDigestMap::new();
+        let reader = new_stmt_summary_reader_for_test(&map);
+        reader.column_names();
+        reader.get_stmt_summary_cumulative_rows();
+        reader.get_stmt_summary_current_rows();
+        reader.get_stmt_summary_history_rows();
+
+        StmtSummaryChecker::new(std::collections::HashSet::new());
+        let checker = StmtSummaryChecker::new(std::collections::HashSet::new());
+        checker.is_digest_valid("");
+        let _ = column_value_factory(CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR);
+    }
+
     /// Go `TestColumnValueFactoryDoubleUintMetrics`.
     ///
     /// Go calls `factory(nil, nil, nil, stats)`; the ported factory takes the
@@ -1477,6 +1501,75 @@ pub(crate) mod tests {
         }
     }
 
+    /// Go `78cac443a4`: execution-time averages use `execCount`, even when
+    /// only some executions commit a transaction.
+    #[test]
+    fn execution_average_columns_use_exec_count() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        let reader = new_stmt_summary_reader_with_column_names_for_test(&ss_map, &[]);
+        let stats = StmtSummaryStats {
+            exec_count: 4,
+            commit_count: 2,
+            sum_kv_total: Duration::from_nanos(100),
+            sum_pd_total: Duration::from_nanos(200),
+            sum_backoff_total: Duration::from_nanos(300),
+            sum_write_sql_resp_total: Duration::from_nanos(400),
+            ..StmtSummaryStats::default()
+        };
+
+        for (name, expected) in [
+            (AVG_KV_TIME_STR, 25),
+            (AVG_PD_TIME_STR, 50),
+            (AVG_BACKOFF_TOTAL_TIME_STR, 75),
+            (AVG_WRITE_SQL_RESP_TIME_STR, 100),
+        ] {
+            let factory = column_value_factory(name)
+                .unwrap_or_else(|| panic!("missing column value factory: {name}"));
+            assert_eq!(
+                factory(&reader, None, None, &stats),
+                Datum::new_int(expected),
+                "{name}"
+            );
+        }
+    }
+
+    /// Go `78cac443a4`: skipped empty table entries must not leave a dangling
+    /// comma in `TABLE_NAMES`.
+    #[test]
+    fn table_names_skip_empty_tables() {
+        let mut info = generate_any_exec_info();
+        let stmt_ctx = Arc::get_mut(&mut info.stmt_ctx).expect("test context is unique");
+        stmt_ctx.tables = vec![
+            TableEntry {
+                db: "db1".to_owned(),
+                table: String::new(),
+            },
+            TableEntry {
+                db: "DB2".to_owned(),
+                table: "TB2".to_owned(),
+            },
+            TableEntry {
+                db: "db3".to_owned(),
+                table: String::new(),
+            },
+        ];
+
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_begin_time_for_cur_interval(chrono::Utc::now().timestamp() + 60);
+        ss_map.add_statement(&info);
+        let mut key = StmtDigestKey::new();
+        key.init(
+            &info.schema_name,
+            &info.digest,
+            &info.prev_sql_digest,
+            &info.plan_digest,
+            &info.resource_group_name,
+            "",
+        );
+        let summary = ss_map.summary_map_get(&key).expect("summary must exist");
+        assert_eq!(summary.lock().unwrap().table_names, "db2.tb2");
+    }
+
     /// Go `fmt.Sprintf("%v", datum.GetValue())`, the rendering Go's `match`
     /// compares. Rendering both sides keeps Go's laxity about which numeric
     /// kind a column yields, which is what the upstream assertions pin.
@@ -1519,13 +1612,11 @@ pub(crate) mod tests {
         let reader = new_stmt_summary_reader_for_test(&ss_map);
         let datums = reader.get_stmt_summary_current_rows();
         assert_eq!(datums.len(), 1);
-        let n = timestamp_datum(unix_seconds_in(
-            ss_map.begin_time_for_cur_interval(),
-            Tz::UTC,
-        ));
+        let tz = SessionTimeZone::utc();
+        let n = timestamp_datum(unix_seconds_in(ss_map.begin_time_for_cur_interval(), &tz));
         let e = timestamp_datum(unix_seconds_in(
             ss_map.begin_time_for_cur_interval() + 1800,
-            Tz::UTC,
+            &tz,
         ));
         let f = timestamp_datum(stmt_exec_info1.start_time);
         let is_tikv = i64::from(stmt_exec_info1.stmt_ctx.is_tikv.load(Ordering::SeqCst));
@@ -1589,28 +1680,28 @@ pub(crate) mod tests {
             Datum::new_uint(scan_detail.rocksdb_block_cache_hit_count),
             Datum::new_uint(scan_detail.rocksdb_block_read_count),
             Datum::new_uint(scan_detail.rocksdb_block_read_count),
-            Datum::new_uint(scan_detail.rocksdb_block_read_byte),
-            Datum::new_uint(scan_detail.rocksdb_block_read_byte),
+            Datum::new_uint(scan_detail.rocksdb_block_read_bytes),
+            Datum::new_uint(scan_detail.rocksdb_block_read_bytes),
             ns(commit_detail.prewrite_time),
             ns(commit_detail.prewrite_time),
             ns(commit_detail.commit_time),
             ns(commit_detail.commit_time),
             ns(commit_detail.get_commit_ts_time),
             ns(commit_detail.get_commit_ts_time),
-            Datum::new_int(commit_detail.commit_backoff_time),
-            Datum::new_int(commit_detail.commit_backoff_time),
-            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time),
-            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time),
+            Datum::new_int(commit_detail.detail.commit_backoff_time_ns),
+            Datum::new_int(commit_detail.detail.commit_backoff_time_ns),
+            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time_ns),
+            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time_ns),
             ns(commit_detail.local_latch_time),
             ns(commit_detail.local_latch_time),
-            Datum::new_int(commit_detail.write_keys),
-            Datum::new_int(commit_detail.write_keys),
-            Datum::new_int(commit_detail.write_size),
-            Datum::new_int(commit_detail.write_size),
+            Datum::new_int(commit_detail.write_keys as i64),
+            Datum::new_int(commit_detail.write_keys as i64),
+            Datum::new_int(commit_detail.write_size as i64),
+            Datum::new_int(commit_detail.write_size as i64),
             Datum::new_int(i64::from(commit_detail.prewrite_region_num)),
             Datum::new_int(i64::from(commit_detail.prewrite_region_num)),
-            Datum::new_int(commit_detail.txn_retry),
-            Datum::new_int(commit_detail.txn_retry),
+            Datum::new_int(commit_detail.transaction_retry as i64),
+            Datum::new_int(commit_detail.transaction_retry as i64),
             Datum::new_int(0),
             Datum::new_int(0),
             Datum::new_int(1),
@@ -1639,17 +1730,17 @@ pub(crate) mod tests {
             Datum::new_string(stmt_exec_info1.prev_sql.as_bytes()),
             Datum::new_string("plan_digest"),
             Datum::new_string(""),
-            Datum::new_real(ru_detail.rru),
-            Datum::new_real(ru_detail.rru),
-            Datum::new_real(ru_detail.wru),
-            Datum::new_real(ru_detail.wru),
-            ns(ru_detail.ru_wait_duration),
-            ns(ru_detail.ru_wait_duration),
+            Datum::new_real(ru_detail.read_ru()),
+            Datum::new_real(ru_detail.read_ru()),
+            Datum::new_real(ru_detail.write_ru()),
+            Datum::new_real(ru_detail.write_ru()),
+            ns(ru_detail.ru_wait_duration()),
+            ns(ru_detail.ru_wait_duration()),
             Datum::new_real(stmt_exec_info1.total_ru_v2),
             Datum::new_real(stmt_exec_info1.total_ru_v2),
             Datum::new_string(stmt_exec_info1.resource_group_name.as_bytes()),
-            ns(stmt_exec_info1.cpu_usages.tidb_cpu_time),
-            ns(stmt_exec_info1.cpu_usages.tikv_cpu_time),
+            Datum::new_int(stmt_exec_info1.cpu_usages.tidb_cpu_time),
+            Datum::new_int(stmt_exec_info1.cpu_usages.tikv_cpu_time),
             Datum::new_int(is_tikv),
             Datum::new_int(is_tiflash),
         ];
@@ -1787,8 +1878,9 @@ pub(crate) mod tests {
         ss_map.set_max_stmt_count(24).unwrap();
     }
 
-    /// The six IA-remote-read columns both IA tests read, in Go's order.
-    const IA_COLUMN_NAMES: [&str; 6] = [
+    /// The seven IA-remote-read columns both IA tests read, in Go's order.
+    const IA_COLUMN_NAMES: [&str; 7] = [
+        IA_EXEC_COUNT_STR,
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR,
         MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR,
         AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR,
@@ -1797,8 +1889,8 @@ pub(crate) mod tests {
         MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
     ];
 
-    /// The two statements both IA tests add: Go's `stmtExecInfo1` and
-    /// `stmtExecInfo2`, differing only in their IA scan-detail counters.
+    /// The two statements both IA tests add: Go's `stmtExecInfo1` has IA
+    /// counters and `stmtExecInfo2` is a standard execution without them.
     fn ia_exec_infos() -> (StmtExecInfo, StmtExecInfo) {
         let mut stmt_exec_info1 = generate_any_exec_info();
         {
@@ -1813,19 +1905,52 @@ pub(crate) mod tests {
             scan_detail.ia_remote_read_segment_duration = Duration::from_millis(5);
         }
 
-        let mut stmt_exec_info2 = generate_any_exec_info();
-        {
-            let scan_detail = stmt_exec_info2
-                .exec_detail
-                .cop_exec_details
-                .scan_detail
-                .as_mut()
-                .unwrap();
-            scan_detail.ia_remote_read_segment_count = 5;
-            scan_detail.ia_remote_read_segment_bytes = 8192;
-            scan_detail.ia_remote_read_segment_duration = Duration::from_millis(9);
-        }
+        let stmt_exec_info2 = generate_any_exec_info();
         (stmt_exec_info1, stmt_exec_info2)
+    }
+
+    /// Go `TestCurrentRowsExcludePreviousIntervalEvictedOther`: evicted
+    /// summaries are lazily expired like regular ones, so the current view
+    /// must not expose a rollup left over from a previous interval.
+    #[test]
+    fn test_current_rows_exclude_previous_interval_evicted_other() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_max_stmt_count(10).unwrap();
+
+        let interval = ss_map.refresh_interval();
+        // Use future interval boundaries so AddStatement does not rotate them
+        // based on the wall clock while the test advances the intervals
+        // explicitly.
+        let previous_begin = Utc::now().timestamp() + interval;
+        ss_map.set_begin_time_for_cur_interval(previous_begin);
+
+        let mut previous_stmt = generate_any_exec_info();
+        for i in 0..11 {
+            previous_stmt.digest = format!("previous_digest_{i}");
+            ss_map.add_statement(&previous_stmt);
+        }
+        assert_eq!(10, ss_map.summary_map_size());
+        assert_eq!(1, ss_map.evicted().unwrap().lock().unwrap().history_len());
+
+        let current_begin = previous_begin + interval;
+        ss_map.set_begin_time_for_cur_interval(current_begin);
+        let mut current_stmt = generate_any_exec_info();
+        current_stmt.digest = "current_digest".to_owned();
+        ss_map.add_statement(&current_stmt);
+        assert_eq!(10, ss_map.summary_map_size());
+
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let rows = reader.get_stmt_summary_current_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0][4],
+            Datum::new_string(current_stmt.digest.as_bytes())
+        );
+        let tz = SessionTimeZone::utc();
+        assert_eq!(
+            rows[0][0],
+            timestamp_datum(unix_seconds_in(current_begin, &tz))
+        );
     }
 
     /// Go `TestToDatumIAColumns`.
@@ -1842,18 +1967,22 @@ pub(crate) mod tests {
 
         let rows = reader.get_stmt_summary_current_rows();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][0], Datum::new_real(4.0));
-        assert_eq!(rows[0][1], Datum::new_uint(5));
-        assert_eq!(rows[0][2], Datum::new_real(6144.0));
-        assert_eq!(rows[0][3], Datum::new_uint(8192));
-        assert_eq!(
-            rows[0][4],
-            Datum::new_int(i64::try_from(Duration::from_millis(7).as_nanos()).unwrap())
-        );
+        assert_eq!(rows[0][0], Datum::new_int(1));
+        assert_eq!(rows[0][1], Datum::new_real(1.5));
+        assert_eq!(rows[0][2], Datum::new_uint(3));
+        assert_eq!(rows[0][3], Datum::new_real(2048.0));
+        assert_eq!(rows[0][4], Datum::new_uint(4096));
         assert_eq!(
             rows[0][5],
-            Datum::new_int(i64::try_from(Duration::from_millis(9).as_nanos()).unwrap())
+            Datum::new_int(i64::try_from(Duration::from_micros(2500).as_nanos()).unwrap())
         );
+        assert_eq!(
+            rows[0][6],
+            Datum::new_int(i64::try_from(Duration::from_millis(5).as_nanos()).unwrap())
+        );
+        let history_rows = reader.get_stmt_summary_history_rows();
+        assert_eq!(history_rows.len(), 1);
+        assert_eq!(history_rows[0][0], Datum::new_int(1));
     }
 
     /// Go `TestToDatumIAColumnsChunkRoundTrip`.
@@ -1875,6 +2004,7 @@ pub(crate) mod tests {
         let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
         max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
         let ret_types = [
+            FieldType::new(FieldTypeCode::LongLong),
             FieldType::new(FieldTypeCode::Double),
             max_unsigned_type.clone(),
             FieldType::new(FieldTypeCode::Double),
@@ -1886,17 +2016,18 @@ pub(crate) mod tests {
         mut_row.set_datums(&rows[0]);
         let row = mut_row.to_row();
 
-        assert!((row.get_float64(0) - 4.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(1), 5);
-        assert!((row.get_float64(2) - 6144.0).abs() < f64::EPSILON);
-        assert_eq!(row.get_uint64(3), 8192);
-        assert_eq!(
-            row.get_int64(4),
-            i64::try_from(Duration::from_millis(7).as_nanos()).unwrap()
-        );
+        assert_eq!(row.get_int64(0), 1);
+        assert!((row.get_float64(1) - 1.5).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(2), 3);
+        assert!((row.get_float64(3) - 2048.0).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(4), 4096);
         assert_eq!(
             row.get_int64(5),
-            i64::try_from(Duration::from_millis(9).as_nanos()).unwrap()
+            i64::try_from(Duration::from_micros(2500).as_nanos()).unwrap()
+        );
+        assert_eq!(
+            row.get_int64(6),
+            i64::try_from(Duration::from_millis(5).as_nanos()).unwrap()
         );
     }
 

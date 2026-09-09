@@ -14,6 +14,145 @@
 
 use super::*;
 
+// `adjustRetFtForCastString` sizes an unspecified CHAR target from the
+// source family (LongLong -> 20), but Go's NUL padding is gated on the
+// FIXED TypeString code (`padZeroForBinaryType`,
+// `builtin_cast.go:2251`): the adjusted VarString target renders "1"
+// unpadded, while a true BINARY(20) target pads to 20 bytes.
+#[test]
+fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
+    fn binary_target(code: FieldTypeCode) -> FieldType {
+        let mut target = FieldType::new(code);
+        target.set_charset_name("binary");
+        target.set_flen(20);
+        target.set_decimal(-1);
+        target
+    }
+
+    let constant = Expression::Constant(Constant::new(Datum::Int(1), {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        ft
+    }));
+
+    let adjusted_var_string = ScalarFunction::new(
+        tidb_ast::CiString::new("cast_binary"),
+        binary_target(FieldTypeCode::VarString),
+        vec![constant.clone()],
+    );
+    let int_field = FieldType::new(FieldTypeCode::LongLong);
+    let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&int_field), 1, 1);
+    chunk.append_int64(0, 0);
+    let row = chunk.get_row(0);
+    let Datum::Bytes(unpadded) = adjusted_var_string
+        .eval(&crate::context::NoColumns, row)
+        .unwrap()
+    else {
+        panic!("expected bytes")
+    };
+    assert_eq!(unpadded, b"1", "the adjusted flen must not NUL-pad");
+
+    let fixed_string = ScalarFunction::new(
+        tidb_ast::CiString::new("cast_binary"),
+        binary_target(FieldTypeCode::String),
+        vec![constant],
+    );
+    let Datum::Bytes(padded) = fixed_string.eval(&crate::context::NoColumns, row).unwrap() else {
+        panic!("expected bytes")
+    };
+    assert_eq!(padded.len(), 20, "BINARY(20) pads with NUL bytes");
+    assert_eq!(&padded[..1], b"1");
+}
+
+#[test]
+fn cast_target_types_follow_go_parser_y_cast_rules() {
+    use tidb_datatype::UNSPECIFIED_LENGTH;
+
+    // parser.y `"BINARY" OptFieldLen`: TypeVarString, but a GIVEN length
+    // switches the code to TypeString; the binary charset/collation/flag are
+    // always set.
+    let (_, binary_len) = cast_target(&tidb_ast::CastType::Binary { len: Some(5) }).unwrap();
+    assert_eq!(binary_len.code(), FieldTypeCode::String);
+    assert_eq!(binary_len.flen(), 5);
+    assert_eq!(
+        (binary_len.charset_name(), binary_len.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, binary_bare) = cast_target(&tidb_ast::CastType::Binary { len: None }).unwrap();
+    assert_eq!(binary_bare.code(), FieldTypeCode::VarString);
+
+    // parser.y `"YEAR"`: TypeYear + binary — not LongLong.
+    let (_, year) = cast_target(&tidb_ast::CastType::Year).unwrap();
+    assert_eq!(year.code(), FieldTypeCode::Year);
+    assert_eq!(
+        (year.charset_name(), year.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"SIGNED" OptInteger` / `"UNSIGNED" OptInteger`: LongLong
+    // (plus UnsignedFlag) with the binary charset/collation/flag.
+    let (_, signed) = cast_target(&tidb_ast::CastType::Signed).unwrap();
+    assert_eq!(signed.code(), FieldTypeCode::LongLong);
+    assert!(!signed.is_unsigned());
+    assert_eq!(
+        (signed.charset_name(), signed.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, unsigned) = cast_target(&tidb_ast::CastType::Unsigned).unwrap();
+    assert!(unsigned.is_unsigned());
+    assert_eq!(
+        (unsigned.charset_name(), unsigned.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"DECIMAL" FloatOpt`: NewDecimal + binary.
+    let (_, decimal) = cast_target(&tidb_ast::CastType::Decimal { flen: 10, scale: 2 }).unwrap();
+    assert_eq!(
+        (decimal.charset_name(), decimal.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"DOUBLE"` / `"FLOAT" FloatOpt` / `"REAL"`: the
+    // defaultLengthAndDecimalForCast defaults (TypeDouble {22, -1},
+    // TypeFloat {12, -1}) plus binary. REAL under REAL_AS_FLOAT folds to
+    // CastType::Float at parse time.
+    let (_, double) = cast_target(&tidb_ast::CastType::Double).unwrap();
+    assert_eq!(double.code(), FieldTypeCode::Double);
+    assert_eq!((double.flen(), double.decimal()), (22, UNSPECIFIED_LENGTH));
+    assert_eq!(
+        (double.charset_name(), double.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, float) = cast_target(&tidb_ast::CastType::Float).unwrap();
+    assert_eq!(float.code(), FieldTypeCode::Float);
+    assert_eq!((float.flen(), float.decimal()), (12, UNSPECIFIED_LENGTH));
+    assert_eq!(
+        (float.charset_name(), float.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"JSON"`: ParseToJSON + Binary flags, utf8mb4/utf8mb4_bin.
+    let (_, json) = cast_target(&tidb_ast::CastType::Json).unwrap();
+    assert!(json.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON));
+    assert!(json.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+    assert_eq!(
+        (json.charset_name(), json.collation_name()),
+        ("utf8mb4", "utf8mb4_bin")
+    );
+
+    // parser.y `"VECTOR" OptVectorElementType OptFieldLen`: binary
+    // charset/collation but — uniquely among the targets — NO BinaryFlag.
+    let (_, vector) = cast_target(&tidb_ast::CastType::Vector {
+        dimensions: Some(3),
+    })
+    .unwrap();
+    assert_eq!(
+        (vector.charset_name(), vector.collation_name()),
+        ("binary", "binary")
+    );
+    assert!(!vector.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+}
+
 #[test]
 fn pi_and_abs_keep_their_source_field_metadata() {
     let pi = builtin_return_type("pi", &[]).unwrap();
@@ -1067,4 +1206,35 @@ mod go_string_flen_tests {
         );
         assert_go("to_base64", &[c_binary()], FieldTypeCode::VarString, 28);
     }
+}
+
+#[test]
+fn char_cast_target_carries_the_explicit_charset() {
+    // Go's `CHAR ... CHARSET binary` suffix sets the binary charset,
+    // collation, AND BinaryFlag.
+    let (_, char_binary) = cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("BINARY".to_owned()),
+    })
+    .unwrap();
+    assert!(char_binary.is_binary_string(), "{char_binary:?}");
+
+    // A named charset keeps its name and takes its default collation
+    // (`charset.GetDefaultCollation`, parser.y:9971).
+    let (_, char_latin1) = cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("LATIN1".to_owned()),
+    })
+    .unwrap();
+    assert_eq!(char_latin1.charset_name(), "LATIN1");
+    assert_eq!(char_latin1.collation_name(), "latin1_bin");
+    assert!(!char_latin1.is_binary_string());
+
+    // An unknown name cannot resolve a collation: Go refuses at parse time,
+    // so the target builder has no shape to hand back.
+    assert!(cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("UNKNOWNCS".to_owned()),
+    })
+    .is_none());
 }

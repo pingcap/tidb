@@ -43,6 +43,8 @@ pub const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
 /// Go `errno.ErrWriteConflict`, the statement-scoped conflict a pessimistic
 /// retry resolves.
 pub const ERR_WRITE_CONFLICT: u16 = 9007;
+/// Go `errno.ErrSharedLockLost`, a transaction-fatal shared-lock upgrade loss.
+pub const ERR_SHARED_LOCK_LOST: u16 = 9015;
 /// Go `errno.ErrRegionUnavailable`, a determinate routing failure that is not
 /// one of `pkg/kv.IsTxnRetryableError`'s three retryable identities.
 pub const ERR_REGION_UNAVAILABLE: u16 = 9005;
@@ -78,9 +80,10 @@ impl LockSqlError {
 /// Maps a lock failure to the error TiDB reports for it.
 ///
 /// [`PessimisticLockFailure::Transaction`] is not statement-scoped: it ends
-/// the transaction, so it is reported with its own diagnostic under the
-/// generic 1105 rather than being disguised as a lock error the client could
-/// usefully retry.
+/// the transaction. Shared-lock loss keeps its registered 9015 identity;
+/// other transaction causes retain their own diagnostic under generic 1105
+/// rather than being disguised as a lock error the client could usefully
+/// retry.
 #[must_use]
 pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlError {
     match failure {
@@ -109,6 +112,9 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
         },
         PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
+            transaction_cause_to_sql_error(cause)
+        }
+        PessimisticLockFailure::Transaction(cause @ TransactionCause::SharedLockLost { .. }) => {
             transaction_cause_to_sql_error(cause)
         }
         PessimisticLockFailure::Transaction(cause) => LockSqlError {
@@ -179,11 +185,13 @@ pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 
 /// Renders a transaction-ending cause as the error TiDB reports for it.
 ///
-/// Write conflicts keep Go's retryable 9007 identity. A terminal effective
-/// backoff keeps the concrete client-go sentinel selected by its longest-sleep
-/// category; only `BoRegionMiss`/`BoRegionScheduling` become 9005. The excluded
-/// ServerBusy cap returns its current ordinary error, while structural region
-/// failures have no such identity and keep their exact diagnostic under 1105.
+/// Write conflicts keep Go's retryable 9007 identity. Shared-lock loss keeps
+/// the transaction-fatal `tikv:9015` identity. A terminal effective backoff
+/// keeps the concrete client-go sentinel selected by its longest-sleep
+/// category; only `BoRegionMiss`/`BoRegionScheduling` become 9005. The
+/// excluded ServerBusy cap returns its current ordinary error, while
+/// structural region failures have no such identity and keep their exact
+/// diagnostic under 1105.
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
@@ -195,11 +203,29 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
         TransactionCause::BackoffExhausted { kind, detail } => {
             backoff_exhausted_to_sql_error(*kind, detail)
         }
+        TransactionCause::SharedLockLost { start_ts, key } => {
+            shared_lock_lost_to_sql_error(*start_ts, key)
+        }
         other => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:1105]transaction failed: {other}"),
         },
+    }
+}
+
+fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
+    let source = StorageDriverError::SharedLockLost {
+        start_ts,
+        key: key.to_owned(),
+    };
+    let ConvertedDriverError::Kv(error) = to_tidb_driver_error(&source) else {
+        unreachable!("shared lock loss has a registered KV error identity")
+    };
+    LockSqlError {
+        code: error.mysql_code().as_u16(),
+        state: DEFAULT_SQL_STATE,
+        message: format!("[{}]{}", error.rfc_code(), error),
     }
 }
 
@@ -292,7 +318,7 @@ mod tests {
     use super::{
         is_retryable_statement_failure, lock_failure_to_sql_error,
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
-        ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT,
+        ERR_REGION_UNAVAILABLE, ERR_SHARED_LOCK_LOST, ERR_WRITE_CONFLICT,
     };
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
     use tidb_executor::cluster_storage::DuplicateKeyHint;
@@ -397,6 +423,25 @@ mod tests {
             },
         ));
         assert_eq!(lock_path.code, ERR_REGION_UNAVAILABLE);
+    }
+
+    #[test]
+    fn shared_lock_lost_keeps_tikv_9015_and_ends_the_transaction() {
+        let cause = TransactionCause::SharedLockLost {
+            start_ts: 101,
+            key: "6B6579".to_owned(),
+        };
+        let error = transaction_cause_to_sql_error(&cause);
+        assert_eq!(error.code, ERR_SHARED_LOCK_LOST);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579"
+        );
+
+        let lock_error = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(cause));
+        assert_eq!(lock_error.code, ERR_SHARED_LOCK_LOST);
+        assert_eq!(lock_error.message, error.message);
     }
 
     #[test]

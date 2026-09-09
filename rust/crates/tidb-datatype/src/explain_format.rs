@@ -40,9 +40,11 @@ pub const EXPLAIN_FORMAT_COST_TRACE: &str = "cost_trace";
 pub const EXPLAIN_FORMAT_PLAN_CACHE: &str = "plan_cache";
 /// Tree-structured plan format.
 pub const EXPLAIN_FORMAT_PLAN_TREE: &str = "plan_tree";
+/// Reserved RU cost format for EXPLAIN ANALYZE.
+pub const EXPLAIN_FORMAT_RU: &str = "ru";
 
 /// Complete validator order from source `ExplainFormats`.
-pub const EXPLAIN_FORMATS: [&str; 13] = [
+pub const EXPLAIN_FORMATS: [&str; 14] = [
     EXPLAIN_FORMAT_BRIEF,
     EXPLAIN_FORMAT_DOT,
     EXPLAIN_FORMAT_HINT,
@@ -56,4 +58,17 @@ pub const EXPLAIN_FORMATS: [&str; 13] = [
     EXPLAIN_FORMAT_COST_TRACE,
     EXPLAIN_FORMAT_PLAN_CACHE,
     EXPLAIN_FORMAT_PLAN_TREE,
+    EXPLAIN_FORMAT_RU,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{EXPLAIN_FORMATS, EXPLAIN_FORMAT_RU};
+
+    #[test]
+    fn ru_format_is_exported_in_source_order() {
+        assert_eq!(EXPLAIN_FORMAT_RU, "ru");
+        assert_eq!(EXPLAIN_FORMATS.len(), 14);
+        assert_eq!(EXPLAIN_FORMATS.last(), Some(&EXPLAIN_FORMAT_RU));
+    }
+}

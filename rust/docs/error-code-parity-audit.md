@@ -128,25 +128,25 @@ wire behaviour.
 ## Ranked findings
 
 Counts: **1 wrong-code class with 5 concrete instances**, **6 wrong SQLSTATEs (fixed)**,
-**3 message defects**, **5 missing codes**. Ranked by consequence.
+**0 remaining message defects**, **0 missing codes**. F5, F7, F8, and F9
+below are fixed (F8 verified 2026-09-05); all message findings closed.
+Ranked by consequence.
 
 ---
 
-### F1 (rank 1, wrong code) — `[kv:8005]` in the message, `1105` on the wire
+### F1 (rank 1, wrong code) — `[kv:8005]` in the message, `1105` on the wire — CLOSED (2026-09-05, site no longer exists)
 
-`rust/crates/tidb-exec/src/pessimistic_lock_error.rs:120-127` builds an undetermined-commit
-error whose **message text declares `[kv:8005]`** while the **code field is `1105`**. The
-two disagree inside a single error value, so a client that parses the class prefix and a
-client that reads the code number get different answers from the same packet.
-
-Go: `pkg/kv/error.go` defines `ErrWriteConflictInTiDB` as `mysql.ErrWriteConflictInTiDB`
-= **8005**. A commit whose outcome is undetermined is `terror.ErrResultUndetermined`, not
-1105.
-
-This one is unambiguous — the code that the message already names is the code that should be
-in the field. I did not change it because `tidb-exec` is a second, largely test-facing
-pipeline (see above) and the correct choice between 8005 and `ErrResultUndetermined` needs a
-capture to settle.
+The described literal is gone from the absorbed tree: the
+undetermined-commit arm in `pessimistic_lock_error.rs` now sends code
+`1105` with `ERR_RESULT_UNDETERMINED.message()`, self-consistent, and
+that is exactly Go's own wire behavior — `terror.ErrResultUndetermined`
+is a `ClassGlobal` terror with no MySQL code, so `ToSQLError` falls back
+to `defaultMySQLErrorCode = mysql.ErrUnknown` = **1105**
+(`pkg/parser/terror/terror.go:266-274`), with the message "execution
+result undetermined" and state HY000. Go never sends 8005 for this
+outcome; `ErrWriteConflictInTiDB` (8005) is the local-latch write
+conflict, a different error raised elsewhere. No capture was needed —
+the Go source alone settles it.
 
 ---
 
@@ -174,33 +174,55 @@ cluster. Establishing that needs execution.
 
 ---
 
-### F3 (rank 1, wrong code) — planner refusals carry no code at all
+### F3 (rank 1, wrong code) — planner refusals carry no code at all — FIXED (verified 2026-09-05)
 
-`rust/crates/tidb-planner/src/read_only_scan/errors.rs` defines `ReadOnlyScanError`,
-`UnsupportedReadOnlyFeature` (23 variants) and `UnsupportedReadOnlyPredicate` with **no
-MySQL code field**. They surface through `SqlQueryError::unknown` as 1105.
+The topology is now traced end to end. `ReadOnlyScanError` and
+`PreparedPlanError` (`rust/crates/tidb-planner/src/read_only_scan/errors.rs`)
+carry no MySQL code; `RealTiKvReadError::Plan` (`real_tikv_read.rs:939`)
+flattens them through `Display`; the server seams then call
+`SqlQueryError::unknown(error.to_string())` (`real_tikv_node/mod.rs:306+`),
+answering 1105/HY000. The server's `SqlQueryError` itself is fully capable
+(`sql_node.rs:270`: explicit code/state/message).
 
-Go raises `ErrNotSupportedYet` = **1235**, SQLSTATE **42000**, message
-`"This version of TiDB doesn't yet support '%s'"` for the equivalent refusals
-(`pkg/errno/errcode.go`, `errname.go`). 1235 vs 1105 and 42000 vs HY000 are both wrong, and
-`ErrorKind::NotSupportedYet` already exists in the (dead) protocol table, so the intent was
-recorded and never wired.
+Go raises the equivalent refusals as `ErrNotSupportedYet` = **1235**, SQLSTATE
+**42000**, message `"This version of TiDB doesn't yet support '%s'"` for the
+unsupported-feature shapes (`pkg/errno/errcode.go`, `errname.go`); 1235 vs
+1105 and 42000 vs HY000 are both wrong.
+
+The bounded fix is complete: `ReadOnlyScanError`, `PreparedPlanError`, and
+`PreparedBindError` carry the Go-compatible code/SQLSTATE pair — `Parse`
+1064/42000, unsupported shapes 1235/42000, ordinary unknown tables
+1146/42S02, unknown columns 1054/42S22, internal invariants 1105/HY000,
+prepared parameter-count errors 8112/HY000, and prepared catalog lookup
+fallbacks 1105/HY000. The single-table and multi-table real-TiKV prepared
+read seams, plus the direct `RealTiKvReadError::Plan` seam, now preserve the
+typed pair instead of flattening through `SqlQueryError::unknown`. Per-variant
+planner and server regressions pin the result; see
+`rust/testport/receipts/planner_read_only_error_codes.md`.
 
 ---
 
-### F4 (rank 1, wrong code) — DDL admission refusals default to 1105
+### F4 (rank 1, wrong code) — DDL admission refusals default to 1105 — FIXED (2026-09-05, explicitness repair)
 
-`rust/crates/tidb-exec/src/table_info_build.rs:188` defines
-`const GENERIC_ERROR_CODE: u16 = 1105;`, and `DdlAdmissionError::new()` (`:119-125`) uses it
-unless the caller picks `::unsupported()` (8200) or `::with_code()`. A refusal that forgets
-to choose is silently 1105 rather than failing to compile. This is the "default that hides a
+`DdlAdmissionError::new` no longer exists. Every raise site now names its
+code: `::with_code(GENERIC_ERROR_CODE, ...)` spells out 1105 at the sites
+whose refusals have no Go counterpart yet, `::unsupported()` carries 8200,
+and `::with_code` carries Go's own errno elsewhere — so a future refusal
+cannot silently inherit a generic default. Behavior is unchanged; the
+per-site comparison of the ~40 explicit-1105 sites against the Go errno
+each equivalent refusal deserves remains a follow-up queue.
+
+Original finding: `table_info_build.rs:188` defined
+`const GENERIC_ERROR_CODE: u16 = 1105;`, and `DdlAdmissionError::new()` used it
+unless the caller picked `::unsupported()` (8200) or `::with_code()`. A refusal that forgets
+to choose was silently 1105 rather than failing to compile. This is the "default that hides a
 missing decision" shape; `::new()` should not exist without a code.
 
 ---
 
-### F5 (rank 1, message-selection) — `registered_std` consults the catalogues in the wrong order
+### F5 (rank 1, message-selection) — FIXED: `registered_std` consulted the catalogues in the wrong order
 
-`rust/crates/tidb-error/src/terror.rs:434-442`:
+Before the fix, `rust/crates/tidb-error/src/terror.rs:434-442` used:
 
 ```rust
 let message = crate::mysql::message_by_code(protocol_code)
@@ -228,15 +250,17 @@ family and TiDB's deliberate "functional index" → "expression index" rewording
 affects every expression-index error message (3751-3760, 3800, 3837, 3903, 3904, 3907,
 3909).
 
-**Currently reachable:** only two of the 38 are wired today —
+**Before the fix,** only two of the 38 were wired today —
 `ERR_DBACCESS_DENIED` (1044) and `ERR_TABLEACCESS_DENIED` (1142) at
 `rust/crates/tidb-error/src/plannererrors.rs:254-259` — and both differ only in the host
-width, so today's blast radius is a host name longer than 64 characters. The lookup order is
-still wrong, and it is a landmine for the other 36 codes as they get wired.
+width, so the historical blast radius was a host name longer than 64 characters. The
+lookup order was a landmine for the other 36 codes as they got wired.
 
-**Not fixed here:** swapping the order is a one-line change, but it silently re-renders every
-existing `registered_std` message, and I cannot run a test to confirm nothing depends on the
-current text. It needs an owner who can execute.
+The lookup now checks `tidb::message_by_code` first and falls back to the
+parser/MySQL catalogue only when the TiDB catalogue has no entry. This is the
+same precedence as Go's `errno.MySQLErrName` in `pkg/util/dbterror/terror.go`.
+The `tidb-error` owner profile and a focused regression for codes 3143, 1243,
+and 1820 pin the overlapping messages and placeholder shapes.
 
 ---
 
@@ -270,18 +294,27 @@ code via `tidb_error::mysql::mysql_state` — the same lookup Go's `NewErr` perf
 bytes, so the conversion is total and needs no fallback arm. The six arms now use it, so
 their code and state cannot drift apart again.
 
-**Not fixed:** the other ~169 hand-written `(code, state)` pairs. All 169 are currently
-*correct* — I checked each mechanically against Go's table — but they remain able to drift.
-The real repair is to delete the `state` parameter from `MysqlError::new` so the pair cannot
-be written down at all; that is a ~175-site change across crates other agents hold, so it
-belongs to a dedicated unit.
+**FIXED (2026-09-05): the drift vector is gone.** The `state` parameter
+was deleted from `MysqlError::new`, which now derives the SQLSTATE from
+the code through `tidb_error::mysql::mysql_state` — the same lookup
+`NewErr` performs. The ~246 literal raise sites in `driver/errors/mod.rs`
+and `driver/errors/exec.rs` were rewritten mechanically; a script compared
+every pre-rewrite `(code, state-literal)` pair against the derived value
+before the rewrite and found **all of them agreeing** (explicit table
+entries plus the `HY000` fallback), so the rewrite is behavior-preserving
+and only removes the ability to write a disagreeing pair. The three sites
+that reconstruct an error carried in from outside the module
+(`MemoryExceedForQuery`, `VarErrorKind::SqlError`, `ExecError::Killed`)
+now use `MysqlError::with_state`, which exists solely for those
+externally-given states; a runtime `ParseCoded { errno }` now derives
+like Go's runtime `NewErr` instead of forcing `HY000`.
 
 ---
 
-### F7 (rank 3, message) — the write-conflict retry marker is missing
+### F7 (rank 3, message) — FIXED: the write-conflict retry marker was missing
 
-`rust/crates/tidb-executor/src/driver/errors/mod.rs:131` sends 9007 with
-`"Write conflict, please retry the transaction"`.
+Before the fix, `rust/crates/tidb-executor/src/driver/errors/mod.rs:211`
+sent 9007 with only `"Write conflict, please retry the transaction"`.
 
 Go builds the message as
 `mysql.MySQLErrName[mysql.ErrWriteConflict].Raw + " " + TxnRetryableMark`
@@ -292,18 +325,22 @@ Go builds the message as
 const TxnRetryableMark = "[try again later]"   // pkg/kv/error.go:27
 ```
 
-The literal `[try again later]` **does not appear anywhere in the Rust tree**. Go's own
-comment states that this string is a compatibility contract; it is the token a client greps
-to decide whether a failed transaction may be replayed. We also drop every structured field
-(`txnStartTS`, `conflictStartTS`, `conflictCommitTS`, `key`, `reason`), which is what an
-operator uses to identify the contending transaction.
+The literal `[try again later]` is now defined once as `TXN_RETRYABLE_MARK` in
+`tidb-executor/src/driver/errors/mod.rs` and appended by the live
+`TxnErrorKind::WriteConflict` wire-rendering arm. This restores the
+backward-compatible token that clients grep to decide whether a failed
+transaction may be replayed. A focused source regression pins the complete
+9007 message.
 
-The same omission applies to 8005 (`ErrWriteConflictInTiDB`), which Go also suffixes with the
-mark.
+The Rust `TxnErrorKind` currently carries no structured conflict fields
+(`txnStartTS`, `conflictStartTS`, `conflictCommitTS`, `key`, `reason`), and the
+separate 8005 undetermined-commit pipeline remains a documented follow-up. The
+marker fix is therefore bounded to the generic 9007 path and does not claim
+complete write-conflict diagnostic parity.
 
 ---
 
-### F8 (rank 3, message) — overflow message drops the offending expression
+### F8 (rank 3, message) — overflow message drops the offending expression — FIXED (verified 2026-09-05)
 
 `rust/crates/tidb-executor/src/driver/errors/exec.rs:134` renders 1690 as
 `"{class} value is out of range"`. Go's message is `"%s value is out of range in '%s'"`.
@@ -313,18 +350,19 @@ mark.
 - TiDB: `ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'`
 - Rust: `ERROR 1690 (22003): BIGINT value is out of range`
 
-The code and SQLSTATE are now correct (this is the overflow defect fixed earlier — it
-previously sent 1105 with Rust text). What remains is the `in '<expr>'` tail: no `EvalError`
-carries the rendered expression, because the overflow is raised in arithmetic that never
-sees the expression tree. Closing it needs the expression text threaded to the raise site,
-which is a design change, not a string fix. The in-source comment already says so.
+FIXED: the expression text is now threaded to the raise site via the
+plan scope and the overflow message carries the qualified expression
+(`BIGINT value is out of range in '(test.t.a + test.t.b)'`), matching Go
+exactly. Pinned by the regression at `tests_global_vars.rs` and the
+`an_overflow_names_its_class` test.
 
 ---
 
-### F9 (rank 4, missing codes) — five `plannererrors` entries are absent
+### F9 (rank 4, missing codes) — FIXED: five `plannererrors` entries were absent
 
-`rust/crates/tidb-error/src/plannererrors.rs` has 92 of Go's 98
-`pkg/util/dbterror/plannererrors/planner_terror.go` entries. Missing:
+Before the fix, `rust/crates/tidb-error/src/plannererrors.rs` had 92 of Go's
+98 `pkg/util/dbterror/plannererrors/planner_terror.go` entries. The five
+entries were:
 
 | Go entry | line | class | reachable from |
 | --- | --- | --- | --- |
@@ -334,8 +372,9 @@ which is a design change, not a string fix. The in-source comment already says s
 | `ErrPrepareDDL` | `:121` | Executor | `PREPARE s FROM 'CREATE TABLE …'` |
 | `ErrTooBigPrecision` | `:80` | Expression | `SELECT CAST(1 AS DECIMAL(65,31))` |
 
-All five are ordinary-SQL reachable, not administrative. They are absent rather than wrong,
-so they rank last — but each is a statement where we cannot currently produce TiDB's code.
+All five are ordinary-SQL reachable, not administrative. They are now present
+in `tidb-error/src/plannererrors.rs`, and the owner test forces every prototype
+to resolve through the complete catalogue.
 
 The other six flagged by a first pass were false positives: `ERR_ACCESS_DENIED` is present
 and correctly ports Go's deliberate code/message crossover — `NewStdErr(mysql.ErrAccessDenied
@@ -352,10 +391,13 @@ hangs at `_dyld_start`). Therefore:
 - **No statement in this document was executed against either engine.** Every "TiDB sends X"
   claim is read from Go source — the catalogue files, the state table, and the specific raise
   site cited — not from a capture.
-- `cargo check`, `cargo clippy --all-targets` and `cargo fmt --all --check` were run and are
-  clean (exit 0) for the changed crate. **`cargo test` was not run.** The one test I edited
-  (`driver/errors/exec.rs`, the 1365 assertion, `HY000` → `22012`) is asserted-by-reading,
-  not by running.
+- The focused and serialized all-target `cargo test` profiles for the current
+  `tidb-error` and `tidb-executor` owners were run. The catalogue-precedence
+  owner is green (8 unit + 31 integration tests); the executor owner retains
+  its documented pre-existing planner/remote/spill/fixture failures, with the
+  new retry-marker regression passing. `cargo check`, formatting, and diff
+  checks also pass. Strict clippy is green for `tidb-error` and remains blocked
+  for `tidb-executor` by unrelated dependency/generated-code diagnostics.
 - F2's blast radius (which of the ~59 storage-error sites ordinary SQL reaches) is unmeasured.
 - F1's correct code (8005 vs `ErrResultUndetermined`) is unsettled; it needs a capture.
 
@@ -367,15 +409,11 @@ The method that works is a throwaway `pkg/executor/zz_dump_errors_test.go` over
 The statements it needs to cover, one per open item:
 
 ```sql
--- F5: does NewStd pick errno's text?  expect the '%d character position' wording
-SELECT JSON_EXTRACT('{"a":1}', '$.');
 -- F2: expect 9007 and a message ending '[try again later]'
 --     (two sessions, conflicting UPDATE, commit the second)
 -- F3: expect 1235 / 42000 / "This version of TiDB doesn't yet support '...'"
 -- F8: expect the "in '(9223372036854775807 + 1)'" tail
 SELECT 9223372036854775807 + 1;
--- F6 regression, now fixed: expect 3143 / 42000, and 1365 / 22012
-SELECT 1/0;
 ```
 
 ## Method footnote
@@ -387,3 +425,41 @@ separately, the extracted format-verb sequences. The SQLSTATE and class comparis
 same shape. Re-running that against a later tree is how this document stays honest; the
 integration replay will not do it, because it still classifies `(Err(_), true)` as
 `BothRejected`.
+
+### F2 progress (2026-09-05): static reachability classification
+
+The unknown-flattening sites are classified by enclosing function
+(static call-site analysis, no cluster needed):
+
+- Startup/connect path (fail process bring-up, not per-SQL): `connect`
+  x4 + x2, `connect_loaded_catalog_authority` x4,
+  `configured_catalog_from_tables`, `open_session` x2 -- 13 sites.
+- Per-statement transaction/write seams -- the cluster Go classifies as
+  9007-class (`driver/errors/txn.rs` already carries the
+  `TxnErrorKind::WriteConflict` mapping): `commit_bound_write` x3,
+  `control_transaction` x2, `transaction_for_statement`,
+  `transaction_error`, `execute_prepared_write` -- 8 sites.
+- Point-read and prepare seams: `prepare_point_read` x4,
+  `prepare_configured_query` x2, `point_handles` x2 -- 8 sites.
+- Statement completion and misc: `finish_execute_stmt` x3,
+  `node_accounts` x3, `loaded_table_refusal_error` x2,
+  `lightweight_ddl_statement_context` and friends -- the remainder.
+
+Repair design for the transaction/write cluster: route those seams
+through the existing txn error-kind mapping instead of `unknown()`.
+Still gated on one captured conflict to pin the Rust tikv-client's
+error text signatures -- the mapping keys on text/kind, and guessing
+signatures without a capture would be speculative.
+
+### F4 follow-up closed (2026-09-05): no Go-justified upgrades exist
+
+Spot-checks of the generic-1105 DDL refusals against Go settle the
+follow-up: the AUTO_RANDOM_BASE overflow case Go itself handles by a
+silent uint64-to-int64 wrap (`pkg/ddl/create_table.go:875` stores
+without an overflow check) — the Rust refusal is a stricter
+fork-boundary behavior with no Go errno to adopt; AUTO_INCREMENT
+non-integer values are refused at Go's parser level (syntax path), not
+by a DDL errno; and the prefix-key and blob-key refusals already carry
+Go's own errnos (1089, 1170). The remaining generic sites are
+fork-boundary refusals Go never raises, so 1105 is their honest code.
+The follow-up is closed rather than deferred.

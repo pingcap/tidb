@@ -35,15 +35,17 @@ Client-go carries route fields in one dynamic `tikvrpc.Request`; client-rust own
 
 All five source tests are independently named and executable in Rust:
 
-- `TestMakeRequestInfo` → `source_test_make_request_info`: the exact BatchGet, Prewrite, Commit, bypass, store-ID, nil-peer, and write-byte assertions are preserved.
-- `TestMakeRequestInfoPredictedReadBytes` → `source_test_make_request_info_predicted_read_bytes`: native route selection carries the source 256-KiB hint and the zero default only for reads.
-- `TestMakeRequestInfoIsCop` → `source_test_make_request_info_is_cop`: Cop and CopStream are true; Get, BatchGet, and Scan are false. A separate production-derived test proves BatchCop's source-false paging identity while retaining analyze bypass.
-- `TestResponseInfoReadBytes` → `source_test_response_info_read_bytes`: legacy uses processed bytes, NextGen uses total bytes, and the NextGen compatibility row selects processed bytes when it is larger.
-- `TestResponseInfoBatchedTasks` → `source_test_response_info_batched_tasks`: the exact top-level plus three nested-task byte/CPU table is reproduced.
+- `TestMakeRequestInfo` → `source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfo`: the exact BatchGet, Prewrite, Commit, bypass, store-ID, nil-peer, and write-byte assertions are preserved.
+- `TestMakeRequestInfoPredictedReadBytes` → `source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfoPredictedReadBytes`: native route selection carries the source 256-KiB hint and the zero default only for reads.
+- `TestMakeRequestInfoIsCop` → `source_go_internal_resourcecontrol_resource_control_test_TestMakeRequestInfoIsCop`: Cop and CopStream are true; Get, BatchGet, and Scan are false. A separate production-derived test proves BatchCop's source-false paging identity while retaining analyze bypass.
+- `TestResponseInfoReadBytes` → `source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoReadBytes`: legacy uses processed bytes, NextGen uses total bytes, and the NextGen compatibility row selects processed bytes when it is larger.
+- `TestResponseInfoBatchedTasks` → `source_go_internal_resourcecontrol_resource_control_test_TestResponseInfoBatchedTasks`: the exact top-level plus three nested-task byte/CPU table is reproduced.
 
 Additional production-derived coverage checks the full transaction/raw write command matrix, the narrow request-size matrix, all access-location outcomes, internal/analyze/background selection, CopStream dispatch downcasting and first-response accounting, transactional Get/BatchGet/Scan response accounting, legacy CPU fallback, public constructors/getters, controller ordering, penalty/priority mutation, RU accumulation, global enable/install policy, and no settlement after transport failure.
 
 The re-audit also added a direct consumer regression for client-go's txn-file accounting-failure side effect. Before the fix, a failed post-commit controller settlement left `TiKVTxnFileErrorCounter{type="accounting"}` unchanged (`0` rather than `1`). Rust now increments the counter exactly once while retaining the already committed transaction, matching `txn_file.go`.
+
+Two additional red/green boundary regressions exercise arithmetic that the five source tests do not reach. Batched Cop scan-byte accumulation previously panicked in a debug Rust build when `u64::MAX` was followed by one byte, while Go's `uint64` wraps to zero. Batched KV CPU similarly retained `2^64` nanoseconds in Rust instead of wrapping the low 64-bit `time.Duration` wire arithmetic to zero. Scan-byte addition, V2/legacy CPU addition, and legacy millisecond conversion now use explicit wrapping arithmetic; ordinary representable durations are unchanged.
 
 ## Consumer inventory
 
@@ -59,18 +61,12 @@ No other pinned Go production or test file imports this package. Downstream tran
 
 Final validation on `nightly-2026-08-22` used the exact package code:
 
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --no-default-features --quiet`: 13 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib resource_control::test:: --all-features --quiet`: 13 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_go_txnkv_transaction_TestTxnFileCommitPreservesCommitOnResourceControlResponseError --no-default-features --quiet`: 1 passed.
-- The same consumer regression with `--all-features`: 1 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --no-default-features --quiet`: 752 passed.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib source_ --all-features --quiet`: 749 passed.
-- `cargo +nightly-2026-08-22 test --workspace --lib --no-default-features --quiet`: the main crate passed 1,021 tests with one unrelated ignore; companion crates passed 2 and 32 tests.
-- `cargo +nightly-2026-08-22 test -p tikv-client --lib --all-features --quiet`: 1,018 passed with one unrelated ignore.
-- `cargo +nightly-2026-08-22 check --workspace --all-targets --all-features`: passed.
-- `cargo +nightly-2026-08-22 clippy --workspace --all-targets --all-features -- -D warnings`: passed without exclusions.
-- `RUSTDOCFLAGS='-D warnings' cargo +nightly-2026-08-22 doc --workspace --all-features --no-deps --document-private-items`: passed.
-- `cargo +nightly-2026-08-22 test --doc --workspace --all-features --quiet`: 51 passed.
+- The exact `source_go_internal_resourcecontrol_resource_control_test_` filter passed all five direct source-test identities with both `--no-default-features` and `--all-features`.
+- The complete `resource_control::test::` module passed 15 tests with `--no-default-features` and 15 with `--all-features`.
+- The txn-file accounting-error consumer regression passed in both feature configurations.
+- `make unit-test` passed 1,401 tests with two configured skips in the no-default workspace matrix and 1,365 tests with six configured skips in the all-feature library matrix.
+- `make check` passed generation verification, all-workspace/all-target/all-feature checking, rustfmt, and Clippy with `-D warnings`.
+- `make doc` passed private-item rustdoc with `-D warnings` and all 51 doctests.
 - `cargo +nightly-2026-08-22 fmt --all -- --check` and `git diff --check`: passed.
 
 The pinned Go 1.25.12 package passed all four source configurations:
@@ -80,4 +76,4 @@ The pinned Go 1.25.12 package passed all four source configurations:
 - `go test -race ./internal/resourcecontrol -count=1`.
 - `go test -race -tags nextgen ./internal/resourcecontrol -count=1`.
 
-The race runs emitted only the known macOS malformed `LC_DYSYMTAB` linker warning. Mechanical reconciliation finds exactly two artifacts/511 lines, five Go declarations, five independently named Rust ports, no benchmark/example/support harness, and five direct Go importer files. No live cluster is required: package-owned outputs are deterministic request/response accounting and dispatch ordering over typed mock transport; high-level RU behavior remains covered by the completed integration matrix.
+The race runs emitted only the known macOS malformed `LC_DYSYMTAB` linker warning. Mechanical reconciliation finds exactly two artifacts/511 lines, five Go declarations, five exact independently named Rust ports (each defined once), no benchmark/example/support harness, and five direct Go importer files. No live cluster is required: package-owned outputs are deterministic request/response accounting and dispatch ordering over typed mock transport; high-level RU behavior remains covered by the completed integration matrix.

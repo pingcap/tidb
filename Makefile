@@ -14,6 +14,13 @@
 
 include Makefile.common
 
+# Define this before SERVER_BUILD_CMD captures its linker flags with :=.
+# Homebrew C linker search paths are not Go linker directives.
+GO_LDFLAGS = $(filter-out -L%, $(LDFLAGS))
+# CHECK_LDFLAGS is assembled in Makefile.common before this file is parsed;
+# rebuild it from the filtered Go flags so `make test` cannot pass C flags to
+# the Go linker.
+CHECK_LDFLAGS = $(GO_LDFLAGS) $(TEST_LDFLAGS)
 
 .DEFAULT_GOAL := default
 
@@ -239,7 +246,7 @@ endif
 
 SERVER_BUILD_CMD := \
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
-	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
+	-ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
 server: ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
@@ -247,9 +254,9 @@ server: ## Build TiDB server binary
 .PHONY: server_debug
 server_debug: ## Build TiDB server binary with debug symbols
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
 else
-	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: server_failpoint
@@ -517,7 +524,7 @@ br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test: ## Run BR (backup and restore) unit tests
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(GO_LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 .PHONY: br_unit_test_in_verify_ci

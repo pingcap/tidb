@@ -40,13 +40,23 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries and TEN of them have a body here. Four live in
-//! this file, because their tree walks are [`super::rewrite`]'s:
+//! Go's list has 35 entries. Four rule bodies live in this file because their
+//! tree walks are [`super::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
-//! and [`PushDownTopNOptimizer`] (#21). Six more live in their own
-//! `rule_*.rs` beside this one, each one fold and one file:
+//! and [`PushDownTopNOptimizer`] (#21). The remaining implemented bodies live
+//! in their owning `rule_*.rs` modules beside this one, including:
 //!
 //! * [`super::rule_result_reorder::ResultReorder`] (#2)
+//! * [`super::rule_aggregation_elimination::AggregationEliminator`] (#6)
+//! * [`super::rule_constant_propagation::ConstantPropagationSolver`] (#10)
+//! * [`super::rule_max_min_elimination::MaxMinEliminator`] (#12)
+//! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
+//! * [`super::rule_partition_processor::PartitionProcessor`] (#16)
+//! * [`super::rule_collect_plan_stats::CollectPredicateColumnsPoint`] (#17)
+//! * [`super::rule_order_aware_join_reorder::OrderAwareJoinReorder`] (#22)
+//! * [`super::rule_collect_plan_stats::SyncWaitStatsLoadPoint`] (#24)
+//! * [`super::rule_join_reorder::JoinReOrderSolver`] (#26)
+//! * [`super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin`] (#27)
 //! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
 //! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
 //! * [`super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
@@ -54,9 +64,9 @@
 //! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
 //! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
 //!
-//! The remaining 25 are present in [`OPT_RULE_LIST`] as their name and flag —
-//! the TABLE is ported, because the order is the semantics — but they have no
-//! body yet.
+//! Entries whose [`RuleId::body`] is `None` are present as their name and flag
+//! but have no body yet. The table is still ported because its order is
+//! semantic.
 //!
 //! [`logical_optimize`] does NOT silently skip those. It records each one it
 //! walked past in [`OptimizeOutcome::skipped`], so a caller can see exactly
@@ -102,7 +112,6 @@
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::builder::FunctionBuilder;
 use tidb_expr::expr_util::predicates::{is_const_null, maybe_over_optimized_4_plan_cache};
-use tidb_expr::expr_util::push_not::push_down_not;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
@@ -213,6 +222,22 @@ pub mod flags {
 #[must_use]
 pub const fn set_predicate_push_down_flag(flag: u64) -> u64 {
     flag | flags::PREDICATE_PUSH_DOWN
+}
+
+/// The rule-independent tail of Go `adjustOptimizationFlags`: when column
+/// pruning is enabled together with any later logical rule, run the second
+/// pruning pass after those rules have introduced temporary columns.
+#[must_use]
+pub const fn add_second_column_prune(flag: u64) -> u64 {
+    if flag & flags::PRUNE_COLUMNS == 0 {
+        return flag;
+    }
+    let above_prune_columns = !(flags::PRUNE_COLUMNS | (flags::PRUNE_COLUMNS - 1));
+    if flag & above_prune_columns != 0 {
+        flag | flags::PRUNE_COLUMNS_AGAIN
+    } else {
+        flag
+    }
 }
 
 /// Every rule in `optRuleList`, named by the Go type that implements it.
@@ -356,7 +381,16 @@ impl RuleId {
         match self {
             Self::ColumnPruner | Self::ColumnPrunerAgain => Some(&ColumnPruner),
             Self::BuildKeySolver => Some(&BuildKeySolver),
+            Self::AggregationEliminator => {
+                Some(&super::rule_aggregation_elimination::AggregationEliminator)
+            }
+            Self::ProjectionEliminator => {
+                Some(&super::rule_projection_elimination::ProjectionEliminator)
+            }
             Self::PpdSolver => Some(&PpdSolver),
+            Self::JoinKeyTypeCastRewriter => {
+                Some(&super::rule_join_key_type_cast::JoinKeyTypeCastRewriter)
+            }
             Self::PushDownTopNOptimizer => Some(&PushDownTopNOptimizer),
             Self::ResultReorder => Some(&super::rule_result_reorder::ResultReorder),
             Self::DeriveTopNFromWindow => {
@@ -372,28 +406,43 @@ impl RuleId {
                 Some(&super::rule_eliminate_empty_selection::EmptySelectionEliminator)
             }
             Self::ResolveExpand => Some(&super::rule_resolve_expand::ResolveExpand),
-            Self::GcSubstituter
-            | Self::DecorrelateSolver
-            | Self::SemiJoinRewriter
-            | Self::AggregationEliminator
-            | Self::SkewDistinctAggRewriter
-            | Self::ProjectionEliminator
-            | Self::MaxMinEliminator
-            | Self::ConstantPropagationSolver
-            | Self::FullTextIndexResolverWhere
-            | Self::ConvertOuterToInnerJoin
-            | Self::JoinKeyTypeCastRewriter
-            | Self::OuterJoinEliminator
-            | Self::PartitionProcessor
-            | Self::CollectPredicateColumnsPoint
-            | Self::AggregationPushDownSolver
-            | Self::PredicateSimplification
+            Self::CollectPredicateColumnsPoint => {
+                Some(&super::rule_collect_plan_stats::CollectPredicateColumnsPoint)
+            }
+            Self::SyncWaitStatsLoadPoint => {
+                Some(&super::rule_collect_plan_stats::SyncWaitStatsLoadPoint)
+            }
+            Self::PartitionProcessor => Some(&super::rule_partition_processor::PartitionProcessor),
+            Self::ConstantPropagationSolver => {
+                Some(&super::rule_constant_propagation::ConstantPropagationSolver)
+            }
+            Self::MaxMinEliminator => Some(&super::rule_max_min_elimination::MaxMinEliminator),
+            Self::PredicateSimplification => {
+                Some(&super::rule_predicate_simplification::PredicateSimplification)
+            }
+            Self::OrderAwareJoinReorder => {
+                Some(&super::rule_order_aware_join_reorder::OrderAwareJoinReorder)
+            }
+            Self::JoinReOrderSolver => Some(&super::rule_join_reorder::JoinReOrderSolver),
+            Self::AggregationPushDownSolver => {
+                Some(&super::rule_aggregation_push_down::AggregationPushDownSolver)
+            }
+            Self::OuterJoinToSemiJoin => {
+                Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
+            }
+            Self::GcSubstituter => Some(&super::rule_generate_column_substitute::GcSubstituter),
+            Self::SemiJoinRewriter => Some(&super::rule_semi_join_rewrite::SemiJoinRewriter),
+            Self::SkewDistinctAggRewriter => {
+                Some(&super::rule_aggregation_skew_rewrite::SkewDistinctAggRewriter)
+            }
+            Self::ConvertOuterToInnerJoin => {
+                Some(&super::rule_outer_to_inner_join::ConvertOuterToInnerJoin)
+            }
+            Self::OuterJoinEliminator => Some(&super::rule_join_elimination::OuterJoinEliminator),
+            Self::DecorrelateSolver => Some(&super::rule_decorrelate::DecorrelateSolver),
+            Self::FullTextIndexResolverWhere
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
-            | Self::OrderAwareJoinReorder
-            | Self::SyncWaitStatsLoadPoint
-            | Self::JoinReOrderSolver
-            | Self::OuterJoinToSemiJoin
             | Self::CorrelateSolver
             | Self::FullTextIndexResolverRejectRemaining => None,
         }
@@ -538,18 +587,78 @@ pub struct RuleContext<'a> {
     /// `logicalop.AddSelection`'s `LogicalSelection` and `Conds2TableDual`'s
     /// `LogicalTableDual`.
     pub allocator: &'a PlanIdAllocator,
+    /// Go `SessionVars.AllocPlanColumnID()`, used by rules that append a
+    /// computed expression to an existing projection.
+    pub column_allocator: &'a crate::expression_rewriter::ColumnIdAllocator,
     /// Go `SCtx().GetExprCtx()`'s construction half; see
     /// [`FunctionBuilder`].
     pub builder: &'a dyn FunctionBuilder,
+    /// The statement evaluation context used by Go's constraint conversions.
+    pub eval_context: &'a dyn tidb_expr::Columns,
     /// Go `SCtx().GetSessionVars().StmtCtx.UseCache`, which
     /// `MaybeOverOptimized4PlanCache` gates on.
     pub use_plan_cache: bool,
+    /// Go `StmtCtx.SetSkipPlanCache`, used when simplification consumes a
+    /// mutable constant and would otherwise freeze its current value.
+    pub plan_cache_marker: Option<&'a dyn PlanCacheMarker>,
     /// Go `SCtx().GetSessionVars().AllowDeriveTopN`, which
     /// `BaseLogicalPlan.DeriveTopN` (`base_logical_plan.go:169`) gates its
     /// whole recursion on.
     pub allow_derive_topn: bool,
     /// Go `DefaultDisabledLogicalRulesList`.
     pub disabled_rules: DisabledLogicalRules,
+    /// Go's domain `StatsHandle`, reached at this rule's exact position.
+    pub statistics_load: Option<&'a dyn super::rule_collect_plan_stats::StatisticsLoadRequester>,
+    /// Go's partition metadata/ranger access at the partition-processor rule.
+    pub partition_pruning: Option<&'a dyn super::rule_partition_processor::PartitionPruning>,
+    /// Go `SessionVars.OptIndexPruneThreshold`.
+    pub opt_index_prune_threshold: i32,
+    /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
+    pub range_max_size: i64,
+    /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.
+    pub selectivity_factor: f64,
+    /// The statement's shared construction-time ranger fallback handler.
+    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    /// Go `SessionVars.AlwaysKeepJoinKey`.
+    pub always_keep_join_key: bool,
+    /// Go `SessionVars.EnableUnsafeSubstitute`.
+    pub enable_unsafe_substitute: bool,
+    /// Go `SessionVars.EnableSemiJoinRewrite`.
+    pub enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
+    pub enable_no_decorrelate_in_select: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
+    pub join_reorder_threshold: i32,
+    /// Go `SessionVars.AllowAggPushDown` (`@@tidb_opt_agg_push_down`, default
+    /// off): gates the aggregation-push-down rule's join and union arms; the
+    /// projection-crossing arm runs regardless, as in Go.
+    pub allow_agg_push_down: bool,
+    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
+    pub advanced_join_reorder: bool,
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    pub cartesian_join_order_threshold: f64,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`.
+    pub join_reorder_through_proj: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
+    pub join_reorder_through_sel: bool,
+    /// Go `SessionVars.EnableOuterJoinReorder`.
+    pub outer_join_reorder: bool,
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    pub advanced_join_hint: bool,
+    /// Go `StmtCtx.SetHintWarning`.
+    pub hint_warning_sink: Option<&'a dyn HintWarningSink>,
+}
+
+/// The optimizer-hint warning side effect exposed by Go's statement context.
+pub trait HintWarningSink {
+    /// Appends one hint warning.
+    fn set_hint_warning(&self, message: &str);
+}
+
+/// The session side effect Go's expression and rule simplifiers perform.
+pub trait PlanCacheMarker {
+    /// Records the first reason the current statement cannot use plan cache.
+    fn set_skip_plan_cache(&self, reason: &str);
 }
 
 /// Go `base.LogicalOptRule` (`base/rule_base.go`).
@@ -675,75 +784,56 @@ fn run_rule_list(
 
 // ***** logicalop.AddSelection and its predicate-simplification dependency *****
 
-/// Go `ruleutil.ApplyPredicateSimplification(sctx, predicates,
-/// propagateConstant=false, filter=nil)`, the SUBSET that
-/// `logicalop.AddSelection` needs.
-///
-/// # Why a subset lands here and not in a `PredicateSimplification` batch
-///
-/// Go schedules `rule.PredicateSimplification` SEVEN positions after
-/// `PPDSolver`, yet `logicalop.AddSelection` (`logical_plans_misc.go:85`) —
-/// which predicate pushdown calls on every child — calls
-/// `ruleutil.ApplyPredicateSimplification`. That is not a phase-ordering
-/// statement: `rule/util/misc.go:214` declares the symbol as a FUNCTION
-/// POINTER that `rule_init.go`'s `init()` fills in, purely so `logicalop` does
-/// not import `rule` and create a package cycle. The dependency is real and
-/// immediate; only the Go linkage is indirect.
-///
-/// So the pushdown-visible half lands here, and the `PredicateSimplification`
-/// RULE (Go #21) still belongs to a later batch, which will complete this
-/// function rather than replace it.
-///
-/// # What this subset does, and what it does not
-///
-/// Ported, from `applyPredicateSimplificationHelper`
-/// (`rule_predicate_simplification.go:199`), in Go's order:
-/// * `PushDownNot` over each predicate;
-/// * `constraint.DeleteTrueExprs` — a predicate that is a constant TRUE is
-///   dropped, since `WHERE TRUE` filters nothing.
-///
-/// NOT ported, each blocked on a named Go symbol that is not transcreated:
-/// * `expression.PropagateConstant` / `PropagateConstantForJoin` — this is the
-///   `propagateConstant` half the parameter name refers to, and it is exactly
-///   what Go's #11 `ConstantPropagationSolver` and #21 own. `AddSelection`
-///   passes `propagateConstant=true`, so this subset is a NARROWING of that
-///   call, not an implementation of it.
-/// * `shortCircuitLogicalConstants`, `mergeInAndNotEQLists`,
-///   `removeRedundantORBranch`, `pruneEmptyORBranches`
-///   (`rule_predicate_simplification.go`).
-///
-/// The narrowing direction is safe: every omitted step only ever REMOVES or
-/// weakens predicates, so keeping a predicate that Go would have simplified
-/// away yields a plan that filters at least as much, never less.
+/// Go `ruleutil.ApplyPredicateSimplification`.
 #[must_use]
 pub fn apply_predicate_simplification(
     ctx: &RuleContext<'_>,
     predicates: Vec<Expression>,
+    propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> Vec<Expression> {
-    if predicates.is_empty() {
-        return predicates;
-    }
-    predicates
-        .iter()
-        .map(|expr| push_down_not(expr, ctx.builder))
-        .filter(|expr| !is_const_true(expr))
-        .collect()
+    super::rule_predicate_simplification::apply_predicate_simplification(
+        ctx,
+        predicates,
+        propagate_constant,
+        valid,
+    )
 }
 
-/// Go `constraint.DeleteTrueExprs`'s per-expression test, for the constants
-/// this crate can decide without an evaluation context.
+/// Go `ruleutil.ApplyPredicateSimplificationForJoin(...,
+/// propagateConstant=true, ...)` for inner and semi joins.
 ///
-/// A `Constant` with a deferred expression or a parameter marker is NEVER
-/// treated as true, because its value is not known at plan time — that is
-/// Go's `ConstLevel` guard, conservatively.
-fn is_const_true(expr: &Expression) -> bool {
-    let Expression::Constant(constant) = expr else {
-        return false;
-    };
-    if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
-        return false;
-    }
-    matches!(constant.value, tidb_datatype::Datum::Int(v) if v != 0)
+/// The important distinction from [`apply_predicate_simplification`] is
+/// `expression.PropagateConstantForJoin`: equality keys form equivalence
+/// classes, and every deterministic predicate over one member is reproduced
+/// for the other members. Thus `a = b AND b = 1` yields `a = 1` while retaining
+/// `a = b` as a physical join key (`tidb_opt_always_keep_join_key` defaults to
+/// ON in Go).
+///
+/// Go's solver also substitutes constants repeatedly to fold expressions that
+/// become constant. That affects simplification quality but not condition
+/// attribution; this planner retains those original conditions and adds the
+/// same equality-derived predicates. Keeping an unfurled original is
+/// conservative, while the derived predicates are what let predicate
+/// pushdown, range building, cardinality estimation and physical join
+/// enumeration see the same constraints as Go.
+#[must_use]
+pub fn apply_predicate_simplification_for_join(
+    ctx: &RuleContext<'_>,
+    predicates: Vec<Expression>,
+    left_schema: &Schema,
+    right_schema: &Schema,
+    propagate_constant: bool,
+    valid: Option<&dyn Fn(&Expression) -> bool>,
+) -> Vec<Expression> {
+    super::rule_predicate_simplification::apply_predicate_simplification_for_join(
+        ctx,
+        predicates,
+        left_schema,
+        right_schema,
+        propagate_constant,
+        valid,
+    )
 }
 
 /// Go `IsConstFalse(sc, cond)`'s decidable half: a constant that converts to
@@ -824,7 +914,7 @@ pub fn add_selection(
     if conditions.is_empty() {
         return child;
     }
-    let conditions = apply_predicate_simplification(ctx, conditions);
+    let conditions = apply_predicate_simplification(ctx, conditions, true, None);
     if conditions.is_empty() {
         return child;
     }
@@ -848,12 +938,32 @@ pub fn add_selection(
 /// Go `rule.ColumnPruner` (`rule/rule_column_pruning.go:31`), Go rules #1 and
 /// #29.
 ///
-/// Go's body is four lines: `lp.PruneColumns(slices.Clone(lp.Schema().Columns))`
-/// plus an `intest` assertion. The assertion —
-/// `noUnexpectedZeroColumnSchema` — is [`crate::column_pruning`], which is
-/// KEPT as its own module because `difftests/planner-tests` consumes it.
+/// Go's body is `lp.PruneColumns(slices.Clone(lp.Schema().Columns))` followed
+/// by the `noUnexpectedZeroColumnSchema` `intest` assertion.
 #[derive(Debug)]
 pub struct ColumnPruner;
+
+/// Go `noUnexpectedZeroColumnSchema` (`rule_column_pruning.go:52`).
+///
+/// `LogicalPlan::schema` returns the first child's schema by reference when
+/// this node does not own one, preserving Go's schema-pointer identity check
+/// without a second, normalized plan representation.
+pub(super) fn no_unexpected_zero_column_schema(plan: &LogicalPlan) -> bool {
+    for child in plan.children() {
+        if !no_unexpected_zero_column_schema(child) {
+            return false;
+        }
+    }
+    if plan.schema().is_none_or(Schema::is_empty) {
+        if !plan.children().is_empty() && plan.base().base.schema().is_none() {
+            return true;
+        }
+        if !matches!(plan, LogicalPlan::TableDual(_)) {
+            return false;
+        }
+    }
+    true
+}
 
 impl LogicalOptRule for ColumnPruner {
     #[allow(clippy::result_large_err)]
@@ -869,7 +979,13 @@ impl LogicalOptRule for ColumnPruner {
         let (plan, failure) = super::rewrite::prune_columns(ctx, plan, root_cols);
         match failure {
             // Go's `planChanged` is hard-coded `false` in this rule.
-            None => Ok((plan, false)),
+            None => {
+                debug_assert!(
+                    no_unexpected_zero_column_schema(&plan),
+                    "After column pruning, some operator got an unexpected zero-column output schema. Please fix it."
+                );
+                Ok((plan, false))
+            }
             Some(error) => Err((plan, error)),
         }
     }
@@ -893,7 +1009,10 @@ impl LogicalOptRule for BuildKeySolver {
         _ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        Ok((super::rewrite::build_key_info_portal(plan), false))
+        Ok((
+            super::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
+            false,
+        ))
     }
 
     fn name(&self) -> &'static str {
@@ -941,7 +1060,7 @@ impl LogicalOptRule for PushDownTopNOptimizer {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            super::rewrite::push_down_topn_with_builder(ctx.builder, plan, None),
+            super::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
             false,
         ))
     }

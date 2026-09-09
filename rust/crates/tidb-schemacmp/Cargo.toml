@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 

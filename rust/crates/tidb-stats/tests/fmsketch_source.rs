@@ -328,3 +328,13 @@ fn source_original_statistics_fixture_pins_typed_ndv_merge_and_coding() {
         assert_eq!(decoded.ndv(), expected.ndv());
     }
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_fm_sketch_returns_can_be_ignored() {
+    FmSketch::new_signed(1);
+    let sketch = FmSketch::new(1);
+    sketch.ndv();
+    sketch.memory_usage();
+    fm_sketch_ndv(Some(&sketch));
+}

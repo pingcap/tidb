@@ -39,7 +39,6 @@ pub struct StatsLoadedStatus {
 
 impl StatsLoadedStatus {
     /// Creates a status from the source's two metadata fields.
-    #[must_use]
     pub const fn new(stats_initialized: bool, evicted_status: i32) -> Self {
         Self {
             stats_initialized,
@@ -48,56 +47,47 @@ impl StatsLoadedStatus {
     }
 
     /// Returns whether statistics were loaded from storage before.
-    #[must_use]
     pub const fn stats_initialized(self) -> bool {
         self.stats_initialized
     }
 
     /// Returns the source eviction-status integer.
-    #[must_use]
     pub const fn evicted_status(self) -> i32 {
         self.evicted_status
     }
 
     /// Returns a status for a fully loaded column or index.
-    #[must_use]
     pub const fn full_load() -> Self {
         Self::new(true, ALL_LOADED)
     }
 
     /// Returns a status for an initialized entry whose expensive data is
     /// evicted.
-    #[must_use]
     pub const fn all_evicted() -> Self {
         Self::new(true, ALL_EVICTED)
     }
 
     /// Copies the source metadata value.
-    #[must_use]
     pub const fn copy(self) -> Self {
         self
     }
 
     /// Returns whether a storage reload is needed.
-    #[must_use]
     pub const fn is_load_needed(self) -> bool {
         self.stats_initialized && self.evicted_status > ALL_LOADED
     }
 
     /// Returns whether histogram and TopN-level essential statistics remain.
-    #[must_use]
     pub const fn is_essential_stats_loaded(self) -> bool {
         self.stats_initialized && self.evicted_status < ALL_EVICTED
     }
 
     /// Returns whether all statistics are evicted.
-    #[must_use]
     pub const fn is_all_evicted(self) -> bool {
         self.stats_initialized && self.evicted_status >= ALL_EVICTED
     }
 
     /// Returns whether all statistics are fully loaded.
-    #[must_use]
     pub const fn is_full_load(self) -> bool {
         self.stats_initialized && self.evicted_status == ALL_LOADED
     }
@@ -106,7 +96,6 @@ impl StatsLoadedStatus {
     ///
     /// The source intentionally distinguishes an uninitialized value from an
     /// initialized value with an unknown eviction level.
-    #[must_use]
     pub const fn status_to_string(self) -> &'static str {
         if !self.stats_initialized {
             return "unInitialized";

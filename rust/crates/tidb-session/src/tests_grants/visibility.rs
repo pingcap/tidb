@@ -367,3 +367,97 @@ fn create_temporary_tables_shows_the_schema_and_no_table() {
         vec!["t1".to_owned(), "t2".to_owned()],
     );
 }
+
+/// Go's `TestInfoSchemaUserAttributes` visibility matrix: an ordinary
+/// account sees only its own row; `CREATE USER` sees non-system accounts;
+/// `SYSTEM_USER` and `SUPER` alone do not widen the result; and SELECT on
+/// `mysql.user` (or `mysql.*`) sees every row.  The rows themselves come from
+/// the real bootstrapped `mysql.user` table, including the JSON metadata that
+/// `CREATE USER ... ATTRIBUTE` stores there.
+#[test]
+fn user_attributes_rows_follow_go_visibility_rules() {
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privs);
+    boot.bootstrap_fresh_store();
+    boot.run(
+        "CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, \
+         uacreateonly, uasystemholder",
+    )
+    .unwrap();
+    boot.run("CREATE USER uavictim@'%' ATTRIBUTE '{\"secret\": \"victim-data\"}'")
+        .unwrap();
+    boot.run("ALTER USER root@'%' ATTRIBUTE '{\"secret\": \"root-data\"}'")
+        .unwrap();
+    boot.run("GRANT SUPER ON *.* TO uaroot").unwrap();
+    boot.run("GRANT SELECT ON mysql.user TO uaselectonmysqluser")
+        .unwrap();
+    boot.run("GRANT SELECT ON mysql.* TO uaselectonmysql")
+        .unwrap();
+    boot.run("GRANT CREATE USER ON *.* TO uacreateonly")
+        .unwrap();
+    boot.run("GRANT SYSTEM_USER ON *.* TO uasystemholder")
+        .unwrap();
+
+    let visible_users = |session: &mut Session| {
+        row_text(session.run("SELECT user FROM information_schema.user_attributes ORDER BY user"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>()
+    };
+
+    let mut nobody = session_as(&privs, boot.shared_catalog(), "uanobody", "%");
+    assert_eq!(visible_users(&mut nobody), vec!["uanobody"]);
+    assert_eq!(
+        row_text(nobody.run(
+            "SELECT attribute FROM information_schema.user_attributes \
+             WHERE user = 'uanobody'",
+        )),
+        vec![vec!["NULL".to_owned()]],
+    );
+
+    let mut super_user = session_as(&privs, boot.shared_catalog(), "uaroot", "%");
+    assert_eq!(visible_users(&mut super_user), vec!["uaroot"]);
+
+    let mut select_user = session_as(&privs, boot.shared_catalog(), "uaselectonmysqluser", "%");
+    assert_eq!(
+        visible_users(&mut select_user),
+        vec![
+            "root",
+            "uacreateonly",
+            "uanobody",
+            "uaroot",
+            "uaselectonmysql",
+            "uaselectonmysqluser",
+            "uasystemholder",
+            "uavictim",
+        ],
+    );
+    assert_eq!(
+        row_text(select_user.run(
+            "SELECT user, attribute FROM information_schema.user_attributes \
+             WHERE user = 'uavictim'",
+        )),
+        vec![vec![
+            "uavictim".to_owned(),
+            r#"{"secret": "victim-data"}"#.to_owned(),
+        ]],
+    );
+
+    let mut select_schema = session_as(&privs, boot.shared_catalog(), "uaselectonmysql", "%");
+    assert_eq!(
+        visible_users(&mut select_schema),
+        visible_users(&mut select_user)
+    );
+
+    let mut create_user = session_as(&privs, boot.shared_catalog(), "uacreateonly", "%");
+    assert_eq!(
+        visible_users(&mut create_user),
+        vec![
+            "uacreateonly",
+            "uanobody",
+            "uaselectonmysql",
+            "uaselectonmysqluser",
+            "uavictim",
+        ],
+    );
+}

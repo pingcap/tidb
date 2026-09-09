@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Decimal, DecimalIntegerWarning, DecimalParseError};
+use crate::mydecimal::RoundMode;
 use crate::MyDecimal;
 
 #[test]
@@ -322,7 +323,14 @@ fn test_to_hash_key() {
 fn test_to_hash_key_bin_tests() {
     let groups: &[(&[&str], &[&str])] = &[
         (
-            &["1.1", "1.1000", "1.10000000000", "01.1", "0001.1", "001.1000000"],
+            &[
+                "1.1",
+                "1.1000",
+                "1.10000000000",
+                "01.1",
+                "0001.1",
+                "001.1000000",
+            ],
             &["1.1", "0001.1", "01.1"],
         ),
         (
@@ -337,7 +345,14 @@ fn test_to_hash_key_bin_tests() {
             &["-1.1", "-0001.1", "-01.1"],
         ),
         (
-            &[".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"],
+            &[
+                ".1",
+                "0.1",
+                "000000.1",
+                ".10000",
+                "0000.10000",
+                "000000000000000000.1",
+            ],
             &[".1", "0.1", "000000.1", "00.1"],
         ),
         (
@@ -389,7 +404,13 @@ fn test_to_hash_key_bin_tests() {
             &["12345", "012345", "000012345", "000000000000012345"],
         ),
         (
-            &["123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"],
+            &[
+                "123E5",
+                "12300000",
+                "00123E5",
+                "000000123E5",
+                "12300000.00000000",
+            ],
             &["12300000", "123E5", "00123E5", "0000000000123E5"],
         ),
         (
@@ -468,6 +489,22 @@ fn go_arithmetic_vectors() {
             .unwrap()
             .to_string(),
         "1.570000"
+    );
+}
+
+/// Decimal `DIV` keeps a quotient wider than `i64` available for the
+/// expression layer's unsigned conversion, matching Go's `ToUint` path.
+#[test]
+fn div_rem_unbounded_preserves_unsigned_bigint_range() {
+    let (quotient, remainder) = Decimal::from_literal("18446744073709551615")
+        .div_rem_unbounded(&Decimal::from_literal("1.5"))
+        .expect("nonzero divisor");
+    assert_eq!(quotient.to_string(), "12297829382473034410");
+    assert_eq!(remainder.to_string(), "0.0");
+    assert_eq!(quotient.to_u64_trunc(), (12_297_829_382_473_034_410, None));
+    assert_eq!(
+        quotient.to_i64_trunc().1,
+        Some(DecimalIntegerWarning::Overflow)
     );
 }
 
@@ -611,6 +648,114 @@ fn my_decimal_bridge_inlines_common_coefficients_and_preserves_wide_values() {
         value.to_chunk_my_decimal().unwrap().to_raw_bytes(),
         source.to_raw_bytes()
     );
+}
+
+/// An integer part wider than the nine-word buffer takes Go `FromString`'s
+/// `ErrOverflow` clamp: `digitsInt = 81`, `digitsFrac = 0`, and the digit-fill
+/// loop consumes the LOW 81 integer digits (`pkg/types/mydecimal.go:447-453`,
+/// `:460-472` at master `d152e4b78d`). The lossy bridge cell must be
+/// byte-equal to the `MyDecimal` Go's own `FromString` builds from the same
+/// text (Go's parser applies exactly this clamp when it lexes such a
+/// literal).
+#[test]
+fn chunk_bridge_lossy_clamps_integer_overflow_like_go_from_string() {
+    for text in [
+        "9".repeat(100),
+        format!("{}9", "9".repeat(81)),
+        format!("1{}.5", "0".repeat(85)),
+    ] {
+        let value = Decimal::from_literal(&text);
+        let lossy = value.to_chunk_my_decimal_lossy();
+        let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+        assert_eq!(
+            go_error,
+            Some(crate::mydecimal::DecimalError::Overflow),
+            "{text}"
+        );
+        assert_eq!(
+            lossy.to_raw_bytes(),
+            go_cell.to_raw_bytes(),
+            "{text}: cell must equal Go's FromString clamp (digitsInt=81, digitsFrac=0)"
+        );
+    }
+
+    // The sign survives the clamp (a negative datum, not a magnitude).
+    let negative = Decimal::from_literal(&format!("-{}", "7".repeat(90)));
+    let lossy = negative.to_chunk_my_decimal_lossy();
+    assert_eq!(
+        String::from_utf8(lossy.to_string_bytes()).unwrap(),
+        format!("-{}", "7".repeat(81))
+    );
+}
+
+/// Fraction digits beyond the nine-word budget take Go `FromString`'s
+/// `ErrTruncated` clamp: `digitsInt` is kept and `digitsFrac` becomes
+/// `(9 - wordsInt) * 9`, consuming the LEADING kept fraction digits
+/// (`pkg/types/mydecimal.go:447-453`, `:481-493`). `resultFrac` pins the
+/// kept fraction (never above the visible scale) so the datum read-back
+/// renders Go's `ToString` text instead of dropping the fraction.
+#[test]
+fn chunk_bridge_lossy_clamps_excess_fraction_like_go_from_string() {
+    // 1 integer digit (1 word) -> 8 fraction words = 72 kept digits.
+    let fraction = "3".repeat(101);
+    let text = format!("2.{fraction}");
+    let value = Decimal::from_literal(&text);
+    let lossy = value.to_chunk_my_decimal_lossy();
+    let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+    assert_eq!(go_error, Some(crate::mydecimal::DecimalError::Truncated));
+    assert_eq!(
+        lossy.to_raw_bytes(),
+        go_cell.to_raw_bytes(),
+        "cell must equal Go's FromString clamp (digitsInt=1, digitsFrac=72)"
+    );
+    assert_eq!(
+        String::from_utf8(lossy.to_string_bytes()).unwrap(),
+        format!("2.{}", "3".repeat(72)),
+        "displayed text must equal Go's ToString of its clamped cell"
+    );
+    assert_eq!(lossy.result_frac(), 72);
+    assert_eq!(
+        Decimal::from_my_decimal(&lossy).to_string(),
+        format!("2.{}", "3".repeat(72))
+    );
+
+    // A hidden-word storage scale above the visible scale (built exactly the
+    // way an aggregate keeps hidden division words: `true_div` retains whole
+    // base-1e9 words, `mul` carries both storage scales) clamps the hidden
+    // digits while the visible fraction survives in `resultFrac`.
+    let left = Decimal::from_literal("8")
+        .true_div(&Decimal::from_literal("7"), 7)
+        .unwrap();
+    assert_eq!((left.scale(), left.storage_scale()), (7, 9));
+    let right = Decimal::from_literal(&format!("1.{}", "2".repeat(64)));
+    let product = left.mul(&right);
+    assert_eq!(product.scale(), 71);
+    let lossy = product.to_chunk_my_decimal_lossy();
+    assert_eq!(lossy.result_frac(), 71);
+    // The cell clamps to eight fraction words, but the visible scale rides in
+    // `resultFrac`, so the datum read-back is the exact product text.
+    assert_eq!(
+        Decimal::from_my_decimal(&lossy).to_string(),
+        product.to_string()
+    );
+}
+
+/// A clamped value whose kept digits are all zero renders `0`: Go master's
+/// `FromString` normalizes the sign away when every word is zero
+/// (`mydecimal.go:531-542`, `if allZero { d.negative = false }`), and the
+/// leading-zero strip collapses the 81-digit buffer.
+#[test]
+fn chunk_bridge_lossy_zero_clamp_renders_like_go_to_string() {
+    // 10^81: integer part needs 82 digits, low 81 kept digits are all zero.
+    let value = Decimal::from_literal(&format!("1{}", "0".repeat(81)));
+    let lossy = value.to_chunk_my_decimal_lossy();
+    assert_eq!(String::from_utf8(lossy.to_string_bytes()).unwrap(), "0");
+    let negative = Decimal::from_literal(&format!("-1{}", "0".repeat(81)));
+    let lossy = negative.to_chunk_my_decimal_lossy();
+    let (go_cell, go_error) = MyDecimal::from_string(format!("-1{}", "0".repeat(81)).as_bytes());
+    assert_eq!(go_error, Some(crate::mydecimal::DecimalError::Overflow));
+    assert_eq!(lossy.to_raw_bytes(), go_cell.to_raw_bytes());
+    assert_eq!(String::from_utf8(lossy.to_string_bytes()).unwrap(), "0");
 }
 
 use crate::decimal::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
@@ -978,6 +1123,52 @@ fn test_round_with_ceil() {
     }
 }
 
+/// Go's non-word-aligned `ModeCeiling` branch inspects only the first
+/// discarded digit. A later non-zero tail therefore does not resurrect
+/// `1.0001` when rounding to one fractional digit.
+#[test]
+fn decimal_round_ceiling_uses_one_digit_for_non_word_aligned_scale() {
+    assert_eq!(
+        parse_signed("1.0001").round_ceiling_to_scale(1).to_string(),
+        "1.0"
+    );
+    assert_eq!(
+        parse_signed("1.0001").round_ceiling_to_scale(3).to_string(),
+        "1.001"
+    );
+    // A word-aligned cut still scans the complete discarded fraction, as Go
+    // does in its separate branch.
+    assert_eq!(
+        parse_signed("1.000000001")
+            .round_ceiling_to_scale(0)
+            .to_string(),
+        "2"
+    );
+}
+
+/// The fixed-word `MyDecimal::round` path must inspect every discarded digit
+/// for `ModeCeiling`, not only the first digit after the requested scale.  Go's
+/// source marks this branch as a TODO; keeping the complete remainder here
+/// avoids silently losing a non-zero tail such as `1.0001 -> 1.001`.
+#[test]
+fn test_my_decimal_round_ceiling_checks_the_discarded_tail() {
+    for (input, expected) in [("1.0001", "1.001"), ("-1.0001", "-1.001")] {
+        let (decimal, error) = MyDecimal::from_string(input.as_bytes());
+        assert!(error.is_none(), "{input} parses");
+        let mut rounded = MyDecimal::default();
+        assert_eq!(
+            decimal.round(&mut rounded, 3, RoundMode::Ceiling),
+            None,
+            "{input} rounds without a warning"
+        );
+        assert_eq!(
+            String::from_utf8(rounded.to_string_bytes()).unwrap(),
+            expected,
+            "{input}"
+        );
+    }
+}
+
 /// Exact TiDB `TestMulMyDecimal`, including the fixed nine-word buffer's
 /// truncation and overflow outcomes.
 #[test]
@@ -1008,6 +1199,12 @@ fn test_mul_my_decimal() {
             Some(DecimalCodecWarning::Overflow),
         ),
         (
+            "-1000000000000000000000000000000000000000000000000000000000000",
+            "1000000000000000000000000000000000000000000000000000000000000",
+            "-0",
+            Some(DecimalCodecWarning::Overflow),
+        ),
+        (
             "0.5999991229316",
             "0.918755041726043",
             "0.5512522192246113614062276588",
@@ -1026,6 +1223,18 @@ fn test_mul_my_decimal() {
         assert_eq!(actual_warning, *warning, "{a} * {b} warning");
         assert_eq!(actual.to_string(), *product, "{a} * {b}");
     }
+}
+
+/// Go's `DecimalMul` assigns the result sign before returning `ErrOverflow`,
+/// so an overflowing product of opposite-signed operands renders as `-0`.
+#[test]
+fn decimal_mul_overflow_preserves_negative_zero() {
+    let magnitude = "1".to_owned() + &"0".repeat(60);
+    let (value, warning) = Decimal::from_signed_literal(&format!("-{magnitude}"))
+        .mul_mysql(&Decimal::from_signed_literal(&magnitude));
+    assert_eq!(warning, Some(DecimalCodecWarning::Overflow));
+    assert_eq!(value.to_string(), "-0");
+    assert!(value.is_negative());
 }
 
 /// Exact source `TestShiftMyDecimal`, including the temporary two-word buffer
@@ -1148,6 +1357,37 @@ fn test_shift_my_decimal() {
     }
 }
 
+/// Go continues after a clamped exponent parse so the exponent bound selects
+/// overflow/truncation instead of leaking the intermediate bad-number error.
+#[test]
+fn parse_mysql_clamped_exponent_keeps_go_error_precedence() {
+    let (positive, positive_error) = Decimal::parse_mysql("1e9223372036854775808");
+    assert_eq!(positive.to_string(), "9".repeat(81));
+    assert_eq!(positive_error, Some(DecimalParseError::Overflow));
+
+    let (negative, negative_error) = Decimal::parse_mysql("1e-9223372036854775809");
+    assert_eq!(negative.to_string(), "0");
+    assert_eq!(negative_error, Some(DecimalParseError::Truncated));
+}
+
+/// Go discards a rounding carry when every original digit was shifted out of
+/// the fixed nine-word decimal buffer.
+#[test]
+fn parse_mysql_shift_discards_carry_after_fraction_exhaustion() {
+    let (value, error) = Decimal::parse_mysql("9e-82");
+    assert_eq!(value.to_string(), "0");
+    assert_eq!(error, Some(DecimalParseError::Truncated));
+}
+
+#[test]
+fn from_f64_uses_go_shortest_exponent_format() {
+    let tiny = Decimal::from_f64(1e-73).expect("finite decimal");
+    assert_eq!(tiny.to_string(), format!("0.{}1", "0".repeat(72)));
+
+    let wide = Decimal::from_f64(1e81).expect("finite decimal");
+    assert_eq!(wide.to_string(), "9".repeat(81));
+}
+
 /// Exact source `TestFromStringMyDecimal`, including exponent best-effort
 /// parsing and the test-only one-word buffer.
 #[test]
@@ -1267,6 +1507,25 @@ fn test_add_my_decimal() {
     assert_eq!(actual.to_string(), large_output);
 }
 
+/// Go `doAdd` checks the leading base-1e9 word before adding the remaining
+/// words. A full `999999999` leading word therefore reports overflow even when
+/// the exact 81-digit result would still fit in the nine-word buffer.
+#[test]
+fn add_overflow_uses_go_leading_word_heuristic() {
+    let left = format!("999999999{}", "0".repeat(72));
+    let (actual, warning) = Decimal::from_literal(&left).add_mysql(&Decimal::from_int(1));
+
+    assert_eq!(warning, Some(DecimalCodecWarning::Overflow));
+    assert_eq!(actual.to_string(), "9".repeat(81));
+
+    // Opposite-sign DecimalAdd takes Go's doSub path, so the same leading
+    // word must not spuriously trigger the add-only overflow precheck.
+    let (actual, warning) =
+        Decimal::from_signed_literal(&format!("-{left}")).add_mysql(&Decimal::from_int(1));
+    assert_eq!(warning, None);
+    assert_eq!(actual.to_string(), format!("-999999998{}", "9".repeat(72)));
+}
+
 /// Complete source `TestSubMyDecimal` row set.
 #[test]
 fn test_sub_my_decimal() {
@@ -1360,6 +1619,23 @@ fn test_div_mod_my_decimal() {
         let actual = parse_signed(left).rem_mysql(&parse_signed(right)).unwrap();
         assert_eq!(actual.to_string(), output, "{left} % {right}");
     }
+}
+
+/// Go's `DecimalDiv` clamps a quotient that needs more than the nine-word
+/// decimal buffer and returns `ErrTruncated` alongside the retained value.
+#[test]
+fn decimal_division_clamps_fractional_words_at_the_codec_boundary() {
+    let left = parse_signed("10000000000000000000.000000000000000000000000000000");
+    let right = parse_signed("3.000000000000000000000000000000");
+    let (value, warning) = left
+        .div_mysql_with_warning(&right, 4)
+        .expect("nonzero divisor");
+    assert_eq!(warning, Some(DecimalCodecWarning::Truncated));
+    let storage = value.storage_string();
+    let (_, fraction) = storage
+        .split_once('.')
+        .expect("division keeps a fractional part");
+    assert_eq!(fraction.len(), 54);
 }
 
 #[test]
@@ -1710,7 +1986,7 @@ fn zero_carries_no_sign_on_every_go_value_path() {
     }
 }
 
-/// The one place Go DOES keep a negative zero, and why this crate declines to.
+/// The one place Go keeps a negative zero, preserved only by raw decoders.
 ///
 /// `FromBin` sets `d.negative = mask != 0` straight from the sign bit and only
 /// resets to `zeroMyDecimal` when `digitsInt == 0 && digitsFrac == 0` -- so a
@@ -1727,12 +2003,10 @@ fn zero_carries_no_sign_on_every_go_value_path() {
 /// from a `MyDecimal` whose sign is already cleared on every value path (see
 /// [`zero_carries_no_sign_on_every_go_value_path`]), so TiDB never WRITES
 /// `0x7f` for a zero -- only a corrupt or foreign encoder can. Reproducing it
-/// would mean deleting this type's `negative && !is_zero` normalization, which
-/// is what keeps "zero compares and renders unsigned" true by construction for
-/// every arithmetic result rather than op-by-op as Go does. This test pins the
-/// deviation so it stays a known, deliberate one instead of drifting.
+/// is why the raw decoder preserves the sign only when Go does, while ordinary
+/// construction and arithmetic continue to normalize zero.
 #[test]
-fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
+fn from_bin_preserves_a_non_canonical_negative_zero_like_go() {
     // Agreed rows: canonical zero, and the `frac == 0` payload Go itself
     // normalizes via the `digitsInt == 0 && digitsFrac == 0` reset.
     for (bin, precision, frac, rendered) in [(vec![0x80_u8], 1, 0, "0"), (vec![0x7f_u8], 1, 0, "0")]
@@ -1743,17 +2017,45 @@ fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
         assert!(!value.is_negative(), "FromBin({bin:x?}) kept a sign");
     }
 
-    // The deviating row. Go yields "-0.00" comparing -1 against zero; this
-    // crate yields "0.00" comparing equal.
-    let (value, _, _) = Decimal::from_bin(&[0x7f, 0x00], 2, 2).expect("FromBin(7f 00)");
-    assert_eq!(value.to_string(), "0.00", "Go renders -0.00 here");
+    // Go keeps the sign when a non-zero fractional digit count prevents its
+    // zero-reset branch.
+    let (value, consumed, _) = Decimal::from_bin(&[0x7f, 0x00], 2, 2).expect("FromBin(7f 00)");
+    assert_eq!(consumed, 1);
+    assert_eq!(value.to_string(), "-0.00");
     assert!(value.is_zero());
-    assert!(!value.is_negative());
+    assert!(value.is_negative());
     assert_eq!(
         value.cmp(&Decimal::from_literal("0.00")),
-        std::cmp::Ordering::Equal,
-        "Go's Compare returns -1 here"
+        std::cmp::Ordering::Less,
     );
+    assert_eq!(value.to_bin(2, 2).unwrap().0, [0x7f]);
+}
+
+/// Go's `MyDecimal.FromBin` zeroes the receiver but still reports the fixed
+/// payload length when a legal `(precision, frac)` shape contains an invalid
+/// word. The strict Rust wrapper keeps returning `BadNumber`; callers that
+/// need Go's cursor-progress state use `from_bin_with_failure`.
+#[test]
+fn from_bin_corrupt_word_keeps_go_zero_and_consumed_size() {
+    // DECIMAL(10, 0): one leading digit byte followed by one 1e9 word. The
+    // latter is outside Go's [0, 999999999] word range.
+    let corrupt = [0x80, 0x3b, 0x9a, 0xca, 0x00];
+    let failure = Decimal::from_bin_with_failure(&corrupt, 10, 0)
+        .expect_err("corrupt word must retain Go's failure state");
+    assert_eq!(failure.error, DecimalCodecError::BadNumber);
+    assert_eq!(failure.consumed, 5);
+    assert_eq!(failure.value.to_string(), "0");
+    assert!(!failure.value.is_negative());
+    assert_eq!(
+        Decimal::from_bin(&corrupt, 10, 0),
+        Err(DecimalCodecError::BadNumber)
+    );
+
+    let malformed = Decimal::from_bin_with_failure(&[0x80], -1, 1)
+        .expect_err("illegal shape must not claim payload bytes");
+    assert_eq!(malformed.error, DecimalCodecError::BadNumber);
+    assert_eq!(malformed.consumed, 0);
+    assert_eq!(malformed.value.to_string(), "0");
 }
 
 /// The previous pad-both-sides comparison, kept as the differential
@@ -1887,4 +2189,14 @@ fn ord_cmp_keeps_go_documented_equalities() {
     let zero = Decimal::parse_mysql("0.00").0;
     assert_eq!(neg_zero.cmp(&zero), std::cmp::Ordering::Equal);
     assert_eq!(zero.cmp(&neg_zero), std::cmp::Ordering::Equal);
+}
+
+#[test]
+fn to_bin_keeps_low_81_integer_digits_on_word_overflow() {
+    use super::Decimal;
+
+    let overwide = Decimal::from_literal(&format!("1{}", "0".repeat(81)));
+    let (encoded, _) = overwide.to_bin(81, 0).unwrap();
+    let (zero, _) = Decimal::from_literal("0").to_bin(81, 0).unwrap();
+    assert_eq!(encoded, zero);
 }

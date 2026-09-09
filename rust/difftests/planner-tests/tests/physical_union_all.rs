@@ -12,30 +12,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalUnionAll planning gates.
+//! Vectors for the wired PhysicalUnionAll planning gates.
 //!
 //! The Go anchor is `TestMppUnionAll` at
 //! `pkg/planner/core/casetest/mpp/mpp_test.go:446`.
 
-use tidb_planner::physical_union_all::{exhaust_physical_union_all, PhysicalUnionAllPlan};
+use tidb_planner::logical::{BaseLogicalPlan, LogicalUnionAll};
+use tidb_planner::physical::{exhaust_physical_plans_4_logical_union_all, PhysicalPlan};
+use tidb_planner::physical_property::{PhysicalProperty, SortItem, TaskType};
+use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]
-fn mpp_union_all_keeps_union_type_and_mpp_candidate() {
-    let plans = exhaust_physical_union_all(true, true, false, false, true, false, 0).unwrap();
-    assert_eq!(plans, vec![PhysicalUnionAllPlan::init(true, 0)]);
-    assert_eq!(plans[0].plan_type(), "Union");
-    assert!(plans[0].mpp());
+fn unsupported_mpp_union_is_not_claimed_without_the_tiflash_tier() {
+    let allocator = PlanIdAllocator::new();
+    let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0));
+    let mpp = PhysicalProperty {
+        task_tp: TaskType::Mpp,
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_union_all(&union, &mpp, &allocator, 1.0).is_empty());
 }
 
 #[test]
 fn root_union_all_emits_source_candidate_order() {
-    let plans = exhaust_physical_union_all(false, true, false, false, true, true, 7).unwrap();
-    assert_eq!(plans[0], PhysicalUnionAllPlan::init(false, 7));
-    assert_eq!(plans[1], PhysicalUnionAllPlan::init(true, 7));
+    let allocator = PlanIdAllocator::new();
+    let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 7));
+    let plans = exhaust_physical_plans_4_logical_union_all(
+        &union,
+        &PhysicalProperty::default(),
+        &allocator,
+        1.0,
+    );
+    assert_eq!(
+        plans.len(),
+        1,
+        "the TiFlash-less tier has one root candidate"
+    );
+    let PhysicalPlan::UnionAll(plan) = &plans[0] else {
+        panic!("a wired PhysicalUnionAll, got {:?}", plans[0]);
+    };
+    assert_eq!(plan.base.base.tp(), "Union");
+    assert_eq!(plan.base.base.query_block_offset(), 7);
+    assert!(!plan.mpp);
 }
 
 #[test]
-fn sort_and_invalid_partition_requests_are_rejected() {
-    assert!(exhaust_physical_union_all(false, true, true, false, true, false, 0).is_none());
-    assert!(exhaust_physical_union_all(true, true, false, false, false, false, 0).is_none());
+fn sort_requests_are_rejected() {
+    let allocator = PlanIdAllocator::new();
+    let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0));
+    let sorted = PhysicalProperty {
+        sort_items: vec![SortItem::new(1, false)],
+        ..PhysicalProperty::default()
+    };
+    assert!(
+        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0).is_empty()
+    );
 }

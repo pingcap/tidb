@@ -49,19 +49,16 @@
 //!
 //! # What it refuses
 //!
-//! A column whose coprocessor descriptor this module cannot build faithfully
-//! -- anything outside the signed and unsigned integer family
-//! (`BIGINT`/`INT`/`MEDIUMINT`/`SMALLINT`/`TINYINT`) and the character-string
-//! family (`VARCHAR`/`CHAR`/the `BLOB`s and their `BINARY` spellings) today --
-//! makes the whole scan fall back to the byte-level cursor. Note that this is
-//! a *projection* gate, separate from the predicate lowering's own type gate:
-//! a table with one `DECIMAL` column in the `SELECT` list cannot be scanned
-//! remotely at all, however pushable its `WHERE` is. The refusal is
-//! [`PushdownScannerError::Unsupported`], which the storage turns into "use
-//! `iter`", so a refused shape is slower and never wrong.
+//! The scan descriptor follows Go `util.ColumnToProto`: every concrete
+//! MySQL/TiDB field type carries its wire type code, declared length/scale,
+//! flags, collation, and (for `ENUM`/`SET`) element names. Only an unknown or
+//! unresolved type is refused. This projection gate is separate from the
+//! predicate lowering's own type gate: a supported column may still leave a
+//! `WHERE` expression above the scan when TiKV cannot evaluate that function.
+//! A refused shape falls back to the byte-level cursor, so it is slower but
+//! never changes the answer.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
@@ -69,7 +66,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
     CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
     QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, SelectInput,
-    WarningCollector,
+    SelectResponseIter, WarningCollector,
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
@@ -78,26 +75,25 @@ use tidb_executor::remote_scan::{
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-use tidb_planner::physical_index_scan::PhysicalIndexScanPlan;
-use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
+use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner::tikv_scan_spec::{
     ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
 };
 use tidb_proto::tipb::{
-    Aggregation, ByItem, ExecType, Executor as PbExecutor, Expr, ExprType, ScalarFuncSig, TopN,
+    ByItem, ExecType, Executor as PbExecutor, Expr, ExprType, ScalarFuncSig, TopN,
 };
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
-    construct_aggregated_read_only_dag_req_with_conditions,
+    construct_aggregate_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 
 enum LoweredAggregate {
-    Legacy {
-        message: Aggregation,
-        output_width: usize,
+    Global {
+        functions: Vec<Expr>,
+        streamed: bool,
     },
     Grouped {
         functions: Vec<Expr>,
@@ -114,17 +110,6 @@ const NOT_NULL_FLAG: i32 = 1;
 const PRI_KEY_FLAG: i32 = 2;
 /// Go `charset.CollationBin`, the coprocessor collation of a numeric column.
 const BINARY_COLLATION_ID: i32 = 63;
-/// Go `mysql.TypeLonglong`.
-const MYSQL_TYPE_LONGLONG: i32 = 8;
-/// Go `mysql.TypeLong`.
-const MYSQL_TYPE_LONG: i32 = 3;
-/// Go `mysql.TypeInt24`.
-const MYSQL_TYPE_INT24: i32 = 9;
-/// Go `mysql.TypeShort`.
-const MYSQL_TYPE_SHORT: i32 = 2;
-/// Go `mysql.TypeTiny`.
-const MYSQL_TYPE_TINY: i32 = 1;
-
 /// One coprocessor scan capability for a node's sessions.
 ///
 /// Each stream owns its lazy DistSQL result. Decoding runs in the consumer's
@@ -132,15 +117,6 @@ const MYSQL_TYPE_TINY: i32 = 1;
 /// by the underlying response owner, without a second decoded-row producer.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
-    /// Rows decoded from coprocessor responses by this node's consumers.
-    rows_returned: Arc<AtomicU64>,
-    /// Scans this node served remotely, against the ones it refused.
-    scans_served: Arc<AtomicU64>,
-    scans_refused: Arc<AtomicU64>,
-    /// The executor list of each DAG this node sent, read back from the
-    /// encoded request. This is the receipt that the Selection and the cap
-    /// really travelled, rather than a claim that they did.
-    requests: Arc<Mutex<Vec<String>>>,
     /// The same table lookup opens several region scans with identical
     /// columns and predicates. Keep the lowered Selection for that request
     /// shape so a large `IN` list is encoded once per node instead of once per
@@ -160,24 +136,8 @@ impl<F> fmt::Debug for CopScanSource<F> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CopScanSource")
-            .field("rows_returned", &self.rows_returned.load(Ordering::Relaxed))
-            .field("scans_served", &self.scans_served.load(Ordering::Relaxed))
-            .field("scans_refused", &self.scans_refused.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
-}
-
-/// What a node's coprocessor scans have done so far, as plain counters.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CopScanStats {
-    /// Rows decoded from coprocessor responses, including an unread chunk tail.
-    pub rows_returned: u64,
-    /// Scans served remotely.
-    pub scans_served: u64,
-    /// Scans refused, which fell back to the byte-level cursor.
-    pub scans_refused: u64,
-    /// One line per sent request, naming its DAG executors.
-    pub requests: Vec<String>,
 }
 
 impl<F> CopScanSource<F> {
@@ -193,26 +153,7 @@ impl<F> CopScanSource<F> {
     pub fn new(factory: Arc<F>) -> Self {
         Self {
             factory,
-            rows_returned: Arc::new(AtomicU64::new(0)),
-            scans_served: Arc::new(AtomicU64::new(0)),
-            scans_refused: Arc::new(AtomicU64::new(0)),
-            requests: Arc::new(Mutex::new(Vec::new())),
             selection_cache: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// The node's live coprocessor-scan counters.
-    #[must_use]
-    pub fn stats(&self) -> CopScanStats {
-        CopScanStats {
-            rows_returned: self.rows_returned.load(Ordering::Relaxed),
-            scans_served: self.scans_served.load(Ordering::Relaxed),
-            scans_refused: self.scans_refused.load(Ordering::Relaxed),
-            requests: self
-                .requests
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .clone(),
         }
     }
 }
@@ -226,10 +167,7 @@ where
         &self,
         request: &PushdownScanRequest,
     ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
-        let refuse = |reason: &str| {
-            self.scans_refused.fetch_add(1, Ordering::Relaxed);
-            PushdownScannerError::Unsupported(reason.to_owned())
-        };
+        let refuse = |reason: &str| PushdownScannerError::Unsupported(reason.to_owned());
         if request.snapshot_ts == 0 {
             return Err(refuse("the statement's snapshot has no timestamp"));
         }
@@ -350,7 +288,10 @@ where
 
         let aggregate = match request.aggregate.as_ref() {
             None => None,
-            Some(PushdownPartialAggregate::Global { functions, streamed }) => {
+            Some(PushdownPartialAggregate::Global {
+                functions,
+                streamed,
+            }) => {
                 if lowered.len() != request.predicates.len()
                     || request.limit.is_some()
                     || request.topn.is_some()
@@ -360,16 +301,15 @@ where
                         "partial aggregation requires a complete Selection and no competing pushdown",
                     ));
                 }
-                let lowered = lower_global_aggregate(functions, &columns).ok_or_else(|| {
+                let lowered = lower_aggregate_functions(functions, &columns).ok_or_else(|| {
                     refuse("a global aggregate function cannot be lowered to TiPB")
                 })?;
                 field_types = functions
                     .iter()
                     .map(|function| function.output_type.clone())
                     .collect();
-                Some(LoweredAggregate::Grouped {
+                Some(LoweredAggregate::Global {
                     functions: lowered,
-                    group_by: Vec::new(),
                     streamed: *streamed,
                 })
             }
@@ -389,7 +329,7 @@ where
                     ));
                 }
                 let lowered_functions =
-                    lower_grouped_aggregate(functions, &columns).ok_or_else(|| {
+                    lower_aggregate_functions(functions, &columns).ok_or_else(|| {
                         refuse("a grouped aggregate function cannot be lowered to TiPB")
                     })?;
                 let group_by = lower_group_by(group_offsets, group_types, &columns)
@@ -403,34 +343,6 @@ where
                     functions: lowered_functions,
                     group_by,
                     streamed: *streamed,
-                })
-            }
-            Some(aggregate) => {
-                // The SAME gate the two arms above state, and for the same
-                // reason: an aggregate computed at the region IS the answer,
-                // so a conjunct left behind is not a weaker pre-filter that
-                // the scan source re-tests -- there are no rows left to test.
-                // `count(*)` reaches this arm, and without the gate
-                // `WHERE u >= 9223372036854775808` over a `BIGINT UNSIGNED`
-                // column answered 5 where every row-returning form of the same
-                // query answered 2: the unsigned literal is one this lowering
-                // refuses, so the Selection stayed home while the COUNT
-                // travelled and counted the whole table.
-                if lowered.len() != request.predicates.len()
-                    || request.limit.is_some()
-                    || request.topn.is_some()
-                    || request.output_offsets.is_some()
-                {
-                    return Err(refuse(
-                        "partial aggregation requires a complete Selection and no competing pushdown",
-                    ));
-                }
-                let message = aggregation_to_pb(aggregate, &columns)
-                    .ok_or_else(|| refuse("a pushed aggregate has no bounded lowering"))?;
-                field_types = aggregate.output_types();
-                Some(LoweredAggregate::Legacy {
-                    message,
-                    output_width: field_types.len(),
                 })
             }
         };
@@ -477,7 +389,7 @@ where
                 );
                 spec.desc = index.desc;
                 spec.primary_column_ids = request.primary_column_ids.clone();
-                PhysicalIndexScanPlan::init(0, 0, &candidate, 0.0)
+                PhysicalIndexScan::init(0, 0, &candidate, 0.0)
                     .try_with_pushdown(
                         ResolvedIndexDescriptor {
                             index_id: index.index_id,
@@ -499,7 +411,7 @@ where
             spec.keep_order = request.keep_order;
             spec.primary_column_ids = request.primary_column_ids.clone();
             spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
-            Some(PhysicalTableScanPlan::init(0, 0, spec))
+            Some(PhysicalTableScan::init(0, 0, spec))
         } else {
             None
         };
@@ -511,7 +423,7 @@ where
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let context = DagRequestContext::new(
+        let mut context = DagRequestContext::new(
             time_zone_name,
             time_zone_offset_secs,
             // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
@@ -524,16 +436,21 @@ where
             // the consumer, without per-row materialization.
             EncodeType::Chunk,
         );
+        // Go `builder_utils.go:73-76`: `dagReq.DivPrecisionIncrement` is set
+        // from the statement's session variable when it differs from the
+        // default; the lowering omits the field at the default value.
+        context.div_precision_increment = request.statement.div_precision_increment;
         let mut dag = match aggregate.as_ref() {
-            Some(LoweredAggregate::Legacy {
-                message,
-                output_width,
-            }) => construct_aggregated_read_only_dag_req_with_conditions(
+            Some(LoweredAggregate::Global {
+                functions,
+                streamed,
+            }) => construct_aggregate_read_only_dag_req_with_conditions(
                 &context,
                 scan,
                 &conditions,
-                message.clone(),
-                *output_width,
+                functions,
+                *streamed,
+                &output_offsets,
             ),
             Some(LoweredAggregate::Grouped {
                 functions,
@@ -597,7 +514,6 @@ where
             });
         }
 
-        let summary = dag_summary(&dag);
         let key_ranges: Vec<KeyRange> = request
             .ranges
             .iter()
@@ -620,9 +536,12 @@ where
         if aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
+        let mut cop_plan_ids = vec![0; dag.executors.len()];
+        if let Some(scan_id) = cop_plan_ids.first_mut() {
+            *scan_id = request.statement.plan_id;
+        }
         let plan = RemoteScanPlan {
             dag,
-            summary: summary.clone(),
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
             key_range_hints: request.range_hints.clone(),
@@ -633,110 +552,34 @@ where
             field_types: field_types.clone(),
             paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
+            resource_group_name: request.statement.resource_group_name.clone(),
+            replica_read: request.statement.replica_read,
+            priority: request.statement.priority,
+            not_fill_cache: request.statement.not_fill_cache,
+            query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
             warnings: request.statement.warnings.clone(),
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
+            cop_plan_ids,
+            root_plan_id: request.statement.plan_id,
         };
         let iter = scan_result(|| open_scan(&self.factory, plan))
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
-        self.scans_served.fetch_add(1, Ordering::Relaxed);
-        self.requests
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .push(summary);
         Ok(Box::new(CopRowStream {
             iter: Some(iter),
-            node_rows: Arc::clone(&self.rows_returned),
             pending: None,
             pending_row: 0,
             field_types,
             returned: 0,
             predicates_applied,
+            plan_id: request.statement.plan_id,
+            exhausted: false,
         }))
     }
 }
 
-/// The DAG's executor list, read back out of the built request.
-///
-/// A receipt is worth more than an assertion here: this reads what is about to
-/// be encoded, so it cannot claim a Selection the request does not carry.
-fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
-    let executors: Vec<String> = dag
-        .executors
-        .iter()
-        .map(|executor| match executor.tp {
-            Some(tp) if tp == ExecType::TypeTableScan as i32 => {
-                let columns = executor
-                    .tbl_scan
-                    .as_ref()
-                    .map_or(0, |scan| scan.columns.len());
-                let table = executor
-                    .tbl_scan
-                    .as_ref()
-                    .and_then(|scan| scan.table_id)
-                    .unwrap_or_default();
-                format!("TableScan(table {table}, {columns} columns)")
-            }
-            Some(tp) if tp == ExecType::TypeIndexScan as i32 => {
-                let (table, index, columns) =
-                    executor.idx_scan.as_ref().map_or((0, 0, 0), |scan| {
-                        (scan.table_id(), scan.index_id(), scan.columns.len())
-                    });
-                format!("IndexScan(table {table}, index {index}, {columns} columns)")
-            }
-            Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
-                "Selection({} conditions)",
-                executor
-                    .selection
-                    .as_ref()
-                    .map_or(0, |selection| selection.conditions.len())
-            ),
-            Some(tp) if tp == ExecType::TypeAggregation as i32 => format!(
-                "HashAgg({} functions)",
-                executor
-                    .aggregation
-                    .as_ref()
-                    .map_or(0, |aggregation| aggregation.agg_func.len())
-            ),
-            Some(tp) if tp == ExecType::TypeLimit as i32 => format!(
-                "Limit({})",
-                executor
-                    .limit
-                    .as_ref()
-                    .and_then(|limit| limit.limit)
-                    .unwrap_or_default()
-            ),
-            Some(tp)
-                if tp == ExecType::TypeAggregation as i32
-                    || tp == ExecType::TypeStreamAgg as i32 =>
-            {
-                let (functions, groups) = executor
-                    .aggregation
-                    .as_ref()
-                    .map_or((0, 0), |agg| (agg.agg_func.len(), agg.group_by.len()));
-                let name = if tp == ExecType::TypeStreamAgg as i32 {
-                    "StreamAgg"
-                } else {
-                    "HashAgg"
-                };
-                format!("{name}({functions} functions, {groups} group keys)")
-            }
-            other => format!("executor {other:?}"),
-        })
-        .collect();
-    format!(
-        "{} -> output offsets {:?}",
-        executors.join(" | "),
-        dag.output_offsets
-    )
-}
-
-/// Everything the lazy result needs, owned independently of the caller.
+/// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     dag: tidb_proto::tipb::DagRequest,
-    /// Read-only identity line for [`open_scan`]'s env-gated trace: which
-    /// executors this request lowers (`IndexScan(table t, index i, ..)` vs
-    /// `TableScan(..)`), and the pushed output offsets.
-    summary: String,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
     envelope: RequestEnvelope,
@@ -765,9 +608,25 @@ struct RemoteScanPlan {
     /// Optional Go IndexLookUp first-window paging floor for index scans.
     paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
-    /// The statement's warning sink, shared with `SHOW WARNINGS`.
+    /// Go `StmtCtx.ResourceGroupName` for this request.
+    resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` for this request.
+    replica_read: tidb_distsql::ReplicaReadType,
+    /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)` for this request.
+    priority: tidb_distsql::Priority,
+    /// Go `StmtCtx.NotFillCache` for this request.
+    not_fill_cache: bool,
+    /// Query-scoped per-store limiter shared by all region tasks for this
+    /// statement.
+    query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// The statement's warning sink. It is an `Arc` handler, so warnings
+    /// appended while the query worker decodes land in the buffer
+    /// `SHOW WARNINGS` reads.
     warnings: WarningCollector,
     cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
+    /// Physical IDs aligned with TiPB executors for runtime summaries.
+    cop_plan_ids: Vec<isize>,
+    root_plan_id: isize,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -799,18 +658,17 @@ where
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
     // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
     //
-    // The context is the STOCK one, not this session's: the remaining
-    // `SetFromSessionVars` fields (replica read, statement priority, paging,
-    // request source, task id, max_execution_time, tidb_kv_read_timeout, the
-    // runaway checker) are session variables no `StmtContext` carries yet, so
-    // threading them is a session-tier change this seam cannot make on its
-    // own. What it can do is stop sending values that correspond to no
-    // session at all.
-    let trace_range_counts =
-        std::env::var_os("TIKV_QUERY_TRACE").is_some().then(|| {
-            (plan.key_ranges.len(), plan.key_range_hints.len())
-        });
+    // The remaining `SetFromSessionVars` fields (request source, task id,
+    // max_execution_time, tidb_kv_read_timeout, the runaway checker) are
+    // session variables no `StmtContext` carries yet. Resource group,
+    // priority, and `NotFillCache` are statement-scoped in Go and are
+    // therefore copied from this request rather than the stock context.
     let mut context = DistSqlContext::new();
+    context.request.resource_group_name = plan.resource_group_name;
+    context.request.replica_read = plan.replica_read;
+    context.request.priority = plan.priority;
+    context.request.not_fill_cache = plan.not_fill_cache;
+    context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults
@@ -838,12 +696,6 @@ where
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
         .with_cop_lite_worker(plan.cop_lite_worker);
-    if let Some((ranges, hints)) = trace_range_counts {
-        eprintln!(
-            "[XTRACE] scan_open {} | ranges={} hints={} keep_order={} allow_unordered={} desc={}",
-            plan.summary, ranges, hints, plan.keep_order, plan.allow_unordered, plan.desc,
-        );
-    }
     let mut runtime = InjectedQueryRuntime::new(&mut transport);
     let result = runtime
         .select_with_runtime_stats(
@@ -854,8 +706,8 @@ where
             // given, and a fresh collector is dropped with them inside.
             QueryResultContext::new(plan.field_types.clone(), plan.warnings)
                 .with_time_zone(plan.time_zone),
-            vec![0],
-            0,
+            plan.cop_plan_ids,
+            plan.root_plan_id,
             true,
         )
         .map_err(|error| error.to_string())?;
@@ -864,46 +716,47 @@ where
 
 /// The caller's end of one coprocessor scan.
 struct CopRowStream {
-    iter: Option<tidb_distsql::SelectResponseIter>,
-    node_rows: Arc<AtomicU64>,
+    /// Dropping this closes the response and cancels unread region work.
+    iter: Option<SelectResponseIter>,
     pending: Option<Chunk>,
     pending_row: usize,
     field_types: Vec<FieldType>,
     returned: u64,
     predicates_applied: bool,
+    plan_id: isize,
+    exhausted: bool,
 }
 
 impl CopRowStream {
-    fn pull_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
-        let Some(iter) = self.iter.as_mut() else {
+    fn pull_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
+        if self.exhausted {
             return Ok(None);
-        };
-        // The SQL driver currently uses Go's default MaxChunkSize. Do not
-        // inflate decoded batches just to amortize a removed thread hop.
-        let result = scan_result(|| {
-            iter.next_chunk_with_required_rows(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize)
-                .map(|batch| batch.map(|batch| batch.row))
-                .map_err(|error| error.to_string())
-        });
-        match result {
-            Ok(Some(batch)) => {
-                self.node_rows
-                    .fetch_add(batch.num_rows() as u64, Ordering::Relaxed);
-                Ok(Some(batch))
+        }
+        loop {
+            let Some(iter) = self.iter.as_mut() else {
+                return Ok(None);
+            };
+            let batch = iter
+                .next_chunk_with_required_rows(required_rows.max(1))
+                .map_err(|error| StorageError::Backend(error.to_string()))?;
+            let Some(batch) = batch else {
+                self.exhausted = true;
+                return Ok(None);
+            };
+            if batch.row.num_rows() == 0 {
+                continue;
             }
-            Ok(None) => {
-                self.close();
-                Ok(None)
-            }
-            Err(error) => {
-                self.close();
-                Err(StorageError::Backend(error))
-            }
+            return Ok(Some(batch.row));
         }
     }
 }
 
 impl PushdownRowStream for CopRowStream {
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.iter.as_ref().map_or((0, 0), |iter| {
+            iter.runtime_stats().cop_count_and_rows(self.plan_id)
+        })
+    }
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
         loop {
             if let Some(batch) = &self.pending {
@@ -923,7 +776,7 @@ impl PushdownRowStream for CopRowStream {
                 self.pending = None;
                 self.pending_row = 0;
             }
-            match self.pull_chunk()? {
+            match self.pull_chunk(1)? {
                 Some(batch) => self.pending = Some(batch),
                 None => return Ok(None),
             }
@@ -934,7 +787,7 @@ impl PushdownRowStream for CopRowStream {
         true
     }
 
-    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+    fn next_chunk(&mut self, required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         if let Some(batch) = self.pending.take() {
             let start = self.pending_row;
             self.pending_row = 0;
@@ -953,11 +806,13 @@ impl PushdownRowStream for CopRowStream {
             self.returned += remainder.num_rows() as u64;
             return Ok(Some(remainder));
         }
-        let batch = self.pull_chunk()?;
-        if let Some(batch) = &batch {
-            self.returned += batch.num_rows() as u64;
+        match self.pull_chunk(required_rows)? {
+            Some(batch) => {
+                self.returned += batch.num_rows() as u64;
+                Ok(Some(batch))
+            }
+            None => Ok(None),
         }
-        Ok(batch)
     }
 
     fn rows_returned(&self) -> u64 {
@@ -969,9 +824,11 @@ impl PushdownRowStream for CopRowStream {
     }
 
     fn close(&mut self) {
-        if let Some(mut iter) = self.iter.take() {
+        if let Some(iter) = self.iter.as_mut() {
             iter.close();
         }
+        self.iter = None;
+        self.exhausted = true;
         self.pending = None;
         self.pending_row = 0;
     }
@@ -983,160 +840,23 @@ impl Drop for CopRowStream {
     }
 }
 
-/// One column's coprocessor descriptor, or `None` for a type this bounded
-/// lowering will not describe.
-///
-/// The refusal is the honest half: a descriptor built from a guessed
-/// collation, length or flag set would make TiKV decode a column differently
-/// from the client, which is a wrong answer rather than a slow one.
-/// Lowers the pushed partial aggregate into the TiPB `Aggregation` message
-/// -- Go `PhysicalHashAgg.ToPB`/`PhysicalStreamAgg.ToPB` over
-/// `aggregation.AggFuncToPBExpr`, narrowed to the column-argument shapes
-/// [`PushdownPartialAggregate`] models. `None` refuses the whole scan.
-///
-/// The aggregate leaves carry no `field_type`: every argument is a scan
-/// column whose full descriptor already travels in the `TableScan`
-/// executor, which is where the region reads types and collations from.
-fn aggregation_to_pb(
-    aggregate: &PushdownPartialAggregate,
-    columns: &[ScanColumnInfo],
-) -> Option<Aggregation> {
-    // Go `AggFuncToPBExpr` types BOTH halves of every aggregate leaf: the
-    // `ColumnRef` child carries the scanned column's declared type and the
-    // aggregate expression carries the function's return type (`RetTp`).
-    // TiKV builds its aggregate implementation FROM that return type
-    // (`components/tidb_query_aggr`), so an untyped expression is not
-    // "default-typed" -- it is refused as `Unsupported type: Unspecified`,
-    // which sysbench's `SELECT SUM(k)` hit live against a real region.
-    let column_ref = |offset: usize| -> Option<Expr> {
-        let column = columns.get(offset)?;
-        let code = tidb_datatype::FieldTypeCode::from_mysql_type(u8::try_from(column.tp).ok()?);
-        let field_type = FieldType::new(code)
-            .with_flags(u32::try_from(column.flag).ok()?)
-            .with_collation_name(tidb_datatype::proto_to_collation(column.collation));
-        tidb_expr::pushdown_catalog::to_pb(
-            &tidb_expr::pushdown_catalog::PbScalar::Column {
-                offset: u32::try_from(offset).ok()?,
-                field_type,
-            },
-            &|offset| scan_column_descriptor(columns, offset),
-        )
-    };
-    let agg = |tp: ExprType, child: Expr, output: &FieldType| -> Option<Expr> {
-        Some(Expr {
-            tp: Some(tp as i32),
-            val: None,
-            children: vec![child],
-            sig: Some(ScalarFuncSig::Unspecified as i32),
-            field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output)?),
-            has_distinct: Some(false),
-        })
-    };
-    let message = |group_by: Vec<Expr>, agg_func: Vec<Expr>, streamed: bool| Aggregation {
-        group_by,
-        agg_func,
-        streamed: Some(streamed),
-    };
-    match aggregate {
-        PushdownPartialAggregate::Count {
-            input_offset,
-            output_type,
-        } => {
-            let input = match input_offset {
-                Some(offset) => column_ref(*offset)?,
-                None => tidb_expr::pushdown_catalog::to_pb(
-                    &tidb_expr::pushdown_catalog::PbScalar::IntLiteral(1),
-                    &|_| None,
-                )?,
-            };
-            Some(message(
-                Vec::new(),
-                vec![agg(ExprType::Count, input, output_type)?],
-                true,
-            ))
-        }
-        PushdownPartialAggregate::Sum {
-            input_offset,
-            output_type,
-        } => Some(message(
-            Vec::new(),
-            vec![agg(ExprType::Sum, column_ref(*input_offset)?, output_type)?],
-            false,
-        )),
-        PushdownPartialAggregate::GroupBy { input_offset, .. } => {
-            Some(message(vec![column_ref(*input_offset)?], Vec::new(), false))
-        }
-        PushdownPartialAggregate::Grouped {
-            group_offsets,
-            functions,
-            streamed,
-            ..
-        } => {
-            let group_by = group_offsets
-                .iter()
-                .map(|offset| column_ref(*offset))
-                .collect::<Option<Vec<_>>>()?;
-            let agg_func = functions
-                .iter()
-                .map(|function| {
-                    lower_aggregate_function(
-                        function.kind,
-                        function.input.as_ref(),
-                        &function.output_type,
-                        columns,
-                    )
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some(message(group_by, agg_func, *streamed))
-        }
-        PushdownPartialAggregate::Global { functions, streamed } => Some(message(
-            Vec::new(),
-            lower_global_aggregate(functions, columns)?,
-            *streamed,
-        )),
-    }
-}
-
 fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
-    // The integer family, with MySQL's default display width for each. The
-    // width is metadata TiKV does not evaluate with -- the value is an integer
-    // either way -- but it is what the catalog declares, so it is what the
-    // descriptor carries.
     let code = column.field_type.code();
-    let (tp, column_len, decimal) = match code {
-        FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20, 0),
-        FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11, 0),
-        FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9, 0),
-        FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6, 0),
-        FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4, 0),
-        FieldTypeCode::NewDecimal => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).ok()?,
-            i32::try_from(column.field_type.decimal()).ok()?,
-        ),
-        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).ok()?,
-            i32::try_from(column.field_type.decimal()).ok()?,
-        ),
-        // The character-string family. Unlike the integer widths above, a
-        // string column's declared LENGTH is not decoration TiKV ignores: it
-        // is what a `VARCHAR(n)` value is checked and compared against, so it
-        // is copied from the catalog rather than defaulted. Go's
-        // `util.ColumnToProto` copies `c.GetFlen()` for every family alike.
-        FieldTypeCode::Varchar
-        | FieldTypeCode::VarString
-        | FieldTypeCode::String
-        | FieldTypeCode::TinyBlob
-        | FieldTypeCode::Blob
-        | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob => (
-            i32::from(code.mysql_type()),
-            i32::try_from(column.field_type.flen()).unwrap_or(-1),
-            i32::try_from(column.field_type.decimal()).unwrap_or(-1),
-        ),
-        _ => return None,
-    };
+    // `FieldTypeCode::Unknown` and `Unspecified` have no stable TiPB
+    // interpretation. Every named code below is accepted by Go's
+    // `ColumnToProto`, including the integer, temporal, floating-point,
+    // JSON, ENUM/SET, BIT, geometry and vector families.
+    if matches!(code, FieldTypeCode::Unknown(_) | FieldTypeCode::Unspecified) {
+        return None;
+    }
+    let tp = i32::from(code.mysql_type());
+    // Go writes `int32(c.GetFlen())`/`int32(c.GetDecimal())` verbatim.  The
+    // parser deliberately leaves some concrete types (for example a bare
+    // `GEOMETRY`) at `-1`, and very wide lengths such as JSON's max width also
+    // narrow to `-1` in the protobuf field.  Preserve that metadata instead
+    // of treating it as an unsupported column.
+    let column_len = i32::try_from(column.field_type.flen()).unwrap_or(-1);
+    let decimal = i32::try_from(column.field_type.decimal()).unwrap_or(-1);
     let mut flag = i32::try_from(column.field_type.flags()).ok()?;
     if column.is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;
@@ -1149,7 +869,18 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // predicate lowering reads this very field back
     // (`tidb_exec::wide_scan_selection`), so the leaf and the scan descriptor
     // cannot disagree about the collator by construction.
-    let collation = if column.field_type.is_string() {
+    let collation = if matches!(
+        code,
+        FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::Blob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::Enum
+            | FieldTypeCode::Set
+    ) {
         tidb_datatype::collation_to_proto(column.field_type.collation_name())
     } else {
         BINARY_COLLATION_ID
@@ -1168,9 +899,15 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
         column_len,
         decimal,
         flag,
+        elems: column
+            .field_type
+            .elems_snapshot()
+            .into_iter()
+            .map(|elem| elem.to_string())
+            .collect(),
         pk_handle: column.is_handle,
         default_val,
-        ..ScanColumnInfo::default()
+        array: column.field_type.is_array(),
     })
 }
 
@@ -1189,27 +926,12 @@ fn scan_column_descriptor(
         decimal: column.decimal,
         charset,
         collation,
+        elems: column.elems.clone(),
+        array: column.array,
     })
 }
 
-fn lower_global_aggregate(
-    functions: &[tidb_executor::remote_scan::PushdownGlobalAggregateFunction],
-    columns: &[ScanColumnInfo],
-) -> Option<Vec<Expr>> {
-    functions
-        .iter()
-        .map(|function| {
-            lower_aggregate_function(
-                function.kind,
-                function.input.as_ref(),
-                &function.output_type,
-                columns,
-            )
-        })
-        .collect()
-}
-
-fn lower_grouped_aggregate(
+fn lower_aggregate_functions(
     functions: &[tidb_executor::remote_scan::PushdownAggregateFunction],
     columns: &[ScanColumnInfo],
 ) -> Option<Vec<Expr>> {
@@ -1250,6 +972,8 @@ fn lower_aggregate_function(
         PushdownAggregateKind::Sum => ExprType::Sum,
         PushdownAggregateKind::Min => ExprType::Min,
         PushdownAggregateKind::Max => ExprType::Max,
+        PushdownAggregateKind::MinCount => ExprType::MinCount,
+        PushdownAggregateKind::MaxCount => ExprType::MaxCount,
     };
     Some(Expr {
         tp: Some(tp as i32),
@@ -1291,4 +1015,45 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
         .handle_index
         .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::Expression;
+
+    #[test]
+    fn max_min_count_uses_the_go_tipb_aggregate_enums() {
+        let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        column.index = 0;
+        let input = Expression::Column(column);
+        let columns = [ScanColumnInfo {
+            column_id: 1,
+            tp: 8,
+            collation: 63,
+            column_len: 20,
+            ..ScanColumnInfo::default()
+        }];
+
+        let max = lower_aggregate_function(
+            PushdownAggregateKind::MaxCount,
+            Some(&input),
+            &FieldType::new(FieldTypeCode::LongLong),
+            &columns,
+        )
+        .expect("MAX_COUNT lowers to a tipb aggregate expression");
+        let min = lower_aggregate_function(
+            PushdownAggregateKind::MinCount,
+            Some(&input),
+            &FieldType::new(FieldTypeCode::LongLong),
+            &columns,
+        )
+        .expect("MIN_COUNT lowers to a tipb aggregate expression");
+        assert_eq!(max.tp, Some(ExprType::MaxCount as i32));
+        assert_eq!(min.tp, Some(ExprType::MinCount as i32));
+        assert_eq!(ExprType::from_i32(3023), Some(ExprType::MaxCount));
+        assert_eq!(ExprType::from_i32(3022), Some(ExprType::MinCount));
+    }
 }

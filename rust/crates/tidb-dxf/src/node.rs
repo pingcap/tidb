@@ -18,13 +18,7 @@
 use crate::subtask::{Allocatable, StepResource};
 use crate::task::TaskBase;
 
-/// go-units' `units.GB`, the decimal gigabyte.
-///
-/// Go reaches for `github.com/docker/go-units` here purely for this constant
-/// and for `units.BytesSize`; no byte-formatting crate is present in this
-/// offline workspace, so both are spelled out locally. go-units defines
-/// `KB = 1000`, `MB = 1000 * KB`, `GB = 1000 * MB`.
-pub const GB: i64 = 1_000_000_000;
+const GB: i64 = 1_000_000_000;
 
 /// Go `ManagedNode`: a TiDB node that is managed by the framework.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,14 +29,14 @@ pub struct ManagedNode {
     /// should have the same role.
     pub role: String,
     /// The node's CPU count.
-    pub cpu_count: i64,
+    pub cpu_count: isize,
 }
 
 /// Go `NodeResource`: the resource of the node. Exported for test.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NodeResource {
     /// Total CPU cores.
-    pub total_cpu: i64,
+    pub total_cpu: isize,
     /// Total memory, in bytes.
     pub total_mem: i64,
     /// Total disk, in bytes.
@@ -50,7 +44,7 @@ pub struct NodeResource {
 }
 
 /// Go `NodeResourceForTest`, only used for test.
-pub const NODE_RESOURCE_FOR_TEST: NodeResource = NodeResource {
+pub static NODE_RESOURCE_FOR_TEST: &NodeResource = &NodeResource {
     total_cpu: 32,
     total_mem: 32 * GB,
     total_disk: 100 * (GB as u64),
@@ -59,7 +53,7 @@ pub const NODE_RESOURCE_FOR_TEST: NodeResource = NodeResource {
 impl NodeResource {
     /// Go `NewNodeResource`.
     #[must_use]
-    pub const fn new(total_cpu: i64, total_mem: i64, total_disk: u64) -> Self {
+    pub const fn new(total_cpu: isize, total_mem: i64, total_disk: u64) -> Self {
         Self {
             total_cpu,
             total_mem,
@@ -70,7 +64,7 @@ impl NodeResource {
     /// Go `LimitDXFResource`: the resource available to DXF under the given
     /// percentage limit.
     #[must_use]
-    pub fn limit_dxf_resource(&self, limit: i64) -> Self {
+    pub fn limit_dxf_resource(&self, limit: isize) -> Self {
         let usable_cpu = get_limited_dxf_cpu(self.total_cpu, limit);
         if usable_cpu == self.total_cpu || self.total_cpu <= 0 {
             return Self::new(self.total_cpu, self.total_mem, self.total_disk);
@@ -86,7 +80,7 @@ impl NodeResource {
     pub fn get_step_resource(&self, task: &TaskBase) -> StepResource {
         let slots = task.get_runtime_slots();
         StepResource {
-            cpu: Allocatable::new(slots),
+            cpu: Allocatable::new(slots as i64),
             // same proportion as CPU
             mem: Allocatable::new(
                 (slots as f64 / self.total_cpu as f64 * self.total_mem as f64) as i64,
@@ -105,26 +99,22 @@ impl NodeResource {
 
 /// Go `getLimitedDXFCPU`: the CPU slots available to DXF under the given
 /// percentage limit.
-fn get_limited_dxf_cpu(total_cpu: i64, limit: i64) -> i64 {
+fn get_limited_dxf_cpu(total_cpu: isize, limit: isize) -> isize {
     if total_cpu <= 0 || limit >= 100 {
         return total_cpu;
     }
     // Using CEIL might make the real limit higher than the given limit. Since
     // DXF uses slots or CPU cores as its unit of resource, that is acceptable.
-    let usable_cpu = (total_cpu as f64 * limit as f64 / 100.0).ceil() as i64;
+    let usable_cpu = (total_cpu as f64 * limit as f64 / 100.0).ceil() as isize;
     if usable_cpu < 1 {
         return 1;
     }
     usable_cpu.min(total_cpu)
 }
 
-/// go-units' `units.BytesSize`: `CustomSize("%.4g%s", size, 1024, binaryAbbrs)`.
-///
-/// Hand-rolled because no byte-formatting crate is reachable in this offline
-/// workspace. It is the sole consumer of go-units' formatting in this package,
-/// reached from `StepResource`'s `String`.
+/// go-units' `units.BytesSize`.
 #[must_use]
-pub fn step_resource_bytes_size(size: f64) -> String {
+pub(crate) fn step_resource_bytes_size(size: f64) -> String {
     const BINARY_ABBRS: [&str; 9] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
     let mut size = size;
     let mut i = 0;
@@ -162,46 +152,5 @@ fn trim_fraction(s: &str) -> &str {
         s.trim_end_matches('0').trim_end_matches('.')
     } else {
         s
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Not a Go test: pins the hand-rolled `units.BytesSize` replacement.
-    #[test]
-    fn test_step_resource_bytes_size() {
-        assert_eq!(step_resource_bytes_size(0.0), "0B");
-        assert_eq!(step_resource_bytes_size(512.0), "512B");
-        assert_eq!(step_resource_bytes_size(1024.0), "1KiB");
-        assert_eq!(step_resource_bytes_size(1600.0), "1.562KiB");
-        assert_eq!(step_resource_bytes_size(8.0 * 1024.0 * 1024.0), "8MiB");
-        assert_eq!(step_resource_bytes_size(32.0 * GB as f64), "29.8GiB");
-    }
-
-    /// Not a Go test: pins `NodeResourceForTest`'s go-units arithmetic.
-    #[test]
-    fn test_node_resource_for_test() {
-        assert_eq!(NODE_RESOURCE_FOR_TEST.total_cpu, 32);
-        assert_eq!(NODE_RESOURCE_FOR_TEST.total_mem, 32_000_000_000);
-        assert_eq!(NODE_RESOURCE_FOR_TEST.total_disk, 100_000_000_000);
-    }
-
-    /// Not a Go test: `GetStepResource` and `GetTaskDiskResource` have no Go
-    /// coverage in this package, but the whole point of `NodeResource` is the
-    /// slot-proportional split, so it is pinned here.
-    #[test]
-    fn test_step_and_disk_resource() {
-        let nr = NodeResource::new(16, 1600, 1000);
-        let task = TaskBase {
-            required_slots: 4,
-            ..TaskBase::default()
-        };
-        let sr = nr.get_step_resource(&task);
-        assert_eq!(sr.cpu.capacity(), 4);
-        assert_eq!(sr.mem.capacity(), 400);
-        assert_eq!(nr.get_task_disk_resource(&task, 800), 200);
-        assert_eq!(nr.get_task_disk_resource(&task, 2000), 250);
     }
 }

@@ -18,6 +18,6 @@
 mod runtime;
 
 pub use runtime::{
-    decode_base_partial, encode_base_partial, DistinctGroupConcatState, GroupConcatSpillError,
-    GroupConcatState, OrderedGroupConcatState,
+    decode_base_partial, encode_base_partial, DistinctGroupConcatState, GroupConcatState,
+    OrderedGroupConcatState,
 };

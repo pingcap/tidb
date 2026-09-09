@@ -28,6 +28,7 @@ use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use crate::cluster_account_seam::RealClusterAccountWriter;
 use crate::cluster_analyze_seam::RealClusterAnalyze;
 use crate::cluster_session::SkippedTable;
+use crate::cluster_stats_lock_seam::RealClusterStatsLock;
 use crate::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
@@ -69,7 +70,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
 
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
@@ -116,10 +117,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Statistics always resolve targets from this published catalog, so the
     // reload loop follows DDL-added tables and changed column types instead of
     // freezing the boot image.
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+    let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         authority.transaction_opener(),
-        config.schema_lease,
+        config.stats_lease,
         COPROCESSOR_QUERY_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
@@ -151,7 +152,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
         Arc::clone(&catalog),
         users.global_vars(),
         CONTROL_PLANE_TIMEOUT,
-    ).map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // The node's coprocessor: base-table scans now carry their predicate,
     // their row cap and their column list to the region, and only the
     // surviving rows come back. The session's own staged writes are merged on
@@ -166,13 +168,16 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // etcd still HAS the record; it just publishes nowhere, and
     // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
     // which is Go's `etcdCli == nil` answer.
-    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
-        crate::serverinfo_etcd::node_server_info(&config),
-        crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
-            Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
-                as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
-        }),
-    ));
+    let server_info = Arc::new(
+        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+            crate::serverinfo_etcd::node_server_info(&config),
+            crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
+                Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
+                    as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
+            }),
+            config.report_status,
+        ),
+    );
     let server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
         Arc::clone(&server_info),
         tidb_domain::serverinfo_syncer::SyncIntervals::default(),
@@ -185,23 +190,66 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None
         }
     };
+    let stats_owner: Arc<dyn tidb_owner::Manager> =
+        match crate::real_tikv_node::connect_schema_notifier(&config) {
+            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                client as Arc<dyn tidb_owner::OwnerStore>,
+                super::STATS_OWNER_PROMPT,
+                server_info.local_server_info().static_info.id,
+                super::STATS_OWNER_KEY,
+            )),
+            None => Arc::new(tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                server_info.local_server_info().static_info.id,
+                None,
+                super::STATS_OWNER_KEY,
+            )),
+        };
     // The other half of being registered: a node the owner can SEE must also
     // ANSWER. Go's `WaitVersionSynced` waits on every `/tidb/server/info`
     // entry, so this acknowledger is spawned exactly when the registration
     // above is -- a node with no reachable etcd registers nowhere, is waited
     // on by nobody, and correctly spawns no acknowledger either.
     let schema_pins = Arc::new(super::schema_sync::SchemaPinRegistry::default());
-    let schema_sync_ack = crate::real_tikv_node::connect_schema_notifier(&config).map(|etcd| {
-        super::schema_sync::SchemaSyncAck::spawn(
-            Arc::clone(&catalog),
+    let schema_sync_ack = match crate::real_tikv_node::connect_schema_notifier(&config) {
+        Some(etcd) => Some(
+            super::schema_sync::SchemaSyncAck::spawn(
+                Arc::clone(&catalog),
+                authority.transaction_opener(),
+                Arc::clone(&schema_pins),
+                etcd,
+                server_info.local_server_info().static_info.id,
+                Arc::clone(&server_info),
+                config.schema_lease / 2,
+                CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "initialize schema-version syncer failed: {error}"
+                )))
+            })?,
+        ),
+        None => None,
+    };
+    let schema_version_syncer = schema_sync_ack
+        .as_ref()
+        .map(super::schema_sync::SchemaSyncAck::syncer);
+    let cluster_ddl = Arc::new(
+        RealClusterDdl::new(
             authority.transaction_opener(),
-            Arc::clone(&schema_pins),
-            etcd,
-            server_info.local_server_info().static_info.id,
-            config.schema_lease / 2,
+            Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+            Arc::clone(&server_info),
+            schema_version_syncer,
         )
-    });
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign DDL owner failed: {error}"
+            )))
+        })?,
+    );
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,
@@ -213,12 +261,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             authority.transaction_opener(),
             TRANSACTION_RPC_TIMEOUT,
         )),
-        Arc::new(RealClusterDdl::new(
-            authority.transaction_opener(),
-            Arc::clone(&catalog),
-            CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
-        )),
+        cluster_ddl,
         Arc::new(RealClusterAccountWriter::new(
             Arc::new(authority.transaction_opener()),
             users.accounts(),
@@ -242,6 +285,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // catalog plus every row of the table, so its requests take the
             // data-plane deadline.
             COPROCESSOR_QUERY_TIMEOUT,
+            config.stats_lease.slow_save_interval(),
+        )),
+        Arc::new(RealClusterStatsLock::new(
+            Arc::new(authority.transaction_opener()),
+            COPROCESSOR_QUERY_TIMEOUT,
         )),
         catalog,
         users.accounts(),
@@ -256,15 +304,95 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )),
     )
     .with_cop_scans(cop_scans)
-    .with_bindings(bindings)
-    .with_server_info(server_info)
+    .with_server_info(Arc::clone(&server_info))
+    .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
-    let factory = Arc::new(factory);
+    let factory = factory.with_bindings(bindings);
+    if tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load()
+    {
+        factory
+            .campaign_stats_owner(config.stats_lease)
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "campaign stats owner failed: {error}"
+                )))
+            })?;
+    }
+    factory.start_stats_usage_workers(config.stats_lease);
+    factory.start_auto_analyze_worker(
+        config.stats_lease,
+        tidb_config::config_tree::config::get_global_config()
+            .performance
+            .run_auto_analyze,
+    );
+    factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
+    factory.start_historical_stats_worker();
+    let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
+    let workload_store = workload_etcd
+        .as_ref()
+        .map(|client| Arc::clone(client) as Arc<dyn tidb_workloadrepo::RepositoryStore>);
+    let workload_owner_factory = workload_etcd.as_ref().map(|client| {
+        let client = Arc::clone(client);
+        let instance_id = server_info.local_server_info().static_info.id.clone();
+        Arc::new(move |key: &str, prompt: &str| {
+            Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                Arc::clone(&client) as Arc<dyn tidb_owner::OwnerStore>,
+                prompt,
+                instance_id.clone(),
+                key,
+            )) as Arc<dyn tidb_owner::Manager>
+        }) as tidb_workloadrepo::OwnerFactory
+    });
+    let workload_repository = tidb_workloadrepo::Worker::new(
+        workload_store,
+        Some(Arc::new(super::WorkloadRepositorySessionPool::new(
+            &factory,
+        ))),
+        workload_owner_factory,
+        server_info.local_server_info().static_info.id.clone(),
+    );
+    let globals = users.global_vars();
+    for (name, apply) in [
+        (
+            tidb_workloadrepo::REPOSITORY_SAMPLING_INTERVAL,
+            tidb_workloadrepo::Worker::set_sampling_interval
+                as fn(&tidb_workloadrepo::Worker, &str) -> Result<(), String>,
+        ),
+        (
+            tidb_workloadrepo::REPOSITORY_SNAPSHOT_INTERVAL,
+            tidb_workloadrepo::Worker::set_snapshot_interval,
+        ),
+        (
+            tidb_workloadrepo::REPOSITORY_RETENTION_DAYS,
+            tidb_workloadrepo::Worker::set_retention_days,
+        ),
+    ] {
+        if let Ok(value) = globals.get(name) {
+            let _ = apply(&workload_repository, &value);
+        }
+    }
+    assert!(
+        factory
+            .set_workload_repository(Arc::clone(&workload_repository))
+            .is_ok(),
+        "workload repository is installed once"
+    );
+    if globals
+        .get(tidb_workloadrepo::REPOSITORY_DEST)
+        .is_ok_and(|value| value == "table")
+        && workload_repository.start().is_err()
+    {
+        workload_repository.stop();
+    }
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
 
@@ -276,6 +404,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // Dropped beside it: once the registration is gone nobody waits
             // on this node, so the acknowledger has nothing left to say.
             schema_sync_ack,
+            workload_repository,
             factory,
             watcher,
             reloader,
@@ -285,11 +414,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_reloader,
             stats_reloader,
             binding_reloader,
+            async_stats_loader,
         ),
         authority,
         move |(
             server_info_runner,
             schema_sync_ack,
+            workload_repository,
             factory,
             watcher,
             reloader,
@@ -299,6 +430,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_reloader,
             stats_reloader,
             binding_reloader,
+            async_stats_loader,
         )| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -322,6 +454,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stats_receipt.pseudo,
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
+            workload_repository.stop();
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
             // shutdown drain. The watch goes first: it nudges the reloader,
@@ -334,6 +467,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             drop(sysvar_reloader);
             drop(stats_reloader);
             drop(binding_reloader);
+            drop(async_stats_loader);
             outcome
         },
     )

@@ -26,7 +26,8 @@ use std::cmp::Ordering;
 use super::{decimal_from_bytes, Datum, DatumValueError};
 use crate::{
     compare_binary_json, parse_datetime, parse_duration, str_to_float, BinaryJSON, BinaryLiteral,
-    Collation, Decimal, MySqlDuration, Time, VectorFloat32,
+    Collation, ConversionContext, CoreTime, Decimal, MySqlDuration, SessionTimeZone, Time,
+    TimeType, VectorFloat32,
 };
 
 impl Datum {
@@ -54,8 +55,61 @@ impl Datum {
     /// mixed numeric, string, temporal, enum/set, binary-literal, and JSON
     /// comparisons because the right operand selects the conversion domain.
     pub fn compare(&self, other: &Self, comparer: Collation) -> Result<Ordering, DatumValueError> {
+        self.compare_in(other, comparer, true, false, &SessionTimeZone::utc())
+    }
+
+    /// Source `Datum.Compare` with statement conversion flags and location.
+    ///
+    /// Go's comparison API receives a `types.Context`; temporal string
+    /// operands therefore obey the statement's zero/invalid-date flags and
+    /// timezone. The legacy [`Self::compare`] wrapper remains UTC and
+    /// permissive for callers that intentionally use the context-free value
+    /// API. This method returns the source's ordering/error pair so callers
+    /// can apply their own statement warning policy.
+    pub fn compare_with_context(
+        &self,
+        other: &Self,
+        comparer: Collation,
+        context: &ConversionContext<'_>,
+        timezone: &SessionTimeZone,
+    ) -> (Ordering, Option<DatumValueError>) {
+        let flags = context.flags();
+        match self.compare_in(
+            other,
+            comparer,
+            flags.ignore_zero_in_date_err(),
+            flags.ignore_invalid_date_err(),
+            timezone,
+        ) {
+            Ok(ordering) => (
+                ordering,
+                string_comparison_event(self, other).map(DatumValueError::Comparison),
+            ),
+            Err(error) => match temporal_zero_ordering(self, other) {
+                Some(ordering) => (ordering, Some(error)),
+                None => (Ordering::Equal, Some(error)),
+            },
+        }
+    }
+
+    fn compare_in(
+        &self,
+        other: &Self,
+        comparer: Collation,
+        allow_zero_in_date: bool,
+        allow_invalid_date: bool,
+        timezone: &SessionTimeZone,
+    ) -> Result<Ordering, DatumValueError> {
         if matches!(self, Self::Json(_)) && !matches!(other, Self::Json(_)) {
-            return other.compare(self, comparer).map(Ordering::reverse);
+            return other
+                .compare_in(
+                    self,
+                    comparer,
+                    allow_zero_in_date,
+                    allow_invalid_date,
+                    timezone,
+                )
+                .map(Ordering::reverse);
         }
         if let Self::Json(value) = other {
             return self.compare_json(value);
@@ -67,8 +121,20 @@ impl Datum {
             Self::Int(value) => self.compare_i64(*value),
             Self::UInt(value) => self.compare_u64(*value),
             Self::Real(value) | Self::Float32(value) => self.compare_f64(*value),
-            Self::String(value) => self.compare_string(value.bytes(), comparer),
-            Self::Bytes(value) => self.compare_string(value, comparer),
+            Self::String(value) => self.compare_string(
+                value.bytes(),
+                comparer,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            ),
+            Self::Bytes(value) => self.compare_string(
+                value,
+                comparer,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            ),
             Self::Decimal(value) => self.compare_decimal(value),
             Self::Duration(value) => self.compare_duration(*value),
             Self::Enum(value, _) => {
@@ -81,12 +147,38 @@ impl Datum {
                 self.compare_named_number(value.name_bytes(), value.to_number(), comparer)
             }
             Self::Json(_) => unreachable!("JSON comparison returned above"),
-            Self::Time(value) => self.compare_time(*value),
+            Self::Time(value) => {
+                self.compare_time(*value, allow_zero_in_date, allow_invalid_date, timezone)
+            }
             Self::VectorFloat32(value) => self.compare_vector(value),
             Self::Raw(_) => Ok(Ordering::Equal),
             Self::Null | Self::MinNotNull | Self::MaxValue => {
                 unreachable!("sentinel comparison returned above")
             }
+        }
+    }
+
+    /// Source `Datum.Compare`'s paired return value: an ordering is retained
+    /// even when parsing the string operand reports an error. Go's temporal,
+    /// duration, and decimal comparison helpers all compare against the
+    /// zero-value receiver produced beside the error; strict Rust callers can
+    /// continue using [`Self::compare`], while warning-policy callers consume
+    /// this method and decide how to publish the error.
+    pub fn compare_with_error(
+        &self,
+        other: &Self,
+        comparer: Collation,
+    ) -> (Ordering, Option<DatumValueError>) {
+        let timezone = SessionTimeZone::utc();
+        match self.compare_in(other, comparer, true, false, &timezone) {
+            Ok(ordering) => (
+                ordering,
+                string_comparison_event(self, other).map(DatumValueError::Comparison),
+            ),
+            Err(error) => match temporal_zero_ordering(self, other) {
+                Some(ordering) => (ordering, Some(error)),
+                None => (Ordering::Equal, Some(error)),
+            },
         }
     }
 
@@ -136,6 +228,9 @@ impl Datum {
         &self,
         value: &[u8],
         comparer: Collation,
+        allow_zero_in_date: bool,
+        allow_invalid_date: bool,
+        timezone: &SessionTimeZone,
     ) -> Result<Ordering, DatumValueError> {
         match self {
             Self::String(left) => Ok(comparer.compare(left.bytes(), value)),
@@ -143,7 +238,7 @@ impl Datum {
             Self::Decimal(left) => Ok(left.cmp(&decimal_from_bytes(value)?.value)),
             Self::Time(left) => {
                 let text = std::str::from_utf8(value)?;
-                let parsed = parse_datetime(text, &chrono_tz::UTC, true, false)
+                let parsed = parse_datetime(text, timezone, allow_zero_in_date, allow_invalid_date)
                     .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
                 Ok(left.compare(parsed.time))
             }
@@ -223,10 +318,28 @@ impl Datum {
         Ok(compare_binary_json(&self.to_mysql_json()?, value))
     }
 
-    fn compare_time(&self, value: Time) -> Result<Ordering, DatumValueError> {
+    fn compare_time(
+        &self,
+        value: Time,
+        allow_zero_in_date: bool,
+        allow_invalid_date: bool,
+        timezone: &SessionTimeZone,
+    ) -> Result<Ordering, DatumValueError> {
         match self {
-            Self::String(left) => compare_time_bytes(left.bytes(), value),
-            Self::Bytes(left) => compare_time_bytes(left, value),
+            Self::String(left) => compare_time_bytes(
+                left.bytes(),
+                value,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            ),
+            Self::Bytes(left) => compare_time_bytes(
+                left,
+                value,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            ),
             Self::Time(left) => Ok(left.compare(value)),
             _ => self.compare_f64(value.to_number().to_f64()),
         }
@@ -243,7 +356,14 @@ impl Datum {
 }
 
 fn numeric_bytes_to_float(bytes: &[u8]) -> Result<f64, DatumValueError> {
-    Ok(str_to_float(std::str::from_utf8(bytes)?, false).value)
+    // Go's `string` values are byte sequences, and `getValidFloatPrefix`
+    // stops at the first non-ASCII byte while retaining the accepted prefix.
+    // A lossy view is safe here: every byte that can participate in the
+    // numeric prefix is ASCII, while an invalid sequence becomes a non-ASCII
+    // replacement character and therefore triggers the same zero/truncation
+    // result instead of a Rust-only UTF-8 refusal.
+    let text = String::from_utf8_lossy(bytes);
+    Ok(str_to_float(&text, false).value)
 }
 
 fn compare_duration_bytes(bytes: &[u8], value: MySqlDuration) -> Result<Ordering, DatumValueError> {
@@ -252,11 +372,86 @@ fn compare_duration_bytes(bytes: &[u8], value: MySqlDuration) -> Result<Ordering
     Ok(parsed.nanoseconds().cmp(&value.nanoseconds()))
 }
 
-fn compare_time_bytes(bytes: &[u8], value: Time) -> Result<Ordering, DatumValueError> {
+fn compare_time_bytes(
+    bytes: &[u8],
+    value: Time,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+    timezone: &SessionTimeZone,
+) -> Result<Ordering, DatumValueError> {
     let text = std::str::from_utf8(bytes)?;
-    let parsed = parse_datetime(text, &chrono_tz::UTC, true, false)
+    let parsed = parse_datetime(text, timezone, allow_zero_in_date, allow_invalid_date)
         .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
     Ok(parsed.time.compare(value))
+}
+
+/// Returns the source ordering against the zero temporal value when parsing
+/// the string side failed. `Datum.Compare` returns this ordering beside the
+/// parse error, rather than discarding it as a Rust-only `Result` would.
+fn temporal_zero_ordering(left: &Datum, right: &Datum) -> Option<Ordering> {
+    let zero_time = || Time::new(CoreTime::default(), TimeType::DateTime, 0).ok();
+    match (left, right) {
+        (Datum::Time(value), Datum::String(_) | Datum::Bytes(_)) => {
+            Some(value.compare(zero_time()?))
+        }
+        (Datum::String(_) | Datum::Bytes(_), Datum::Time(value)) => {
+            Some(zero_time()?.compare(*value))
+        }
+        (Datum::Duration(value), Datum::String(_) | Datum::Bytes(_)) => {
+            Some(value.nanoseconds().cmp(&0))
+        }
+        (Datum::String(_) | Datum::Bytes(_), Datum::Duration(value)) => {
+            Some(0.cmp(&value.nanoseconds()))
+        }
+        _ => None,
+    }
+}
+
+/// Returns the source truncation diagnostic for a string conversion that the
+/// value-only comparison path deliberately keeps as a best-effort result.
+fn string_comparison_event(left: &Datum, right: &Datum) -> Option<String> {
+    let bytes = match (left, right) {
+        (Datum::String(value), _) => Some(value.bytes()),
+        (Datum::Bytes(value), _) => Some(value.as_slice()),
+        (_, Datum::String(value)) => Some(value.bytes()),
+        (_, Datum::Bytes(value)) => Some(value.as_slice()),
+        _ => None,
+    }?;
+    let is_decimal = matches!(left, Datum::Decimal(_)) || matches!(right, Datum::Decimal(_));
+    if is_decimal {
+        return decimal_from_bytes(bytes)
+            .ok()
+            .and_then(|converted| converted.event)
+            .map(|_| {
+                format!(
+                    "Truncated incorrect DECIMAL value: '{}'",
+                    String::from_utf8_lossy(bytes)
+                )
+            });
+    }
+    let numeric_domain = matches!(
+        (left, right),
+        (
+            Datum::String(_) | Datum::Bytes(_),
+            Datum::Int(_) | Datum::UInt(_)
+        ) | (
+            Datum::String(_) | Datum::Bytes(_),
+            Datum::Real(_) | Datum::Float32(_)
+        ) | (
+            Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_),
+            Datum::String(_) | Datum::Bytes(_)
+        )
+    );
+    if numeric_domain {
+        let text = String::from_utf8_lossy(bytes);
+        return str_to_float(&text, false).event.map(|_| {
+            format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                String::from_utf8_lossy(bytes)
+            )
+        });
+    }
+    None
 }
 
 fn float_order(left: f64, right: f64) -> Ordering {
@@ -309,7 +504,7 @@ mod tests {
     use super::Datum;
     use crate::{
         parse_datetime, parse_enum_value, parse_set_value, BinaryJSON, BinaryLiteral, Collation,
-        Decimal, MySqlDuration,
+        ConversionContext, DatumValueError, Decimal, MySqlDuration, SessionTimeZone, STRICT_FLAGS,
     };
 
     /// Source: `pkg/types/compare_test.go::TestCompare`. Every source row is
@@ -499,6 +694,121 @@ mod tests {
                 std::cmp::Ordering::Equal
             );
         }
+    }
+
+    /// Go's `StrToFloat` scans the raw string bytes and keeps the zero prefix
+    /// when the first byte is not numeric. Invalid UTF-8 in a `Bytes` datum
+    /// therefore compares as numeric zero (with a source truncation event),
+    /// rather than becoming a Rust UTF-8 conversion error.
+    #[test]
+    fn non_utf8_numeric_bytes_keep_go_zero_prefix_ordering() {
+        let invalid = Datum::new_bytes(vec![0xff]);
+        assert_eq!(
+            invalid.compare(&Datum::Int(0), Collation::Binary).unwrap(),
+            std::cmp::Ordering::Equal
+        );
+
+        let invalid = Datum::new_bytes(vec![0xff]);
+        let zero = Datum::new_decimal(crate::Decimal::from_int(0));
+        assert_eq!(
+            invalid.compare(&zero, Collation::Binary).unwrap(),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    /// Go's temporal comparison keeps the zero DATETIME returned beside a
+    /// parse error. The strict Rust wrapper still reports the error, while
+    /// the paired API exposes the `Greater` ordering to a warning-policy
+    /// caller.
+    #[test]
+    fn compare_with_error_keeps_temporal_ordering_beside_parse_error() {
+        let value = Datum::new_time(
+            parse_datetime("2011-01-01 00:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
+        let invalid = Datum::new_string("not a date");
+
+        let (ordering, error) = value.compare_with_error(&invalid, Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Greater);
+        assert!(matches!(error, Some(DatumValueError::Comparison(_))));
+
+        let (ordering, error) = invalid.compare_with_error(&value, Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Less);
+        assert!(matches!(error, Some(DatumValueError::Comparison(_))));
+    }
+
+    /// Go's numeric string comparison keeps the best-effort prefix and
+    /// returns its truncation error beside the ordering. Rust's value-only
+    /// path already computes the prefix; this regression pins the paired
+    /// diagnostic channel as well.
+    #[test]
+    fn compare_with_error_keeps_numeric_prefix_ordering_beside_error() {
+        let (ordering, error) =
+            Datum::Int(1).compare_with_error(&Datum::new_string("1abc"), Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Equal);
+        assert!(matches!(
+            error,
+            Some(DatumValueError::Comparison(message))
+                if message == "Truncated incorrect DOUBLE value: '1abc'"
+        ));
+    }
+
+    /// Go's `Datum.Compare` parses temporal strings with the statement
+    /// context's date flags. A strict context rejects an invalid calendar
+    /// date, while `ALLOW_INVALID_DATES` compares the written calendar fields
+    /// instead of silently forcing the legacy UTC/permissive behavior.
+    #[test]
+    fn compare_with_context_uses_statement_date_flags() {
+        let zone = SessionTimeZone::utc();
+        let left = Datum::new_time(
+            parse_datetime("2020-02-28", &zone, true, true)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-02-31");
+        let strict = ConversionContext::strict();
+        let relaxed = strict.with_flags(
+            STRICT_FLAGS
+                .with_ignore_zero_in_date_err(true)
+                .with_ignore_invalid_date_err(true),
+        );
+
+        let (ordering, error) =
+            left.compare_with_context(&right, Collation::Binary, &strict, &zone);
+        assert_eq!(ordering, std::cmp::Ordering::Greater);
+        assert!(error.is_some());
+
+        let (ordering, error) =
+            left.compare_with_context(&right, Collation::Binary, &relaxed, &zone);
+        assert_eq!(ordering, std::cmp::Ordering::Less);
+        assert_eq!(error, None);
+    }
+
+    #[test]
+    fn compare_with_context_uses_statement_timezone() {
+        let utc = SessionTimeZone::utc();
+        let plus_two = SessionTimeZone::Fixed {
+            name: "+02:00".to_owned(),
+            offset_secs: 2 * 60 * 60,
+        };
+        let left = Datum::new_time(
+            parse_datetime("2020-01-01 00:00:00", &utc, true, false)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-01-01 00:00:00+01:00");
+        let context = ConversionContext::strict();
+
+        let (ordering, error) =
+            left.compare_with_context(&right, Collation::Binary, &context, &utc);
+        assert_eq!(ordering, std::cmp::Ordering::Greater);
+        assert_eq!(error, None);
+
+        let (ordering, error) =
+            left.compare_with_context(&right, Collation::Binary, &context, &plus_two);
+        assert_eq!(ordering, std::cmp::Ordering::Less);
+        assert_eq!(error, None);
     }
 
     #[test]

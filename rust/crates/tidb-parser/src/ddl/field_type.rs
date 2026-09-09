@@ -445,7 +445,7 @@ fn decode_enum_set_binary_literal(text: &str, kind: TokenKind) -> Option<Vec<u8>
             format!("0{digits}")
         };
         let mut bytes = Vec::with_capacity(digits.len() / 2);
-        for pair in digits.as_bytes().chunks_exact(2) {
+        for pair in digits.as_bytes().as_chunks::<2>().0 {
             let high = (pair[0] as char).to_digit(16)? as u8;
             let low = (pair[1] as char).to_digit(16)? as u8;
             bytes.push((high << 4) | low);
@@ -457,7 +457,7 @@ fn decode_enum_set_binary_literal(text: &str, kind: TokenKind) -> Option<Vec<u8>
         padded.push_str(&"0".repeat(pad));
         padded.push_str(digits);
         let mut bytes = Vec::with_capacity(padded.len() / 8);
-        for chunk in padded.as_bytes().chunks_exact(8) {
+        for chunk in padded.as_bytes().as_chunks::<8>().0 {
             let mut byte = 0u8;
             for bit in chunk {
                 byte = (byte << 1)

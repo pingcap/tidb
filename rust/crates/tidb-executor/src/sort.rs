@@ -14,23 +14,20 @@
 
 //! `pkg/executor/sortexec` `SortExec`: the `ORDER BY` operator.
 //!
-//! Serial in-memory semantics of Go's unparallel single-partition path: the
-//! first `Next` drains the child, materializes every row, evaluates the
-//! by-item keys once per row (Go builds `keyColumns`/`keyCmpFuncs` the same
-//! way), sorts, then emits the rows in order chunk by chunk.
+//! Go's default parallel path: the first `Next` fetches child chunks into
+//! bounded persistent-pool worker lanes, each worker sorts batches of at most
+//! `maxChunkSize * 30` rows and locally K-way merges them, and the result path
+//! heap-merges one run per worker. OOM coordinates whole-worker spill rounds
+//! through [`crate::parallel_sort_spill_helper`]. The explicit serial path is
+//! retained for Go's `IsUnparallel` tests and uses [`crate::sort_partition`].
 //!
 //! Null ordering matches Go `chunk.cmpNull`: NULL compares below every
 //! non-NULL value, and a descending by-item negates the whole comparison --
 //! so NULLs come first ascending and last descending.
 //!
-//! DIVERGENCE (documented): Go's in-memory partition sorts with `sort.Slice`
-//! (`sort_partition.go`, unstable); this port uses Rust's stable `sort_by`,
-//! so only the order of exactly-tying rows can differ -- an order Go does not
-//! guarantee either.
-//!
-//! DEFERRED: the parallel sort workers/fetcher/generator pipeline and its
-//! failpoints. The serial path supports spilling, memory/disk quotas and
-//! statement cancellation.
+//! The worker/fetcher pipeline, spill-to-disk partitions, K-way mergers, and
+//! memory/disk trackers are active. Go failpoints and the random worker-fault
+//! injection hooks remain test-harness-only and are not production behavior.
 //!
 //! Row comparison is `tidb_expr::compare_datums` — the shared,
 //! collation-aware datum comparator (Go `types/datum.go` `Datum.Compare`
@@ -40,19 +37,22 @@
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
-use tidb_chunk::row::Row;
+use tidb_chunk::compare::ColumnCompareFunc;
+use tidb_chunk::row::{OwnedRow, Row};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::{ArcAction, Tracker};
+use tidb_util::memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
 
 use crate::mem_quota::StatementMemory;
+use crate::parallel_sort_spill_helper::{LocalSortWorker, ParallelSortSpillHelper};
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
+use crate::sort_util::recover_worker_panic;
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
@@ -64,12 +64,219 @@ pub struct SortByItem {
     pub desc: bool,
 }
 
-/// Evaluates every by-item against `row`, producing the row's sort key.
+#[derive(Clone)]
+struct MergeHead {
+    partition_id: usize,
+    key: Vec<Datum>,
+}
+
+/// Go `parallelSortWorker`: one bounded input lane, its locally sorted
+/// batches, and the memory charged by the fetcher on its behalf.
+struct ParallelSortWorker<C: Columns> {
+    field_types: Vec<FieldType>,
+    detached_tracker: Arc<Tracker>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
+    spill_chunk_size: usize,
+    by_items: Vec<SortByItem>,
+    compare_funcs: Vec<Option<ColumnCompareFunc>>,
+    ctx: C,
+    memory: StatementMemory,
+    batches: Vec<SortPartition>,
+    current: SortPartition,
+    max_sorted_rows: usize,
+    total_memory_usage: i64,
+}
+
+impl<C> ParallelSortWorker<C>
+where
+    C: Columns,
+{
+    fn new(
+        field_types: Vec<FieldType>,
+        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
+        spill_chunk_size: usize,
+        by_items: Vec<SortByItem>,
+        ctx: C,
+        max_chunk_size: usize,
+        memory: StatementMemory,
+    ) -> Self {
+        // The fetcher charges the sort tracker before dispatch, exactly as Go
+        // does. Worker partitions therefore account below a detached tracker
+        // solely to keep their own release bookkeeping intact.
+        let detached_tracker = Tracker::new(0, -1);
+        let mut current = SortPartition::new(
+            field_types.clone(),
+            &detached_tracker,
+            Arc::clone(&spill_storage),
+        );
+        current.set_spill_chunk_size(spill_chunk_size);
+        let compare_funcs = compile_compare_funcs(&by_items);
+        Self {
+            field_types,
+            detached_tracker,
+            spill_storage,
+            spill_chunk_size,
+            by_items,
+            compare_funcs,
+            ctx,
+            memory,
+            batches: Vec::new(),
+            current,
+            max_sorted_rows: max_chunk_size.saturating_mul(30).max(1),
+            total_memory_usage: 0,
+        }
+    }
+
+    fn fresh_partition(&self) -> SortPartition {
+        let mut partition = SortPartition::new(
+            self.field_types.clone(),
+            &self.detached_tracker,
+            Arc::clone(&self.spill_storage),
+        );
+        partition.set_spill_chunk_size(self.spill_chunk_size);
+        partition
+    }
+
+    fn finish_batch(&mut self) -> Result<(), ExecError> {
+        if self.current.num_rows() == 0 {
+            return Ok(());
+        }
+        self.current.sort_with_parallel_memory(
+            &self.by_items,
+            &self.compare_funcs,
+            &self.ctx,
+            &self.memory,
+        )?;
+        let next = self.fresh_partition();
+        self.batches
+            .push(std::mem::replace(&mut self.current, next));
+        Ok(())
+    }
+
+    fn add_chunk(&mut self, chunk: Chunk, memory_usage: i64) -> Result<(), ExecError> {
+        self.total_memory_usage = self.total_memory_usage.saturating_add(memory_usage);
+        self.current.add(chunk);
+        if self.current.num_rows() >= self.max_sorted_rows {
+            self.finish_batch()?;
+        }
+        Ok(())
+    }
+
+    fn sort_local_rows(&mut self) -> Result<Vec<OwnedRow>, ExecError> {
+        let Some(mut run) = self.sort_local_partition()? else {
+            return Ok(Vec::new());
+        };
+        Ok(run.take_sorted_owned_rows())
+    }
+
+    fn sort_local_partition(&mut self) -> Result<Option<SortPartition>, ExecError> {
+        self.finish_batch()?;
+        SortPartition::merge_sorted_in_memory(
+            std::mem::take(&mut self.batches),
+            &self.by_items,
+            &self.compare_funcs,
+            &self.ctx,
+            &self.memory,
+        )
+    }
+
+    fn take_total_memory_usage(&mut self) -> i64 {
+        std::mem::take(&mut self.total_memory_usage)
+    }
+}
+
+/// Shared pointer shape of Go's `*parallelSortWorker`. Worker-pool jobs and
+/// the coordinated spill helper never operate on the same worker at once:
+/// the fetcher joins all in-flight lanes before initiating a spill round.
+struct SharedParallelSortWorker<C: Columns>(Arc<Mutex<ParallelSortWorker<C>>>);
+
+impl<C: Columns> Clone for SharedParallelSortWorker<C> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<C: Columns> SharedParallelSortWorker<C> {
+    fn sort_local_partition(&mut self) -> Result<Option<SortPartition>, ExecError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sort_local_partition()
+    }
+}
+
+impl<C> LocalSortWorker for SharedParallelSortWorker<C>
+where
+    C: Columns + Send + 'static,
+{
+    fn sort_local_rows(&mut self) -> Result<Vec<OwnedRow>, ExecError> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sort_local_rows()
+    }
+
+    fn take_total_memory_usage(&mut self) -> i64 {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take_total_memory_usage()
+    }
+}
+
+/// Go `parallelSortSpillAction`: request one coordinated spill only when the
+/// sort itself owns at least a tenth of the statement quota; otherwise defer
+/// to the previous OOM action.
+struct ParallelSortSpillAction {
+    base: BaseOomAction,
+    need_spill: Arc<AtomicBool>,
+    sort_tracker: Arc<Tracker>,
+    spill_limit: i64,
+}
+
+impl ActionOnExceed for ParallelSortSpillAction {
+    fn action(&self, tracker: &Arc<Tracker>) {
+        if self.need_spill.load(SeqCst) {
+            return;
+        }
+        if tracker.check_exceed() && self.sort_tracker.bytes_consumed() >= self.spill_limit {
+            self.need_spill.store(true, SeqCst);
+            return;
+        }
+        if tracker.check_exceed() {
+            if let Some(fallback) = self.get_fallback() {
+                fallback.action(tracker);
+            }
+        }
+    }
+
+    fn set_fallback(&self, action: Option<ArcAction>) {
+        self.base.set_fallback(action);
+    }
+
+    fn get_fallback(&self) -> Option<ArcAction> {
+        self.base.get_fallback()
+    }
+
+    fn get_priority(&self) -> i64 {
+        DEF_SPILL_PRIORITY
+    }
+
+    fn set_finished(&self) {
+        self.base.set_finished();
+    }
+
+    fn is_finished(&self) -> bool {
+        self.base.is_finished()
+    }
+}
+
+/// Evaluates every supported by-item against `row`, producing an owned
+/// merge-head key.
 ///
-/// Go keeps no materialized key (`keyCmpFuncs` re-reads the chunk cell on
-/// every comparison); this port materializes one so a spilled run can be
-/// compared after its chunk is gone. See `SortPartition::add` for the memory
-/// that costs and why it is counted.
+/// The in-memory sort does not call this: like Go, it compares cells in the
+/// retained chunks directly. Owned keys are needed only while merging run
+/// heads, including spilled rows whose source chunk can be reloaded.
 pub fn eval_sort_key<C: Columns>(
     by_items: &[SortByItem],
     ctx: &C,
@@ -77,9 +284,32 @@ pub fn eval_sort_key<C: Columns>(
 ) -> Result<Vec<Datum>, ExecError> {
     let mut key = Vec::with_capacity(by_items.len());
     for item in by_items {
-        key.push(item.expr.eval(ctx, row)?);
+        match &item.expr {
+            Expression::Column(_) => {
+                key.push(item.expr.eval(ctx, row)?);
+            }
+            // Go's `buildKeyColumns` omits constants, so even a deferred
+            // constant is never evaluated while sorting or merging rows.
+            // Keep a positional placeholder for callers that zip keys with
+            // by-items; `less_by_items` skips this slot below.
+            Expression::Constant(_) => key.push(Datum::Null),
+            _ => return Err(ExecError::unsupported("Get unexpected expression")),
+        }
     }
     Ok(key)
+}
+
+/// Go `SortExec.buildKeyColumns`: only direct child columns and constants are
+/// valid executor sort keys. Planner expressions must be materialized by a
+/// projection before they reach this operator.
+pub(crate) fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
+    if by_items
+        .iter()
+        .any(|item| !matches!(&item.expr, Expression::Column(_) | Expression::Constant(_)))
+    {
+        return Err(ExecError::unsupported("Get unexpected expression"));
+    }
+    Ok(())
 }
 
 /// Go `lessRow`: the first non-equal by-item decides, and `Desc` negates it.
@@ -93,6 +323,11 @@ pub fn less_by_items(
     b: &[Datum],
 ) -> Result<Ordering, ExecError> {
     for (i, item) in by_items.iter().enumerate() {
+        if matches!(&item.expr, Expression::Constant(_)) {
+            // Go's `buildKeyColumns` excludes constants, so they cannot affect
+            // ordering and must not be evaluated (deferred constants included).
+            continue;
+        }
         let mut cmp = tidb_expr::compare_datums_with_collation(
             &a[i],
             &b[i],
@@ -108,11 +343,78 @@ pub fn less_by_items(
     Ok(Ordering::Equal)
 }
 
+/// Compiles Go `keyCmpFuncs` once for direct-column by-items.
+///
+/// Go's physical Sort accepts columns and constants. Constants are handled as
+/// equal keys by `compare_rows`; the common physical-column path is
+/// allocation-free just like Go's.
+fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFunc>> {
+    by_items
+        .iter()
+        .map(|item| {
+            item.expr
+                .as_column()
+                .and_then(|column| column.get_static_type())
+                .and_then(tidb_chunk::compare::get_column_compare_func)
+        })
+        .collect()
+}
+
+/// Go `lessRow`: compares two retained chunk rows without allocating keys.
+pub(crate) fn compare_rows<C: Columns>(
+    by_items: &[SortByItem],
+    compare_funcs: &[Option<ColumnCompareFunc>],
+    ctx: &C,
+    left: Row<'_>,
+    right: Row<'_>,
+) -> Result<Ordering, ExecError> {
+    for (index, item) in by_items.iter().enumerate() {
+        let mut ordering = match (&item.expr, &compare_funcs[index]) {
+            (Expression::Column(column), Some(compare)) if column.index >= 0 => {
+                let column = usize::try_from(column.index).unwrap_or(usize::MAX);
+                if column < left.len() && column < right.len() {
+                    let left_column = left
+                        .chunk()
+                        .expect("a non-empty row has a chunk")
+                        .column(column);
+                    let right_column = right
+                        .chunk()
+                        .expect("a non-empty row has a chunk")
+                        .column(column);
+                    compare(&left_column, left.idx(), &right_column, right.idx())
+                } else {
+                    let left = item.expr.eval(ctx, left)?;
+                    let right = item.expr.eval(ctx, right)?;
+                    tidb_expr::compare_datums_with_collation(
+                        &left,
+                        &right,
+                        tidb_expr::collation_derive::collation_of_node(&item.expr),
+                    )?
+                }
+            }
+            // A constant has the same value for every input row and cannot
+            // affect their order. Go omits it from `keyColumns`.
+            (Expression::Constant(_), _) => Ordering::Equal,
+            _ => return Err(ExecError::unsupported("Get unexpected expression")),
+        };
+        if item.desc {
+            ordering = ordering.reverse();
+        }
+        if ordering != Ordering::Equal {
+            return Ok(ordering);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
 /// Go `SortExec` (unparallel, external): one or more sorted runs, merged.
 pub struct SortExec<C: Columns> {
     meta: ExecutorMeta,
     /// Go `ByItems`.
     by_items: Vec<SortByItem>,
+    /// Go `keyCmpFuncs`, compiled once instead of allocating a Datum key for
+    /// every retained row.
+    compare_funcs: Vec<Option<ColumnCompareFunc>>,
     child: Box<dyn Executor>,
     ctx: C,
     /// Go `fetched`: whether the child has been drained and sorted.
@@ -120,6 +422,10 @@ pub struct SortExec<C: Columns> {
     /// Go `Unparallel.sortPartitions`: the sorted runs, in creation order.
     /// One entry, unspilled, is the common in-memory case.
     partitions: Vec<SortPartition>,
+    /// Go `multiWayMergeImpl.elements`: one current head per live run.
+    merge_heads: Vec<MergeHead>,
+    /// Whether [`Self::merge_heads`] has been initialized from the runs.
+    merge_initialized: bool,
     /// The statement's memory budget, which this operator's tracker hangs off
     /// and whose quota it checks after each `Consume`.
     memory: StatementMemory,
@@ -145,9 +451,17 @@ pub struct SortExec<C: Columns> {
     registered_action: Option<ArcAction>,
     /// Go `spillChunkSize` (a package var so tests can shrink it).
     spill_chunk_size: usize,
+    /// Go `SessionVars.ExecutorConcurrency`, resolved for this statement.
+    /// The default constructor stays serial for executor-level unit tests;
+    /// SQL planning installs the statement value with
+    /// [`Self::with_parallelism`].
+    parallelism: usize,
 }
 
-impl<C: Columns> SortExec<C> {
+impl<C> SortExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     /// Builds a sort of `child`'s rows by `by_items`, evaluated with `ctx`.
     /// `memory` is the statement's budget (Go: the `StmtCtx.MemTracker` the
     /// operator attaches to). It is a required argument rather than an
@@ -161,6 +475,7 @@ impl<C: Columns> SortExec<C> {
         ctx: C,
         memory: StatementMemory,
     ) -> Self {
+        let compare_funcs = compile_compare_funcs(&by_items);
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let spill_limit = memory.quota() / 10;
@@ -168,10 +483,13 @@ impl<C: Columns> SortExec<C> {
         SortExec {
             meta,
             by_items,
+            compare_funcs,
             child,
             ctx,
             fetched: false,
             partitions: Vec::new(),
+            merge_heads: Vec::new(),
+            merge_initialized: false,
             memory,
             tracker,
             disk_tracker,
@@ -180,7 +498,15 @@ impl<C: Columns> SortExec<C> {
             need_spill: Arc::new(AtomicBool::new(false)),
             registered_action: None,
             spill_chunk_size: SPILL_CHUNK_SIZE,
+            parallelism: 1,
         }
+    }
+
+    /// Selects Go's default parallel sort worker count for this statement.
+    #[must_use]
+    pub fn with_parallelism(mut self, parallelism: usize) -> Self {
+        self.parallelism = parallelism.max(1);
+        self
     }
 
     /// Go `SetSmallSpillChunkSizeForTest`: shrink the spill chunk so a test
@@ -235,6 +561,11 @@ impl<C: Columns> SortExec<C> {
     /// Go `fetchChunksUnparallel` + `storeChunk`: drain the child into sorted
     /// runs, spilling whenever the memory action says to.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
+        validate_by_items(&self.by_items)?;
+        if self.parallelism > 1 {
+            return self.fetch_and_sort_parallel();
+        }
+
         let fields: Vec<FieldType> = self.meta.ret_field_types().to_vec();
         let mut current = self.new_partition(&fields);
 
@@ -247,10 +578,15 @@ impl<C: Columns> SortExec<C> {
             // Accounting happens INSIDE the loop, which is what makes a query
             // over a large table spill (or stop) early instead of first
             // materializing everything and only then noticing.
-            current.add(chunk, &self.by_items, &self.ctx)?;
+            current.add(chunk);
 
             if self.need_spill.swap(false, SeqCst) {
-                current.spill_to_disk(&self.by_items)?;
+                current.spill_to_disk_with_memory(
+                    &self.by_items,
+                    &self.compare_funcs,
+                    &self.ctx,
+                    &self.memory,
+                )?;
                 self.partitions.push(current);
                 current = self.new_partition(&fields);
             }
@@ -260,13 +596,177 @@ impl<C: Columns> SortExec<C> {
             self.memory.check()?;
         }
 
-        current.sort(&self.by_items)?;
+        current.sort_with_memory(&self.by_items, &self.compare_funcs, &self.ctx, &self.memory)?;
         self.partitions.push(current);
         Ok(())
     }
+
+    /// Go `fetchChunksParallel`: the fetcher owns child access, dispatches
+    /// bounded work to persistent worker-pool lanes while it continues
+    /// fetching, coordinates whole-worker spill rounds, and finally exposes
+    /// one sorted run per worker (or per spill round) to the result merger.
+    fn fetch_and_sort_parallel(&mut self) -> Result<(), ExecError> {
+        let fields = self.meta.ret_field_types().to_vec();
+        let spill_storage = self.memory.spill_storage();
+        let worker_count = self.parallelism;
+        let mut workers = (0..worker_count)
+            .map(|_| {
+                SharedParallelSortWorker(Arc::new(Mutex::new(ParallelSortWorker::new(
+                    fields.clone(),
+                    Arc::clone(&spill_storage),
+                    self.spill_chunk_size,
+                    self.by_items.clone(),
+                    self.ctx.clone(),
+                    self.meta.max_chunk_size(),
+                    self.memory.clone(),
+                ))))
+            })
+            .collect::<Vec<_>>();
+
+        let finish = Arc::new(AtomicBool::new(false));
+        let spill_by_items = Arc::new(self.by_items.clone());
+        let spill_compare_funcs = Arc::new(compile_compare_funcs(&spill_by_items));
+        let spill_ctx = self.ctx.clone();
+        let (error_sender, _error_receiver) = std::sync::mpsc::channel();
+        let mut spill_helper = ParallelSortSpillHelper::new(
+            workers.clone(),
+            Arc::clone(&self.tracker),
+            Arc::clone(&self.disk_tracker),
+            Arc::clone(&spill_storage),
+            fields.clone(),
+            Arc::clone(&finish),
+            move |left: &OwnedRow, right: &OwnedRow| {
+                compare_rows(
+                    &spill_by_items,
+                    &spill_compare_funcs,
+                    &spill_ctx,
+                    left.as_row(),
+                    right.as_row(),
+                )
+            },
+            error_sender,
+            "",
+        );
+
+        let need_spill = Arc::new(AtomicBool::new(false));
+        self.need_spill = Arc::clone(&need_spill);
+        if self.enable_tmp_storage_on_oom {
+            let action: ArcAction = Arc::new(ParallelSortSpillAction {
+                base: BaseOomAction::default(),
+                need_spill: Arc::clone(&need_spill),
+                sort_tracker: Arc::clone(&self.tracker),
+                spill_limit: self.spill_limit,
+            });
+            self.memory
+                .session_tracker()
+                .fallback_old_and_set_new_action(Arc::clone(&action));
+            self.registered_action = Some(action);
+        }
+
+        let mut pending = (0..worker_count).map(|_| None).collect::<Vec<_>>();
+        let join_lane = |lane: &mut Option<std::sync::mpsc::Receiver<Result<(), ExecError>>>| {
+            if let Some(result) = lane.take() {
+                result.recv().map_err(|_| {
+                    ExecError::internal("parallel sort worker dropped its result")
+                })??;
+            }
+            Ok::<(), ExecError>(())
+        };
+        let join_all =
+            |pending: &mut Vec<Option<std::sync::mpsc::Receiver<Result<(), ExecError>>>>| {
+                for lane in pending {
+                    join_lane(lane)?;
+                }
+                Ok::<(), ExecError>(())
+            };
+
+        let result = (|| -> Result<(), ExecError> {
+            let mut next_worker = 0usize;
+            loop {
+                let mut chunk = self.child.new_chunk();
+                self.child.next(&mut chunk)?;
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+
+                let lane = next_worker;
+                next_worker = (next_worker + 1) % worker_count;
+                join_lane(&mut pending[lane])?;
+
+                let rows = i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
+                let memory_usage = chunk
+                    .memory_usage()
+                    .saturating_add(tidb_chunk::row::ROW_SIZE.saturating_mul(rows));
+                self.tracker.consume(memory_usage);
+                let worker = workers[lane].clone();
+                pending[lane] = Some(crate::worker_pool::spawn(move || {
+                    recover_worker_panic(|| {
+                        worker
+                            .0
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .add_chunk(chunk, memory_usage)
+                    })
+                }));
+
+                if need_spill.swap(false, SeqCst) {
+                    join_all(&mut pending)?;
+                    spill_helper.set_bytes_info(
+                        self.memory.session_tracker().bytes_consumed(),
+                        self.memory.session_tracker().get_bytes_limit(),
+                    );
+                    spill_helper.set_need_spill();
+                    spill_helper.spill()?;
+                }
+                self.memory.check()?;
+            }
+
+            join_all(&mut pending)?;
+            if spill_helper.is_spill_triggered() {
+                // Go spills the workers' final partial batches too, so the result
+                // source is wholly on disk after the first spill round.
+                spill_helper.spill()?;
+                for run in spill_helper.take_sorted_rows_in_disk() {
+                    self.partitions.push(SortPartition::from_spilled(
+                        fields.clone(),
+                        &self.tracker,
+                        Arc::clone(&spill_storage),
+                        run,
+                    ));
+                }
+            } else {
+                // No spill: each worker locally merges its sorted batches into
+                // one run, then the SortExec heap merges those worker runs.
+                for worker in &mut workers {
+                    let mut run = recover_worker_panic(|| worker.sort_local_partition())?;
+                    let released = LocalSortWorker::take_total_memory_usage(worker);
+                    self.tracker.consume(-released);
+                    if let Some(run) = &mut run {
+                        run.attach_memory_to(&self.tracker);
+                    }
+                    if let Some(run) = run {
+                        self.partitions.push(run);
+                    }
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            // A lane error must not leave sibling jobs or spill files behind.
+            // The executor may not be closed immediately after `Next` fails.
+            let _ = join_all(&mut pending);
+            self.tracker.replace_bytes_used(0);
+        }
+        finish.store(true, SeqCst);
+        spill_helper.close();
+        result
+    }
 }
 
-impl<C: Columns> Executor for SortExec<C> {
+impl<C> Executor for SortExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     /// Go `Open`: resets the fetched state and opens the child.
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
@@ -274,6 +774,8 @@ impl<C: Columns> Executor for SortExec<C> {
             partition.close();
         }
         self.partitions.clear();
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         // Go `SortExec.Open`: `e.memTracker.ReplaceBytesUsed(0)` -- a re-opened
         // sort (an Apply's inner side re-runs per outer row) must not keep
         // charging for rows it has just dropped.
@@ -288,11 +790,6 @@ impl<C: Columns> Executor for SortExec<C> {
     /// With one run this is Go's `onePartitionSorting`; with several it is
     /// `externalSorting`, the multi-way merge over the runs.
     ///
-    /// FAITHFUL ADAPTATION: Go's merger is a heap
-    /// (`multi_way_merge.go`); this picks the minimum by scanning the runs,
-    /// which is the same output for `k` runs and, at the handful of runs an
-    /// external sort produces, the same work. Ties resolve to the earlier run
-    /// in both, and tie order is not a guaranteed property of either.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         if !self.fetched {
@@ -300,31 +797,95 @@ impl<C: Columns> Executor for SortExec<C> {
             self.fetched = true;
         }
 
-        let batch = self.meta.max_chunk_size();
+        // Go's `SortExec.Next` fills the parent chunk until `req.IsFull()`;
+        // preserve the caller's required-row bound rather than always
+        // emitting a full executor-sized batch.
+        let batch = req.required_rows().min(self.meta.max_chunk_size());
+        if self.partitions.len() == 1 {
+            return self.partitions[0].append_sorted_rows_into(req, batch);
+        }
         let mut partitions = std::mem::take(&mut self.partitions);
         let result = (|| -> Result<(), ExecError> {
-            while req.num_rows() < batch {
-                for partition in &mut partitions {
+            if !self.merge_initialized {
+                self.merge_heads.clear();
+                for (partition_id, partition) in partitions.iter_mut().enumerate() {
                     partition.load_head(&self.by_items, &self.ctx)?;
-                }
-                let mut best: Option<usize> = None;
-                for (i, partition) in partitions.iter().enumerate() {
-                    let Some(key) = partition.head_key() else {
-                        continue;
-                    };
-                    match best {
-                        None => best = Some(i),
-                        Some(b) => {
-                            let other = partitions[b].head_key().expect("a loaded head");
-                            if less_by_items(&self.by_items, key, other)? == Ordering::Less {
-                                best = Some(i);
-                            }
-                        }
+                    if let Some(key) = partition.head_key() {
+                        self.merge_heads.push(MergeHead {
+                            partition_id,
+                            key: key.to_vec(),
+                        });
                     }
                 }
-                match best {
-                    None => break,
-                    Some(i) => partitions[i].take_head_into(req),
+                let mut compare_error = None;
+                crate::topn_chunk_heap::go_heap::init(&mut self.merge_heads, &mut |left, right| {
+                    match less_by_items(&self.by_items, &left.key, &right.key) {
+                        Ok(ordering) => ordering == Ordering::Less,
+                        Err(error) => {
+                            if compare_error.is_none() {
+                                compare_error = Some(error);
+                            }
+                            false
+                        }
+                    }
+                });
+                if let Some(error) = compare_error {
+                    return Err(error);
+                }
+                self.merge_initialized = true;
+            }
+            while req.num_rows() < batch {
+                let Some(head) = self.merge_heads.first() else {
+                    break;
+                };
+                let partition_id = head.partition_id;
+                partitions[partition_id].take_head_into(req);
+                partitions[partition_id].load_head(&self.by_items, &self.ctx)?;
+                if let Some(key) = partitions[partition_id].head_key() {
+                    self.merge_heads[0].key = key.to_vec();
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::fix(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
+                } else {
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::remove(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
                 }
             }
             Ok(())
@@ -340,6 +901,8 @@ impl<C: Columns> Executor for SortExec<C> {
             partition.close();
         }
         self.partitions.clear();
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         if let Some(action) = self.registered_action.take() {
             self.memory
                 .session_tracker()
@@ -374,9 +937,14 @@ impl<C: Columns> Executor for SortExec<C> {
 mod tests {
     use super::*;
     use crate::mem_quota::OomAction;
+    use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
+    use tidb_util::sqlkiller::KillSignal;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -513,6 +1081,17 @@ mod tests {
         Expression::Column(c)
     }
 
+    fn scalar_plus_col_expr(idx: usize) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![
+                col_expr(idx),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ))
+    }
+
     /// Builds a sort over one chunk whose rows are given per column as
     /// `Option<i64>` (None = NULL).
     fn sort_over(rows: &[Vec<Option<i64>>], by: Vec<SortByItem>) -> SortExec<NoColumns> {
@@ -575,124 +1154,6 @@ mod tests {
         (0..n).rev().map(|v| vec![Some(v)]).collect()
     }
 
-    #[derive(Default)]
-    struct RecordMemoryCharge {
-        base: tidb_util::memory::BaseOomAction,
-        observed: std::sync::Mutex<Vec<i64>>,
-    }
-
-    impl tidb_util::memory::ActionOnExceed for RecordMemoryCharge {
-        fn action(&self, tracker: &Arc<Tracker>) {
-            self.observed.lock().unwrap().push(tracker.bytes_consumed());
-        }
-        fn set_fallback(&self, action: Option<ArcAction>) {
-            self.base.set_fallback(action);
-        }
-        fn get_fallback(&self) -> Option<ArcAction> {
-            self.base.get_fallback()
-        }
-        fn get_priority(&self) -> i64 {
-            tidb_util::memory::DEF_LOG_PRIORITY
-        }
-        fn set_finished(&self) {
-            self.base.set_finished();
-        }
-        fn is_finished(&self) -> bool {
-            self.base.is_finished()
-        }
-    }
-
-    #[test]
-    fn sort_partition_charges_complete_chunks_once() {
-        let fields = vec![long(), FieldType::new(FieldTypeCode::Varchar)];
-        let by: Vec<_> = fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| {
-                let mut column = Column::new(index as i64, field.clone());
-                column.index = index as i64;
-                SortByItem {
-                    expr: Expression::Column(column),
-                    desc: false,
-                }
-            })
-            .collect();
-        let parent = Tracker::new(0, 1);
-        let action = Arc::new(RecordMemoryCharge::default());
-        parent.set_action_on_exceed(Some(action.clone()));
-        let mut partition = SortPartition::new(
-            fields.clone(),
-            &parent,
-            StatementMemory::default().spill_storage(),
-        );
-        let mut expected = 0;
-        let mut observed = Vec::new();
-        for count in [0, 1, 17, 257] {
-            let mut chunk = Chunk::new_with_capacity(&fields, count.max(1));
-            for row in 0..count {
-                if row % 3 == 0 {
-                    chunk.append_null(0);
-                } else {
-                    chunk.append_int64(0, row as i64);
-                }
-                chunk.append_string(1, &"x".repeat(row % 19 + 1));
-            }
-            expected += chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * count as i64;
-            for row in 0..count {
-                expected += size_of::<Vec<Datum>>() as i64;
-                for datum in eval_sort_key(&by, &NoColumns, chunk.get_row(row)).unwrap() {
-                    expected += datum.estimated_mem_usage() as i64;
-                }
-            }
-            partition.add(chunk, &by, &NoColumns).unwrap();
-            observed.push(expected);
-            assert_eq!(partition.mem_tracker().bytes_consumed(), expected);
-            assert_eq!(parent.bytes_consumed(), expected);
-            assert_eq!(*action.observed.lock().unwrap(), observed);
-        }
-        partition.close();
-        assert_eq!(parent.bytes_consumed(), 0);
-    }
-
-    #[test]
-    fn sort_partition_rejects_a_failed_key_batch_without_partial_rows_or_charge() {
-        use tidb_expr::scalar_function::ScalarFunction;
-
-        let fields = vec![long()];
-        let by = vec![SortByItem {
-            expr: Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("abs"),
-                long(),
-                vec![col_expr(0)],
-            )),
-            desc: false,
-        }];
-        let parent = Tracker::new(0, -1);
-        let mut partition = SortPartition::new(
-            fields.clone(),
-            &parent,
-            StatementMemory::default().spill_storage(),
-        );
-        let mut first = Chunk::new_with_capacity(&fields, 1);
-        first.append_int64(0, 7);
-        partition.add(first, &by, &NoColumns).unwrap();
-        let held = parent.bytes_consumed();
-        let mut failed = Chunk::new_with_capacity(&fields, 2);
-        failed.append_int64(0, 2);
-        failed.append_int64(0, i64::MIN);
-        assert!(partition.add(failed, &by, &NoColumns).is_err());
-        assert_eq!(partition.num_rows(), 1, "failed chunk retained a row handle");
-        assert_eq!(parent.bytes_consumed(), held, "failed chunk retained a charge");
-        partition.sort(&by).unwrap();
-        assert!(partition.load_head(&by, &NoColumns).unwrap());
-        let mut output = Chunk::new_with_capacity(&fields, 1);
-        partition.take_head_into(&mut output);
-        assert_eq!(output.get_row(0).get_int64(0), 7);
-        assert!(!partition.load_head(&by, &NoColumns).unwrap());
-        partition.close();
-        assert_eq!(parent.bytes_consumed(), 0);
-    }
-
     #[test]
     fn a_sort_accounts_its_materialized_rows_against_the_statement() {
         let memory = StatementMemory::default();
@@ -710,8 +1171,7 @@ mod tests {
         let mut req = exec.new_chunk();
         exec.next(&mut req).unwrap();
         let held = memory.bytes_consumed();
-        // At least the retained chunk bytes plus one row cursor per row; the
-        // exact total also carries the materialized keys.
+        // At least the retained chunk bytes plus one row cursor per row.
         assert!(
             held > tidb_chunk::row::ROW_SIZE * 64,
             "accounted only {held} bytes for 64 retained rows"
@@ -745,6 +1205,58 @@ mod tests {
             Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
             other => panic!("expected the quota to be enforced, got {other:?}"),
         }
+    }
+
+    /// Go `sortexec/sort_spill.go::hasEnoughDataToSpill` uses an inclusive
+    /// tenth-of-quota boundary. Reaching that boundary must request a spill
+    /// rather than falling through to the previous cancellation action.
+    #[test]
+    fn parallel_sort_requests_spill_at_exact_tenth_of_quota() {
+        let quota = 100_i64;
+        let sort_tracker = Tracker::new(1, -1);
+        sort_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota);
+        let need_spill = Arc::new(AtomicBool::new(false));
+        let action = ParallelSortSpillAction {
+            base: BaseOomAction::default(),
+            need_spill: Arc::clone(&need_spill),
+            sort_tracker,
+            spill_limit: quota / 10,
+        };
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            need_spill.load(SeqCst),
+            "the inclusive tenth-of-quota boundary must request a spill"
+        );
+    }
+
+    /// Go's parallel spill action only requests a spill for an over-quota
+    /// trigger. Reaching the sort-owned tenth-of-quota threshold alone must
+    /// leave the action available for a later over-quota callback.
+    #[test]
+    fn parallel_sort_does_not_spill_before_trigger_tracker_exceeds_quota() {
+        let quota = 100_i64;
+        let sort_tracker = Tracker::new(1, -1);
+        sort_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota - 1);
+        let need_spill = Arc::new(AtomicBool::new(false));
+        let action = ParallelSortSpillAction {
+            base: BaseOomAction::default(),
+            need_spill: Arc::clone(&need_spill),
+            sort_tracker,
+            spill_limit: quota / 10,
+        };
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            !need_spill.load(SeqCst),
+            "a non-exceeded trigger tracker must not request a spill"
+        );
     }
 
     #[test]
@@ -819,6 +1331,53 @@ mod tests {
             }],
         );
         assert_eq!(collect(&mut e), rows1(&[Some(3), Some(2), Some(1)]));
+    }
+
+    /// Go `SortExec.buildKeyColumns` accepts only columns and constants. A
+    /// scalar by-item must be rejected before the child is drained rather than
+    /// evaluated by a Rust-only fallback comparator.
+    #[test]
+    fn sort_rejects_non_column_by_item_like_go() {
+        let mut e = sort_over(
+            &rows1(&[Some(2), Some(1)]),
+            vec![SortByItem {
+                expr: scalar_plus_col_expr(0),
+                desc: false,
+            }],
+        );
+        e.open().unwrap();
+        let mut req = e.new_chunk();
+        let error = e
+            .next(&mut req)
+            .expect_err("scalar sort keys must be rejected");
+        assert!(
+            matches!(error, ExecError::Unsupported(ref message) if message == "Get unexpected expression"),
+            "unexpected error: {error:?}"
+        );
+        e.close().unwrap();
+    }
+
+    /// Go's `buildKeyColumns` accepts constants but excludes them from the
+    /// comparison keys, so a deferred constant must never be evaluated while
+    /// sorting. Its key slot stays positional and compares equal.
+    #[test]
+    fn sort_does_not_evaluate_constant_by_item_like_go() {
+        let mut constant = Constant::new(Datum::Int(7), long());
+        constant.deferred_expr = Some(Box::new(scalar_plus_col_expr(0)));
+        let by = [SortByItem {
+            expr: Expression::Constant(constant),
+            desc: false,
+        }];
+        let fields = vec![long()];
+        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        chunk.append_int64(0, 1);
+
+        let key = eval_sort_key(&by, &NoColumns, chunk.get_row(0)).unwrap();
+        assert_eq!(key, vec![Datum::Null]);
+        assert_eq!(
+            less_by_items(&by, &[Datum::Null], &[Datum::Int(9)]).unwrap(),
+            Ordering::Equal
+        );
     }
 
     #[test]
@@ -899,6 +1458,39 @@ mod tests {
         e.close().unwrap();
     }
 
+    /// Go `executor_required_rows_test.go::TestSortRequiredRows`: one sorted
+    /// run must stop at the parent's requested row count on every pull, not
+    /// fill the executor's full max-sized chunk before returning.
+    #[test]
+    fn sort_honors_each_output_chunk_required_rows() {
+        let mut e = sort_over(
+            &rows1(&[
+                Some(9),
+                Some(8),
+                Some(7),
+                Some(6),
+                Some(5),
+                Some(4),
+                Some(3),
+                Some(2),
+                Some(1),
+                Some(0),
+            ]),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+        );
+        e.open().unwrap();
+        let mut req = e.new_chunk();
+        for (required, expected) in [(1, 1), (5, 5), (3, 3), (10, 1)] {
+            req.set_required_rows(required, e.max_chunk_size());
+            e.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), expected, "required rows: {required}");
+        }
+        e.close().unwrap();
+    }
+
     #[test]
     fn empty_child_is_empty() {
         let mut e = sort_over(
@@ -953,6 +1545,216 @@ mod tests {
             expr: col_expr(0),
             desc: false,
         }]
+    }
+
+    /// Go source of truth: `sortexec.TestSortInParallel`.
+    #[test]
+    fn parallel_sort_workers_share_input_and_heap_merge_their_runs() {
+        let n = 4096i64;
+        let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 4051) % n)]).collect();
+        let mut expected: Vec<i64> = rows.iter().map(|row| row[0].unwrap()).collect();
+        expected.sort_unstable();
+
+        let mut exec =
+            multi_chunk_sorter(&rows, asc(), 64, StatementMemory::default()).with_parallelism(4);
+        exec.open().unwrap();
+        assert_eq!(drain_first_col(&mut exec), expected);
+        assert_eq!(
+            exec.num_partitions(),
+            4,
+            "the statement concurrency must create four independently sorted worker runs"
+        );
+        assert_eq!(
+            exec.partitions
+                .iter()
+                .map(SortPartition::in_memory_chunk_count)
+                .sum::<usize>(),
+            64,
+            "Go retains the 64 fetched chunks and sorts lightweight row cursors instead of copying every row into new chunks"
+        );
+        exec.close().unwrap();
+    }
+
+    /// Go `parallelSortWorker.multiWayMergeLocalSortedRows`: crossing the
+    /// worker's `maxChunkSize * 30` boundary creates more than one locally
+    /// sorted batch, then merges their row cursors without replacing the
+    /// fetched chunks.
+    #[test]
+    fn parallel_worker_merges_multiple_batches_without_copying_chunks() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            2,
+            memory.clone(),
+        );
+        for batch in 0..3i64 {
+            let mut chunk = Chunk::new_with_capacity(&fields, 32);
+            for row in 0..32i64 {
+                chunk.append_int64(0, 95 - (batch * 32 + row));
+            }
+            let rows = i64::try_from(chunk.num_rows()).unwrap();
+            let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+            worker.add_chunk(chunk, memory_usage).unwrap();
+        }
+
+        let mut run = worker
+            .sort_local_partition()
+            .unwrap()
+            .expect("the worker received rows");
+        assert_eq!(run.in_memory_chunk_count(), 3);
+        let mut output = Chunk::new_with_capacity(&fields, 96);
+        run.append_sorted_rows_into(&mut output, 96).unwrap();
+        assert_eq!(
+            (0..output.num_rows())
+                .map(|row| output.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (0..96).collect::<Vec<_>>()
+        );
+    }
+
+    /// Go's `parallelSortWorker.multiWayMergeLocalSortedRows` polls the query
+    /// killer every 100 emitted rows. A cancellation already pending when the
+    /// local merge starts must abort the worker result instead of returning a
+    /// complete sorted slice.
+    #[test]
+    fn parallel_worker_honors_query_kill_during_local_merge() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            2,
+            memory.clone(),
+        );
+        for batch in 0..3i64 {
+            let mut chunk = Chunk::new_with_capacity(&fields, 32);
+            for row in 0..32i64 {
+                chunk.append_int64(0, 95 - (batch * 32 + row));
+            }
+            let rows = i64::try_from(chunk.num_rows()).unwrap();
+            let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+            worker.add_chunk(chunk, memory_usage).unwrap();
+        }
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = worker.sort_local_rows();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed worker merge must return an executor cancellation error: {result:?}"
+        );
+    }
+
+    /// Go's `parallelSortWorker.keyColumnsLess` also polls after 20,000 row
+    /// comparisons while sorting a batch. A single large batch bypasses the
+    /// local merge, isolating that comparator checkpoint.
+    #[test]
+    fn parallel_worker_honors_query_kill_during_batch_sort() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let batch_size = 8192usize;
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            batch_size,
+            memory.clone(),
+        );
+        let mut chunk = Chunk::new_with_capacity(&fields, batch_size);
+        for row in 0..batch_size {
+            let value = ((row * 7919) % batch_size) as i64;
+            chunk.append_int64(0, value);
+        }
+        let rows = i64::try_from(chunk.num_rows()).unwrap();
+        let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+        worker.add_chunk(chunk, memory_usage).unwrap();
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = worker.sort_local_rows();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed worker batch sort must return an executor cancellation error: {result:?}"
+        );
+    }
+
+    /// Go's serial `sortPartition.keyColumnsLess` polls the SQL killer every
+    /// 10,240 comparisons. Exercise the partition directly so the pending
+    /// signal reaches the comparator checkpoint instead of the fetch loop's
+    /// ordinary post-chunk check.
+    #[test]
+    fn serial_sort_partition_honors_query_kill_during_batch_sort() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let parent = Tracker::new(1, -1);
+        let mut partition = SortPartition::new(fields.clone(), &parent, memory.spill_storage());
+        let batch_size = 8192usize;
+        let mut chunk = Chunk::new_with_capacity(&fields, batch_size);
+        for row in 0..batch_size {
+            let value = ((row * 7919) % batch_size) as i64;
+            chunk.append_int64(0, value);
+        }
+        partition.add(chunk);
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let by_items = asc();
+        let compare_funcs = compile_compare_funcs(&by_items);
+        let result = partition.sort_with_memory(&by_items, &compare_funcs, &NoColumns, &memory);
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed serial partition sort must return an executor cancellation error: {result:?}"
+        );
+    }
+
+    /// Go source of truth: `sortexec.TestParallelSortSpillDisk`.
+    ///
+    /// Once a parallel spill is triggered, Go's fetcher coordinates a whole
+    /// worker spill round and spills the final partial batches as well. The
+    /// result must therefore be backed entirely by the helper's disk runs,
+    /// not by the old serial-fetch path followed by an in-memory repartition.
+    #[test]
+    fn parallel_sort_spills_worker_rounds_and_final_batches() {
+        let dir = scratch_temp_dir("parallel-sortexec");
+        let n = 12_345i64;
+        let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 12_341) % n)]).collect();
+        let mut expected = rows
+            .iter()
+            .map(|row| row[0].expect("no nulls"))
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+
+        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 43)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = multi_chunk_sorter(&rows, asc(), 193, memory).with_parallelism(4);
+        exec.open().unwrap();
+        assert_eq!(drain_first_col(&mut exec), expected);
+        assert!(exec.bytes_in_disk() > 0, "parallel sort did not spill");
+        assert!(
+            exec.partitions.iter().all(SortPartition::is_spilled),
+            "after its first spill Go writes every final worker batch to disk"
+        );
+        assert!(
+            exec.num_non_empty_partitions() > 1,
+            "the input must exercise more than one coordinated spill round"
+        );
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
+        drop(exec);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go source of truth: `sortexec.TestUnparallelSortSpillDisk`.

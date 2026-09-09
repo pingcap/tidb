@@ -216,18 +216,118 @@
 //!   no collation (matching Go), so no collation-mismatch error can arise
 //!   there even when TiDB's own planner would have rewritten the expression.
 
+use tidb_error::terror::TerrorError;
+use tidb_txnkv::{Key, KeyRange};
+use tidb_util::dbterror::{self, exeerrors};
+use tidb_util::sqlkiller::{KillSignal, SqlKiller};
+
+/// A DDL key range together with the flashback-cluster exclusion marker.
+///
+/// This is Go `keyRangeMayExclude` from `pkg/ddl/cluster.go`. The range
+/// planner guarantees sorted, non-overlapping input; the marker only controls
+/// whether the range contributes to the output or terminates the current
+/// continuous run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyRangeMayExclude {
+    /// Half-open range to include or exclude.
+    pub range: KeyRange,
+    /// When true, flushes the current run and is omitted from the result.
+    pub exclude: bool,
+}
+
+/// Drops excluded ranges and coalesces each surviving continuous run.
+///
+/// This is Go `mergeContinuousKeyRanges` (`pkg/ddl/cluster.go:330`). The
+/// caller supplies ranges sorted by start key and without overlap; an
+/// excluded range represents a known gap, so it closes the current run rather
+/// than being merged across. Keys are cloned because Go's returned
+/// `kv.KeyRange` owns the slice values independently of the input wrappers.
+#[must_use]
+pub fn merge_continuous_key_ranges(ranges: &[KeyRangeMayExclude]) -> Vec<KeyRange> {
+    let mut result = Vec::with_capacity(1);
+    let mut continuous_start: Option<Key> = None;
+    let mut continuous_end: Option<Key> = None;
+
+    for item in ranges {
+        if item.exclude {
+            if let (Some(start), Some(end)) = (continuous_start.take(), continuous_end.take()) {
+                result.push(KeyRange::new(start, end));
+            }
+            continue;
+        }
+
+        if continuous_start.is_none() {
+            continuous_start = Some(item.range.start_key.clone());
+        }
+        continuous_end = Some(item.range.end_key.clone());
+    }
+
+    if let (Some(start), Some(end)) = (continuous_start, continuous_end) {
+        result.push(KeyRange::new(start, end));
+    }
+    result
+}
+
+/// Reports whether a DDL statement's session has been interrupted, together
+/// with the Go-compatible kill flag.
+///
+/// This is Go `isSessionDone` (`pkg/ddl/executor.go:461`). The failpoint-only
+/// `BatchAddTiFlashSendDone` override belongs to the unported batch wait loop;
+/// this pure helper covers the SQL-killer contract shared by that loop and
+/// other DDL callers.
+#[must_use]
+pub fn is_session_done(killer: &SqlKiller) -> (bool, u32) {
+    let killed = killer
+        .handle_signal()
+        .is_some_and(|error| exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&error)));
+    if killed {
+        (true, KillSignal::QueryInterrupted.raw())
+    } else {
+        (false, 0)
+    }
+}
+
+/// Converts the DDL wait loop's numeric kill flag into the canonical
+/// interrupted-query error.
+///
+/// This is Go `convertKillFlag` (`pkg/ddl/executor.go:475`): zero is the
+/// failpoint-only abort and therefore succeeds, while any non-zero flag is a
+/// query interruption.
+pub fn convert_kill_flag(killed: u32) -> Result<(), TerrorError> {
+    if killed == 0 {
+        return Ok(());
+    }
+    Err(exeerrors::ERR_QUERY_INTERRUPTED
+        .generate_with_stack(exeerrors::ERR_QUERY_INTERRUPTED.message()))
+}
+
+/// Reports whether a failed system DDL cancellation should be retried.
+///
+/// This is Go `isRetryableDDLCancelErr` (`pkg/ddl/executor.go:7227`). The
+/// three terminal cancellation errors are rejected through terror identity
+/// equality, including wrapped errors; every other error remains retryable.
+#[must_use]
+pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) -> bool {
+    !dbterror::ERR_CANCEL_FINISHED_DDL_JOB.equal(Some(error))
+        && !dbterror::ERR_CANNOT_CANCEL_DDL_JOB.equal(Some(error))
+        && !dbterror::ERR_DDL_JOB_NOT_FOUND.equal(Some(error))
+}
+
 mod alter_metadata;
 mod alter_table;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
+pub mod check_constraint;
 pub mod column_field_type;
 mod column_types;
 pub mod index_prefix;
 mod indexes;
+pub mod mview_helpers;
+pub mod mview_schedule_expr;
+pub mod placement_policy;
 mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
-pub mod placement_policy;
 mod table_partition;
 pub mod table_partition_list;
 pub mod table_partition_range;
@@ -242,9 +342,8 @@ pub use placement_policy::{
 };
 pub use table_partition::{
     append_partition_defs, build_partition_metadata, escape_partition_name,
-    partition_placement_text,
-    linear_partitioning_warning,
-    partition_spec_from_metadata, StoredPartitionDefinition, StoredPartitionMetadata,
+    linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
+    StoredPartitionDefinition, StoredPartitionMetadata,
 };
 
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
@@ -255,14 +354,36 @@ use table_constraints::{
 };
 
 use indexes::{index_part_names, is_visible};
-pub use table_lifecycle::{run_drop_table_in, run_rename_table_in, run_truncate_table_in};
+pub use table_lifecycle::{
+    run_drop_table_in, run_rename_table_in, run_truncate_table_in,
+    run_truncate_table_in_with_foreign_key_checks,
+};
 
 use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
 use crate::SchemaErrorKind;
 use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 use tidb_model::column::ColumnInfo;
+
+/// Go `setNoDefaultValueFlag` (`pkg/ddl/add_column.go:1093`) marks a final
+/// NOT NULL column that has no explicit default, except for AUTO_INCREMENT and
+/// TIMESTAMP columns whose value source is implicit. CREATE, ADD, and MODIFY
+/// all run this rule after their option/primary-key flags settle.
+pub(crate) fn set_no_default_value_flag(
+    field_type: &mut tidb_datatype::FieldType,
+    has_default_value: bool,
+) {
+    if has_default_value
+        || !field_type.has_flag(NOT_NULL_FLAG)
+        || field_type.has_flag(AUTO_INCREMENT_FLAG)
+        || field_type.has_flag(FieldTypeFlags::TIMESTAMP)
+    {
+        return;
+    }
+    field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
+}
 
 /// The row-handle layout a table is built with, decided ONCE per
 /// `CREATE TABLE` and then read by everything downstream.
@@ -316,6 +437,7 @@ impl HandleKind {
         let clustered = match storage {
             Some(tidb_ast::PrimaryKeyStorage::Clustered) => true,
             Some(tidb_ast::PrimaryKeyStorage::NonClustered) => false,
+            Some(tidb_ast::PrimaryKeyStorage::Unknown(_)) => false,
             None => match mode {
                 tidb_vardef::modes::ClusteredIndexDefMode::ON => true,
                 tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY => single_int,
@@ -413,6 +535,16 @@ pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Optio
     })
 }
 
+/// The final `COMPRESSION=` option a CREATE or ALTER TABLE applies, stored
+/// verbatim (Go `handleTableOptions`, `create_table.go:964-965`; the loop
+/// overwrites so the last option wins).
+pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Option<String> {
+    options.iter().rev().find_map(|option| match option {
+        tidb_ast::TableOption::Compression(value) => Some(value.clone()),
+        _ => None,
+    })
+}
+
 pub(crate) fn table_comment_option(
     options: &[tidb_ast::TableOption],
     table: &str,
@@ -486,7 +618,7 @@ pub fn resolve_database_charset(
 /// on an existing `TTLInfo` -- so the `TTL=` clause is what decides. Their
 /// defaults are Go's: `TTL_ENABLE` is ON and the job interval is
 /// `DefaultTTLJobInterval`.
-fn ttl_info_from_options(
+pub(crate) fn ttl_info_from_options(
     options: &[tidb_ast::TableOption],
 ) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
     let mut info: Option<tidb_model::TTLInfo> = None;
@@ -497,8 +629,8 @@ fn ttl_info_from_options(
             unit,
         } = option
         {
-            let interval_time_unit = tidb_model::time_unit_type_from_keyword(unit)
-                .ok_or_else(|| {
+            let interval_time_unit =
+                tidb_model::time_unit_type_from_keyword(unit).ok_or_else(|| {
                     DriverError::unsupported(format!("`{unit}` is not a TTL interval unit"))
                 })?;
             info = Some(tidb_model::TTLInfo {
@@ -591,32 +723,50 @@ pub fn discarded_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> u
             tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
                 1
             }
-            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+            tidb_ast::AlterTableAction::AddColumn { column, .. } => column
+                .options
                 .iter()
-                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                .filter(|option| matches!(option, tidb_ast::ColumnOption::Check(_)))
                 .count(),
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => {
+                constraints
+                    .iter()
+                    .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                    .count()
+                    + columns
+                        .iter()
+                        .flat_map(|column| &column.options)
+                        .filter(|option| matches!(option, tidb_ast::ColumnOption::Check(_)))
+                        .count()
+            }
             _ => 0,
         })
         .sum()
 }
 
-/// How many of an `ALTER TABLE`'s actions ADD a `CHECK` constraint, which is
-/// what the `tidb_enable_check_constraint = ON` refusal is gated on: with the
-/// variable ON, Go would STORE and enforce these.
-#[must_use]
-pub fn added_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> usize {
-    alter
-        .actions
-        .iter()
-        .map(|action| match action {
-            tidb_ast::AlterTableAction::AddCheck(_) => 1,
-            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+fn check_constraint_name_exists_in_schema(
+    catalog: &Catalog,
+    database: &str,
+    excluding_table: Option<&str>,
+    constraint_name: &str,
+) -> bool {
+    catalog
+        .table_names(database)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|name| !excluding_table.is_some_and(|excluded| name.eq_ignore_ascii_case(excluded)))
+        .filter_map(|name| catalog.table_in(database, &name))
+        .any(|entry| match entry {
+            crate::TableEntry::Kv(table) => table
+                .check_constraint_infos()
                 .iter()
-                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
-                .count(),
-            _ => 0,
+                .any(|info| info.name.original().eq_ignore_ascii_case(constraint_name)),
+            _ => false,
         })
-        .sum()
 }
 
 /// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the
@@ -785,9 +935,36 @@ pub(crate) fn refuse_temporary_table_alter_options(
 /// Nothing records `on_commit_delete` past this point, and Go does not
 /// either: `TableInfo` has no such field, so `SHOW CREATE TABLE` prints
 /// ` ON COMMIT DELETE ROWS` for every global temporary table unconditionally.
-fn temp_table_type_of(
+pub fn validate_temporary_table_create(
     create: &tidb_ast::CreateTableStmt,
 ) -> Result<tidb_model::TempTableType, DriverError> {
+    // Go `preprocessor.checkCreateTableGrammar` (`preprocess.go:946`): two
+    // table options are refused on a temporary table before anything else is
+    // built, because neither has a meaning for a relation that never reaches
+    // TiKV. `AUTO_RANDOM` is rejected by the column-option pass at the same
+    // preprocessing boundary.
+    if create.temporary != tidb_ast::CreateTableTemporary::None {
+        for option in &create.table_options {
+            match option {
+                tidb_ast::TableOption::ShardRowIdBits(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"));
+                }
+                tidb_ast::TableOption::PlacementPolicy(_) => {
+                    return Err(DriverError::OptOnTemporaryTable("PLACEMENT"));
+                }
+                _ => {}
+            }
+        }
+        if create.columns.iter().any(|column| {
+            column
+                .options
+                .iter()
+                .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
+        }) {
+            return Err(DriverError::OptOnTemporaryTable("auto_random"));
+        }
+    }
+
     match create.temporary {
         tidb_ast::CreateTableTemporary::None => Ok(tidb_model::TempTableType::NONE),
         tidb_ast::CreateTableTemporary::Global => {
@@ -840,8 +1017,17 @@ pub fn run_create_table_in(
         enable_check_constraint,
         clustered_index_mode,
     } = settings;
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
-        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    // A parser refusal carrying its own errno (Go raises partition arity
+    // errors like `ast.ErrPartitionColumnList` [ddl:1653] straight from the
+    // grammar action via `opt.Validate()`) keeps its coded identity on the
+    // wire; ordinary grammar failures stay the plain 1064-style parse error.
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode).map_err(|e| match e.errno {
+        Some(errno) => DriverError::ParseCoded {
+            errno,
+            message: e.message,
+        },
+        None => DriverError::Parse(format!("{e:?}")),
+    })?;
 
     let create = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
@@ -859,49 +1045,26 @@ pub fn run_create_table_in(
         }
     };
 
-    if enable_check_constraint && check_constraint_count(create) > 0 {
-        return Err(DriverError::unsupported(
-            "CHECK constraints are only modelled with tidb_enable_check_constraint off",
-        ));
-    }
-
-    // Go `preprocessor.checkCreateTableGrammar` (`preprocess.go:946`): two
-    // table options are refused on a temporary table before anything else is
-    // built, because neither has a meaning for a relation that never reaches
-    // TiKV -- `SHARD_ROW_ID_BITS` spreads a table's record keys over regions
-    // and `PLACEMENT` pins them to stores. The argument spellings are Go's
-    // and differ in CASE from the ones `checkReferInfoForTemporaryTable`
-    // passes for the same settings inherited through `LIKE`, so they are
-    // written out rather than derived.
-    if create.temporary != tidb_ast::CreateTableTemporary::None {
-        for option in &create.table_options {
-            match option {
-                tidb_ast::TableOption::ShardRowIdBits(_) => {
-                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"))
-                }
-                tidb_ast::TableOption::PlacementPolicy(_) => {
-                    return Err(DriverError::OptOnTemporaryTable("PLACEMENT"))
-                }
-                _ => {}
-            }
-        }
-        // Go `checkColumnOptions` (`preprocess.go:1197`): `AUTO_RANDOM` needs
-        // a persisted allocator and a sharded handle domain, so a temporary
-        // table cannot carry one.
-        if create.columns.iter().any(|column| {
-            column
-                .options
-                .iter()
-                .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
-        }) {
-            return Err(DriverError::OptOnTemporaryTable("auto_random"));
-        }
-    }
     // Go `setTemporaryType`, which the DDL builder reaches only after the
     // preprocessor checks above have passed. The order is observable:
     // `create global temporary table t (a int) shard_row_id_bits = 4
     //  on commit preserve rows` is 8006, not 8200.
-    let temporary = temp_table_type_of(create)?;
+    let temporary = validate_temporary_table_create(create)?;
+    // Go's `checkReferInfoForTemporaryTable` refuses a FOREIGN KEY declared
+    // by either LOCAL or GLOBAL temporary table with ErrCannotAddForeign
+    // (1215). This must happen before normal column/parent resolution so a
+    // temporary child cannot publish a constraint into the session overlay.
+    if temporary != tidb_model::TempTableType::NONE
+        && create
+            .table_constraints
+            .iter()
+            .any(|constraint| matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_)))
+    {
+        return Err(DriverError::DdlCoded {
+            errno: 1215,
+            message: "Cannot add foreign key constraint".to_owned(),
+        });
+    }
     validate_table_options(&create.table_options)?;
     // Go refuses CTAS outright and has never implemented it:
     // `preprocess.go` -> `checkCreateTableGrammar` does
@@ -935,6 +1098,15 @@ pub fn run_create_table_in(
     // therefore succeeds and SHADOWS it for this session, which is MySQL's
     // rule and the reason the shadowed entry has to be preserved rather than
     // overwritten (see `Catalog::register_local_temporary_in`).
+    // Go's preprocessor resolves a LIKE source before the DDL layer checks
+    // whether the target already exists.  Validate the source now so a
+    // missing table (1146) or wrong object (1347) wins over a target 1050,
+    // including the `IF NOT EXISTS` spelling.
+    if let Some(source) = &create.like_table {
+        let (source_db, source_name) = crate::driver::split_table_path_pub(source, current_db)?;
+        create_like_source(source_db, source_name, catalog)?;
+    }
+
     let name_taken = if temporary == tidb_model::TempTableType::LOCAL {
         matches!(catalog.table_in(&database, name), Some(crate::TableEntry::Kv(table))
             if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
@@ -942,21 +1114,24 @@ pub fn run_create_table_in(
         catalog.contains_in(&database, name)
     };
     if name_taken {
+        let duplicate = DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
+            "{database}.{name}"
+        )));
         if create.if_not_exists {
+            // Go's `createTableWithInfo` appends ErrTableExists (1050) as a
+            // Note for IF NOT EXISTS, including the CREATE TABLE ... LIKE
+            // form, then returns without replacing the existing table.
+            ctx.append_suppressed(&duplicate);
             return Ok(false);
         }
         // Go `infoschema.ErrTableExists` (1050) prints the db-qualified name:
         // "Table 'test.t1' already exists".
-        return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
-            format!("{database}.{name}"),
-        )));
+        return Err(duplicate);
     }
 
     // `CREATE TABLE ... LIKE` copies a built table rather than building one
     // from column definitions, so it leaves before any of that work. The
-    // target's own existence was settled just above, which is the order Go
-    // reports the two in: an existing target is 1050 even when the source is
-    // a view.
+    // source was validated above to preserve Go's preprocessing order.
     if let Some(source) = &create.like_table {
         let (source_db, source_name) = crate::driver::split_table_path_pub(source, current_db)?;
         let (source_db, source_name) = (source_db.to_owned(), source_name.to_owned());
@@ -979,8 +1154,14 @@ pub fn run_create_table_in(
             if source.auto_random().is_some() {
                 return Err(DriverError::OptOnTemporaryTable("auto_random"));
             }
+            if source.pre_split_regions() != 0 {
+                return Err(DriverError::OptOnTemporaryTable("pre split regions"));
+            }
             if source.partition().is_some() {
                 return Err(DriverError::PartitionNoTemporary);
+            }
+            if source.shard_row_id_bits() != 0 {
+                return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"));
             }
             if source.placement_policy().is_some() {
                 return Err(DriverError::OptOnTemporaryTable("placement"));
@@ -994,9 +1175,11 @@ pub fn run_create_table_in(
             .map(|_| catalog.allocate_table_id())
             .collect::<Vec<_>>()
             .into_iter();
-        let mut copy = create_like_source(&source_db, &source_name, catalog)?
-            .create_like(id, &mut || ids.next().expect("one id per copied partition"));
-        copy.name = name.to_owned();
+        let mut copy = create_like_source(&source_db, &source_name, catalog)?.create_like(
+            id,
+            name,
+            &mut || ids.next().expect("one id per copied partition"),
+        );
         // Go `BuildTableInfoWithLike` (`create_table.go:1300`) strips the TTL
         // from a temporary copy rather than refusing it, because the source's
         // TTL is not something this statement asked for.
@@ -1060,6 +1243,18 @@ pub fn run_create_table_in(
         seen_indexes.push(name);
     }
 
+    // Go `checkTooManyColumns` (`pkg/ddl/create_table.go:719`) runs after
+    // duplicate/name checks and before the table metadata is published.
+    // Keep the limit on the owning catalog rather than a process-global so
+    // embedded callers and tests can exercise the same configuration without
+    // racing unrelated catalogs.
+    if create.columns.len() > catalog.table_column_count_limit() {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: "Too many columns".to_owned(),
+        });
+    }
+
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
     let database_charset = catalog
         .database_charset(&database)
@@ -1067,7 +1262,7 @@ pub fn run_create_table_in(
     let table_charset = table_charset_of(&create.table_options, database_charset)?;
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
-        let field_type = field_type_of(def, table_charset)?;
+        let field_type = field_type_of(def, table_charset, catalog.enable_enum_length_limit())?;
         let column_id = i64::try_from(
             i.checked_add(1)
                 .expect("a parsed table cannot contain usize::MAX columns"),
@@ -1150,7 +1345,7 @@ pub fn run_create_table_in(
         auto_increment_offset = Some(i);
     }
 
-    let primary_key = primary_key_column(create, &columns)?;
+    let primary_key = primary_key_column(create, &columns, catalog.max_index_length())?;
     let pk_offsets: Vec<usize> = match &primary_key {
         Some(declared) => {
             let mut offsets = Vec::with_capacity(declared.columns.len());
@@ -1287,6 +1482,10 @@ pub fn run_create_table_in(
     // It validates the persisted spelling but does not replace it with the
     // typed runtime value. `setNoDefaultValueFlag` is likewise based on the
     // now-final option flags, not the flags present when DEFAULT was visited.
+    let has_default_values: Vec<bool> = staged_defaults
+        .iter()
+        .map(|staged| staged.as_ref().is_some_and(|staged| staged.has_default))
+        .collect();
     let mut defaults = Vec::with_capacity(staged_defaults.len());
     for (offset, staged) in staged_defaults.into_iter().enumerate() {
         let Some(staged) = staged else {
@@ -1316,6 +1515,9 @@ pub fn run_create_table_in(
     // the source checks above have observed the intermediate flag state.
     for offset in &pk_offsets {
         columns[*offset].add_flag(u64::from(NOT_NULL_FLAG));
+    }
+    for (offset, column) in columns.iter_mut().enumerate() {
+        set_no_default_value_flag(&mut column.field_type, has_default_values[offset]);
     }
 
     let table_id = catalog.allocate_table_id();
@@ -1377,10 +1579,19 @@ pub fn run_create_table_in(
     if let Some(comment) = table_comment_option(&create.table_options, name, ctx)? {
         table.set_comment(comment);
     }
+    // Go `handleTableOptions` (`create_table.go:964-965`): the COMPRESSION
+    // string is stored verbatim, no validation, last one wins (later options
+    // overwrite `tbInfo.Compression`).
+    if let Some(compression) = table_compression_option(&create.table_options) {
+        table.set_compression(compression);
+    }
     match &handle {
         HandleKind::RowId => {}
         HandleKind::IntHandle(offset) => table.set_pk_handle_offset(*offset),
-        HandleKind::CommonHandle(offsets) => table.set_common_handle_offsets(offsets.clone()),
+        HandleKind::CommonHandle(offsets) => {
+            table.set_common_handle_offsets(offsets.clone());
+            table.set_common_handle_version(1);
+        }
     }
     if let Some(spec) = auto_random {
         table.set_auto_random(spec);
@@ -1425,6 +1636,50 @@ pub fn run_create_table_in(
     if ttl_info.is_some() && temporary != tidb_model::TempTableType::NONE {
         return Err(DriverError::TempTableNotAllowedWithTTL);
     }
+    // Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go
+    // :141-149`): the TTL column must EXIST (missing names fail `ErrBadField`
+    // with "TTL config" as the clause) and be a time type -- DATE, DATETIME
+    // or TIMESTAMP (`ErrUnsupportedColumnInTTLConfig`, 8148).
+    if let Some(info) = ttl_info.as_ref() {
+        let named = info.column_name.original();
+        match table.columns.iter().find(|column| column.name.eq_ignore_ascii_case(named)) {
+            None => {
+                return Err(DriverError::UnknownColumnInTtlConfig(named.to_owned()));
+            }
+            Some(column) if !column.field_type.code().is_type_time() => {
+                return Err(DriverError::UnsupportedColumnInTtlConfig(named.to_owned()));
+            }
+            Some(_) => {}
+        }
+    }
+    // Go `checkPrimaryKeyForTTLTable` (`pkg/ddl/ttl.go:155-168`): a TTL table
+    // whose CLUSTERED primary key contains a FLOAT or DOUBLE column is refused
+    // (8153) -- TTL deletes expired rows with SQL predicates, and comparing a
+    // float handle loses precision.
+    if ttl_info.is_some() && clustered {
+        let pk_offsets: &[usize] = match &handle {
+            HandleKind::CommonHandle(offsets) => offsets,
+            HandleKind::IntHandle(offset) => std::slice::from_ref(offset),
+            HandleKind::RowId => &[],
+        };
+        if pk_offsets.iter().any(|offset| {
+            matches!(
+                columns[*offset].field_type.code(),
+                FieldTypeCode::Float | FieldTypeCode::Double
+            )
+        }) {
+            return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
+        }
+    }
+    // Go `checkTTLInfoValid` with `foreignKeyCheckIs` (`pkg/ddl/ttl.go
+    // :104-107`): a table another table's foreign key refers to cannot take
+    // a TTL config (8152). At CREATE the table is brand new, so only an
+    // FK-containing sibling can refer to it by name already.
+    if ttl_info.is_some()
+        && crate::foreign_key::is_table_referred(catalog, &database, &name)
+    {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
     table.set_ttl_info(ttl_info);
     // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
     // TableInfo and read by `AllocHandleIDs`, which composes those HIGH bits
@@ -1435,14 +1690,16 @@ pub fn run_create_table_in(
             let bits = value.parse::<u64>().map_err(|_| {
                 DriverError::unsupported("SHARD_ROW_ID_BITS needs an integer value")
             })?;
-            // Go `checkShardRowIDBits`: the shard has to leave room for the
-            // counter and the sign bit.
-            if bits >= 16 {
-                return Err(DriverError::unsupported(
-                    "shard_row_id_bits should be less than 16",
-                ));
+            // Go `handleTableOptions` (`create_table.go:967-971`): on a table
+            // whose primary key is the CLUSTERED row id, any positive bit
+            // count is refused (`ErrUnsupportedShardRowIDBits`, 8200);
+            // otherwise the value is CLAMPED to `MaxShardRowIDBits` (15),
+            // never refused -- an over-large count on a non-clustered table
+            // is not an error.
+            if bits > 0 && clustered {
+                return Err(DriverError::UnsupportedShardRowIdBits);
             }
-            table.set_shard_row_id_bits(bits);
+            table.set_shard_row_id_bits(bits.min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS));
         }
         if let tidb_ast::TableOption::PreSplitRegions(value) = option {
             let regions = value.parse::<u64>().map_err(|_| {
@@ -1461,12 +1718,17 @@ pub fn run_create_table_in(
                     "table option auto_id_cache overflows int64",
                 ));
             }
-            table
-                .set_auto_id_cache(cache)
-                .map_err(|message| DriverError::unsupported(message))?;
+            table.init_auto_id_cache(cache);
         }
     }
-    let (indexes, hidden_columns) = table_indexes(create, &columns, clustered, ctx)?;
+    let (indexes, hidden_columns, partial_conditions) = table_indexes(
+        create,
+        &columns,
+        clustered,
+        matches!(&handle, HandleKind::CommonHandle(_)),
+        ctx,
+        catalog.max_index_length(),
+    )?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
@@ -1507,8 +1769,73 @@ pub fn run_create_table_in(
         let clustered_primary = index.clustered_primary;
         table.add_index(index, clustered_primary);
     }
-    for foreign_key in table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?
-    {
+    for (index_id, index_name, condition) in &partial_conditions {
+        crate::ddl::indexes::validate_partial_index_condition(table.columns(), condition)?;
+        table
+            .add_partial_index_condition(
+                *index_id,
+                index_name,
+                condition,
+                &ctx.session_zone(),
+                ctx.like_default_escape(),
+            )
+            .map_err(|error| {
+                DriverError::Parse(format!("partial index condition failed: {error:?}"))
+            })?;
+    }
+    let foreign_keys = table_foreign_keys(
+        create,
+        &columns,
+        &table,
+        catalog,
+        &database,
+        foreign_key_checks,
+        create.partitioning.is_some(),
+    )?;
+    if enable_check_constraint {
+        let checks = check_constraint::create_inputs(create);
+        let check_foreign_keys = foreign_keys
+            .iter()
+            .map(|foreign_key| check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key.cols.clone(),
+                has_referential_action: foreign_key.on_delete != FkAction::NoOption
+                    || foreign_key.on_update != FkAction::NoOption,
+            })
+            .collect::<Vec<_>>();
+        let mut max_constraint_id = table.max_constraint_id();
+        let infos = check_constraint::build_constraint_infos(
+            &tidb_ast::CiString::new(name),
+            &columns,
+            table.indexes().iter().map(|index| index.name.clone()),
+            &check_foreign_keys,
+            &checks,
+            &mut max_constraint_id,
+            tidb_model::SchemaState::PUBLIC,
+            ctx,
+        )
+        .map_err(|error| DriverError::DdlCoded {
+            errno: error.code,
+            message: error.message,
+        })?;
+        if let Some(info) = infos.iter().find(|info| {
+            check_constraint_name_exists_in_schema(catalog, &database, None, info.name.original())
+        }) {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                message: format!(
+                    "Duplicate check constraint name '{}'.",
+                    info.name.original()
+                ),
+            });
+        }
+        table
+            .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
+            .map_err(|error| DriverError::DdlCoded {
+                errno: 1105,
+                message: format!("{error:?}"),
+            })?;
+    }
+    for foreign_key in foreign_keys {
         // Go `addForeignKeyIndex`: a foreign key needs an index on its
         // referencing columns, and TiDB adds one named after the constraint
         // UNLESS an existing key -- the clustered primary key included --
@@ -1534,6 +1861,7 @@ pub fn run_create_table_in(
         let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
         let covered_index = |index: &KvIndex| {
             covered(&index.column_offsets)
+                && table.partial_index_safe_for_columns(index, &fk_offsets)
                 && fk_offsets.iter().enumerate().all(|(position, at)| {
                     let length = index.prefix_length(position);
                     length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
@@ -1543,25 +1871,39 @@ pub fn run_create_table_in(
                 })
         };
         if !covered(handle.offsets()) && !table.indexes().iter().any(covered_index) {
+            if table
+                .indexes()
+                .iter()
+                .any(|index| index.name.eq_ignore_ascii_case(&foreign_key.name))
+            {
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::mysql::errcode::ErrDupKeyName,
+                    message: format!("duplicate key name {}", foreign_key.name),
+                });
+            }
             let id = table.next_index_id();
-            table.add_index(KvIndex {
-                id,
-                name: foreign_key.name.clone(),
-                comment: String::new(),
-                unique: false,
-                column_offsets: fk_offsets.clone(),
-                // Go's auto-created foreign-key index names whole columns:
-                // an `FKInfo` has no per-column length to carry.
-                prefix_lengths: vec![
-                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                    fk_offsets.len()
-                ],
-                // Local to the table it constrains: an `FKInfo` carries no
-                // `GLOBAL` to record.
-                global: false,
-                clustered_primary: false,
-                visible: true,
-            }, false);
+            table.add_index(
+                KvIndex {
+                    id,
+                    name: foreign_key.name.clone(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: fk_offsets.clone(),
+                    // Go's auto-created foreign-key index names whole columns:
+                    // an `FKInfo` has no per-column length to carry.
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                        fk_offsets.len()
+                    ],
+                    // Local to the table it constrains: an `FKInfo` carries no
+                    // `GLOBAL` to record.
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                    visible: true,
+                },
+                false,
+            );
         }
         table.allocate_foreign_key_id();
         table.add_foreign_key(foreign_key);
@@ -1588,6 +1930,46 @@ pub fn run_create_table_in(
             return Err(DriverError::PartitionNoTemporary);
         }
         table.set_partition(partition);
+        if !partial_conditions.is_empty() {
+            return Err(crate::ddl::indexes::unsupported_partial_index(
+                "partial index on partitioned table is not supported",
+            ));
+        }
+    }
+    // Go's `checkTableForeignKeyValid` re-checks children that were created
+    // earlier with `foreign_key_checks=0` when their referenced parent lands.
+    // The child is already published in this catalog image, while this parent
+    // is still in-flight, so validate against `table` before registration and
+    // leave the catalog untouched on failure.
+    for (child_database, child_name) in catalog.table_paths() {
+        let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
+        else {
+            continue;
+        };
+        if child.foreign_keys().is_empty() {
+            continue;
+        }
+        let child_columns: Vec<table_constraints::FkColumn> = child
+            .columns
+            .iter()
+            .map(|column| table_constraints::FkColumn {
+                name: column.name.clone(),
+                generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+                field_type: column.field_type.clone(),
+            })
+            .collect();
+        for foreign_key in child.foreign_keys() {
+            if foreign_key.ref_schema.eq_ignore_ascii_case(&database)
+                && foreign_key.ref_table.eq_ignore_ascii_case(name)
+            {
+                table_constraints::validate_foreign_key_parent(
+                    foreign_key,
+                    &child_columns,
+                    child.partition().is_some(),
+                    &table,
+                )?;
+            }
+        }
     }
     // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
     // against the policies in the infoschema and refuses an unknown one with
@@ -1673,9 +2055,9 @@ fn create_like_source<'a>(
         // A matrix-backed fixture table has no stored structure to copy. It
         // only exists in this crate's own tests, so this is unreachable from
         // SQL, but it must not be mistaken for "does not exist".
-        Some(crate::TableEntry::Mem(_) | crate::TableEntry::Cte(_)) => Err(
-            DriverError::unsupported("CREATE TABLE LIKE needs a stored table"),
-        ),
+        Some(crate::TableEntry::Mem(_)) => Err(DriverError::unsupported(
+            "CREATE TABLE LIKE needs a stored table",
+        )),
         None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
         ))),
@@ -1703,7 +2085,7 @@ fn column_dependent_error(
             DriverError::DependentByGeneratedColumn(column.to_owned())
         }
         ColumnDependent::Partition => {
-            DriverError::DependentByPartitionFunctional(column.to_lowercase())
+            DriverError::DependentByPartitionFunctional(column.go_to_lower())
         }
     }
 }

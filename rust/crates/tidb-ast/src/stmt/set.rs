@@ -39,6 +39,15 @@ impl SetStmt {
             assignment.restore_into(out);
         }
     }
+
+    /// Returns the statement text safe for processlist, logging, and audit
+    /// consumers. System assignments use the same redaction rules as Go's
+    /// `SetStmt.SecureText`, so embedding API-key values never leave the AST.
+    pub fn secure_text(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
 }
 
 /// A single system-variable assignment within [`SetStmt`].
@@ -63,8 +72,29 @@ impl SystemVariableAssignment {
         out.push('.');
         out.push_str(&back_quote(&self.name));
         out.push('=');
-        self.value.restore_into(out);
+        if is_embedding_api_key_sys_var(&self.name) {
+            // Go's VariableAssignment.Restore writes this as a string literal
+            // rather than routing the secret through the expression formatter.
+            out.push_str("'******'");
+        } else {
+            self.value.restore_into(out);
+        }
     }
+}
+
+/// The explicit Go allowlist of system variables carrying embedding API keys.
+/// Keep this list closed: names that merely share a prefix must remain visible.
+fn is_embedding_api_key_sys_var(name: &str) -> bool {
+    [
+        "tidb_exp_embed_jina_ai_api_key",
+        "tidb_exp_embed_openai_api_key",
+        "tidb_exp_embed_cohere_api_key",
+        "tidb_exp_embed_huggingface_api_key",
+        "tidb_exp_embed_nvidia_nim_api_key",
+        "tidb_exp_embed_gemini_api_key",
+    ]
+    .iter()
+    .any(|candidate| name.eq_ignore_ascii_case(candidate))
 }
 
 /// System-variable assignment scope accepted by TiDB's generic SET loop.

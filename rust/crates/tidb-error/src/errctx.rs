@@ -99,7 +99,6 @@ impl ErrGroup {
 /// Source `errGroupMap`, keyed by error code. Go builds a hash map in
 /// `init()`; a match over the same registered codes removes the mutable
 /// global while keeping the identical membership.
-#[must_use]
 pub fn err_group_for_code(code: isize) -> Option<ErrGroup> {
     let Ok(code) = u16::try_from(code) else {
         return None;
@@ -145,7 +144,6 @@ impl LevelMap {
     }
 
     /// Returns a copy with one group's level replaced.
-    #[must_use]
     pub const fn with_level(self, group: ErrGroup, level: Level) -> Self {
         let mut levels = self.0;
         levels[group.index()] = level;
@@ -207,13 +205,11 @@ pub struct MultiError(Vec<SharedError>);
 
 impl MultiError {
     /// Combines errors into one group value, mirroring `multierr.Append`.
-    #[must_use]
     pub fn new(errors: Vec<SharedError>) -> Self {
         Self(errors)
     }
 
     /// Source `Errors()`: the contained errors in order.
-    #[must_use]
     pub fn errors(&self) -> &[SharedError] {
         &self.0
     }
@@ -254,20 +250,17 @@ impl fmt::Debug for Context {
 
 impl Context {
     /// Source `LevelMap()`: the context's group-to-level map.
-    #[must_use]
     pub const fn level_map(&self) -> LevelMap {
         self.level_map
     }
 
     /// Source `LevelForGroup`: the level for a specified group.
-    #[must_use]
     pub const fn level_for_group(&self, err_group: ErrGroup) -> Level {
         self.level_map.get(err_group)
     }
 
     /// Source `WithStrictErrGroupLevel`: a copy that returns the error
     /// directly for every kind of error.
-    #[must_use]
     pub fn with_strict_err_group_level(&self) -> Self {
         Self {
             level_map: LevelMap::strict(),
@@ -276,7 +269,6 @@ impl Context {
     }
 
     /// Source `WithErrGroupLevel`: a copy with one group's level replaced.
-    #[must_use]
     pub fn with_err_group_level(&self, err_group: ErrGroup, level: Level) -> Self {
         Self {
             level_map: self.level_map.with_level(err_group, level),
@@ -285,7 +277,6 @@ impl Context {
     }
 
     /// Source `WithErrGroupLevels`: a copy with the whole map replaced.
-    #[must_use]
     pub fn with_err_group_levels(&self, levels: LevelMap) -> Self {
         Self {
             level_map: levels,
@@ -306,7 +297,6 @@ impl Context {
     /// Source `HandleError`. See [`Self::handle_error_with_alias`] for the
     /// per-error logic. A [`MultiError`] group is handled error by error, and
     /// the first error found is returned.
-    #[must_use]
     pub fn handle_error(&self, err: Option<SharedError>) -> Option<SharedError> {
         let err = err?;
         // The function of handling an error group is placed in `handle_error`
@@ -336,7 +326,6 @@ impl Context {
     /// 2. If the level is [`Level::Warn`], `warn_err` is appended as a
     ///    warning and `None` is returned.
     /// 3. If the level is [`Level::Ignore`], `None` is returned.
-    #[must_use]
     pub fn handle_error_with_alias(
         &self,
         internal_err: Option<SharedError>,
@@ -363,13 +352,11 @@ impl Context {
 
 /// Source `NewContext`: creates an error context to handle the errors and
 /// warnings, starting from the strict zero-valued level map.
-#[must_use]
 pub fn new_context(handler: Arc<dyn WarnAppender>) -> Context {
     new_context_with_levels(LevelMap::strict(), handler)
 }
 
 /// Source `NewContextWithLevels`.
-#[must_use]
 pub fn new_context_with_levels(levels: LevelMap, handler: Arc<dyn WarnAppender>) -> Context {
     Context {
         level_map: levels,
@@ -384,7 +371,6 @@ pub static STRICT_NO_WARNING_CONTEXT: LazyLock<Context> =
 
 /// Source `ResolveErrLevel`: resolves the error level according to the
 /// `ignore` and `warn` flags. `ignore` always wins if both are set.
-#[must_use]
 pub const fn resolve_err_level(ignore: bool, warn: bool) -> Level {
     if ignore {
         Level::Ignore

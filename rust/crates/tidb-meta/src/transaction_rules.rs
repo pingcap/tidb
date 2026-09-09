@@ -1,5 +1,4 @@
 /// Go `splitRangeInt64Max`.
-#[must_use]
 pub fn split_range_int64_max(count: i64) -> Vec<(String, String)> {
     assert!(count >= 0, "negative split range count");
     let mut ranges = Vec::with_capacity(count as usize);
@@ -162,13 +161,11 @@ pub fn table_info_must_load_with_filters(
 }
 
 /// Go `IsTableInfoMustLoad`.
-#[must_use]
 pub fn table_info_must_load(json: &[u8]) -> bool {
     table_info_must_load_with_filters(json, true, TABLE_INFO_MUST_LOAD_FILTERS)
 }
 
 /// Go `Unescape`; replacements are deliberately ordered.
-#[must_use]
 pub fn unescape_name(value: &str) -> String {
     value.replace(r#"\""#, r#"""#).replace(r#"\\"#, r#"\"#)
 }
@@ -198,52 +195,23 @@ pub fn unescape_name_bytes(value: &[u8]) -> Vec<u8> {
 pub fn fast_unmarshal_table_name_info(data: &[u8]) -> Result<TableNameInfo> {
     let members = extract_top_level_members(data, TABLE_NAME_INFO_FIELDS)
         .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
-    let id = serde_json::from_str::<i64>(members["id"].get())
+    let id_tokens = &members["id"];
+    let [JsonToken::Number(number)] = id_tokens.as_slice() else {
+        return Err(MetaError::InvalidJson("unexpected id field in JSON".to_owned()));
+    };
+    let id = number
+        .parse::<i64>()
         .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
-    struct SourceName(String);
-    impl<'de> Deserialize<'de> for SourceName {
-        fn deserialize<D: serde::Deserializer<'de>>(
-            deserializer: D,
-        ) -> std::result::Result<Self, D::Error> {
-            struct SourceNameVisitor;
-            impl<'de> serde::de::Visitor<'de> for SourceNameVisitor {
-                type Value = SourceName;
-
-                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    formatter.write_str("a two-field CI string object")
-                }
-
-                fn visit_map<A: serde::de::MapAccess<'de>>(
-                    self,
-                    mut map: A,
-                ) -> std::result::Result<Self::Value, A::Error> {
-                    let Some(_first_key) = map.next_key::<String>()? else {
-                        return Err(serde::de::Error::custom("unexpected name field in JSON"));
-                    };
-                    // Go takes token 2, the first value, without checking the
-                    // first key's spelling.
-                    let first_value = map.next_value::<String>()?;
-                    let Some(_second_key) = map.next_key::<String>()? else {
-                        return Err(serde::de::Error::custom("unexpected name field in JSON"));
-                    };
-                    let second_value = map.next_value::<serde_json::Value>()?;
-                    if second_value.is_array() || second_value.is_object() {
-                        return Err(serde::de::Error::custom("unexpected name field in JSON"));
-                    }
-                    if map.next_key::<serde::de::IgnoredAny>()?.is_some() {
-                        return Err(serde::de::Error::custom("unexpected name field in JSON"));
-                    }
-                    Ok(SourceName(first_value))
-                }
-            }
-            deserializer.deserialize_map(SourceNameVisitor)
-        }
+    let name_tokens = &members["name"];
+    if name_tokens.len() != 6 {
+        return Err(MetaError::InvalidJson("unexpected name field in JSON".to_owned()));
     }
-    let SourceName(original) = serde_json::from_str(members["name"].get())
-        .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
+    let JsonToken::String(original) = &name_tokens[2] else {
+        return Err(MetaError::InvalidJson("unexpected name field in JSON".to_owned()));
+    };
     Ok(TableNameInfo {
         id,
-        name: CiString::new(&original),
+        name: CiString::new(original),
     })
 }
 
@@ -251,11 +219,13 @@ pub fn fast_unmarshal_table_name_info(data: &[u8]) -> Result<TableNameInfo> {
 pub fn extract_schema_and_table_name_from_job(data: &[u8]) -> Result<(String, String)> {
     let members = extract_top_level_members(data, JOB_EXTRACT_FIELDS)
         .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
-    let schema = serde_json::from_str::<String>(members["schema_name"].get())
-        .map_err(|_| MetaError::InvalidJson("unexpected name field in JSON".to_owned()))?;
-    let table = serde_json::from_str::<String>(members["table_name"].get())
-        .map_err(|_| MetaError::InvalidJson("unexpected name field in JSON".to_owned()))?;
-    Ok((schema, table))
+    let [JsonToken::String(schema)] = members["schema_name"].as_slice() else {
+        return Err(MetaError::InvalidJson("unexpected name field in JSON".to_owned()));
+    };
+    let [JsonToken::String(table)] = members["table_name"].as_slice() else {
+        return Err(MetaError::InvalidJson("unexpected name field in JSON".to_owned()));
+    };
+    Ok((schema.clone(), table.clone()))
 }
 
 /// Go `IsJobMatch`, including the source expression's `&&`/`||` precedence.
@@ -276,7 +246,6 @@ pub fn job_matches(
 }
 
 /// Go `DefaultGroupMeta4Test`.
-#[must_use]
 pub fn default_resource_group_for_test() -> Arc<ResourceGroupInfo> {
     Arc::clone(DEFAULT_RESOURCE_GROUP.get_or_init(|| {
         Arc::new(ResourceGroupInfo {
@@ -333,22 +302,8 @@ fn go_fixed_two(value: f64) -> String {
     }
 }
 
-fn is_zero_i64(value: &i64) -> bool {
-    *value == 0
-}
-
 fn is_zero_f64(value: &f64) -> bool {
     *value == 0.0
-}
-
-fn go_zero_time() -> DateTime<Utc> {
-    DateTime::from_naive_utc_and_offset(
-        NaiveDate::from_ymd_opt(1, 1, 1)
-            .expect("Go zero date")
-            .and_hms_nano_opt(0, 0, 0, 0)
-            .expect("Go zero time"),
-        Utc,
-    )
 }
 
 fn serialize_go_time<S: serde::Serializer>(

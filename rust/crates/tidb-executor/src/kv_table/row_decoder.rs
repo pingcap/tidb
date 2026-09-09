@@ -45,19 +45,16 @@ pub struct DecodedRow {
 
 impl DecodedRow {
     /// Values in table-column order, including decoded defaults and generated values.
-    #[must_use]
     pub fn values(&self) -> &[Datum] {
         &self.values
     }
 
     /// The decoded column-id map.
-    #[must_use]
     pub fn by_id(&self) -> &BTreeMap<i64, Datum> {
         &self.by_id
     }
 
     /// Takes both representations.
-    #[must_use]
     pub fn into_parts(self) -> (Vec<Datum>, BTreeMap<i64, Datum>) {
         (self.values, self.by_id)
     }
@@ -246,30 +243,21 @@ impl PreparedPointGetRowDecoder {
                 }
             });
             let codec_handle = codec_handle.transpose()?;
-            let defaults = self
-                .has_origin_defaults
-                .then(|| {
-                    self.columns
-                        .iter()
-                        .map(|output| {
-                            output
-                                .column
-                                .origin_default_value(
-                                    context.origin_default_flags(),
-                                    context.zone(),
-                                )
-                                .map_err(|error| KvTableError::Decode(error.to_string()))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
+            let default_datum = |index: usize| {
+                self.columns[index]
+                    .column
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
             return tidb_codec::decode_row_to_datums(
                 value,
                 &self.v2_columns,
                 &tidb_codec::DecodeRowOptions {
                     handle_column_ids: &self.v2_handle_column_ids,
                     handle: codec_handle.as_ref(),
-                    defaults: defaults.as_deref(),
+                    default_datum: self.has_origin_defaults.then_some(
+                        &default_datum as &(dyn Fn(usize) -> Result<Datum, String> + '_),
+                    ),
                     timezone: Some(context.zone()),
                     ..tidb_codec::DecodeRowOptions::default()
                 },
@@ -539,7 +527,12 @@ impl RowDecoder {
             )
             .collect();
         let v2_fast_path = generated_offsets.is_empty()
-            && columns.iter().all(|column| column.origin_default.is_none());
+            && columns.iter().all(|column| column.origin_default.is_none())
+            // The typed rowcodec fast path uses the default (new-collation)
+            // restored-data policy. Old-collation common handles must use the
+            // map path so `fill_handle_columns_if` can materialize their
+            // handle components, matching Go's mode-sensitive decoder.
+            && (use_new_collation || common_handle_offsets.is_empty());
 
         Ok(Self {
             columns,
@@ -846,21 +839,6 @@ impl RowDecoder {
                 values[column.offset].clone()
             }
         }).collect()
-    }
-}
-
-/// The integer handle at the end of an encoded record key.
-impl PreparedPointGetRowDecoder {
-    /// The handle at the tail of an encoded record key, for the row-range arm
-    /// of a prepared point read (a clustered primary-key prefix).
-    pub(crate) fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
-        if self.common_handle_offsets.is_empty() {
-            return decode_int_handle(key).map(TableHandle::Int);
-        }
-        let bytes = key
-            .get(RECORD_ROW_KEY_LEN - 8..)
-            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
-        Ok(TableHandle::Common(bytes.to_vec()))
     }
 }
 

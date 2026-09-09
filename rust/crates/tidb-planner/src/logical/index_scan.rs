@@ -16,7 +16,7 @@
 //! `LogicalIndexScan`, "the logical index scan operator for TiKV".
 //!
 //! SEED of `pkg/planner/core`. This operator was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! # Narrowings, by name
 //!
@@ -130,7 +130,10 @@ impl LogicalIndexScan {
         if !source.pk_is_handle {
             return None;
         }
-        let handle = source.handle_cols.first()?;
+        let handle = source
+            .handle_cols
+            .first()
+            .expect("index scan requires a handle column");
         schema
             .columns
             .iter()
@@ -230,6 +233,8 @@ pub fn matches_indices_prop(
     }
     prop_items.iter().enumerate().all(|(i, item)| {
         col_lens.get(i).copied() == Some(UNSPECIFIED_LENGTH)
-            && idx_cols.get(i).is_some_and(|col| col.unique_id == item.col)
+            && idx_cols
+                .get(i)
+                .is_some_and(|col| col.unique_id == item.col.unique_id)
     })
 }

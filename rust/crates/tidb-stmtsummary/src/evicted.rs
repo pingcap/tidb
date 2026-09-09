@@ -86,19 +86,16 @@ pub enum MatchResult {
 
 impl StmtSummaryByDigestEvicted {
     /// Go `newStmtSummaryByDigestEvicted`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go's `ssbde.history.Len()`.
-    #[must_use]
     pub fn history_len(&self) -> usize {
         self.history.len()
     }
 
     /// Go's read access to `ssbde.history`, oldest interval first.
-    #[must_use]
     pub fn history(&self) -> &VecDeque<StmtSummaryByDigestEvictedElement> {
         &self.history
     }
@@ -199,7 +196,6 @@ impl StmtSummaryByDigestEvicted {
     ///
     /// Go skips rows whose `toEvictedCountDatum` returned `nil`; that helper
     /// always returns a row, so no row is skipped here.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Vec<Datum>> {
         self.history
             .iter()
@@ -211,12 +207,13 @@ impl StmtSummaryByDigestEvicted {
     /// Go `(*stmtSummaryByDigestEvicted).collectHistorySummaries`, called by
     /// the reader's `getStmtEvictedOtherHistoryRow`. Go takes no checker here
     /// (only `stmtSummaryByDigest`'s namesake does), and neither does this.
-    #[must_use]
     pub fn collect_history_summaries(
         &self,
         history_size: usize,
     ) -> Vec<&StmtSummaryByDigestEvictedElement> {
-        self.history.iter().take(history_size).collect()
+        let mut summaries: Vec<_> = self.history.iter().rev().take(history_size).collect();
+        summaries.reverse();
+        summaries
     }
 }
 
@@ -248,7 +245,6 @@ impl StmtSummaryByDigestMap {
     /// Returns no rows when the map was built by
     /// [`StmtSummaryByDigestMap::with_sinks`] with a sink other than the
     /// `evicted.go` rollup.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Vec<Datum>> {
         self.evicted().map_or_else(Vec::new, |evicted| {
             evicted.lock().unwrap().to_evicted_count_datum()
@@ -258,7 +254,6 @@ impl StmtSummaryByDigestMap {
 
 impl StmtSummaryByDigestEvictedElement {
     /// Go `newStmtSummaryByDigestEvictedElement`.
-    #[must_use]
     pub fn new(begin_time: i64, end_time: i64) -> Self {
         Self {
             begin_time,
@@ -312,7 +307,6 @@ impl StmtSummaryByDigestEvictedElement {
     }
 
     /// Go `(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum`.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Datum> {
         vec![
             timestamp_datum(self.begin_time),
@@ -408,6 +402,7 @@ pub fn add_info(add_to: &mut StmtSummaryByDigestElement, add_with: &StmtSummaryB
     if add_to.max_rocksdb_block_read_byte < add_with.max_rocksdb_block_read_byte {
         add_to.max_rocksdb_block_read_byte = add_with.max_rocksdb_block_read_byte;
     }
+    add_to.ia_exec_count += add_with.ia_exec_count;
     add_to.sum_ia_remote_read_segment_count += add_with.sum_ia_remote_read_segment_count;
     if add_to.max_ia_remote_read_segment_count < add_with.max_ia_remote_read_segment_count {
         add_to.max_ia_remote_read_segment_count = add_with.max_ia_remote_read_segment_count;
@@ -500,8 +495,8 @@ pub fn add_info(add_to: &mut StmtSummaryByDigestElement, add_with: &StmtSummaryB
     add_to.sum_pd_total += add_with.sum_pd_total;
     add_to.sum_backoff_total += add_with.sum_backoff_total;
     add_to.sum_write_sql_resp_total += add_with.sum_write_sql_resp_total;
-    add_to.sum_tidb_cpu += add_with.sum_tidb_cpu;
-    add_to.sum_tikv_cpu += add_with.sum_tikv_cpu;
+    add_to.sum_tidb_cpu = add_to.sum_tidb_cpu.wrapping_add(add_with.sum_tidb_cpu);
+    add_to.sum_tikv_cpu = add_to.sum_tikv_cpu.wrapping_add(add_with.sum_tikv_cpu);
 
     add_to.sum_errors += add_with.sum_errors;
 
@@ -571,6 +566,24 @@ mod tests {
             write!(buf, "{}", get_evicted(element)).unwrap();
         }
         buf
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_evicted_returns_can_be_ignored() {
+        StmtSummaryByDigestEvicted::new();
+        let evicted = StmtSummaryByDigestEvicted::new();
+        evicted.history_len();
+        evicted.history();
+        evicted.to_evicted_count_datum();
+        evicted.collect_history_summaries(1);
+
+        StmtSummaryByDigestEvictedElement::new(0, 1);
+        let element = StmtSummaryByDigestEvictedElement::new(0, 1);
+        element.to_evicted_count_datum();
+
+        let map = StmtSummaryByDigestMap::new();
+        map.to_evicted_count_datum();
     }
 
     /// Go `getEvicted`.
@@ -752,6 +765,28 @@ mod tests {
             get_all_evicted(&ssbde),
             "{begin: 9, end: 10, count: 1}, {begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}"
         );
+    }
+
+    /// Go `78cac443a4`: history collection keeps the newest retained
+    /// intervals, but returns them oldest-to-newest for the history table.
+    #[test]
+    fn evicted_history_collection_keeps_latest_intervals() {
+        let mut evicted = StmtSummaryByDigestEvicted::new();
+        for begin_time in [10, 20, 30] {
+            evicted
+                .history
+                .push_back(StmtSummaryByDigestEvictedElement::new(
+                    begin_time,
+                    begin_time + 10,
+                ));
+        }
+
+        let latest = evicted.collect_history_summaries(2);
+        let intervals: Vec<(i64, i64)> = latest
+            .iter()
+            .map(|element| (element.begin_time, element.end_time))
+            .collect();
+        assert_eq!(intervals, vec![(20, 30), (30, 40)]);
     }
 
     /// Go `TestMapToEvictedCountDatum`: `stmtSummaryByDigestMap.ToEvictedCountDatum`.
@@ -938,6 +973,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 4,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 2,
                 sum_ia_remote_read_segment_count: 8,
                 max_ia_remote_read_segment_count: 3,
 
@@ -1041,6 +1077,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 4,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 3,
                 sum_ia_remote_read_segment_count: 8,
                 max_ia_remote_read_segment_count: 5,
 
@@ -1146,6 +1183,7 @@ mod tests {
                 max_rocksdb_block_read_count: 3,
                 sum_rocksdb_block_read_byte: 8,
                 max_rocksdb_block_read_byte: 4,
+                ia_exec_count: 5,
                 sum_ia_remote_read_segment_count: 16,
                 max_ia_remote_read_segment_count: 5,
 

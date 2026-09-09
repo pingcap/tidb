@@ -16,9 +16,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_codec::{
-    decimal_encoded_len, decode_decimal, decode_one, encode_decimal_fixed, CodecError, DECIMAL_FLAG,
-};
+use tidb_codec::{decode_decimal, decode_one, encode_decimal_fixed, CodecError, DECIMAL_FLAG};
 use tidb_datatype::Decimal;
 
 #[derive(Clone, Copy)]
@@ -125,14 +123,8 @@ fn fixed_precision_decimal_comparison_and_value_size_source_rows() {
         let left_key = fixed_key(&left, 30, 6).unwrap();
         let right_key = fixed_key(&right, 30, 6).unwrap();
         assert_eq!(left_key.cmp(&right_key), expected);
-        assert_eq!(
-            left_key.len(),
-            1 + decimal_encoded_len(&left, 30, 6).unwrap()
-        );
-        assert_eq!(
-            right_key.len(),
-            1 + decimal_encoded_len(&right, 30, 6).unwrap()
-        );
+        assert_eq!(left_key.len(), 17);
+        assert_eq!(right_key.len(), 17);
 
         let (remain, decoded) = decode_one(&left_key).unwrap();
         assert!(remain.is_empty());
@@ -165,10 +157,7 @@ fn fixed_precision_float_derived_rows_are_ordered_and_sized() {
         .map(|value| {
             let decimal = parse_decimal(&value.to_string());
             let encoded = fixed_key(&decimal, 20, 6).unwrap();
-            assert_eq!(
-                encoded.len(),
-                1 + decimal_encoded_len(&decimal, 20, 6).unwrap()
-            );
+            assert_eq!(encoded.len(), 13);
             encoded
         })
         .collect();
@@ -201,6 +190,17 @@ fn truncation_and_overflow_are_typed_for_the_caller_error_context() {
 }
 
 #[test]
+fn invalid_signed_shape_preserves_go_partial_header_write() {
+    let decimal = parse_decimal("1.5");
+    let mut encoded = vec![0xaa];
+    assert_eq!(
+        encode_decimal_fixed(&mut encoded, &decimal, -1, -1),
+        Err(CodecError::DecimalOutOfRange)
+    );
+    assert_eq!(encoded, [0xaa, 0xff, 0xff]);
+}
+
+#[test]
 fn decimal_codec_and_frac_source_rows_round_trip_metadata_and_remainder() {
     // `pkg/util/codec/decimal_test.go::TestDecimalCodec` and `TestFrac`.
     let literals = [
@@ -215,11 +215,6 @@ fn decimal_codec_and_frac_source_rows_round_trip_metadata_and_remainder() {
         assert_eq!(&encoded[..2], &[0xaa, 0xbb]);
         assert_eq!(usize::from(encoded[2]), expected_precision);
         assert_eq!(u32::from(encoded[3]), decimal.storage_scale());
-        assert_eq!(
-            encoded.len() - 2,
-            decimal_encoded_len(&decimal, 0, 0).unwrap(),
-        );
-
         encoded.extend_from_slice(&[0xaa, 0xbb]);
         let (remain, decoded, precision, scale) = decode_decimal(&encoded[2..]).unwrap();
         assert_eq!(remain, &[0xaa, 0xbb]);
@@ -230,7 +225,49 @@ fn decimal_codec_and_frac_source_rows_round_trip_metadata_and_remainder() {
     }
 }
 
-fn fixed_key(decimal: &Decimal, precision: usize, scale: usize) -> Result<Vec<u8>, CodecError> {
+#[test]
+fn decoded_negative_zero_preserves_sign_and_wire_bytes() {
+    let encoded = [4, 4, 0x7f, 0xff];
+    let (remain, decimal, precision, scale) = decode_decimal(&encoded).unwrap();
+    assert!(remain.is_empty());
+    assert_eq!((precision, scale), (4, 4));
+    assert_eq!(decimal.to_string(), "-0.0000");
+
+    let mut reencoded = Vec::new();
+    encode_decimal_fixed(&mut reencoded, &decimal, 4, 4).unwrap();
+    assert_eq!(reencoded, encoded);
+}
+
+#[test]
+fn decimal_header_and_size_edge_cases_match_go() {
+    let wide_fraction = [
+        40, 35, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let (_, decoded, precision, scale) = decode_decimal(&wide_fraction).unwrap();
+    assert_eq!((precision, scale), (40, 35));
+    assert_eq!(decoded.storage_scale(), 35);
+
+    let forty_fraction_digits = parse_decimal(&format!("0.{}", "1".repeat(40)));
+    let mut encoded = Vec::new();
+    assert_eq!(
+        encode_decimal_fixed(&mut encoded, &forty_fraction_digits, 0, 0),
+        Err(CodecError::DecimalTruncated)
+    );
+    assert_eq!(encoded.len(), 21);
+
+    let mut clamped = Vec::new();
+    encode_decimal_fixed(&mut clamped, &parse_decimal("0.1"), 40, 31).unwrap();
+    assert_eq!(&clamped[..2], &[40, 30]);
+}
+
+#[test]
+fn malformed_decimal_shapes_panic_where_go_panics() {
+    assert!(std::panic::catch_unwind(|| decode_decimal(&[0, 0, 0])).is_err());
+    assert!(std::panic::catch_unwind(|| decode_decimal(&[1, 10, 0])).is_err());
+    assert!(std::panic::catch_unwind(|| decode_decimal(&[20, 0, 0x80])).is_err());
+}
+
+fn fixed_key(decimal: &Decimal, precision: i64, scale: i64) -> Result<Vec<u8>, CodecError> {
     let mut output = vec![DECIMAL_FLAG];
     encode_decimal_fixed(&mut output, decimal, precision, scale)?;
     Ok(output)

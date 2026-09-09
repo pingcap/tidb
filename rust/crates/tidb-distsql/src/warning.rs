@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use tidb_util::context::MAX_WARNING_COUNT;
+const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 /// The three warning levels exposed by TiDB's `WarnAppender` contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

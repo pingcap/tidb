@@ -19,7 +19,6 @@
 //! histograms, planner context, or statistics handles.
 
 /// Calculates left-triangle overlap percentage for `[left, right]`.
-#[must_use]
 pub fn left_overlap_percent(
     mut left: f64,
     mut right: f64,
@@ -42,7 +41,6 @@ pub fn left_overlap_percent(
 }
 
 /// Calculates right-triangle overlap percentage for `[left, right]`.
-#[must_use]
 pub fn right_overlap_percent(
     mut left: f64,
     mut right: f64,

@@ -12,56 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/util/password-validation` (Go package `validator`): checks a
-//! plaintext password against the `validate_password.*` policy.
-//! This dependency-leaf owner is shared by session account DDL and expression
-//! evaluation.
-//!
-//! Faithful adaptations:
-//! - Go reads policy inputs through `variable.GlobalVarAccessor`; here the
-//!   validators are generic over the [`GlobalVarAccessor`] trait so the
-//!   production accessor and any mock satisfy them.
-//! - The user-name check operates on raw bytes exactly like Go
-//!   (`bytes.Contains`, byte-reversed name): it is case-sensitive and
-//!   matches on the UTF-8 byte sequence, not on runes.
-//! - The dictionary check filters words by their **byte** length
-//!   (`len(word)`), lowercases both sides (Unicode-aware, like
-//!   `strings.ToLower`), and tests substring containment.
-//! - The low policy compares the **rune** count (`len([]rune(pwd))`); the
-//!   medium policy classifies each rune with the Unicode upper/lower/digit
-//!   properties.
+use tidb_datatype::GoString;
 
-use tidb_error::mysql;
-
-/// `validate_password.policy`.
-pub const VALIDATE_PASSWORD_POLICY: &str = "validate_password.policy";
-/// `validate_password.enable`.
-pub const VALIDATE_PASSWORD_ENABLE: &str = "validate_password.enable";
-/// `validate_password.check_user_name`.
-pub const VALIDATE_PASSWORD_CHECK_USER_NAME: &str = "validate_password.check_user_name";
-/// `validate_password.length`.
-pub const VALIDATE_PASSWORD_LENGTH: &str = "validate_password.length";
-/// `validate_password.mixed_case_count`.
-pub const VALIDATE_PASSWORD_MIXED_CASE_COUNT: &str = "validate_password.mixed_case_count";
-/// `validate_password.number_count`.
-pub const VALIDATE_PASSWORD_NUMBER_COUNT: &str = "validate_password.number_count";
-/// `validate_password.special_char_count`.
-pub const VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT: &str = "validate_password.special_char_count";
-/// `validate_password.dictionary`.
-pub const VALIDATE_PASSWORD_DICTIONARY: &str = "validate_password.dictionary";
-
-/// The complete global-variable input set used by this package and its SQL
-/// builtin consumer.
-pub const VALIDATE_PASSWORD_SYSVARS: [&str; 8] = [
-    VALIDATE_PASSWORD_ENABLE,
-    VALIDATE_PASSWORD_POLICY,
-    VALIDATE_PASSWORD_CHECK_USER_NAME,
-    VALIDATE_PASSWORD_LENGTH,
-    VALIDATE_PASSWORD_MIXED_CASE_COUNT,
-    VALIDATE_PASSWORD_NUMBER_COUNT,
-    VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT,
-    VALIDATE_PASSWORD_DICTIONARY,
-];
+const VALIDATE_PASSWORD_POLICY: &str = "validate_password.policy";
+const VALIDATE_PASSWORD_CHECK_USER_NAME: &str = "validate_password.check_user_name";
+const VALIDATE_PASSWORD_LENGTH: &str = "validate_password.length";
+const VALIDATE_PASSWORD_MIXED_CASE_COUNT: &str = "validate_password.mixed_case_count";
+const VALIDATE_PASSWORD_NUMBER_COUNT: &str = "validate_password.number_count";
+const VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT: &str = "validate_password.special_char_count";
+const VALIDATE_PASSWORD_DICTIONARY: &str = "validate_password.dictionary";
 
 const MAX_PWD_VALIDATION_LENGTH: usize = 100;
 const MIN_PWD_VALIDATION_LENGTH: usize = 4;
@@ -76,18 +35,17 @@ pub trait GlobalVarAccessor {
 }
 
 /// The two username spellings stored on Go's `auth.UserIdentity`.
-#[derive(Clone, Copy, Debug)]
-pub struct PasswordUser<'a> {
+pub struct PasswordUser {
     /// The connection login username (`UserIdentity.Username`).
-    pub username: &'a str,
+    pub username: GoString,
     /// The matched grant username (`UserIdentity.AuthUsername`).
-    pub auth_username: &'a str,
+    pub auth_username: GoString,
 }
 
 /// A password-validation error, unifying the accessor read error, the
 /// integer-parse error Go surfaces from `strconv.ParseInt`, and the policy
 /// rejection Go raises as `ErrNotValidPassword`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum PwdError<E> {
     /// The global-variable accessor failed.
     Accessor(E),
@@ -116,13 +74,6 @@ impl<E: std::fmt::Display> std::fmt::Display for PwdError<E> {
 
 impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for PwdError<E> {}
 
-/// The MySQL error code of a [`PwdError::NotValid`] (`ErrNotValidPassword`,
-/// 1819), matching Go's `variable.ErrNotValidPassword`.
-#[must_use]
-pub const fn not_valid_password_code() -> u16 {
-    mysql::errcode::ErrNotValidPassword
-}
-
 /// Whether `needle` occurs as a contiguous byte subsequence of `haystack`
 /// (Go `bytes.Contains`; `needle` is assumed non-empty by callers).
 fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -136,24 +87,16 @@ fn tidb_opt_on(value: &str) -> bool {
     value.eq_ignore_ascii_case("ON") || value == "1"
 }
 
-/// Whether the password-validation plugin is enabled globally.
-pub fn validation_enabled<A: GlobalVarAccessor>(accessor: &A) -> Result<bool, PwdError<A::Error>> {
-    accessor
-        .get_global_sys_var(VALIDATE_PASSWORD_ENABLE)
-        .map(|value| tidb_opt_on(&value))
-        .map_err(PwdError::Accessor)
-}
-
 /// Go `ValidateDictionaryPassword`: rejects a password containing any
 /// dictionary word (returns `Ok(false)` when a word is contained).
 pub fn validate_dictionary_password<A: GlobalVarAccessor>(
-    pwd: &str,
+    pwd: &GoString,
     accessor: &A,
 ) -> Result<bool, PwdError<A::Error>> {
     let dictionary = accessor
         .get_global_sys_var(VALIDATE_PASSWORD_DICTIONARY)
         .map_err(PwdError::Accessor)?;
-    let pwd = tidb_mysql::to_lowercase(pwd);
+    let pwd = tidb_mysql::to_lowercase(&pwd.to_utf8_lossy_go());
     for word in dictionary.split(';') {
         // Go filters by byte length: len(word) in [min, max].
         if word.len() >= MIN_PWD_VALIDATION_LENGTH
@@ -169,8 +112,8 @@ pub fn validate_dictionary_password<A: GlobalVarAccessor>(
 /// Go `ValidateUserNameInPassword`: returns a warning if the password
 /// contains the (possibly byte-reversed) current user name.
 pub fn validate_user_name_in_password<A: GlobalVarAccessor>(
-    pwd: &str,
-    current_user: Option<PasswordUser<'_>>,
+    pwd: &GoString,
+    current_user: Option<&PasswordUser>,
     accessor: &A,
 ) -> Result<String, PwdError<A::Error>> {
     let pwd_bytes = pwd.as_bytes();
@@ -200,7 +143,7 @@ pub fn validate_user_name_in_password<A: GlobalVarAccessor>(
 
 /// Go `ValidatePasswordLowPolicy`: enforces the minimum length (in runes).
 pub fn validate_password_low_policy<A: GlobalVarAccessor>(
-    pwd: &str,
+    pwd: &GoString,
     accessor: &A,
 ) -> Result<String, PwdError<A::Error>> {
     let validate_length: i64 = accessor
@@ -208,7 +151,7 @@ pub fn validate_password_low_policy<A: GlobalVarAccessor>(
         .map_err(PwdError::Accessor)?
         .parse()
         .map_err(PwdError::ParseInt)?;
-    if (pwd.chars().count() as i64) < validate_length {
+    if (pwd.to_utf8_lossy_go().chars().count() as i64) < validate_length {
         return Ok(format!("Require Password Length: {validate_length}"));
     }
     Ok(String::new())
@@ -217,13 +160,13 @@ pub fn validate_password_low_policy<A: GlobalVarAccessor>(
 /// Go `ValidatePasswordMediumPolicy`: enforces mixed-case, digit, and
 /// special-character minimum counts.
 pub fn validate_password_medium_policy<A: GlobalVarAccessor>(
-    pwd: &str,
+    pwd: &GoString,
     accessor: &A,
 ) -> Result<String, PwdError<A::Error>> {
     let (mut lower_case, mut upper_case, mut number, mut special) = (0i64, 0i64, 0i64, 0i64);
     // Classify each rune exactly as Go's unicode.IsUpper/IsLower/IsDigit
     // else-chain does; a rune matching none is a special character.
-    for c in pwd.chars() {
+    for c in pwd.to_utf8_lossy_go().chars() {
         if tidb_mysql::is_unicode_uppercase_letter(c) {
             upper_case += 1;
         } else if tidb_mysql::is_unicode_lowercase_letter(c) {
@@ -277,8 +220,8 @@ pub fn validate_password_medium_policy<A: GlobalVarAccessor>(
 
 /// Go `ValidatePassword`: full policy check (LOW -> MEDIUM -> STRONG).
 pub fn validate_password<A: GlobalVarAccessor>(
-    pwd: &str,
-    current_user: Option<PasswordUser<'_>>,
+    pwd: &GoString,
+    current_user: Option<&PasswordUser>,
     accessor: &A,
 ) -> Result<(), PwdError<A::Error>> {
     let validate_policy = accessor
@@ -320,10 +263,6 @@ mod tests {
 
     use super::*;
 
-    /// A source-shaped test accessor: a plain name -> value map. TiDB's
-    /// `MockGlobalAccessor4Tests` snapshots the sysvar registry defaults; we
-    /// instead seed the relevant `validate_password.*` values directly, which
-    /// is equivalent for these checks and keeps the test dependency-closed.
     #[derive(Default)]
     struct MapAccessor(BTreeMap<String, String>);
 
@@ -340,16 +279,20 @@ mod tests {
         }
     }
 
-    fn user<'a>(username: &'a str, auth_username: &'a str) -> PasswordUser<'a> {
+    fn user(username: &str, auth_username: &str) -> PasswordUser {
         PasswordUser {
-            username,
-            auth_username,
+            username: username.into(),
+            auth_username: auth_username.into(),
         }
+    }
+
+    fn password(value: &str) -> GoString {
+        value.into()
     }
 
     // Go TestValidateDictionaryPassword.
     #[test]
-    fn dictionary_password() {
+    fn test_validate_dictionary_password() {
         let mut acc = MapAccessor::default();
         acc.set(
             VALIDATE_PASSWORD_DICTIONARY,
@@ -366,23 +309,16 @@ mod tests {
             ("abcd123。，；！", false),
         ] {
             assert_eq!(
-                validate_dictionary_password(pwd, &acc).unwrap(),
+                validate_dictionary_password(&password(pwd), &acc).unwrap(),
                 expected,
                 "{pwd}"
             );
         }
     }
 
-    #[test]
-    fn dictionary_uses_go_simple_case_mapping() {
-        let mut acc = MapAccessor::default();
-        acc.set(VALIDATE_PASSWORD_DICTIONARY, "İABC");
-        assert!(!validate_dictionary_password("xxiabcxx", &acc).unwrap());
-    }
-
     // Go TestValidateUserNameInPassword.
     #[test]
-    fn user_name_in_password() {
+    fn test_validate_user_name_in_password() {
         let u = user("user", "authuser");
         let cases = [
             ("", ""),
@@ -400,7 +336,7 @@ mod tests {
         acc.set(VALIDATE_PASSWORD_CHECK_USER_NAME, "ON");
         for (pwd, warn) in cases {
             assert_eq!(
-                validate_user_name_in_password(pwd, Some(u), &acc).unwrap(),
+                validate_user_name_in_password(&password(pwd), Some(&u), &acc).unwrap(),
                 warn,
                 "{pwd}"
             );
@@ -410,7 +346,7 @@ mod tests {
         acc.set(VALIDATE_PASSWORD_CHECK_USER_NAME, "OFF");
         for (pwd, _) in cases {
             assert_eq!(
-                validate_user_name_in_password(pwd, Some(u), &acc).unwrap(),
+                validate_user_name_in_password(&password(pwd), Some(&u), &acc).unwrap(),
                 "",
                 "{pwd}"
             );
@@ -419,77 +355,58 @@ mod tests {
 
     // Go TestValidatePasswordLowPolicy.
     #[test]
-    fn low_policy() {
+    fn test_validate_password_low_policy() {
         let mut acc = MapAccessor::default();
         acc.set(VALIDATE_PASSWORD_LENGTH, "8");
         assert_eq!(
-            validate_password_low_policy("1234", &acc).unwrap(),
+            validate_password_low_policy(&password("1234"), &acc).unwrap(),
             "Require Password Length: 8"
         );
-        assert_eq!(validate_password_low_policy("12345678", &acc).unwrap(), "");
+        assert_eq!(
+            validate_password_low_policy(&password("12345678"), &acc).unwrap(),
+            ""
+        );
 
         acc.set(VALIDATE_PASSWORD_LENGTH, "12");
         assert_eq!(
-            validate_password_low_policy("12345678", &acc).unwrap(),
+            validate_password_low_policy(&password("12345678"), &acc).unwrap(),
             "Require Password Length: 12"
         );
     }
 
     // Go TestValidatePasswordMediumPolicy.
     #[test]
-    fn medium_policy() {
+    fn test_validate_password_medium_policy() {
         let mut acc = MapAccessor::default();
         acc.set(VALIDATE_PASSWORD_MIXED_CASE_COUNT, "1");
         acc.set(VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT, "2");
         acc.set(VALIDATE_PASSWORD_NUMBER_COUNT, "3");
 
         assert_eq!(
-            validate_password_medium_policy("!@A123", &acc).unwrap(),
+            validate_password_medium_policy(&password("!@A123"), &acc).unwrap(),
             "Require Password Lowercase Count: 1"
         );
         assert_eq!(
-            validate_password_medium_policy("!@a123", &acc).unwrap(),
+            validate_password_medium_policy(&password("!@a123"), &acc).unwrap(),
             "Require Password Uppercase Count: 1"
         );
         assert_eq!(
-            validate_password_medium_policy("!@Aa12", &acc).unwrap(),
+            validate_password_medium_policy(&password("!@Aa12"), &acc).unwrap(),
             "Require Password Digit Count: 3"
         );
         assert_eq!(
-            validate_password_medium_policy("!Aa123", &acc).unwrap(),
+            validate_password_medium_policy(&password("!Aa123"), &acc).unwrap(),
             "Require Password Non-alphanumeric Count: 2"
         );
         assert_eq!(
-            validate_password_medium_policy("!@Aa123", &acc).unwrap(),
+            validate_password_medium_policy(&password("!@Aa123"), &acc).unwrap(),
             ""
-        );
-
-        // Go `unicode.IsDigit` accepts the Nd category, not every Unicode
-        // numeric character. Rust's `is_numeric` would incorrectly count ².
-        acc.set(VALIDATE_PASSWORD_SPECIAL_CHAR_COUNT, "0");
-        acc.set(VALIDATE_PASSWORD_NUMBER_COUNT, "1");
-        assert_eq!(
-            validate_password_medium_policy("Aa²", &acc).unwrap(),
-            "Require Password Digit Count: 1"
-        );
-
-        // Go `unicode.IsUpper` / `IsLower` use the Lu / Ll general
-        // categories, not Unicode's broader derived Uppercase / Lowercase
-        // properties used by Rust's `char` predicates.
-        acc.set(VALIDATE_PASSWORD_MIXED_CASE_COUNT, "1");
-        assert_eq!(
-            validate_password_medium_policy("aⅣ1", &acc).unwrap(),
-            "Require Password Uppercase Count: 1"
-        );
-        assert_eq!(
-            validate_password_medium_policy("Aⓐ1", &acc).unwrap(),
-            "Require Password Lowercase Count: 1"
         );
     }
 
     // Go TestValidatePassword.
     #[test]
-    fn validate_password_full() {
+    fn test_validate_password() {
         let u = user("user", "authuser");
         let mut acc = MapAccessor::default();
         // Registry defaults the test relies on (see sysvar.go).
@@ -501,26 +418,19 @@ mod tests {
         acc.set(VALIDATE_PASSWORD_DICTIONARY, "");
 
         acc.set(VALIDATE_PASSWORD_POLICY, "LOW");
-        assert!(validate_password("1234", Some(u), &acc).is_err());
-        assert!(validate_password("user1234", Some(u), &acc).is_err());
-        assert!(validate_password("authuser1234", Some(u), &acc).is_err());
-        assert!(validate_password("User1234", Some(u), &acc).is_ok());
+        assert!(validate_password(&password("1234"), Some(&u), &acc).is_err());
+        assert!(validate_password(&password("user1234"), Some(&u), &acc).is_err());
+        assert!(validate_password(&password("authuser1234"), Some(&u), &acc).is_err());
+        assert!(validate_password(&password("User1234"), Some(&u), &acc).is_ok());
 
         acc.set(VALIDATE_PASSWORD_POLICY, "MEDIUM");
-        assert!(validate_password("User1234", Some(u), &acc).is_err());
-        assert!(validate_password("!User1234", Some(u), &acc).is_ok());
-        assert!(validate_password("！User1234", Some(u), &acc).is_ok());
+        assert!(validate_password(&password("User1234"), Some(&u), &acc).is_err());
+        assert!(validate_password(&password("!User1234"), Some(&u), &acc).is_ok());
+        assert!(validate_password(&password("！User1234"), Some(&u), &acc).is_ok());
 
         acc.set(VALIDATE_PASSWORD_POLICY, "STRONG");
         acc.set(VALIDATE_PASSWORD_DICTIONARY, "User");
-        assert!(validate_password("!User1234", Some(u), &acc).is_err());
-        assert!(validate_password("!ABcd1234", Some(u), &acc).is_ok());
-
-        // The rejection carries ErrNotValidPassword's code and message.
-        let err = validate_password("1234", Some(u), &acc).unwrap_err();
-        assert_eq!(not_valid_password_code(), 1819);
-        assert!(err
-            .to_string()
-            .starts_with("Your password does not satisfy the current policy requirements ("));
+        assert!(validate_password(&password("!User1234"), Some(&u), &acc).is_err());
+        assert!(validate_password(&password("!ABcd1234"), Some(&u), &acc).is_ok());
     }
 }

@@ -69,3 +69,11 @@ func TestReservedErrCodeRange(t *testing.T) {
 			errName, reservedStart, reservedEnd, code)
 	}
 }
+
+func TestSharedLockLostErrorCatalog(t *testing.T) {
+	msg, ok := MySQLErrName[ErrSharedLockLost]
+	assert.True(t, ok)
+	assert.Equal(t, 9015, ErrSharedLockLost)
+	assert.Equal(t, "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s", msg.Raw)
+	assert.Equal(t, []int{1}, msg.RedactArgPos)
+}

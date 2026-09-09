@@ -21,15 +21,15 @@
 //! a refusal — below).
 //!
 //! This is the production body behind
-//! [`crate::find_best_task::JoinCostModel::enforce`]: `findBestTask`'s
+//! [`crate::find_best_task::dispatch::find_best_task`]: `findBestTask`'s
 //! enforcer branch prices `EnforceProperty(prop, task, ...)` against the
 //! un-enforced candidates, and until this file the crate had only the seam.
 //!
 //! # Refusals, each naming its Go symbol
 //!
-//! * `MppTask.EnforceExchanger` (`enforce.go:63`) needs
-//!   `property.NeedEnforceExchanger` (partition-property matching over a
-//!   `funcdep.FDSet`) and `EnforceExchangerImpl` builds a
+//! * `MppTask.EnforceExchanger` (`enforce.go:63`) needs the task's current
+//!   `HashCols`, which this task type does not yet carry, and
+//!   `EnforceExchangerImpl` builds a
 //!   `PhysicalExchangeSender`/`PhysicalExchangeReceiver` pair — both
 //!   operators unported. Every MPP-property path through `EnforceProperty`
 //!   runs through it (Go calls it even for an empty sort property), so the
@@ -41,11 +41,9 @@
 //!   (`enforce.go:37`): the session-vars warning sink is unported; the
 //!   not-all-for-partition MPP arm returns the invalid task Go returns, and
 //!   the warning text is not raised anywhere.
-//! * `funcdep.FDSet` is unported; it is only read inside the refused
-//!   `NeedEnforceExchanger`, so no parameter carries it.
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use crate::physical_property::{CteProducerStatus, PhysicalProperty};
+use crate::physical_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::{attach2_task, MppTask, Task};
 use crate::task_type::TaskType;
@@ -54,17 +52,15 @@ impl MppTask {
     /// Go `MppTask.EnforceExchanger(prop, fd)` (`enforce.go:63`): insert an
     /// exchange pair above the task when the partition property demands one.
     ///
-    /// REFUSED: the guard is `property.NeedEnforceExchanger(t.partTp,
-    /// t.HashCols, prop, fd)` — partition-property matching this port does
-    /// not carry (`HashCols` itself is a named boundary on [`MppTask`]) —
-    /// and `EnforceExchangerImpl` builds a `PhysicalExchangeSender` /
+    /// REFUSED: the guard needs `t.HashCols`, which this task type does not
+    /// carry, and `EnforceExchangerImpl` builds a `PhysicalExchangeSender` /
     /// `PhysicalExchangeReceiver` pair, operators that are not ported.
     /// Skipping the exchange instead would emit an MPP plan Go would never
     /// run; refusing is the loud version of the same gap.
     pub fn enforce_exchanger(&self) -> Result<MppTask, PlanError> {
         Err(PlanError::internal(
             "MppTask.EnforceExchanger (enforce.go) is not ported: \
-             property.NeedEnforceExchanger and the \
+             MppTask.HashCols and the \
              PhysicalExchangeSender/PhysicalExchangeReceiver pair of \
              EnforceExchangerImpl are missing",
         ))
@@ -112,17 +108,22 @@ pub fn enforce_property(
         return Ok(task);
     }
     if prop.task_tp != TaskType::Mpp {
-        task = task.into_root_task()?;
+        task = task.convert_to_root_task(allocator)?;
     }
     let sort_req_prop = PhysicalProperty {
-        index_join: None,
         task_tp: TaskType::Root,
         sort_items: prop.sort_items.clone(),
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
-        no_cop_push_down: false,
+        mpp_partition_cols: Vec::new(),
+        mpp_partition_tp: Default::default(),
         sort_items_for_partition: Vec::new(),
-        cte_producer_status: CteProducerStatus::default(),
+        cte_producer_status: prop.cte_producer_status,
+        vector_prop: Default::default(),
+        no_cop_push_down: prop.no_cop_push_down,
+        advisory_sort_items: Vec::new(),
+        index_join_prop: None,
+        partial_order_info: None,
     };
     let child = task
         .plan()
@@ -130,20 +131,31 @@ pub fn enforce_property(
     let mut base = BasePhysicalPlan::new(allocator, "Sort", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.set_children_req_props(vec![Some(sort_req_prop)]);
-    let by_items =
-        crate::physical_property::ColumnSortItem::from_property(&prop.sort_items, child.schema())?
-            .into_iter()
-            .map(|item| {
-                tidb_expr::aggregation::ByItems::new(
-                    tidb_expr::expression::Expression::Column(item.col),
-                    item.desc,
-                )
-            })
-            .collect();
+    // Go's `prop.SortItems` hold the complete `*expression.Column`, so the
+    // executor can compile a `keyCmpFunc` from `col.GetType()`. This port
+    // reduces a `SortItem` to a `UniqueID` while matching properties, so the
+    // typed column has to be recovered from the child schema here, where the
+    // Sort is materialized. Without it the executor sees a `Column` whose
+    // `ret_type` is `None` and cannot build the compare function.
+    let by_items = prop
+        .sort_items
+        .iter()
+        .map(|item| {
+            let column = child
+                .schema()
+                .and_then(|schema| schema.retrieve_column(&item.col))
+                .cloned()
+                .unwrap_or_else(|| item.col.clone());
+            tidb_expr::aggregation::ByItems::new(
+                tidb_expr::expression::Expression::Column(column),
+                item.desc,
+            )
+        })
+        .collect();
     let sort = PhysicalPlan::Sort(PhysicalSort {
         base,
         by_items,
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    attach2_task(sort, vec![task], None)
+    attach2_task(sort, vec![task], None, allocator)
 }

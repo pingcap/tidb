@@ -69,15 +69,10 @@
 //! # Narrowings, by exact Go symbol
 //!
 //! * `expression.BuildCastFunction4Union(ctx, srcCol, dstType)`. The cast
-//!   itself is [`tidb_expr::aggregation::wrap_cast::build_cast_to`], which is
-//!   Go's `BuildCastFunction`. What the `4Union` spelling adds is
-//!   `inUnion = true` on the built `builtinCastXXXSig`, an EVALUATION flag
-//!   that turns a signed-to-unsigned overflow into `0` instead of an error
-//!   (`expression/builtin_cast.go`'s `inUnion` field). [`tidb_expr`]'s
-//!   `ScalarFunction` has no per-signature state to carry it, so the flag is
-//!   dropped and the cast is the ordinary one. That is a RUNTIME difference on
-//!   an out-of-range value only; the plan SHAPE and every result type are
-//!   identical.
+//!   itself is [`tidb_expr::aggregation::wrap_cast::build_cast_to_in_union`],
+//!   which carries Go's `inUnion = true` bit in the internal function name.
+//!   For a signed ETInt value and an unsigned target, the evaluator clamps a
+//!   negative value to zero exactly as `builtinCastIntAsIntSig` does.
 //! * `types.NameSlice` / `expression.Column.CleanHashCode`. Both are Go
 //!   memory-management details with no observable counterpart.
 //! * `b.ctx.GetSessionVars().StmtCtx`'s warning channel. `setUnionFlen` and
@@ -229,7 +224,7 @@ fn divide_union_select_plans(
 
 /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (MySQL 1222).
 fn wrong_number_of_columns() -> PlanError {
-    PlanError::internal("The used SELECT statements have a different number of columns")
+    PlanError::wrong_number_of_columns_in_select()
 }
 
 /// Go `*expression.Column.RetType`, which is never nil for a column a builder
@@ -346,10 +341,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if src_type.equal(&dst_type) {
                     exprs.push(Expression::Column(src_col.clone()));
                 } else {
-                    // boundary: `expression.BuildCastFunction4Union`'s
-                    // `inUnion` flag; see this module's narrowings.
+                    // `BuildCastFunction4Union` carries Go's `inUnion` flag
+                    // through the internal cast name.
                     exprs.push(
-                        tidb_expr::aggregation::wrap_cast::build_cast_to(
+                        tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
                             Expression::Column(src_col.clone()),
                             dst_type,
                         )
@@ -672,7 +667,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // path, which is Go's `defer`.
         let outer_cte_depth = self.outer_ctes.len();
         let current_layer_ctes = match &set_opr.with {
-            Some(with) => match self.build_with(with) {
+            Some(with) => match self.build_with(
+                with,
+                &super::cte::cte_consumer_counts(
+                    &tidb_ast::QueryStmt::SetOpr(Box::new(set_opr.clone())),
+                    with,
+                ),
+            ) {
                 Ok(ctes) => ctes,
                 Err(error) => {
                     self.outer_ctes.truncate(outer_cte_depth);

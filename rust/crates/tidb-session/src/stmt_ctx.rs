@@ -35,25 +35,21 @@ use crate::{DriverError, Session, StatementKind, StmtOutput};
 /// Go statement reads fields where this port was doing twenty-six
 /// by-name string lookups and parses -- measured as the heaviest
 /// user-code frame on both the read and write paths once the metadata
-/// clones were gone. GLOBAL-scope reads (`tidb_mem_oom_action`,
-/// `tidb_enable_tmp_storage_on_oom`, the password-validation set) stay
-/// LIVE in the builder: a peer's `SET GLOBAL` moves them without this
-/// session's generation changing, so caching them here would be wrong.
+/// clones were gone. GLOBAL-scope statement policies
+/// (`tidb_mem_oom_action`, `tidb_enable_tmp_storage_on_oom`) stay LIVE in the
+/// builder, while expressions retain the shared global accessor itself.
 pub(crate) struct StatementVarSnapshot {
     generation: u64,
     version: Option<String>,
+    time_zone: tidb_executor::SessionTimeZone,
     connection_charset: String,
     connection_collation: String,
     allow_write_row_id: bool,
     sysdate_is_now: bool,
-    sql_mode: tidb_parser::SqlMode,
-    date_modes: tidb_datatype::DateModes,
+    timestamp: Option<f64>,
+    sql_mode: tidb_mysql::SqlMode,
+    scanner_sql_mode: tidb_parser::SqlMode,
     string_type_flags: tidb_datatype::ConversionFlags,
-    strict_sql_mode: bool,
-    error_for_division_by_zero: bool,
-    only_full_group_by: bool,
-    no_unsigned_subtraction: bool,
-    auto_increment_zero_explicit: bool,
     allow_auto_random_explicit_insert: bool,
     shard_allocate_step: u64,
     like_default_escape: u8,
@@ -62,20 +58,50 @@ pub(crate) struct StatementVarSnapshot {
     cte_depth: i64,
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
+    selectivity_factor: f64,
+    enable_pseudo_for_outdated_stats: bool,
+    stats_load_sync_wait_ms: u64,
+    stats_load_pseudo_timeout: bool,
+    plan_replayer_capture_enabled: bool,
+    opt_index_prune_threshold: i32,
+    range_max_size: i64,
+    opt_prefix_index_single_scan: bool,
+    always_keep_join_key: bool,
+    allow_agg_push_down: bool,
+    enable_unsafe_substitute: bool,
+    enable_semi_join_rewrite: bool,
+    allow_in_subq_to_join_and_agg: bool,
+    enable_no_decorrelate_in_select: bool,
+    enable_skew_distinct_agg: bool,
+    enable_mview: bool,
+    max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
+    allow_projection_push_down: bool,
+    limit_push_down_threshold: u64,
+    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
     outer_join_reorder: bool,
     index_merge: bool,
     static_partition_prune: bool,
     new_only_full_group_by_check: bool,
+    remove_orderby_in_subquery: bool,
     mem_quota: i64,
+    replica_read: tidb_executor::ReplicaReadType,
+    isolation_read_engines: String,
+    init_chunk_size: usize,
+    max_chunk_size: usize,
     max_allowed_packet: u64,
     group_concat_max_len: u64,
     apply_cache_capacity: i64,
+    hashagg_partial_concurrency: usize,
+    hashagg_final_concurrency: usize,
     block_encryption_mode: tidb_executor::BlockEncryptionMode,
+    ddl_cdc_write_source: u64,
+    ddl_reorg_priority: i64,
+    ddl_session_alias: String,
     arbitrator_wait_averse: Option<bool>,
     arbitrator_reserved: i64,
 }
@@ -101,13 +127,13 @@ impl Session {
         &self,
         mem_quota: i64,
         tmp_storage_on_oom: bool,
-    ) -> (Arc<tidb_planner::candidate_cost::CostEnv>, f64) {
+    ) -> Arc<tidb_planner::find_best_task::coster::CostEnv> {
         // Everything below derives from the session's variable table, except
         // the two per-statement arguments. Share the immutable snapshot until
         // either source changes; retained contexts must keep their old policy.
         // Go's equivalents are typed `SessionVars` fields maintained at `SET`.
         let generation = self.vars.generation();
-        if let Some((cached_at, env, join_concurrency)) = self.cost_env_cache.borrow_mut().as_mut() {
+        if let Some((cached_at, env)) = self.cost_env_cache.borrow_mut().as_mut() {
             if *cached_at == generation {
                 if env.session.mem_quota != mem_quota
                     || env.session.enable_tmp_storage_on_oom != tmp_storage_on_oom
@@ -116,7 +142,7 @@ impl Session {
                     updated.session.mem_quota = mem_quota;
                     updated.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
                 }
-                return (Arc::clone(env), *join_concurrency);
+                return Arc::clone(env);
             }
         }
         let number = |name: &str, default: f64| {
@@ -146,7 +172,8 @@ impl Session {
             }
         };
 
-        let mut env = tidb_planner::candidate_cost::CostEnv::default();
+        let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
+        env.session.hash_join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
         env.session.distsql_scan_concurrency = number("tidb_distsql_scan_concurrency", 15.0);
         env.session.index_lookup_concurrency =
             resolved_concurrency("tidb_index_lookup_concurrency");
@@ -184,10 +211,9 @@ impl Session {
         env.cost_factors.hash_join = number("tidb_opt_hash_join_cost_factor", 1.0);
         env.cost_factors.index_join = number("tidb_opt_index_join_cost_factor", 1.0);
 
-        let join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
         let env = Arc::new(env);
-        *self.cost_env_cache.borrow_mut() = Some((generation, env.clone(), join_concurrency));
-        (env, join_concurrency)
+        *self.cost_env_cache.borrow_mut() = Some((generation, env.clone()));
+        env
     }
 
     /// The expression context used by an immutable prepared PointGet plan.
@@ -199,12 +225,8 @@ impl Session {
     pub(crate) fn prepared_point_get_context(
         &self,
     ) -> tidb_executor::kv_table::PreparedPointGetDecodeContext {
-        let mode = self.vars.get_system("sql_mode").unwrap_or_default();
-        let allow_invalid_dates = mode
-            .split(',')
-            .any(|part| part.trim().eq_ignore_ascii_case("ALLOW_INVALID_DATES"));
         tidb_executor::kv_table::PreparedPointGetDecodeContext::for_query(
-            allow_invalid_dates,
+            self.vars.sql_mode().has_allow_invalid_dates_mode(),
             self.session_time_zone(),
         )
     }
@@ -218,92 +240,51 @@ impl Session {
     /// A complete `StmtContext` would also snapshot planner, expression, sequence, and
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
-        let quota = self
-            .vars
-            .get_system("tidb_mem_quota_query")
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
-        let oom_action = tidb_executor::OomAction::parse(
-            &self
-                .vars
-                .get_global("tidb_mem_oom_action")
-                .unwrap_or_default(),
+        if let Some(authority) = self.statement_result_authority.borrow().as_ref() {
+            return authority.clone();
+        }
+        let snapshot = self.statement_var_snapshot();
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        let authority = self.build_statement_result_authority(
+            &snapshot,
+            snapshot.mem_quota,
+            oom_action,
+            tmp_storage_on_oom,
         );
-        let tmp_storage_on_oom = {
-            let value = self
-                .vars
-                .get_global("tidb_enable_tmp_storage_on_oom")
-                .unwrap_or_default();
-            !(value.eq_ignore_ascii_case("off") || value == "0")
-        };
+        self.statement_result_authority
+            .replace(Some(authority.clone()));
+        authority
+    }
+
+    fn build_statement_result_authority(
+        &self,
+        snapshot: &StatementVarSnapshot,
+        mem_quota: i64,
+        oom_action: tidb_executor::OomAction,
+        tmp_storage_on_oom: bool,
+    ) -> crate::ResultMaterializationAuthority {
         self.session_memory
-            .configure(quota, oom_action, tmp_storage_on_oom);
-        let memory = self.session_memory.statement();
-        let init_chunk_size = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(32);
-        let max_chunk_size = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(1024);
-        crate::ResultMaterializationAuthority::new(memory, init_chunk_size, max_chunk_size)
+            .configure(mem_quota, oom_action, tmp_storage_on_oom);
+        let memory = self.session_memory.statement_with_arbitration(
+            snapshot.arbitrator_wait_averse,
+            snapshot.arbitrator_reserved,
+        );
+        crate::ResultMaterializationAuthority::new(
+            memory,
+            snapshot.init_chunk_size,
+            snapshot.max_chunk_size,
+        )
     }
 
     /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
     /// comes from the zone database, and a `+HH:MM`/`-HH:MM` string is a
     /// fixed offset bounded to `[-12:59, +14:00]`.
     ///
-    /// An unparseable value falls back to the host zone rather than failing
-    /// the statement, because this tier accepts the variable without
-    /// validating it at SET time -- Go validates there instead, and that
-    /// check is the deferred half of this port.
+    /// Runtime `SET` validates the value before it reaches this resolver.
+    /// An unparseable value can therefore only come from a foreign persisted
+    /// global-variable row; in that case the host zone is the safe fallback.
     pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
-        use tidb_executor::SessionTimeZone;
-        let written = self
-            .vars
-            .get_system("time_zone")
-            .unwrap_or_else(|_| "SYSTEM".to_owned());
-        if !written.eq_ignore_ascii_case("SYSTEM") {
-            if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
-                return SessionTimeZone::Named(zone);
-            }
-            if let Some(rest) = written.strip_prefix(['+', '-']) {
-                let negative = written.starts_with('-');
-                let mut parts = rest.split(':');
-                let hours: i32 = parts.next().unwrap_or_default().parse().unwrap_or(-1);
-                let minutes: i32 = parts.next().unwrap_or("0").parse().unwrap_or(-1);
-                if hours >= 0 && (0..60).contains(&minutes) {
-                    let offset = hours * 3600 + minutes * 60;
-                    let bounded = if negative {
-                        offset <= 12 * 3600 + 59 * 60
-                    } else {
-                        offset <= 14 * 3600
-                    };
-                    if bounded {
-                        return SessionTimeZone::Fixed {
-                            name: written.clone(),
-                            offset_secs: if negative { -offset } else { offset },
-                        };
-                    }
-                }
-            }
-        }
-        // SYSTEM is TiDB's process-wide `SystemLocation`, not an offset
-        // snapshot. Preserve a resolved IANA zone (and therefore DST), with
-        // the process-local zone as the same fallback Go uses.
-        match tidb_util::timeutil::system_location() {
-            tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-            tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
-                SessionTimeZone::Fixed { name, offset_secs }
-            }
-        }
+        self.statement_var_snapshot().time_zone.clone()
     }
 
     /// The instant every `NOW()` in one statement shares, which Go fixes on
@@ -373,26 +354,27 @@ impl Session {
     /// transaction -- see `with_statement_stage`'s note about a storage whose
     /// clone shares a handle rather than copying by value.
     fn sequence_snapshot(&self) -> Arc<tidb_executor::SequenceSnapshot> {
-        let by_name = match &self.txn {
-            Some(txn) => txn.working.sequence_allocators(),
+        let (by_name, object_names) = match &self.txn {
+            Some(txn) => (
+                txn.working.sequence_allocators(),
+                txn.working.object_names(),
+            ),
             None => match self.catalog.lock() {
-                Ok(catalog) => catalog.sequence_allocators(),
+                Ok(catalog) => (catalog.sequence_allocators(), catalog.object_names()),
                 // A poisoned catalog is reported by the statement itself; an
-                // empty map here just makes every name unknown.
-                Err(_) => HashMap::new(),
+                // empty snapshot here makes every name unknown.
+                Err(_) => (HashMap::new(), std::collections::HashSet::new()),
             },
         };
-        Arc::new(tidb_executor::SequenceSnapshot::new(
+        Arc::new(tidb_executor::SequenceSnapshot::new_with_objects(
             by_name,
+            object_names,
             &self.current_db,
             Arc::clone(&self.sequence_last_values),
         ))
     }
 
     fn tidb_decode_key_snapshot(&self) -> Arc<tidb_executor::TidbDecodeKeySnapshot> {
-        if self.skip_tidb_decode_key_snapshot.get() {
-            return Arc::default();
-        }
         let Ok(catalog) = self.catalog.lock() else {
             return Arc::default();
         };
@@ -432,30 +414,7 @@ impl Session {
     /// [`tidb_executor::StmtContext`], which every executor entry already
     /// takes, rather than on ~30 separate parameters.
     pub(crate) fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
-        // Cached against the variable table's generation: Go keeps the
-        // parsed mode as `SessionVars.SQLMode`, a typed field the `SET` hook
-        // maintains, so the per-statement read is a field access there and a
-        // stamp check here.
-        let generation = self.vars.generation();
-        if let Some((cached_at, mode)) = self.scanner_sql_mode_cache.get() {
-            if cached_at == generation {
-                return mode;
-            }
-        }
-        // `SET sql_mode = 'ANSI'` is stored already expanded (captured from
-        // TiDB: `@@sql_mode` reads back
-        // `REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI`),
-        // so matching names against the stored text sees every flag a
-        // combination brought in.
-        let mode = scanner_sql_mode_of(
-            &self
-                .vars
-                .get_system("sql_mode")
-                .unwrap_or_default()
-                .to_ascii_uppercase(),
-        );
-        self.scanner_sql_mode_cache.set(Some((generation, mode)));
-        mode
+        scanner_sql_mode_of(self.vars.sql_mode())
     }
 
     /// Parses one statement of THIS session, under the `sql_mode` in force
@@ -491,7 +450,21 @@ impl Session {
     /// while its default checks still consult the captured strict/date modes
     /// and session time zone.
     pub fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
-        self.statement_context(false)
+        // The MV-execution session variables ride every DDL context: Go's
+        // `AddMViewExecutionSessionVarsToJob` snapshots them into the job
+        // envelope at submission, and a context without the image would
+        // record the defaults instead of the creator's settings.
+        let mut context = self.statement_context(false);
+        context
+            .set_session_vars_image(crate::vars::m_view_execution_session_vars_image(&self.vars));
+        context
+    }
+
+    /// Starts a statement executed by a server-owned route and returns the
+    /// same statement memory and SQL killer ordinary execution receives.
+    #[must_use]
+    pub fn routed_statement_memory(&self) -> tidb_executor::StatementMemory {
+        self.statement_context(false).statement_memory()
     }
 
     /// Resolves a `CREATE [OR REPLACE] VIEW` against this session's catalog
@@ -525,18 +498,52 @@ impl Session {
         self.statement_context_ignoring(is_dml, false)
     }
 
-    /// Builds the context used by the narrow prepared point/DML paths.
-    /// Those paths do not evaluate `TIDB_DECODE_KEY`, so constructing its
-    /// catalog metadata snapshot only adds per-execute work.
-    pub(crate) fn fast_statement_context(
+    /// Go `ResetContextOfStmt`'s statement-scoped modifiers: the session
+    /// snapshot plus the statement's own priority and `SQL_NO_CACHE`. Both
+    /// ride the `StmtContext` into every coprocessor request the statement
+    /// issues (`SetFromSessionVars`).
+    pub(crate) fn statement_context_for_stmt(
         &self,
+        stmt: &tidb_ast::Stmt,
         is_dml: bool,
+    ) -> tidb_executor::StmtContext {
+        self.statement_context(is_dml)
+            .with_statement_priority(crate::statement_priority_of(stmt))
+            .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
+    }
+
+    fn latest_index_schema_snapshot(
+        &self,
+    ) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+        let mut schema = self.catalog.lock().ok()?.latest_index_schema();
+        for (_, _, table) in &self.local_temporary_tables {
+            schema.table_indexes.insert(
+                table.table_id,
+                table
+                    .indexes()
+                    .iter()
+                    .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
+                        id: index.id,
+                        is_public: true,
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+        }
+        Some(Arc::new(schema))
+    }
+
+    pub(crate) fn statement_context_for_update_read(
+        &self,
         ignore_err: bool,
     ) -> tidb_executor::StmtContext {
-        let previous = self.skip_tidb_decode_key_snapshot.replace(true);
-        let context = self.statement_context_ignoring(is_dml, ignore_err);
-        self.skip_tidb_decode_key_snapshot.set(previous);
-        context
+        let mut ctx = self.statement_context_ignoring(true, ignore_err);
+        if self.connection_id.is_some_and(|id| id > 0) && ctx.latest_index_schema().is_none() {
+            if let Some(latest_index_schema) = self.latest_index_schema_snapshot() {
+                ctx = ctx.with_latest_index_schema(latest_index_schema);
+            }
+        }
+        ctx
     }
 
     /// [`Self::statement_context`] for a DML statement that carries the
@@ -545,19 +552,14 @@ impl Session {
     /// The cached [`StatementVarSnapshot`], re-derived only when a `SET`
     /// moved the variable table; see the struct's own doc for why the
     /// GLOBAL-scope reads are NOT in it.
-    fn statement_var_snapshot(&self) -> std::rc::Rc<StatementVarSnapshot> {
+    fn statement_var_snapshot(&self) -> Arc<StatementVarSnapshot> {
         let generation = self.vars.generation();
         if let Some(cached) = self.statement_var_cache.borrow().as_ref() {
             if cached.generation == generation {
-                return std::rc::Rc::clone(cached);
+                return Arc::clone(cached);
             }
         }
-        let mode_upper = self
-            .vars
-            .get_system("sql_mode")
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let has = |flag: &str| mode_upper.split(',').any(|part| part.trim() == flag);
+        let sql_mode = self.vars.sql_mode();
         let on = |name: &str| {
             self.vars
                 .get_system(name)
@@ -569,12 +571,61 @@ impl Session {
                 Ok("OFF" | "off" | "0")
             )
         };
-        let snapshot = std::rc::Rc::new(StatementVarSnapshot {
+        let executor_concurrency = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_EXECUTOR_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize);
+        let resolved_concurrency = |name: &str| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .filter(|value| *value > 0)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(executor_concurrency)
+        };
+        let index_lookup_push_down_policy = match self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY)
+            .as_deref()
+        {
+            Ok("force") => tidb_planner::access_path::IndexLookupPushDownPolicy::Force,
+            Ok("affinity-force") => {
+                tidb_planner::access_path::IndexLookupPushDownPolicy::AffinityForce
+            }
+            _ => tidb_planner::access_path::IndexLookupPushDownPolicy::HintOnly,
+        };
+        let read_staleness = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
+            .ok()
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .is_some_and(|value| value != 0);
+        let index_lookup_push_down_session =
+            tidb_planner::access_path::IndexLookupPushDownSession {
+                repeatable_read: self
+                    .vars
+                    .get_system("transaction_isolation")
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("REPEATABLE-READ")),
+                leader_read: self.vars.replica_read() == tidb_executor::ReplicaReadType::Leader,
+                staleness: read_staleness,
+                historical_read: self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
+                    .is_ok_and(|value| !value.is_empty()),
+                max_keys_read: self.vars.max_keys_read(true),
+                policy: index_lookup_push_down_policy,
+            };
+        let snapshot = Arc::new(StatementVarSnapshot {
             generation,
             string_type_flags: tidb_datatype::ConversionFlags::default()
                 .with_skip_ascii_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_ASCII_CHECK))
                 .with_skip_utf8_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_UTF8_CHECK)),
             version: self.vars.get_system("version").ok(),
+            time_zone: self.vars.session_time_zone(),
             connection_charset: self
                 .vars
                 .get_system("character_set_connection")
@@ -585,6 +636,12 @@ impl Session {
                 .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
             allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
             sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
+            timestamp: self
+                .vars
+                .get_system("timestamp")
+                .ok()
+                .filter(|value| value != "0")
+                .and_then(|value| value.parse::<f64>().ok()),
             allow_auto_random_explicit_insert: on(
                 tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT,
             ),
@@ -594,7 +651,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(i64::MAX as u64),
-            like_default_escape: if has("NO_BACKSLASH_ESCAPES")
+            like_default_escape: if sql_mode.has_no_backslash_escapes_mode()
                 && not_off(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
             {
                 0
@@ -632,6 +689,50 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.0),
+            selectivity_factor: self.vars.selectivity_factor(),
+            enable_pseudo_for_outdated_stats: on("tidb_enable_pseudo_for_outdated_stats"),
+            stats_load_sync_wait_ms: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_SYNC_WAIT)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64),
+            stats_load_pseudo_timeout: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_PSEUDO_TIMEOUT)
+                .map_or(true, |value| {
+                    !value.eq_ignore_ascii_case("OFF") && value != "0"
+                }),
+            plan_replayer_capture_enabled: on("tidb_enable_plan_replayer_capture")
+                || on("tidb_enable_plan_replayer_continuous_capture"),
+            opt_index_prune_threshold: self
+                .vars
+                .get_system("tidb_opt_index_prune_threshold")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(20),
+            range_max_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_RANGE_MAX_SIZE)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE),
+            opt_prefix_index_single_scan: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
+            ),
+            always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
+            allow_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_AGG_PUSH_DOWN),
+            enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
+            enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
+            allow_in_subq_to_join_and_agg: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG,
+            ),
+            enable_no_decorrelate_in_select: on(
+                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
+            ),
+            enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
+            enable_mview: self.vars.mview_enabled(),
+            max_execution_time_ms: self.vars.max_execution_time(),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ),
@@ -642,6 +743,14 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.01),
+            allow_projection_push_down: on("tidb_opt_projection_push_down"),
+            limit_push_down_threshold: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_PUSH_DOWN_THRESHOLD)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
+            index_lookup_push_down_session,
             join_reorder_through_proj: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
             ),
@@ -657,18 +766,31 @@ impl Session {
             new_only_full_group_by_check: on(
                 tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
             ),
+            remove_orderby_in_subquery: on(tidb_vardef::tidb_vars::TIDB_REMOVE_ORDERBY_IN_SUBQUERY),
             mem_quota: self
                 .vars
                 .get_system("tidb_mem_quota_query")
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
-            max_allowed_packet: self
+            replica_read: self.vars.replica_read(),
+            isolation_read_engines: self
                 .vars
-                .get_system("max_allowed_packet")
+                .get_system("tidb_isolation_read_engines")
+                .unwrap_or_else(|_| "tikv,tiflash,tidb".to_owned()),
+            init_chunk_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
                 .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(64 << 20),
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize),
+            max_chunk_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize),
+            max_allowed_packet: self.vars.max_allowed_packet(),
             group_concat_max_len: self
                 .vars
                 .get_system("group_concat_max_len")
@@ -681,11 +803,32 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE),
+            hashagg_partial_concurrency: resolved_concurrency("tidb_hashagg_partial_concurrency"),
+            hashagg_final_concurrency: resolved_concurrency("tidb_hashagg_final_concurrency"),
             block_encryption_mode: self
                 .vars
                 .get_system("block_encryption_mode")
                 .ok()
                 .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
+                .unwrap_or_default(),
+            ddl_cdc_write_source: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0),
+            ddl_reorg_priority: match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_DDL_REORG_PRIORITY)
+                .as_deref()
+            {
+                Ok("PRIORITY_NORMAL") => 0,
+                Ok("PRIORITY_HIGH") => 2,
+                _ => 1,
+            },
+            ddl_session_alias: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
                 .unwrap_or_default(),
             arbitrator_wait_averse: match self
                 .vars
@@ -703,19 +846,10 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or_default(),
-            sql_mode: scanner_sql_mode_of(&mode_upper),
-            date_modes: tidb_datatype::DateModes {
-                no_zero_date: has("NO_ZERO_DATE"),
-                no_zero_in_date: has("NO_ZERO_IN_DATE"),
-                allow_invalid_dates: has("ALLOW_INVALID_DATES"),
-            },
-            strict_sql_mode: has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
-            error_for_division_by_zero: has("ERROR_FOR_DIVISION_BY_ZERO"),
-            only_full_group_by: has("ONLY_FULL_GROUP_BY"),
-            no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
-            auto_increment_zero_explicit: has("NO_AUTO_VALUE_ON_ZERO"),
+            sql_mode,
+            scanner_sql_mode: scanner_sql_mode_of(sql_mode),
         });
-        *self.statement_var_cache.borrow_mut() = Some(std::rc::Rc::clone(&snapshot));
+        *self.statement_var_cache.borrow_mut() = Some(Arc::clone(&snapshot));
         snapshot
     }
 
@@ -745,13 +879,12 @@ impl Session {
             .string_type_flags
             .with_skip_utf8mb4_check(!check_mb4);
         let version = snapshot.version.clone();
-        let tidb_info = Some(self.vars.tidb_info());
         let connection_charset = snapshot.connection_charset.clone();
         let connection_collation = snapshot.connection_collation.clone();
-        let zone = self.session_time_zone();
-        let clock = self.statement_clock(&zone);
+        let zone = snapshot.time_zone.clone();
         let allow_write_row_id = snapshot.allow_write_row_id;
         let sysdate_is_now = snapshot.sysdate_is_now;
+        let sql_mode = snapshot.sql_mode;
         let allow_auto_random_explicit_insert = snapshot.allow_auto_random_explicit_insert;
         let shard_allocate_step = snapshot.shard_allocate_step;
         let like_default_escape = snapshot.like_default_escape;
@@ -760,140 +893,247 @@ impl Session {
         let cte_depth = snapshot.cte_depth;
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
+        let selectivity_factor = snapshot.selectivity_factor;
+        let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
+        let stats_load_sync_wait_ms = snapshot.stats_load_sync_wait_ms;
+        let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
+        let plan_replayer_capture_enabled = snapshot.plan_replayer_capture_enabled;
+        let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
+        let range_max_size = snapshot.range_max_size;
+        let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
+        let always_keep_join_key = snapshot.always_keep_join_key;
+        let allow_agg_push_down = snapshot.allow_agg_push_down;
+        let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
+        let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
+        let allow_in_subq_to_join_and_agg =
+            if self.stmt_hints.has_allow_in_subq_to_join_and_agg_hint {
+                self.stmt_hints.allow_in_subq_to_join_and_agg
+            } else {
+                snapshot.allow_in_subq_to_join_and_agg
+            };
+        let enable_no_decorrelate_in_select = snapshot.enable_no_decorrelate_in_select;
+        let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
+        let enable_mview = snapshot.enable_mview;
+        let max_execution_time_ms = if self.stmt_hints.has_max_execution_time {
+            self.stmt_hints.max_execution_time
+        } else {
+            snapshot.max_execution_time_ms
+        };
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
+        let allow_projection_push_down = snapshot.allow_projection_push_down;
+        let limit_push_down_threshold = snapshot.limit_push_down_threshold;
+        let mut index_lookup_push_down_session = snapshot.index_lookup_push_down_session;
+        // Transaction state is not part of the variable-table generation
+        // that keys `StatementVarSnapshot`, so read it at every statement
+        // boundary like Go reads `TxnCtx.IsStaleness`.
+        index_lookup_push_down_session.staleness |= self
+            .txn
+            .as_ref()
+            .is_some_and(|transaction| transaction.is_stale_read());
+        let latest_index_schema = (!index_lookup_push_down_session.repeatable_read
+            && self.connection_id.is_some_and(|id| id > 0))
+        .then(|| self.latest_index_schema_snapshot())
+        .flatten();
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
-        let index_merge = snapshot.index_merge;
+        let index_merge = snapshot.index_merge && !self.stmt_hints.no_index_merge_hint;
         let static_partition_prune = snapshot.static_partition_prune;
         let new_only_full_group_by_check = snapshot.new_only_full_group_by_check;
-        let mem_quota = snapshot.mem_quota;
+        let remove_orderby_in_subquery = snapshot.remove_orderby_in_subquery;
+        let mem_quota = if self.stmt_hints.has_mem_quota_hint {
+            self.stmt_hints.mem_quota_query
+        } else {
+            snapshot.mem_quota
+        };
+        let replica_read = if self.stmt_hints.has_replica_read_hint {
+            tidb_executor::ReplicaReadType::from_raw(self.stmt_hints.replica_read)
+        } else {
+            snapshot.replica_read
+        };
+        let isolation_read_engines = snapshot.isolation_read_engines.clone();
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
         let apply_cache_capacity = snapshot.apply_cache_capacity;
+        let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
+        let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
         let block_encryption_mode = snapshot.block_encryption_mode;
-        let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
-        let arbitrator_reserved = snapshot.arbitrator_reserved;
-        // Capture this statement's owner, not values or a connection-time
-        // reader: SET GLOBAL validation temporarily selects a scratch table.
-        let globals = self.vars.global_sysvars();
-        let tmp_storage_on_oom = {
-            let value = self
-                .vars
-                .get_global("tidb_enable_tmp_storage_on_oom")
-                .unwrap_or_default();
-            !(value.eq_ignore_ascii_case("off") || value == "0")
-        };
-        let (optimizer_cost_env, hash_join_concurrency) =
-            self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
-        let oom_action = tidb_executor::OomAction::parse(
-            &self
-                .vars
-                .get_global("tidb_mem_oom_action")
-                .unwrap_or_default(),
+        let global_sysvar_accessor = self.vars.global_sysvar_accessor();
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        let optimizer_cost_env = self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
+        let result_authority = self.build_statement_result_authority(
+            &snapshot,
+            mem_quota,
+            oom_action,
+            tmp_storage_on_oom,
         );
-        self.session_memory
-            .configure(mem_quota, oom_action, tmp_storage_on_oom);
-        let memory = self
-            .session_memory
-            .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved);
+        let statement_memory = result_authority.statement_memory();
+        let index_usage_collector = self.session_index_usage_collector.as_ref().map(|session| {
+            Arc::new(
+                tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector::new(Arc::clone(
+                    session,
+                )),
+            )
+        });
+        self.statement_result_authority
+            .replace(Some(result_authority));
         // The SAME three bits on both branches: a query reads them for
         // `CAST(... AS DATE/DATETIME)`, a DML statement reads them for the
         // column write. They used to be attached only below, which left every
         // read with the all-false default -- and made `NO_ZERO_DATE` silently
         // inoperative on the read path.
-        let date_modes = snapshot.date_modes;
+        let date_modes = tidb_datatype::DateModes {
+            no_zero_date: sql_mode.has_no_zero_date_mode(),
+            no_zero_in_date: sql_mode.has_no_zero_in_date_mode(),
+            allow_invalid_dates: sql_mode.has_allow_invalid_dates_mode(),
+        };
         if !is_dml {
-            let ctx = tidb_executor::StmtContext::for_query_with_memory(memory)
-                // A read's error levels do not depend on the mode, but DDL
-                // takes this same context and Go's DDL checks DO read
-                // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
-                .with_strict(snapshot.strict_sql_mode)
-                .with_date_modes(date_modes)
-                .with_string_type_flags(string_type_flags)
-                .with_cte_max_recursion_depth(cte_depth)
-                .with_join_reorder_threshold(join_reorder_threshold)
-                .with_advanced_join_reorder(advanced_join_reorder)
-                .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
-                .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
-                .with_optimizer_cost_env(optimizer_cost_env.clone(), hash_join_concurrency)
-                .with_join_reorder_through_proj(join_reorder_through_proj)
-                .with_join_reorder_through_sel(join_reorder_through_sel)
-                .with_outer_join_reorder(outer_join_reorder)
-                .with_index_merge(index_merge)
-                .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
-                .with_planned_apply_channel(Arc::clone(&self.planned_apply))
-                .with_allow_write_row_id(allow_write_row_id)
-                .with_static_partition_prune(static_partition_prune)
-                .with_only_full_group_by(snapshot.only_full_group_by)
-                .with_new_only_full_group_by_check(new_only_full_group_by_check)
-                .with_session_state(current_db, version, tidb_info)
-                .with_connection_charset_info(
-                    connection_charset.clone(),
-                    connection_collation.clone(),
-                )
-                .with_user(self.current_user.clone(), self.login_user.clone())
-                .with_global_sysvar_reader(move |name| globals.get_for_global_scope(name).ok())
-                .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
-                .with_connection_id(self.connection_id)
-                .with_advisory_locks(self.advisory_locks.clone())
-                .with_selected_lock_keys(self.selected_lock_keys.clone())
-                .with_rand_session(Arc::clone(&self.rand))
-                .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
-                .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
-                .with_row_id_shards(Arc::clone(&self.row_id_shards))
-                .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
-                .with_user_vars(Arc::clone(&self.user_vars))
-                .with_previous_statement(self.last_insert_id, self.prev_row_count)
-                .with_last_found_rows(self.last_found_rows)
-                .with_current_tso(self.current_tso())
-                .with_week_and_division_scale(week_format, div_scale)
-                .with_max_allowed_packet(max_allowed_packet)
-                .with_group_concat_max_len(group_concat_max_len)
-                .with_apply_cache_capacity(apply_cache_capacity)
-                .with_block_encryption_mode(block_encryption_mode)
-                .with_sequences(self.sequence_snapshot())
-                .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
-                .with_sql_mode(snapshot.sql_mode)
-                .with_no_unsigned_subtraction(snapshot.no_unsigned_subtraction)
-                .with_like_default_escape(like_default_escape)
-                .with_default_string_match_selectivity(default_string_match_selectivity)
-                .with_sysdate_is_now(sysdate_is_now)
-                .with_clock(clock, zone);
-            // Prepared plan cache, the reusable half: hand the in-flight
-            // statement its replay pins and/or capture sink.
-            if let Some(state) = self.active_prepared_pin.borrow().as_ref() {
-                let mut ctx = ctx;
-                if let Some(pins) = &state.apply {
-                    ctx = ctx.with_prepared_path_pins(Arc::clone(pins));
-                }
-                if let Some(sink) = &state.capture {
-                    ctx = ctx.with_prepared_pin_capture(Arc::clone(sink));
-                }
-                return ctx;
+            let mut ctx =
+                tidb_executor::StmtContext::for_query_with_memory(statement_memory.clone())
+                    // A read's error levels do not depend on the mode, but DDL
+                    // takes this same context and Go's DDL checks DO read
+                    // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
+                    .with_strict(sql_mode.has_strict_mode())
+                    .with_date_modes(date_modes)
+                    .with_string_type_flags(string_type_flags)
+                    .with_cte_max_recursion_depth(cte_depth)
+                    .with_join_reorder_threshold(join_reorder_threshold)
+                    .with_advanced_join_reorder(advanced_join_reorder)
+                    .with_allow_agg_push_down(allow_agg_push_down)
+                    .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                    .with_projection_push_down(allow_projection_push_down)
+                    .with_limit_push_down_threshold(limit_push_down_threshold)
+                    .with_index_lookup_push_down_session(index_lookup_push_down_session)
+                    .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
+                    .with_optimizer_cost_env(optimizer_cost_env.clone())
+                    .with_hashagg_concurrency(
+                        hashagg_partial_concurrency,
+                        hashagg_final_concurrency,
+                    )
+                    .with_join_reorder_through_proj(join_reorder_through_proj)
+                    .with_join_reorder_through_sel(join_reorder_through_sel)
+                    .with_outer_join_reorder(outer_join_reorder)
+                    .with_index_merge(index_merge)
+                    .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
+                    .with_planned_apply_channel(Arc::clone(&self.planned_apply))
+                    .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
+                    .with_allow_write_row_id(allow_write_row_id)
+                    .with_static_partition_prune(static_partition_prune)
+                    .with_only_full_group_by(sql_mode.has_only_full_group_by())
+                    .with_new_only_full_group_by_check(new_only_full_group_by_check)
+                    .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
+                    .with_session_state(current_db, version)
+                    .with_isolation_read_engines(isolation_read_engines)
+                    .with_connection_charset_info(
+                        connection_charset.clone(),
+                        connection_collation.clone(),
+                    )
+                    .with_user(self.current_user.clone(), self.login_user.clone())
+                    .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
+                    .with_active_roles(
+                        self.current_user
+                            .as_ref()
+                            .map(|_| Arc::clone(&self.active_roles)),
+                    )
+                    .with_connection_id(self.connection_id)
+                    .with_advisory_locks(self.advisory_locks.clone())
+                    .with_selected_lock_keys(self.selected_lock_keys.clone())
+                    .with_rand_session(Arc::clone(&self.rand))
+                    .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
+                    .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
+                    .with_row_id_shards(Arc::clone(&self.row_id_shards))
+                    .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
+                    .with_user_vars(Arc::clone(&self.user_vars))
+                    .with_previous_statement(self.last_insert_id, self.prev_row_count)
+                    .with_last_found_rows(self.last_found_rows)
+                    .with_client_found_rows(self.client_found_rows)
+                    .with_current_tso(self.current_tso())
+                    .with_week_and_division_scale(week_format, div_scale)
+                    .with_max_allowed_packet(max_allowed_packet)
+                    .with_group_concat_max_len(group_concat_max_len)
+                    .with_apply_cache_capacity(apply_cache_capacity)
+                    .with_block_encryption_mode(block_encryption_mode)
+                    .with_sequences(self.sequence_snapshot())
+                    .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
+                    .with_sql_mode(snapshot.scanner_sql_mode)
+                    .with_ddl_sql_mode(sql_mode.0)
+                    .with_ddl_job_context(
+                        snapshot.ddl_cdc_write_source,
+                        snapshot.ddl_reorg_priority,
+                        snapshot.ddl_session_alias.clone(),
+                        Vec::new(),
+                    )
+                    .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
+                    .with_like_default_escape(like_default_escape)
+                    .with_default_string_match_selectivity(default_string_match_selectivity)
+                    .with_selectivity_factor(selectivity_factor)
+                    .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
+                    .with_stats_load_policy(
+                        stats_load_sync_wait_ms,
+                        stats_load_pseudo_timeout,
+                        max_execution_time_ms,
+                    )
+                    .with_plan_replayer_capture(plan_replayer_capture_enabled)
+                    .with_column_stats_usage(self.stats_collector.clone())
+                    .with_index_usage_collector(index_usage_collector)
+                    .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
+                    .with_opt_index_prune_threshold(opt_index_prune_threshold)
+                    .with_range_max_size(range_max_size)
+                    .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
+                    .with_always_keep_join_key(always_keep_join_key)
+                    .with_enable_unsafe_substitute(enable_unsafe_substitute)
+                    .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                    .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
+                    .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
+                    .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+                    .with_enable_mview(enable_mview)
+                    .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
+                        self.vars.query_cop_store_limit() as isize,
+                    ))
+                    .with_enable_check_constraint(self.enable_check_constraint())
+                    .with_sysdate_is_now(sysdate_is_now)
+                    .with_resource_group_name(self.active_resource_group.clone())
+                    .with_replica_read(replica_read)
+                    .with_executor_first_run_breakpoint(
+                        Arc::clone(&self.executor_first_run_breakpoint),
+                        self.breakpoint_notify_func(),
+                    )
+                    .with_lazy_clock(snapshot.timestamp, zone);
+            if let Some(latest_index_schema) = latest_index_schema {
+                ctx = ctx.with_latest_index_schema(latest_index_schema);
+            }
+            if let Some(parameters) = &self.prepared_params {
+                ctx = ctx.with_prepared_params(Arc::clone(parameters));
             }
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
-        let ctx = tidb_executor::StmtContext::for_dml_with_memory(
-            snapshot.error_for_division_by_zero,
-            snapshot.strict_sql_mode,
+        let mut ctx = tidb_executor::StmtContext::for_dml_with_memory(
+            sql_mode.has_error_for_division_by_zero_mode(),
+            sql_mode.has_strict_mode(),
             ignore_err,
-            memory,
+            statement_memory.clone(),
         )
         .with_date_modes(date_modes)
         .with_string_type_flags(string_type_flags)
         .with_planned_apply_channel(Arc::clone(&self.planned_apply))
+        .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
         .with_allow_write_row_id(allow_write_row_id)
-        .with_only_full_group_by(snapshot.only_full_group_by)
+        .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
-        .with_session_state(current_db, version, tidb_info)
+        .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
+        .with_session_state(current_db, version)
+        .with_isolation_read_engines(isolation_read_engines)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
-        .with_global_sysvar_reader(move |name| globals.get_for_global_scope(name).ok())
-        .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
+        .with_global_sysvar_accessor(global_sysvar_accessor)
+        .with_active_roles(
+            self.current_user
+                .as_ref()
+                .map(|_| Arc::clone(&self.active_roles)),
+        )
         .with_connection_id(self.connection_id)
         .with_advisory_locks(self.advisory_locks.clone())
         .with_selected_lock_keys(self.selected_lock_keys.clone())
@@ -905,6 +1145,7 @@ impl Session {
         .with_user_vars(Arc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_last_found_rows(self.last_found_rows)
+        .with_client_found_rows(self.client_found_rows)
         .with_current_tso(self.current_tso())
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
@@ -914,14 +1155,52 @@ impl Session {
         .with_sequences(self.sequence_snapshot())
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
-        .with_clock(clock, zone)
-        .with_sql_mode(snapshot.sql_mode)
-        .with_no_unsigned_subtraction(snapshot.no_unsigned_subtraction)
+        .with_resource_group_name(self.active_resource_group.clone())
+        .with_replica_read(tidb_executor::ReplicaReadType::Leader)
+        .with_executor_first_run_breakpoint(
+            Arc::clone(&self.executor_first_run_breakpoint),
+            self.breakpoint_notify_func(),
+        )
+        .with_lazy_clock(snapshot.timestamp, zone)
+        .with_sql_mode(snapshot.scanner_sql_mode)
+        .with_ddl_sql_mode(sql_mode.0)
+        .with_ddl_job_context(
+            snapshot.ddl_cdc_write_source,
+            snapshot.ddl_reorg_priority,
+            snapshot.ddl_session_alias.clone(),
+            Vec::new(),
+        )
+        .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
+        .with_selectivity_factor(selectivity_factor)
+        .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
+        .with_stats_load_policy(
+            stats_load_sync_wait_ms,
+            stats_load_pseudo_timeout,
+            max_execution_time_ms,
+        )
+        .with_plan_replayer_capture(plan_replayer_capture_enabled)
+        .with_column_stats_usage(self.stats_collector.clone())
+        .with_index_usage_collector(index_usage_collector)
+        .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
+        .with_opt_index_prune_threshold(opt_index_prune_threshold)
+        .with_range_max_size(range_max_size)
+        .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
+        .with_always_keep_join_key(always_keep_join_key)
+        .with_enable_unsafe_substitute(enable_unsafe_substitute)
+        .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+        .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
+        .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
+        .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+        .with_enable_mview(enable_mview)
+        .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
+            self.vars.query_cop_store_limit() as isize,
+        ))
         .with_auto_increment_step(increment, offset)
-        .with_auto_increment_zero_explicit(snapshot.auto_increment_zero_explicit)
+        .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())
+        .with_enable_check_constraint(self.enable_check_constraint())
         .with_constraint_check_in_place(constraint_check_in_place)
         // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
         // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
@@ -937,14 +1216,25 @@ impl Session {
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
         .with_advanced_join_reorder(advanced_join_reorder)
+        .with_allow_agg_push_down(allow_agg_push_down)
         .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+        .with_projection_push_down(allow_projection_push_down)
+        .with_limit_push_down_threshold(limit_push_down_threshold)
+        .with_index_lookup_push_down_session(index_lookup_push_down_session)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
-        .with_optimizer_cost_env(optimizer_cost_env, hash_join_concurrency)
+        .with_optimizer_cost_env(optimizer_cost_env)
+        .with_hashagg_concurrency(hashagg_partial_concurrency, hashagg_final_concurrency)
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)
         .with_index_merge(index_merge)
         .with_static_partition_prune(static_partition_prune);
+        if let Some(parameters) = &self.prepared_params {
+            ctx = ctx.with_prepared_params(Arc::clone(parameters));
+        }
+        if let Some(latest_index_schema) = latest_index_schema {
+            ctx = ctx.with_latest_index_schema(latest_index_schema);
+        }
         ctx
     }
 
@@ -976,8 +1266,7 @@ impl Session {
     /// `SetGlobal` writes: the variable is GLOBAL-scope only, so the value a
     /// statement sees is the global one, not a session copy. The registry
     /// defaults it to OFF, and unlike `foreign_key_checks` the safe fallback
-    /// for an unreadable value is OFF -- that is what a stock TiDB does and
-    /// the only mode this engine models.
+    /// for an unreadable value is OFF -- that is what a stock TiDB does.
     pub(crate) fn enable_check_constraint(&self) -> bool {
         matches!(
             self.vars
@@ -1066,301 +1355,37 @@ impl Session {
     }
 }
 
-/// The scanner flags Go's `Parser.SetSQLMode` consults, read off an
-/// already-uppercased, already-expanded `@@sql_mode` text.
-pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
-    #[cfg(test)]
-    tests::SCANNER_MODE_PARSES.with(|count| count.set(count.get() + 1));
-    let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+/// The scanner flags Go's `Parser.SetSQLMode` consults, projected from the
+/// same typed `SessionVars.SQLMode` authority every other consumer reads.
+pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parser::SqlMode {
     tidb_parser::SqlMode {
-        real_as_float: has("REAL_AS_FLOAT"),
-        no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
-        ansi_quotes: has("ANSI_QUOTES"),
-        high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
-        ignore_space: has("IGNORE_SPACE"),
-        pipes_as_concat: has("PIPES_AS_CONCAT"),
+        real_as_float: mode.has_real_as_float_mode(),
+        no_backslash_escapes: mode.has_no_backslash_escapes_mode(),
+        ansi_quotes: mode.has_ansi_quotes_mode(),
+        high_not_precedence: mode.has_high_not_precedence_mode(),
+        ignore_space: mode.has_ignore_space_mode(),
+        pipes_as_concat: mode.has_pipes_as_concat_mode(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    thread_local! {
-        pub(super) static SCANNER_MODE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    }
-
     #[test]
-    fn statement_cost_environments_share_immutable_snapshots() {
-        let mut session = Session::new();
-        let query = session.statement_context(false);
-        let dml = session.statement_context(true);
-        assert!(std::ptr::eq(
-            query.optimizer_cost_env(),
-            dml.optimizer_cost_env()
-        ));
-        let cloned = query.clone();
-        assert!(std::ptr::eq(
-            query.optimizer_cost_env(),
-            cloned.optimizer_cost_env()
-        ));
-
-        let original_tmp = query.optimizer_cost_env().session.enable_tmp_storage_on_oom;
-        let generation = session.vars.generation();
-        session
-            .vars
-            .set_global(
-                "tidb_enable_tmp_storage_on_oom",
-                if original_tmp { "OFF" } else { "ON" }.to_owned(),
-            )
-            .unwrap();
-        assert_eq!(session.vars.generation(), generation);
-        let updated = session.statement_context(false);
-        assert_eq!(
-            updated
-                .optimizer_cost_env()
-                .session
-                .enable_tmp_storage_on_oom,
-            !original_tmp
-        );
-        assert_eq!(
-            query.optimizer_cost_env().session.enable_tmp_storage_on_oom,
-            original_tmp
-        );
-        assert!(!std::ptr::eq(
-            query.optimizer_cost_env(),
-            updated.optimizer_cost_env()
-        ));
-        let same_policy = session.statement_context(true);
-        assert!(std::ptr::eq(
-            updated.optimizer_cost_env(),
-            same_policy.optimizer_cost_env()
-        ));
-
-        session
-            .vars
-            .set_system("tidb_distsql_scan_concurrency", "7".to_owned())
-            .unwrap();
-        let new_variables = session.statement_context(false);
-        assert_eq!(
-            new_variables
-                .optimizer_cost_env()
-                .session
-                .distsql_scan_concurrency,
-            7.0
-        );
-        assert!(!std::ptr::eq(
-            updated.optimizer_cost_env(),
-            new_variables.optimizer_cost_env()
-        ));
-
-        let (old_quota, _) = session.optimizer_cost_env(1024, original_tmp);
-        let (new_quota, _) = session.optimizer_cost_env(2048, original_tmp);
-        assert_eq!(old_quota.session.mem_quota, 1024);
-        assert_eq!(new_quota.session.mem_quota, 2048);
-        assert!(!Arc::ptr_eq(&old_quota, &new_quota));
-        drop(new_quota);
-        let (unretained, _) = session.optimizer_cost_env(4096, !original_tmp);
-        assert_eq!(unretained.session.mem_quota, 4096);
-        assert_eq!(unretained.session.enable_tmp_storage_on_oom, !original_tmp);
-        assert_eq!(old_quota.session.mem_quota, 1024);
-    }
-
-    #[test]
-    fn statement_contexts_reuse_derived_sql_modes() {
-        let mut session = Session::new();
-        session.vars.set_system("sql_mode", "ANSI,STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES,ERROR_FOR_DIVISION_BY_ZERO,NO_UNSIGNED_SUBTRACTION,NO_AUTO_VALUE_ON_ZERO,NO_BACKSLASH_ESCAPES,HIGH_NOT_PRECEDENCE".to_owned()).unwrap();
-        drop(session.statement_context(false));
-        SCANNER_MODE_PARSES.with(|count| count.set(0));
-        for dml in [false, true] {
-            let context = session.statement_context(dml);
-            let mode = context.sql_mode();
-            assert!(mode.real_as_float && mode.ansi_quotes && mode.pipes_as_concat);
-            assert!(mode.no_backslash_escapes && mode.high_not_precedence && mode.ignore_space);
-            assert!(context.strict());
-            assert!(context.only_full_group_by());
-            assert!(context.no_unsigned_subtraction());
-            let dates = context.date_modes();
-            assert!(dates.no_zero_date && dates.no_zero_in_date && dates.allow_invalid_dates);
-            if dml {
-                assert!(context.auto_increment_zero_is_explicit());
-            }
-        }
-        SCANNER_MODE_PARSES.with(|count| assert_eq!(count.get(), 0));
-        session.vars.set_system("sql_mode", String::new()).unwrap();
-        let context = session.statement_context(true);
-        let mode = context.sql_mode();
-        assert!(!mode.real_as_float && !mode.ansi_quotes && !mode.pipes_as_concat);
-        assert!(!mode.no_backslash_escapes && !mode.high_not_precedence && !mode.ignore_space);
-        assert!(!context.strict());
-        assert!(!context.only_full_group_by());
-        assert!(!context.no_unsigned_subtraction());
-        assert!(!context.auto_increment_zero_is_explicit());
-        let dates = context.date_modes();
-        assert!(!dates.no_zero_date && !dates.no_zero_in_date && !dates.allow_invalid_dates);
-    }
-
-    #[test]
-    #[ignore = "isolated SQL-mode context timing; no timing assertion"]
-    fn statement_sql_mode_construction_benchmark() {
-        use std::hint::black_box;
-        use std::time::Instant;
-        let mut session = Session::new();
-        let default = session.vars.get_system("sql_mode").unwrap();
-        for (name, mode) in [("empty", ""), ("default", default.as_str()), ("expanded", "ANSI,TRADITIONAL,NO_BACKSLASH_ESCAPES,HIGH_NOT_PRECEDENCE,NO_UNSIGNED_SUBTRACTION,NO_AUTO_VALUE_ON_ZERO")] {
-            session.vars.set_system("sql_mode", mode.to_owned()).unwrap();
-            for dml in [false, true] {
-                for _ in 0..100 {
-                    drop(black_box(session.statement_context(dml)));
-                }
-                for round in 0..5 {
-                    let started = Instant::now();
-                    for _ in 0..10_000 {
-                        drop(black_box(session.statement_context(dml)));
-                    }
-                    println!("sql-mode-context mode={name} dml={dml} round={round} iterations=10000 ns_per_context={}", started.elapsed().as_nanos() / 10_000);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn prepared_statement_charset_flags_follow_session_and_instance_changes() {
-        use tidb_executor::Columns;
-        let mut session = Session::new();
+    fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
+        let mut session = crate::Session::new();
         let original = session.statement_context(false);
-        assert!(!original.type_flags().skip_ascii_check());
-        assert!(!original.type_flags().skip_utf8_check());
-        assert!(!original.type_flags().skip_utf8mb4_check());
-        session
-            .vars
-            .set_system("tidb_skip_ascii_check", "ON".to_owned())
-            .unwrap();
-        session
-            .vars
-            .set_system("tidb_skip_utf8_check", "ON".to_owned())
-            .unwrap();
-        let changed = session.statement_context(false);
-        assert!(changed.type_flags().skip_ascii_check());
-        assert!(changed.type_flags().skip_utf8_check());
-        assert!(!original.type_flags().skip_ascii_check());
-        let cached = session.statement_var_snapshot();
-        let generation = session.vars.generation();
-        session
-            .vars
-            .set_global("tidb_check_mb4_value_in_utf8", "OFF".to_owned())
-            .unwrap();
-        let changed_global = session.statement_context(false);
-        assert_eq!(generation, session.vars.generation());
-        assert!(std::rc::Rc::ptr_eq(
-            &cached,
-            &session.statement_var_snapshot()
-        ));
-        assert!(changed_global.type_flags().skip_utf8mb4_check());
-        assert!(!changed.type_flags().skip_utf8mb4_check());
-        // Restore the instance setting even though contexts retain snapshots.
-        session
-            .vars
-            .set_global("tidb_check_mb4_value_in_utf8", "ON".to_owned())
-            .unwrap();
-        let dml = session
-            .statement_context(true)
-            .with_statement_class(tidb_executor::StatementClass::Insert);
-        assert!(dml.type_flags().skip_ascii_check());
-        assert!(dml.type_flags().skip_utf8_check());
-        assert!(!dml.type_flags().skip_utf8mb4_check());
-    }
-
-    #[test]
-    fn ordinary_statements_keep_variable_derived_caches() {
-        let mut session = Session::new();
-        let snapshot = session.statement_var_snapshot();
-        let generation = session.vars.generation();
-        for (sql, fails) in [
-            ("SELECT 1", false),
-            ("SELECT 2", false),
-            ("SELECT * FROM missing_cache_test_table", true),
-        ] {
-            assert_eq!(session.run(sql).is_err(), fails, "{sql}");
-            assert_eq!(session.vars.generation(), generation, "{sql}");
-            assert!(std::rc::Rc::ptr_eq(
-                &snapshot,
-                &session.statement_var_snapshot()
-            ));
-        }
-        let restore = session.vars.snapshot_system("sql_mode");
-        session
-            .vars
-            .set_system("sql_mode", "ANSI".to_owned())
-            .unwrap();
-        let overlaid = session.statement_var_snapshot();
-        assert!(!std::rc::Rc::ptr_eq(&snapshot, &overlaid));
-        assert!(session.scanner_sql_mode().ansi_quotes);
-        session.vars.restore_system(restore);
-        assert!(!std::rc::Rc::ptr_eq(
-            &overlaid,
-            &session.statement_var_snapshot()
-        ));
-        assert!(!session.scanner_sql_mode().ansi_quotes);
-    }
-
-    #[test]
-    fn version_identity_invalidates_cached_statement_vars() {
-        let mut session = Session::new();
-        let original = session.statement_var_snapshot();
-        let info = tidb_util::versioninfo::VersionInfo::build_default()
-            .with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0");
-        let expected = info.server_version.clone();
-        session.set_version_info(info);
-        let updated = session.statement_var_snapshot();
-        assert_eq!(updated.version.as_deref(), Some(expected.as_str()));
-        assert!(!std::rc::Rc::ptr_eq(&original, &updated));
-    }
-
-    #[test]
-    #[ignore = "isolated statement-boundary timing; no timing assertion"]
-    fn ordinary_statement_cache_benchmark() {
-        use std::hint::black_box;
-        use std::time::Instant;
-        let mut session = Session::new();
-        for _ in 0..100 {
-            black_box(session.run("SELECT 1").unwrap());
-        }
-        for round in 0..5 {
-            let started = Instant::now();
-            for _ in 0..10_000 {
-                black_box(session.run("SELECT 1").unwrap());
-            }
-            println!("statement-cache round={round} iterations=10000 ns_per_statement={}", started.elapsed().as_nanos() / 10_000);
-        }
-    }
-
-    #[test]
-    #[ignore = "isolated context construction timing; no timing assertion"]
-    fn statement_global_reader_construction_benchmark() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        let mut session = Session::new();
-        for dictionary_bytes in [0, 1024, 65536] {
+        assert_eq!(original.range_max_size(), 67_108_864);
+        for quota in [1_i64, 0, i64::MAX] {
             session
-                .vars
-                .set_global("validate_password.dictionary", "x".repeat(dictionary_bytes))
+                .run(&format!("SET tidb_opt_range_max_size = {quota}"))
                 .unwrap();
-            for dml in [false, true] {
-                for _ in 0..100 {
-                    drop(black_box(session.statement_context(dml)));
-                }
-                for round in 0..5 {
-                    let started = Instant::now();
-                    for _ in 0..10_000 {
-                        drop(black_box(session.statement_context(dml)));
-                    }
-                    println!("global-context dictionary_bytes={dictionary_bytes} dml={dml} round={round} iterations=10000 ns_per_context={}", started.elapsed().as_nanos() / 10_000);
-                }
-            }
+            assert_eq!(session.statement_context(false).range_max_size(), quota);
+            assert_eq!(session.statement_context(true).range_max_size(), quota);
         }
+        assert_eq!(original.range_max_size(), 67_108_864);
     }
+
+    use super::*;
 
     #[test]
     fn selected_record_keys_reach_the_owner_from_query_and_dml_contexts() {
@@ -1378,10 +1403,7 @@ mod tests {
             let selected = context
                 .selected_lock_keys()
                 .expect("owner installed collector");
-            let source = TableDualExec::new(
-                ExecutorMeta::new(Default::default(), 0, 1, 1),
-                1,
-            );
+            let source = TableDualExec::new(ExecutorMeta::new(Default::default(), 0, 1, 1), 1);
             let mut exec = SelectLockExec::new(
                 Box::new(source),
                 vec![Box::new(|_| Ok(Some(b"selected-record".to_vec())))],
@@ -1407,28 +1429,167 @@ mod tests {
     }
 
     #[test]
-    fn fast_statement_context_does_not_build_decode_key_metadata() {
-        let session = Session::new();
-        // Session bootstrap may create a normal context; isolate the fast
-        // path assertion from that startup bookkeeping.
-        *session
-            .tidb_decode_key_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        let _fast = session.fast_statement_context(false, false);
+    fn no_decorrelate_in_select_reaches_the_statement_context() {
+        let mut session = Session::new();
+        assert!(!session
+            .statement_context(false)
+            .enable_no_decorrelate_in_select());
+        session
+            .run("set tidb_opt_enable_no_decorrelate_in_select = on")
+            .unwrap();
         assert!(session
-            .tidb_decode_key_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .statement_context(false)
+            .enable_no_decorrelate_in_select());
+    }
+
+    /// Go `ResetContextOfStmt` sets `sc.Priority` from the statement's own
+    /// modifier and `sc.NotFillCache` from a SELECT's `SQL_NO_CACHE`; both
+    /// then ride `SetFromSessionVars` into every coprocessor request.
+    #[test]
+    fn statement_priority_and_no_cache_reach_the_statement_context() {
+        let session = Session::new();
+        let parse = |sql: &str| session.parse(sql).expect("the statement parses");
+
+        let ctx = session.statement_context_for_stmt(
+            &parse("select high_priority sql_no_cache id from t"),
+            false,
+        );
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::High);
+        assert!(ctx.not_fill_cache());
+
+        let ctx =
+            session.statement_context_for_stmt(&parse("update low_priority t set id = 1"), true);
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::Low);
+        assert!(
+            !ctx.not_fill_cache(),
+            "NotFillCache is a SELECT-only modifier"
+        );
+
+        // Go's `*ast.LoadDataStmt` arm reads the dedicated `LowPriority` word.
+        let ctx = session.statement_context_for_stmt(
+            &parse("load data low_priority infile '/a.csv' into table t"),
+            true,
+        );
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::Low);
+
+        let ctx = session.statement_context_for_stmt(&parse("select id from t"), false);
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::None);
+        assert!(!ctx.not_fill_cache());
+    }
+
+    #[test]
+    fn result_materialization_retains_the_statement_context_tracker() {
+        let session = Session::new();
+        let context = session.statement_context(false);
+        let executing_memory = context.statement_memory();
+        let (retained_memory, _, _) = session.result_materialization_authority().into_parts();
+
+        assert!(Arc::ptr_eq(
+            executing_memory.stmt_tracker(),
+            retained_memory.stmt_tracker(),
+        ));
+    }
+
+    #[test]
+    fn index_lookup_pushdown_uses_one_typed_statement_snapshot() {
+        let mut session = Session::new();
+        session
+            .run("SET tidb_index_lookup_pushdown_policy = 'force'")
+            .unwrap();
+        session
+            .run("SET transaction_isolation = 'READ-COMMITTED'")
+            .unwrap();
+        session.run("SET tidb_replica_read = 'follower'").unwrap();
+        session.run("SET tidb_max_keys_read = 7").unwrap();
+
+        let context = session.statement_context(false);
+        let snapshot = context.index_lookup_push_down_session();
+        assert_eq!(
+            snapshot.policy,
+            tidb_planner::access_path::IndexLookupPushDownPolicy::Force
+        );
+        assert!(!snapshot.repeatable_read);
+        assert!(!snapshot.leader_read);
+        assert_eq!(snapshot.max_keys_read, 7);
+        assert!(!snapshot.staleness);
+        assert!(!snapshot.historical_read);
+    }
+
+    #[test]
+    fn read_committed_connected_session_captures_latest_index_schema() {
+        let mut session = Session::new();
+        assert!(session
+            .statement_context(false)
+            .latest_index_schema()
             .is_none());
 
-        // The suppression is scoped to one context construction; ordinary
-        // statements still retain the metadata required by TIDB_DECODE_KEY.
-        let _normal = session.statement_context(false);
-        assert!(session
-            .tidb_decode_key_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        session.set_connection_id(7);
+        session
+            .run("SET transaction_isolation = 'READ-COMMITTED'")
+            .unwrap();
+
+        let latest = session
+            .statement_context(false)
+            .latest_index_schema()
+            .expect("connected READ-COMMITTED statement has a domain snapshot");
+        assert_eq!(
+            latest.schema_meta_version,
+            session.lock_catalog().unwrap().metadata_version()
+        );
+
+        let mut repeatable_read = Session::new();
+        repeatable_read.set_connection_id(8);
+        assert!(repeatable_read
+            .statement_context_for_update_read(false)
+            .latest_index_schema()
             .is_some());
+    }
+
+    #[test]
+    fn unsafe_generated_column_substitution_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        assert!(!session.statement_context(false).enable_unsafe_substitute());
+
+        session
+            .run("SET tidb_enable_unsafe_substitute = ON")
+            .unwrap();
+        assert!(session.statement_context(false).enable_unsafe_substitute());
+    }
+
+    #[test]
+    fn semi_join_rewrite_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        assert!(!session.statement_context(false).enable_semi_join_rewrite());
+
+        session
+            .run("SET tidb_opt_enable_semi_join_rewrite = ON")
+            .unwrap();
+        assert!(session.statement_context(false).enable_semi_join_rewrite());
+    }
+
+    #[test]
+    fn skew_distinct_agg_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        assert!(!session.statement_context(false).enable_skew_distinct_agg());
+
+        session.run("SET tidb_opt_skew_distinct_agg = ON").unwrap();
+        assert!(session.statement_context(false).enable_skew_distinct_agg());
+    }
+
+    #[test]
+    fn ddl_job_metadata_uses_the_session_snapshot() {
+        let mut session = Session::new();
+        session.set_connection_id(77);
+        session.run("SET tidb_cdc_write_source = 9").unwrap();
+        session
+            .run("SET tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+            .unwrap();
+        session.run("SET tidb_session_alias = 'ddl-owner'").unwrap();
+
+        let context = session.ddl_statement_context();
+        assert_eq!(context.ddl_connection_id(), 77);
+        assert_eq!(context.ddl_cdc_write_source(), 9);
+        assert_eq!(context.ddl_reorg_priority(), 2);
+        assert_eq!(context.ddl_session_alias(), "ddl-owner");
     }
 }

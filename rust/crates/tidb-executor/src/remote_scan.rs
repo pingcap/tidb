@@ -104,6 +104,10 @@ pub enum PushdownAggregateKind {
     Min,
     /// `MAX(expr)`.
     Max,
+    /// `MIN_COUNT(expr)`: count rows tied at the minimum argument.
+    MinCount,
+    /// `MAX_COUNT(expr)`: count rows tied at the maximum argument.
+    MaxCount,
 }
 
 /// A pushed aggregate function and the scan-row expression it reads.
@@ -153,48 +157,11 @@ pub fn extreme_replaces(
     })
 }
 
-/// One function in a global partial aggregation. Unlike the older bounded
-/// column-offset variants, Go permits any TiKV-pushable scalar expression as
-/// an aggregate argument.
-#[derive(Clone, Debug)]
-pub struct PushdownGlobalAggregateFunction {
-    /// The aggregate function implemented by TiKV.
-    pub kind: PushdownAggregateKind,
-    /// The expression evaluated for each qualifying scan row. `None` is
-    /// `COUNT(1)`/`COUNT(*)`.
-    pub input: Option<Expression>,
-    /// The partial result column returned by TiKV.
-    pub output_type: FieldType,
-}
-
 /// One aggregation the base scan may execute inside TiKV before rows cross
 /// the network. This deliberately covers only partial stages with a typed
 /// planner representation and a corresponding TiKV DAG lowering.
 #[derive(Clone, Debug)]
 pub enum PushdownPartialAggregate {
-    /// A partial `COUNT`; the root stage sums the per-region counts.
-    Count {
-        /// Offset in [`PushdownScanRequest::columns`], or `None` for
-        /// `COUNT(*)`/`COUNT(1)` whose input is the constant one.
-        input_offset: Option<usize>,
-        /// The partial count column returned by TiKV.
-        output_type: FieldType,
-    },
-    /// A partial `SUM(column)`; the root stage sums the per-region sums.
-    Sum {
-        /// Offset in [`PushdownScanRequest::columns`].
-        input_offset: usize,
-        /// The partial sum column returned by TiKV.
-        output_type: FieldType,
-    },
-    /// A partial hash aggregation with one group key and no aggregate
-    /// functions, used by one-column `SELECT DISTINCT`.
-    GroupBy {
-        /// Offset in [`PushdownScanRequest::columns`].
-        input_offset: usize,
-        /// The group-key column returned by TiKV.
-        output_type: FieldType,
-    },
     /// A grouped partial aggregation. TiKV returns aggregate results first
     /// and group keys last, matching its aggregation-schema contract.
     Grouped {
@@ -207,12 +174,12 @@ pub enum PushdownPartialAggregate {
         /// `true` for StreamAgg over ordered input, `false` for HashAgg.
         streamed: bool,
     },
-    /// A global partial aggregation. TiKV returns exactly one row containing the
-    /// function states, including for empty input.
+    /// A global partial aggregation. TiKV returns exactly one row containing
+    /// the function states, including for empty input.
     Global {
         /// Aggregate functions in physical output order.
-        functions: Vec<PushdownGlobalAggregateFunction>,
-        /// The selected physical implementation, also carried by the TiKV DAG.
+        functions: Vec<PushdownAggregateFunction>,
+        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
         streamed: bool,
     },
 }
@@ -288,8 +255,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offset(&self) -> usize {
         match self {
-            Self::Count { input_offset, .. } => input_offset.unwrap_or(0),
-            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => *input_offset,
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -319,9 +284,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn output_types(&self) -> Vec<FieldType> {
         match self {
-            Self::Count { output_type, .. }
-            | Self::Sum { output_type, .. }
-            | Self::GroupBy { output_type, .. } => vec![output_type.clone()],
             Self::Grouped {
                 group_types,
                 functions,
@@ -342,10 +304,6 @@ impl PushdownPartialAggregate {
     #[must_use]
     pub fn input_offsets(&self) -> Vec<usize> {
         match self {
-            Self::Count { input_offset, .. } => input_offset.iter().copied().collect(),
-            Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => {
-                vec![*input_offset]
-            }
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -515,10 +473,12 @@ pub struct PushdownScanRequest {
 /// without the sink turns a failing query into a silently truncating one --
 /// strictly worse than the failure it replaced -- so no call site may thread
 /// one and forget the other.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
     /// Go's TryCopLiteWorker permits only one inline reader per statement.
     pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
+    /// Physical scan plan ID used by Go `RuntimeStatsColl`.
+    pub plan_id: isize,
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
     ///
@@ -541,6 +501,41 @@ pub struct PushdownStatementContext {
     /// The `Default` is UTC, which is the zone a caller with no session behind
     /// it evaluates in.
     pub time_zone: SessionTimeZone,
+    /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
+    pub resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
+    pub replica_read: tidb_distsql::ReplicaReadType,
+    /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`: the statement's
+    /// own priority modifier projected onto KV's three values.
+    pub priority: tidb_distsql::Priority,
+    /// Go `StmtCtx.NotFillCache`, set by a SELECT's `SQL_NO_CACHE`.
+    pub not_fill_cache: bool,
+    /// Go's query-scoped per-store coprocessor limiter, shared by every
+    /// remote scan in this statement.
+    pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `SessionVars.DivPrecisionIncrement`, copied to every DAG request's
+    /// `DivPrecisionIncrement` when it differs from the default.
+    pub div_precision_increment: u32,
+}
+
+impl Default for PushdownStatementContext {
+    fn default() -> Self {
+        Self {
+            plan_id: 0,
+            push_down_flags: 0,
+            cop_lite_worker: Arc::default(),
+            warnings: WarningCollector::default(),
+            time_zone: SessionTimeZone::default(),
+            resource_group_name: "default".to_owned(),
+            replica_read: tidb_distsql::ReplicaReadType::Leader,
+            priority: tidb_distsql::Priority::NoPriority,
+            not_fill_cache: false,
+            query_cop_store_limiter: None,
+            // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
+            // behind it has no session value to send.
+            div_precision_increment: 4,
+        }
+    }
 }
 
 impl PushdownStatementContext {
@@ -548,16 +543,47 @@ impl PushdownStatementContext {
     #[must_use]
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
+            plan_id: 0,
             push_down_flags: ctx.push_down_flags(),
             cop_lite_worker: ctx.cop_lite_worker(),
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
+            resource_group_name: ctx.resource_group_name().to_owned(),
+            replica_read: ctx.replica_read(),
+            priority: kv_priority(ctx.statement_priority()),
+            not_fill_cache: ctx.not_fill_cache(),
+            query_cop_store_limiter: ctx.query_cop_store_limiter(),
+            div_precision_increment: ctx.div_precision_increment(),
         }
+    }
+
+    /// Binds the physical scan whose TiKV execution summary owns this read.
+    #[must_use]
+    pub fn with_plan_id(mut self, plan_id: i64) -> Self {
+        self.plan_id = plan_id as isize;
+        self
+    }
+}
+
+/// Go `RequestBuilder.getKVPriority`: the AST priority enum projected onto
+/// DistSQL's own copy of the same enum. `Delayed` maps to `NoPriority` only
+/// later, at the KV boundary, so the DistSQL context keeps the spelling the
+/// statement used.
+const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_distsql::Priority {
+    match priority {
+        tidb_ast::StatementPriority::None => tidb_distsql::Priority::NoPriority,
+        tidb_ast::StatementPriority::Low => tidb_distsql::Priority::Low,
+        tidb_ast::StatementPriority::High => tidb_distsql::Priority::High,
+        tidb_ast::StatementPriority::Delayed => tidb_distsql::Priority::Delayed,
     }
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
-pub trait PushdownRowStream: Send {
+pub trait PushdownRowStream {
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` for the scan executor.
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        (0, 0)
+    }
     /// The next row in record-key order, as the requested columns, or `None`
     /// at the end of the answer.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
@@ -568,10 +594,11 @@ pub trait PushdownRowStream: Send {
         false
     }
 
-    /// The next decoded columnar batch. Callers use this only after
+    /// The next decoded columnar batch using the executor's current Go
+    /// `Chunk.RequiredRows` demand. Callers use this only after
     /// [`Self::supports_chunks`] returns true; row-only backends keep the
     /// existing [`Self::next_row`] contract.
-    fn next_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+    fn next_chunk(&mut self, _required_rows: usize) -> Result<Option<Chunk>, StorageError> {
         Ok(None)
     }
 
@@ -614,7 +641,10 @@ impl ChainedPushdownStream {
     /// Chains the parts in READ order: part 0's rows all precede part 1's.
     #[must_use]
     pub fn new(parts: Vec<Box<dyn PushdownRowStream>>) -> Box<dyn PushdownRowStream> {
-        assert!(!parts.is_empty(), "a chained stream needs at least one part");
+        assert!(
+            !parts.is_empty(),
+            "a chained stream needs at least one part"
+        );
         Box::new(ChainedPushdownStream {
             parts,
             current: 0,
@@ -624,6 +654,12 @@ impl ChainedPushdownStream {
 }
 
 impl PushdownRowStream for ChainedPushdownStream {
+    fn cop_count_and_rows(&self) -> (u64, u64) {
+        self.parts.iter().fold((0, 0), |total, part| {
+            let part = part.cop_count_and_rows();
+            (total.0.wrapping_add(part.0), total.1.wrapping_add(part.1))
+        })
+    }
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
         if self.finished {
             return Ok(None);
@@ -733,12 +769,16 @@ mod tests {
     use crate::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
-    use crate::driver::{run_select_on, Catalog};
+    use crate::driver::{
+        build_prepared_select_plan, run_select_on, Catalog, PreparedPlanCacheEnvironment,
+        DEFAULT_DATABASE,
+    };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
     use crate::mem_table::MemTableSourceExec;
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
+    use crate::run_prepared_select_for_test;
     use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
@@ -807,6 +847,9 @@ mod tests {
         requested_keep_orders: Arc<Mutex<Vec<bool>>>,
         /// Simulate region completion order only for explicitly unordered reads.
         reverse_unordered: std::sync::atomic::AtomicBool,
+        /// The reader-local output projection each request asked TiKV to
+        /// apply after its predicates.
+        requested_output_offsets: Arc<Mutex<Vec<Option<Vec<usize>>>>>,
         /// A warning the region reports on each request, standing in for
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
@@ -838,6 +881,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.keep_order);
+            self.requested_output_offsets
+                .lock()
+                .unwrap()
+                .push(request.output_offsets.clone());
             if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
                 // Exactly what `tidb_distsql`'s `response_channel` does with
                 // `SelectResponse.warnings`, into whatever collector it was
@@ -935,6 +982,9 @@ mod tests {
                 }
                 if appended_handle {
                     row.push(Datum::Int(handle.int_value().unwrap()));
+                }
+                if let Some(offsets) = &request.output_offsets {
+                    row = offsets.iter().map(|offset| row[*offset].clone()).collect();
                 }
                 rows.push(row);
                 if request.limit.is_some_and(|cap| rows.len() as u64 >= cap) {
@@ -1188,17 +1238,21 @@ mod tests {
     fn common_handle_fixture() -> Fixture {
         let mut fixture = fixture_with(None);
         fixture.table.set_common_handle_offsets(vec![0, 1]);
-        fixture.table.add_index(KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            column_offsets: vec![0, 1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        fixture.table.add_index(
+            KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0, 1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
         fixture
     }
 
@@ -1234,6 +1288,7 @@ mod tests {
             requested_flags: Arc::default(),
             requested_keep_orders: Arc::default(),
             reverse_unordered: std::sync::atomic::AtomicBool::new(false),
+            requested_output_offsets: Arc::default(),
             region_warning: Mutex::new(None),
             opened: Arc::default(),
             minimum_opens_before_read: Arc::default(),
@@ -1257,7 +1312,10 @@ mod tests {
     #[test]
     fn write_range_reader_preserves_record_identity_and_staged_rows() {
         for mut fixture in [fixture(), clustered_fixture(), common_handle_fixture()] {
-            fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+            fixture
+                .scanner
+                .reverse_unordered
+                .store(true, Ordering::Relaxed);
             for row in [[1, 10], [2, 20], [3, 30], [4, 40]] {
                 fixture
                     .table
@@ -1305,53 +1363,103 @@ mod tests {
 
     #[test]
     fn composite_cnf_writes_fetch_only_the_matching_keys() {
-        let mut fixture = fixture_with_columns(None, vec![
-            column("a", 1), column("b", 2), column("c", 3), column("v", 4),
-        ]);
+        let mut fixture = fixture_with_columns(
+            None,
+            vec![
+                column("a", 1),
+                column("b", 2),
+                column("c", 3),
+                column("v", 4),
+            ],
+        );
         fixture.table.set_common_handle_offsets(vec![0, 1, 2]);
         for b in 1..=4 {
             for c in 1..=4 {
-                fixture.table.insert_row(
-                    &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
-                    &tidb_expr::NoColumns,
-                ).unwrap();
+                fixture
+                    .table
+                    .insert_row(
+                        &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
+                        &tidb_expr::NoColumns,
+                    )
+                    .unwrap();
             }
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture.table.clear_dirty_content();
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
-        let (rows, reads) = capture_storage_ops(|| run_select_on(
+        let (rows, reads) = capture_storage_ops(|| {
+            run_select_on(
             "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v>0 ORDER BY b DESC LIMIT 1",
             &catalog, &ctx,
-        ).unwrap());
+        ).unwrap()
+        });
         assert_eq!(rows, vec![vec![Datum::Int(10)]]);
-        assert_eq!(reads, crate::storage::StorageOps { gets: 1, ..Default::default() },
-            "complete composite ranges must execute one batched read, not just print a point plan");
-        assert_eq!(crate::run_update_on(
-            "UPDATE t SET v=999 WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
-            &mut catalog, &ctx,
-        ).unwrap(), 0, "a batched handle read must retain the write's residual predicate");
-        assert_eq!(crate::run_delete_on(
-            "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
-            &mut catalog, &ctx,
-        ).unwrap(), 0, "a batched delete must retain its residual predicate");
-        let (updated, ops) = capture_storage_ops(|| crate::run_update_on(
-            "UPDATE t SET v=v+1 WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
-            &mut catalog, &ctx,
-        ).unwrap());
+        assert_eq!(
+            reads,
+            crate::storage::StorageOps {
+                gets: 1,
+                ..Default::default()
+            },
+            "complete composite ranges must execute one batched read, not just print a point plan"
+        );
+        assert_eq!(
+            crate::run_update_on(
+                "UPDATE t SET v=999 WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap(),
+            0,
+            "a batched handle read must retain the write's residual predicate"
+        );
+        assert_eq!(
+            crate::run_delete_on(
+                "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap(),
+            0,
+            "a batched delete must retain its residual predicate"
+        );
+        let (updated, ops) = capture_storage_ops(|| {
+            crate::run_update_on(
+                "UPDATE t SET v=v+1 WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap()
+        });
         assert_eq!(updated, 2);
-        assert_eq!((ops.scans, ops.cop_scans), (0, 0), "point writes must not open scans");
-        assert_eq!(run_select_on(
-            "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 ORDER BY b",
-            &catalog, &ctx,
-        ).unwrap(), vec![vec![Datum::Int(11)], vec![Datum::Int(11)]]);
-        let (deleted, ops) = capture_storage_ops(|| crate::run_delete_on(
-            "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
-            &mut catalog, &ctx,
-        ).unwrap());
+        assert_eq!(
+            (ops.scans, ops.cop_scans),
+            (0, 0),
+            "point writes must not open scans"
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 ORDER BY b",
+                &catalog,
+                &ctx,
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(11)], vec![Datum::Int(11)]]
+        );
+        let (deleted, ops) = capture_storage_ops(|| {
+            crate::run_delete_on(
+                "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap()
+        });
         assert_eq!(deleted, 2);
-        assert_eq!((ops.scans, ops.cop_scans), (0, 0), "dirty point deletes must not open scans");
+        assert_eq!(
+            (ops.scans, ops.cop_scans),
+            (0, 0),
+            "dirty point deletes must not open scans"
+        );
     }
 
     #[test]
@@ -1361,7 +1469,10 @@ mod tests {
             .field_type
             .add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
         let mut fixture = fixture_with_columns(Some(0), columns);
-        fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+        fixture
+            .scanner
+            .reverse_unordered
+            .store(true, Ordering::Relaxed);
         for (a, b) in [(0, 10), (1, 20), (1_u64 << 63, 30), (u64::MAX, 40)] {
             fixture
                 .table
@@ -1468,21 +1579,28 @@ mod tests {
                 .unwrap(),
             );
             let mut fixture = fixture_with_columns(pk_handle_offset, columns);
-            fixture.table.add_index(KvIndex {
-                id: 2,
-                name: "check_stored".to_owned(),
-                comment: String::new(),
-                unique: false,
-                column_offsets: vec![2],
-                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-                visible: true,
-                global: false,
-                clustered_primary: false,
-            }, false);
+            fixture.table.add_index(
+                KvIndex {
+                    id: 2,
+                    name: "check_stored".to_owned(),
+                    comment: String::new(),
+                    unique: false,
+                    column_offsets: vec![2],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                false,
+            );
             for a in [1, 2, 3] {
                 fixture
                     .table
-                    .insert_row(&[Datum::Int(a), Datum::Null, Datum::Int(a + 20)], &tidb_expr::NoColumns)
+                    .insert_row(
+                        &[Datum::Int(a), Datum::Null, Datum::Int(a + 20)],
+                        &tidb_expr::NoColumns,
+                    )
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1499,6 +1617,7 @@ mod tests {
                     &[],
                     &ctx.session_zone(),
                     &PushdownStatementContext::from_stmt(&ctx),
+                    2,
                 )
                 .unwrap()
                 .expect("the table probe remains remote");
@@ -1519,7 +1638,10 @@ mod tests {
                 let sql = format!("SELECT b FROM t FORCE INDEX(check_stored) WHERE c>=21 AND b>11 ORDER BY c{suffix}");
                 assert_eq!(
                     run_select_on(&sql, &catalog, &ctx).unwrap(),
-                    expected.into_iter().map(|value| vec![Datum::Int(value)]).collect::<Vec<_>>(),
+                    expected
+                        .into_iter()
+                        .map(|value| vec![Datum::Int(value)])
+                        .collect::<Vec<_>>(),
                     "{sql}; handle={pk_handle_offset:?}"
                 );
             }
@@ -1601,7 +1723,10 @@ mod tests {
             let mut columns = vec![column("a", 1), column("b", 2), column("c", 3)];
             columns[0].field_type = key_type;
             let mut fixture = fixture_with_columns(None, columns);
-            fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+            fixture
+                .scanner
+                .reverse_unordered
+                .store(true, Ordering::Relaxed);
             fixture.table.set_common_handle_offsets(vec![0, 1]);
             let mut handles = Vec::new();
             for b in 1..=4 {
@@ -1671,7 +1796,12 @@ mod tests {
                 );
             }
             let sql = format!("SELECT SUM(c) FROM t WHERE {predicate}");
-            fixture.scanner.requested_keep_orders.lock().unwrap().clear();
+            fixture
+                .scanner
+                .requested_keep_orders
+                .lock()
+                .unwrap()
+                .clear();
             let (rows, ops) = capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
             assert_eq!(
                 rows,
@@ -1896,10 +2026,6 @@ mod tests {
             ExecutorMeta::new(schema(1), 0, 32, 1024),
             outer_rows,
         ));
-        let unused_inner: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
-            ExecutorMeta::new(schema(2), 0, 32, 1024),
-            Vec::new(),
-        ));
         let mut left = Column::new(1, field.clone());
         left.index = 0;
         let mut right = Column::new(2, field.clone());
@@ -1917,26 +2043,25 @@ mod tests {
             crate::RowDecodeContext::for_query(&ctx),
         );
         lookup.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-        let mut join = JoinExec::new(
+        let mut join = JoinExec::new_index_lookup(
             ExecutorMeta::new(schema(1), 0, 32, 1024),
             JoinKind::Semi,
             vec![equality],
             outer,
-            unused_inner,
+            vec![field.clone()],
+            vec![field.clone(), field],
             ctx.clone(),
             ctx.statement_memory(),
+            IndexLookupPlan {
+                lookup_is_left: false,
+                probe_keys: vec![0],
+                probe_key_domains: Vec::new(),
+                source: IndexLookupSource::Leaf(lookup),
+                outer_not_null: Vec::new(),
+                inner_not_null: Vec::new(),
+                probe_bounds: Vec::new(),
+            },
         );
-        join.set_index_lookup_plan(IndexLookupPlan {
-            lookup_is_left: false,
-            probe_keys: vec![0],
-            source: IndexLookupSource::Leaf(lookup),
-            aggregation: None,
-            aggregation_stream_ordered: false,
-            outer_not_null: Vec::new(),
-            inner_not_null: Vec::new(),
-            probe_cast: None,
-            probe_bounds: Vec::new(),
-        });
 
         join.open().unwrap();
         let mut rows = 0;
@@ -2166,12 +2291,13 @@ mod tests {
     /// A clustered handle whose `WHERE` admits NO handle at all reads nothing
     /// -- it does not send a coprocessor request with no ranges.
     ///
-    /// Both halves matter. `id > 97 AND id < 97` and a NULL bound each build an
-    /// EMPTY range list, which the local cursor states exactly by opening no
-    /// iterator; the coprocessor's `Ranges` list cannot state it, and the
-    /// transport rejects the request instead (`missing_ranges`). The control
-    /// below keeps the ordinary narrowed range on the coprocessor, so this is
-    /// not "stop pushing ranges down".
+    /// `id > 97 AND id < 97` builds an EMPTY range list, which the local cursor
+    /// states exactly by opening no iterator; the coprocessor's `Ranges` list
+    /// cannot state it, and the transport rejects the request instead
+    /// (`missing_ranges`). A NULL bound is NOT the same case: Go's BETWEEN
+    /// rewrite is one `and(ge, le)` condition, so `IsConstNull` misses it and
+    /// the relation is read. The control below keeps the ordinary narrowed
+    /// range on the coprocessor, so this is not "stop pushing ranges down".
     #[test]
     fn an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request() {
         let mut fixture = clustered_fixture();
@@ -2191,6 +2317,16 @@ mod tests {
             Vec::<Vec<Datum>>::new()
         );
         assert_eq!(
+            fixture.returned.load(Ordering::Relaxed),
+            0,
+            "no row crossed the network for an empty handle range"
+        );
+        // `a BETWEEN NULL AND NULL` rewrites to `and(ge(a, NULL), le(a, NULL))`
+        // (`betweenToExpression`, `expression_rewriter.go:2788`), which is NOT
+        // an access condition: Go's `IsConstNull` (`util.go:2356`) only fires
+        // on a bare comparison, so the whole relation is read and the filter
+        // drops every row.
+        assert_eq!(
             run_select_on(
                 "SELECT a FROM t WHERE a BETWEEN NULL AND NULL",
                 &catalog,
@@ -2201,11 +2337,12 @@ mod tests {
         );
         assert_eq!(
             fixture.returned.load(Ordering::Relaxed),
-            0,
-            "no row crossed the network for a range that admits none"
+            100,
+            "a NULL bound is not an access condition, so the relation is read"
         );
 
         // Control: a range that DOES admit rows still reaches the coprocessor.
+        fixture.returned.store(0, Ordering::Relaxed);
         assert_eq!(
             run_select_on("SELECT a FROM t WHERE a BETWEEN 98 AND 100", &catalog, &ctx).unwrap(),
             vec![
@@ -2253,7 +2390,10 @@ mod tests {
     #[test]
     fn staged_rows_survive_the_remote_scan_and_are_filtered_by_the_same_predicate() {
         let mut fixture = fixture();
-        fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+        fixture
+            .scanner
+            .reverse_unordered
+            .store(true, Ordering::Relaxed);
         let committed_low = fixture
             .table
             .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
@@ -2541,20 +2681,40 @@ mod tests {
         // The ordinary ranger, not the AST fast path, derives these keys.
         // Residuals, absent rows and ORDER/LIMIT still execute above the get.
         for (sql, expected) in [
-            ("SELECT b FROM t WHERE a>=5 AND a<=5 AND b>1", vec![vec![Datum::Int(50)]]),
+            (
+                "SELECT b FROM t WHERE a>=5 AND a<=5 AND b>1",
+                vec![vec![Datum::Int(50)]],
+            ),
             ("SELECT b FROM t WHERE a>=5 AND a<=5 AND b>50", vec![]),
-            ("SELECT b FROM t WHERE a IN (5,7,999) AND b>50 ORDER BY b DESC LIMIT 1", vec![vec![Datum::Int(70)]]),
+            (
+                "SELECT b FROM t WHERE a IN (5,7,999) AND b>50 ORDER BY b DESC LIMIT 1",
+                vec![vec![Datum::Int(70)]],
+            ),
         ] {
             let (rows, ops) = capture_storage_ops(|| run_select_on(sql, &catalog, &ctx).unwrap());
             assert_eq!(rows, expected, "{sql}");
-            assert_eq!(ops, crate::storage::StorageOps { gets: 1, ..Default::default() }, "{sql}");
-            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse("52592:ON").unwrap();
-            assert_eq!(fix.get_bool(tidb_planner::fix_control::FIX_52592), Some(true));
+            assert_eq!(
+                ops,
+                crate::storage::StorageOps {
+                    gets: 1,
+                    ..Default::default()
+                },
+                "{sql}"
+            );
+            let (fix, _) =
+                tidb_planner::fix_control::OptimizerFixControl::parse("52592:ON").unwrap();
+            assert_eq!(
+                fix.get_bool(tidb_planner::fix_control::FIX_52592),
+                Some(true)
+            );
             let disabled = ctx.clone().with_optimizer_fix_control(fix);
-            let (rows, ops) = capture_storage_ops(|| run_select_on(sql, &catalog, &disabled).unwrap());
+            let (rows, ops) =
+                capture_storage_ops(|| run_select_on(sql, &catalog, &disabled).unwrap());
             assert_eq!(rows, expected, "disabled: {sql}");
-            assert!(ops.scans > 0 || ops.cop_scans > 0,
-                "fix 52592 must retain scan execution: {sql}: {ops:?}");
+            assert!(
+                ops.scans > 0 || ops.cop_scans > 0,
+                "fix 52592 must retain scan execution: {sql}: {ops:?}"
+            );
         }
 
         // Control: the same table read as a RANGE does send a coprocessor
@@ -2565,6 +2725,98 @@ mod tests {
         });
         assert_eq!(ops.gets, 0);
         assert_eq!((ops.cop_scans, ops.cop_rows), (1, 3));
+    }
+
+    /// Go keeps the selected PhysicalProjection inside the TableReader cop
+    /// task. The physical-plan receipt must therefore narrow the remote row,
+    /// not merely print that projection in EXPLAIN while a root ProjectionExec
+    /// still receives every scan column.
+    #[test]
+    fn a_clean_clustered_range_sends_the_cop_projection() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=10 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        let rows =
+            run_select_on("SELECT b FROM t WHERE a BETWEEN 5 AND 7", &catalog, &ctx).unwrap();
+
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(50)],
+                vec![Datum::Int(60)],
+                vec![Datum::Int(70)]
+            ]
+        );
+        assert_eq!(
+            *scanner.requested_output_offsets.lock().unwrap(),
+            vec![Some(vec![1])],
+            "the selected cop projection must reach DAGRequest.output_offsets",
+        );
+    }
+
+    /// A prepared cache hit recursively rebuilds the retained range tree and
+    /// must preserve the same reader-local projection receipt as ordinary
+    /// planning.
+    #[test]
+    fn a_cached_clustered_range_sends_the_cop_projection_after_rebuild() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=10 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let scanner = Arc::clone(&fixture.scanner);
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let statement = tidb_parser::parse("SELECT b FROM t WHERE a BETWEEN ? AND ?").unwrap();
+        let plan = Arc::new(
+            build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
+                .expect("the range statement is cacheable"),
+        );
+        let environment = PreparedPlanCacheEnvironment::default();
+
+        for (bounds, expected, cache_hit) in [
+            (
+                [Datum::Int(5), Datum::Int(7)],
+                vec![Datum::Int(50), Datum::Int(60), Datum::Int(70)],
+                false,
+            ),
+            (
+                [Datum::Int(8), Datum::Int(9)],
+                vec![Datum::Int(80), Datum::Int(90)],
+                true,
+            ),
+        ] {
+            let execution = plan
+                .bind(&bounds, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .expect("the integer bounds bind");
+            assert_eq!(execution.cache_hit(), cache_hit);
+            let (_, rows) =
+                run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
+            let expected = expected
+                .into_iter()
+                .map(|value| vec![value])
+                .collect::<Vec<_>>();
+            assert_eq!(rows, expected);
+        }
+        assert_eq!(
+            *scanner.requested_output_offsets.lock().unwrap(),
+            vec![Some(vec![1]), Some(vec![1])],
+            "both the first build and recursive cache rebuild keep the cop projection",
+        );
     }
 
     /// MUTATION PROBE, with its control. A backend that lowers NONE of the

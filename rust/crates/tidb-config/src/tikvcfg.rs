@@ -24,6 +24,8 @@
 //! singleton belong to the client/runtime layers, not the config shapes).
 
 use serde::{Deserialize, Serialize};
+use std::sync::{OnceLock, RwLock};
+use tidb_hack::go_to_lower;
 
 /// Default stores-refresh interval in seconds (Go `DefStoresRefreshInterval`).
 pub const DEF_STORES_REFRESH_INTERVAL: u64 = 60;
@@ -139,7 +141,7 @@ impl TxnLocalLatches {
 pub struct PessimisticTxn {
     /// Max retry count for a single statement.
     #[serde(rename = "max-retry-count")]
-    pub max_retry_count: u32,
+    pub max_retry_count: usize,
 }
 
 /// Async-commit config (Go `AsyncCommit`; durations are nanoseconds).
@@ -458,6 +460,31 @@ impl Default for Config {
     }
 }
 
+fn global_config() -> &'static RwLock<Config> {
+    static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
+    GLOBAL_CONFIG.get_or_init(|| RwLock::new(Config::default()))
+}
+
+/// Go client config `GetGlobalConfig`.
+pub fn get_global_config() -> Config {
+    global_config()
+        .read()
+        .expect("TiKV global config lock poisoned")
+        .clone()
+}
+
+/// Go client config `StoreGlobalConfig`.
+pub fn store_global_config(config: Config) {
+    *global_config()
+        .write()
+        .expect("TiKV global config lock poisoned") = config;
+}
+
+/// Go client config `GetTxnScopeFromConfig` (without its test failpoint).
+pub fn get_txn_scope_from_config() -> String {
+    txn_scope_or_global(&get_global_config().txn_scope)
+}
+
 /// Extracts the effective txn scope (Go `GetTxnScopeFromConfig`, without the
 /// failpoint injection). Empty scope resolves to [`GLOBAL_TXN_SCOPE`].
 pub fn txn_scope_or_global(txn_scope: &str) -> String {
@@ -475,7 +502,7 @@ pub fn parse_path(path: &str) -> Result<(Vec<String>, bool, String), String> {
     let (scheme, rest) = path
         .split_once("://")
         .ok_or_else(|| format!("Uri scheme expected [tikv] but found [{path}]"))?;
-    if scheme.to_lowercase() != "tikv" {
+    if go_to_lower(scheme) != "tikv" {
         return Err(format!("Uri scheme expected [tikv] but found [{scheme}]"));
     }
     let (host, query) = match rest.split_once('?') {
@@ -488,7 +515,7 @@ pub fn parse_path(path: &str) -> Result<(Vec<String>, bool, String), String> {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         match k {
             "keyspaceName" => keyspace_name = v.to_string(),
-            "disableGC" => match v.to_lowercase().as_str() {
+            "disableGC" => match go_to_lower(v).as_str() {
                 "true" => disable_gc = true,
                 "false" | "" => {}
                 _ => return Err("disableGC flag should be true/false".into()),

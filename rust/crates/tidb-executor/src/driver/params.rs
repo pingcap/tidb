@@ -13,14 +13,12 @@
 // limitations under the License.
 
 //! Prepared-statement parameter markers: counting the `?` markers a statement
-//! carries, and replacing each with the literal for its execute-time value.
+//! carries and installing each execute-time value.
 //!
 //! Go keeps the parsed statement and installs the values on the marker nodes
-//! themselves. This tier reaches execution through SQL text, so the markers
-//! become literals and the statement is restored -- see [`bind_parameters`]
-//! for why that round trip is exact. Both directions share one AST walk
-//! ([`walk_statement_markers`]), so a statement shape that can be counted can
-//! always be bound.
+//! themselves. Retained prepared plans use that same representation through
+//! [`bind_prepared_statement`]; only the legacy text helper
+//! [`bind_parameters`] replaces markers with literals and restores SQL.
 
 use super::*;
 /// Binds a prepared statement's parameters, replacing every `?` marker with
@@ -71,11 +69,95 @@ pub fn bind_statement(mut stmt: Stmt, values: &[Datum]) -> Result<Stmt, DriverEr
 pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, DriverError> {
     let mut bound_stmt = stmt.clone();
     let mut bound = 0usize;
-    bind_statement_markers(&mut bound_stmt, values, &mut bound)?;
+    install_statement_marker_values(&mut bound_stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::WrongParamCount);
     }
     Ok(bound_stmt)
+}
+
+/// Recover the current parameters at the owned, marker-bearing AST entry.
+/// Cached executions carry this snapshot directly and do not walk the AST.
+pub fn bound_parameter_values(
+    stmt: &mut Stmt,
+) -> Result<Option<std::sync::Arc<[Datum]>>, DriverError> {
+    let mut values = Vec::new();
+    walk_markers(stmt, &mut |expr| {
+        let tidb_ast::Expr::ParamMarker { order, value, .. } = expr else {
+            unreachable!()
+        };
+        if values.len() <= *order {
+            values.resize_with(*order + 1, || None);
+        }
+        values[*order] = value.clone();
+    });
+    if values.is_empty() {
+        return Ok(None);
+    }
+    values
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .map(|values| Some(values.into()))
+        .ok_or(DriverError::WrongParamCount)
+}
+
+/// Rebinds markers on the complete statement retained by a cached DML root.
+/// SELECT and DML cache entries use this same complete-statement operation;
+/// marker nodes remain present so their physical roots can rebuild
+/// parameter-derived ranges on every execution.
+pub(crate) fn bind_prepared_statement_in_place(
+    stmt: &mut Stmt,
+    values: &[Datum],
+) -> Result<(), DriverError> {
+    let mut bound = 0usize;
+    install_statement_marker_values(stmt, values, &mut bound)?;
+    if bound != values.len() {
+        return Err(DriverError::WrongParamCount);
+    }
+    Ok(())
+}
+
+/// Installs execute-time values without replacing marker nodes. Go's
+/// `ParamMarkerExpr` embeds a `ValueExpr`, so the ordinary planner sees both
+/// the current datum and the stable marker order. Cached physical expressions
+/// can then retain `Constant.ParamMarker` and rebind it recursively.
+fn install_statement_marker_values(
+    stmt: &mut Stmt,
+    values: &[Datum],
+    bound: &mut usize,
+) -> Result<(), DriverError> {
+    install_marker_values(stmt, values, bound)
+}
+
+fn install_marker_values<T: tidb_ast::Visitable>(
+    node: &mut T,
+    values: &[Datum],
+    bound: &mut usize,
+) -> Result<(), DriverError> {
+    let mut failure = None;
+    walk_markers(node, &mut |expr| {
+        let tidb_ast::Expr::ParamMarker {
+            order,
+            in_execute,
+            value,
+            ..
+        } = expr
+        else {
+            return;
+        };
+        match values.get(*order) {
+            Some(parameter) => {
+                *value = Some(parameter.clone());
+                *in_execute = true;
+                *bound += 1;
+            }
+            None => failure = Some(DriverError::WrongParamCount),
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// The number of `?` markers a statement carries, which `COM_STMT_PREPARE`
@@ -99,7 +181,7 @@ pub fn parsed_parameter_count(stmt: &Stmt) -> usize {
 }
 
 /// Walks a statement's expressions, applying `visit` to every marker.
-fn walk_statement_markers<N: tidb_ast::Visitable>(stmt: &mut N, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
+fn walk_markers<T: tidb_ast::Visitable>(node: &mut T, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
     struct MarkerVisitor<'a> {
         visit: &'a mut dyn FnMut(&mut tidb_ast::Expr),
     }
@@ -120,7 +202,7 @@ fn walk_statement_markers<N: tidb_ast::Visitable>(stmt: &mut N, visit: &mut dyn 
         }
     }
 
-    tidb_ast::Visitable::accept(stmt, &mut MarkerVisitor { visit });
+    tidb_ast::Visitable::accept(node, &mut MarkerVisitor { visit });
 }
 
 /// Replaces each marker with its value, in the parser's own left-to-right
@@ -131,7 +213,7 @@ fn bind_statement_markers<N: tidb_ast::Visitable>(
     bound: &mut usize,
 ) -> Result<(), DriverError> {
     let mut failure = None;
-    walk_statement_markers(stmt, &mut |expr| {
+    walk_markers(stmt, &mut |expr| {
         let order = match expr {
             tidb_ast::Expr::ParamMarker { order, .. } => *order,
             _ => return,
@@ -167,7 +249,7 @@ pub(crate) fn bind_prelock_predicate(
 
 /// Counts the markers without changing them.
 fn count_statement_markers(stmt: &mut Stmt, counted: &mut usize) {
-    walk_statement_markers(stmt, &mut |_| *counted += 1);
+    walk_markers(stmt, &mut |_| *counted += 1);
 }
 
 #[cfg(test)]
@@ -201,10 +283,7 @@ mod tests {
     fn prepared_typed_markers_reach_projection_filter_and_order() {
         let sql = "SELECT IF(?, v + ?, v - ?) FROM p \
                    WHERE id BETWEEN ? AND ? ORDER BY id DESC LIMIT 2";
-        for (values, expected) in [
-            ([1, 3, 4, 1, 3], [33, 23]),
-            ([0, 3, 4, 1, 2], [16, 6]),
-        ] {
+        for (values, expected) in [([1, 3, 4, 1, 3], [33, 23]), ([0, 3, 4, 1, 2], [16, 6])] {
             assert_eq!(
                 run_prepared_select(sql, values.into_iter().map(Datum::Int).collect()),
                 expected
@@ -224,11 +303,10 @@ mod tests {
                 tidb_datatype::Decimal::from_scaled_i128(55, 0),
             )]],
         );
-        assert!(run_prepared_select(
-            sql,
-            vec![Datum::Int(5), Datum::Int(2), Datum::Int(60)],
-        )
-        .is_empty());
+        assert!(
+            run_prepared_select(sql, vec![Datum::Int(5), Datum::Int(2), Datum::Int(60)],)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -299,7 +377,12 @@ mod tests {
             assert_eq!(columns.len(), expected.len());
             for ((name, actual), (code, flen, decimal, flags)) in columns.iter().zip(expected) {
                 assert_eq!(
-                    (actual.code(), actual.flen(), actual.decimal(), actual.flags()),
+                    (
+                        actual.code(),
+                        actual.flen(),
+                        actual.decimal(),
+                        actual.flags()
+                    ),
                     (code, flen, decimal, flags),
                     "{name}, parameter {param:?}",
                 );
@@ -309,7 +392,11 @@ mod tests {
                 );
                 assert_eq!(
                     actual.collation_name(),
-                    if code == C::Null { "utf8mb4_bin" } else { "binary" },
+                    if code == C::Null {
+                        "utf8mb4_bin"
+                    } else {
+                        "binary"
+                    },
                 );
             }
         }

@@ -189,7 +189,7 @@ impl Parser {
             _ => return Err(self.err_here("expected a username")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            self.bumped_at_name().to_lowercase()
+            tidb_mysql::to_lowercase(&self.bumped_at_name())
         } else {
             "%".to_string()
         };
@@ -418,7 +418,7 @@ impl Parser {
             _ => return Err(self.err_here("expected a role name")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            self.bumped_at_name().to_lowercase()
+            tidb_mysql::to_lowercase(&self.bumped_at_name())
         } else {
             "%".to_string()
         };
@@ -669,7 +669,7 @@ fn decode_auth_hex(raw: &str) -> Option<String> {
         return None;
     }
     let mut bytes = Vec::with_capacity(digits.len() / 2);
-    for pair in digits.as_bytes().chunks_exact(2) {
+    for pair in digits.as_bytes().as_chunks::<2>().0 {
         let pair = std::str::from_utf8(pair).ok()?;
         bytes.push(u8::from_str_radix(pair, 16).ok()?);
     }

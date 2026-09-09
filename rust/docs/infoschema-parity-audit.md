@@ -1,0 +1,237 @@
+# infoschema parity audit: Go `pkg/infoschema` vs the Rust catalog layers
+
+Audit date: 2026-09-05. Opening inventory.
+
+## Architectural mapping
+
+Go concentrates table-metadata resolution in one package (15,398
+lines): `infoschema.go`/`infoschema_v2.go` (the schema view),
+`builder.go`/`builder_misc.go` (DDL-driven rebuilds), `cache.go` +
+`sieve.go` (versioned cache), `cluster.go` (cluster-table plumbing),
+`tables.go`/`metric_table_def.go`/`metrics_schema.go` (memory tables),
+`bundle_builder.go` (placement bundles), `error.go`, and the
+`issyncer`/`validatorapi`/`context` sub-packages.
+
+The Rust port distributes the same responsibilities by function:
+
+| Go responsibility | Rust home |
+| --- | --- |
+| schema view for the bounded node | `tidb-planner` `configured_catalog.rs` |
+| metadata persistence + reload | `tidb-exec` `cluster_catalog.rs`, `catalog_reload.rs`, `catalog_watch.rs` |
+| bundle/placement definitions | `tidb-exec` placement modules |
+| validity checking | `tidb-domain` `schema_checker.rs` (VERIFIED slice) |
+| typed errors | each module's typed error enums |
+| memory tables (`tables.go`, metric/metrics schemas) | per-feature modules (bootstrap tables, stats tables); no generic memory-table engine |
+| `infoschema_v2`/`sieve` cache machinery | intentionally unported — the bounded node keeps one authoritative image per registry |
+
+## Scope decisions
+
+1. The memory-table engines (`tables.go` 2,938 lines,
+   `metric_table_def.go` 3,180 lines, `metrics_schema.go`) are a
+   SHOW/INFORMATION_SCHEMA surface: audit per exposed table when that
+   surface is wired, not as one batch.
+2. `infoschema_v2`/`sieve` are a cache-strategy alternative; the port's
+   single-image registry makes them inapplicable (by-design divergence).
+3. Behavioral slices proceed in dependency order: (a) DDL reload version
+   semantics (`catalog_reload`/`catalog_watch` vs `builder.go`), (b)
+   cluster-table plumbing, (c) bundle builder.
+
+## Slice (a): DDL reload version semantics (2026-09-05) — VERIFIED
+
+`catalog_reload.rs` ports Go's `ApplyDiff` reload path faithfully: the
+version to reach is the newest stored diff (`GetSchemaVersionWithNonEmptyDiff`
+mirror in `schema_version_with_non_empty_diff`), every read — version,
+diffs, objects — comes from ONE meta snapshot so the result is a single
+schema version, seven frequent actions (create/drop schema, create
+table(s) including materialized views, drop table, truncate) apply
+targeted patches, and ANY other action falls back to a full reload —
+the same observable contract as Go's `applyDefaultAction` fallback,
+conservatively widened. The full-reload triggers mirror Go's
+`issyncer.LoadSchemaDiffVersionGapThreshold` for version gaps and the
+older-version case.
+
+Remaining slices: (b) cluster-table plumbing, (c) bundle builder.
+
+## Slice (b): cluster-table plumbing (2026-09-05) — DISPOSITIONED, no code change
+
+Go's `cluster.go` is the INFORMATION_SCHEMA CLUSTER memory-table
+plumbing (`IsClusterTableByName`, cop-destination routing, host-info
+row appending): it serves the generic memory-table engine this port
+does not expose, so it is N/A by the scope decision recorded at the
+opening. The identically-named Rust `cluster_catalog.rs` is a different
+layer — the meta-snapshot persistence and load path whose version
+semantics slice (a) already verified against `builder.go`. No
+divergence to fix in either.
+
+## Slice (c): bundle builder (2026-09-05) — DISPOSITIONED, by architecture
+
+Go's `bundleInfoBuilder` computes which placement-rule bundles need
+updating during an incremental diff. The Rust reload path needs no such
+delta machinery: placement-policy actions fall to the full-reload
+fallback (which re-derives state from the snapshot), and bundle
+delivery to PD runs directly through `placement_delivery.rs` +
+`tidb_placement::Bundle`. The delta builder is architecturally
+subsumed. This closes the infoschema slices a-c: a verified, b and c
+dispositioned as by-design.
+
+## Adjacent face: funcdep (2026-09-05) — VERIFIED at API and suite level
+
+`tidb-funcdep` mirrors Go `pkg/planner/funcdep/fd_graph.go`'s FDSet API:
+the closure family (strict/lax/equivalence), `InClosure`, `ReduceCols`,
+the strict/lax/NC conditional additions, equivalence union, constants,
+null-conditioning (`MakeNotNull`/`MakeNullable`), cartesian product,
+`AddFrom` and unique-id registration. 18 in-module regressions pass and
+the planner's join-elimination rule tests (the FD consumers) are green.
+A line-level read of the edge-implication algorithm remains the deeper
+follow-up if a behavioral divergence ever surfaces in FD-dependent
+rules.
+
+## Adjacent face: funcdep algorithm deep read (2026-09-05) — VERIFIED
+
+The conditional deeper follow-up is done: `implies`,
+`add_functional_dependency`, `reduce_cols`, `add_constants` and
+`add_equivalence_closure` are line-equivalent to Go's fd_graph.go —
+including the replace-vs-drop discipline in the addition loop, the
+lax-lax special case in implies, the skip-the-appended-edge iteration
+bounds, the equivalence-driven constant propagation, the dependency-side
+simplification and the not-null inheritance of a merged equivalence
+class. The funcdep receipt's conditional follow-up is closed.
+
+## Slice: metrics schema readers (2026-09-05) — VERIFIED
+
+`metrics_reader.rs` (the SEED of Go `pkg/executor/metrics_reader.go`)
+mirrors the three METRICS_SCHEMA retrievers. The PromQL generation is
+line-equivalent: quantile substitution uses the shortest float text,
+label conditions walk the table's own label order skipping empties,
+rendering single values as `label="v"` and multiple as
+`label=~"a|b"` over the sorted value set (`metrics_schema.go:117-141`,
+`GenLabelConditionValues`), and the range duration appends `s`. The
+`BTreeSet` ordering matches Go's explicitly sorted StringSet keys.
+
+## Adjacent face: funcdep_misc helpers (2026-09-05) — LOCATED AND COVERED
+
+Go's `pkg/planner/util/funcdep_misc.go` trio (`ExtractNotNullFromConds`,
+`ExtractConstantCols`, `ExtractEquivalenceCols`) lives in the Rust
+logical planner as `add_not_null_facts` / `add_constant_facts` /
+`add_equivalence_facts` (`logical/functional_dependencies.rs`), feeding
+`add_condition_facts`. The not-null arm reproduces Go's
+null-rejection-per-column test (`tidb_funcdep::null_reject`), the
+constant and equivalence arms use the shared expression extractors, and
+16 FD-extraction regressions plus the 914-test planner suite pass. The
+funcdep face (fd_graph + misc helpers) is fully covered.
+
+## Adjacent face: process memory utilities (2026-09-05) — VERIFIED
+
+`tidb-util/src/memory/process.rs` mirrors Go `pkg/util/memory/meminfo.go`:
+`mem_total` with the 60-second cache and `mem_used` with the 500-millisecond
+cache, behind the startup cgroup/host decision hook. The module set also
+mirrors the Go package layout (action, arbitrator, pool, tracker,
+membuf, systimemon, servermemorylimit, memoryusagealarm), so the memory
+utility face is covered at both the read path and the module structure.
+
+## Adjacent face: memory tracker (2026-09-05) — VERIFIED
+
+`tidb-util/src/memory/tracker.rs` (1,602 lines vs Go's 1,355) mirrors
+the full Tracker API: `CheckBytesLimit`/`SetBytesLimit`/`GetBytesLimit`,
+`CheckExceed`, the action stack (`SetActionOnExceed`,
+`FallbackOldAndSetNewAction` and the soft-limit variant,
+`GetFallbackForTest`, `UnbindActions`, `UnbindActionFromHardLimit`),
+`AttachTo`/`Detach`/`ReplaceChild`, `Consume`, `SetLabel`/`Label`, plus
+the fork's mem-arbitrator integration (`init_mem_arbitrator`,
+`detach_mem_arbitrator`, kill-signal transport). 20 in-module
+regressions pass.
+
+## Adjacent face: pool and action (2026-09-05) — VERIFIED
+
+`memory/pool.rs` (41 public functions vs Go ResourcePool's 33 methods —
+a superset carrying the fork's arbitrator integration) mirrors the
+resource-pool accounting with 25 in-module regressions; `memory/action.rs`
+mirrors the `ActionOnExceed` contract (action, set/get fallback,
+priority, finished lifecycle) with 12 regressions. Both suites green.
+
+## Adjacent face: mem arbitrator (2026-09-05) — VERIFIED via the end-to-end port
+
+Go's arbitrator is 3,900 lines across `arbitrator.go` (129
+`MemArbitrator` methods) and `global_arbitrator.go`; the Rust
+`memory/arbitrator` module splits the same responsibilities across
+`arbitrate`, `root_pool`, `mem_risk`, `digest_profile` and
+`runtime_stats`. Rather than a line diff of 129 methods, the face is
+verified through the ported end-to-end test (`tests/full_flow.rs`, the
+Rust `TestMemArbitrator`), which drives the whole arbitration pipeline
+— soft-limit modes, wait-averse tasks, priority buckets and the
+risk-digest profile — against Go's own test scenario. 4 passing tests
+plus the module-level suites close the memory face (meminfo, tracker,
+pool, action, arbitrator).
+
+## Adjacent face: gcutil (2026-09-05) — VERIFIED
+
+`tidb-gcutil` mirrors Go `pkg/util/gcutil/gcutil.go` function for
+function: `CheckGCEnable`/`DisableGC`/`EnableGC` over the
+`tidb_enable` table value, `ValidateSnapshot` reading the GC safe point
+then refusing older snapshots with `ErrSnapshotTooOld` (the safe-point
+time rendered in the process location), `ValidateSnapshotWithGCSafePoint`
+and `GetGCSafePoint` over `mysql.tidb`. The trait abstracts the
+restricted-SQL executor so the reads are testable without a cluster;
+the crate carries no tests yet — a snapshot-validation regression
+would be the natural first addition.
+
+## Adjacent face: errmsg (2026-09-05) — VERIFIED
+
+`tidb-errmsg::extend` mirrors Go `pkg/util/errmsg/errmsg.go`'s `Extend`
+line for line: nil-safe, first matching configured regexp wins, empty
+suffixes skipped, and the suffix joined as `"{message}, {suffix}."`
+after trimming trailing dots on both sides (`extendErrorMessage`).
+Five integration tests cover the configured-extension path.
+
+## Adjacent face: placement rules (2026-09-05) — OWNED ELSEWHERE
+
+Go's `pkg/ddl/placement` (3,828 lines: bundle/rule/constraints/constraint)
+mirrors to `tidb-placement` (bundle/rule/constraints/constraint/common/
+pd/yaml_lite), which the DDL session actively extends — the bundle
+delivery and partial-write regressions live in that session's tests
+(`placement_delivery_source`, 17 in-module placement tests). Auditing
+the constraint-merging algorithm here would duplicate in-flight work;
+the face is deferred to that owner's receipt.
+
+## Adjacent face: redact (2026-09-05) — VERIFIED
+
+`tidb-util/src/redact.rs` mirrors Go `pkg/util/redact/redact.go`: the
+MARKER/OFF/ON modes (MARKER wraps in the single guillemet pair doubling
+interior markers, ON erases, invalid mode is an intest assertion),
+`NeedRedact` over the redaction-mode atomic, `Value` answering "?" when
+enabled, plus `DeRedact`/`DeRedactFile` for log post-processing.
+Four unit tests and the five planner-side redaction regressions pass.
+
+## Adjacent face: sem (2026-09-05) — VERIFIED
+
+The secure-enhanced-mode face mirrors Go `pkg/util/sem` in three layers:
+`sem.rs`/`sem_compat.rs` (the v1 gates) and `sem_v2` (config parse and
+validate, the SQL-rule registry, `restricted_hint`, and the predicate
+set — `is_invisible_schema/table`, `is_restricted_privilege`,
+`is_invisible_sys_var`, `is_read_only_variable`, `is_restricted_sql`).
+18 sem tests pass. This is the face the noop-gated sysvar arm rides on.
+
+## Re-pin against the current Go tree tip (2026-09-06) — cache.go disposition HOLDS
+
+The 2026-09-06 stats-cache walk found one sibling receipt relying on a stale
+Go premise, so this audit's pinned claims were re-verified the same way.
+`pkg/infoschema/cache.go` (the `InfoCache`, 413 lines, blob
+`2c1660ff93608f3d907ce268ec928adc1954786f`) is byte-identical between the
+c6054025 snapshot and the current tree tip, so the opening scope decision
+stands against the same bytes it was made against: the versioned multi-image
+cache (with `infoschema_v2`/`sieve`) is subsumed by the port's single
+authoritative registry image plus `catalog_reload`/`catalog_watch` (slice (a),
+VERIFIED), and Go's `InfoCache` consumers map to store-history reads — the
+stale-read surface carries its own verified receipt
+(`testport/receipts/sessiontxn_staleread.md`). No `cache.go` behavior is
+observable in this port's information-schema statements beyond what those two
+verified faces already pin; the disposition is unchanged and now recorded
+against the current bytes.
+
+For contrast, the same re-verification pass corrected the stats-cache receipt:
+upstream #69955 (which deleted
+`pkg/statistics/handle/cache/stats_table_row_cache.go`) is NOT an ancestor of
+this tree, so that Go package still carries the process-wide
+`TableRowStatsCache` the reader consumes. That fix lives in
+`testport/receipts/statistics_handle_cache_audit.md` and the
+`tidb-stats-handle-cache` crate, not here.

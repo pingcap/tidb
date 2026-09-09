@@ -87,8 +87,10 @@ pub(super) fn json_array_append(
         return Ok(Datum::Null);
     };
     for (pair, types) in vals[1..]
-        .chunks_exact(2)
-        .zip(arg_types[1..].chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(arg_types[1..].as_chunks::<2>().0)
     {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);
@@ -121,8 +123,10 @@ pub(super) fn json_array_insert(
         return Ok(Datum::Null);
     };
     for (pair, types) in vals[1..]
-        .chunks_exact(2)
-        .zip(arg_types[1..].chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(arg_types[1..].as_chunks::<2>().0)
     {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);
@@ -177,8 +181,10 @@ pub(super) fn json_modify(
         return Ok(Datum::Null);
     };
     for (pair, types) in vals[1..]
-        .chunks_exact(2)
-        .zip(arg_types[1..].chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(arg_types[1..].as_chunks::<2>().0)
     {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);

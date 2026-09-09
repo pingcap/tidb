@@ -401,7 +401,7 @@ impl Columns for FractionalClock {
 fn current_time_truncates_to_microseconds_before_fsp_rounding() {
     let clock = FractionalClock;
     assert_eq!(
-        current_time(&[Datum::Int(6)], &clock).unwrap(),
+        current_time(&[Datum::Int(6)], "curtime", &clock).unwrap(),
         Datum::new_string("22:13:20.654320".to_string())
     );
     assert_eq!(
@@ -424,8 +424,8 @@ fn current_clock_null_fsp_follows_each_go_signature() {
         utc_timestamp(&[Datum::Int(0)], &clock)
     );
     assert_eq!(
-        current_time(&[Datum::Null], &clock),
-        current_time(&[Datum::Int(0)], &clock)
+        current_time(&[Datum::Null], "curtime", &clock),
+        current_time(&[Datum::Int(0)], "curtime", &clock)
     );
     assert_eq!(utc_time(&[Datum::Null], &clock), Ok(Datum::Null));
 }
@@ -518,9 +518,18 @@ fn sec_to_time_source_vectors() {
         // Go sets the constant's field-type decimal per row
         // (`SetDecimal(test.inputDecimal)`): 1, 1, then 5. A DECIMAL datum
         // carries that scale; a bare Real would be the unspecified case.
-        (Datum::Decimal(crate::Decimal::from_literal("86401.4")), "24:00:01.4"),
-        (Datum::Decimal(crate::Decimal::from_literal("-86401.4")), "-24:00:01.4"),
-        (Datum::Decimal(crate::Decimal::from_literal("86401.54321")), "24:00:01.54321"),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("86401.4")),
+            "24:00:01.4",
+        ),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("-86401.4")),
+            "-24:00:01.4",
+        ),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("86401.54321")),
+            "24:00:01.54321",
+        ),
         (string_datum("123.4"), "00:02:03.400000"),
         (string_datum("123.4567891"), "00:02:03.456789"),
         (string_datum("123"), "00:02:03.000000"),
@@ -630,6 +639,18 @@ fn date_format_source_vectors() {
     assert_eq!(
         calendar::date_format(&Datum::Null, &string_datum("%Y-%M-%D")).unwrap(),
         Datum::Null
+    );
+}
+
+/// Go's `Time.convertDateFormat` uses the `uint32` sentinel
+/// `4294967295` when `%X`/`%x`'s ISO week-year calculation is negative (for
+/// example, the year-zero boundary). Rust's signed formatting must preserve
+/// that source-visible spelling rather than exposing `-001`.
+#[test]
+fn date_format_negative_week_year_uses_go_uint32_sentinel() {
+    assert_eq!(
+        calendar::date_format(&string_datum("0000-01-01"), &string_datum("%X %x"),).unwrap(),
+        Datum::new_string("0000 4294967295".to_owned())
     );
 }
 
@@ -749,6 +770,55 @@ fn str_to_date_source_vectors() {
         Datum::Null
     );
     assert!(calendar::str_to_date(&[string_datum("2020")], &crate::NoColumns).is_err());
+}
+
+/// Go's `STR_TO_DATE` `%.` token consumes Unicode punctuation
+/// (`unicode.IsPunct`) but does not consume ASCII symbols such as `+`.
+/// Keep the expression-level implementation aligned with the datatype parser
+/// rather than using Rust's ASCII-only punctuation predicate.
+#[test]
+fn str_to_date_punctuation_token_uses_go_unicode_categories() {
+    let relaxed = Modes(tidb_datatype::DateModes {
+        no_zero_date: false,
+        no_zero_in_date: true,
+        allow_invalid_dates: false,
+    });
+    assert_eq!(
+        calendar::str_to_date(&[string_datum("2013¿5"), string_datum("%Y%.%c")], &relaxed,)
+            .unwrap(),
+        Datum::new_string("2013-05-00".to_owned())
+    );
+    assert_eq!(
+        calendar::str_to_date(&[string_datum("2013+5"), string_datum("%Y%.%c")], &relaxed,)
+            .unwrap(),
+        Datum::Null
+    );
+}
+
+#[test]
+fn str_to_date_exhausted_tokens_preserve_go_meridiem_fix_state() {
+    // Go records ctx["%p"] = 0 after the clock is consumed. `%H` plus that
+    // marker is invalid, while `%h` treats the absent marker as AM.
+    assert_eq!(
+        calendar::str_to_date(
+            &[string_datum("11:30:45"), string_datum("%H:%i:%s %p")],
+            &crate::NoColumns,
+        )
+        .unwrap(),
+        Datum::Null
+    );
+    assert_eq!(
+        calendar::str_to_date(
+            &[string_datum("11:30:45"), string_datum("%h:%i:%s %p")],
+            &crate::NoColumns,
+        )
+        .unwrap(),
+        Datum::new_string("11:30:45".to_owned())
+    );
+    assert_eq!(
+        calendar::str_to_date(&[string_datum(""), string_datum("%p")], &crate::NoColumns).unwrap(),
+        Datum::Null
+    );
 }
 
 /// A session whose `sql_mode` bits are chosen per test; everything else

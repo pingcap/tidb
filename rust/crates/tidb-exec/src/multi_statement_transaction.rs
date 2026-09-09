@@ -49,14 +49,15 @@ use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_executor::deadlock_history::record_deadlock;
 use tidb_pd_client::PdClient;
-use tidb_planner::physical_selection::{ComparisonOp, ComparisonOperand, PhysicalSelectionPlan};
+use tidb_planner::physical::PhysicalSelection;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
     ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ReadOnlyScanPlan, ResolvedProjectionColumn,
 };
-use tidb_planner::signed_bigint_ranger::SignedBigIntRange;
+use tidb_planner::signed_bigint_ranger::{
+    BigIntComparison, ComparisonOp, ComparisonOperand, SignedBigIntRange,
+};
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
@@ -156,7 +157,7 @@ impl TransactionStatementError {
 
 fn record_lock_failure(failure: &PessimisticLockFailure) {
     if let PessimisticLockFailure::Deadlock(detail) = failure {
-        record_deadlock(detail);
+        crate::deadlock_recording::record_deadlock(detail);
     }
 }
 
@@ -222,6 +223,8 @@ where
     /// the record key the buffer is keyed by.
     table: ConfiguredTable,
     buffer: TransactionMutationBuffer,
+    /// Go statement scan detail accumulated while planning the current write.
+    statement_processed_keys: i64,
     /// Per-statement RPC budget. Stored as a duration, never as an already
     /// minted [`UnaryCallContext`]: that type carries an absolute deadline, so
     /// one minted at `BEGIN` would hand every later statement — and the commit
@@ -292,6 +295,7 @@ where
             mode,
             table,
             buffer: TransactionMutationBuffer::new(),
+            statement_processed_keys: 0,
             timeout,
             keep_alive: None,
             lock_values: BTreeMap::new(),
@@ -392,10 +396,10 @@ where
         let key = encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(handle));
         let staged = self.buffer.staged(&key)?;
         match staged.kind() {
-            OptimisticMutationKind::Delete => Some(None),
-            OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
-                Some(Some(staged.value()))
-            }
+            OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => Some(None),
+            OptimisticMutationKind::Insert
+            | OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::SystemRowPut => Some(Some(staged.value())),
             // Index keys are never record keys, and a meta key lives in the `m`
             // namespace, so neither can carry one.
             OptimisticMutationKind::IndexPut
@@ -441,8 +445,10 @@ where
                 continue;
             }
             let row = match staged.kind() {
-                OptimisticMutationKind::Delete => None,
-                OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => Some(
+                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
+                OptimisticMutationKind::Insert
+                | OptimisticMutationKind::PutExisting
+                | OptimisticMutationKind::SystemRowPut => Some(
                     decode_staged_projection(projection, handle, staged.value())
                         .map_err(|error| TransactionStatementError::write(&error))?,
                 ),
@@ -471,7 +477,11 @@ where
         plan: &ReadOnlyScanPlan,
     ) -> Result<StagedRowOverlay, TransactionStatementError> {
         let selection = plan.selection();
-        let scan_columns = &plan.table_scan().pushdown().columns;
+        let scan_columns = &plan
+            .table_scan()
+            .pushdown()
+            .expect("ReadOnlyScanPlan always owns executable TiKV scan fields")
+            .columns;
         let mut overlay = Vec::new();
         for staged in self.buffer.staged_entries() {
             let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {
@@ -486,8 +496,10 @@ where
                 continue;
             }
             let row = match staged.kind() {
-                OptimisticMutationKind::Delete => None,
-                OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
+                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
+                OptimisticMutationKind::Insert
+                | OptimisticMutationKind::PutExisting
+                | OptimisticMutationKind::SystemRowPut => {
                     if let Some(selection) = selection {
                         let scan_row = decode_staged_scan_columns(
                             &self.table,
@@ -533,6 +545,7 @@ where
         write: &ConfiguredPreparedWrite,
         session_tz: &SessionTimeZone,
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
+        self.statement_processed_keys = 0;
         let plan = if self.mode.is_pessimistic() {
             match write {
                 ConfiguredPreparedWrite::ReplaceRows { .. }
@@ -554,6 +567,7 @@ where
             plan_configured_write(self, write, &self.statement_call(), session_tz)
                 .map_err(|error| TransactionStatementError::write(&error))?
         };
+        let processed_keys = self.statement_processed_keys;
         match plan {
             ConfiguredWritePlan::Write {
                 mutations,
@@ -570,6 +584,9 @@ where
                     affected_rows,
                     no_write: None,
                     warnings: Vec::new(),
+                    write_size: 0,
+                    write_keys: 0,
+                    processed_keys,
                 })
             }
             ConfiguredWritePlan::NoWrite {
@@ -579,6 +596,9 @@ where
                 affected_rows,
                 no_write: Some(reason),
                 warnings: Vec::new(),
+                write_size: 0,
+                write_keys: 0,
+                processed_keys,
             }),
             ConfiguredWritePlan::Ignore {
                 mutations,
@@ -596,9 +616,24 @@ where
                     affected_rows,
                     no_write: None,
                     warnings,
+                    write_size: 0,
+                    write_keys: 0,
+                    processed_keys,
                 })
             }
         }
+    }
+
+    /// Go commit detail `WriteSize` and `WriteKeys` for the final coalesced
+    /// transaction mutation set.
+    pub fn write_details(&self) -> (isize, isize) {
+        self.buffer
+            .staged_entries()
+            .fold((0_isize, 0_isize), |(size, keys), mutation| {
+                let mutation_size =
+                    mutation.key().len().wrapping_add(mutation.value().len()) as isize;
+                (size.wrapping_add(mutation_size), keys.wrapping_add(1))
+            })
     }
 
     /// Plans a pessimistic conflict-resolving write until every key it might
@@ -730,6 +765,19 @@ where
             unreachable!("the pessimistic mode check above admits only a pessimistic transaction");
         };
         let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+        // The session prelock path may already own these point-write keys.
+        // Match Go's KVTxn.LockKeys behavior by omitting held keys from the
+        // request; a repeated PessimisticLock RPC only adds statement latency.
+        // A held key without a cached value still falls through to snapshot
+        // storage, so this does not change read semantics.
+        let missing = keys
+            .iter()
+            .filter(|key| !held.contains(*key))
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
         let mut attempt = 0;
         let acquired = loop {
             // This shared lock path deliberately carries no absence
@@ -743,10 +791,9 @@ where
             // request flag, set from `InitReturnValues` when an executor needs
             // the row it is about to modify (`pkg/executor/point_get.go:614`).
             let retry_reason = match if return_values {
-                transaction
-                    .acquire_locks_returning_values(keys, &BTreeSet::new(), wait, &call)
+                transaction.acquire_locks_returning_values(&missing, &BTreeSet::new(), wait, &call)
             } else {
-                transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
+                transaction.acquire_locks(&missing, &BTreeSet::new(), wait, &call)
             } {
                 Ok(acquired) => {
                     // Cache whatever rows rode back BEFORE deciding what the
@@ -958,12 +1005,14 @@ where
             return Ok(match staged.kind() {
                 OptimisticMutationKind::Delete
                 | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete => None,
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::SystemRowDelete => None,
                 OptimisticMutationKind::Insert
                 | OptimisticMutationKind::PutExisting
                 | OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::SystemRowPut => Some(staged.value().to_vec()),
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
         }
@@ -988,6 +1037,9 @@ where
             // after a lock conflict would recompute the same stale mutation.
             OpenTransaction::Pessimistic(transaction) => transaction.for_update_get(key, call)?,
         };
+        if value.is_some() {
+            self.statement_processed_keys = self.statement_processed_keys.wrapping_add(1);
+        }
         Ok(value)
     }
 }
@@ -1093,10 +1145,15 @@ fn decode_staged_scan_columns(
 /// scan row. A NULL comparison is not true and therefore cannot pass a SQL
 /// `WHERE`, matching `expression.EvalBool` in Go's UnionScan.
 fn selection_matches_staged_row(
-    selection: &PhysicalSelectionPlan,
+    selection: &PhysicalSelection,
     row: &[Datum],
 ) -> Result<bool, ConfiguredWriteError> {
-    for condition in selection.conditions() {
+    for expression in &selection.conditions {
+        let condition = BigIntComparison::from_expression(expression).ok_or_else(|| {
+            ConfiguredWriteError::RowRead(
+                "staged-row overlay cannot evaluate this physical Selection expression".to_owned(),
+            )
+        })?;
         let operand = |operand: ComparisonOperand| match operand {
             ComparisonOperand::Int(value) => Ok(Datum::new_int(value)),
             ComparisonOperand::InputOffset(offset) => {
@@ -1175,14 +1232,12 @@ mod tests {
         MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
         TRANSACTION_END_TIMEOUT,
     };
+    use crate::configure_deadlock_history;
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
-    use tidb_planner::physical_selection::{
-        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionPlan,
-    };
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
     };
-    use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
+    use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan};
     use tidb_txnkv::transaction::{
         DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome, OptimisticMutation,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
@@ -1190,9 +1245,7 @@ mod tests {
     };
 
     use tidb_datatype::Datum;
-    use tidb_executor::deadlock_history::{
-        configure_global_deadlock_history, global_deadlock_history,
-    };
+    use tidb_executor::deadlock_history::GLOBAL_DEADLOCK_HISTORY;
 
     static DEADLOCK_HISTORY_TEST: Mutex<()> = Mutex::new(());
 
@@ -1200,8 +1253,8 @@ mod tests {
 
     impl Drop for ResetDeadlockHistory {
         fn drop(&mut self) {
-            global_deadlock_history().clear();
-            configure_global_deadlock_history(0, false);
+            GLOBAL_DEADLOCK_HISTORY.clear();
+            configure_deadlock_history(0, false);
         }
     }
 
@@ -1307,8 +1360,8 @@ mod tests {
     fn a_live_deadlock_failure_is_recorded_before_it_reaches_sql() {
         let _serial = DEADLOCK_HISTORY_TEST.lock().unwrap();
         let _reset = ResetDeadlockHistory;
-        configure_global_deadlock_history(2, false);
-        global_deadlock_history().clear();
+        configure_deadlock_history(2, false);
+        GLOBAL_DEADLOCK_HISTORY.clear();
         let failure = PessimisticLockFailure::Deadlock(DeadlockDetail {
             lock_ts: 7,
             lock_key: b"blocked".to_vec(),
@@ -1326,7 +1379,7 @@ mod tests {
         record_lock_failure(&failure);
         let error = TransactionStatementError::from_lock_failure(&failure);
         assert_eq!(error.sql_error().code, 1213);
-        let records = global_deadlock_history().get_all();
+        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].id, 1);
         assert_eq!(records[0].wait_chain[0].try_lock_txn, 7);
@@ -1347,13 +1400,13 @@ mod tests {
             wait_chain: Vec::new(),
         });
 
-        configure_global_deadlock_history(2, false);
+        configure_deadlock_history(2, false);
         record_lock_failure(&failure);
-        assert!(global_deadlock_history().get_all().is_empty());
+        assert!(GLOBAL_DEADLOCK_HISTORY.get_all().is_empty());
 
-        configure_global_deadlock_history(2, true);
+        configure_deadlock_history(2, true);
         record_lock_failure(&failure);
-        let records = global_deadlock_history().get_all();
+        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         assert_eq!(records.len(), 1);
         assert!(records[0].is_retryable);
     }
@@ -1441,22 +1494,19 @@ mod tests {
 
     #[test]
     fn a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics() {
-        let selection = PhysicalSelectionPlan::from_bigint_conditions(vec![BigIntComparison::new(
-            ComparisonOp::Gt,
-            ComparisonOperand::InputOffset(1),
-            ComparisonOperand::Int(10),
+        let plan = ReadOnlyScanPlan::lower(
+            "SELECT id FROM campaign.accounts WHERE balance > 10",
+            &table(),
         )
-        .unwrap()])
         .unwrap();
+        let selection = plan.selection().unwrap();
 
+        assert!(selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Int(11)]).unwrap());
         assert!(
-            selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(11)]).unwrap()
+            !selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Int(10)]).unwrap()
         );
         assert!(
-            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(10)]).unwrap()
-        );
-        assert!(
-            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Null]).unwrap(),
+            !selection_matches_staged_row(selection, &[Datum::Int(7), Datum::Null]).unwrap(),
             "a NULL WHERE comparison is not true"
         );
     }

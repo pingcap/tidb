@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row_in_disk::DataInDiskByRows;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const LIVE_RESULT: &str = "exists=true,temp-root=true,repository=false";
 const CLOSED_RESULT: &str = "exists=false,temp-root=true,repository=false";

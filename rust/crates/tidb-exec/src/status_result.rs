@@ -67,6 +67,9 @@ impl StatusResultSnapshot {
                 protocol_41,
             },
             result_set_options: ResultSetOptions {
+                affected_rows: published.affected_rows,
+                last_insert_id: published.last_insert_id,
+                info: published.message.as_bytes().to_vec(),
                 status_flags,
                 warnings,
                 deprecate_eof,

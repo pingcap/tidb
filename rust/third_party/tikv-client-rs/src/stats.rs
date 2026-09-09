@@ -136,6 +136,10 @@ static TIKV_PIPELINED_FLUSH_DURATION_HISTOGRAM: ClientHistogram =
     ClientHistogram("TiKVPipelinedFlushDuration");
 static TIKV_TXN_CMD_DURATION: ClientObserverVec = ClientObserverVec("TiKVTxnCmdHistogram");
 static TIKV_TXN_REGIONS_NUM: ClientObserverVec = ClientObserverVec("TiKVTxnRegionsNumHistogram");
+static TIKV_TXN_LAG_COMMIT_TS_WAIT: ClientObserverVec =
+    ClientObserverVec("TiKVTxnLagCommitTSWaitHistogram");
+static TIKV_TXN_LAG_COMMIT_TS_ATTEMPT: ClientObserverVec =
+    ClientObserverVec("TiKVTxnLagCommitTSAttemptHistogram");
 static TIKV_RAWKV_CMD_DURATION: ClientObserverVec = ClientObserverVec("TiKVRawkvCmdHistogram");
 static TIKV_RAWKV_SIZE: ClientObserverVec = ClientObserverVec("TiKVRawkvSizeHistogram");
 static TIKV_ASYNC_BATCH_GET_COUNTER: ClientCounterVec =
@@ -439,6 +443,29 @@ pub(crate) fn observe_retry_backoff(kind: &'static str, duration: Duration) {
     TIKV_BACKOFF_HISTOGRAM
         .with_label_values(&[kind])
         .observe(duration_to_sec(duration));
+}
+
+pub(crate) fn observe_commit_ts_lag(duration: Duration, attempts: u64, succeeded: bool) {
+    let result = if succeeded { "ok" } else { "err" };
+    TIKV_TXN_LAG_COMMIT_TS_WAIT
+        .with_label_values(&[result])
+        .observe(duration_to_sec(duration));
+    TIKV_TXN_LAG_COMMIT_TS_ATTEMPT
+        .with_label_values(&[result])
+        .observe(attempts as f64);
+}
+
+#[cfg(test)]
+pub(crate) fn commit_ts_lag_sample_counts() -> [u64; 4] {
+    let sample_count = |metric: &ClientObserverVec, result: &str| {
+        metric.with_label_values(&[result]).get_sample_count()
+    };
+    [
+        sample_count(&TIKV_TXN_LAG_COMMIT_TS_WAIT, "ok"),
+        sample_count(&TIKV_TXN_LAG_COMMIT_TS_ATTEMPT, "ok"),
+        sample_count(&TIKV_TXN_LAG_COMMIT_TS_WAIT, "err"),
+        sample_count(&TIKV_TXN_LAG_COMMIT_TS_ATTEMPT, "err"),
+    ]
 }
 
 /// Mirrors client-go's range-task completed/failed region gauges. Completed

@@ -50,11 +50,10 @@ fn is_zero_row_dual(plan: &LogicalPlan) -> bool {
     matches!(plan, LogicalPlan::TableDual(dual) if dual.row_count == 0)
 }
 
-/// Go's "case 2: indirect projection + table dual item", which reads
-/// `proj.Children()[0]` and would panic on a childless projection.
+/// Go's "case 2: indirect projection + table dual item", which indexes
+/// `proj.Children()[0]` and therefore panics on a childless projection.
 fn is_projection_over_zero_row_dual(plan: &LogicalPlan) -> bool {
-    matches!(plan, LogicalPlan::Projection(_))
-        && plan.children().first().is_some_and(is_zero_row_dual)
+    matches!(plan, LogicalPlan::Projection(_)) && is_zero_row_dual(&plan.children()[0])
 }
 
 struct EliminateUnionAllDual<'a, 'ctx> {

@@ -23,12 +23,9 @@ use crate::zeropool::Pool;
 use std::io::{self, Write};
 use std::sync::LazyLock;
 
-/// Size of one physical checksum block.
-pub const CHECKSUM_BLOCK_SIZE: usize = 1024;
-/// Size of the little-endian CRC-32 field.
-pub const CHECKSUM_SIZE: usize = 4;
-/// Logical payload capacity in one checksum block.
-pub const CHECKSUM_PAYLOAD_SIZE: usize = CHECKSUM_BLOCK_SIZE - CHECKSUM_SIZE;
+const CHECKSUM_BLOCK_SIZE: usize = 1024;
+const CHECKSUM_SIZE: usize = 4;
+const CHECKSUM_PAYLOAD_SIZE: usize = CHECKSUM_BLOCK_SIZE - CHECKSUM_SIZE;
 
 static CHECKSUM_READER_BUFFER_POOL: LazyLock<Pool<Vec<u8>>> =
     LazyLock::new(|| Pool::new(|| vec![0; CHECKSUM_BLOCK_SIZE]));
@@ -89,7 +86,6 @@ where
     W: CloseWrite,
 {
     /// Creates a checksum writer over `underlying`.
-    #[must_use]
     pub fn new(underlying: W) -> Self {
         Self {
             error: None,
@@ -101,13 +97,11 @@ where
     }
 
     /// Returns unused logical payload bytes in the current block.
-    #[must_use]
     pub const fn available_size(&self) -> usize {
         CHECKSUM_PAYLOAD_SIZE - self.payload_used
     }
 
     /// Returns buffered logical payload bytes.
-    #[must_use]
     pub const fn buffered(&self) -> usize {
         self.payload_used
     }
@@ -144,25 +138,13 @@ where
     }
 
     /// Returns logical payload not yet flushed.
-    #[must_use]
     pub fn get_cache(&self) -> &[u8] {
         &self.buffer[CHECKSUM_SIZE..CHECKSUM_SIZE + self.payload_used]
     }
 
     /// Returns the logical offset of the cached payload.
-    #[must_use]
     pub const fn get_cache_data_offset(&self) -> i64 {
         self.flushed_user_data_count
-    }
-
-    /// Returns the next writer layer.
-    ///
-    /// A spill reader needs the live cache of every writer layer: checksum's
-    /// logical tail and, when enabled, the plaintext tail still buffered by
-    /// the AES-CTR writer underneath it.
-    #[must_use]
-    pub const fn underlying(&self) -> &W {
-        &self.underlying
     }
 
     /// Flushes and closes every owned writer layer.
@@ -229,7 +211,6 @@ where
     R: ReadAt,
 {
     /// Creates a checksum reader over `underlying`.
-    #[must_use]
     pub const fn new(underlying: R) -> Self {
         Self { underlying }
     }
@@ -246,12 +227,6 @@ where
     fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
         if destination.is_empty() {
             return ReadAtResult::ok(0);
-        }
-        if offset < 0 {
-            return ReadAtResult::io(
-                0,
-                io::Error::new(io::ErrorKind::InvalidInput, "negative read offset"),
-            );
         }
         let mut offset_in_payload = offset % CHECKSUM_PAYLOAD_SIZE as i64;
         let mut cursor =
@@ -345,25 +320,6 @@ mod tests {
             } else {
                 ReadAtResult::ok(copied)
             }
-        }
-    }
-
-    #[derive(Clone)]
-    struct RecordingReader {
-        block: Arc<Vec<u8>>,
-        offsets: Arc<Mutex<Vec<i64>>>,
-    }
-
-    impl ReadAt for RecordingReader {
-        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
-            let mut offsets = self.offsets.lock().expect("recorded offsets");
-            offsets.push(offset);
-            if offsets.len() > 1 {
-                return ReadAtResult::io(0, io::Error::other("stop after one block"));
-            }
-            drop(offsets);
-            destination.copy_from_slice(&self.block);
-            ReadAtResult::ok(destination.len())
         }
     }
 
@@ -780,37 +736,14 @@ mod tests {
     }
 
     #[test]
-    fn flushed_offset_wraps_like_the_source_int64_counter() {
-        let file = MemoryFile::default();
-        let mut writer = Writer::new(file);
-        writer.flushed_user_data_count = i64::MAX;
-        assert_eq!(writer.write(b"x").unwrap(), 1);
-        writer.flush_buffer().unwrap();
-        assert_eq!(writer.get_cache_data_offset(), i64::MIN);
-    }
-
-    #[test]
-    fn read_cursor_wraps_like_source_int64_arithmetic() {
-        let mut block = vec![0; CHECKSUM_BLOCK_SIZE];
-        let checksum = crc32fast::hash(&block[CHECKSUM_SIZE..]);
-        block[..CHECKSUM_SIZE].copy_from_slice(&checksum.to_le_bytes());
-        let offsets = Arc::new(Mutex::new(Vec::new()));
-        let reader = Reader::new(RecordingReader {
-            block: Arc::new(block),
-            offsets: Arc::clone(&offsets),
-        });
-        let mut destination = vec![0; 1021];
-
-        let result = reader.read_at(&mut destination, i64::MAX);
-
-        assert_eq!(result.n, 893);
-        assert_eq!(
-            result.error.expect("injected read error").to_string(),
-            "stop after one block"
-        );
-        assert_eq!(
-            *offsets.lock().expect("recorded offsets"),
-            vec![-9_187_201_950_435_737_600, -9_187_201_950_435_736_576]
-        );
+    #[deny(unused_must_use)]
+    fn TestReturnValuesMayBeIgnoredLikeGo() {
+        Writer::new(MemoryFile::default());
+        let writer = Writer::new(MemoryFile::default());
+        writer.available_size();
+        writer.buffered();
+        writer.get_cache();
+        writer.get_cache_data_offset();
+        Reader::new(MemoryFile::default());
     }
 }

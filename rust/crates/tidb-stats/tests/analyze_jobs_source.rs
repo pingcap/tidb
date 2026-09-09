@@ -94,3 +94,12 @@ fn source_job_defaults_match_go_zero_values() {
     assert!(job.sample_rate_reason.is_empty());
     assert_eq!(job.progress.get_delta_count(), 0);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_analyze_job_returns_can_be_ignored() {
+    tidb_stats::go_zero_time();
+    let progress = AnalyzeProgress::default();
+    progress.get_delta_count();
+    progress.get_last_dump_time();
+}

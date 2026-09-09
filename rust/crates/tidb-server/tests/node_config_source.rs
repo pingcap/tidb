@@ -14,7 +14,7 @@ use tidb_server::{
     run_configured_node, ConfiguredReadColumnKind, NodeConfig, NodeConfigError,
     RunConfiguredNodeError,
 };
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorageOpenError};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
 
 fn required() -> Vec<&'static str> {
     vec![
@@ -129,19 +129,29 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
 
     impl Drop for DisableSemOnDrop {
         fn drop(&mut self) {
+            tidb_util::sem_v2::disable();
             tidb_util::sem::disable();
         }
     }
 
+    tidb_util::sem_v2::disable();
     tidb_util::sem::disable();
     let _reset = DisableSemOnDrop;
     let base = std::env::temp_dir().join(format!("tidb-server-sem-startup-{}", std::process::id()));
+    let sem = ConfigFile::write(
+        "sem_v2",
+        &format!(
+            "{{\"version\":\"1.0\",\"tidb_version\":{:?}}}",
+            tidb_util::sem_v2::tidb_release_version()
+        ),
+    );
     let file = ConfigFile::write(
         "sem_startup",
         &format!(
-            "tmp-storage-path = {:?}\ntmp-storage-quota = {}\n\n[security]\nenable-sem = true\n",
+            "tmp-storage-path = {:?}\ntmp-storage-quota = {}\n\n[security]\nenable-sem = true\nsem-config = {:?}\n",
             base,
-            i64::MAX
+            i64::MAX,
+            sem.0,
         ),
     );
     let path = file.0.to_string_lossy().into_owned();
@@ -154,37 +164,23 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
         error,
         RunConfiguredNodeError::Spill(SpillStorageOpenError::QuotaExceedsAvailable { .. })
     ));
-    assert!(
-        tidb_util::sem::is_enabled(),
-        "SEM must be installed before spill/listener/cluster startup"
-    );
+    assert!(tidb_util::sem_v2::is_enabled());
+    assert!(!tidb_util::sem::is_enabled());
     let _ = std::fs::remove_dir_all(base);
 }
 
 #[test]
-fn configured_tidb_edition_is_an_owned_server_identity() {
-    let file = ConfigFile::write(
-        "tidb_edition",
-        r#"
-tidb-edition = "Starter"
-"#,
-    );
-    let path = file.0.to_string_lossy().into_owned();
-    let mut args = required();
-    args.extend(["--config", &path]);
-
-    let config = NodeConfig::parse(args).expect("the accepted TiDB edition has a runtime owner");
-    assert_eq!(config.version_info.edition, "Starter");
-    assert_eq!(
-        config.version_info.version_comment(),
-        "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
-    );
-}
-
-#[test]
 fn version_flag_prints_the_effective_source_identity_without_topology() {
-    let defaults = NodeConfig::version_info_for_display(["tidb-server", "-V"]).unwrap();
-    assert_eq!(defaults.store, "unistore");
+    let defaults = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+        .arg("-V")
+        .output()
+        .expect("run tidb-server -V");
+    assert!(defaults.status.success(), "{:?}", defaults.status);
+    assert!(
+        String::from_utf8(defaults.stdout)
+            .unwrap()
+            .contains("Store: unistore")
+    );
 
     let file = ConfigFile::write(
         "version_flag",
@@ -194,27 +190,15 @@ fn version_flag_prints_the_effective_source_identity_without_topology() {
          server-version = \"8.0.11-TiDB-v9.0.0\"\n",
     );
     let path = file.0.to_string_lossy().into_owned();
-    let expected = NodeConfig::version_info_for_display([
-        "tidb-server",
-        "-V",
-        "--config",
-        path.as_str(),
-    ])
-    .unwrap();
-    assert_eq!(expected.store, "tikv");
-    assert_eq!(expected.edition, "Starter");
-    assert_eq!(expected.release_version, "v9.0.0");
-    assert_eq!(expected.server_version, "8.0.11-TiDB-v9.0.0");
-
     let output = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
         .args(["-V", "--config", path.as_str()])
         .output()
         .expect("run tidb-server -V");
     assert!(output.status.success(), "{:?}", output.status);
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap().trim_end(),
-        tidb_util::printer::get_tidb_info(&expected)
-    );
+    let output = String::from_utf8(output.stdout).unwrap();
+    assert!(output.contains("Store: tikv"), "{output}");
+    assert!(output.contains("Edition: Starter"), "{output}");
+    assert!(output.contains("Release Version: v9.0.0"), "{output}");
 }
 
 #[test]

@@ -12,18 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalLimit metadata.
+//! Vectors for the wired PhysicalLimit operator.
 //!
 //! The Go anchor is `TestLimitPushdown` at
 //! `pkg/planner/core/casetest/physicalplantest/physical_plan_test.go:1600`.
 
-use tidb_planner::physical_limit::{PhysicalLimitPlan, RedactMode};
+use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_expr::{column::Column, schema::Schema};
+use tidb_planner::physical::{BasePhysicalPlan, PhysicalLimit, RedactMode};
+use tidb_planner::physical_property::SortItem;
+
+fn limit(offset: u64, count: u64, query_block_offset: i32) -> PhysicalLimit {
+    PhysicalLimit {
+        base: BasePhysicalPlan::with_id(1, "Limit", query_block_offset),
+        offset,
+        count,
+        ..PhysicalLimit::default()
+    }
+}
 
 #[test]
 fn limit_plan_tree_metadata_matches_source() {
-    let plan = PhysicalLimitPlan::init(0, 100, 2);
-    assert_eq!(plan.plan_type(), "Limit");
-    assert_eq!(plan.query_block_offset(), 2);
+    let plan = limit(0, 100, 2);
+    assert_eq!(plan.base.base.tp(), "Limit");
+    assert_eq!(plan.base.base.query_block_offset(), 2);
     assert_eq!(
         plan.explain_info(RedactMode::Disable),
         "offset:0, count:100"
@@ -32,7 +44,7 @@ fn limit_plan_tree_metadata_matches_source() {
 
 #[test]
 fn redaction_modes_preserve_source_limit_shape() {
-    let plan = PhysicalLimitPlan::init(4, 8, 0);
+    let plan = limit(4, 8, 0);
     assert_eq!(
         plan.explain_info(RedactMode::Marker),
         "offset:‹4›, count:‹8›"
@@ -42,9 +54,13 @@ fn redaction_modes_preserve_source_limit_shape() {
 
 #[test]
 fn partition_and_prefix_metadata_are_caller_owned() {
-    let plan = PhysicalLimitPlan::init(1, 2, 0)
-        .with_partition_explain("partition by a")
-        .with_prefix_col("a", 3);
+    let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+    column.orig_name = "a".to_owned();
+    let mut plan = limit(1, 2, 0);
+    plan.base.base.set_schema(Some(Schema::new(vec![column])));
+    plan.partition_by = vec![SortItem::new(1, false)];
+    plan.prefix_col = Some(1);
+    plan.prefix_len = 3;
     assert_eq!(
         plan.explain_info(RedactMode::Disable),
         "partition by a, offset:1, count:2, prefix_col:a, prefix_len:3"

@@ -41,7 +41,7 @@ use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog};
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
-use tidb_exec::cop_scan::{CopScanSource, CopScanStats};
+use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_exec::stats_watch::StatsSnapshot;
@@ -64,8 +64,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// The node's coprocessor capability, retained typed so the run can print its
-/// counters as a receipt.
+/// The node's coprocessor capability.
 type CopScans = Arc<CopScanSource<ProductionReadSessionFactory>>;
 
 struct Arguments {
@@ -151,21 +150,6 @@ fn run() -> Result<(), String> {
     } else {
         run_autocommit(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     };
-    if let Some(scans) = cop_scans.as_ref() {
-        let CopScanStats {
-            rows_returned,
-            scans_served,
-            scans_refused,
-            requests,
-        } = scans.stats();
-        for request in &requests {
-            println!("coprocessor request: {request}");
-        }
-        println!(
-            "coprocessor scans: served {scans_served}, refused {scans_refused}, \
-             rows across the wire {rows_returned}"
-        );
-    }
     drop(cop_scans);
     // The opener clone holds PD request handles; the authority's shutdown
     // drains and refuses to stop while any are live (the drain footgun only a

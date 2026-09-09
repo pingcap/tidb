@@ -9,7 +9,6 @@ use crate::consts::{AuthCachingSha2Password, AuthNativePassword, AuthTiDBSM3Pass
 use crate::types::*;
 
 /// Returns whether a type is one of MySQL's five integer storage types.
-#[must_use]
 pub const fn is_integer_type(tp: u8) -> bool {
     matches!(
         tp,
@@ -18,7 +17,6 @@ pub const fn is_integer_type(tp: u8) -> bool {
 }
 
 /// Returns the source default display length and decimal length.
-#[must_use]
 pub const fn default_field_length_and_decimal(tp: u8) -> (i64, i32) {
     match tp {
         TypeBit => (1, 0),
@@ -46,7 +44,6 @@ pub const fn default_field_length_and_decimal(tp: u8) -> (i64, i32) {
 }
 
 /// Returns the source default dimensions for an unspecified CAST target.
-#[must_use]
 pub const fn default_field_length_and_decimal_for_cast(tp: u8) -> (i64, i32) {
     match tp {
         TypeString => (0, -1),
@@ -64,7 +61,6 @@ pub const fn default_field_length_and_decimal_for_cast(tp: u8) -> (i64, i32) {
 
 /// Mirrors the intentionally historical Go helper: these three supported
 /// plugins are classified as requiring access to the clear-text password.
-#[must_use]
 pub fn is_auth_plugin_clear_text(plugin: &str) -> bool {
     matches!(
         plugin,

@@ -112,6 +112,7 @@ keys-limit = 123
 total-key-size-limit = 1024
 [experimental]
 allow-expression-index = true
+allow-enable-foreign-key-check-in-shared-lock = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -183,6 +184,7 @@ max_connections = 200
     assert_eq!(conf.tikv_client.async_commit.total_key_size_limit, 1024);
 
     assert!(conf.experimental.allows_expression_index);
+    assert!(conf.experimental.allow_enable_foreign_key_check_in_shared_lock);
     assert_eq!(conf.isolation_read.engines, vec!["tiflash".to_owned()]);
     assert_eq!(
         conf.labels,

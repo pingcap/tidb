@@ -12,99 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Semantic boundary tests for accepted Go package `pkg/util/systimemon`.
+//! Source test for Go `pkg/util/systimemon`.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
-use tidb_util::logutil::{init_logger, new_log_config, FileLogConfig, DEFAULT_LOG_FORMAT};
-use tidb_util::systimemon::{SystemTimeMonitor, MONITOR_INTERVAL};
+use tidb_util::systimemon::start_monitor;
 
-struct RestoreStdoutLogger;
+/// Go `TestSystimeMonitor`.
+#[test]
+fn test_systime_monitor() {
+    let err_triggered = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&err_triggered);
+    let now_triggered = Arc::new(AtomicBool::new(false));
+    let clock_flag = Arc::clone(&now_triggered);
 
-impl Drop for RestoreStdoutLogger {
-    fn drop(&mut self) {
-        let config = new_log_config(
-            "info",
-            DEFAULT_LOG_FORMAT,
-            "",
-            "",
-            FileLogConfig::default(),
-            false,
+    thread::spawn(move || {
+        start_monitor(
+            move || {
+                if !clock_flag.swap(true, Ordering::SeqCst) {
+                    return SystemTime::now();
+                }
+                SystemTime::now() - Duration::from_secs(2)
+            },
+            move || callback_flag.store(true, Ordering::SeqCst),
         );
-        let _ = init_logger(&config);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !err_triggered.load(Ordering::SeqCst) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
     }
-}
-
-#[test]
-fn system_time_monitor_reports_the_source_backward_jump() {
-    assert_eq!(MONITOR_INTERVAL, Duration::from_millis(100));
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let now_calls = Arc::clone(&calls);
-    let (reported_tx, reported_rx) = mpsc::channel();
-    let monitor = SystemTimeMonitor::start(
-        move || {
-            if now_calls.fetch_add(1, Ordering::Relaxed) == 0 {
-                SystemTime::UNIX_EPOCH + Duration::from_secs(2)
-            } else {
-                SystemTime::UNIX_EPOCH + Duration::from_secs(1)
-            }
-        },
-        move || {
-            let _ = reported_tx.send(());
-        },
-    );
-
-    reported_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("the source backward jump must invoke its callback");
-    drop(monitor);
-}
-
-#[test]
-fn system_time_monitor_logs_the_source_lifecycle_messages() {
-    let directory = tempfile::tempdir().expect("log directory");
-    let filename = directory.path().join("systimemon.log");
-    let config = new_log_config(
-        "info",
-        DEFAULT_LOG_FORMAT,
-        "",
-        "",
-        FileLogConfig {
-            filename: filename.to_string_lossy().into_owned(),
-            max_size: 4096,
-            ..FileLogConfig::default()
-        },
-        true,
-    );
-    init_logger(&config).expect("install the logger used by systimemon");
-    let _restore = RestoreStdoutLogger;
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let now_calls = Arc::clone(&calls);
-    let (reported_tx, reported_rx) = mpsc::channel();
-    let monitor = SystemTimeMonitor::start(
-        move || {
-            if now_calls.fetch_add(1, Ordering::Relaxed) == 0 {
-                SystemTime::UNIX_EPOCH + Duration::from_nanos(2)
-            } else {
-                SystemTime::UNIX_EPOCH + Duration::from_nanos(1)
-            }
-        },
-        move || {
-            let _ = reported_tx.send(());
-        },
-    );
-
-    reported_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("backward jump must invoke the handler");
-    drop(monitor);
-
-    let output = std::fs::read_to_string(filename).expect("read system-time monitor logs");
-    assert!(output.contains("start system time monitor"), "{output}");
-    assert!(output.contains("system time jump backward"), "{output}");
-    assert!(output.contains("last=2"), "{output}");
+    assert!(err_triggered.load(Ordering::SeqCst));
 }

@@ -16,8 +16,8 @@
 
 use crate::histogram::Histogram;
 use crate::{
-    query_index_bytes, CmsSketch, FmSketch, IndexMemUsage, StatsLoadedStatus, TableItemId, TopN,
-    ALL_EVICTED, ALL_LOADED,
+    query_index_bytes, CmsSketch, FmSketch, IndexMemUsage, StatsLoadedStatus, TopN, ALL_EVICTED,
+    ALL_LOADED,
 };
 
 /// The index metadata used directly by `index.go` and `table.go`.
@@ -41,27 +41,21 @@ pub struct Index {
     pub stats_loaded_status: StatsLoadedStatus,
     pub stats_version: i64,
     pub physical_id: i64,
-    /// Memory already measured by the source-owned histogram representation.
-    pub histogram_memory_usage: i64,
 }
 
 impl Index {
-    #[must_use]
     pub fn copy(&self) -> Self {
         self.clone()
     }
 
-    #[must_use]
     pub fn item_id(&self) -> i64 {
         self.info.as_ref().expect("index has no metadata").id
     }
 
-    #[must_use]
     pub const fn is_all_evicted(&self) -> bool {
         self.stats_loaded_status.is_all_evicted()
     }
 
-    #[must_use]
     pub const fn evicted_status(&self) -> i32 {
         self.stats_loaded_status.evicted_status()
     }
@@ -76,29 +70,24 @@ impl Index {
             StatsLoadedStatus::new(self.stats_loaded_status.stats_initialized(), ALL_EVICTED);
     }
 
-    #[must_use]
     pub const fn stats_version(&self) -> i64 {
         self.stats_version
     }
 
-    #[must_use]
     pub const fn is_cms_exist(&self) -> bool {
         self.cmsketch.is_some()
     }
 
     /// Go `IsEvicted` intentionally tests only the integer status. The zero
     /// value therefore behaves as `AllLoaded` even when uninitialized.
-    #[must_use]
     pub const fn is_evicted(&self) -> bool {
         self.stats_loaded_status.evicted_status() != ALL_LOADED
     }
 
-    #[must_use]
     pub const fn is_full_load(&self) -> bool {
         self.stats_loaded_status.is_full_load()
     }
 
-    #[must_use]
     pub fn total_row_count(&self) -> f64 {
         let histogram = self.histogram.total_row_count();
         if self.stats_version >= 2 {
@@ -123,14 +112,13 @@ impl Index {
     }
 
     /// Go `MemoryUsage`; FM sketch memory is intentionally not included.
-    #[must_use]
     pub fn memory_usage(&self) -> IndexMemUsage {
         let mut usage = IndexMemUsage {
             index_id: self.item_id(),
-            histogram_mem_usage: self.histogram_memory_usage,
+            histogram_mem_usage: self.histogram.memory_usage(),
             ..IndexMemUsage::default()
         };
-        let mut total = self.histogram_memory_usage;
+        let mut total = usage.histogram_mem_usage;
         if let Some(cmsketch) = &self.cmsketch {
             usage.cmsketch_mem_usage = cmsketch.memory_usage() as i64;
             total = total.wrapping_add(usage.cmsketch_mem_usage);
@@ -145,7 +133,6 @@ impl Index {
 
     /// Go `QueryBytes` using the existing source-owned histogram fallback
     /// value. TopN and CMS are resolved here in the original precedence.
-    #[must_use]
     pub fn query_bytes(&self, encoded: &[u8], histogram_count: u64) -> u64 {
         query_index_bytes(
             self.top_n
@@ -158,7 +145,6 @@ impl Index {
         )
     }
 
-    #[must_use]
     pub fn increase_factor(&self, realtime_row_count: i64) -> f64 {
         let index_count = self.total_row_count();
         if index_count == 0.0 {
@@ -168,7 +154,6 @@ impl Index {
         }
     }
 
-    #[must_use]
     pub const fn histogram(&self) -> &Histogram {
         &self.histogram
     }
@@ -178,7 +163,6 @@ impl Index {
         self.top_n.as_ref()
     }
 
-    #[must_use]
     pub const fn is_analyzed(&self) -> bool {
         self.stats_version > 0
     }
@@ -189,48 +173,6 @@ pub fn copy_index(index: Option<&Index>) -> Option<Index> {
     index.map(Index::copy)
 }
 
-#[must_use]
 pub fn index_is_all_evicted(index: Option<&Index>) -> bool {
     index.is_none_or(Index::is_all_evicted)
-}
-
-/// Inputs owned by `planctx.PlanContext` and `HistColl` in Go.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct IndexValidityContext {
-    pub restricted_sql: bool,
-    pub cannot_trigger_load: bool,
-    pub pseudo: bool,
-    pub physical_id: i64,
-    pub sync_load_failed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct IndexValidity {
-    pub invalid: bool,
-    pub load_request: Option<TableItemId>,
-}
-
-/// Pure form of Go `IndexStatsIsInvalid`, retaining the source behavior that
-/// queues a load request but continues to compute validity.
-#[must_use]
-pub fn index_stats_validity(
-    index: Option<&Index>,
-    context: IndexValidityContext,
-    index_id: i64,
-) -> IndexValidity {
-    let load_request = ((index.is_none()
-        || index.is_some_and(|index| !index.stats_loaded_status.is_full_load()))
-        && !context.cannot_trigger_load
-        && !context.restricted_sql)
-        .then_some(TableItemId {
-            table_id: context.physical_id,
-            id: index_id,
-            is_index: true,
-            is_sync_load_failed: context.sync_load_failed,
-        });
-    let invalid = index.is_none_or(|index| context.pseudo || index.total_row_count() == 0.0);
-    IndexValidity {
-        invalid,
-        load_request,
-    }
 }

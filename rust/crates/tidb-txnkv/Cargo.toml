@@ -25,6 +25,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -45,6 +46,10 @@ path = "tests/lock_resolver_source.rs"
 [[test]]
 name = "region_error_recovery_source"
 path = "tests/region_error_recovery_source.rs"
+
+[[test]]
+name = "resource_group_tag_source"
+path = "tests/resource_group_tag_source.rs"
 
 [[bench]]
 name = "kv"

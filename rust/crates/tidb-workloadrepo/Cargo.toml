@@ -1,0 +1,20 @@
+[package]
+name = "tidb-workloadrepo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB workload repository worker"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tidb-owner = { path = "../tidb-owner" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+
+[dev-dependencies]
+chrono-tz.workspace = true

@@ -35,11 +35,10 @@
 //!    estimates from what it just wrote.
 //!
 //! Nothing the node serves from is touched until the 2PC commits. A statement
-//! that cannot analyze the table -- a partitioned one, a prefix index -- never
-//! reaches storage; a commit rejected by a write conflict with a Go TiDB's
-//! own concurrent `ANALYZE` leaves the cluster's statistics exactly as that
-//! other node wrote them, and the client is told. There is no rollback path
-//! to get wrong.
+//! rejected before execution never reaches storage; a commit rejected by a
+//! write conflict with a Go TiDB's own concurrent `ANALYZE` leaves the
+//! cluster's statistics exactly as that other node wrote them, and the client
+//! is told. There is no rollback path to get wrong.
 //!
 //! Step 5 is deliberately not a failure of the statement. The rows are
 //! durable; a node that could not refresh its own copy is a node whose next
@@ -51,7 +50,6 @@
 //! [`RealClusterDdl::refresh_catalog`]: crate::cluster_session_node::RealClusterDdl
 //! [`SharedStats`]: tidb_exec::stats_watch::SharedStats
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
@@ -61,19 +59,22 @@ use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
-use tidb_exec::cluster_stats_load::column_types_of;
-use tidb_exec::real_tikv_analyze::{commit_cluster_analyze, ClusterAnalyzeReport};
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
+use tidb_exec::real_tikv_analyze::{
+    commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
+    save_cluster_analyze_options, AnalyzeJobLifecycle, ApproximateTableCountProvider,
+    ClusterAnalyzeReport,
+};
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
+use tidb_exec::real_tikv_load_stats::{
+    commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
+};
+use tidb_exec::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_util::sqlkiller::SqlKiller;
 
 use crate::sql_node::{cluster_analyze_error, SqlQueryError};
-
-/// One table's physical ID paired with the declared types its stored
-/// histogram bounds decode against -- the shape
-/// [`load_stats_snapshot_from_cluster`] takes.
-type StatsTarget = (i64, BTreeMap<i64, tidb_datatype::FieldType>);
 
 /// This node's one route to the cluster's stored statistics.
 ///
@@ -82,7 +83,26 @@ type StatsTarget = (i64, BTreeMap<i64, tidb_datatype::FieldType>);
 /// cluster. The production implementation is [`RealClusterAnalyze`].
 pub trait ClusterAnalyze: Send + Sync {
     /// Analyzes one table and stores its statistics.
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError>;
+    fn execute(
+        &self,
+        statement: &AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn ApproximateTableCountProvider,
+        killer: &SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn AnalyzeJobLifecycle,
+    ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
+
+    /// Loads one client-transferred JSON statistics dump into cluster storage.
+    fn load_stats(
+        &self,
+        _json: &tidb_executor::load_stats::JsonTable,
+        _historical_stats_enabled: bool,
+    ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this statistics writer does not support LOAD STATS",
+        ))
+    }
 }
 
 /// The production analyzer: one real transaction per table, the optimistic
@@ -98,6 +118,7 @@ where
     /// reads. Republished only after a commit.
     stats: Arc<SharedStats>,
     timeout: Duration,
+    stats_lease: Duration,
 }
 
 impl<C, L, P> RealClusterAnalyze<C, L, P>
@@ -113,60 +134,64 @@ where
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         stats: Arc<SharedStats>,
         timeout: Duration,
+        stats_lease: Duration,
     ) -> Self {
         Self {
             opener,
             stats,
             timeout,
+            stats_lease,
         }
     }
 
-    /// Reloads every table's statistics into this node's live snapshot.
-    ///
-    /// Whole-snapshot rather than one-table, because that is the only shape
-    /// [`SharedStats`] publishes, and because a snapshot assembled from two
-    /// timestamps is exactly what
-    /// [`load_stats_snapshot_from_cluster`] exists to prevent. A failure is
-    /// a warning: the rows are durable and the reload tick will find them.
-    fn refresh_stats(&self) {
-        let targets = match self.stats_targets() {
-            Ok(targets) => targets,
-            Err(error) => return warn_reload_failed(&error),
-        };
-        match load_stats_snapshot_from_cluster(&self.opener, self.timeout, &targets) {
-            Ok(snapshot) => {
-                let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-                self.stats.store(snapshot);
+    /// Runs Go's targeted cache update after ANALYZE or LOAD STATS.
+    fn refresh_stats(&self, physical_ids: Vec<i64>) -> Result<(), String> {
+        let (targets, loader) = self.stats_targets()?;
+        match update_stats_cache_from_cluster(
+            &self.opener,
+            self.timeout,
+            &targets,
+            &self.stats,
+            &loader,
+            self.stats_lease,
+            self.stats_lease.is_zero(),
+            physical_ids,
+        ) {
+            Ok(_) => {
+                let receipt = self.stats.receipt();
                 eprintln!(
                     "{{\"event\":\"stats_reloaded_after_analyze\",\"loaded\":{},\"pseudo\":{}}}",
                     receipt.loaded, receipt.pseudo
                 );
+                Ok(())
             }
-            Err(error) => warn_reload_failed(&error.to_string()),
+            Err(error) => Err(error.to_string()),
         }
     }
 
     /// Every non-system table in the cluster, with the column types its
     /// stored bounds decode against.
-    fn stats_targets(&self) -> Result<Vec<StatsTarget>, String> {
+    fn stats_targets(&self) -> Result<(Vec<StatsTarget>, ClusterStatsLoader), String> {
         let mut transaction = self
             .opener
             .begin_read_only()
             .map_err(|error| error.to_string())?;
-        let targets = {
+        let result = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
-            catalog
+            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+            let targets = catalog
                 .databases
                 .iter()
                 .flat_map(|database| database.tables.iter())
-                .map(|table| (table.id, column_types_of(table)))
-                .collect()
+                .flat_map(StatsTarget::for_table)
+                .collect();
+            (targets, loader)
         };
         transaction
             .finish_without_writes()
             .map_err(|error| error.to_string())?;
-        Ok(targets)
+        Ok(result)
     }
 }
 
@@ -176,11 +201,87 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError> {
-        let report = commit_cluster_analyze(&self.opener, statement, self.timeout)
-            .map_err(cluster_analyze_error)?;
-        self.refresh_stats();
+    fn execute(
+        &self,
+        statement: &AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn ApproximateTableCountProvider,
+        killer: &SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn AnalyzeJobLifecycle,
+    ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
+        let statement = resolve_cluster_analyze_statement(
+            &self.opener,
+            statement,
+            self.timeout,
+            resource_group,
+            approximate_counts,
+        )
+        .map_err(cluster_analyze_error)?;
+        let logical_table_id = statement.logical_table_id();
+        let record_history = || historical_stats_enabled();
+        let record_global_history = || {
+            let initialized = self
+                .stats
+                .load()
+                .get(&logical_table_id)
+                .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                .is_some_and(|table| table.is_initialized());
+            record_global_history_enabled(record_history(), initialized)
+        };
+        let mut report = commit_cluster_analyze(
+            &self.opener,
+            &statement,
+            self.timeout,
+            self.stats_lease,
+            killer,
+            &record_history,
+            &record_global_history,
+            jobs,
+        )
+        .map_err(cluster_analyze_error)?;
+        if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
+            report.option_save_warning = Some(error.to_string());
+        }
+        if let Err(error) = self.refresh_stats(report.cache_update_physical_ids().to_vec()) {
+            warn_reload_failed(&error);
+        }
         Ok(report)
+    }
+
+    fn load_stats(
+        &self,
+        json: &tidb_executor::load_stats::JsonTable,
+        historical_stats_enabled: bool,
+    ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
+        let current = self.stats.load();
+        let report = commit_cluster_load_stats(
+            &self.opener,
+            json,
+            self.timeout,
+            historical_stats_enabled,
+            |table_id| {
+                current
+                    .get(&table_id)
+                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+                    .is_some()
+            },
+            0,
+        )
+        .map_err(cluster_load_stats_error)?;
+        // Unlike ANALYZE, pinned Go returns `StatsHandle.Update` failure from
+        // `LoadStatsFromJSON`; durable writes do not turn this into a warning.
+        self.refresh_stats(report.physical_ids().to_vec())
+            .map_err(SqlQueryError::unknown)?;
+        Ok(report)
+    }
+}
+
+fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError {
+    match error {
+        ClusterLoadStatsCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterLoadStatsCommitError::Commit(error) => crate::sql_node::lock_sql_error(&error),
+        ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }
 

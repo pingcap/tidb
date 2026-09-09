@@ -104,12 +104,12 @@ pub(crate) fn sem_verdict_mask(
     mask: u64,
     has_restricted_tables_admin: bool,
 ) -> Option<bool> {
-    if !tidb_util::sem::is_enabled() || has_restricted_tables_admin {
+    if !tidb_util::sem_compat::is_enabled() || has_restricted_tables_admin {
         return None;
     }
     let database_lower = database.to_ascii_lowercase();
     let table_lower = table.to_ascii_lowercase();
-    if tidb_util::sem::is_invisible_table(&database_lower, &table_lower) {
+    if tidb_util::sem_compat::is_invisible_table(&database_lower, &table_lower) {
         return Some(false);
     }
     const SEM_REFUSED_WRITES: &[GlobalPriv] = &[
@@ -451,6 +451,10 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::DropIndex(drop) => one(&drop.table, GlobalPriv::Index),
         // Around line 5487.
         DdlStmt::CreateView(create) => one(&create.name, GlobalPriv::CreateView),
+        // `resolveCreateSequenceStmt` (`planbuilder.go` around line 5398)
+        // records the same table-scoped CREATE privilege as CREATE TABLE and
+        // carries the sequence name in the 1142 auth error.
+        DdlStmt::CreateSequence(create) => one(&create.name, GlobalPriv::Create),
         _ => Vec::new(),
     }
 }

@@ -39,6 +39,12 @@ pub struct AlternativePlanSignals {
     pub semi_join_rewrite: bool,
     /// The statement uses `FTS_MATCH_WORD`.
     pub fts_function_is_used: bool,
+    /// Round 1's chosen physical plan reads from both TiKV and TiFlash.
+    pub mixed_storage_engines: bool,
+    /// A datasource in round 1 has no TiFlash access path.
+    pub missing_tiflash_path: bool,
+    /// A datasource carries an explicit `READ_FROM_STORAGE` engine hint.
+    pub has_store_type_hint: bool,
 }
 
 impl AlternativePlanSignals {
@@ -70,5 +76,20 @@ impl AlternativePlanSignals {
     /// Records a semi-join-rewrite candidate.
     pub fn mark_semi_join_rewrite(&mut self) {
         self.semi_join_rewrite = true;
+    }
+
+    /// Records that the chosen plan mixes TiKV and TiFlash access paths.
+    pub fn mark_mixed_storage_engines(&mut self) {
+        self.mixed_storage_engines = true;
+    }
+
+    /// Records that a datasource cannot produce a TiFlash access path.
+    pub fn mark_missing_tiflash_path(&mut self) {
+        self.missing_tiflash_path = true;
+    }
+
+    /// Records that an explicit storage-engine hint fixes the plan choice.
+    pub fn mark_store_type_hint(&mut self) {
+        self.has_store_type_hint = true;
     }
 }

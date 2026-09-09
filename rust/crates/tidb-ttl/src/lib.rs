@@ -19,7 +19,8 @@
 //! across:
 //! - [`sql_builder`] <- Go `pkg/ttl/sqlbuilder` — complete package.
 //! - [`session`] <- Go `pkg/ttl/session` — complete package.
-//! - [`cache`] <- Go `pkg/ttl/cache` — SEED.
+//! - [`cache`] <- Go `pkg/ttl/cache` — partial; only the info-schema cache
+//!   `Update` methods remain behind a real-`infoschema` boundary.
 //!
 //! # Dependencies
 //!

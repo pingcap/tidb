@@ -13,6 +13,39 @@
 use crate::analyze_arm::AnalyzePanicPhase;
 use crate::tests_support::*;
 use crate::*;
+use tidb_executor::TableEntry;
+
+struct AnalyzeUsage(
+    std::collections::HashMap<
+        tidb_model::TableItemID,
+        (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+    >,
+);
+
+impl ColumnStatsUsageProvider for AnalyzeUsage {
+    fn load_column_stats_usage(
+        &self,
+        _location: &tidb_datatype::SessionTimeZone,
+        _resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    > {
+        Ok(self.0.clone())
+    }
+}
+
+fn analyze_usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
+    tidb_model::TableItemID {
+        table_id,
+        id: column_id,
+        is_index: false,
+        is_sync_load_failed: false,
+    }
+}
 
 /// The scan row's `estRows` and `operator info`, which is where the statistics
 /// show up.
@@ -226,6 +259,172 @@ fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
     );
 }
 
+#[test]
+fn analyze_persists_effective_column_list_and_reuses_raw_options() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY kb(b))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,2,3),(2,3,4)").unwrap();
+
+    session
+        .run("ANALYZE TABLE t COLUMNS c WITH 7 BUCKETS")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "Columns a,b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+        ]]
+    );
+    let table_id = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is not a table")
+            };
+            let saved = catalog
+                .analyze_options(table.table_id)
+                .expect("ANALYZE persists its options by default");
+            assert_eq!(saved.raw.num_buckets, Some(7));
+            assert_eq!(
+                saved.columns,
+                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(vec![
+                    "a".to_owned(),
+                    "b".to_owned(),
+                    "c".to_owned(),
+                ]),
+                "Go persists the requested column plus mandatory PK/index columns in schema order"
+            );
+            Ok(table.table_id)
+        })
+        .unwrap();
+
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .analyze_options(table_id)
+                    .expect("the saved row remains present")
+                    .raw
+                    .num_buckets,
+                Some(7),
+                "a statement without BUCKETS reuses the persisted raw value"
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session
+        .run("SET GLOBAL tidb_persist_analyze_options = OFF")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE t ALL COLUMNS WITH 9 BUCKETS")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let saved = catalog
+                .analyze_options(table_id)
+                .expect("disabling persistence does not delete an existing row");
+            assert_eq!(saved.raw.num_buckets, Some(7));
+            assert!(matches!(
+                saved.columns,
+                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(_)
+            ));
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_persist_analyze_options = ON")
+        .unwrap();
+}
+
+#[test]
+fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE p (a INT, b INT, KEY kb(b)) \
+             PARTITION BY RANGE (a) (\
+               PARTITION p0 VALUES LESS THAN (10),\
+               PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO p VALUES (1,1),(11,11)").unwrap();
+    session.run("ANALYZE TABLE p WITH 7 BUCKETS").unwrap();
+
+    let (table_id, p0_id, p1_id) = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "p") else {
+                panic!("p is not a table")
+            };
+            let definitions = &table.partition().expect("p is partitioned").definitions;
+            let p0 = definitions
+                .iter()
+                .find(|partition| partition.name.eq_ignore_ascii_case("p0"))
+                .expect("p0 exists")
+                .id;
+            let p1 = definitions
+                .iter()
+                .find(|partition| partition.name.eq_ignore_ascii_case("p1"))
+                .expect("p1 exists")
+                .id;
+            for physical_id in [table.table_id, p0, p1] {
+                assert_eq!(
+                    catalog
+                        .analyze_options(physical_id)
+                        .expect("whole-table ANALYZE saves every static physical row")
+                        .raw
+                        .num_buckets,
+                    Some(7)
+                );
+            }
+            Ok((table.table_id, p0, p1))
+        })
+        .unwrap();
+
+    session.run("INSERT INTO p VALUES (2,2),(12,12)").unwrap();
+    session
+        .run("ANALYZE TABLE p PARTITION p0 WITH 9 BUCKETS")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .table_statistics(p0_id)
+                    .expect("p0 was refreshed")
+                    .row_count,
+                2
+            );
+            assert_eq!(
+                catalog
+                    .table_statistics(p1_id)
+                    .expect("p1 remains analyzed")
+                    .row_count,
+                1,
+                "a named static ANALYZE does not refresh an unrequested partition"
+            );
+            assert_eq!(
+                catalog.analyze_options(table_id).unwrap().raw.num_buckets,
+                Some(7)
+            );
+            assert_eq!(
+                catalog.analyze_options(p0_id).unwrap().raw.num_buckets,
+                Some(9)
+            );
+            assert_eq!(
+                catalog.analyze_options(p1_id).unwrap().raw.num_buckets,
+                Some(7)
+            );
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// The row decoder used by `ANALYZE` evaluates generated columns instead of
 /// refusing the table or sampling the stored placeholder for a virtual one.
 #[test]
@@ -279,6 +478,157 @@ fn analyze_materializes_virtual_and_stored_generated_columns() {
             }
             Ok(())
         })
+        .unwrap();
+}
+
+/// Pinned Go warns when predicate-column storage has no row for the table,
+/// even though mandatory index columns still make the analysis executable.
+#[test]
+fn analyze_predicate_columns_without_collected_usage_warns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, KEY idx_a(a))").unwrap();
+
+    assert_eq!(
+        session.run("ANALYZE TABLE t PREDICATE COLUMNS").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+        ]]
+    );
+}
+
+#[test]
+fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, c INT, KEY ib(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3)")
+        .unwrap();
+    let (table_id, a, b, c) = session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is a table")
+            };
+            Ok((
+                table.table_id,
+                table.columns[0].id,
+                table.columns[1].id,
+                table.columns[2].id,
+            ))
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
+        .unwrap();
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        [(analyze_usage_item(table_id, a), (None, None))]
+            .into_iter()
+            .collect(),
+    )));
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
+            assert_eq!(
+                statistics
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                std::collections::HashSet::from([a, b])
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        [
+            (analyze_usage_item(table_id, a), (None, None)),
+            (analyze_usage_item(table_id, c), (None, None)),
+        ]
+        .into_iter()
+        .collect(),
+    )));
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
+            assert_eq!(
+                statistics
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>(),
+                std::collections::HashSet::from([a, b, c])
+            );
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
+        .unwrap();
+}
+
+#[test]
+fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE plain (a INT, b INT)").unwrap();
+    session
+        .run("CREATE TABLE indexed (a INT, b INT, KEY iab(a,b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE primary_key (a INT, b INT, c INT, PRIMARY KEY(a,b))")
+        .unwrap();
+    session.run("INSERT INTO plain VALUES (1,1)").unwrap();
+    session.run("INSERT INTO indexed VALUES (1,1)").unwrap();
+    session
+        .run("INSERT INTO primary_key VALUES (1,1,1)")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
+        .unwrap();
+    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
+        std::collections::HashMap::new(),
+    )));
+
+    for table in ["plain", "indexed", "primary_key"] {
+        session.run(&format!("ANALYZE TABLE {table}")).unwrap();
+    }
+    session
+        .with_catalog_mut(|catalog| {
+            for (table_name, expected_offsets) in [
+                ("plain", Vec::<usize>::new()),
+                ("indexed", vec![0, 1]),
+                ("primary_key", vec![0, 1]),
+            ] {
+                let Some(TableEntry::Kv(table)) = catalog.table_in("test", table_name) else {
+                    panic!("{table_name} is a table")
+                };
+                let expected = expected_offsets
+                    .into_iter()
+                    .map(|offset| table.columns[offset].id)
+                    .collect::<std::collections::HashSet<_>>();
+                let actual = catalog
+                    .table_statistics(table.table_id)
+                    .expect("table was analyzed")
+                    .columns
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(actual, expected, "{table_name}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
         .unwrap();
 }
 
@@ -463,35 +813,126 @@ fn analyze_resolves_and_refuses_names() {
     );
 }
 
-/// A clause this engine does not implement is refused by name rather than
-/// answered OK -- an `ANALYZE` that returns success without rebuilding the
-/// histograms would leave the planner estimating from whatever was there
-/// before while the client believes it just measured the table.
+/// Stats v2 treats an ordinary index target as a request for the normal full
+/// sampling task, exactly as Go's `buildAnalyzeFullSamplingTask` does.
 #[test]
-fn an_unimplemented_analyze_clause_is_refused() {
+fn ordinary_index_target_collects_all_statistics() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT, KEY ka(a))").unwrap();
     session.run("INSERT INTO t VALUES (1),(2)").unwrap();
 
-    for refused in [
-        "ANALYZE TABLE t INDEX ka",
-        "ANALYZE TABLE t COLUMNS a",
-        "ANALYZE INCREMENTAL TABLE t INDEX ka",
-    ] {
-        assert!(
-            session.run(refused).is_err(),
-            "`{refused}` must refuse rather than answer OK"
-        );
-    }
-    // ... and the refusals left the table unanalyzed, not half-analyzed.
+    session.run("ANALYZE TABLE t INDEX ka").unwrap();
     assert_eq!(
-        scan_row(&mut session, "EXPLAIN SELECT * FROM t").1,
-        "keep order:false, stats:pseudo"
+        warnings_of(&session),
+        vec![(
+            1105,
+            "The version 2 would collect all statistics not only the selected indexes".to_owned(),
+        )]
+    );
+    assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "2.00");
+
+    let missing = session
+        .run("ANALYZE TABLE t INDEX missing")
+        .expect_err("Go rejects a named index that is not public metadata");
+    assert!(missing
+        .to_string()
+        .contains("Index 'missing' in field list does not exist in table 't'"));
+
+    assert!(
+        session.run("ANALYZE INCREMENTAL TABLE t INDEX ka").is_err(),
+        "the separate incremental v2 gap remains an explicit refusal"
     );
 }
 
-/// `ANALYZE` inside an explicit transaction runs, and a `ROLLBACK` takes its
-/// statistics back with it. TiDB's do NOT come back -- captured:
+/// Go removes a special GLOBAL prefix index from the ordinary column-sampling
+/// task and analyzes its logical-table keyspace through an independent index
+/// task. That task replaces only the index item: it must not overwrite the
+/// existing table row count, and it cannot be scoped to one partition.
+#[test]
+fn special_global_index_uses_the_independent_analyze_task() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE only_special (a INT, b VARCHAR(16), UNIQUE KEY gb(b(2)) GLOBAL) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO only_special VALUES (1,'aa')")
+        .unwrap();
+    session.run("ANALYZE TABLE only_special INDEX").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "only_special") else {
+                panic!("only_special is not stored as table bytes")
+            };
+            assert!(
+                catalog.table_statistics(table.table_id).is_none(),
+                "pinned Go's empty-name all-special branch creates no task"
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session
+        .run(
+            "CREATE TABLE sg (a INT, b VARCHAR(16), UNIQUE KEY gb(b(2)) GLOBAL) \
+             PARTITION BY HASH(a) PARTITIONS 2",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO sg VALUES (1,'aa'),(2,'bb'),(3,'cc'),(4,'dd')")
+        .unwrap();
+
+    session.run("ANALYZE TABLE sg").unwrap();
+    session.run("INSERT INTO sg VALUES (5,'ee')").unwrap();
+    session.run("ANALYZE TABLE sg INDEX gb").unwrap();
+    assert!(warnings_of(&session).is_empty());
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "sg") else {
+                panic!("sg is not stored as table bytes")
+            };
+            let index_id = table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case("gb"))
+                .expect("gb exists")
+                .id;
+            let statistics = catalog
+                .table_statistics(table.table_id)
+                .expect("the independent task writes logical-table statistics");
+            assert_eq!(
+                statistics.row_count, 4,
+                "an independent index task preserves existing stats_meta.count"
+            );
+            let index = statistics
+                .indexes
+                .get(&index_id)
+                .expect("the independent task publishes gb");
+            assert_eq!(
+                index.histogram.total_row_count()
+                    + index
+                        .topn
+                        .as_ref()
+                        .map_or(0.0, |topn| topn.total_count() as f64),
+                5.0
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    let error = session
+        .run("ANALYZE TABLE sg PARTITION p0 INDEX gb")
+        .expect_err("Go cannot scope a global-index task to one partition");
+    assert!(error
+        .to_string()
+        .contains("Analyze global index 'gb' can't work with analyze specified partitions"));
+}
+
+/// `ANALYZE` inside an explicit transaction runs through the process-wide
+/// statistics handle, so a later `ROLLBACK` does not take its statistics back.
+/// Captured from TiDB:
 ///
 /// ```text
 /// create table t (a int, key ka(a))
@@ -503,31 +944,22 @@ fn an_unimplemented_analyze_clause_is_refused() {
 /// explain select * from t     -- IndexFullScan_6  3.00  STILL 3.00
 /// ```
 ///
-/// DIVERGENCE, named rather than papered over (see [`crate::analyze_arm`]):
-/// TiDB's `ANALYZE` writes through an INTERNAL session, so its statistics are
-/// not the rolling-back transaction's to discard. This tier runs it against
-/// the catalog the statement sees, so they are. Making the WRITE escape the
-/// transaction would also make the READ escape it, and sampling rows the
-/// statement cannot see is the worse of the two errors: it would build a
-/// histogram of a table state this session never observed.
-///
-/// The committed path is the one the scripts take, and it agrees with TiDB.
 #[test]
-fn analyze_inside_a_transaction_rolls_back_with_it() {
+fn analyze_inside_a_transaction_survives_rollback() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT, KEY ka(a))").unwrap();
     session.run("INSERT INTO t VALUES (1),(2),(3)").unwrap();
+    let mut peer = Session::with_catalog(session.shared_catalog());
 
     session.run("BEGIN").unwrap();
     session.run("ANALYZE TABLE t").unwrap();
-    // Inside the transaction the estimate is TiDB's.
+    // The analyzing transaction and another session both see the stats-handle
+    // publication before the user transaction ends.
     assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "3.00");
+    assert_eq!(scan_row(&mut peer, "EXPLAIN SELECT * FROM t").0, "3.00");
     session.run("ROLLBACK").unwrap();
-    assert_eq!(
-        scan_row(&mut session, "EXPLAIN SELECT * FROM t").0,
-        "10000.00",
-        "the divergence above: TiDB keeps 3.00 here"
-    );
+    assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "3.00");
+    assert_eq!(scan_row(&mut peer, "EXPLAIN SELECT * FROM t").0, "3.00");
 
     session.run("BEGIN").unwrap();
     session.run("ANALYZE TABLE t").unwrap();

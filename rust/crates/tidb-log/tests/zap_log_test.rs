@@ -8,6 +8,7 @@
 
 //! Transcreation of pinned `zap_log_test.go`.
 
+use chrono::NaiveDateTime;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -451,5 +452,41 @@ fn test_log_file_no_permission() {
     let cfg = file_config(&nested);
     init_logger(&cfg).unwrap();
     assert!(nested.exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// lumberjack parity: rotated backups are named
+/// `<base>-<local timestamp><ext>` (not `<file>.<sequence>`).
+#[test]
+fn test_rotate_backup_name_uses_timestamp_format() {
+    let dir = temp_dir("rotate-name");
+    let mut cfg = file_config(&dir);
+    cfg.file.max_size = 1;
+    let (logger, _) = init_logger(&cfg).unwrap();
+    let long = "x".repeat(2 * 1024 * 1024);
+    // The first write seeds the active file; the second crosses the limit
+    // and rotates it.
+    logger.info("seed", &[]);
+    logger.info("rotate me", &[Field::new("msg", Value::Str(long))]);
+    wait_until(Duration::from_secs(5), || {
+        let names: Vec<String> = fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.iter().any(|name| {
+            name.starts_with("test-")
+                && name
+                    .strip_prefix("test-")
+                    .and_then(|stamp| stamp.strip_suffix(".log"))
+                    .and_then(|stamp| {
+                        chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H-%M-%S%.f").ok()
+                    })
+                    .is_some()
+        })
+    });
     fs::remove_dir_all(dir).unwrap();
 }

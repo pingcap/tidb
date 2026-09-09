@@ -102,3 +102,19 @@ fn source_status_to_string_preserves_diagnostic_labels() {
         "unInitialized"
     );
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_status_returns_can_be_ignored() {
+    let status = StatsLoadedStatus::new(true, ALL_LOADED);
+    status.stats_initialized();
+    status.evicted_status();
+    StatsLoadedStatus::full_load();
+    StatsLoadedStatus::all_evicted();
+    status.copy();
+    status.is_load_needed();
+    status.is_essential_stats_loaded();
+    status.is_all_evicted();
+    status.is_full_load();
+    status.status_to_string();
+}

@@ -17,7 +17,7 @@
 //! also declares.
 //!
 //! SEED of `pkg/planner/core`. `LogicalWindow` was a
-//! [`crate::logical::TodoLogicalOp`] before this batch.
+//! `LogicalPlan` placeholder arm before this batch.
 //!
 //! This file MERGES the crate's former `window_frame` identity leaf: its
 //! `FrameBoundIdentity`/`WindowFrameIdentity` modelled Go's HANDWRITTEN
@@ -433,7 +433,7 @@ impl LogicalWindow {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let child_len = self_schema
             .columns
             .len()

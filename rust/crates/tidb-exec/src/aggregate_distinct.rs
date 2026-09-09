@@ -15,20 +15,17 @@
 // Tuple DISTINCT state translated from
 // `pkg/expression/aggregation/util.go::distinctChecker`.
 
-use std::collections::HashSet;
-
 use tidb_datatype::Datum;
+use tidb_util::mvmap::MVMap;
 
 /// Stores previously encoded tuples and reports whether the next tuple is new.
 ///
 /// Go's checker reuses one `codec.EncodeValue` buffer and stores the resulting
-/// byte key in an `MVMap`. The Rust shape preserves that ownership and reuse,
-/// using `HashSet` because this consumer needs membership, not multiple values
-/// per key. String and bytes datums deliberately share one raw-byte tag, as
-/// Go `EncodeValue` does; collation metadata must not change DISTINCT identity.
-#[derive(Debug, Default)]
+/// byte key in an `MVMap`. String and bytes datums deliberately share one
+/// raw-byte tag, as Go `EncodeValue` does; collation metadata must not change
+/// DISTINCT identity.
 pub struct DistinctChecker {
-    existing_keys: HashSet<Vec<u8>>,
+    existing_keys: MVMap,
     key: Vec<u8>,
 }
 
@@ -36,7 +33,10 @@ impl DistinctChecker {
     /// Creates an empty checker that has seen no tuples yet.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            existing_keys: MVMap::new(),
+            key: Vec::new(),
+        }
     }
 
     /// Returns `true` only for the tuple's first occurrence.
@@ -45,7 +45,11 @@ impl DistinctChecker {
         for value in values {
             encode_value(&mut self.key, value);
         }
-        self.existing_keys.insert(self.key.clone())
+        if !self.existing_keys.get(&self.key, Vec::new()).is_empty() {
+            return false;
+        }
+        self.existing_keys.put(&self.key, &[]);
+        true
     }
 }
 

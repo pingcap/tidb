@@ -141,6 +141,7 @@ use tidb_model::{
 };
 
 use crate::table_info_build::DdlAdmissionError;
+use tidb_hack::{GoToLower, GoToUpper};
 
 /// Go `partition.go`'s unexported `partitionMaxValue`, needed by the
 /// comparison helpers below.
@@ -181,7 +182,7 @@ pub fn build_storage_class_settings_from_json(
     // `json.Unmarshal`), so a non-string top-level value or trailing garbage
     // both fail here and fall through.
     if let Ok(tier) = serde_json::from_slice::<String>(input) {
-        let tier = tier.to_uppercase();
+        let tier = tier.go_to_upper();
         // Go returns immediately whether `checkTier` succeeds or fails: the
         // string form never falls back to the object/list forms.
         check_tier(&tier)?;
@@ -358,19 +359,19 @@ fn normalize_storage_class_defs(
 }
 
 fn normalize_storage_class_def(def: &mut StorageClassDef) {
-    def.tier = def.tier.to_uppercase();
+    def.tier = def.tier.go_to_upper();
     for i in 0..def.names_in.len() {
-        let lowered = def.names_in.get(i).to_lowercase();
+        let lowered = def.names_in.get(i).go_to_lower();
         def.names_in.set(i, lowered);
     }
     for i in 0..def.transitions.len() {
         def.transitions
-            .update(i, |rule| rule.tier = rule.tier.to_uppercase());
+            .update(i, |rule| rule.tier = rule.tier.go_to_upper());
     }
 }
 
 fn normalize_storage_class_tier(tier: &str) -> Result<String, DdlAdmissionError> {
-    let tier = tier.to_uppercase();
+    let tier = tier.go_to_upper();
     check_tier(&tier)?;
     Ok(tier)
 }
@@ -990,8 +991,7 @@ fn get_range_value(value: &str, unsigned: bool) -> Result<RangeValue, DdlAdmissi
 }
 
 /// The `model.ColumnInfo` fields [`ColumnInfoSource`] reads, borrowed from an
-/// owned snapshot -- see `tidb_executor::ddl_copr::CopColumnInfo` for the
-/// same pattern against the same trait.
+/// owned snapshot.
 struct PartitionExprColumnInfo<'a>(&'a ColumnInfo);
 
 impl ColumnInfoSource for PartitionExprColumnInfo<'_> {

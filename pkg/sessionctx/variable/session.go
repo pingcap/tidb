@@ -811,6 +811,9 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	// QueryCopStoreLimit limits TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -1751,6 +1754,9 @@ type SessionVars struct {
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
 
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches. 0 disables Analyze store batching.
+	AnalyzeStoreBatchSize int
+
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
@@ -2463,6 +2469,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2501,10 +2508,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,

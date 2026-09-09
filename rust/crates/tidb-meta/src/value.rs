@@ -35,7 +35,6 @@ pub enum MagicType {
 }
 
 /// Go `whichMagicType`.
-#[must_use]
 pub const fn which_magic_type(byte: u8) -> MagicType {
     if byte <= 0x3f {
         MagicType::Json
@@ -62,7 +61,6 @@ pub fn parse_int_value(value: &[u8]) -> Result<i64> {
 }
 
 /// Go `meta.attachMagicByte`.
-#[must_use]
 pub fn attach_magic_byte(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() + 1);
     out.push(CURRENT_MAGIC_BYTE_VER);

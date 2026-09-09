@@ -36,6 +36,7 @@ use tidb_vardef::tidb_vars::{
 };
 
 use crate::vars::VarError;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `OffInt`.
 pub const OFF_INT: i64 = 0;
@@ -199,8 +200,13 @@ pub fn parse_memory_limit(
     original_value: &str,
 ) -> Result<ParsedMemoryLimit, TruncatedWrongValue> {
     let parsed = if total_mem != 0 {
-        parse_percentage(normalized_value)
-            .map(|(percentage, normalized)| (total_mem * percentage / 100, normalized))
+        parse_percentage(normalized_value).map(|(percentage, normalized)| {
+            // Go evaluates `total * percentage / 100` as uint64 arithmetic;
+            // overflow wraps instead of panicking in a debug build. Keep the
+            // same arithmetic contract for callers that provide a synthetic
+            // near-u64 host total (real host totals are much smaller).
+            (total_mem.wrapping_mul(percentage) / 100, normalized)
+        })
     } else {
         None
     };
@@ -296,7 +302,7 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
         return Ok(String::new());
     }
     let mut column_types = Vec::new();
-    for item in val.to_lowercase().split(',') {
+    for item in go_to_lower(val).split(',') {
         let column_type = item.trim();
         if !ANALYZE_SKIP_ALLOWED_TYPES.contains(&column_type) {
             return Err(VarError::WrongValueForVar(
@@ -313,7 +319,7 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
 /// dropping anything outside the allowed types.
 #[must_use]
 pub fn parse_analyze_skip_column_types(val: &str) -> BTreeSet<String> {
-    val.to_lowercase()
+    go_to_lower(val)
         .split(',')
         .filter(|column_type| ANALYZE_SKIP_ALLOWED_TYPES.contains(column_type))
         .map(ToOwned::to_owned)
@@ -429,6 +435,13 @@ mod tests {
             error.to_string(),
             "[variable:1292]Truncated incorrect tidb_server_memory_limit value: 'bogus'"
         );
+
+        // Go's uint64 multiplication wraps before division. This synthetic
+        // maximum-total case must stay deterministic instead of panicking in
+        // Rust's debug arithmetic.
+        let wrapped = parse_memory_limit(u64::MAX, "99%", "99%").unwrap();
+        assert_eq!(wrapped.byte_size, 184_467_440_737_095_515);
+        assert_eq!(wrapped.normalized, "99%");
     }
 
     // The GA allowlist and its error-message rendering.

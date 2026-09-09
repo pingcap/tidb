@@ -44,6 +44,9 @@ pub enum ExecError {
     /// scalar subquery's plan carries. It is an executor error because it is
     /// only known per outer row, once the inner query has run.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `exeerrors.ErrCTEMaxRecursionDepth` (3636). The payload is the
+    /// first recursive iteration beyond `@@cte_max_recursion_depth`.
+    CteMaxRecursionDepth(u64),
     /// Go `exeerrors.ErrMemoryExceedForQuery` (8175): the statement's memory
     /// consumption crossed `tidb_mem_quota_query` while
     /// `tidb_mem_oom_action` was `CANCEL`. See [`crate::StatementMemory`].
@@ -142,18 +145,6 @@ pub trait Executor {
         None
     }
 
-    /// Whether this operator tree already enforces every conjunct of the
-    /// statement's `WHERE` clause.
-    ///
-    /// This is a physical-plan fact, not a semantic shortcut: the default is
-    /// deliberately false, and only an operator that has installed all leaf
-    /// filters and join equalities may opt in. The driver uses it to avoid
-    /// rebuilding a redundant root `Selection` after a join strategy is
-    /// committed.
-    fn consumes_where(&self) -> bool {
-        false
-    }
-
     /// Go `aggExecutorTreeInputEmpty` (`pkg/executor/join/hash_join_v1.go`):
     /// whether this already-executed operator tree is an aggregation that saw
     /// NO input row, and therefore owes its single output row entirely to the
@@ -166,13 +157,6 @@ pub trait Executor {
     /// is not an aggregation and does not forward reports `false`.
     fn agg_tree_input_empty(&self) -> bool {
         false
-    }
-
-    /// Exact cardinality shortcut for a parent global `COUNT(*)`. Operators
-    /// that can compute it without materializing their output may return it;
-    /// `None` keeps the normal pull path and all other aggregate semantics.
-    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
-        Ok(None)
     }
 }
 

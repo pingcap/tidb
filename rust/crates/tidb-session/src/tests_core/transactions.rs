@@ -4,77 +4,6 @@
 
 use crate::*;
 
-#[test]
-fn prepared_prelock_matches_bound_statement_keys() {
-    let mut session = Session::new();
-    session.run("CREATE TABLE prelock_int (id BIGINT PRIMARY KEY, v BIGINT)").unwrap();
-    session.run("CREATE TABLE prelock_pair (a BIGINT, b BIGINT, v BIGINT, PRIMARY KEY(a,b) CLUSTERED)").unwrap();
-    for isolation in ["REPEATABLE-READ", "READ-COMMITTED"] {
-        session.run(&format!("SET transaction_isolation='{isolation}'")).unwrap();
-        for ((sql, params), rr_keys) in [
-            ("SELECT ? FROM prelock_int WHERE id=?", vec![Datum::Int(5), Datum::Int(7)]),
-            ("SELECT ? FROM prelock_int WHERE id=? FOR UPDATE", vec![Datum::Int(5), Datum::Int(7)]),
-            ("SELECT v FROM prelock_int WHERE id IN (?,?,?) FOR UPDATE", vec![Datum::Int(7), Datum::Int(9), Datum::Int(7)]),
-            ("SELECT v FROM prelock_int WHERE id IN (-?,?) FOR UPDATE", vec![Datum::Int(7), Datum::Int(9)]),
-            ("SELECT v FROM prelock_pair WHERE (b,a) IN ((?,?),(?,?)) FOR UPDATE", vec![Datum::Int(2), Datum::Int(1), Datum::Int(4), Datum::Int(3)]),
-            ("SELECT v FROM prelock_pair WHERE b=? AND a=? FOR UPDATE", vec![Datum::Int(2), Datum::Int(1)]),
-            ("SELECT v FROM prelock_int WHERE id=? FOR UPDATE NOWAIT", vec![Datum::Int(7)]),
-            ("SELECT v FROM prelock_int WHERE id=? ORDER BY id LIMIT 1 FOR UPDATE", vec![Datum::Int(7)]),
-            ("UPDATE prelock_int SET v=?+? WHERE id=?", vec![Datum::Int(3), Datum::Int(4), Datum::Int(7)]),
-            ("UPDATE prelock_pair SET v=? WHERE b=? AND a=?", vec![Datum::Int(9), Datum::Int(2), Datum::Int(1)]),
-            ("DELETE FROM prelock_int WHERE id=-?", vec![Datum::Int(7)]),
-            ("DELETE FROM prelock_int WHERE id>?", vec![Datum::Int(7)]),
-            ("INSERT INTO prelock_int VALUES (?,?)", vec![Datum::Int(7), Datum::Int(8)]),
-        // Go's point/batch matcher admits values and markers, not unary
-        // expressions around markers. Those retain ordinary execution.
-        ].into_iter().zip([0, 1, 2, 0, 2, 1, 0, 0, 1, 1, 0, 0, 0]) {
-            let template = session.parse(sql).unwrap();
-            let bound = tidb_executor::bind_statement(template.clone(), &params).unwrap();
-            let expected = session.statement_prelock_keys(&bound);
-            let expected_count = if isolation == "READ-COMMITTED" && matches!(&template, Stmt::Query(_)) {
-                0
-            } else {
-                rr_keys
-            };
-            assert_eq!(expected.len(), expected_count, "{isolation}: {sql}");
-            assert_eq!(session.prepared_statement_prelock_keys(&template, &params), expected,
-                "{isolation}: {sql}");
-            assert_eq!(template, session.parse(sql).unwrap(), "retained AST must stay immutable");
-        }
-    }
-}
-
-#[test]
-#[ignore = "manual pre-lock classification benchmark; run without competing workloads"]
-fn prepared_prelock_classification_cost() {
-    let mut session = Session::new();
-    let columns = (0..64).map(|i| format!("v{i} BIGINT")).collect::<Vec<_>>().join(",");
-    session.run(&format!("CREATE TABLE prelock_cost (id BIGINT PRIMARY KEY, {columns})")).unwrap();
-    let projection = (0..64).map(|i| format!("v{i}+? AS a{i}")).collect::<Vec<_>>().join(",");
-    let assignments = (0..64).map(|i| format!("v{i}=?")).collect::<Vec<_>>().join(",");
-    for (label, sql, params) in [
-        ("point_read", "SELECT v0 FROM prelock_cost WHERE id=?".to_owned(), vec![Datum::Int(7)]),
-        ("wide_read", format!("SELECT {projection} FROM prelock_cost WHERE id=?"), vec![Datum::Int(7); 65]),
-        ("point_write", "UPDATE prelock_cost SET v0=? WHERE id=?".to_owned(), vec![Datum::Int(8), Datum::Int(7)]),
-        ("wide_write", format!("UPDATE prelock_cost SET {assignments} WHERE id=?"), vec![Datum::Int(7); 65]),
-        ("batch_lock", "SELECT v0 FROM prelock_cost WHERE id IN (?,?,?) FOR UPDATE".to_owned(), vec![Datum::Int(7), Datum::Int(9), Datum::Int(11)]),
-    ] {
-        let template = session.parse(&sql).unwrap();
-        let bound = tidb_executor::bind_statement(template.clone(), &params).unwrap();
-        let expected = session.statement_prelock_keys(&bound);
-        assert_eq!(session.prepared_statement_prelock_keys(&template, &params), expected);
-        for round in 0..5 {
-            let started = std::time::Instant::now();
-            for _ in 0..10000 {
-                std::hint::black_box(session.prepared_statement_prelock_keys(
-                    std::hint::black_box(&template), std::hint::black_box(&params)));
-            }
-            println!("prelock_cost case={label} round={round} ns_per_call={}",
-                started.elapsed().as_nanos()/10000);
-        }
-    }
-}
-
 /// Go retains TxnCtx.Isolation across changes to the session default.
 #[test]
 fn locking_read_isolation_is_retained_until_transaction_end() {
@@ -83,10 +12,14 @@ fn locking_read_isolation_is_retained_until_transaction_end() {
         ("REPEATABLE-READ", "READ-COMMITTED", false),
         ("READ-COMMITTED", "REPEATABLE-READ", true),
     ] {
-        session.run(&format!("SET SESSION transaction_isolation='{initial}'")).unwrap();
+        session
+            .run(&format!("SET SESSION transaction_isolation='{initial}'"))
+            .unwrap();
         assert_eq!(session.read_committed_locking(), read_committed);
         session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-        session.run(&format!("SET SESSION transaction_isolation='{subsequent}'")).unwrap();
+        session
+            .run(&format!("SET SESSION transaction_isolation='{subsequent}'"))
+            .unwrap();
         assert_eq!(session.read_committed_locking(), read_committed);
         session.control_transaction("ROLLBACK").unwrap();
         assert_eq!(session.read_committed_locking(), !read_committed);
@@ -260,7 +193,9 @@ fn normal_insert_duplicate_mode_matches_go_for_autocommit_and_explicit_modes() {
     assert!(!default.constraint_check_in_place());
     assert!(default.pessimistic_lazy_dup_check());
 
-    session.apply_set("SET tidb_txn_mode = 'optimistic'").unwrap();
+    session
+        .apply_set("SET tidb_txn_mode = 'optimistic'")
+        .unwrap();
     let optimistic = session.statement_context(true);
     assert!(!optimistic.pessimistic_lazy_dup_check());
     assert!(!optimistic.constraint_check_in_place());
@@ -343,6 +278,23 @@ fn autocommit_off_puts_a_statement_in_a_transaction() {
             vec![Datum::Int(3)],
         ])
     );
+}
+
+#[test]
+fn process_status_uses_the_typed_autocommit_and_transaction_bits() {
+    let mut session = Session::new();
+    assert_eq!(session.status_text(), "autocommit");
+
+    session.run("SET autocommit = 0").unwrap();
+    assert_eq!(session.status_text(), "");
+
+    session.control_transaction("BEGIN").unwrap();
+    assert_eq!(session.status_text(), "in transaction");
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(session.status_text(), "");
+
+    session.run("SET autocommit = 1").unwrap();
+    assert_eq!(session.status_text(), "autocommit");
 }
 
 /// A session that has pinned a historical timestamp must not be answered

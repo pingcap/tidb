@@ -34,7 +34,7 @@ use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, S
 
 use super::channel_iter::{ChannelIter, ChannelIterError};
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
-use super::distsql_runtime::{SelectResultMetadata, SelectResultRuntimeStats};
+use super::distsql_runtime::{LimiterWaitStats, SelectResultMetadata, SelectResultRuntimeStats};
 use super::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use super::select_iter::SelectResultRow;
 use super::warning::{Warning, WarningCollector, WarningLevel};
@@ -1058,6 +1058,13 @@ impl SelectResponseIter {
             backoff_sleep_ns,
             execution_summaries,
         );
+    }
+
+    /// Merges request-limiter wait evidence transferred from the response
+    /// owner. Go records this once when `selectResult` closes, rather than
+    /// attaching it to an individual protobuf response sample.
+    pub fn record_limiter_wait(&mut self, stats: LimiterWaitStats) {
+        self.runtime_stats.limiter_wait.merge(stats);
     }
 
     /// Borrows the runtime statistics accumulated by this consumer.

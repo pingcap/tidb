@@ -1,0 +1,26 @@
+[package]
+name = "tidb-ddl-serverstate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/serverstate: etcd and in-memory smooth-upgrade state syncers."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+fail = { version = "0.4", optional = true }
+prometheus = { version = "0.14", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-model = { path = "../tidb-model" }
+tidb-util = { path = "../tidb-util" }

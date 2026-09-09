@@ -34,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -88,6 +91,93 @@ func TestFormatSQL(t *testing.T) {
 	vardef.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaa(len:20)", val.String())
+}
+
+func TestScalarSubqueryRegistryLifecycle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table scalar_registry (id int primary key, v int)")
+	tk.MustExec("insert into scalar_registry values (1, 10), (2, 20), (3, 30)")
+	const scalarSQL = "select (select sum(v) from scalar_registry)"
+	const pointSQL = "select v from scalar_registry where id = 1"
+	const batchSQL = "select v from scalar_registry where id in (1, 2)"
+
+	checkScalarPlans := func(t *testing.T, tk *testkit.TestKit, expected int) base.Plan {
+		t.Helper()
+		vars := tk.Session().GetSessionVars()
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		flat := plannercore.FlattenPhysicalPlan(plan, true)
+		t.Logf("plan=%T registry=%d flattened scalar trees=%d", plan, len(vars.MapScalarSubQ), len(flat.ScalarSubQueries))
+		require.Len(t, flat.ScalarSubQueries, expected)
+		require.Len(t, vars.MapScalarSubQ, expected)
+		return plan
+	}
+	newSession := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		return tk
+	}
+	runScalar := func(t *testing.T, tk *testkit.TestKit) {
+		t.Helper()
+		tk.MustQuery(scalarSQL).Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+	}
+
+	t.Run("current scalar survives planning context restoration", func(t *testing.T) {
+		tk := newSession(t)
+		for _, alternative := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			runScalar(t, tk)
+		}
+	})
+	t.Run("following PointGet", func(t *testing.T) {
+		tk := newSession(t)
+		runScalar(t, tk)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following non-prepared BatchPointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache = on")
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		runScalar(t, tk)
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		require.IsType(t, &physicalop.BatchPointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following prepared PointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select v from scalar_registry where id = ?'")
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		runScalar(t, tk)
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 0)
+	})
+	t.Run("prepared scalar is rebuilt for each execution", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select (select sum(v) from scalar_registry where id > ?)'")
+		tk.MustExec("set @id = 0")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("50"))
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 1)
+	})
+	t.Run("PointGet after scalar evaluation error", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustGetErrCode("select (select v from scalar_registry)", 1242)
+		require.NotEmpty(t, tk.Session().GetSessionVars().MapScalarSubQ)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
 }
 
 func TestContextCancelWhenReadFromCopIterator(t *testing.T) {

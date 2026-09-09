@@ -15,10 +15,8 @@
 //! Bounded best-N heap from Go `pkg/util/generic`.
 //!
 //! The root is the worst retained item, so a better arrival replaces it in
-//! logarithmic time. Capacity and comparator validity are enforced by Rust's
-//! types; snapshots are returned best-to-worst without mutating the heap.
-
-use std::cmp::Ordering;
+//! logarithmic time. Snapshots are returned best-to-worst without mutating the
+//! heap.
 
 /// An unexported binary heap that keeps the worst item (smallest per `cmp`) at
 /// the root, backing [`BoundedMinHeap`].
@@ -27,9 +25,9 @@ struct InternalHeap<T, F> {
     items: Vec<T>,
 }
 
-impl<T, F: Fn(&T, &T) -> Ordering> InternalHeap<T, F> {
+impl<T, F: Fn(&T, &T) -> isize> InternalHeap<T, F> {
     fn less(&self, i: usize, j: usize) -> bool {
-        (self.cmp)(&self.items[i], &self.items[j]) == Ordering::Less
+        (self.cmp)(&self.items[i], &self.items[j]) < 0
     }
 
     /// Sifts the element at `j` up towards the root.
@@ -90,34 +88,28 @@ impl<T, F: Fn(&T, &T) -> Ordering> InternalHeap<T, F> {
 /// when a better item arrives.
 pub struct BoundedMinHeap<T, F> {
     data: InternalHeap<T, F>,
-    max_size: usize,
+    max_size: isize,
 }
 
-impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
+impl<T, F: Fn(&T, &T) -> isize> BoundedMinHeap<T, F> {
     /// Creates a new bounded min-heap with the specified maximum size and
     /// comparison function.
     ///
-    #[must_use]
-    pub fn new(max_size: usize, cmp_func: F) -> Self {
+    pub fn new(max_size: isize, cmp_func: Option<F>) -> Self {
+        let cmp_func = cmp_func.expect("comparison function cannot be nil");
+        assert!(max_size >= 0, "maxSize cannot be negative");
         Self {
             data: InternalHeap {
                 cmp: cmp_func,
-                items: Vec::with_capacity(max_size),
+                items: Vec::with_capacity(max_size as usize),
             },
             max_size,
         }
     }
 
     /// Returns the number of items in the heap.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.data.items.len()
-    }
-
-    /// Returns whether the heap contains no items.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.data.items.is_empty()
     }
 
     /// Adds an item to the bounded min-heap. If the heap is full and the new
@@ -128,7 +120,7 @@ impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
             return;
         }
 
-        if self.data.items.len() < self.max_size {
+        if self.data.items.len() < self.max_size as usize {
             // Heap not full, just add the item.
             self.data.push(item);
             return;
@@ -136,7 +128,7 @@ impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
 
         // Heap is full; check if the new item is better than the worst (root of
         // the min-heap).
-        if (self.data.cmp)(&item, &self.data.items[0]) == Ordering::Greater {
+        if (self.data.cmp)(&item, &self.data.items[0]) > 0 {
             // New item is better, replace the worst.
             self.data.items[0] = item;
             self.data.fix(0);
@@ -144,7 +136,6 @@ impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
     }
 
     /// Returns all items in the heap as a sorted slice (best to worst).
-    #[must_use]
     pub fn to_sorted_slice(&self) -> Vec<T>
     where
         T: Clone,
@@ -155,7 +146,7 @@ impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
 
         // Copy items to avoid modifying the heap, then sort best-to-worst.
         let mut result = self.data.items.clone();
-        result.sort_by(|a, b| (self.data.cmp)(a, b).reverse());
+        result.sort_by(|a, b| (self.data.cmp)(a, b).wrapping_neg().cmp(&0));
         result
     }
 }
@@ -163,7 +154,6 @@ impl<T, F: Fn(&T, &T) -> Ordering> BoundedMinHeap<T, F> {
 #[cfg(test)]
 mod tests {
     use super::BoundedMinHeap;
-    use std::cmp::Ordering;
 
     // A simple test item with a value for comparison.
     #[derive(Clone)]
@@ -174,19 +164,19 @@ mod tests {
 
     // Compares integers (for max-heap behavior, return negative for smaller
     // values).
-    fn int_comparator(a: &i32, b: &i32) -> Ordering {
-        a.cmp(b)
+    fn int_comparator(a: &i32, b: &i32) -> isize {
+        (*a > *b) as isize - (*a < *b) as isize
     }
 
     // Compares TestItems by value.
-    fn test_item_comparator(a: &TestItem, b: &TestItem) -> Ordering {
-        a.value.cmp(&b.value)
+    fn test_item_comparator(a: &TestItem, b: &TestItem) -> isize {
+        int_comparator(&a.value, &b.value)
     }
 
     // Go `TestBoundedMinHeapBasic`.
     #[test]
     fn bounded_min_heap_basic() {
-        let mut bmh = BoundedMinHeap::new(3, int_comparator);
+        let mut bmh = BoundedMinHeap::new(3, Some(int_comparator));
 
         // Test empty state.
         assert_eq!(bmh.len(), 0);
@@ -207,7 +197,7 @@ mod tests {
         assert_eq!(bmh.to_sorted_slice(), vec![9, 8, 7]);
 
         // Test duplicate values.
-        let mut bmh2 = BoundedMinHeap::new(3, int_comparator);
+        let mut bmh2 = BoundedMinHeap::new(3, Some(int_comparator));
         for item in [5, 5, 3, 8, 5] {
             bmh2.add(item);
         }
@@ -219,7 +209,7 @@ mod tests {
     #[test]
     fn bounded_min_heap_edge_cases() {
         // Test single item capacity.
-        let mut bmh1 = BoundedMinHeap::new(1, int_comparator);
+        let mut bmh1 = BoundedMinHeap::new(1, Some(int_comparator));
         bmh1.add(3);
         bmh1.add(1);
         bmh1.add(7);
@@ -228,7 +218,7 @@ mod tests {
         assert_eq!(bmh1.to_sorted_slice(), vec![7]);
 
         // Test zero capacity.
-        let mut bmh0 = BoundedMinHeap::new(0, int_comparator);
+        let mut bmh0 = BoundedMinHeap::new(0, Some(int_comparator));
         bmh0.add(5);
         bmh0.add(10);
         assert_eq!(bmh0.len(), 0);
@@ -238,7 +228,7 @@ mod tests {
     // Go `TestBoundedMinHeapCustomStruct`.
     #[test]
     fn bounded_min_heap_custom_struct() {
-        let mut bmh = BoundedMinHeap::new(3, test_item_comparator);
+        let mut bmh = BoundedMinHeap::new(3, Some(test_item_comparator));
 
         // Add custom struct items.
         bmh.add(TestItem {
@@ -278,9 +268,9 @@ mod tests {
     #[test]
     fn bounded_min_heap_reverse_comparator() {
         // Reverse comparator for min-heap behavior (keeping smallest values).
-        let reverse_comparator = |a: &i32, b: &i32| int_comparator(a, b).reverse();
+        let reverse_comparator = |a: &i32, b: &i32| int_comparator(a, b).wrapping_neg();
 
-        let mut bmh = BoundedMinHeap::new(3, reverse_comparator);
+        let mut bmh = BoundedMinHeap::new(3, Some(reverse_comparator));
 
         for item in [9, 2, 7, 1, 8, 3] {
             bmh.add(item);
@@ -294,7 +284,7 @@ mod tests {
     // Go `TestBoundedMinHeapItemReplacement`.
     #[test]
     fn bounded_min_heap_item_replacement() {
-        let mut bmh = BoundedMinHeap::new(2, int_comparator);
+        let mut bmh = BoundedMinHeap::new(2, Some(int_comparator));
 
         bmh.add(5);
         bmh.add(3);
@@ -313,7 +303,7 @@ mod tests {
         assert_eq!(bmh.to_sorted_slice(), vec![10, 8]);
 
         // Test equal values behavior.
-        let mut bmh2 = BoundedMinHeap::new(3, int_comparator);
+        let mut bmh2 = BoundedMinHeap::new(3, Some(int_comparator));
         bmh2.add(5);
         bmh2.add(5);
         bmh2.add(5);
@@ -328,7 +318,7 @@ mod tests {
         const CAPACITY: usize = 10;
         const DATA_SIZE: i32 = 1000;
 
-        let mut bmh = BoundedMinHeap::new(CAPACITY, int_comparator);
+        let mut bmh = BoundedMinHeap::new(CAPACITY as isize, Some(int_comparator));
 
         // Add many items.
         for i in 0..DATA_SIZE {
@@ -345,11 +335,20 @@ mod tests {
         }
     }
 
-    // Rust's types exclude the source's negative capacity and nil comparator.
     #[test]
-    fn zero_capacity_is_a_noop() {
-        let mut bmh = BoundedMinHeap::new(0, int_comparator);
+    fn new_bounded_min_heap_safety_checks() {
+        assert!(std::panic::catch_unwind(|| {
+            BoundedMinHeap::<i32, fn(&i32, &i32) -> isize>::new(10, None)
+        })
+        .is_err());
+        assert!(
+            std::panic::catch_unwind(|| BoundedMinHeap::new(-1, Some(int_comparator))).is_err()
+        );
+        assert!(std::panic::catch_unwind(|| BoundedMinHeap::new(0, Some(int_comparator))).is_ok());
+        assert!(std::panic::catch_unwind(|| BoundedMinHeap::new(10, Some(int_comparator))).is_ok());
+
+        let mut bmh = BoundedMinHeap::new(0, Some(int_comparator));
         bmh.add(5);
-        assert!(bmh.is_empty());
+        assert_eq!(bmh.len(), 0);
     }
 }

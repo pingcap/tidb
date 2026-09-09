@@ -15,6 +15,8 @@ workspace = true
 
 [dependencies]
 tidb-ast = { path = "../../crates/tidb-ast" }
+tidb-datatype = { path = "../../crates/tidb-datatype" }
+tidb-expr = { path = "../../crates/tidb-expr" }
 tidb-planner = { path = "../../crates/tidb-planner" }
 
 [[test]]

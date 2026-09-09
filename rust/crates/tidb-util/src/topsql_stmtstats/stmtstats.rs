@@ -20,9 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::aggregator::global_aggregator;
-use super::ru_details::RuDetails;
 use super::rustats::{normalize_ru_version, ExecutionContext, RuIncrementMap, RuKey, RuVersion};
 use super::ruv2_metrics::{self, RuV2Metrics, RuV2Weights};
+use tikv_client::RuDetails;
 
 /// Go `BinaryDigest`, converted from `parser.Digest.Bytes()` so that it can be
 /// used as a map key.
@@ -69,7 +69,6 @@ pub struct SqlPlanDigest {
 }
 
 /// Go `newSQLPlanDigest`.
-#[must_use]
 pub fn new_sql_plan_digest(sql_digest: &[u8], plan_digest: &[u8]) -> SqlPlanDigest {
     SqlPlanDigest {
         sql_digest: BinaryDigest::from(sql_digest),
@@ -93,7 +92,6 @@ pub struct KvStatementStatsItem {
 
 impl KvStatementStatsItem {
     /// Go `NewKvStatementStatsItem`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -133,7 +131,6 @@ pub struct StatementStatsItem {
 
 impl StatementStatsItem {
     /// Go `NewStatementStatsItem`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -313,7 +310,6 @@ pub struct StatementStats {
 ///
 /// Go returns a `*StatementStats` that the global aggregator also holds; the
 /// shared ownership is an `Arc` here.
-#[must_use]
 pub fn create_statement_stats() -> Arc<StatementStats> {
     let stats = Arc::new(StatementStats::default());
     global_aggregator().register(&stats);
@@ -456,7 +452,6 @@ impl StatementStats {
 
     /// Go `StatementStats.Take`: takes out all existing [`StatementStatsMap`]
     /// data. Thread-safe.
-    #[must_use]
     pub fn take(&self) -> StatementStatsMap {
         std::mem::take(&mut self.lock().data)
     }
@@ -471,7 +466,6 @@ impl StatementStats {
     }
 
     /// Go `StatementStats.Finished`.
-    #[must_use]
     pub fn finished(&self) -> bool {
         self.finished.load(Ordering::SeqCst)
     }
@@ -479,7 +473,6 @@ impl StatementStats {
     /// Go `StatementStats.MergeRUInto`: drains the finished RU buffer and
     /// returns the accumulated RU increments. In-flight RU is sampled in the
     /// same call.
-    #[must_use]
     pub fn merge_ru_into(&self) -> RuIncrementMap {
         let mut inner = self.lock();
         let result = std::mem::take(&mut inner.finished_ru_buffer);
@@ -576,7 +569,7 @@ fn current_ru_total(exec_ctx: Option<&ExecutionContext>, ru_details: Option<&RuD
 
     match ru_details {
         None => 0.0,
-        Some(ru) => ru.rru() + ru.wru(),
+        Some(ru) => ru.read_ru() + ru.write_ru(),
     }
 }
 
@@ -608,6 +601,20 @@ mod tests {
 
     const SECOND_NS: u64 = 1_000_000_000;
     const MILLISECOND_NS: u64 = 1_000_000;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        new_sql_plan_digest(b"sql", b"plan");
+        KvStatementStatsItem::new();
+        StatementStatsItem::new();
+        create_statement_stats();
+
+        let stats = Arc::new(StatementStats::default());
+        stats.take();
+        stats.finished();
+        stats.merge_ru_into();
+    }
 
     // Go `TestKvStatementStatsItemMerge`.
     #[test]

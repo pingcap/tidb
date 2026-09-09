@@ -53,23 +53,12 @@ pub enum RawRowValue<'a> {
 pub enum RowDecodeError {
     /// The row-level framing or offset table is malformed.
     Layout(RowCodecError),
-    /// A compact integer payload is not one of Go's 1/2/4/8-byte widths.
-    InvalidIntegerWidth {
-        /// Whether the requested interpretation is signed.
-        signed: bool,
-        /// Number of payload bytes supplied by the caller.
-        width: usize,
-    },
 }
 
 impl fmt::Display for RowDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Layout(error) => write!(formatter, "row layout: {error}"),
-            Self::InvalidIntegerWidth { signed, width } => {
-                let kind = if *signed { "signed" } else { "unsigned" };
-                write!(formatter, "row {kind} integer has invalid width {width}")
-            }
         }
     }
 }
@@ -122,9 +111,9 @@ impl<'a> RowDecoder<'a> {
 /// Decodes one compact signed row payload.
 ///
 /// This is Go `decodeInt`: rowcodec stores signed integers in the shortest
-/// little-endian two's-complement width (1, 2, 4, or 8 bytes).  Unlike the Go
-/// helper, malformed widths are returned as a typed error instead of causing
-/// an out-of-bounds panic in the default 8-byte branch.
+/// little-endian two's-complement width (1, 2, 4, or 8 bytes). Every width
+/// other than 1, 2, or 4 enters Go's default 8-byte branch: short inputs panic
+/// and long inputs ignore bytes after the first eight.
 pub fn decode_raw_int(input: &[u8]) -> Result<i64, RowDecodeError> {
     match input.len() {
         1 => Ok(i64::from(i8::from_le_bytes([input[0]]))),
@@ -134,22 +123,17 @@ pub fn decode_raw_int(input: &[u8]) -> Result<i64, RowDecodeError> {
         4 => Ok(i64::from(i32::from_le_bytes(
             input.try_into().expect("four-byte width"),
         ))),
-        8 => Ok(i64::from_le_bytes(
-            input.try_into().expect("eight-byte width"),
+        _ => Ok(i64::from_le_bytes(
+            input[..8].try_into().expect("first eight bytes"),
         )),
-        width => Err(RowDecodeError::InvalidIntegerWidth {
-            signed: true,
-            width,
-        }),
     }
 }
 
 /// Decodes one compact unsigned row payload.
 ///
 /// This is Go `decodeUint`: rowcodec stores unsigned integers in the shortest
-/// little-endian 1/2/4/8-byte width.  A non-source width is rejected before
-/// any integer conversion so malformed row values cannot panic or silently
-/// truncate.
+/// little-endian 1/2/4/8-byte width. Every other width follows Go's default
+/// 8-byte branch.
 pub fn decode_raw_uint(input: &[u8]) -> Result<u64, RowDecodeError> {
     match input.len() {
         1 => Ok(u64::from(input[0])),
@@ -159,12 +143,8 @@ pub fn decode_raw_uint(input: &[u8]) -> Result<u64, RowDecodeError> {
         4 => Ok(u64::from(u32::from_le_bytes(
             input.try_into().expect("four-byte width"),
         ))),
-        8 => Ok(u64::from_le_bytes(
-            input.try_into().expect("eight-byte width"),
+        _ => Ok(u64::from_le_bytes(
+            input[..8].try_into().expect("first eight bytes"),
         )),
-        width => Err(RowDecodeError::InvalidIntegerWidth {
-            signed: false,
-            width,
-        }),
     }
 }

@@ -27,9 +27,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tidb_ast::{CiString, MEDIUM_PRIORITY_VALUE};
+use tidb_dxf::schstatus::TtlTuneFactors;
 use tidb_metadef::system::MAX_USER_GLOBAL_ID;
 use tidb_model::db::DBInfo;
 use tidb_model::masking_policy::MaskingPolicyInfo;
@@ -38,7 +39,7 @@ use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_util::partialjson::extract_top_level_members;
+use tidb_util::partialjson::{extract_top_level_members, JsonToken};
 
 use crate::error::{MetaError, Result};
 use crate::{key, structure, value};
@@ -65,6 +66,8 @@ impl NextGenBootTableVersion {
     pub const BASE: Self = Self(1);
     /// Adds `mysql.tidb_masking_policy`.
     pub const MASKING_POLICY: Self = Self(2);
+    /// Adds materialized-view maintenance metadata tables.
+    pub const MATERIALIZED_VIEW: Self = Self(3);
 }
 
 /// Go `DDLTableVersion`.
@@ -585,41 +588,6 @@ pub const FOREIGN_KEY_ATTRIBUTES_NIL: &[u8] = br#""fk_info":null"#;
 /// Go `checkForeignKeyAttributesZero`.
 pub const FOREIGN_KEY_ATTRIBUTES_ZERO: &[u8] = br#""fk_info":[]"#;
 
-/// Go `schstatus.TTLTuneFactors`, the exact stored shape consumed by
-/// `SetDXFScheduleTuneFactors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct TtlTuneFactors {
-    /// Go `time.Duration`, encoded as integer nanoseconds and omitted at zero.
-    #[serde(rename = "ttl", default, skip_serializing_if = "is_zero_i64")]
-    pub ttl_nanoseconds: i64,
-    /// Go's embedded `time.Time` is serialized even when zero despite its
-    /// `omitempty` tag.
-    #[serde(
-        rename = "expire_time",
-        default = "go_zero_time",
-        serialize_with = "serialize_go_time",
-        deserialize_with = "deserialize_go_time"
-    )]
-    pub expire_time: DateTime<Utc>,
-    /// Resource amplification, omitted at zero.
-    #[serde(
-        rename = "amplify_factor",
-        default,
-        skip_serializing_if = "is_zero_f64"
-    )]
-    pub amplify_factor: f64,
-}
-
-impl Default for TtlTuneFactors {
-    fn default() -> Self {
-        Self {
-            ttl_nanoseconds: 0,
-            expire_time: go_zero_time(),
-            amplify_factor: 0.0,
-        }
-    }
-}
-
 /// Go protobuf `resource_manager.Consumption` as seen by `encoding/json`.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct RuConsumption {
@@ -735,7 +703,6 @@ impl<T> Mutator<T> {
 impl<T: MetaSnapshot> Mutator<T> {
     /// Go `NewReader`: marks a snapshot as an internal metadata request
     /// without applying the transaction-only mutator configuration.
-    #[must_use]
     pub fn new_reader(mut snapshot: T) -> Self {
         snapshot.mark_internal_meta_request();
         let start_ts = snapshot.start_ts();
@@ -745,7 +712,6 @@ impl<T: MetaSnapshot> Mutator<T> {
 
 impl<T: RawTransaction> Mutator<T> {
     /// Go `NewMutator` without options.
-    #[must_use]
     pub fn new(transaction: T) -> Self {
         let mut options: [MutatorOption<T>; 0] = [];
         Self::new_with_options(transaction, &mut options)
@@ -753,7 +719,6 @@ impl<T: RawTransaction> Mutator<T> {
 
     /// Go `NewMutator(txn, options...)`, including transaction configuration
     /// and source-order option execution.
-    #[must_use]
     pub fn new_with_options(mut transaction: T, options: &mut [MutatorOption<T>]) -> Self {
         transaction.configure_meta_mutator();
         let start_ts = transaction.start_ts();
@@ -765,7 +730,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.StartTS`.
-    #[must_use]
     pub fn start_ts(&self) -> u64 {
         self.start_ts
     }
@@ -827,7 +791,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GlobalIDKey`.
-    #[must_use]
     pub fn global_id_key(&self) -> Vec<u8> {
         key::next_global_id_kv_key()
     }
@@ -895,7 +858,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.EncodeSchemaDiffKey`.
-    #[must_use]
     pub fn encoded_schema_diff_key(&self, schema_version: i64) -> Vec<u8> {
         key::schema_diff_kv_key(schema_version)
     }
@@ -1226,7 +1188,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GenAutoTableIDKeyValue`.
-    #[must_use]
     pub fn auto_table_id_key_value(
         &self,
         database_id: i64,
@@ -1240,7 +1201,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetAutoIDAccessors`.
-    #[must_use]
     pub fn auto_ids(&self, database_id: i64, table_id: i64) -> AutoIdAccessors<T> {
         AutoIdAccessors {
             meta: self.clone(),
@@ -1731,6 +1691,19 @@ impl<T: RawTransaction> Mutator<T> {
         TxStructure::meta(&mut *transaction).set(key::BOOTSTRAP, &value::encode_int_value(version))
     }
 
+    /// Go `Mutator.GetStarterBootstrapVersion`.
+    pub fn starter_bootstrap_version(&self) -> Result<i64> {
+        let mut transaction = self.lock()?;
+        TxStructure::meta(&mut *transaction).get_int64(key::STARTER_BOOTSTRAP)
+    }
+
+    /// Go `Mutator.FinishStarterBootstrap`.
+    pub fn finish_starter_bootstrap(&self, version: i64) -> Result<()> {
+        let mut transaction = self.lock()?;
+        TxStructure::meta(&mut *transaction)
+            .set(key::STARTER_BOOTSTRAP, &value::encode_int_value(version))
+    }
+
     /// Go `Mutator.GetSchemaDiff`.
     pub fn schema_diff(&self, schema_version: i64) -> Result<Option<SchemaDiff>> {
         let mut transaction = self.lock()?;
@@ -1750,7 +1723,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go test-only `DDLJobHistoryKey`.
-    #[must_use]
     pub fn ddl_job_history_key(&self, job_id: i64) -> Vec<u8> {
         key::ddl_job_history_kv_key(job_id)
     }
@@ -1898,13 +1870,11 @@ impl<T: RawTransaction> AutoIdAccessors<T> {
     }
 
     /// Go `RowID`.
-    #[must_use]
     pub fn row_id(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::Row)
     }
 
     /// Go `IncrementID`; table versions before 5 share the row-ID field.
-    #[must_use]
     pub fn increment_id(&self, table_version: u16) -> AutoIdAccessor<T> {
         if table_version < tidb_model::table_info::TABLE_INFO_VERSION5 {
             self.row_id()
@@ -1914,19 +1884,16 @@ impl<T: RawTransaction> AutoIdAccessors<T> {
     }
 
     /// Go `RandomID`.
-    #[must_use]
     pub fn random_id(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::Random)
     }
 
     /// Go `SequenceValue`.
-    #[must_use]
     pub fn sequence_value(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::SequenceValue)
     }
 
     /// Go `SequenceCycle`.
-    #[must_use]
     pub fn sequence_cycle(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::SequenceCycle)
     }

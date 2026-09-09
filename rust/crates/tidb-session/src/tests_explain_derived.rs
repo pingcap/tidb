@@ -67,11 +67,30 @@ fn derived_session() -> Session {
 #[test]
 fn a_derived_table_is_its_subquery_s_own_plan() {
     let mut session = derived_session();
+    // Operator ids shift with the session's statement history: strip the
+    // `_N` suffixes from the operator cells before matching the shape.
+    let strip_id = |line: &str| -> String {
+        line.split('|')
+            .map(|cell| match cell.rsplit_once('_') {
+                Some((prefix, suffix))
+                    if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    prefix.to_owned()
+                }
+                _ => cell.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let shape: Vec<String> = plan(&mut session, "explain select * from (select * from t) x")
+        .into_iter()
+        .map(|row| strip_id(&row))
+        .collect();
     assert_eq!(
-        plan(&mut session, "explain select * from (select * from t) x"),
+        shape,
         vec![
-            "TableReader_2|10000.00|root||data:TableFullScan",
-            "└─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TableReader|10000.00|root||data:TableFullScan",
+            "└─TableFullScan|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // The rows the same query returns are unchanged by being described: a
@@ -261,10 +280,9 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
 /// `actRows` column reports what each one really produced rather than
 /// attributing the whole subquery to one node.
 ///
-/// This is the assertion that the descent is real and not cosmetic: on three
-/// rows, `a > 1` inside the derived table passes 2 and `x.b < 3` outside it
-/// passes 1, and both counts are on their own operator. A recorder that
-/// stopped at the derived table could not tell those two apart.
+/// Predicate pushdown combines the inner and outer predicates into one
+/// coprocessor Selection. The scan still reports all three rows it reads and
+/// the Selection reports the single row that satisfies both predicates.
 #[test]
 fn explain_analyze_meters_inside_the_derived_table() {
     let mut session = derived_session();
@@ -283,10 +301,9 @@ fn explain_analyze_meters_inside_the_derived_table() {
     assert_eq!(
         act_rows,
         vec![
-            ("Selection_4".to_owned(), "1".to_owned()),
-            ("IndexLookUp_3".to_owned(), "2".to_owned()),
-            ("├─IndexRangeScan_1(Build)".to_owned(), "1".to_owned()),
-            ("TableRowIDScan_2(Probe)".to_owned(), "1".to_owned()),
+            ("TableReader_9".to_owned(), "1".to_owned()),
+            ("Selection_8".to_owned(), "1".to_owned()),
+            ("TableFullScan_7".to_owned(), "3".to_owned()),
         ]
     );
 }

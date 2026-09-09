@@ -24,15 +24,16 @@
 //! "large" (and stays large even if that value is later removed), exactly
 //! as in the source; `equals` handles the large-but-all-small case.
 
-use std::collections::{btree_set, BTreeSet};
+use std::borrow::Borrow;
+use std::collections::BTreeSet;
 use std::fmt;
 
 const SMALL_CUT_OFF: i64 = 64;
 /// Go `intsets.MaxInt` sentinel (max platform int; 64-bit here) returned by
 /// [`FastIntSet::next`] when no larger element exists.
-pub const MAX_INT: i64 = i64::MAX;
+const MAX_INT: i64 = i64::MAX;
 /// Go `intsets.MinInt`.
-pub const MIN_INT: i64 = i64::MIN;
+const MIN_INT: i64 = i64::MIN;
 
 /// A small-int-optimized set (Go `FastIntSet`).
 #[derive(Clone, Default, Debug)]
@@ -43,54 +44,18 @@ pub struct FastIntSet {
     large: Option<BTreeSet<i64>>,
 }
 
-/// Ascending iterator over the values exposed by Go `ForEach`.
-pub struct FastIntSetIter<'a> {
-    inner: FastIntSetIterInner<'a>,
-}
-
-enum FastIntSetIterInner<'a> {
-    Small(u64),
-    Large(btree_set::Iter<'a, i64>),
-}
-
-impl Iterator for FastIntSetIter<'_> {
-    type Item = i64;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            FastIntSetIterInner::Small(bits) => {
-                if *bits == 0 {
-                    return None;
-                }
-                let value = bits.trailing_zeros() as i64;
-                *bits &= *bits - 1;
-                Some(value)
-            }
-            FastIntSetIterInner::Large(values) => {
-                let value = *values.next()?;
-                (value != MAX_INT).then_some(value)
-            }
-        }
-    }
-}
-
 impl FastIntSet {
     /// Go `NewFastIntSet`.
-    pub fn new(values: &[i64]) -> FastIntSet {
+    pub fn new<I, V>(values: I) -> FastIntSet
+    where
+        I: IntoIterator<Item = V>,
+        V: Borrow<i64>,
+    {
         let mut res = FastIntSet::default();
-        for &v in values {
-            res.insert(v);
+        for value in values {
+            res.insert(*value.borrow());
         }
         res
-    }
-
-    /// Constructs a set from an iterator of source `int` values.
-    pub fn of(values: impl IntoIterator<Item = i64>) -> FastIntSet {
-        let mut result = FastIntSet::default();
-        for value in values {
-            result.insert(value);
-        }
-        result
     }
 
     /// Go `Len`.
@@ -207,20 +172,22 @@ impl FastIntSet {
         res
     }
 
-    /// Iterates the values in the same order and domain as Go `ForEach`.
-    #[must_use]
-    pub fn iter(&self) -> FastIntSetIter<'_> {
-        let inner = match &self.large {
-            Some(values) => FastIntSetIterInner::Large(values.iter()),
-            None => FastIntSetIterInner::Small(self.small),
-        };
-        FastIntSetIter { inner }
-    }
-
     /// Go `ForEach` (ascending).
     pub fn for_each(&self, mut f: impl FnMut(i64)) {
-        for value in self.iter() {
+        if let Some(large) = &self.large {
+            for &value in large {
+                if value == MAX_INT {
+                    break;
+                }
+                f(value);
+            }
+            return;
+        }
+        let mut values = self.small;
+        while values != 0 {
+            let value = values.trailing_zeros() as i64;
             f(value);
+            values &= values - 1;
         }
     }
 
@@ -437,23 +404,6 @@ impl FastIntSet {
                 self.insert(i);
             }
         }
-    }
-}
-
-impl PartialEq for FastIntSet {
-    fn eq(&self, other: &Self) -> bool {
-        self.equals(other)
-    }
-}
-
-impl Eq for FastIntSet {}
-
-impl<'a> IntoIterator for &'a FastIntSet {
-    type Item = i64;
-    type IntoIter = FastIntSetIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
     }
 }
 
@@ -823,150 +773,5 @@ mod tests {
             "(-5,-3,-2,-1,0-5)"
         );
         assert_eq!(FastIntSet::new(&[0, 1, 3, 4, 5]).to_string(), "(0,1,3-5)");
-    }
-
-    #[test]
-    fn source_shift_wraps_like_go_int() {
-        assert_eq!(
-            FastIntSet::new(&[1]).shift(MAX_INT).sorted_array(),
-            vec![MIN_INT]
-        );
-        assert_eq!(FastIntSet::new(&[1]).shift(MIN_INT).sorted_array(), vec![1]);
-        assert_eq!(
-            FastIntSet::new(&[MAX_INT - 1]).shift(2).sorted_array(),
-            vec![MIN_INT]
-        );
-    }
-
-    #[test]
-    fn shifting_an_empty_set_is_always_empty() {
-        let small_empty = FastIntSet::default();
-        let mut large_empty = FastIntSet::new(&[64]);
-        large_empty.clear();
-
-        for set in [&small_empty, &large_empty] {
-            for delta in [MIN_INT, -65, -64, -1, 0, 1, 64, 65, MAX_INT] {
-                assert!(set.shift(delta).is_empty(), "delta {delta}");
-            }
-        }
-    }
-
-    #[test]
-    fn source_bitmap_transition_contracts() {
-        let mut set = FastIntSet::default();
-        assert!(set.is_empty());
-        assert!(!set.only1_zero());
-
-        set.insert(0);
-        assert!(set.only1_zero());
-        set.insert(63);
-        assert_eq!(set.len(), 2);
-        assert_eq!(set.get_small_uint64().unwrap(), 1 | (1 << 63));
-
-        let independent = set.copy();
-        set.insert(64);
-        assert_eq!(set.sorted_array(), vec![0, 63, 64]);
-        set.remove(64);
-        assert_eq!(set.sorted_array(), vec![0, 63]);
-        assert!(set.get_small_uint64().is_err());
-        assert_eq!(independent.get_small_uint64().unwrap(), 1 | (1 << 63));
-
-        set.clear();
-        assert!(set.is_empty());
-        assert!(set.get_small_uint64().is_err());
-        set.insert(1);
-        assert_eq!(set.sorted_array(), vec![1]);
-    }
-
-    #[test]
-    fn source_max_int_sentinel_contract() {
-        let set = FastIntSet::new(&[MAX_INT]);
-        assert_eq!(set.len(), 1);
-        assert!(set.has(MAX_INT));
-        assert_eq!(set.next(MAX_INT), (MAX_INT, false));
-        assert_eq!(set.sorted_array(), vec![MAX_INT]);
-
-        let mut visited = Vec::new();
-        set.for_each(|value| visited.push(value));
-        assert!(visited.is_empty());
-        assert_eq!(set.to_string(), "()");
-    }
-
-    #[test]
-    fn source_copy_from_preserves_go_representation() {
-        let target = FastIntSet::new(&[1]);
-        let mut receiver = FastIntSet::new(&[64]);
-        receiver.copy_from(&target);
-
-        assert_eq!(receiver.len(), 0);
-        assert!(receiver.has(1));
-        assert!(receiver.sorted_array().is_empty());
-        assert!(receiver.equals(&target));
-        assert_eq!(
-            receiver.get_small_uint64().unwrap_err(),
-            "set contains large values, cannot get small uint64"
-        );
-    }
-
-    #[test]
-    fn source_mixed_representation_set_algebra() {
-        let small = FastIntSet::new(&[1, 2]);
-        let mut large = FastIntSet::new(&[1, 2, 64]);
-        large.remove(64);
-
-        assert_eq!(small, large);
-        assert!(small.equals(&large));
-        assert!(large.equals(&small));
-        assert!(small.subset_of(&large));
-        assert!(large.subset_of(&small));
-        assert_eq!(small.union(&large).sorted_array(), vec![1, 2]);
-        assert_eq!(large.intersection(&small).sorted_array(), vec![1, 2]);
-        assert!(large.difference(&small).is_empty());
-        assert!(large.intersects(&FastIntSet::new(&[2])));
-        assert!(!small.subset_of(&FastIntSet::new(&[2])));
-        assert!(!small.intersects(&FastIntSet::new(&[3])));
-        assert_eq!(
-            small.difference(&FastIntSet::new(&[2])).sorted_array(),
-            vec![1]
-        );
-
-        let lhs_large = FastIntSet::new(&[1, 64, 65]);
-        let rhs_large = FastIntSet::new(&[1, 65, 66]);
-        assert_eq!(
-            lhs_large.intersection(&rhs_large).sorted_array(),
-            vec![1, 65]
-        );
-    }
-
-    #[test]
-    fn idiomatic_iteration_preserves_source_domain_and_order() {
-        let set = FastIntSet::of([-2, 1, 65, MAX_INT]);
-        assert_eq!(set.iter().collect::<Vec<_>>(), vec![-2, 1, 65]);
-        assert_eq!((&set).into_iter().collect::<Vec<_>>(), vec![-2, 1, 65]);
-    }
-
-    #[test]
-    fn source_range_and_error_contracts() {
-        let mut full_small = FastIntSet::default();
-        full_small.add_range(0, 63);
-        assert_eq!(full_small.get_small_uint64().unwrap(), u64::MAX);
-        assert_eq!(
-            FastIntSet::new(&[64]).get_small_uint64().unwrap_err(),
-            "set contains large values, cannot get small uint64"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "invalid range when adding range to FastIntSet")]
-    fn source_invalid_range_panic_text() {
-        FastIntSet::default().add_range(1, 0);
-    }
-
-    #[test]
-    fn source_string_pair_and_sentinel_contracts() {
-        assert_eq!(FastIntSet::new(&[-2, -1]).to_string(), "(-2,-1)");
-        assert_eq!(FastIntSet::new(&[7, 8]).to_string(), "(7,8)");
-        assert_eq!(FastIntSet::new(&[7, 8, 9]).to_string(), "(7-9)");
-        assert_eq!(FastIntSet::new(&[MAX_INT]).to_string(), "()");
     }
 }

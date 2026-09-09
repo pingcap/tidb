@@ -30,9 +30,7 @@ pub use cop_iterator::CopIterator;
 pub use direct_unary_query_transport::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, LockedResponseAction,
-    LockedResponseDelegate, LockedResponseObservation, PublicationObserverAlreadyInstalled,
-    PublishedDispatchEvidence, RegionRetryWaiter,
+    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation, RegionRetryWaiter,
 };
 pub use lock_recovery::OptimisticLockRecovery;
 pub use tikv_rpc_contract::{
@@ -59,6 +57,24 @@ pub enum ReadEngineGeneration {
     Classic,
     /// Next-generation TiKV bills the larger of total and processed bytes.
     NextGeneration,
+}
+
+impl ReadEngineGeneration {
+    /// Selects the generation from the source's compile-time kernel type.
+    ///
+    /// Go `pagingResponseReadBytes` reads `clientgoconfig.NextGen`, a const
+    /// chosen by the `nextgen` build tag (`config/nextgen_on.go` /
+    /// `nextgen_off.go`). `tidb-config`'s `nextgen` feature is that tag, so the
+    /// production transport default follows the kernel instead of hardcoding
+    /// the classic basis.
+    #[must_use]
+    pub fn from_kernel_type() -> Self {
+        if tidb_config::kerneltype::is_next_gen() {
+            Self::NextGeneration
+        } else {
+            Self::Classic
+        }
+    }
 }
 
 /// Extracts the MVCC byte count observed by adaptive paging.

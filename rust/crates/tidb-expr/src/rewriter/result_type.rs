@@ -220,6 +220,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
     let name = match cast_type {
         CastType::Signed => "cast_signed",
         CastType::Unsigned => "cast_unsigned",
+        CastType::UnsignedInUnion => "cast_unsigned_in_union",
         CastType::Char { .. } => "cast_char",
         CastType::Binary { .. } => "cast_binary",
         CastType::Decimal { .. } => "cast_decimal",
@@ -232,31 +233,67 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         CastType::Vector { .. } => "cast_vector",
     };
     let ft = match cast_type {
-        CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Unsigned => {
+        // parser.y `"SIGNED" OptInteger`: TypeLonglong + CharsetBin/
+        // CollationBin/BinaryFlag.
+        CastType::Signed => {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            set_binary_charset(&mut ft);
             ft
         }
-        CastType::Char { len, .. } => {
+        // parser.y `"UNSIGNED" OptInteger`: TypeLonglong +
+        // UnsignedFlag|BinaryFlag + the binary charset. (`UnsignedInUnion`
+        // is this crate's internal union-projection carrier, not a parser
+        // target; it keeps the same shape as `Unsigned`.)
+        CastType::Unsigned | CastType::UnsignedInUnion => {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        CastType::Char { len, charset } => {
             let mut ft = FieldType::new(FieldTypeCode::VarString);
             if let Some(len) = len {
                 ft.set_flen(i64::from(*len));
             }
+            // Go's `CHAR OptFieldLen OptBinary` rule: the `BINARY` suffix is
+            // `IsBinary` (BinaryFlag + binary charset/collation); a named
+            // charset resolves its default collation via
+            // `charset.GetDefaultCollation` (parser.y:9971). The no-clause
+            // shape takes the session charset — the recorded boundary here.
+            match charset.as_deref() {
+                Some("BINARY") => set_binary_charset(&mut ft),
+                Some(name) => {
+                    let collation = tidb_datatype::get_default_collation(name).ok()?;
+                    ft.set_charset_name(name.to_owned());
+                    ft.set_collation_name(collation);
+                }
+                None => {}
+            }
             ft
         }
+        // parser.y `"BINARY" OptFieldLen`: TypeVarString, but a GIVEN length
+        // switches the code to TypeString; the binary charset/collation/flag
+        // are always set. An omitted length keeps TypeVarString, whose
+        // missing default in `defaultLengthAndDecimalForCast` leaves flen
+        // unspecified (no truncation).
         CastType::Binary { len } => {
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            let mut ft = FieldType::new(match len {
+                Some(_) => FieldTypeCode::String,
+                None => FieldTypeCode::VarString,
+            });
             set_binary_charset(&mut ft);
             if let Some(len) = len {
                 ft.set_flen(i64::from(*len));
             }
             ft
         }
+        // parser.y `"DECIMAL" FloatOpt`: TypeNewDecimal + the binary
+        // charset/collation/flag.
         CastType::Decimal { flen, scale } => {
             let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
             ft.set_flen(i64::from(*flen));
             ft.set_decimal(i64::from(*scale));
+            set_binary_charset(&mut ft);
             ft
         }
         CastType::Date => {
@@ -282,23 +319,194 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             set_binary_charset(&mut ft);
             ft
         }
-        CastType::Year => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
+        // parser.y `"YEAR"`: TypeYear + the binary charset — the eval type
+        // is still ETInt, so the evaluation arm is unchanged.
+        CastType::Year => {
+            let mut ft = FieldType::new(FieldTypeCode::Year);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"DOUBLE"`: TypeDouble + the
+        // defaultLengthAndDecimalForCast defaults {22, -1} + binary.
+        CastType::Double => {
+            let mut ft = FieldType::new(FieldTypeCode::Double);
+            ft.set_flen(22);
+            ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"FLOAT" FloatOpt`: TypeFloat (p <= 24; p >= 25 folds to
+        // `CastType::Double` at parse time) + the {12, -1} defaults + binary.
+        CastType::Float => {
+            let mut ft = FieldType::new(FieldTypeCode::Float);
+            ft.set_flen(12);
+            ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"JSON"`: TypeJSON + BinaryFlag|ParseToJSONFlag + the
+        // default utf8mb4 charset/collation.
         CastType::Json => {
             let mut ft = FieldType::new(FieldTypeCode::Json);
             ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
             ft
         }
+        // parser.y `"VECTOR" OptVectorElementType OptFieldLen`:
+        // TypeTiDBVectorFloat32. Unlike the other targets, this rule sets
+        // only CharsetBin/CollationBin — it does NOT add BinaryFlag.
         CastType::Vector { dimensions } => {
             let mut ft = FieldType::new(FieldTypeCode::VectorFloat32);
             if let Some(dimensions) = dimensions {
                 ft.set_flen(i64::from(*dimensions));
             }
             ft.set_decimal(0);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
             ft
         }
     };
     Some((name, ft))
+}
+
+/// Go `adjustRetFtForCastString` (`builtin_cast.go`): a `CAST(... AS CHAR)`
+/// target with an unspecified width takes the width of the value the cast
+/// produces, per the argument's family (and `CAST(json AS CHAR)` widens the
+/// code to `TypeLongBlob`). Fixed `TypeString` targets return untouched, so
+/// the caller gates on `VarString` — Go's own early return.
+pub(crate) fn adjust_ret_ft_for_cast_string(ret_ft: &mut FieldType, arg_ft: &FieldType) {
+    use tidb_datatype::FieldTypeFlags;
+    const MAX_TINY_BLOB_SIZE: i64 = 255;
+    const CAST_BLOB_FLEN: i64 = 65_535 * 4;
+    const CAST_MEDIUM_BLOB_FLEN: i64 = 16_777_215 * 4;
+    const MAX_LONG_BLOB_SIZE: i64 = 4_294_967_295;
+    const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
+
+    // Go: `if retFt.GetType() == mysql.TypeString { return }` — only variable
+    // length string types are estimated; every estimation arm also requires
+    // `originalFlen == UnspecifiedLength`.
+    if ret_ft.code() != FieldTypeCode::VarString || ret_ft.flen() != UNSPECIFIED {
+        return;
+    }
+    if arg_ft.code() == FieldTypeCode::Null {
+        return;
+    }
+    match arg_ft.eval_type() {
+        tidb_datatype::EvalType::Int => {
+            let flen = match arg_ft.code() {
+                // issue 44786: sizing an int by its type width, not its
+                // declared flen, so `CHAR(1)` cannot truncate `-1`.
+                FieldTypeCode::Tiny => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        3
+                    } else {
+                        4
+                    }
+                }
+                FieldTypeCode::Short => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        5
+                    } else {
+                        6
+                    }
+                }
+                FieldTypeCode::Int24 => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        8
+                    } else {
+                        9
+                    }
+                }
+                FieldTypeCode::Long => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        10
+                    } else {
+                        11
+                    }
+                }
+                // BIGINT is 20 either way: both range endpoints print 20
+                // characters.
+                FieldTypeCode::LongLong => 20,
+                FieldTypeCode::Year => 4,
+                FieldTypeCode::Bit => arg_ft.flen(),
+                // Go asserts Enum/Set never reach here (their
+                // EnumSetAsIntFlag path is removed upstream of the call)
+                // and leaves the target untouched otherwise.
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Real => {
+            // TiDB formats float/double in `f` notation, so the width covers
+            // the smallest denormal: 87 for float, 370 for double.
+            let flen = match arg_ft.code() {
+                FieldTypeCode::Float => 87,
+                FieldTypeCode::Double => 370,
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Decimal => {
+            let precision = arg_ft.flen();
+            let scale = arg_ft.decimal();
+            if precision == UNSPECIFIED || scale == UNSPECIFIED {
+                return;
+            }
+            let mut ret = precision;
+            if scale > 0 {
+                ret += 1;
+            }
+            if !arg_ft.has_flag(FieldTypeFlags::UNSIGNED) && precision > 0 {
+                ret += 1; // for negative sign
+            }
+            if ret == 0 {
+                ret = 1;
+            }
+            ret_ft.set_flen(ret);
+        }
+        tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp => {
+            let mut flen = if arg_ft.code() == FieldTypeCode::Date {
+                10 // MaxDateWidth
+            } else {
+                19 // MaxDatetimeWidthNoFsp
+            };
+            if arg_ft.decimal() > 0 {
+                flen += 1 + arg_ft.decimal();
+            }
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Duration => {
+            let mut flen = 10; // MaxDurationWidthNoFsp
+            if arg_ft.decimal() > 0 {
+                flen += 1 + arg_ft.decimal();
+            }
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Json => {
+            ret_ft.set_flen(MAX_LONG_BLOB_SIZE);
+            ret_ft.set_code(FieldTypeCode::LongBlob);
+        }
+        tidb_datatype::EvalType::VectorFloat32 => {}
+        tidb_datatype::EvalType::String => {
+            let flen = match arg_ft.code() {
+                FieldTypeCode::String | FieldTypeCode::Varchar | FieldTypeCode::VarString => {
+                    if arg_ft.flen() > 0 {
+                        arg_ft.flen()
+                    } else {
+                        return;
+                    }
+                }
+                FieldTypeCode::TinyBlob => MAX_TINY_BLOB_SIZE,
+                FieldTypeCode::Blob => CAST_BLOB_FLEN,
+                FieldTypeCode::MediumBlob => CAST_MEDIUM_BLOB_FLEN,
+                FieldTypeCode::LongBlob => MAX_LONG_BLOB_SIZE,
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+    }
 }
 
 /// Go `types.DefaultTypeForValue` for a `*MyDecimal`: the printed length plus
@@ -507,7 +715,20 @@ fn clock_fsp(args: &[Expression]) -> Option<i64> {
         [] => 0,
         [Expression::Constant(constant)] => match &constant.value {
             Datum::Null => 0,
-            Datum::Int(value) => *value,
+            // Go `types.CheckFsp` (`pkg/types/fsp.go:38`), run at BUILD time
+            // on the constant by `nowFunctionClass.getFunction`: above
+            // `MaxFsp` CLAMPS to 6 (`now(7)` answers as `now(6)`), -1 is the
+            // unspecified marker mapping to 0, and any other negative is a
+            // build error surfacing as this tier's None.
+            Datum::Int(value) => {
+                if *value > 6 {
+                    6
+                } else if *value < 0 {
+                    return None;
+                } else {
+                    *value
+                }
+            }
             Datum::UInt(value) => i64::try_from(*value).ok()?,
             value => value.sql_string().ok()?.parse().ok()?,
         },
@@ -819,7 +1040,6 @@ fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
 /// declared scale; a constant scale fixes the result scale at build time.
 fn round_truncate_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::{EvalType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH};
-
     let value_type = args.first()?.static_type()?;
     let eval_type = match value_type.eval_type() {
         EvalType::Int => EvalType::Int,
@@ -1165,6 +1385,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "from_unixtime" => from_unixtime_return_type(args)?,
         "tidb_parse_tso" => tidb_parse_tso_return_type(args)?,
         "tidb_parse_tso_logical" if args.len() == 1 => int(),
+        // Go `tidbBoundedStalenessFunctionClass` fixes the result to
+        // DATETIME(3) (`setDecimalAndFlenForDatetime(3)`).
+        "tidb_bounded_staleness" if args.len() == 2 => datetime_return_type(3, false)?,
         "tidb_current_tso" if args.is_empty() => int(),
         "get_format" if args.len() == 2 => ft_with_flen(text(), 17),
         "monthname" | "dayname" | "date_format" => text(),
@@ -1245,7 +1468,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "json_extract" | "json_object" | "json_array" | "json_keys" | "json_quote"
         | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
-        | "json_merge_preserve" | "json_merge_patch" => text(),
+        | "json_merge_preserve" | "json_merge_patch" | "json_pretty" => text(),
         "json_contains"
         | "json_contains_path"
         | "json_length"
@@ -1308,7 +1531,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         }
         "getvar_real" if args.len() == 1 => FieldType::new(FieldTypeCode::Double),
         "getvar_decimal" if args.len() == 1 => FieldType::new(FieldTypeCode::NewDecimal),
+        "getvar_time" if args.len() == 1 => FieldType::new(FieldTypeCode::Datetime),
         "getvar_string" if args.len() == 1 => text(),
+        // Go `getParamFunctionClass.getFunction` returns ETString and fixes
+        // its display width at `mysql.MaxFieldVarCharLength` (65535).
+        "getparam" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(65_535);
+            ft
+        }
         // `SETVAR` reports -- and stores -- its value argument's type.
         "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),
         // Go reads these from `SessionVars`; each returns a string of flen 64
@@ -1318,11 +1549,16 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // `pkg/expression/builtin_info.go` -- every one of them ends in
         // `bf.tp.SetFlen(64)`). `SCHEMA` is an alias of `DATABASE` and
         // `SESSION_USER`/`SYSTEM_USER` of `USER`, sharing the same class and
-        // so the same width. `CURRENT_RESOURCE_GROUP` is deliberately absent:
-        // it has the same flen 64, but no evaluator arm exists for it, so it
-        // stays refused rather than typed-then-unevaluable.
-        "database" | "schema" | "version" | "current_user" | "current_role" | "user"
-        | "session_user" | "system_user" => {
+        // so the same width.
+        "database"
+        | "schema"
+        | "version"
+        | "current_user"
+        | "current_role"
+        | "current_resource_group"
+        | "user"
+        | "session_user"
+        | "system_user" => {
             let mut ft = text();
             ft.set_flen(64);
             ft
@@ -1347,7 +1583,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),
-            i64::try_from(tidb_util::printer::get_tidb_info(&Default::default()).len())
+            i64::try_from(tidb_util::printer::get_tidb_info().len())
                 .unwrap_or(i64::MAX),
         ),
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.
@@ -1700,7 +1936,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // branches (the `Expr::Case` arm of `rewrite_expr_resolved`), which
         // is Go's own `thenArgs`.
         "if" if args.len() == 3 => super::control_type::infer_type4_control_funcs("if", &args[1..])?,
-        "case_when" | "ifnull" | "coalesce" => {
+        "case" | "ifnull" | "coalesce" => {
             super::control_type::infer_type4_control_funcs(name, args)?
         }
         _ => return None,

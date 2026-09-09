@@ -27,15 +27,12 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE;
-use base64::Engine;
 use tidb_config::config_tree::Config as SourceConfig;
-use tidb_config::configtypes::parse_go_duration;
-use tidb_config::{deploymode, kerneltype};
+use tidb_config::kerneltype;
+use tidb_hack::GoToLower;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
-use tidb_util::versioninfo::VersionInfo;
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
 
 /// Go's `config.Instance.MaxConnections` default is 0, and
 /// `server.go`'s `checkConnectionCount` reads 0 as *unlimited*:
@@ -153,8 +150,41 @@ pub enum StoreKind {
     Unistore,
 }
 
+/// Go `Performance.StatsLease` after duration parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatsLease {
+    /// A negative lease: do not initialize or periodically load statistics.
+    Disabled,
+    /// A zero lease: run the loader with Go's three-second fallback.
+    Zero,
+    /// A positive lease: initialize and reload at this exact interval.
+    Positive(Duration),
+}
+
+impl StatsLease {
+    /// The interval used by Go's `loadStatsWorker`, or no worker for a
+    /// negative lease.
+    #[must_use]
+    pub const fn reload_interval(self) -> Option<Duration> {
+        match self {
+            Self::Disabled => None,
+            Self::Zero => Some(Duration::from_secs(3)),
+            Self::Positive(interval) => Some(interval),
+        }
+    }
+
+    /// The positive-only lease used by Go's slow-save version fence.
+    #[must_use]
+    pub const fn slow_save_interval(self) -> Duration {
+        match self {
+            Self::Positive(interval) => interval,
+            Self::Disabled | Self::Zero => Duration::ZERO,
+        }
+    }
+}
+
 /// Complete startup input consumed by the concurrent SQL node.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeConfig {
     /// Go `cfg.Status.ReportStatus` (default true): whether the status
     /// HTTP listener starts.
@@ -234,6 +264,9 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
+    /// Go `Performance.StatsLease`, retaining the negative/zero distinction
+    /// that controls whether and how `loadStatsWorker` starts.
+    pub stats_lease: StatsLease,
     /// Server certificate for inbound TLS on the MySQL port (TiDB's
     /// `[security] ssl-cert`). `None` with [`Self::auto_tls`] set generates a
     /// self-signed pair instead.
@@ -256,6 +289,8 @@ pub struct NodeConfig {
     /// TiDB's `[security] enable-sem`: install the process-wide Security
     /// Enhanced Mode policy before any startup resource is admitted.
     pub sem_enabled: bool,
+    /// TiDB's `[security] sem-config`: a nonempty path selects SEM v2.
+    pub sem_config: String,
     /// TiDB's `[security] skip-grant-table`, accepted only when the process
     /// effective uid passes the source root-only validation.
     pub skip_grant_table: bool,
@@ -279,8 +314,8 @@ pub struct NodeConfig {
     pub spill_storage: SpillStorageSpec,
     /// Process-wide global-memory controller policy.
     pub memory_arbitrator: MemoryArbitratorConfig,
-    /// Coherent build identity plus the optional startup edition override.
-    pub version_info: VersionInfo,
+    /// Effective Go process configuration installed before startup proceeds.
+    pub(crate) global_config: SourceConfig,
 }
 
 /// Startup configuration failure.
@@ -373,6 +408,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.cluster-ssl-key",
     "security.disconnect-on-expired-password",
     "security.enable-sem",
+    "security.sem-config",
     "security.skip-grant-table",
     "security.spilled-file-encryption-method",
     "security.ssl-cert",
@@ -452,8 +488,15 @@ fn collect_toml_leaves(table: &toml::Table, prefix: &str, leaves: &mut BTreeSet<
 }
 
 fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
-    let nanos = parse_go_duration(value)
-        .or_else(|_| parse_go_duration(&format!("{value}s")))
+    let parse = |value: &str| {
+        serde_json::from_value::<tidb_config::configtypes::Duration>(serde_json::Value::String(
+            value.to_owned(),
+        ))
+        .map(|duration| duration.0)
+        .map_err(|error| error.to_string())
+    };
+    let nanos = parse(value)
+        .or_else(|_| parse(&format!("{value}s")))
         .map_err(|reason| invalid("lease", &reason))?;
     if nanos < 0 {
         return Err(invalid("lease", "value must not be negative"));
@@ -466,52 +509,25 @@ fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     ))
 }
 
+fn parse_stats_lease(value: &str) -> Result<StatsLease, NodeConfigError> {
+    let nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
+        serde_json::Value::String(value.to_owned()),
+    )
+    .map(|duration| duration.0)
+    .map_err(|error| invalid("performance.stats-lease", &error.to_string()))?;
+    if nanos < 0 {
+        return Ok(StatsLease::Disabled);
+    }
+    if nanos == 0 {
+        return Ok(StatsLease::Zero);
+    }
+    Ok(StatsLease::Positive(Duration::from_nanos(
+        u64::try_from(nanos).expect("nonnegative i64 fits u64"),
+    )))
+}
+
 fn nonempty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
-}
-
-fn resolve_spill_storage(
-    configured_base: Option<&str>,
-    quota_bytes: i64,
-    encryption: SpillEncryptionMethod,
-    host: IpAddr,
-    port: u16,
-) -> SpillStorageSpec {
-    let os_temp = std::env::temp_dir();
-    let source_default = encoded_spill_path(&os_temp, "0.0.0.0", 4000);
-    let base = match configured_base {
-        None => os_temp,
-        Some(path) if std::path::Path::new(path) == source_default => std::env::temp_dir(),
-        Some(path) => PathBuf::from(path),
-    };
-    SpillStorageSpec {
-        path: encoded_spill_path(&base, &host.to_string(), port),
-        quota_bytes,
-        encryption,
-    }
-}
-
-fn encoded_spill_path(base: &std::path::Path, host: &str, port: u16) -> PathBuf {
-    #[cfg(unix)]
-    let uid = rustix::process::getuid().as_raw().to_string();
-    #[cfg(not(unix))]
-    let uid = String::new();
-    encoded_spill_path_for_identity(base, host, port, "0.0.0.0", 10080, &uid)
-}
-
-fn encoded_spill_path_for_identity(
-    base: &std::path::Path,
-    host: &str,
-    port: u16,
-    status_host: &str,
-    status_port: u16,
-    uid: &str,
-) -> PathBuf {
-    let identity = format!("{host}:{port}/{status_host}:{status_port}");
-    let encoded = URL_SAFE.encode(identity.as_bytes());
-    base.join(format!("{uid}_tidb"))
-        .join(encoded)
-        .join("tmp-storage")
 }
 
 impl NodeConfig {
@@ -658,12 +674,12 @@ impl NodeConfig {
 
         let mut source = config_path.as_deref().map(load_source_config).transpose()?;
         let mut file_schema_lease = None;
-        let mut temp_storage_base = None;
         let mut temp_storage_quota = -1;
         let mut spill_encryption = SpillEncryptionMethod::Plaintext;
         let mut file_auto_tls = None;
         let mut file_disconnect_on_expired_password = None;
         let mut sem_enabled = false;
+        let mut sem_config = String::new();
         let mut memory_arbitrator = MemoryArbitratorConfig {
             server_memory_limit: "80%".to_owned(),
             mode: "disable".to_owned(),
@@ -733,6 +749,9 @@ impl NodeConfig {
             if loaded.is_defined("security.enable-sem") {
                 sem_enabled = config.security.enable_sem;
             }
+            if loaded.is_defined("security.sem-config") {
+                sem_config.clone_from(&config.security.sem_config);
+            }
             if loaded.is_defined("pessimistic-txn.deadlock-history-capacity") {
                 deadlock_history_capacity = usize::try_from(
                     config.pessimistic_txn.deadlock_history_capacity,
@@ -750,9 +769,6 @@ impl NodeConfig {
             }
             if loaded.is_defined("security.skip-grant-table") {
                 file_skip_grant_table = config.security.skip_grant_table;
-            }
-            if loaded.is_defined("tmp-storage-path") {
-                temp_storage_base = Some(config.temp_storage_path.clone());
             }
             if loaded.is_defined("tmp-storage-quota") {
                 temp_storage_quota = config.temp_storage_quota;
@@ -787,7 +803,7 @@ impl NodeConfig {
         if !host.is_loopback() && !load_privileges && !file_skip_grant_table {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
-        let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
+        let port: u16 = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
         let affinity_cpus = parse_affinity_cpus(affinity_cpus.as_deref().unwrap_or_default())?;
         let store = store.as_deref().unwrap_or("tikv");
         // Go `main.go` registers tikv, unistore and mocktikv; this
@@ -886,10 +902,25 @@ impl NodeConfig {
             cluster_ssl_cert.clone(),
             cluster_ssl_key.clone(),
         )?;
+        let status_host = main_flags
+            .status_host
+            .clone()
+            .unwrap_or_else(|| "0.0.0.0".to_owned());
+        let status_port = main_flags
+            .status_port
+            .as_deref()
+            .map(|port| {
+                port.parse::<u16>()
+                    .map_err(|_| invalid("--status", "expected a port number"))
+            })
+            .transpose()?
+            .unwrap_or(10080);
         if let Some(loaded) = source.as_mut() {
             let config = &mut loaded.config;
             config.host = host.to_string();
-            config.port = u32::from(port);
+            config.port = usize::from(port);
+            config.status.status_host.clone_from(&status_host);
+            config.status.status_port = usize::from(status_port);
             config.store = tidb_config::store::StoreType("tikv".to_owned());
             config.path = pd_endpoints.join(",");
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
@@ -906,6 +937,7 @@ impl NodeConfig {
             config.security.auto_tls = auto_tls;
             config.security.disconnect_on_expired_password = disconnect_on_expired_password;
             config.security.enable_sem = sem_enabled;
+            config.security.sem_config.clone_from(&sem_config);
             config.security.skip_grant_table = file_skip_grant_table;
             config.security.cluster_ssl_ca = cluster_ssl_ca.clone().unwrap_or_default();
             config.security.cluster_ssl_cert = cluster_ssl_cert.clone().unwrap_or_default();
@@ -913,26 +945,10 @@ impl NodeConfig {
             config.security.spilled_file_encryption_method =
                 spill_encryption.as_config_value().to_owned();
             config.temp_storage_quota = temp_storage_quota;
-            config.temp_storage_path = temp_storage_base.clone().unwrap_or_default();
             config
                 .valid()
                 .map_err(|reason| invalid("--config", &reason))?;
         }
-        let spill_storage = resolve_spill_storage(
-            temp_storage_base.as_deref(),
-            temp_storage_quota,
-            spill_encryption,
-            host,
-            port,
-        );
-        let deploy_mode = if kerneltype::is_next_gen() {
-            Some(source.as_ref().map_or_else(
-                || deploymode::get().to_string(),
-                |loaded| loaded.config.deploy_mode.to_string(),
-            ))
-        } else {
-            None
-        };
         // Go `overrideConfig`: the flag wins; otherwise the bind host
         // stands in unless it is the wildcard, in which case Go defers to
         // a local-IP lookup the node performs later. The wildcard arm is
@@ -949,29 +965,35 @@ impl NodeConfig {
             None if host.to_string() != "0.0.0.0" => host.to_string(),
             None => String::new(),
         };
-        let version_info = configured_version_info(
-            tidb_edition.as_deref().unwrap_or_default(),
-            tidb_release_version.as_deref().unwrap_or_default(),
-            server_version.as_deref().unwrap_or_default(),
-            store,
-            deploy_mode,
-        )?;
+        let mut global_config = source.map_or_else(SourceConfig::default, |loaded| loaded.config);
+        global_config.host = host.to_string();
+        global_config.port = usize::from(port);
+        global_config.status.status_host.clone_from(&status_host);
+        global_config.status.status_port = usize::from(status_port);
+        global_config.store = tidb_config::store::StoreType(store.to_owned());
+        global_config.path = pd_endpoints.join(",");
+        global_config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
+        global_config.instance.max_connections =
+            u32::try_from(max_connections).expect("connection limit fits u32");
+        global_config.temp_storage_quota = temp_storage_quota;
+        global_config.security.spilled_file_encryption_method =
+            spill_encryption.as_config_value().to_owned();
+        global_config.tidb_edition = tidb_edition.unwrap_or_default();
+        global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
+        global_config.server_version = server_version.unwrap_or_default();
+        validate_version_config(&global_config)?;
+        let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
+        global_config.update_temp_storage_path();
+        let spill_storage = SpillStorageSpec {
+            path: PathBuf::from(&global_config.temp_storage_path),
+            quota_bytes: temp_storage_quota,
+            encryption: spill_encryption,
+        };
 
         Ok(Self {
             report_status: main_flags.report_status.unwrap_or(true),
-            status_host: main_flags
-                .status_host
-                .clone()
-                .unwrap_or_else(|| "0.0.0.0".to_owned()),
-            status_port: main_flags
-                .status_port
-                .as_deref()
-                .map(|port| {
-                    port.parse::<u16>()
-                        .map_err(|_| invalid("--status", "expected a port number"))
-                })
-                .transpose()?
-                .unwrap_or(10080),
+            status_host,
+            status_port,
             // Go's config default plus `setGlobalVars`' one `{Port}`
             // replacement (`main.go:1109`).
             socket: socket
@@ -998,6 +1020,7 @@ impl NodeConfig {
             deadlock_history_capacity,
             deadlock_history_collect_retryable,
             schema_lease,
+            stats_lease,
             load_privileges,
             cluster_session,
             ssl_cert: ssl_cert.map(PathBuf::from),
@@ -1005,16 +1028,17 @@ impl NodeConfig {
             auto_tls,
             disconnect_on_expired_password,
             sem_enabled,
+            sem_config,
             skip_grant_table: file_skip_grant_table,
             cluster_security,
             spill_storage,
             memory_arbitrator,
-            version_info,
+            global_config,
         })
     }
 
-    /// Builds the identity printed by `-V` without requiring a runnable node topology.
-    pub fn version_info_for_display<I, S>(arguments: I) -> Result<VersionInfo, NodeConfigError>
+    /// Initializes the same process globals Go reads when printing `-V`.
+    pub fn initialize_versions_for_display<I, S>(arguments: I) -> Result<(), NodeConfigError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -1024,8 +1048,9 @@ impl NodeConfig {
         // main.go's own flag surface is consumed FIRST, so every Go spelling
         // is accepted exactly as initFlagSet accepts it; the node's options
         // remain for the loop below, untouched and in order.
-        let (main_flags, remaining) = crate::main_flags::extract_main_go_flags(arguments.collect())
-            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
+        let (_main_flags, remaining) =
+            crate::main_flags::extract_main_go_flags(arguments.collect())
+                .map_err(|error| invalid("main.go flags", &error.to_string()))?;
         let mut pending = remaining.into_iter().peekable();
         let mut config_path = None;
         let mut store = None;
@@ -1055,43 +1080,23 @@ impl NodeConfig {
         let source = config_path.as_deref().map(load_source_config).transpose()?;
         let defaults = SourceConfig::default();
         let config = source.as_ref().map_or(&defaults, |loaded| &loaded.config);
-        let deploy_mode = kerneltype::is_next_gen().then(|| config.deploy_mode.to_string());
-        configured_version_info(
-            &config.tidb_edition,
-            &config.tidb_release_version,
-            &config.server_version,
-            store.as_deref().unwrap_or(&config.store.0),
-            deploy_mode,
-        )
+        let mut config = config.clone();
+        if let Some(store) = store {
+            config.store = tidb_config::store::StoreType(store);
+        }
+        validate_version_config(&config)?;
+        install_process_globals(config);
+        Ok(())
     }
 
-    /// JSON projection of every startup value this bounded node owns.
+    pub(crate) fn install_process_globals(&self) {
+        let max_procs = self.global_config.performance.max_procs;
+        install_process_globals(self.global_config.clone());
+        tidb_util::cpu::install_cpu_count(max_procs, self.affinity_cpus.len());
+    }
+
     pub(crate) fn startup_config_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "host": self.host.to_string(),
-            "port": self.port,
-            "path": self.pd_endpoints.join(","),
-            "store": &self.version_info.store,
-            "max-allowed-packet": self.max_allowed_packet,
-            "instance": {
-                "max_connections": self.max_connections,
-                "tidb_server_memory_limit": self.memory_arbitrator.server_memory_limit,
-                "tidb_mem_arbitrator_mode": self.memory_arbitrator.mode,
-                "tidb_mem_arbitrator_soft_limit": self.memory_arbitrator.soft_limit,
-            },
-            "lease-ms": u64::try_from(self.schema_lease.as_millis()).unwrap_or(u64::MAX),
-            "cluster-session": self.cluster_session,
-            "load-privileges": self.load_privileges,
-            "security": {
-                "auto-tls": self.auto_tls,
-                "disconnect-on-expired-password": self.disconnect_on_expired_password,
-                "enable-sem": self.sem_enabled,
-                "skip-grant-table": self.skip_grant_table,
-                "ssl-cert": self.ssl_cert.as_ref().map(|path| path.to_string_lossy().into_owned()),
-                "ssl-key": self.ssl_key.as_ref().map(|path| path.to_string_lossy().into_owned()),
-            },
-        }))
-        .expect("owned startup config projection is serializable")
+        serde_json::to_vec(&self.global_config).expect("effective global config is serializable")
     }
 
     /// Stable usage text printed by the executable for `--help`.
@@ -1115,39 +1120,62 @@ impl NodeConfig {
     }
 }
 
-fn configured_version_info(
-    edition: &str,
-    release_version: &str,
-    server_version: &str,
-    store: &str,
-    deploy_mode: Option<String>,
-) -> Result<VersionInfo, NodeConfigError> {
-    let mut info = VersionInfo::build_default();
+fn validate_version_config(config: &SourceConfig) -> Result<(), NodeConfigError> {
     if kerneltype::is_next_gen() {
-        if !edition.is_empty() || !release_version.is_empty() || !server_version.is_empty() {
+        if !config.tidb_edition.is_empty()
+            || !config.tidb_release_version.is_empty()
+            || !config.server_version.is_empty()
+        {
             return Err(invalid(
                 "--config",
                 "config options tidb-edition, tidb-release-version and server-version are not \
                  allowed to set in nextgen kernel",
             ));
         }
+        let versions = tidb_mysql::runtime_versions();
         let component =
-            tidb_mysql::normalize_tidb_release_version_for_next_gen(&info.release_version)
-                .to_owned();
-        let server_version = tidb_mysql::build_tidbx_server_version(&component)
+            tidb_mysql::normalize_tidb_release_version_for_next_gen(&versions.tidb_release_version);
+        tidb_mysql::build_tidbx_server_version(component)
             .map_err(|error| invalid("--config", &error.to_string()))?;
-        info = info.with_configured_versions(&component, &server_version);
-    } else {
-        info = info
-            .with_configured_edition(edition)
-            .with_configured_versions(release_version, server_version);
     }
-    Ok(info.with_runtime_environment(
-        tidb_config::config_tree::config::check_table_before_drop(),
-        store,
-        kerneltype::name(),
-        deploy_mode,
-    ))
+    Ok(())
+}
+
+fn install_process_globals(config: SourceConfig) {
+    if kerneltype::is_next_gen() {
+        tidb_config::deploymode::set(config.deploy_mode)
+            .expect("validated next-generation deploy mode");
+    }
+    let configured_edition = config.tidb_edition.clone();
+    let configured_release = config.tidb_release_version.clone();
+    let configured_server = config.server_version.clone();
+    tidb_config::config_tree::config::store_global_config(config);
+
+    let defaults = tidb_mysql::runtime_versions();
+    if kerneltype::is_next_gen() {
+        let release =
+            tidb_mysql::normalize_tidb_release_version_for_next_gen(&defaults.tidb_release_version)
+                .to_owned();
+        let server = tidb_mysql::build_tidbx_server_version(&release)
+            .expect("next-generation release was validated");
+        tidb_mysql::set_runtime_versions(release, server);
+        return;
+    }
+    if !configured_edition.is_empty() {
+        tidb_util::versioninfo::set_tidb_edition(configured_edition);
+    }
+    tidb_mysql::set_runtime_versions(
+        if configured_release.is_empty() {
+            defaults.tidb_release_version
+        } else {
+            configured_release
+        },
+        if configured_server.is_empty() {
+            defaults.server_version
+        } else {
+            configured_server
+        },
+    );
 }
 
 fn parse_read_table<I>(
@@ -1425,7 +1453,7 @@ fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<()
     let mut ids = HashSet::with_capacity(columns.len());
     let mut clustered_primary_keys = 0;
     for column in columns {
-        if !names.insert(column.name.to_lowercase()) {
+        if !names.insert(column.name.go_to_lower()) {
             return Err(invalid(
                 option,
                 "column names must be unique case-insensitively",
@@ -1468,7 +1496,7 @@ fn validate_load_tables(
     }
     let mut names = HashSet::with_capacity(load_tables.len());
     for loaded in load_tables {
-        let name = (loaded.database.to_lowercase(), loaded.table.to_lowercase());
+        let name = (loaded.database.go_to_lower(), loaded.table.go_to_lower());
         if !names.insert(name.clone()) {
             return Err(invalid(
                 "--load-table",
@@ -1477,7 +1505,7 @@ fn validate_load_tables(
         }
         if read_tables
             .iter()
-            .any(|table| (table.database.to_lowercase(), table.table.to_lowercase()) == name)
+            .any(|table| (table.database.go_to_lower(), table.table.go_to_lower()) == name)
         {
             return Err(invalid(
                 "--load-table",
@@ -1504,7 +1532,7 @@ fn validate_read_tables(
     let mut names = HashSet::with_capacity(tables.len());
     let mut ids = HashSet::with_capacity(tables.len());
     for table in tables {
-        if !names.insert((table.database.to_lowercase(), table.table.to_lowercase())) {
+        if !names.insert((table.database.go_to_lower(), table.table.go_to_lower())) {
             return Err(invalid(
                 "--read-table",
                 "table names must be unique case-insensitively within each database",
@@ -1590,55 +1618,12 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        encoded_spill_path_for_identity, parse_column_descriptor, ConfiguredReadColumnKind,
-        NodeConfig, NodeConfigError, StoreKind,
+        parse_column_descriptor, parse_stats_lease, ConfiguredReadColumnKind, NodeConfig,
+        NodeConfigError, StatsLease, StoreKind,
     };
-
-    #[test]
-    fn spill_path_identity_matches_source_encoding() {
-        for (host, status_host, port, status_port, encoded) in [
-            (
-                "0.0.0.0",
-                "0.0.0.0",
-                4000,
-                10080,
-                "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=",
-            ),
-            (
-                "127.0.0.1",
-                "127.16.5.1",
-                4000,
-                10080,
-                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA==",
-            ),
-            (
-                "127.0.0.1",
-                "127.16.5.1",
-                4000,
-                15532,
-                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg==",
-            ),
-        ] {
-            assert_eq!(
-                encoded_spill_path_for_identity(
-                    Path::new("/tmp"),
-                    host,
-                    port,
-                    status_host,
-                    status_port,
-                    "501",
-                ),
-                Path::new("/tmp")
-                    .join("501_tidb")
-                    .join(encoded)
-                    .join("tmp-storage")
-            );
-        }
-    }
 
     /// The cluster TLS options thread into a `ClusterSecurity`, and their
     /// consistency rules (CA required for any material, cert⇔key together)
@@ -1990,6 +1975,25 @@ mod tests {
         assert_eq!(projected["store"], "tikv");
         // Go's config default: `Instance.MaxConnections` is 0 (unlimited).
         assert_eq!(projected["instance"]["max_connections"], 0);
+        assert_eq!(
+            config.stats_lease,
+            StatsLease::Positive(Duration::from_secs(3))
+        );
+    }
+
+    #[test]
+    fn stats_lease_uses_go_duration_parsing_and_allows_zero() {
+        assert_eq!(
+            parse_stats_lease("1500ms").unwrap(),
+            StatsLease::Positive(Duration::from_millis(1500))
+        );
+        assert_eq!(parse_stats_lease("0s").unwrap(), StatsLease::Zero);
+        assert_eq!(parse_stats_lease("-1s").unwrap(), StatsLease::Disabled);
+        assert_eq!(
+            parse_stats_lease("0s").unwrap().reload_interval(),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(parse_stats_lease("-1s").unwrap().reload_interval(), None);
     }
 
     #[test]

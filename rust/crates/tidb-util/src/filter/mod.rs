@@ -27,12 +27,10 @@ use std::collections::HashMap;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use regex::Regex;
-use regex_syntax::ast::parse::Parser;
-use regex_syntax::ast::{self, Ast, Visitor};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 use crate::table_filter::{MySQLReplicationRules, Table};
-use crate::table_rule_selector::{InsertType, Selector, SelectorError, TrieSelector};
+use crate::table_rule_selector::{InsertType, Selector, TrieSelector};
 
 /// The action a matched rule implies (Go `ActionType`): keep (`DO`) or drop.
 pub type ActionType = bool;
@@ -46,27 +44,11 @@ pub type Rules = MySQLReplicationRules;
 
 /// A filter build error (Go returns `error` from `New`).
 #[derive(Debug)]
-pub enum FilterError {
-    /// A DoDB/IgnoreDB rule had an empty database string.
-    EmptyDb,
-    /// A DoTables/IgnoreTables rule had an empty schema or table string.
-    EmptyTable,
-    /// A regex rule failed to compile.
-    Regex(String),
-    /// The trie selector rejected an insert.
-    Selector(SelectorError),
-}
+pub struct FilterError(String);
 
 impl std::fmt::Display for FilterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FilterError::EmptyDb => f.write_str("DoDB/IgnoreDB rule's DB string cannot be empty"),
-            FilterError::EmptyTable => f.write_str(
-                "DoTables/IgnoreTables rule's DB string or Table string cannot be empty",
-            ),
-            FilterError::Regex(e) => write!(f, "{e}"),
-            FilterError::Selector(e) => write!(f, "{e}"),
-        }
+        f.write_str(&self.0)
     }
 }
 
@@ -132,7 +114,6 @@ impl Filter {
 
     /// Go `ApplyOn`: returns the (case-normalised) clones of the input tables
     /// that pass the filter. Deprecated in Go; kept for parity.
-    #[must_use]
     pub fn apply_on(&self, stbs: &[Table]) -> Vec<Table> {
         if self.rules.is_none() {
             return stbs.to_vec();
@@ -152,7 +133,6 @@ impl Filter {
     }
 
     /// Go `Apply`: returns the original input tables that pass the filter.
-    #[must_use]
     pub fn apply(&self, stbs: &[Table]) -> Vec<Table> {
         if self.rules.is_none() {
             return stbs.to_vec();
@@ -162,10 +142,10 @@ impl Filter {
             let probe = if self.case_sensitive {
                 tb.clone()
             } else {
-                Table::new(
-                    go_simple_lowercase(&tb.schema),
-                    go_simple_lowercase(&tb.name),
-                )
+                Table {
+                    schema: go_simple_lowercase(&tb.schema),
+                    name: go_simple_lowercase(&tb.name),
+                }
             };
             if self.matches(&probe) {
                 tbs.push(tb.clone());
@@ -175,7 +155,6 @@ impl Filter {
     }
 
     /// Go `Match`: whether `tb` should be kept (not filtered out).
-    #[must_use]
     pub fn matches(&self, tb: &Table) -> bool {
         let Some(_rules) = self.rules.as_ref() else {
             return true;
@@ -231,7 +210,7 @@ impl Filter {
                 }
             }
         }
-        let rule_set = self.selector.match_rules(a, "");
+        let rule_set = self.selector.match_rules(a, "").unwrap_or_default();
         rule_set
             .iter()
             .any(|r| r.kind == RuleKind::Db && r.is_allow_list == is_allow_check)
@@ -251,14 +230,17 @@ impl Filter {
                 if !self.match_string(&ptb.schema[1..], &tb.schema) {
                     continue;
                 }
-                let rule_set = self.selector.match_rules(&tb.name, "");
+                let rule_set = self.selector.match_rules(&tb.name, "").unwrap_or_default();
                 if rule_set.iter().any(|r| {
                     r.kind == RuleKind::TblOnlyTblPart && r.is_allow_list == is_allow_check
                 }) {
                     return true;
                 }
             }
-            let rule_set = self.selector.match_rules(&tb.schema, "");
+            let rule_set = self
+                .selector
+                .match_rules(&tb.schema, "")
+                .unwrap_or_default();
             for r in &rule_set {
                 if r.kind == RuleKind::TblOnlyDbPart
                     && r.is_allow_list == is_allow_check
@@ -267,7 +249,10 @@ impl Filter {
                     return true;
                 }
             }
-            let rule_set = self.selector.match_rules(&tb.schema, &tb.name);
+            let rule_set = self
+                .selector
+                .match_rules(&tb.schema, &tb.name)
+                .unwrap_or_default();
             if rule_set
                 .iter()
                 .any(|r| r.kind == RuleKind::TblFull && r.is_allow_list == is_allow_check)
@@ -298,13 +283,17 @@ fn init_rules(
     };
     for db in &rules.do_dbs {
         if db.is_empty() {
-            return Err(FilterError::EmptyDb);
+            return Err(FilterError(
+                "DoDB rule's DB string cannot be empty".to_owned(),
+            ));
         }
         init_schema_rule(selector, pattern_map, db, true, case_sensitive)?;
     }
     for table in &rules.do_tables {
         if table.schema.is_empty() || table.name.is_empty() {
-            return Err(FilterError::EmptyTable);
+            return Err(FilterError(
+                "DoTables rule's DB string or Table string cannot be empty".to_owned(),
+            ));
         }
         init_table_rule(
             selector,
@@ -317,13 +306,17 @@ fn init_rules(
     }
     for db in &rules.ignore_dbs {
         if db.is_empty() {
-            return Err(FilterError::EmptyDb);
+            return Err(FilterError(
+                "IgnoreDB rule's DB string cannot be empty".to_owned(),
+            ));
         }
         init_schema_rule(selector, pattern_map, db, false, case_sensitive)?;
     }
     for table in &rules.ignore_tables {
         if table.schema.is_empty() || table.name.is_empty() {
-            return Err(FilterError::EmptyTable);
+            return Err(FilterError(
+                "IgnoreTables rule's DB string or Table string cannot be empty".to_owned(),
+            ));
         }
         init_table_rule(
             selector,
@@ -345,109 +338,10 @@ fn init_one_regex(
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
     if !pattern_map.contains_key(origin) {
-        let re = compile_go_regexp(origin, case_sensitive).map_err(FilterError::Regex)?;
+        let re = crate::go_regexp::compile(origin, case_sensitive).map_err(FilterError)?;
         pattern_map.insert(origin.to_owned(), re);
     }
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct RegexReplacement {
-    start: usize,
-    end: usize,
-    value: &'static str,
-}
-
-#[derive(Default)]
-struct GoRegexpVisitor {
-    replacements: Vec<RegexReplacement>,
-}
-
-impl GoRegexpVisitor {
-    fn perl_class(class: &ast::ClassPerl) -> RegexReplacement {
-        let value = match (&class.kind, class.negated) {
-            (ast::ClassPerlKind::Digit, false) => "[0-9]",
-            (ast::ClassPerlKind::Digit, true) => "[^0-9]",
-            (ast::ClassPerlKind::Space, false) => "[\\t\\n\\f\\r ]",
-            (ast::ClassPerlKind::Space, true) => "[^\\t\\n\\f\\r ]",
-            (ast::ClassPerlKind::Word, false) => "[0-9A-Za-z_]",
-            (ast::ClassPerlKind::Word, true) => "[^0-9A-Za-z_]",
-        };
-        RegexReplacement {
-            start: class.span.start.offset,
-            end: class.span.end.offset,
-            value,
-        }
-    }
-}
-
-impl Visitor for GoRegexpVisitor {
-    type Output = Vec<RegexReplacement>;
-    type Err = std::convert::Infallible;
-
-    fn finish(self) -> Result<Self::Output, Self::Err> {
-        Ok(self.replacements)
-    }
-
-    fn visit_pre(&mut self, node: &Ast) -> Result<(), Self::Err> {
-        match node {
-            Ast::ClassPerl(class) => self.replacements.push(Self::perl_class(class)),
-            Ast::Assertion(assertion) => {
-                let value = match assertion.kind {
-                    ast::AssertionKind::WordBoundary => Some("(?-u:\\b)"),
-                    ast::AssertionKind::NotWordBoundary => Some("(?-u:\\B)"),
-                    _ => None,
-                };
-                if let Some(value) = value {
-                    self.replacements.push(RegexReplacement {
-                        start: assertion.span.start.offset,
-                        end: assertion.span.end.offset,
-                        value,
-                    });
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn visit_class_set_item_pre(&mut self, item: &ast::ClassSetItem) -> Result<(), Self::Err> {
-        if let ast::ClassSetItem::Perl(class) = item {
-            self.replacements.push(Self::perl_class(class));
-        }
-        Ok(())
-    }
-}
-
-// Go's regexp package defines its Perl character classes and word boundaries
-// over ASCII. Rust regex deliberately makes the same spellings Unicode-aware.
-// Rewrite only those source constructs; Unicode literals, `.`, and `\p{...}`
-// retain their normal rune semantics.
-fn go_regexp_pattern(pattern: &str) -> Result<String, String> {
-    let ast = Parser::new()
-        .parse(pattern)
-        .map_err(|error| error.to_string())?;
-    let mut replacements =
-        ast::visit(&ast, GoRegexpVisitor::default()).expect("the regexp visitor is infallible");
-    if replacements.is_empty() {
-        return Ok(pattern.to_owned());
-    }
-    replacements.sort_unstable_by_key(|replacement| std::cmp::Reverse(replacement.start));
-    let mut result = pattern.to_owned();
-    for replacement in replacements {
-        result.replace_range(replacement.start..replacement.end, replacement.value);
-    }
-    Ok(result)
-}
-
-pub(crate) fn compile_go_regexp(pattern: &str, case_sensitive: bool) -> Result<Regex, String> {
-    let pattern = go_regexp_pattern(pattern)?;
-    let pattern = if case_sensitive {
-        pattern
-    } else {
-        format!("(?i){pattern}")
-    };
-    Regex::new(&pattern).map_err(|error| error.to_string())
 }
 
 // Go `initSchemaRule`.
@@ -472,7 +366,7 @@ fn init_schema_rule(
             }),
             InsertType::Append,
         )
-        .map_err(FilterError::Selector)
+        .map_err(|error| FilterError(error.to_string()))
 }
 
 // Go `initTableRule`.
@@ -502,7 +396,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     } else if !db_is_regex && tbl_is_regex {
         init_one_regex(pattern_map, &table_str[1..], case_sensitive)?;
         selector
@@ -516,7 +410,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     } else {
         selector
             .insert(
@@ -529,7 +423,7 @@ fn init_table_rule(
                 }),
                 InsertType::Append,
             )
-            .map_err(FilterError::Selector)?;
+            .map_err(|error| FilterError(error.to_string()))?;
     }
     Ok(())
 }

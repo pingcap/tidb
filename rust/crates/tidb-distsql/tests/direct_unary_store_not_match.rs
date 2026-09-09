@@ -556,7 +556,7 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
             ])),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,

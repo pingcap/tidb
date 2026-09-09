@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
+use tidb_model::Job;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
@@ -40,14 +41,136 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
+use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
-    IndexBackfill,
+    lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
+    plan_persisted_check_constraint_job_step, prepare_check_constraint_job_submission,
+    CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
+    ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate,
 };
-use crate::cluster_table_storage::SessionTransaction;
+use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
+use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
+
+struct LabelDeliveryReceipt {
+    endpoint: String,
+    original: Vec<tidb_executor::ddl_label::Rule>,
+    rule_ids: [String; 2],
+}
+
+struct PlacementDeliveryReceipt {
+    endpoint: String,
+    rollback: Vec<tidb_placement::Bundle>,
+}
+
+fn deliver_placement_bundles(
+    endpoint: &str,
+    bundles: &[tidb_placement::Bundle],
+    rollback_bundles: &[tidb_placement::Bundle],
+    timeout: Duration,
+) -> Result<Option<PlacementDeliveryReceipt>, ClusterDdlError> {
+    if bundles.is_empty() {
+        return Ok(None);
+    }
+    crate::placement_delivery::put_rule_bundles(endpoint, bundles, timeout).map_err(|error| {
+        ClusterDdlError::NotCommitted(format!("failed to notify PD the placement rules: {error}"))
+    })?;
+    let rollback = if rollback_bundles.is_empty() {
+        // Non-exchange DDL keeps the existing retry behavior: IDs allocated
+        // by an optimistic attempt are withdrawn if the catalog transaction
+        // loses its race. Exchange supplies exact pre-change bundles because
+        // its groups already existed under the swapped physical IDs.
+        bundles
+            .iter()
+            .map(|bundle| tidb_placement::Bundle {
+                id: bundle.id.clone(),
+                ..tidb_placement::Bundle::default()
+            })
+            .collect()
+    } else {
+        rollback_bundles.to_vec()
+    };
+    Ok(Some(PlacementDeliveryReceipt {
+        endpoint: endpoint.to_owned(),
+        rollback,
+    }))
+}
+
+fn deliver_exchange_label_rules(
+    endpoint: &str,
+    write: &DdlWrite,
+    timeout: Duration,
+) -> Result<Option<LabelDeliveryReceipt>, ClusterDdlError> {
+    let Some(swap) = &write.exchange_partition_label_swap else {
+        return Ok(None);
+    };
+    let codec = tidb_executor::ddl_label::CodecV1;
+    let rule_ids = swap.rule_ids(&codec);
+    let original =
+        crate::label_delivery::get_label_rules(endpoint, &rule_ids, timeout).map_err(|error| {
+            ClusterDdlError::NotCommitted(format!("failed to get PD the label rules: {error}"))
+        })?;
+    let patch = swap.patch(&codec, &original);
+    crate::label_delivery::patch_label_rules(endpoint, &patch, timeout).map_err(|error| {
+        ClusterDdlError::NotCommitted(format!("failed to notify PD the label rules: {error}"))
+    })?;
+    Ok(Some(LabelDeliveryReceipt {
+        endpoint: endpoint.to_owned(),
+        original,
+        rule_ids,
+    }))
+}
+
+fn restore_exchange_label_rules(
+    receipt: &LabelDeliveryReceipt,
+    timeout: Duration,
+) -> Result<(), crate::label_delivery::LabelDeliveryError> {
+    let present = receipt
+        .original
+        .iter()
+        .map(|rule| rule.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let delete_rules = receipt
+        .rule_ids
+        .iter()
+        .filter(|id| !present.contains(id.as_str()))
+        .cloned()
+        .collect();
+    let patch = tidb_executor::ddl_label::new_rule_patch(receipt.original.clone(), delete_rules);
+    crate::label_delivery::patch_label_rules(&receipt.endpoint, &patch, timeout)
+}
+
+fn restore_placement(
+    receipt: &PlacementDeliveryReceipt,
+    timeout: Duration,
+) -> Result<(), crate::placement_delivery::PlacementDeliveryError> {
+    crate::placement_delivery::put_rule_bundles(&receipt.endpoint, &receipt.rollback, timeout)
+}
+
+fn compensate_external_delivery(
+    mut cause: ClusterDdlError,
+    placement_receipt: Option<&PlacementDeliveryReceipt>,
+    label_receipt: Option<&LabelDeliveryReceipt>,
+    timeout: Duration,
+) -> ClusterDdlError {
+    if let Some(receipt) = label_receipt {
+        if let Err(error) = restore_exchange_label_rules(receipt, timeout) {
+            cause = ClusterDdlError::NotCommitted(format!(
+                "{cause}; and restoring the attempt's label rules failed: {error}"
+            ));
+        }
+    }
+    if let Some(receipt) = placement_receipt {
+        if let Err(error) = restore_placement(receipt, timeout) {
+            cause = ClusterDdlError::NotCommitted(format!(
+                "{cause}; and restoring the attempt's placement bundles failed: {error}"
+            ));
+        }
+    }
+    cause
+}
 
 /// Parses and admits one text-protocol statement as a catalog change.
 ///
@@ -128,6 +251,21 @@ pub enum ClusterDdlError {
     /// whose entries were never written. The refusal is what keeps that
     /// unreachable on a path that cannot walk the table.
     BackfillUnavailable,
+    /// `EXCHANGE PARTITION ... WITH VALIDATION` rejected a row or failed
+    /// while reading/evaluating the validation scan.
+    ExchangeValidation(LockSqlError),
+    /// The change needs exchange validation and this path cannot read rows.
+    ExchangeValidationUnavailable,
+    /// Enabling an enforced CHECK rejected an existing row or failed while
+    /// reading/evaluating the validation scan.
+    CheckConstraintValidation(LockSqlError),
+    /// The change needs CHECK validation and this path cannot read rows.
+    CheckConstraintValidationUnavailable,
+    /// A persisted DDL statement was sent to the non-scheduler execution path.
+    PersistedJobRequired,
+    /// A CHECK schema phase is durable but not yet acknowledged by every
+    /// registered node, so advancing would violate the two-version invariant.
+    SchemaSync(String),
 }
 
 impl fmt::Display for ClusterDdlError {
@@ -163,6 +301,23 @@ impl fmt::Display for ClusterDdlError {
                 "this path cannot perform an index change: it would publish an index \
                  that exists but holds no entry for any row the table already has"
             ),
+            Self::ExchangeValidation(error) => formatter.write_str(&error.message),
+            Self::ExchangeValidationUnavailable => write!(
+                formatter,
+                "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
+            ),
+            Self::CheckConstraintValidation(error) => formatter.write_str(&error.message),
+            Self::CheckConstraintValidationUnavailable => write!(
+                formatter,
+                "this path cannot validate existing rows before enabling a CHECK constraint"
+            ),
+            Self::PersistedJobRequired => {
+                formatter.write_str("this DDL must be submitted to the persisted DDL job queue")
+            }
+            Self::SchemaSync(detail) => write!(
+                formatter,
+                "CHECK schema phase is committed but not synchronized: {detail}"
+            ),
         }
     }
 }
@@ -177,7 +332,13 @@ impl std::error::Error for ClusterDdlError {
             | Self::NotCommitted(_)
             | Self::Undetermined(_)
             | Self::Backfill(_)
-            | Self::BackfillUnavailable => None,
+            | Self::BackfillUnavailable
+            | Self::ExchangeValidation(_)
+            | Self::ExchangeValidationUnavailable
+            | Self::CheckConstraintValidation(_)
+            | Self::CheckConstraintValidationUnavailable
+            | Self::PersistedJobRequired
+            | Self::SchemaSync(_) => None,
         }
     }
 }
@@ -308,9 +469,17 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // entries has to go through `commit_cluster_ddl_with_backfill`, which
     // reads the table's rows on the SAME transaction; committing the meta half
     // here would leave an index that answers queries with nothing.
-    if write.backfill.is_some() {
+    if !write.backfill.is_empty() {
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
+    }
+    if write.exchange_partition_validation.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::ExchangeValidationUnavailable);
+    }
+    if write.check_constraint_validation.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
     }
     // Go sends the placement bundles INSIDE the DDL job, before the schema
     // version is published, and fails the job when PD refuses
@@ -322,20 +491,38 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // An embedded store answers `None` for the endpoint and has no PD to tell,
     // so delivery is skipped rather than attempted against an address that
     // does not exist.
-    let mut delivered_endpoint = None;
-    if !write.placement_bundles.is_empty() {
-        if let Some(endpoint) = opener.pd().http_endpoint() {
-            if let Err(error) = crate::placement_delivery::put_rule_bundles(
-                &endpoint,
-                &write.placement_bundles,
-                timeout,
-            ) {
+    let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_placement_bundles(
+            &endpoint,
+            &write.placement_bundles,
+            &write.placement_rollback_bundles,
+            timeout,
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
                 transaction.finish_without_writes()?;
-                return Err(ClusterDdlError::NotCommitted(error.to_string()));
+                return Err(error);
             }
-            delivered_endpoint = Some(endpoint);
         }
-    }
+    } else {
+        None
+    };
+    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                transaction.finish_without_writes()?;
+                return Err(compensate_external_delivery(
+                    error,
+                    placement_receipt.as_ref(),
+                    None,
+                    timeout,
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let planned_version = write.schema_version;
     // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
     // a bundle carries are already durable when the job worker delivers it --
@@ -345,31 +532,18 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     // re-plans with fresh ones; the delivered bundles must go back too, or PD
     // keeps rules for ids the catalog never published and some later object
     // inherits them.
-    let withdraw_bundles = |cause: ClusterDdlError| -> ClusterDdlError {
-        let Some(endpoint) = delivered_endpoint.as_ref() else {
-            return cause;
-        };
-        // Go deletes a group the same way it sets one: an empty bundle under
-        // `partial=true` replaces the group with nothing (`placement.NewBundle`
-        // in the drop paths).
-        let empty: Vec<tidb_placement::Bundle> = write
-            .placement_bundles
-            .iter()
-            .map(|bundle| tidb_placement::Bundle {
-                id: bundle.id.clone(),
-                ..tidb_placement::Bundle::default()
-            })
-            .collect();
-        match crate::placement_delivery::put_rule_bundles(endpoint, &empty, timeout) {
-            Ok(()) => cause,
-            // A retry after a failed withdrawal would leave the stale groups
-            // behind, so the conflict stops being retryable.
-            Err(error) => ClusterDdlError::NotCommitted(format!(
-                "{cause}; and withdrawing the attempt's placement bundles failed: {error}"
-            )),
+    let outcome = match transaction.commit(write.mutations, &call) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            return Err(compensate_external_delivery(
+                ClusterDdlError::Transaction(error),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ));
         }
     };
-    match transaction.commit(write.mutations, &call)? {
+    match outcome {
         OptimisticCommitOutcome::Committed(_) => {
             notify_schema_version(notifier, planned_version);
             Ok(ClusterDdlReport::Applied {
@@ -378,14 +552,20 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                 warning: write.warning,
             })
         }
-        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(withdraw_bundles(classify(
-            planned_version,
-            &rolled_back.cause,
-        ))),
-        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => Err(withdraw_bundles(classify(
-            planned_version,
-            &cleanup_failed.cause,
-        ))),
+        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(compensate_external_delivery(
+            classify(planned_version, &rolled_back.cause),
+            placement_receipt.as_ref(),
+            label_receipt.as_ref(),
+            timeout,
+        )),
+        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => {
+            Err(compensate_external_delivery(
+                classify(planned_version, &cleanup_failed.cause),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ))
+        }
         // An undetermined commit may have PUBLISHED the catalog that claims
         // these bundles; withdrawing them here could strip a live table's
         // placement, so they stay.
@@ -421,6 +601,67 @@ pub trait IndexBackfiller {
     ) -> Result<(), String>;
 }
 
+/// Executes Go's `checkExchangePartitionRecordValidation` from the DDL
+/// transaction's own row snapshot.
+pub trait ExchangePartitionValidator {
+    /// Proves every standalone-table row routes to the named partition.
+    fn validate(
+        &self,
+        plan: &ExchangePartitionValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError>;
+}
+
+/// Executes Go's existing-row CHECK validation from the DDL transaction's
+/// own row snapshot before the candidate metadata is published.
+pub trait CheckConstraintValidator {
+    /// Proves every stored row satisfies the candidate enforced constraint.
+    fn validate(
+        &self,
+        plan: &CheckConstraintValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError>;
+}
+
+/// Owner-side synchronization between committed CHECK schema phases.
+///
+/// The implementation reloads the owner's own catalog and then waits for the
+/// existing per-job acknowledgements from every registered TiDB node. There
+/// is intentionally no lease-delay fallback here: a phase may advance only
+/// after the nodes that can serve writes have loaded its writable metadata.
+pub trait CheckConstraintSchemaSync {
+    /// Stable owner id stored in `mysql.tidb_mdl_info.owner_id`.
+    fn owner_id(&self) -> &str;
+
+    /// Waits until every registered node has acknowledged `version` for
+    /// `ddl_job_id`.
+    fn wait_version_synced(&self, ddl_job_id: i64, version: i64) -> Result<(), String>;
+
+    /// Removes the per-job acknowledgement keys after the final phase.
+    fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
+}
+
+#[derive(Clone, Copy)]
+enum DdlPhase<'statement> {
+    Initial(&'statement DdlStatement),
+    PersistedCheckConstraint { ddl_job_id: i64 },
+}
+
+struct CommittedDdlPhase {
+    report: ClusterDdlReport,
+    ddl_job_id: i64,
+    schema_version: i64,
+    persisted_job_terminal: bool,
+    mdl_info: Option<MdlInfoUpdate>,
+}
+
+enum DdlPhaseOutcome {
+    AlreadySatisfied(ClusterDdlReport),
+    Committed(CommittedDdlPhase),
+}
+
 /// Publishes one catalog change together with the index entries it owes.
 ///
 /// One `SessionTransaction` serves all three halves at one `start_ts`: the
@@ -451,18 +692,490 @@ pub fn commit_cluster_ddl_with_backfill<
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
-    // The same `kv.RunInNewTxn(retryable=true)` loop as [`commit_cluster_ddl`]
-    // -- see its doc. A retried attempt re-stages the backfill from the fresh
-    // snapshot too, exactly as Go re-runs the whole job.
+    if matches!(
+        statement,
+        DdlStatement::AddCheckConstraint { .. }
+            | DdlStatement::DropCheckConstraint { .. }
+            | DdlStatement::AlterCheckConstraint { .. }
+    ) {
+        return Err(ClusterDdlError::PersistedJobRequired);
+    }
+
+    match commit_cluster_ddl_phase_with_retry(
+        opener,
+        DdlPhase::Initial(statement),
+        timeout,
+        notifier,
+        backfiller,
+        exchange_validator,
+        check_constraint_validator,
+        schema_sync.owner_id(),
+    )? {
+        DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
+        DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
+    }
+}
+
+/// Runs one already-submitted persisted CHECK DDL job until it reaches history.
+///
+/// This is the worker half of Go's scheduler contract. It accepts a job ID,
+/// reloads the active row before every step, and therefore resumes jobs
+/// submitted by another server or abandoned by a former owner.
+#[allow(clippy::too_many_arguments)]
+pub fn run_persisted_check_constraint_job_to_completion<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    loop {
+        let outcome = match commit_cluster_ddl_phase_with_retry(
+            Arc::clone(&opener),
+            DdlPhase::PersistedCheckConstraint { ddl_job_id },
+            timeout,
+            notifier,
+            backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            schema_sync.owner_id(),
+        ) {
+            Err(ClusterDdlError::CheckConstraintValidation(validation_error))
+                if validation_error.code
+                    == tidb_error::tidb::errcode::ErrCheckConstraintViolated =>
+            {
+                mark_check_constraint_job_rollingback_with_retry(
+                    Arc::clone(&opener),
+                    ddl_job_id,
+                    &validation_error,
+                    timeout,
+                )?;
+                let rollback = commit_cluster_ddl_phase_with_retry(
+                    Arc::clone(&opener),
+                    DdlPhase::PersistedCheckConstraint { ddl_job_id },
+                    timeout,
+                    notifier,
+                    backfiller,
+                    exchange_validator,
+                    check_constraint_validator,
+                    schema_sync.owner_id(),
+                )?;
+                let DdlPhaseOutcome::Committed(rollback) = rollback else {
+                    unreachable!("a persisted CHECK rollback is a worker write")
+                };
+                synchronize_committed_check_phase(
+                    Arc::clone(&opener),
+                    timeout,
+                    &rollback,
+                    schema_sync,
+                )?;
+                if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                    eprintln!(
+                        "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    );
+                }
+                return Err(ClusterDdlError::CheckConstraintValidation(validation_error));
+            }
+            outcome => outcome?,
+        };
+        let DdlPhaseOutcome::Committed(committed) = outcome else {
+            unreachable!("a queued CHECK action is always a worker write")
+        };
+        synchronize_committed_check_phase(Arc::clone(&opener), timeout, &committed, schema_sync)?;
+        if committed.persisted_job_terminal {
+            if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                eprintln!(
+                    "{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                    serde_json::to_string(&error)
+                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                );
+            }
+            return Ok(committed.report);
+        }
+    }
+}
+
+/// Pinned Go `GenGIDAndInsertJobsWithRetry`: lock the global-ID key, assign
+/// every action-owned ID, run the caller's registration callback, encode all
+/// rows, and commit the allocation and inserts atomically.
+pub fn gen_global_ids_and_insert_jobs_with_retry<C, L, P, F, Cleanup>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    specs: &mut [crate::ddl_job_submit::JobSpec],
+    timeout: Duration,
+    mut before_insert_with_assigned_ids: F,
+) -> Result<(), ClusterDdlError>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    F: FnMut(&[crate::ddl_job_submit::JobSpec]) -> Option<Cleanup>,
+    Cleanup: FnOnce(),
+{
+    let mut attempt = 0_u32;
+    loop {
+        let transaction = SessionTransaction::begin_pessimistic(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let lock_outcome =
+            match transaction.lock_keys(vec![tidb_meta::key::next_global_id_kv_key()]) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let _ = transaction.rollback();
+                    return Err(ClusterDdlError::NotCommitted(error.to_string()));
+                }
+            };
+        let for_update_ts = match lock_outcome {
+            LockKeysOutcome::Locked { for_update_ts, .. }
+            | LockKeysOutcome::RetryStatement { for_update_ts, .. } => for_update_ts,
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                let _ = transaction.rollback();
+                return Err(ClusterDdlError::NotCommitted(error.message));
+            }
+        };
+        let planned = (|| -> Result<_, ClusterDdlError> {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot_at_for(for_update_ts, true)
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::from)?;
+            plan_insert_attempt(
+                &mut snapshot,
+                &catalog,
+                specs,
+                &mut before_insert_with_assigned_ids,
+            )
+            .map_err(Into::into)
+        })();
+        let (mutations, cleanup) = match planned {
+            Ok(planned) => planned,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        };
+        let buffer = MutationBuffer::new();
+        match finish_insert_attempt(transaction.commit_with(&buffer, mutations), cleanup) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(0, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
+    }
+}
+
+/// Submits one persisted CHECK DDL job without executing it.
+///
+/// Go's submitter and owner scheduler are separate. Exposing the boundary is
+/// what lets a non-owner connection enqueue work and wait while the elected
+/// owner (possibly another server) executes it.
+pub fn submit_check_constraint_job_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<i64, ClusterDdlError> {
+    let preparation = SessionTransaction::begin(
+        Arc::clone(&opener),
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let start_ts = preparation.start_ts();
+    let prepared = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            preparation
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        prepare_check_constraint_job_submission(
+            &mut snapshot,
+            statement,
+            start_ts,
+            upgrading,
+            min_job_id,
+        )
+    };
+    let mut spec = match prepared {
+        Ok(Some(spec)) => spec,
+        Ok(None) => {
+            let _ = preparation.rollback();
+            return Err(ClusterDdlError::NotCommitted(
+                "the statement is not a CHECK DDL job".to_owned(),
+            ));
+        }
+        Err(error) => {
+            let _ = preparation.rollback();
+            return Err(error.into());
+        }
+    };
+    preparation
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+
+    gen_global_ids_and_insert_jobs_with_retry(
+        opener,
+        std::slice::from_mut(&mut spec),
+        timeout,
+        |_| Option::<fn()>::None,
+    )?;
+    Ok(spec.job.id)
+}
+
+/// Loads the persisted active DDL queue from a fresh cluster snapshot.
+///
+/// The returned order is the job table's primary-key order, matching Go's
+/// scheduler query `ORDER BY job_id`. The read transaction is always rolled
+/// back because queue inspection publishes no state.
+pub fn load_active_persisted_ddl_jobs<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    min_job_id: i64,
+) -> Result<Vec<Job>, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let jobs = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+        let table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        table
+            .load_from(&mut snapshot, min_job_id)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+            .into_iter()
+            .map(|active| active.job)
+            .collect()
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(jobs)
+}
+
+/// Reads pinned Go `systable.Manager.GetMinJobID` in a fresh read-only
+/// transaction for `MinJobIDRefresher`.
+pub fn load_min_persisted_ddl_job_id<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    previous_min_job_id: i64,
+) -> Result<i64, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let minimum = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(DdlPlanError::Catalog)?;
+        crate::ddl_systable::SystemTableManager::new(&catalog)
+            .get_min_job_id(&mut snapshot, previous_min_job_id)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(minimum)
+}
+
+/// Reads one terminal DDL job from Go's authoritative meta history.
+pub fn load_history_persisted_ddl_job<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    timeout: Duration,
+) -> Result<Option<Job>, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::session_commit_protocol(),
+    )?;
+    let history = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        snapshot
+            .get(&tidb_meta::key::ddl_job_history_kv_key(ddl_job_id))
+            .map_err(DdlPlanError::Catalog)?
+            .map(|encoded| {
+                let mut job = Job::default();
+                job.decode(&encoded)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+                Ok::<Job, DdlPlanError>(job)
+            })
+            .transpose()?
+    };
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    Ok(history)
+}
+
+fn mark_check_constraint_job_rollingback_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    ddl_job_id: i64,
+    validation_error: &LockSqlError,
+    timeout: Duration,
+) -> Result<(), ClusterDdlError> {
+    let mut attempt = 0_u32;
+    loop {
+        let transaction = SessionTransaction::begin(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let mutations = {
+            let mut snapshot = SnapshotMetaSnapshot::new(
+                transaction
+                    .snapshot()
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+            plan_check_constraint_job_rollingback(
+                &mut snapshot,
+                ddl_job_id,
+                validation_error.code,
+                &validation_error.message,
+            )
+        };
+        let mutations = match mutations {
+            Ok(mutations) => mutations,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error.into());
+            }
+        };
+        let buffer = MutationBuffer::new();
+        match transaction.commit_with(&buffer, mutations) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(0, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
+    }
+}
+
+fn synchronize_committed_check_phase<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    committed: &CommittedDdlPhase,
+    schema_sync: &dyn CheckConstraintSchemaSync,
+) -> Result<(), ClusterDdlError> {
+    let Some(mdl_info) = &committed.mdl_info else {
+        return Ok(());
+    };
+    schema_sync
+        .wait_version_synced(committed.ddl_job_id, committed.schema_version)
+        .map_err(ClusterDdlError::SchemaSync)?;
+    if let Err(error) = clean_mdl_info_with_retry(
+        opener,
+        timeout,
+        mdl_info,
+        committed.ddl_job_id,
+        committed.schema_version,
+        schema_sync.owner_id(),
+    ) {
+        eprintln!(
+            "{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{},\"error\":{}}}",
+            committed.ddl_job_id,
+            serde_json::to_string(&error.to_string())
+                .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+        );
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_cluster_ddl_phase_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    phase: DdlPhase<'_>,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    owner_id: &str,
+) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     let mut attempt: u32 = 0;
     loop {
         match commit_cluster_ddl_with_backfill_once(
             Arc::clone(&opener),
-            statement,
+            phase,
             timeout,
             notifier,
             backfiller,
+            exchange_validator,
+            check_constraint_validator,
+            owner_id,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -481,13 +1194,16 @@ fn commit_cluster_ddl_with_backfill_once<
     P: StorePdCapability,
 >(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    statement: &DdlStatement,
+    phase: DdlPhase<'_>,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
+    exchange_validator: &dyn ExchangePartitionValidator,
+    check_constraint_validator: &dyn CheckConstraintValidator,
+    owner_id: &str,
+) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     let transaction = SessionTransaction::begin(
-        opener,
+        Arc::clone(&opener),
         timeout,
         crate::session_commit_protocol::session_commit_protocol(),
     )?;
@@ -498,9 +1214,17 @@ fn commit_cluster_ddl_with_backfill_once<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        plan_ddl(&mut snapshot, statement, start_ts)
+        match phase {
+            DdlPhase::Initial(statement) => {
+                plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false))
+            }
+            DdlPhase::PersistedCheckConstraint { ddl_job_id } => {
+                plan_persisted_check_constraint_job_step(&mut snapshot, ddl_job_id, start_ts)
+                    .map(|step| (DdlPlan::Write(Box::new(step.write)), step.terminal))
+            }
+        }
     };
-    let plan = match plan {
+    let (plan, persisted_job_terminal) = match plan {
         Ok(plan) => plan,
         Err(error) => {
             let _ = transaction.rollback();
@@ -512,12 +1236,17 @@ fn commit_cluster_ddl_with_backfill_once<
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
+            return Ok(DdlPhaseOutcome::AlreadySatisfied(
+                ClusterDdlReport::AlreadySatisfied { detail, warning },
+            ));
         }
-        DdlPlan::Write(write) => write,
+        DdlPlan::Write(write) => *write,
     };
     let buffer = MutationBuffer::new();
-    if let Some(backfill) = &write.backfill {
+    if !write.backfill.is_empty()
+        || write.exchange_partition_validation.is_some()
+        || write.check_constraint_validation.is_some()
+    {
         let staged = transaction
             .snapshot()
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
@@ -527,9 +1256,22 @@ fn commit_cluster_ddl_with_backfill_once<
                     .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
                     .bind(snapshot);
                 let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                backfiller
-                    .stage(backfill, handle, &buffer)
-                    .map_err(ClusterDdlError::Backfill)
+                for backfill in &write.backfill {
+                    backfiller
+                        .stage(backfill, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::Backfill)?;
+                }
+                if let Some(validation) = &write.exchange_partition_validation {
+                    exchange_validator
+                        .validate(validation, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::ExchangeValidation)?;
+                }
+                if let Some(validation) = &write.check_constraint_validation {
+                    check_constraint_validator
+                        .validate(validation, Arc::clone(&handle), &buffer)
+                        .map_err(ClusterDdlError::CheckConstraintValidation)?;
+                }
+                Ok(())
             });
         if let Err(error) = staged {
             // Nothing has been published: the entries only ever existed in this
@@ -539,17 +1281,114 @@ fn commit_cluster_ddl_with_backfill_once<
             return Err(error);
         }
     }
+    let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_placement_bundles(
+            &endpoint,
+            &write.placement_bundles,
+            &write.placement_rollback_bundles,
+            timeout,
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
+        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let _ = transaction.rollback();
+                return Err(compensate_external_delivery(
+                    error,
+                    placement_receipt.as_ref(),
+                    None,
+                    timeout,
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let mut write = write;
+    if let Some(mdl_info) = &write.mdl_info_update {
+        if let Err(error) = mdl_info.append_mutations(
+            write.ddl_job_id,
+            write.schema_version,
+            owner_id,
+            &mut write.mutations,
+        ) {
+            let _ = transaction.rollback();
+            return Err(error.into());
+        }
+    }
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
             notify_schema_version(notifier, planned_version);
-            Ok(ClusterDdlReport::Applied {
+            Ok(DdlPhaseOutcome::Committed(CommittedDdlPhase {
+                report: ClusterDdlReport::Applied {
+                    schema_version: planned_version,
+                    created_id: write.created_id,
+                    warning: write.warning,
+                },
+                ddl_job_id: write.ddl_job_id,
                 schema_version: planned_version,
-                created_id: write.created_id,
-                warning: write.warning,
-            })
+                persisted_job_terminal,
+                mdl_info: write.mdl_info_update,
+            }))
         }
-        Err(error) => Err(classify_session_ddl_commit_error(planned_version, error)),
+        Err(error) => {
+            let cause = classify_session_ddl_commit_error(planned_version, error);
+            if matches!(cause, ClusterDdlError::Undetermined(_)) {
+                Err(cause)
+            } else {
+                Err(compensate_external_delivery(
+                    cause,
+                    placement_receipt.as_ref(),
+                    label_receipt.as_ref(),
+                    timeout,
+                ))
+            }
+        }
+    }
+}
+
+fn clean_mdl_info_with_retry<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+    mdl_info: &MdlInfoUpdate,
+    ddl_job_id: i64,
+    schema_version: i64,
+    owner_id: &str,
+) -> Result<(), ClusterDdlError> {
+    let mut attempt: u32 = 0;
+    loop {
+        let transaction = SessionTransaction::begin(
+            Arc::clone(&opener),
+            timeout,
+            crate::session_commit_protocol::session_commit_protocol(),
+        )?;
+        let mut mutations = Vec::new();
+        mdl_info.append_delete_mutations(ddl_job_id, schema_version, owner_id, &mut mutations)?;
+        let buffer = MutationBuffer::new();
+        match transaction.commit_with(&buffer, mutations) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                let cause = classify_session_ddl_commit_error(schema_version, error);
+                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
+                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
+                {
+                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                    attempt += 1;
+                    continue;
+                }
+                return Err(cause);
+            }
+        }
     }
 }
 
@@ -589,6 +1428,9 @@ pub fn classify_session_ddl_commit_error(
 /// second attempt from this path would only delay a statement whose result is
 /// already durable.
 pub fn notify_schema_version(notifier: Option<&dyn SchemaVersionNotifier>, version: i64) {
+    if version == 0 {
+        return;
+    }
     let Some(notifier) = notifier else {
         return;
     };

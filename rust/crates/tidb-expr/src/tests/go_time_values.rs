@@ -16,7 +16,7 @@
 //! MakeTime tables (`builtin_time_test.go:2623`, `:2677`).
 
 use super::*;
-use tidb_datatype::{FieldType, FieldTypeCode as C};
+use tidb_datatype::{FieldType, FieldTypeCode as C, FieldTypeFlags};
 
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
@@ -26,6 +26,7 @@ fn const_arg(datum: Datum) -> Expression {
     let field_type = match &datum {
         Datum::Null => FieldType::new(C::Null),
         Datum::Int(_) => FieldType::new(C::LongLong),
+        Datum::UInt(_) => FieldType::new(C::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED),
         Datum::Real(_) => FieldType::new(C::Double),
         Datum::String(_) | Datum::Bytes(_) => FieldType::new(C::VarString),
         Datum::Decimal(_) => FieldType::new(C::NewDecimal),
@@ -144,4 +145,33 @@ fn go_test_maketime() {
             None => assert!(value.is_null(), "{args:?}: {value:?}"),
         }
     }
+}
+
+/// The remaining floating-second and unsigned-hour rows from Go's
+/// `TestMakeTime` (`pkg/expression/builtin_time_test.go:2677`). Real seconds
+/// use the result signature's MaxFsp, while an unsigned `-1` hour is detected
+/// before the signed value is interpreted and clamps to the positive TIME
+/// limit.
+#[test]
+fn go_test_maketime_float_seconds_and_unsigned_hour() {
+    for (args, expected) in [
+        (vec![i(838), i(58), r(59.1)], "838:58:59.100000"),
+        (vec![i(-838), i(59), r(59.1)], "-838:59:59.000000"),
+        (vec![i(1000), i(1), r(59.1)], "838:59:59.000000"),
+        (vec![i(-1000), i(1), r(1.23)], "-838:59:59.000000"),
+    ] {
+        let value =
+            eval_named("maketime", args.clone()).unwrap_or_else(|e| panic!("{args:?}: {e:?}"));
+        let label = value.label();
+        assert_eq!(
+            label.strip_prefix("STR:").unwrap_or(&label),
+            expected,
+            "{args:?}"
+        );
+    }
+
+    let value = eval_named("maketime", vec![Datum::UInt(u64::MAX), i(0), i(0)])
+        .expect("unsigned hour must evaluate");
+    let label = value.label();
+    assert_eq!(label.strip_prefix("STR:").unwrap_or(&label), "838:59:59");
 }

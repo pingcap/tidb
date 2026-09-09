@@ -190,8 +190,6 @@ impl MultiSource {
                     database: table.qualifiable_db.clone(),
                     columns: table.columns.clone(),
                     offset: table.offset,
-                    func_deps: Default::default(),
-                    physical: None,
                 })
                 .collect(),
             coalesced: self.coalesced.clone(),
@@ -309,15 +307,8 @@ fn scan_derived_table(
             "a LATERAL derived table is not supported in multi-table DML",
         ));
     }
-    let (alias, mut columns, rows) = super::from::derived_source_relation(
-        subquery,
-        alias,
-        catalog,
-        current_db,
-        ctx,
-        None,
-        &tidb_planner::physical_property::PhysicalProperty::default(),
-    )?;
+    let (alias, mut columns, rows) =
+        super::from::derived_source_relation(subquery, alias, catalog, current_db, ctx)?;
     // The parser refuses `(SELECT ...) t (x, y)` in an UPDATE's `FROM`
     // (Go errno 1064, both the comma and the JOIN spelling), so this list is
     // empty on every statement that reaches here. It is applied anyway
@@ -529,12 +520,6 @@ fn scan_base_table(
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
             .collect(),
-        TableEntry::Cte(cte) => cte
-            .to_rows()
-            .map_err(DriverError::from)?
-            .into_iter()
-            .map(|row| (vec![None], row))
-            .collect(),
         // Go expands a view into its stored SELECT before deciding which
         // sources are writable. Its rows therefore participate in a join,
         // but carry no base-table identity and cannot be an UPDATE/DELETE
@@ -662,8 +647,6 @@ fn join_sources(
             database: table.qualifiable_db.clone(),
             columns: table.columns.clone(),
             offset: table.offset,
-            func_deps: Default::default(),
-            physical: None,
         });
     }
     let mut coalesced_conditions = Vec::new();
@@ -860,6 +843,7 @@ pub(crate) fn run_multi_update(
         })
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
+    ctx.notify_before_executor_first_run();
     let rows = selected_rows(
         &mut source,
         &update.where_clause,
@@ -871,6 +855,7 @@ pub(crate) fn run_multi_update(
     account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
 
     let mut once: UpdateOnce = BTreeMap::new();
+    let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
     for (ids, values) in &rows {
         let chunk = row_chunk(values, &field_types)?;
@@ -910,10 +895,19 @@ pub(crate) fn run_multi_update(
                 write_row(catalog, table, id, &new_row, ctx)?;
                 changed_rows += 1;
             }
+            touched_rows += 1;
             once.insert((slot, id.clone()), changed);
         }
     }
-    Ok(changed_rows)
+    ctx.set_message(format!(
+        "Rows matched: {touched_rows}  Changed: {changed_rows}  Warnings: {}",
+        ctx.warning_count()
+    ));
+    Ok(if ctx.client_found_rows() {
+        touched_rows
+    } else {
+        changed_rows
+    })
 }
 
 /// One resolved `SET` assignment: which target table it writes, that table's
@@ -1059,9 +1053,9 @@ fn write_row(
             mem.rows[*index] = row.to_vec();
             Ok(())
         }
-        (TableEntry::Kv(kv), RowId::Kv(handle)) => {
-            kv.update_row(handle, row, ctx).map_err(kv_write_error)
-        }
+        (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+            .update_row_with_context(handle, row, ctx)
+            .map_err(kv_write_error),
         // The identity was read off this very entry a moment ago.
         _ => Err(DriverError::unsupported(
             "table storage changed during a multi-table write",
@@ -1080,6 +1074,7 @@ pub(crate) fn run_multi_delete(
 ) -> Result<u64, DriverError> {
     let mut source = build_multi_source(from, catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
+    ctx.notify_before_executor_first_run();
     let rows = selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?;
     account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
 
@@ -1145,10 +1140,9 @@ pub(crate) fn run_multi_delete(
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);
             }
-            (TableEntry::Kv(kv), RowId::Kv(handle)) => {
-                kv.delete_row(handle, &ctx.session_zone())
-                    .map_err(|e| super::dml::kv_read_error("row delete failed", e))?
-            }
+            (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
+                .delete_row_with_context(handle, ctx)
+                .map_err(|e| super::dml::kv_read_error("row delete failed", e))?,
             _ => {
                 return Err(DriverError::unsupported(
                     "table storage changed during a multi-table write",

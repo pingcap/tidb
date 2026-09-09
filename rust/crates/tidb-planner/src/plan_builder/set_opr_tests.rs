@@ -30,6 +30,7 @@ use tidb_datatype::{
     FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone, UNSPECIFIED_LENGTH,
 };
 use tidb_expr::ZonedNoColumns;
+use tidb_funcdep::ColSet;
 
 use super::catalog::{SourceColumn, SourceTable, TableSource};
 use super::set_opr::union_join_field_type;
@@ -74,6 +75,7 @@ fn column(offset: usize, name: &str, ret_type: FieldType) -> SourceColumn {
         is_public: true,
         is_hidden: false,
         is_virtual_generated: false,
+        generated_expr: None,
     }
 }
 
@@ -81,6 +83,13 @@ fn bigint() -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::LongLong);
     ft.set_flen(20);
     ft.set_decimal(0);
+    ft
+}
+
+fn unsigned_bigint(flen: i64) -> FieldType {
+    let mut ft = bigint();
+    ft.set_flen(flen);
+    ft.add_flags(FieldTypeFlags::UNSIGNED);
     ft
 }
 
@@ -93,8 +102,8 @@ fn varchar(flen: i64) -> FieldType {
     ft
 }
 
-/// `CREATE TABLE test.t (a BIGINT, b BIGINT)` and
-/// `CREATE TABLE test.s (a BIGINT, v VARCHAR(10))`.
+/// `CREATE TABLE test.t (a BIGINT, b BIGINT, u BIGINT UNSIGNED)` and
+/// `CREATE TABLE test.s (a BIGINT, v VARCHAR(10), u BIGINT UNSIGNED)`.
 fn catalog() -> TestCatalog {
     TestCatalog {
         current_database: "test".to_owned(),
@@ -104,7 +113,11 @@ fn catalog() -> TestCatalog {
                 table_name: "t".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
-                columns: vec![column(0, "a", bigint()), column(1, "b", bigint())],
+                columns: vec![
+                    column(0, "a", bigint()),
+                    column(1, "b", bigint()),
+                    column(2, "u", unsigned_bigint(5)),
+                ],
                 ..SourceTable::default()
             },
             SourceTable {
@@ -112,7 +125,11 @@ fn catalog() -> TestCatalog {
                 table_name: "s".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 101,
-                columns: vec![column(0, "a", bigint()), column(1, "v", varchar(10))],
+                columns: vec![
+                    column(0, "a", bigint()),
+                    column(1, "v", varchar(10)),
+                    column(2, "u", unsigned_bigint(20)),
+                ],
                 ..SourceTable::default()
             },
         ],
@@ -211,6 +228,19 @@ fn test_union_all_is_a_bare_union_all_with_one_projection_per_branch() {
         .iter()
         .all(|child| child.tp() == "Projection"));
     assert!(!operator_names(&plan).iter().any(|tp| tp == "Aggregation"));
+}
+
+#[test]
+fn extract_fd_source_union_all_common_equivalence() {
+    let plain = build("SELECT a, b FROM t UNION ALL SELECT a, b FROM t");
+    assert!(plain.extract_fd().equivalence_cols().is_empty());
+
+    let selected = build("SELECT a, b FROM t WHERE a = b UNION ALL SELECT a, b FROM t WHERE a = b");
+    let schema = selected.schema().expect("union schema");
+    let fd = selected.extract_fd();
+    assert!(fd
+        .closure_of_equivalence(&ColSet::new([schema.columns[0].unique_id]))
+        .has(schema.columns[1].unique_id));
 }
 
 #[test]
@@ -451,10 +481,21 @@ fn test_a_set_operation_is_usable_as_a_derived_table() {
 // ***** CTE reference resolution *****
 
 #[test]
-fn test_a_cte_reference_becomes_a_logical_cte_over_a_shared_class() {
-    // `tryBuildCTE` (`:4739`) plus `buildWith` (`:7994`).
+fn test_a_single_consumer_cte_is_inlined_like_go() {
+    // `UpdateCTEConsumerCount` plus `computeCTEInlineFlag`: exactly one
+    // consumer takes `buildDataSourceFromCTEMerge` instead of a CTE storage.
     let plan = build("WITH c AS (SELECT a FROM t) SELECT a FROM c");
-    let cte = find(&plan, "CTE").expect("a LogicalCTE is built for the reference");
+    assert!(find(&plan, "CTE").is_none());
+    assert!(find(&plan, "DataSource").is_some());
+}
+
+#[test]
+fn test_a_multi_consumer_cte_becomes_a_logical_cte_over_a_shared_class() {
+    let plan = build(
+        "WITH c AS (SELECT a FROM t) \
+         SELECT x.a FROM c AS x JOIN c AS y ON x.a = y.a",
+    );
+    let cte = find(&plan, "CTE").expect("multiple consumers materialize the CTE");
     let LogicalPlan::CTE(cte) = cte else {
         unreachable!()
     };
@@ -462,15 +503,16 @@ fn test_a_cte_reference_becomes_a_logical_cte_over_a_shared_class() {
     let class = cte.cte.as_ref().expect("the reference points at a class");
     assert!(class.borrow().seed_part_logical_plan.is_some());
     assert!(class.borrow().recursive_part_logical_plan.is_none());
-    // Not inlined: the consumer count is unavailable here, which is Go's
-    // "cannot determine" arm; see `cte`'s ConsumerCount narrowing.
     assert!(find(&plan, "DataSource").is_none());
 }
 
 #[test]
 fn test_a_cte_shadows_a_real_table_of_the_same_name() {
     // Go looks the CTE up FIRST, in `buildDataSource`'s `dbName.L == ""` arm.
-    let plan = build("WITH t AS (SELECT a FROM s) SELECT a FROM t");
+    let plan = build(
+        "WITH t AS (SELECT a FROM s) \
+         SELECT x.a FROM t AS x JOIN t AS y ON x.a = y.a",
+    );
     assert!(find(&plan, "CTE").is_some());
 }
 
@@ -496,7 +538,10 @@ fn test_a_ctes_column_list_renames_its_output_and_a_wrong_length_is_refused() {
 
 #[test]
 fn test_a_later_cte_may_reference_an_earlier_one() {
-    let plan = build("WITH c1 AS (SELECT a FROM t), c2 AS (SELECT a FROM c1) SELECT a FROM c2");
+    let plan = build(
+        "WITH c1 AS (SELECT a FROM t), c2 AS (SELECT a FROM c1) \
+         SELECT x.a FROM c2 AS x JOIN c2 AS y ON x.a = y.a",
+    );
     assert!(find(&plan, "CTE").is_some());
 }
 
@@ -507,7 +552,10 @@ fn test_a_non_recursive_cte_cannot_see_itself() {
     assert!(build_err("WITH c AS (SELECT a FROM c) SELECT a FROM c").contains("doesn't exist"));
     // Inside the CTE's own body, `t` is the real TABLE — the seed plan the
     // class holds is a DataSource, not a second CTE reference.
-    let plan = build("WITH t AS (SELECT a FROM t) SELECT a FROM t");
+    let plan = build(
+        "WITH t AS (SELECT a FROM t) \
+         SELECT x.a FROM t AS x JOIN t AS y ON x.a = y.a",
+    );
     let LogicalPlan::CTE(cte) = find(&plan, "CTE").expect("the outer reference") else {
         unreachable!()
     };
@@ -604,9 +652,12 @@ fn test_a_recursive_cte_without_a_union_is_refused() {
     // `buildRecursiveCTE`'s `default` arm refines
     // `ErrCTERecursiveRequiresNonRecursiveFirst` into
     // `ErrCTERecursiveRequiresUnion`.
+    // Go's `buildRecursiveCTE` default arm refines the seed self-reference's
+    // `ErrCTERecursiveRequiresNonRecursiveFirst` into
+    // `ErrCTERecursiveRequiresUnion` (`logical_plan_builder.go:7931-7937`).
     assert!(
         build_err("WITH RECURSIVE c (n) AS (SELECT n FROM c) SELECT n FROM c")
-            .contains("neither aggregation nor window functions")
+            .contains("should contain a UNION")
     );
 }
 
@@ -634,7 +685,8 @@ fn test_a_recursive_declaration_with_no_self_reference_is_an_ordinary_cte() {
     // "In this case, even if SQL specifies 'WITH RECURSIVE', the CTE is
     // non-recursive."
     let plan = build(
-        "WITH RECURSIVE c (n) AS (SELECT a FROM t UNION ALL SELECT b FROM t) SELECT n FROM c",
+        "WITH RECURSIVE c (n) AS (SELECT a FROM t UNION ALL SELECT b FROM t) \
+         SELECT x.n FROM c AS x JOIN c AS y ON x.n = y.n",
     );
     let LogicalPlan::CTE(cte) = find(&plan, "CTE").expect("a LogicalCTE") else {
         unreachable!()
@@ -670,18 +722,74 @@ fn test_a_recursive_ctes_limit_becomes_the_classs_limit_bounds() {
 #[test]
 fn test_no_sequence_is_built_unless_mpp_shared_cte_execution_is_on() {
     // `tryToBuildSequence` (`:4624`) returns the plan untouched by default.
-    let plan = build("WITH c AS (SELECT a FROM t) SELECT a FROM c");
+    let sql = "WITH c AS (SELECT a FROM t) \
+               SELECT x.a FROM c AS x JOIN c AS y ON x.a = y.a";
+    let plan = build(sql);
     assert!(!operator_names(&plan).iter().any(|tp| tp == "Sequence"));
 
     let harness = Harness::new();
     let mut builder = harness.builder();
     builder.enable_mpp_shared_cte_execution = true;
-    let plan = build_in(&mut builder, "WITH c AS (SELECT a FROM t) SELECT a FROM c")
-        .expect("the sequence form builds");
+    let plan = build_in(&mut builder, sql).expect("the sequence form builds");
     assert_eq!(plan.tp(), "Sequence");
     // The CTE producers come FIRST and the main query LAST; see
     // `logical::sequence`'s header.
     let children = plan.children();
     assert_eq!(children.len(), 2);
     assert_eq!(children[0].tp(), "CTE");
+}
+
+/// A union projection with two unsigned integer branches carries the internal
+/// `inUnion` cast marker when one branch must widen to the joined type.
+#[test]
+fn union_unsigned_widening_uses_the_in_union_cast_signature() {
+    let plan = build("SELECT u FROM t UNION ALL SELECT u FROM s");
+    let LogicalPlan::UnionAll(union) = &plan else {
+        panic!("expected a UnionAll at the root, got {}", plan.tp());
+    };
+    let LogicalPlan::Projection(first) = &union.base.children()[0] else {
+        panic!("expected a Projection for the first branch");
+    };
+    let [tidb_expr::expression::Expression::ScalarFunction(cast)] = first.exprs.as_slice() else {
+        panic!("the narrow unsigned branch should be widened by a cast");
+    };
+    assert_eq!(cast.func_name.original(), "cast_unsigned_in_union");
+    assert!(cast.get_static_type().is_some_and(FieldType::is_unsigned));
+}
+
+#[test]
+fn union_mismatched_children_are_re_typed_in_place_when_the_cast_is_not_needed() {
+    let plan = build("SELECT a FROM t UNION SELECT b FROM t");
+    let LogicalPlan::Aggregation(agg) = &plan else {
+        panic!("expected an Aggregation at the root, got {}", plan.tp());
+    };
+    let LogicalPlan::UnionAll(ref union) = agg.base.children()[0] else {
+        panic!("expected a UnionAll under the Aggregation");
+    };
+    for child in union.base.children() {
+        let LogicalPlan::Projection(projection) = child else {
+            panic!("expected a Projection per branch");
+        };
+        let [expr] = projection.exprs.as_slice() else {
+            panic!("one expression per branch");
+        };
+        assert!(
+            matches!(expr, tidb_expr::expression::Expression::Column(_)),
+            "the re-pointed child stays a bare column: {expr:?}"
+        );
+    }
+    // The union column carries the joined type (LongLong, flen 20).
+    assert_eq!(union_cols_first_code(&plan), Some(FieldTypeCode::LongLong));
+    std::mem::forget(plan);
+}
+
+fn union_cols_first_code(plan: &LogicalPlan) -> Option<FieldTypeCode> {
+    plan.schema()
+        .map(|schema| {
+            schema
+                .columns
+                .first()
+                .map(|column| column.ret_type.as_ref().unwrap().code())
+        })
+        .unwrap_or(None)
 }

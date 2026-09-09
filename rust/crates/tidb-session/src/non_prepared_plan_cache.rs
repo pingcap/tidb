@@ -12,145 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The non-prepared plan cache: turning a written statement into the
-//! parameterized form two textually different statements share, deciding
-//! whether that form may be cached at all, and reporting the hit through
-//! `@@last_plan_from_cache`.
+//! Go-compatible non-prepared physical-plan caching.
 //!
 //! Mirrors the non-prepared half of Go `pkg/planner/core/plan_cacheable_checker.go`
 //! (`NonPreparedPlanCacheableWithCtx`, `isSelectStmtNonPrepCacheableFastCheck`,
 //! `extractTableNames`, and the `nonPreparedPlanCacheableChecker` visitor)
-//! together with the `SessionVars.FoundInPlanCache` / `PrevFoundInPlanCache`
-//! promotion Go performs in `ResetContextOfStmt`.
-//!
-//! # What is modelled and what is NOT -- read this before trusting a hit
-//!
-//! Go caches a `*PlanCacheValue`: the OPTIMIZED PLAN, rebound to the new
-//! statement's parameter values. This tier has no reified plan object -- a
-//! statement reaches execution through its SQL text and is parsed and planned
-//! inside `Session::execute_statement` on every run. So there is nothing here
-//! to store and reuse, and this cache DOES NOT REUSE A PLAN. What it stores is
-//! the parameterized key, and what it reproduces is the cache's OBSERVABLE
-//! contract: which statements are admitted, which are refused and why, and
-//! whether the statement that just ran would have found its plan already
-//! there.
-//!
-//! This is stated plainly rather than papered over because it decides the
-//! risk profile. Go's danger in this feature is returning a plan built for a
-//! DIFFERENT literal -- the right operator shape over the wrong rows. Here
-//! the statement is always re-planned from its own text, so that failure is
-//! structurally impossible, not merely untested. The half that IS
-//! safety-critical here is the ADMISSION decision, because when this tier
-//! grows a reusable plan the refusal list is what will stand between a
-//! shared key and a wrong answer. That list is therefore ported at full
-//! fidelity below, with the reason strings Go emits, and each entry is
-//! pinned by a test.
-//!
-//! # The key
-//!
-//! The key is `(schema version, current database, parameterized SQL)`.
-//!
-//! * The PARAMETERIZED SQL is the statement restored after every literal has
-//!   been replaced by `?`. Two statements share a key exactly when they differ
-//!   only in literal values -- Go's own parameterization.
-//! * A literal's TYPE is part of the key, not erased by it: `a = 1`,
-//!   `a = 1.0` and `a = '1'` restore to `?` alike, so their type is carried in
-//!   the key's parameter-kind suffix. Go relies on the rebinding step to keep
-//!   these apart; carrying the kinds in the key achieves the same separation
-//!   without a rebinding step to rely on.
-//! * The SCHEMA VERSION is [`Catalog::version`], which moves on every DDL. Go
-//!   drops a cached plan whose schema version has moved; including the version
-//!   in the key does the same thing by making the old entry unreachable.
-//! * An optimizer HINT is part of the restored text, so a hinted statement and
-//!   its unhinted twin have different keys and do not share an entry. That is
-//!   Go's behavior too (`ast.TableOptimizerHint` is an admitted node, and the
-//!   hint survives into the digest), and it is what makes
-//!   `SELECT /*+ SET_VAR(...) */ ...` break the cache in
-//!   `sessionctx/setvar`'s `TestSetVarHintBreakCache`.
-//!
-//! # The one known divergence: a duplicated IN-list over a unique key
-//!
-//! `planner/core/plan_cache`'s `TestIssue44830NonPrep` runs the same
-//! parameterized statement with three different IN-lists and expects a MISS
-//! whenever the list repeats a value:
-//!
-//! ```text
-//! select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3));  -- 2nd run: hit
-//! select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2));  -- miss
-//! select * from t1 where 1=1 and (a, b) in ((2, 2), (2, 2), (2, 2));  -- miss
-//! ```
-//!
-//! All three restore to `(a, b) in ((?, ?), (?, ?), (?, ?))`, so this tier
-//! shares one key across all of them and reports a hit for the last two.
-//! It would be easy -- and wrong -- to conclude the key must also carry the
-//! list's duplicate structure. Go's reason is not about keys at all, and it
-//! is CONDITIONAL ON THE PLAN, which is why it cannot be reproduced here.
-//!
-//! Go refuses in two separate places, both of which need an access path:
-//!
-//! * On the way IN, `isSafePointGetPath4PlanCacheScenario2`
-//!   (`planner/core/plan_cache_utils.go`) guards the Batch/PointGet a single
-//!   `IN` predicate produces:
-//!   `return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values
-//!   in this in-list for safety.`
-//!   A repeated element collapses into fewer ranges than the list has
-//!   elements, the path is declared unsafe, and `find_best_task.go` calls
-//!   `SetSkipPlanCache("Batch/PointGet plans may be over-optimized")` -- so
-//!   the plan never enters the cache. Captured: running the all-duplicate
-//!   statement TWICE still reports `0` the second time.
-//! * On the way OUT, `buildRangesForBatchGet`
-//!   (`planner/core/plan_cache_rebuild.go`) re-derives the ranges for the new
-//!   literals and refuses the cached plan when the count moved:
-//!   `if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(...) {
-//!   return errors.New("rebuild to get an unsafe range") }`.
-//!   That is why a duplicated list misses even when a DISTINCT list of the
-//!   same length is already cached under the identical key -- captured, and
-//!   the distinct statement still hits afterwards, so the entry is not
-//!   evicted, merely unusable for that call.
-//!
-//! Both checks are reached only when the optimizer chose a Batch/PointGet,
-//! so the refusal is a property of the PLAN, not of the statement text.
-//! Captured against `gorun` with the SAME statements and only the schema
-//! changed, and again with a scalar IN-list:
-//!
-//! ```text
-//! create table t1 (a int, b int, primary key(a, b));
-//!   (a, b) in ((2, 2), (2, 2), (2, 2))  -- Batch_Point_Get -> MISS
-//! create table t1 (a int, b int, key(a, b));
-//!   (a, b) in ((2, 2), (2, 2), (2, 2))  -- IndexReader     -> HIT
-//! create table t  (a int, b int, key(b));
-//!   a in (2, 2, 2)                      -- HIT
-//! create table u  (a int primary key, b int);
-//!   a in (2, 2, 2)                      -- HIT
-//! ```
-//!
-//! So the rule is NOT "a duplicated IN-list is uncacheable". TiDB caches a
-//! duplicated list in three of those four shapes, including over a primary
-//! key; only the row-constructor form over a clustered composite primary key
-//! reaches the point-get valve. Keying on the list's ARITY, as this tier
-//! does, is TiDB's behavior everywhere else, and an AST-level "duplicates
-//! never share a key" rule would have been an invention that broke the three
-//! captured hits. Those are pinned by tests below, in both directions.
-//!
-//! The one divergent shape is also the one this tier cannot execute at all:
-//! `ROW(a, b) IN (ROW(...), ...)` is rejected by the expression rewriter
-//! before any plan exists, so no wrong rows can be returned through it today.
-//! Closing it honestly needs an access path to inspect, which this key-only
-//! tier does not have.
+//! plus Go `getPlanFromNonPreparedPlanCache`: literal parameterization creates
+//! one retained marker-bearing statement, and the same `PreparedSelectPlan`
+//! used by SQL/binary PREPARE owns its physical entries. Parameter types,
+//! schema/statistics versions, matched binding SQL, admission, recursive range
+//! rebuild, and executor construction therefore have one implementation.
 
-use tidb_ast::{Expr, GroupByItem, JoinNode, OrderItem, QueryStmt, SelectStmt, Stmt};
-use tidb_executor::Catalog;
+use tidb_ast::{
+    Expr, GroupByItem, IsTarget, JoinNode, OrderItem, QueryStmt, SelectField, SelectStmt, Stmt,
+};
+use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
+use tidb_executor::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_planner::metrics::non_prep_plan_cache_unsupported_counter;
 use tidb_util::filter::is_system_schema;
 use tidb_util::kvcache::SimpleLruCache;
 
 /// Go `getMaxParamLimit`'s default: `PlanCacheMaxParamNum` (200).
 const MAX_PARAM_NUM: usize = 200;
-
-/// Go's cap on the values an `IN (...)` list may hold before the statement is
-/// refused (`MaxCacheableLimitCount` neighbours; the checker's own in-list
-/// bound).
-const MAX_IN_LIST_LEN: usize = 200;
 
 /// Why a statement may not enter the non-prepared plan cache.
 ///
@@ -158,86 +42,360 @@ const MAX_IN_LIST_LEN: usize = 200;
 /// `tidb_last_plan_cache_reason`-style surface reports what TiDB reports and
 /// so a divergence in the refusal itself is visible rather than silent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Refusal(pub &'static str);
-
-/// The kind tag a parameterized literal contributes to the key.
-///
-/// Two statements whose literals differ in KIND must not share an entry even
-/// though both restore to `?`: an integer, a decimal and a string compare
-/// against a column under different rules and select different access paths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParamKind {
-    Int,
-    Decimal,
-    Float,
-    Str,
+pub(crate) struct Refusal {
+    /// Go's own reason string, verbatim.
+    pub reason: &'static str,
+    /// Whether Go increments `GetNonPrepPlanCacheUnsupportedCounter` for
+    /// this refusal: checker-walk refusals set `cacheable=false` and count
+    /// (`plan_cacheable_checker.go:470-476`), while the clause-level
+    /// fast-check refusals and the statement-kind top gate return before
+    /// the counter exists to them.
+    pub counted: bool,
 }
 
-impl ParamKind {
-    const fn tag(self) -> char {
-        match self {
-            Self::Int => 'i',
-            Self::Decimal => 'd',
-            Self::Float => 'f',
-            Self::Str => 's',
+impl Refusal {
+    /// A checker-walk refusal: counted by the unsupported counter.
+    pub(crate) fn walk(reason: &'static str) -> Self {
+        Self {
+            reason,
+            counted: true,
+        }
+    }
+
+    /// A clause-level fast-check refusal: not counted.
+    pub(crate) fn fast(reason: &'static str) -> Self {
+        Self {
+            reason,
+            counted: false,
         }
     }
 }
 
-/// The per-session cache. Go keeps an LRU sized by
-/// `tidb_non_prepared_plan_cache_size`; the entries here are keys only, for
-/// the reason the module doc states.
+/// One parameterized statement and its execute-time literal values.
+pub(crate) struct ParameterizedSelect {
+    pub(crate) key: String,
+    pub(crate) statement: Stmt,
+    pub(crate) values: Vec<Datum>,
+}
+
+/// The per-session parameterized-statement LRU. Each value owns the same
+/// general physical-plan cache used by PREPARE.
 #[derive(Default)]
 pub(crate) struct NonPreparedPlanCache {
-    keys: Option<SimpleLruCache<String, ()>>,
+    plans: Option<SimpleLruCache<String, std::sync::Arc<PreparedSelectPlan>>>,
     capacity: usize,
 }
 
 impl NonPreparedPlanCache {
-    /// A cache holding at most `capacity` keys
-    /// (`tidb_non_prepared_plan_cache_size`, Go default 100).
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
-        Self {
-            keys: (capacity > 0).then(|| SimpleLruCache::new(capacity)),
-            capacity,
+    pub(crate) fn resize(&mut self, capacity: usize) {
+        if self.capacity == capacity {
+            return;
         }
+        match self.plans.as_mut() {
+            Some(plans) if capacity > 0 => {
+                let _ = plans.set_capacity(capacity);
+            }
+            _ => self.plans = (capacity > 0).then(|| SimpleLruCache::new(capacity)),
+        }
+        self.capacity = capacity;
     }
 
-    /// Records `key` as just used and answers whether it was already present.
-    ///
-    /// A hit moves the key to the most-recent end, which is the LRU order Go's
-    /// own cache maintains; a miss inserts it, evicting the least recent when
-    /// the cache is full.
-    pub(crate) fn admit(&mut self, key: String) -> bool {
-        let Some(keys) = self.keys.as_mut() else {
-            return false;
-        };
-        if keys.get(key.as_str()).is_some() {
-            return true;
+    pub(crate) fn get(&mut self, key: &str) -> Option<std::sync::Arc<PreparedSelectPlan>> {
+        self.plans.as_mut()?.get(key).cloned()
+    }
+
+    pub(crate) fn put(&mut self, key: String, plan: std::sync::Arc<PreparedSelectPlan>) {
+        if let Some(plans) = self.plans.as_mut() {
+            plans.put(key, plan);
         }
-        keys.put(key, ());
-        false
     }
 }
 
-/// Builds the cache key for `stmt`, or the reason it may not be cached.
-///
-/// This is Go's `NonPreparedPlanCacheableWithCtx` and the parameterization it
-/// guards, fused: the same single walk that admits the statement produces the
-/// parameterized form, exactly as Go's visitor does.
-pub(crate) fn cache_key(
+/// The per-session parameterized-DML-statement LRU over the same
+/// general physical-plan cache PREPARE uses for DML roots.
+#[derive(Default)]
+pub(crate) struct NonPreparedDmlCache {
+    plans: Option<SimpleLruCache<String, std::sync::Arc<PreparedDmlPlan>>>,
+    capacity: usize,
+}
+
+impl NonPreparedDmlCache {
+    pub(crate) fn resize(&mut self, capacity: usize) {
+        if self.capacity == capacity {
+            return;
+        }
+        match self.plans.as_mut() {
+            Some(plans) if capacity > 0 => {
+                let _ = plans.set_capacity(capacity);
+            }
+            _ => self.plans = (capacity > 0).then(|| SimpleLruCache::new(capacity)),
+        }
+        self.capacity = capacity;
+    }
+
+    pub(crate) fn get(&mut self, key: &str) -> Option<std::sync::Arc<PreparedDmlPlan>> {
+        self.plans.as_mut()?.get(key).cloned()
+    }
+
+    pub(crate) fn put(&mut self, key: String, plan: std::sync::Arc<PreparedDmlPlan>) {
+        if let Some(plans) = self.plans.as_mut() {
+            plans.put(key, plan);
+        }
+    }
+}
+
+/// Go `NonPreparedPlanCacheableWithCtx`'s UPDATE/INSERT/DELETE arms plus the
+/// checker walk and `paramReplacer` over the DML tree: SET values, `VALUES`
+/// rows, `ON DUPLICATE KEY UPDATE` values, and the WHERE predicate are
+/// parameterized; ORDER BY and LIMIT literals stay verbatim (Go's replacer
+/// skips those node kinds so different limit values plan differently).
+pub(crate) fn parameterize_dml(
     stmt: &Stmt,
     catalog: &Catalog,
     current_db: &str,
     enable_param_limit: bool,
-) -> Result<String, Refusal> {
+    string_collation: Collation,
+    max_num_param: usize,
+) -> Result<ParameterizedSelect, Refusal> {
+    let mut walk = Walk {
+        catalog,
+        current_db,
+        enable_param_limit,
+        tables: Vec::new(),
+        params: Vec::new(),
+        string_collation,
+        const_count: 0,
+        sum_in_list_len: 0,
+        filter_depth: 0,
+        max_num_param,
+    };
+    let statement = match stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Update(update) => {
+                if !update.hints.is_empty() {
+                    return Err(Refusal::fast(
+                        "not support update statement with table hints",
+                    ));
+                }
+                if matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }) {
+                    return Err(Refusal::fast(
+                        "not support multiple tables update statements",
+                    ));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Update(
+                    update.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Update(update) = &mut **dml else {
+                        unreachable!("cloned the matched update")
+                    };
+                    walk.dml_table(match &update.kind {
+                        tidb_ast::UpdateKind::Single(table) => &table.name,
+                        tidb_ast::UpdateKind::Multi { .. } => unreachable!("refused above"),
+                    })?;
+                    walk.table_names_cacheable()?;
+                    walk.update(update)?;
+                }
+                statement
+            }
+            tidb_ast::DmlStmt::Insert(insert) => {
+                if !insert.hints.is_empty() {
+                    return Err(Refusal::fast(
+                        "not support insert statement with table hints",
+                    ));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Insert(
+                    insert.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Insert(insert) = &mut **dml else {
+                        unreachable!("cloned the matched insert")
+                    };
+                    walk.dml_table(&insert.table)?;
+                    walk.table_names_cacheable()?;
+                    if insert.rows.is_empty() {
+                        // `INSERT ... SELECT`: Go admits only a plain SELECT
+                        // source and fast-checks it before the walk.
+                        let Some(source) = insert.source.as_deref_mut() else {
+                            return Err(Refusal::fast("not a SELECT statement"));
+                        };
+                        let tidb_ast::QueryStmt::Select(select) = source else {
+                            return Err(Refusal::fast("not a select statement"));
+                        };
+                        walk.select(select)?;
+                    } else {
+                        let n_rows = insert.rows.len();
+                        let n_cols = insert.rows.first().map_or(0, Vec::len);
+                        if n_rows * n_cols > walk.max_num_param {
+                            return Err(Refusal::fast("too many values in the insert statement"));
+                        }
+                        walk.insert(insert)?;
+                    }
+                }
+                statement
+            }
+            tidb_ast::DmlStmt::Delete(delete) => {
+                if !delete.hints.is_empty() {
+                    // Go's own message names INSERT for every statement kind.
+                    return Err(Refusal::fast(
+                        "not support insert statement with table hints",
+                    ));
+                }
+                if matches!(delete.kind, tidb_ast::DeleteKind::Multi { .. }) {
+                    return Err(Refusal::fast(
+                        "not support multiple tables delete statements",
+                    ));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Delete(
+                    delete.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Delete(delete) = &mut **dml else {
+                        unreachable!("cloned the matched delete")
+                    };
+                    walk.dml_table(match &delete.kind {
+                        tidb_ast::DeleteKind::Single(table) => &table.name,
+                        tidb_ast::DeleteKind::Multi { .. } => unreachable!("refused above"),
+                    })?;
+                    walk.table_names_cacheable()?;
+                    walk.delete(delete)?;
+                }
+                statement
+            }
+            _ => return Err(Refusal::fast("not a SELECT/UPDATE/INSERT/DELETE statement")),
+        },
+        _ => return Err(Refusal::fast("not a SELECT/UPDATE/INSERT/DELETE statement")),
+    };
+
+    walk.table_names_cacheable()?;
+    let mut key = String::with_capacity(64);
+    key.push_str(current_db);
+    key.push('|');
+    key.push_str(&statement.restore());
+    Ok(ParameterizedSelect {
+        key,
+        statement,
+        values: walk.params,
+    })
+}
+
+impl Walk<'_> {
+    /// Go `extractTableNames` for a DML target: the dotted name path is
+    /// lowered exactly like a SELECT's table reference.
+    fn dml_table(&mut self, name: &[String]) -> Result<(), Refusal> {
+        let Some(table_name) = name.last() else {
+            return Err(Refusal::walk("some column is not found in table schema"));
+        };
+        let schema = if name.len() >= 2 {
+            &name[name.len() - 2]
+        } else {
+            self.current_db
+        };
+        self.tables
+            .push((go_simple_lowercase(schema), go_simple_lowercase(table_name)));
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.UpdateStmt` plus the replacer pass: SET
+    /// values and ON DUPLICATE values are parameterized, ORDER BY and LIMIT
+    /// literals stay verbatim.
+    fn update(&mut self, update: &mut tidb_ast::UpdateStmt) -> Result<(), Refusal> {
+        for assignment in &mut update.assignments {
+            self.check_expr(&assignment.value)?;
+        }
+        if let Some(where_clause) = update.where_clause.as_ref() {
+            self.check_inside_filter(|walk| walk.check_expr(where_clause))?;
+        }
+        self.order_by(&update.order_by)?;
+        if let Some(limit) = update.limit.as_ref() {
+            if !self.enable_param_limit {
+                return Err(Refusal::walk("query has 'limit ?' is un-cacheable"));
+            }
+            if let Some(offset) = limit.offset.as_ref() {
+                self.check_expr(offset)?;
+            }
+            self.check_expr(&limit.count)?;
+        }
+        for assignment in &mut update.assignments {
+            self.replace_expr(&mut assignment.value)?;
+        }
+        if let Some(where_clause) = update.where_clause.as_mut() {
+            self.replace_expr(where_clause)?;
+        }
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.InsertStmt` plus the replacer pass:
+    /// VALUES rows and ON DUPLICATE values are parameterized; the SELECT
+    /// source (when present) goes through the full SELECT walk.
+    fn insert(&mut self, insert: &mut tidb_ast::InsertStmt) -> Result<(), Refusal> {
+        for row in &mut insert.rows {
+            for value in row.iter_mut() {
+                self.check_expr(value)?;
+            }
+        }
+        for assignment in &mut insert.on_duplicate {
+            self.check_expr(&assignment.value)?;
+        }
+        // Go's `extractTableNames` for the INSERT-SELECT source accumulates
+        // the target + source tables and refuses when the combined count
+        // exceeds two (plan_cacheable_checker.go:394).
+        if self.tables.len() > 2 {
+            return Err(Refusal::walk(
+                "queries that have more than 2 tables are not supported",
+            ));
+        }
+        for row in &mut insert.rows {
+            for value in row.iter_mut() {
+                self.replace_expr(value)?;
+            }
+        }
+        for assignment in &mut insert.on_duplicate {
+            self.replace_expr(&mut assignment.value)?;
+        }
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.DeleteStmt` plus the replacer pass.
+    fn delete(&mut self, delete: &mut tidb_ast::DeleteStmt) -> Result<(), Refusal> {
+        if let Some(where_clause) = delete.where_clause.as_ref() {
+            self.check_inside_filter(|walk| walk.check_expr(where_clause))?;
+        }
+        self.order_by(&delete.order_by)?;
+        if let Some(limit) = delete.limit.as_ref() {
+            if !self.enable_param_limit {
+                return Err(Refusal::walk("query has 'limit ?' is un-cacheable"));
+            }
+            if let Some(offset) = limit.offset.as_ref() {
+                self.check_expr(offset)?;
+            }
+            self.check_expr(&limit.count)?;
+        }
+        if let Some(where_clause) = delete.where_clause.as_mut() {
+            self.replace_expr(where_clause)?;
+        }
+        Ok(())
+    }
+}
+
+/// Go `GetParamSQLFromAST`: clone the admitted statement, replace its filter
+/// literals with ordered markers, and retain the literal datums for physical
+/// planning and later recursive rebuilds.
+pub(crate) fn parameterize_select(
+    stmt: &Stmt,
+    catalog: &Catalog,
+    current_db: &str,
+    enable_param_limit: bool,
+    string_collation: Collation,
+    max_num_param: usize,
+) -> Result<ParameterizedSelect, Refusal> {
     let Stmt::Query(query) = stmt else {
-        return Err(Refusal("not a SELECT/UPDATE/INSERT/DELETE statement"));
+        return Err(Refusal::fast("not a SELECT/UPDATE/INSERT/DELETE statement"));
     };
     let QueryStmt::Select(select) = &**query else {
         // Go reaches a `UNION` through `ast.SetOprStmt`, which is not in the
         // admitted node list.
-        return Err(Refusal("query has some unsupported Node"));
+        return Err(Refusal::walk("query has some unsupported Node"));
     };
 
     let mut walk = Walk {
@@ -246,29 +404,28 @@ pub(crate) fn cache_key(
         enable_param_limit,
         tables: Vec::new(),
         params: Vec::new(),
+        string_collation,
         const_count: 0,
+        sum_in_list_len: 0,
         filter_depth: 0,
+        max_num_param,
     };
     let mut parameterized = (**select).clone();
     walk.fast_check(&parameterized)?;
     walk.select(&mut parameterized)?;
 
     let mut key = String::with_capacity(64);
-    key.push_str(&catalog.version().to_string());
-    key.push('|');
     key.push_str(current_db);
     key.push('|');
-    for kind in &walk.params {
-        key.push(kind.tag());
-    }
-    key.push('|');
-    key.push_str(
-        &Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(
-            parameterized,
-        ))))
-        .restore(),
-    );
-    Ok(key)
+    let statement = Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(
+        parameterized,
+    ))));
+    key.push_str(&statement.restore());
+    Ok(ParameterizedSelect {
+        key,
+        statement,
+        values: walk.params,
+    })
 }
 
 /// The admitting walk: Go's `nonPreparedPlanCacheableChecker`, whose `Enter`
@@ -280,12 +437,17 @@ struct Walk<'a> {
     /// Go `checker.tableNodes`: the at-most-two tables the query reads, whose
     /// schemas the filter-column rule consults.
     tables: Vec<(String, String)>,
-    params: Vec<ParamKind>,
+    params: Vec<Datum>,
+    string_collation: Collation,
     const_count: usize,
+    /// Go accumulates the lengths of every IN-list before visiting their
+    /// values, so its dedicated refusal wins over the general literal cap.
+    sum_in_list_len: usize,
     /// Go `checker.filterCnt`: non-zero while inside a filter, which is what
     /// makes the column-type rule apply to `col = 1` but not to a select
     /// field.
     filter_depth: usize,
+    max_num_param: usize,
 }
 
 impl Walk<'_> {
@@ -293,28 +455,38 @@ impl Walk<'_> {
     /// taken before any node is visited.
     fn fast_check(&mut self, select: &SelectStmt) -> Result<(), Refusal> {
         if select.kind != tidb_ast::SelectStatementKind::Select {
-            return Err(Refusal("not a select statement"));
+            return Err(Refusal::fast("not a select statement"));
         }
         if select.lock.is_some() {
             // Go refuses a locking read at the statement-kind gate:
             // `selStmt.LockInfo != nil` is "not a SELECT statement".
-            return Err(Refusal("not a SELECT statement"));
+            return Err(Refusal::fast("not a SELECT statement"));
         }
         if select.having.is_some() {
-            return Err(Refusal("queries with HAVING clauses are not supported"));
+            return Err(Refusal::fast(
+                "queries with HAVING clauses are not supported",
+            ));
         }
         if !select.windows.is_empty() {
-            return Err(Refusal("queries using window-functions are not supported"));
+            return Err(Refusal::fast(
+                "queries using window-functions are not supported",
+            ));
         }
         if select.limit.is_some() && !self.enable_param_limit {
-            return Err(Refusal("queries with limit clauses are not supported"));
+            return Err(Refusal::fast(
+                "queries with limit clauses are not supported",
+            ));
         }
         if select.with.is_some() {
             // A CTE reaches Go as a sub-query node, which the visitor refuses.
-            return Err(Refusal("queries that have sub-queries are not supported"));
+            return Err(Refusal::fast(
+                "queries that have sub-queries are not supported",
+            ));
         }
         let Some(from) = &select.from else {
-            return Err(Refusal("queries that have sub-queries are not supported"));
+            return Err(Refusal::fast(
+                "queries that have sub-queries are not supported",
+            ));
         };
         self.extract_table_names(from)
     }
@@ -327,7 +499,7 @@ impl Walk<'_> {
             self.extract_from_node(right)?;
         }
         if self.tables.len() > 2 {
-            return Err(Refusal(
+            return Err(Refusal::walk(
                 "queries that have more than 2 tables are not supported",
             ));
         }
@@ -338,7 +510,7 @@ impl Walk<'_> {
         match node {
             JoinNode::Table(table) => {
                 let Some(table_name) = table.name.last() else {
-                    return Err(Refusal("some column is not found in table schema"));
+                    return Err(Refusal::fast("some column is not found in table schema"));
                 };
                 let schema = if table.name.len() >= 2 {
                     &table.name[table.name.len() - 2]
@@ -352,142 +524,339 @@ impl Walk<'_> {
             JoinNode::Join(inner) => self.extract_table_names(inner),
             // Go's `extractTableNames` default arm: a derived table is a
             // sub-query as far as this checker is concerned.
-            JoinNode::Derived { .. } => {
-                Err(Refusal("queries that have sub-queries are not supported"))
-            }
+            JoinNode::Derived { .. } => Err(Refusal::fast(
+                "queries that have sub-queries are not supported",
+            )),
         }
     }
 
     /// Walks the admitted `SELECT` shape, parameterizing as it goes.
     fn select(&mut self, select: &mut SelectStmt) -> Result<(), Refusal> {
         self.table_names_cacheable()?;
-        for field in select.fields.fields_mut() {
-            // A `*` projects no expression; Go's `FieldList` arm recurses into
-            // the fields it has and a wildcard contributes no node.
-            if let tidb_ast::SelectField::Expr { expr, .. } = field {
-                self.expr(expr)?;
+        // Go first runs `nonPreparedPlanCacheableChecker` over the complete
+        // tree. Its later `paramReplacer` skips SelectField, GroupByClause,
+        // OrderByClause and Limit, so validate those nodes without replacing
+        // their literals.
+        for field in select.fields.fields() {
+            if let SelectField::Expr { expr, .. } = field {
+                self.check_expr(expr)?;
             }
         }
         if let Some(from) = select.from.as_mut() {
-            self.join_conditions(from)?;
+            self.check_join_conditions(from)?;
+        }
+        if let Some(where_clause) = select.where_clause.as_ref() {
+            self.check_expr(where_clause)?;
+        }
+        self.group_by(&select.group_by)?;
+        self.order_by(&select.order_by)?;
+        if let Some(limit) = select.limit.as_ref() {
+            if !self.enable_param_limit {
+                return Err(Refusal::walk("query has 'limit ?' is un-cacheable"));
+            }
+            if let Some(offset) = limit.offset.as_ref() {
+                self.check_expr(offset)?;
+            }
+            self.check_expr(&limit.count)?;
+        }
+
+        // This is the separate `paramReplacer` pass. Only predicates are
+        // mutable here; the four skipped Go node types above stay verbatim.
+        if let Some(from) = select.from.as_mut() {
+            self.replace_join_conditions(from)?;
         }
         if let Some(where_clause) = select.where_clause.as_mut() {
-            self.filter(where_clause)?;
-        }
-        self.group_by(&mut select.group_by)?;
-        self.order_by(&mut select.order_by)?;
-        if select.limit.is_some() && !self.enable_param_limit {
-            return Err(Refusal("query has 'limit ?' is un-cacheable"));
+            self.replace_expr(where_clause)?;
         }
         Ok(())
     }
 
-    fn join_conditions(&mut self, join: &mut tidb_ast::Join) -> Result<(), Refusal> {
+    fn check_join_conditions(&mut self, join: &tidb_ast::Join) -> Result<(), Refusal> {
+        if let Some(on) = join.on.as_ref() {
+            self.check_expr(on)?;
+        }
+        if let JoinNode::Join(inner) = &join.left {
+            self.check_join_conditions(inner)?;
+        }
+        if let Some(JoinNode::Join(inner)) = join.right.as_ref() {
+            self.check_join_conditions(inner)?;
+        }
+        Ok(())
+    }
+
+    fn replace_join_conditions(&mut self, join: &mut tidb_ast::Join) -> Result<(), Refusal> {
         if let Some(on) = join.on.as_mut() {
-            self.filter(on)?;
+            self.replace_expr(on)?;
         }
         if let JoinNode::Join(inner) = &mut join.left {
-            self.join_conditions(inner)?;
+            self.replace_join_conditions(inner)?;
         }
         if let Some(JoinNode::Join(inner)) = join.right.as_mut() {
-            self.join_conditions(inner)?;
+            self.replace_join_conditions(inner)?;
         }
         Ok(())
     }
 
     /// Go's `GroupByClause` arm: only bare columns are admitted.
-    fn group_by(&mut self, items: &mut [GroupByItem]) -> Result<(), Refusal> {
+    fn group_by(&mut self, items: &[GroupByItem]) -> Result<(), Refusal> {
         for item in items {
             if !matches!(item.expr, Expr::Column(_)) {
-                return Err(Refusal("only support group by {columns}'"));
+                return Err(Refusal::fast("only support group by {columns}'"));
             }
         }
         Ok(())
     }
 
     /// Go's `OrderByClause` arm: only bare columns are admitted.
-    fn order_by(&mut self, items: &mut [OrderItem]) -> Result<(), Refusal> {
+    fn order_by(&mut self, items: &[OrderItem]) -> Result<(), Refusal> {
         for item in items {
             if !matches!(item.expr, Expr::Column(_)) {
-                return Err(Refusal("only support order by {columns}'"));
+                return Err(Refusal::fast("only support order by {columns}'"));
             }
         }
         Ok(())
     }
 
-    /// Enters a filter node: Go's `isFilterNode` raises `filterCnt`, which is
-    /// what makes the column-type rule apply here and only here.
-    fn filter(&mut self, expr: &mut Expr) -> Result<(), Refusal> {
+    /// Go raises `filterCnt` only for the four AST node types returned by
+    /// `isFilterNode`, not for the WHERE/ON clause as a whole.
+    fn check_inside_filter(
+        &mut self,
+        check: impl FnOnce(&mut Self) -> Result<(), Refusal>,
+    ) -> Result<(), Refusal> {
         self.filter_depth += 1;
-        let result = self.expr(expr);
+        let result = check(self);
         self.filter_depth -= 1;
         result
     }
 
-    /// Go's `Enter`: an admitted node recurses, everything else refuses.
-    fn expr(&mut self, expr: &mut Expr) -> Result<(), Refusal> {
+    /// Go `nonPreparedPlanCacheableChecker.Enter`: admitted nodes recurse and
+    /// every AST shape absent from its switch is refused.
+    fn check_expr(&mut self, expr: &Expr) -> Result<(), Refusal> {
         match expr {
             Expr::Column(name) => self.column(name),
-            Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::String(_) => {
-                self.parameterize(expr)
-            }
+            Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Bool(_) => self.count_literal(),
             // Go refuses a NULL constant explicitly: `not-null-col = NULL`
             // folds to a table-dual plan that `not-null-col = ?` cannot
             // reproduce, so sharing the entry would change the plan shape.
-            Expr::Null => Err(Refusal("query has null constants")),
+            Expr::Null => Err(Refusal::walk("query has null constants")),
             // Go refuses BIT and HEX literals "for safety" -- their binary
             // kind survives parameterization badly.
-            Expr::Hex(_) | Expr::Bit(_) => {
-                Err(Refusal("query has BIT / HEX literals are not supported"))
-            }
+            Expr::Hex(_) | Expr::Bit(_) => Err(Refusal::walk(
+                "query has BIT / HEX literals are not supported",
+            )),
             // Go refuses an underscore-charset value for the same reason.
             Expr::CharsetString { .. } | Expr::CharsetBinary { .. } => {
-                Err(Refusal("query has values with under-score charset"))
+                Err(Refusal::walk("query has values with under-score charset"))
             }
             // Go's checker refuses a user-defined variable outright.
-            Expr::UserVar(_) => Err(Refusal("query has user-defined variables is un-cacheable")),
-            Expr::Paren(inner) => self.expr(inner),
-            Expr::Binary(_, left, right) => {
-                self.expr(left)?;
-                self.expr(right)
-            }
-            Expr::Unary(_, inner) => self.expr(inner),
-            Expr::Is { expr, .. } => self.expr(expr),
+            Expr::UserVar(_) => Err(Refusal::walk(
+                "query has user-defined variables is un-cacheable",
+            )),
+            Expr::Paren(inner) => self.check_expr(inner),
+            Expr::Binary(_, left, right) => self.check_inside_filter(|walk| {
+                walk.check_expr(left)?;
+                walk.check_expr(right)
+            }),
+            Expr::Is {
+                expr,
+                target: IsTarget::Null,
+                ..
+            } => self.check_inside_filter(|walk| walk.check_expr(expr)),
             Expr::Between {
                 expr, low, high, ..
-            } => {
-                self.expr(expr)?;
-                self.expr(low)?;
-                self.expr(high)
-            }
+            } => self.check_inside_filter(|walk| {
+                walk.check_expr(expr)?;
+                walk.check_expr(low)?;
+                walk.check_expr(high)
+            }),
             Expr::In { expr, list, .. } => {
-                if list.len() > MAX_IN_LIST_LEN {
-                    return Err(Refusal("too many values in in-list"));
+                self.sum_in_list_len = self.sum_in_list_len.saturating_add(list.len());
+                if self.sum_in_list_len > self.max_num_param {
+                    return Err(Refusal::walk("too many values in in-list"));
                 }
-                self.expr(expr)?;
-                for item in list.iter_mut() {
-                    self.expr(item)?;
-                }
-                Ok(())
+                self.check_inside_filter(|walk| {
+                    walk.check_expr(expr)?;
+                    for item in list {
+                        walk.check_expr(item)?;
+                    }
+                    Ok(())
+                })
             }
             Expr::Row(items) => {
-                for item in items.iter_mut() {
-                    self.expr(item)?;
+                for item in items {
+                    self.check_expr(item)?;
                 }
                 Ok(())
+            }
+            Expr::Func { name, args, .. } | Expr::GenericFuncCall { name, args, .. } => {
+                if is_uncacheable_function(name) {
+                    return Err(Refusal::walk("query has un-cacheable functions"));
+                }
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::Aggregate { args, .. } => {
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::GroupConcat { args, order_by, .. } => {
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                for item in order_by {
+                    self.check_expr(&item.expr)?;
+                }
+                Ok(())
+            }
+            // Rust gives these Go FuncCallExpr spellings dedicated variants
+            // solely to preserve their custom SQL restore syntax. Their
+            // cache admission remains FuncCallExpr admission. A TRIM
+            // direction is the exception: Go exposes its TrimDirectionExpr
+            // child, which is not in the admitted-node switch.
+            Expr::Position { substr, str } => {
+                self.check_expr(substr)?;
+                self.check_expr(str)
+            }
+            Expr::Trim {
+                expr,
+                remstr,
+                direction: None,
+            } => {
+                self.check_expr(expr)?;
+                if let Some(remstr) = remstr {
+                    self.check_expr(remstr)?;
+                }
+                Ok(())
+            }
+            Expr::MemberOf { expr, array } => {
+                self.check_expr(expr)?;
+                self.check_expr(array)
             }
             // A sub-query in any of its shapes is Go's
             // "query has sub-queries is un-cacheable".
             Expr::Subquery(_)
             | Expr::Exists { .. }
             | Expr::InSubquery { .. }
-            | Expr::CompareSubquery { .. } => Err(Refusal("query has sub-queries is un-cacheable")),
-            // Everything else -- functions, CASE, CAST, aggregates, windows,
-            // LIKE, REGEXP, system variables -- lands on Go's final
+            | Expr::CompareSubquery { .. } => {
+                Err(Refusal::walk("query has sub-queries is un-cacheable"))
+            }
+            // Everything else -- unary operations, CASE, casts, windows,
+            // LIKE, REGEXP, system variables, and specialized nodes absent
+            // from Go's admitted-node switch -- lands on Go's final
             // "unexpected cases" arm. This catch-all is the whole reason the
             // port is safe: a node this walk has never been taught cannot
             // silently join a shared key.
-            _ => Err(Refusal("query has some unsupported Node")),
+            _ => Err(Refusal::walk("query has some unsupported Node")),
+        }
+    }
+
+    /// Go `paramReplacer`: replaces values everywhere except SelectField,
+    /// GroupByClause, OrderByClause and Limit. The checker above has already
+    /// proved this tree consists only of admitted nodes.
+    fn replace_expr(&mut self, expr: &mut Expr) -> Result<(), Refusal> {
+        match expr {
+            Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Bool(_) => self.parameterize(expr),
+            Expr::Column(_) => Ok(()),
+            Expr::Paren(inner) => self.replace_expr(inner),
+            Expr::Binary(_, left, right) => {
+                self.replace_expr(left)?;
+                self.replace_expr(right)
+            }
+            Expr::Is {
+                expr,
+                target: IsTarget::Null,
+                ..
+            } => self.replace_expr(expr),
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                self.replace_expr(expr)?;
+                self.replace_expr(low)?;
+                self.replace_expr(high)
+            }
+            Expr::In { expr, list, .. } => {
+                self.replace_expr(expr)?;
+                for item in list {
+                    self.replace_expr(item)?;
+                }
+                Ok(())
+            }
+            Expr::Row(items) => {
+                for item in items {
+                    self.replace_expr(item)?;
+                }
+                Ok(())
+            }
+            Expr::Func { name, args, .. } | Expr::GenericFuncCall { name, args, .. } => {
+                let format_function = matches!(
+                    name.to_ascii_uppercase().as_str(),
+                    "DATE_FORMAT" | "STR_TO_DATE" | "TIME_FORMAT" | "FROM_UNIXTIME"
+                );
+                for (index, arg) in args.iter_mut().enumerate() {
+                    if !format_function || index == 0 {
+                        self.replace_expr(arg)?;
+                    }
+                }
+                Ok(())
+            }
+            Expr::Aggregate { args, .. } => {
+                for arg in args {
+                    self.replace_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::GroupConcat { args, order_by, .. } => {
+                for arg in args {
+                    self.replace_expr(arg)?;
+                }
+                for item in order_by {
+                    self.replace_expr(&mut item.expr)?;
+                }
+                Ok(())
+            }
+            Expr::Position { substr, str } => {
+                self.replace_expr(substr)?;
+                self.replace_expr(str)
+            }
+            Expr::Trim {
+                expr,
+                remstr,
+                direction: None,
+            } => {
+                self.replace_expr(expr)?;
+                if let Some(remstr) = remstr {
+                    self.replace_expr(remstr)?;
+                }
+                Ok(())
+            }
+            Expr::MemberOf { expr, array } => {
+                self.replace_expr(expr)?;
+                self.replace_expr(array)
+            }
+            _ => Err(Refusal::walk("query has some unsupported Node")),
+        }
+    }
+
+    fn count_literal(&mut self) -> Result<(), Refusal> {
+        self.const_count += 1;
+        if self.const_count > self.max_num_param {
+            Err(Refusal::walk("query has too many constants"))
+        } else {
+            Ok(())
         }
     }
 
@@ -498,7 +867,7 @@ impl Walk<'_> {
             return Ok(());
         }
         let Some(column) = name.last() else {
-            return Err(Refusal("some column is not found in table schema"));
+            return Err(Refusal::walk("some column is not found in table schema"));
         };
         let mut found = false;
         for (schema, table) in &self.tables {
@@ -511,7 +880,7 @@ impl Walk<'_> {
                 }
                 found = true;
                 if is_unparameterizable_type(&field_type) {
-                    return Err(Refusal(
+                    return Err(Refusal::walk(
                         "query has some filters with JSON, Enum, Set or Bit columns",
                     ));
                 }
@@ -520,7 +889,7 @@ impl Walk<'_> {
         if found {
             Ok(())
         } else {
-            Err(Refusal("some column is not found in table schema"))
+            Err(Refusal::walk("some column is not found in table schema"))
         }
     }
 
@@ -529,47 +898,82 @@ impl Walk<'_> {
     fn table_names_cacheable(&self) -> Result<(), Refusal> {
         for (schema, table) in &self.tables {
             if is_system_schema(schema) {
-                return Err(Refusal("access tables in system schema"));
+                return Err(Refusal::walk("access tables in system schema"));
             }
             let Some(entry) = self.catalog.table_in(schema, table) else {
                 // An unknown table is not this check's error to report -- the
                 // statement's own resolution will raise it -- but it must not
                 // be cached either.
-                return Err(Refusal("some column is not found in table schema"));
+                return Err(Refusal::walk("some column is not found in table schema"));
             };
             if entry.is_view() {
-                return Err(Refusal("queries that access views are not supported"));
+                return Err(Refusal::walk("queries that access views are not supported"));
             }
             if entry.is_sequence() {
-                return Err(Refusal("queries that access in-memory tables"));
+                return Err(Refusal::walk("queries that access in-memory tables"));
             }
         }
         Ok(())
     }
 
-    /// Replaces one literal by a `?` marker, counting it against Go's
-    /// `maxNumberParam` and recording its kind for the key.
+    /// Replaces one literal by a `?` marker and counts it against Go's
+    /// `maxNumberParam`. Literal types deliberately do not enter the
+    /// parameterized-SQL descriptor; the shared physical cache matches them
+    /// through its parameter-type key, as Go's `SessionPlanCache.Get` does.
     fn parameterize(&mut self, expr: &mut Expr) -> Result<(), Refusal> {
-        let kind = match expr {
-            Expr::Int(_) => ParamKind::Int,
-            Expr::Decimal(_) => ParamKind::Decimal,
-            Expr::Float(_) => ParamKind::Float,
-            Expr::String(_) => ParamKind::Str,
+        let value = match expr {
+            Expr::Int(text) => text
+                .parse::<i64>()
+                .map(Datum::Int)
+                .or_else(|_| text.parse::<u64>().map(Datum::UInt))
+                .map_err(|_| Refusal::walk("query has some unsupported Node"))?,
+            Expr::Decimal(text) => Datum::Decimal(Decimal::from_literal(text)),
+            Expr::Float(value) => Datum::Real(*value),
+            Expr::String(value) => {
+                Datum::String(StringDatum::new(value.as_bytes(), self.string_collation))
+            }
+            Expr::RawString(value) => {
+                Datum::String(StringDatum::new(value.as_bytes(), self.string_collation))
+            }
+            Expr::Bool(value) => Datum::Int(i64::from(*value)),
             _ => return Ok(()),
         };
-        self.const_count += 1;
-        if self.const_count > MAX_PARAM_NUM {
-            return Err(Refusal("query has too many constants"));
-        }
-        self.params.push(kind);
+        self.params.push(value);
         *expr = Expr::ParamMarker {
             offset: 0,
             order: self.params.len() - 1,
             in_execute: false,
+            value: None,
             projection_offset: 0,
         };
         Ok(())
     }
+}
+
+/// Go `expression.UnCacheableFunctions` at the pinned source commit.
+fn is_uncacheable_function(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "DATABASE"
+            | "CURRENT_USER"
+            | "CURRENT_ROLE"
+            | "CURRENT_RESOURCE_GROUP"
+            | "USER"
+            | "CONNECTION_ID"
+            | "LAST_INSERT_ID"
+            | "ROW_COUNT"
+            | "VERSION"
+            | "LIKE"
+            | "JSON_OBJECT"
+            | "JSON_ARRAY"
+            | "COALESCE"
+            | "CONVERT"
+            | "TIME"
+            | "DATE"
+            | "TIMESTAMP"
+            | "AES_ENCRYPT"
+            | "AES_DECRYPT"
+    )
 }
 
 /// Go's `mysql.TypeJSON / TypeEnum / TypeSet / TypeBit` filter-column refusal.
@@ -582,35 +986,237 @@ fn is_unparameterizable_type(field_type: &tidb_datatype::FieldType) -> bool {
 }
 
 impl crate::Session {
-    /// Decides whether the statement about to run would have found its plan
-    /// in the non-prepared plan cache, and records the entry if not.
-    ///
-    /// This runs before planning and never short-circuits it: see the module
-    /// doc for why a hit here reuses a KEY and not a plan.
-    pub(crate) fn probe_non_prepared_plan_cache(&mut self, stmt: &Stmt) {
+    /// Parameterizes one admitted non-prepared SELECT. Refused statements use
+    /// the ordinary planner and publish no cache hit.
+    pub(crate) fn parameterize_non_prepared_select(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Option<ParameterizedSelect> {
         if !self.non_prepared_plan_cache_enabled() {
-            return;
+            return None;
+        }
+        // Go's unsupported counter increments only for checker-walk refusals
+        // (cacheable=false after `Accept`); clause-level fast-check refusals
+        // return their reason without touching any counter. The
+        // classification rides on `Refusal::counted`.
+        let capacity = self.non_prepared_plan_cache_capacity();
+        self.non_prepared_plan_cache.resize(capacity);
+        let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let string_collation = self
+            .vars
+            .get_system("collation_connection")
+            .ok()
+            .and_then(|name| Collation::from_name(&name))
+            .unwrap_or(Collation::Utf8Mb4Bin);
+        let configured_max = self
+            .vars
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_PARAM_NUM,
+        };
+        let catalog = self.catalog.lock().ok()?;
+        match parameterize_select(
+            stmt,
+            &catalog,
+            &self.current_db,
+            enable_param_limit,
+            string_collation,
+            max_num_param,
+        ) {
+            Ok(parameterized) => Some(parameterized),
+            Err(refusal) => {
+                // Go `NonPreparedPlanCacheableWithCtx`'s unsupported counter:
+                // only checker-walk refusals count; clause-level fast-check
+                // refusals return their reason without touching the counter.
+                if refusal.counted {
+                    non_prep_plan_cache_unsupported_counter().inc();
+                }
+                None
+            }
+        }
+    }
+
+    /// Go's DML switch: `EnableNonPreparedPlanCacheForDML`, true by default.
+    fn non_prepared_plan_cache_for_dml_enabled(&self) -> bool {
+        self.session_bool("tidb_enable_non_prepared_plan_cache_for_dml", true)
+    }
+
+    /// Parameterizes one non-prepared UPDATE/INSERT/DELETE statement.
+    pub(crate) fn parameterize_non_prepared_dml(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Option<ParameterizedSelect> {
+        if !self.non_prepared_plan_cache_enabled()
+            || !self.non_prepared_plan_cache_for_dml_enabled()
+        {
+            return None;
         }
         let capacity = self.non_prepared_plan_cache_capacity();
-        if self.non_prepared_plan_cache.capacity != capacity {
-            // Go's `SetCapacity` keeps the entries that still fit; resizing to
-            // a different bound here starts clean rather than guessing which
-            // survive, which can only ever cost hits, never invent one.
-            self.non_prepared_plan_cache = NonPreparedPlanCache::with_capacity(capacity);
-        }
+        self.non_prepared_dml_cache.resize(capacity);
         let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
-        let key = {
-            let Ok(catalog) = self.catalog.lock() else {
-                return;
-            };
-            match cache_key(stmt, &catalog, &self.current_db, enable_param_limit) {
-                Ok(key) => key,
-                // A refused statement leaves `found_in_plan_cache` false, which
-                // is exactly what Go reports for it.
-                Err(_) => return,
+        let string_collation = self
+            .vars
+            .get_system("collation_connection")
+            .ok()
+            .and_then(|name| Collation::from_name(&name))
+            .unwrap_or(Collation::Utf8Mb4Bin);
+        let configured_max = self
+            .vars
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_PARAM_NUM,
+        };
+        let catalog = self.catalog.lock().ok()?;
+        parameterize_dml(
+            stmt,
+            &catalog,
+            &self.current_db,
+            enable_param_limit,
+            string_collation,
+            max_num_param,
+        )
+        .ok()
+    }
+
+    /// Generates or recursively rebuilds the retained DML root for one
+    /// parameterized non-prepared statement, through the same plan object
+    /// SQL and binary PREPARE use.
+    pub(crate) fn bind_non_prepared_dml(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedDmlExecution> {
+        if !self.non_prepared_plan_cache_allowed(effective_statement) {
+            return None;
+        }
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
+        let plan = match self.non_prepared_dml_cache.get(&parameterized.key) {
+            Some(plan) => plan,
+            None => {
+                let plan = {
+                    let catalog = self.lock_catalog().ok()?;
+                    tidb_executor::build_prepared_dml_plan(
+                        &parameterized.statement,
+                        parameterized.values.len(),
+                        &catalog,
+                        self.current_database(),
+                    )
+                    .ok()??
+                };
+                let plan = std::sync::Arc::new(plan);
+                self.non_prepared_dml_cache
+                    .put(parameterized.key.clone(), std::sync::Arc::clone(&plan));
+                plan
             }
         };
-        self.found_in_plan_cache = self.non_prepared_plan_cache.admit(key);
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(execution) = plan.bind_cached_for_statement(
+                &parameterized.values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                effective_statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
+                // defer observes the lookup duration on hits only.
+                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
+                return Some(execution);
+            }
+        }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
+        let ctx = self.statement_context(false);
+        let catalog = self.lock_catalog().ok()?;
+        plan.bind_for_statement(
+            &parameterized.values,
+            &catalog,
+            self.current_database(),
+            &ctx,
+            &environment,
+            effective_statement,
+        )
+    }
+
+    /// Generates or recursively rebuilds the physical plan owned by one
+    /// parameterized non-prepared statement. This is Go's
+    /// `GetPlanFromPlanCache(..., isNonPrepared=true)` over the same Rust plan
+    /// object SQL and binary PREPARE use.
+    pub(crate) fn bind_non_prepared_select(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedSelectExecution> {
+        if !self.non_prepared_plan_cache_allowed(effective_statement) {
+            return None;
+        }
+        let lookup_start = std::time::Instant::now();
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
+            Some(plan) => plan,
+            None => {
+                let ctx = self.statement_context(false);
+                let plan = {
+                    let catalog = self.lock_catalog().ok()?;
+                    tidb_executor::build_prepared_select_plan(
+                        &parameterized.statement,
+                        parameterized.values.len(),
+                        &catalog,
+                        self.current_database(),
+                        &ctx,
+                    )?
+                };
+                let plan = std::sync::Arc::new(plan);
+                self.non_prepared_plan_cache
+                    .put(parameterized.key.clone(), std::sync::Arc::clone(&plan));
+                plan
+            }
+        };
+        let observe = |start: std::time::Instant| {
+            tidb_planner::metrics::plan_cache_lookup_duration(false)
+                .observe(start.elapsed().as_secs_f64());
+        };
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(execution) = plan.bind_cached_for_statement(
+                &parameterized.values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                effective_statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
+                // defer observes the lookup duration ONLY when it hit; a
+                // miss/re-plan records the miss counter and nothing else.
+                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
+                observe(lookup_start);
+                return Some(execution);
+            }
+        }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
+        let ctx = self.statement_context(false);
+        let catalog = self.lock_catalog().ok()?;
+        let execution = plan.bind_for_statement(
+            &parameterized.values,
+            &catalog,
+            self.current_database(),
+            &ctx,
+            &environment,
+            effective_statement,
+        );
+        execution
     }
 
     /// Whether `@@last_plan_from_cache` should report a hit, which is the
@@ -623,9 +1229,34 @@ impl crate::Session {
         self.session_bool("tidb_enable_non_prepared_plan_cache", false)
     }
 
+    fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
+        let hints = crate::variables::parse_statement_hints_without_catalog(
+            statement,
+            self.current_database(),
+        );
+        if hints.ignore_plan_cache {
+            return false;
+        }
+        let hint_only = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        !hint_only || hints.use_plan_cache
+    }
+
     fn non_prepared_plan_cache_capacity(&self) -> usize {
+        // Go's capacity comes from the unified `tidb_session_plan_cache_size`
+        // ONLY (`session.go:2927`, `NewSimpleLRUCache(uint(s.SessionPlanCacheSize))`).
+        // The deprecated `tidb_non_prepared_plan_cache_size` writes an orphan
+        // field plus warning 1287 and has no readers — the Rust funnel reads
+        // nothing it wouldn't. The `unwrap_or(100)` is the defensive default
+        // matching `DefTiDBSessionPlanCacheSize`.
         self.vars
-            .get_system("tidb_non_prepared_plan_cache_size")
+            .get_system("tidb_session_plan_cache_size")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(100)

@@ -5,12 +5,12 @@ File-by-file semantic comparison of Go `pkg/types` against
 `file:line`, and a concrete distinguishing input. Areas checked and found
 equal are listed too — that inventory tells the next reader where not to look.
 
-**Execution constraint.** Nothing can be run on this machine: `syspolicyd` is
-wedged and every freshly created executable hangs at `_dyld_start`. `cargo
-check` and `cargo clippy` work; `cargo test`, `gorun`, `goeval` and Go test
-binaries do not. **Every finding below is derived by reading source on both
-sides and none has been confirmed by execution.** Where a claim depends on
-behaviour I could not read out of the source with certainty, it says so.
+**Execution note.** The initial inventory was source-derived while
+`syspolicyd` prevented newly created Go executables from starting. The current
+dedicated worktree can run the pinned Rust nightly test profiles; Go test
+binaries and `gorun`/`goeval` remain unavailable. Each implemented finding now
+links a focused Rust regression and its Ready-profile outcome in the receipts.
+Claims that remain source-only are called out explicitly below.
 
 Standing oracle limit that motivates this audit: the integration replay
 compares rejected-vs-accepted only, never error text, and observes warnings on
@@ -29,30 +29,42 @@ compares rejected-vs-accepted only, never error text, and observes warnings on
 `M*` MyDecimal, `F*` FieldType/Set/Enum. Counts and the unaudited list are at
 the bottom.
 
-The worst three:
+The highest-impact open item is now:
 
-- **F1** — a `utf8mb4_0900_bin` CHAR or VARCHAR column wrote a restored-data
-  payload TiDB never writes, so the index and row bytes were mutually
-  undecodable between the two engines. Two independent bugs in one boolean.
-  **Fixed** in this branch.
-- **D1** — `CAST(TIME '11:59:59.999999' AS SIGNED)` returns `115960` instead of
-  `120000`: the port rounds the rendered decimal instead of the temporal value,
-  so the fractional carry never propagates through the sexagesimal fields. The
-  sibling entry point three files over already does this correctly and
-  documents the same number.
-- **T1/T2** — a duration with trailing garbage or an invalid minute silently
-  becomes a *different duration* rather than the parsed value or NULL:
-  `'11:22:33abc'` is `11:22:33` in Go and `00:00:11` here; `'10:70:00'` is NULL
-  in Go and `00:00:10` here.
+- **D5** — the datatype comparison seam and live expression evaluator now
+  carry statement date flags/timezone; direct dependency-leaf callers still
+  own publication of the returned comparison diagnostic.
 
-Two fixes landed in this branch (commits `4d2b945d4d`, `441fc392c9`); both are
-literal transcriptions of a Go predicate, both ship a regression test, and
-**neither test has been run**. Everything else is written up rather than
-half-implemented.
+M6 and M10 are fixed in the Rust owner: the decimal add/sub boundary now
+preserves Go's leading-word overflow heuristic, and the fixed-word parser
+preserves Go's distinct no-digits `TruncatedWrongValue` and exponent
+`BadNumber` identities.
+
+The former F1, D1, and T1/T2 rank-one defects are fixed in this branch; their
+focused regressions and Ready outcomes remain linked in the sections below.
+
+The Rust `tidb-expr` aggregate-cast boundary is also aligned for Go's
+unspecified decimal scale: `WrapWithCastAsDecimal` now preserves a strict
+REAL/string constant's natural fraction and refines the wrapper metadata to
+its actual precision. The executable regression and Ready evidence are in
+`rust/testport/receipts/types_explain_format_audit.md`; this is an expression
+caller fix rather than a new `pkg/types` finding.
+
+The related UNION decimal-cast caller is now source-specific as well. Rust's
+expression builder selects the Go `BuildCastFunction4Union` REAL, integer,
+string, or DECIMAL signature and applies the merged decimal shape after the
+source-specific negative-value rule. Its executable regressions and Ready
+evidence are recorded in the same receipt; this remains an expression-layer
+boundary rather than a new datatype finding.
+
+Multiple fixes have landed in this branch, including the F1/F2 field-type
+predicates and the D/T/M temporal and decimal batches. Their focused
+regressions and Ready outcomes are recorded in the receipts referenced by each
+section; the remaining findings are explicitly bounded or still open.
 
 ---
 
-## D1 (rank 1) — `Datum::to_i64` does not round a TIME/DATETIME before rendering it as a number
+## D1 (rank 1, FIXED) — `Datum::to_i64` does not round a TIME/DATETIME before rendering it as a number
 
 `CAST(<temporal> AS SIGNED)` in MySQL rounds the *temporal value* to `fsp = 0`
 first, so a fractional second carries through the sexagesimal fields. Go does
@@ -99,12 +111,45 @@ number. `rust/crates/tidb-datatype/src/datum_convert.rs:216-236`
 comment "`11:59:59.999999` becomes 120000, not 115960". The two paths
 disagree with each other.
 
-Not fixed here. `Time::round_frac` needs a timezone
-(`mysql_time.rs:442`; Go's `Time.RoundFrac` reaches the location through
-`GoTime(ctx.Location())`) and `Datum::to_i64()` takes no context, so the fix is
-either a context parameter or a documented UTC choice matching what
-`convert_to_signed` already does. That is a signature change across callers in
-two crates, and with nothing runnable here I will not land it blind.
+Fixed in the Rust datum conversion path: `to_i64_in` now rounds temporal
+values at `DEFAULT_FSP` in the caller's session zone before rendering them as
+numbers. Focused carry and DST regressions are covered by the datatype owner
+tests.
+
+The earlier context concern — callers of the zone-free `to_i64`
+convenience method, which intentionally supplies UTC while
+`Time::round_frac` needs a timezone (`mysql_time.rs:442`; Go's
+`Time.RoundFrac` reaches the location through `GoTime(ctx.Location())`) —
+was CLOSED (2026-09-05) by a production-caller audit. Every call site
+falls into one of three zone-safe classes:
+
+1. Kind-gated or decision-inert: the caller only converts string/bytes
+   kinds through `to_i64` (`executor/driver/agg_build.rs`
+   `constant_eval_int`), or — the ranger YEAR block
+   (`planner/ranger/points.rs` `refine_value_and_op`) — a temporal
+   constant *can* reach the `pre_value` conversion (Go's
+   `ConvertToMysqlYear` explicitly handles `KindMysqlTime`), but
+   `pre_value` only feeds the out-of-range operator flip
+   (`value.GetInt64() > preValue`), where any zone renders the rounded
+   full-datetime number at ~2e13 against year bounds of at most 2155:
+   the comparison outcome is identical under UTC and the session zone,
+   so the zone cannot flip the decision.
+2. Post-cast integer getters: the `other =>` fallback arms in the
+   expression signatures (`string_fn.rs` integer/BIT_COUNT/FORMAT
+   getters, `time_fn/mod.rs` `int_arg`, `hash_agg.rs` `datum_bits`,
+   `math_fn/mod.rs`, `builtin_ext/crypto.rs`, `time_fn/add_sub.rs` FSP,
+   `time_fn/calendar.rs` INTERVAL amount) run after Go's and Rust's
+   `WrapWithCastAsInt` has already converted any Time source through the
+   session zone (`cast.rs` `to_i64_signed_in`, the documented
+   DST-carrying boundary). The signature itself never sees a raw Time,
+   exactly as Go's `EvalInt` signatures do not.
+3. Zone-aware by construction: every path where a Time/Duration datum
+   converts directly (`to_i64_in`, `convert_to_signed`, the temporal
+   comparison evaluator) already carries the caller's session zone.
+
+No reachable call site converts a temporal datum through the zone-free
+convenience, so no signature change is needed; the zone-free method is a
+UTC-fallback for kinds where the location is inert.
 
 Note in passing: Go's own signed and unsigned paths are asymmetric —
 `convertToUint` (`pkg/types/datum.go:1339-1355`) uses `dec.Round(dec, 0,
@@ -113,7 +158,7 @@ ModeHalfUp)` on the rendered number rather than `RoundFrac`, so
 `convert_to_unsigned` (`datum_convert.rs:283-284`) mirrors that correctly.
 `Datum::to_i64` is applying the *unsigned* rule on the signed path.
 
-## D2 (rank 1) — `Datum::to_i64` treats a hex/bit LITERAL like a BIT column value
+## D2 (rank 1, FIXED) — `Datum::to_i64` treats a hex/bit LITERAL like a BIT column value
 
 Go splits the two kinds. `KindMysqlBit` (a stored `BIT(n)` column value)
 reinterprets the low 64 bits; `KindBinaryLiteral` (a `0x…` / `b'…'` literal)
@@ -138,12 +183,12 @@ Distinguishing input: a `BinaryLiteral` payload of eight `0xFF` bytes
 - For `KindMysqlBit` both sides give `-1` with no error, so Rust is correct for
   half the pair and wrong for the other half.
 
-Unverified: whether TiDB's expression layer keeps a hex literal as
-`KindBinaryLiteral` all the way to this call, or folds it to a `UInt` datum
-first. The Datum-level divergence is unambiguous from the source; the
-SQL-level reachability is not something I could establish without running.
+The Datum-level split is now implemented and covered by
+`source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets`. Whether
+the expression layer retains a hex literal as `KindBinaryLiteral` through this
+call remains a separate SQL-reachability question.
 
-## D3 (rank 3) — `Datum::compare` REFUSES a non-UTF-8 string operand where Go compares it
+## D3 (rank 3, FIXED 2026-09-04) — `Datum::compare` REFUSES a non-UTF-8 string operand where Go compares it
 
 Go's datum comparison operates on raw bytes throughout. The Rust port converts
 through `std::str::from_utf8` and propagates the error, so a `binary`- or
@@ -167,13 +212,18 @@ Distinguishing input: `Datum::Bytes(vec![0xFF])` compared against
 - Go: `compareInt64` → default → `compareFloat64` → `StrToFloat` yields `0.0`
   with a truncation event → result `0` (equal), which under a
   warning-disposition context is just a warning.
-- Rust: `compare_i64` → `compare_f64` → `numeric_bytes_to_float` →
-  `Utf8Error` → `Err(DatumValueError)`; no ordering is produced at all.
+- Rust: `compare_i64` → `compare_f64` → `numeric_bytes_to_float` now uses a
+  lossy byte-preserving prefix scan and produces the same zero ordering; the
+  earlier `Utf8Error` refusal is removed.
 
 Any `VARBINARY`/`BLOB`/`latin1` value holding a byte outside ASCII reaches
-this. The same shape applies to `Datum::String` via `as_utf8()?`.
+this. The same shape applies to `Datum::String` via its raw bytes. The focused
+regression `datum::compare::tests::non_utf8_numeric_bytes_keep_go_zero_prefix_ordering`
+and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`; the warning sink and
+session context remain the separate D4/D5 boundary.
 
-## D4 (rank 3) — `Datum::compare` returns `Err` where Go returns an ORDERING *and* an error
+## D4 (rank 3, FIXED 2026-09-04) — `Datum::compare` returns `Err` where Go returns an ORDERING *and* an error
 
 Go's comparison helpers that parse a string return both the comparison result
 and the parse error; the parse failure leaves a zero value that the comparison
@@ -186,15 +236,23 @@ Rust returns `Err` with no ordering, so a lenient caller loses the answer.
   DefaultFsp)` alongside the error, so `dt` is the zero datetime. Same pattern
   at `:878-880` (duration), `:998-1000`, `:871-874` (decimal).
 - Rust: `rust/crates/tidb-datatype/src/datum/compare.rs:144-154` and
-  `:249-260` — `parse_datetime(...).map_err(...)` then `?`.
+  `:249-260` — the strict `compare` wrapper still maps
+  `parse_datetime(...).map_err(...)` through `?`, but the new
+  `Datum::compare_with_error` source-facing seam retains the zero-value
+  ordering beside that error for temporal and duration strings. The same seam
+  reports the truncation event beside the best-effort ordering for numeric and
+  decimal string conversions.
 
 Distinguishing input: `Time('2011-01-01 00:00:00')` compared with
 `String('not a date')`.
 
 - Go: ordering `Greater` (zero datetime sorts first) plus the parse error.
-- Rust: `Err(DatumValueError::Comparison(...))`, no ordering.
+- Rust: `compare_with_error` returns `(Greater, Some(error))`; the legacy
+  `compare` remains strict and returns `Err` for callers that cannot carry a
+  paired result. Focused regressions cover both directions and the numeric
+  prefix event in `receipts/types_explain_format_audit.md`.
 
-## D5 (rank 2/3) — `Datum::compare` has no context: flags, timezone and warning sink are all hardcoded
+## D5 (rank 2/3, PARTIALLY FIXED 2026-09-04) — `Datum::compare` has no context: flags, timezone and warning sink are all hardcoded
 
 `Datum.Compare` in Go takes a `types.Context` and threads it into every nested
 conversion. The Rust `Datum::compare` takes only a `Collation`. Three
@@ -223,12 +281,33 @@ Go passes through `ctx.HandleTruncate`, which appends a warning under
 floor. `compare_f64`'s decimal arm (`:124`) likewise uses the infallible
 `to_f64()` where Go's `MyDecimal.ToFloat64()` returns an error.
 
-Consequence: a comparison that MySQL accompanies with `Warning 1292 Truncated
-incorrect DOUBLE value: 'abc'` produces no warning at all. This is exactly the
-class the integration replay cannot see (28 of 4,906 statements observe
-warnings).
+The datatype owner now exposes `Datum::compare_with_context`, which threads
+the caller's zero-in-date and invalid-date flags plus an explicit
+`SessionTimeZone` through every temporal string conversion. It preserves the
+source ordering/error pair, so a strict parse failure can still be handled by
+the statement layer without losing the zero-value ordering. Focused
+regressions cover `2020-02-31` under strict versus `ALLOW_INVALID_DATES`, and a
+`+01:00` offset whose result changes between UTC and `+02:00` session zones.
 
-## D6 (rank 2) — `Datum::to_decimal` for a float source discards `FromString`'s error
+The live `tidb-expr::ops::time_compare_ordering` caller now reads
+`Columns::date_modes()` and `Columns::time_zone()` and publishes 1292 through
+the existing warning sink. Its focused regressions cover the same invalid-date
+accept/refuse split and timezone-offset ordering through `eval_binary_full`.
+
+The context-free `compare` wrapper remains deliberately source-compatible for
+dependency-leaf callers and uses its documented UTC/default policy. Warning
+publication for the datatype seam is still caller-owned:
+`compare_with_context` returns the diagnostic rather than inventing a
+`TerrorError` code. Thus the live expression path is aligned, while direct
+dependency-leaf users that need statement warning policy must consume the
+paired API explicitly; D5 remains partially open at that boundary.
+
+The remaining direct-API distinction is exactly the class the integration
+replay cannot see (28 of 4,906 statements observe warnings): a comparison that
+MySQL accompanies with `Warning 1292 Truncated incorrect DOUBLE value: 'abc'`
+still requires its caller to publish the returned diagnostic.
+
+## D6 (rank 2, FIXED) — `Datum::to_decimal` for a float source discards `FromString`'s error
 
 - Go: `pkg/types/datum.go:1941-1944` (`ConvertDatumToDecimal`) — `err =
   dec.FromFloat64(d.GetFloat64())`, and the error is returned
@@ -251,9 +330,13 @@ stored `f64` to `f32` and widens it back, because `SetFloat32FromF64`
 (`:192-196`) stores a raw `f64`. Rust's `to_decimal` uses the stored value
 directly while its own `to_f64` (`datum/convert.rs:169`) *does* apply the
 `as f32` round-trip — so the two Rust accessors disagree with each other.
-Distinguishing input: a `Float32` datum built from the `f64` `3.1` —
-`to_f64()` gives `3.0999999046325684`, `to_decimal()` gives `3.1`; Go gives
-`3.0999999046325684` for both.
+Distinguishing input: a `Float32` datum built from the `f64` `3.1` — both Rust
+accessors now narrow to `3.0999999046325684`, matching Go.
+
+Fixed in the Rust datum conversion owner: float parsing now preserves the
+source overflow event and narrows `Float32` through `f32`. The focused
+regression is recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## D7 (rank 1, now FIXED) — `str_to_int`/`str_to_uint` accepted a bare sign as the function-cast prefix
 
@@ -290,7 +373,7 @@ Reachability today: `str_to_int(_, true)` has no in-tree caller —
 case right. So this was a latent trap in a public API rather than a live wrong
 answer.
 
-## D8 (rank 4) — error-code precedence inverted on the signed string→int path
+## D8 (rank 4, FIXED 2026-09-04) — error-code precedence inverted on the signed string→int path
 
 When both the string parse and the range clamp have something to report, Go
 keeps the **parse** error on the signed path and the **clamp** error on the
@@ -306,12 +389,15 @@ unsigned path. Rust uses one helper for both and always keeps the clamp error.
 
 Distinguishing input: `Datum::String("999abc")` converted to a signed
 `TINYINT`. Go reports `1292 Truncated incorrect INTEGER value: '999abc'`;
-Rust reports `1690 TINYINT value is out of range in '999'`. Both saturate to
-`127`, and both codes are in `HandleTruncate`'s allowlist so the
-error-vs-warning disposition is the same — this is a message/code difference
-only.
+Rust now retains the same source truncation event while the unsigned path
+continues to retain the clamp event. Both saturate to `127`, and both codes
+are in `HandleTruncate`'s allowlist so the error-vs-warning disposition is
+the same — this is a message/code difference only. The focused regression
+`datum_convert::tests::signed_string_conversion_prefers_source_truncation_over_clamp`
+and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
-## D9 (rank 4) — `getValidFloatPrefix`'s NUL-byte error argument
+## D9 (rank 4, FIXED 2026-09-04) — `getValidFloatPrefix`'s NUL-byte error argument
 
 Go truncates the *subject string* at the NUL before formatting the message
 (`pkg/types/convert.go:740-742` reassigns `s = s[:validLen]`, and `:755` uses
@@ -320,8 +406,9 @@ that `s`). Rust's `valid_float_prefix`
 length separately and leaves the caller holding the full input for the message.
 
 Distinguishing input: `"\x0012"`. Go's warning text is `Truncated incorrect
-DOUBLE value: ''`; Rust's caller renders the whole operand. Value and
-disposition are identical.
+DOUBLE value: ''`; Rust now uses the same subject while leaving value and
+disposition unchanged. Focused cast regression and Ready evidence are
+recorded in `rust/testport/receipts/types_float_warning_nul.md`.
 
 ---
 
@@ -333,7 +420,7 @@ myself (`T1`'s `matchDuration` tail and `T4`'s `GetFsp` arithmetic); the rest
 carry the sub-audit's file:line evidence and have **not** been independently
 re-derived.
 
-## T1 (rank 1) — trailing garbage after a duration: Go keeps the parsed clock, Rust re-parses the leading digits
+## T1 (rank 1, FIXED 2026-09-04) — trailing garbage after a duration: Go keeps the parsed clock, Rust re-parses the leading digits
 
 - Go: `pkg/types/time.go:1777-1781` — after a successful match,
   `if err == nil && len(rest) > 0 { return Duration{d, fsp}, false,
@@ -350,16 +437,25 @@ Distinguishing inputs:
 | `'11:22:33abc'` fsp 0 | `11:22:33` + warning 1292 | `00:00:11` |
 | `'12:34:56.7890 xyz'` | NULL (`time.go:1751`, `charsLen >= 12`) | `00:00:12` |
 
-## T2 (rank 1) — invalid minute/second: Go returns NULL, Rust returns a value
+Rust now preserves the parsed clock plus a truncation event for short
+literals and returns the NULL-shaped error for the source's long/invalid
+forms. The focused regression
+`duration_tests::malformed_duration_input_has_only_the_two_source_outcomes`
+is part of commit `0d6d34ccb7`; the owner profile was rerun in the later
+temporal Ready receipts.
+
+## T2 (rank 1, FIXED 2026-09-04) — invalid minute/second: Go returns NULL, Rust returns a value
 
 - Go: `pkg/types/time.go:1760-1762` — `checkHHMMSS` failure returns
   `ZeroDuration, isNull=true`.
 - Rust: `rust/crates/tidb-datatype/src/duration.rs:619-621` returns
   `InvalidFormat`, which falls into the same `:692-719` re-parse.
 
-Distinguishing input: `'10:70:00'` → Go NULL, Rust `00:00:10`.
+Distinguishing input: `'10:70:00'` → Go NULL, Rust now returns the matching
+NULL-shaped parse error instead of `00:00:10`; covered by the same focused
+malformed-duration regression above.
 
-## T3 (rank 1) — a trailing bare `.` is legal in Go and rejected in Rust
+## T3 (rank 1, FIXED 2026-09-04) — a trailing bare `.` is legal in Go and rejected in Rust
 
 - Go: `pkg/types/time.go:1703-1720` — `matchFrac` uses `parser.Digit(rest, 0)`
   (`pkg/util/parser/parser.go:104`), and zero digits is legal, so frac is 0 and
@@ -368,9 +464,10 @@ Distinguishing input: `'10:70:00'` → Go NULL, Rust `00:00:10`.
   `if start == index { return Err(InvalidFormat) }`.
 
 Distinguishing input: `'11:22:33.'` → Go `11:22:33` with **no** warning, Rust
-`00:00:11` with a truncation event.
+now retains the same value with no event; covered by the same focused
+malformed-duration regression above.
 
-## T4 (rank 1) — `GetFsp` counts BYTES after the dot, Rust counts digits
+## T4 (rank 1, FIXED 2026-09-04) — `GetFsp` counts BYTES after the dot, Rust counts digits
 
 - Go: `pkg/types/time.go:569-581` — `fsp = len(s) - index - 1`, capped at 6.
 - Rust: `rust/crates/tidb-datatype/src/mysql_time.rs:737-747` —
@@ -383,9 +480,12 @@ Distinguishing inputs:
 | `ParseDatetime('2020-01-01 10:00:00.5x')` | fsp 4 → `2020-01-01 10:00:00.5000` | fsp 1 → `…10:00:00.5` |
 | `'2020-01-01 12:00:00.1+05:00'` | fsp 6 → `2020-01-01 07:00:00.100000` | fsp 1 → `2020-01-01 07:00:00.1` |
 
-Also on the live path via `rust/crates/tidb-expr/src/cast.rs:457`.
+Also on the live path via `rust/crates/tidb-expr/src/cast.rs:457`. The focused
+`mysql_time::tests::get_fsp_counts_source_suffix_bytes` regression and owner
+validation are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
-## T5 (rank 1) — fractional-overflow carry bypasses the session zone and the calendar check
+## T5 (rank 1, FIXED 2026-09-04) — fractional-overflow carry bypasses the session zone and the calendar check
 
 - Go: `pkg/types/time.go:1186-1193` — `t1, err := tmp.GoTime(ctx.Location())`
   then `FromGoTime(t1.Add(gotime.Second))`; **errors** when `GoTime` fails.
@@ -401,113 +501,172 @@ Distinguishing inputs:
 - `'2017-00-05 23:59:59.9999999'` fsp 6 → Go `ErrWrongValue`; Rust returns a
   value (a 2016-12 date out of `calc_daynr`).
 
-## T6 (rank 1) — `Duration.RoundFrac` halfway direction is wrong for negatives
+Rust now carries fractional overflow through the session timezone and calendar
+validation. The focused datatype and expression regressions, with Ready
+evidence, are recorded in
+`rust/testport/receipts/types_timestamp_dst_gap.md` and
+`rust/testport/receipts/types_explain_format_audit.md`.
+
+## T6 (rank 1) — `Duration.RoundFrac` halfway direction is wrong for negatives (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:1536-1555` rounds through `gotime.Time.Round`, whose
   documented halfway rule is round **up** (toward +∞), not away from zero.
-- Rust: `rust/crates/tidb-datatype/src/duration.rs:912-931` —
-  `if value >= 0 {(v+half)/unit} else {(v-half)/unit}`, away from zero.
+- Rust: `rust/crates/tidb-datatype/src/duration.rs:912-947` now uses
+  sign-aware nearest-value arithmetic: non-halfway values past the midpoint
+  round away from zero, while an exact negative tie rounds toward zero. The
+  focused source-derived regression is
+  `duration_tests::round_duration_fsp_matches_source_round_rows`; the complete
+  owner profile and validation evidence are in
+  `rust/testport/receipts/types_duration_round_ties.md`.
 
 Distinguishing input: `TIME '-00:00:00.0015'` (nanoseconds `-1_500_000`),
-fsp 6 → 3 → Go `-00:00:00.001`, Rust `-00:00:00.002`.
+fsp 6 → 3 → Go and Rust `-00:00:00.001`. A value past the tie,
+`-1_501_000ns`, rounds to `-2ms` on both sides.
 
-## T7 (rank 2) — no `ErrTimestampInDSTTransition` path in the string parser
+## T7 (rank 2) — `ErrTimestampInDSTTransition` path in the string parser (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2012-2034` plus `adjustTimestampErrForDST`
   (`:2036-2052`) — a TIMESTAMP string landing in a DST gap returns the
   **adjusted value** together with `ErrTimestampInDSTTransition`, which callers
   such as `Time.Convert` (`time.go:464-470`) downgrade to a warning.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:501-504` —
-  `time.validate(...)?` propagates a hard `Err`. The adjustment exists only in
-  `mysql_time.rs:355-362` (`convert_kind`), never in the string parser.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs` now carries
+  `ParsedTime::dst_adjusted`; both string and packed numeric TIMESTAMP parsing
+  adjust with `CoreTime::adjusted_datetime`. `tidb-expr::cast` emits 8179 for
+  the read path, while `Datum::convert_to_in` carries a dedicated
+  `TimestampInDSTTransition` event through `tidb-executor::driver::write_cast`
+  so writes retain the adjusted value and apply Go's strict/lenient warning
+  policy.
 
 Distinguishing input: tz `America/Los_Angeles`,
-`ParseTime('2018-03-11 02:00:16', TIMESTAMP, 0)` → Go `2018-03-11 03:00:00` +
-warning; Rust `Err(NonexistentLocalTime)`, no value.
+`ParseTime('2018-03-11 02:00:16', TIMESTAMP, 0)` → Go and Rust
+`2018-03-11 03:00:00` plus warning 8179 in lenient mode (the strict write path
+returns the same error). Focused parser, expression-cast, and write-cast
+regressions are recorded in
+`rust/testport/receipts/types_timestamp_dst_gap.md`.
 
-## T8 (rank 2) — `ParseTimeFromNum(0)` drops the zero-date error
+## T8 (rank 2) — `ParseTimeFromNum(0)` drops the zero-date error (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2083-2098` — for `num == 0`, when
   `!ctx.Flags().IgnoreZeroDateErr()` it returns `ErrTruncatedWrongVal`.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:769-774` — unconditional
-  `Ok(zero, truncated: false)`; the flag is not even a parameter.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs` now threads an explicit
+  `ignore_zero_date_err` bit through `parse_time_from_num`. The zero branch
+  returns a `TimeError::ZeroDate` when the bit is clear, while preserving the
+  zero fallback in `TemporalOutcome`; datum conversion passes the statement
+  flag, and expression callers retain Go's default-statement behavior.
 
 Distinguishing input: numeric literal `0` into a `DATE` column under
-`NO_ZERO_DATE` + strict mode → Go errors, Rust stores a silent zero.
+`NO_ZERO_DATE` + strict mode → Go and Rust return the zero value beside a
+temporal conversion error; default statement flags still store zero silently.
+Focused parser and datum-conversion regressions plus the owner Ready profile
+are recorded in `rust/testport/receipts/types_parse_time_from_num_zero.md`.
 
-## T9 (rank 3) — `str_to_date` hardcodes `allow_zero_in_date = true`
+## T9 (rank 3) — `str_to_date` hardcodes `allow_zero_in_date = true` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2938-2963` — `t.Check(typeCtx)` consults
   `ctx.Flags().IgnoreZeroInDate()`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:75` —
-  `result.validate(true, allow_invalid_date, timezone)`; `Time::str_to_date`
-  (`:53-58`) has no such parameter.
+- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs` now accepts an explicit
+  `allow_zero_in_date` parameter and forwards it to `Time::validate`; the
+  benchmark and source-vector helper preserve the default read-path value.
 
 Distinguishing input: `sql_mode='NO_ZERO_IN_DATE'`,
 `STR_TO_DATE('2013-05','%Y-%m')` → Go NULL, Rust `2013-05-00`.
+The focused datatype regression `str_to_date_zero_in_date_flag_is_not_hardcoded`
+now covers both refusal and acceptance, with the owner Ready evidence in
+`rust/testport/receipts/types_str_to_date_zero_in_date.md`.
 
-## T10 (rank 3) — `ctx[token] = 0` on date exhaustion not ported
+## T10 (rank 3) — `ctx[token] = 0` on date exhaustion not ported (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:3021-3024` records `ctx[token] = 0` when the input
   runs out mid-format; `mysqlTimeFix` (`:2972-2978`) then errors when `%p`
   appears with `%H`, or when `Hour() == 0`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:124-126` returns early
-  with nothing recorded, so `fix_meridiem` (`:338-354`) sees `None`.
+- Rust: both `rust/crates/tidb-datatype/src/str_to_date.rs:124-143` and the
+  live `rust/crates/tidb-expr/src/time_fn/calendar.rs` evaluator now record
+  exhausted `%p`/`%H`/12-hour token presence before stopping. The focused
+  regressions and complete owner Ready profiles are recorded in
+  `rust/testport/receipts/types_str_to_date_exhaustion.md`.
 
-Distinguishing inputs: `STR_TO_DATE('11:30:45', '%H:%i:%s %p')` → Go NULL,
-Rust `0000-00-00 11:30:45`. `STR_TO_DATE('', '%p')` → Go NULL, Rust
-`0000-00-00 00:00:00`.
+Distinguishing inputs: `STR_TO_DATE('11:30:45', '%H:%i:%s %p')` → Go and Rust
+NULL. `STR_TO_DATE('', '%p')` → Go and Rust NULL, while the valid 12-hour
+case `STR_TO_DATE('11:30:45', '%h:%i:%s %p')` remains `11:30:45` (implicit AM).
 
-## T11 (rank 3) — `%.` uses `is_ascii_punctuation` instead of `unicode.IsPunct`
+## T11 (rank 3) — `%.` uses `is_ascii_punctuation` instead of `unicode.IsPunct` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:3534-3543` — `skipAllPunct` → `unicode.IsPunct`,
   which **excludes** the ASCII symbols `+ < = > ^ \` | ~ $`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:235-237` —
-  `char::is_ascii_punctuation`, which includes them and excludes Latin-1
-  punctuation.
+- Rust: the datatype parser and the independent expression evaluator now use
+  the shared `tidb_datatype::is_go_punctuation` classifier, including the
+  source-version Unicode table and explicit newer-Unicode exclusions.
 
-Distinguishing inputs (divergent in both directions):
-`STR_TO_DATE('2013+5','%Y%.%c')` → Go NULL, Rust `2013-05-00`.
-`STR_TO_DATE('2013¿5','%Y%.%c')` → Go `2013-05-00`, Rust error.
+Distinguishing inputs now agree: `STR_TO_DATE('2013+5','%Y%.%c')` is NULL and
+`STR_TO_DATE('2013¿5','%Y%.%c')` is `2013-05-00`. The focused expression
+regression and Ready evidence are recorded in
+`rust/testport/receipts/expression_collation_audit.md`.
 
-## T12 (rank 3) — float-string path hardcodes `allow_invalid_date = false`
+## T12 (rank 3) — float-string path hardcodes `allow_invalid_date = false` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:1050` — `ParseDatetimeFromNum(ctx, numOfTime)`, whose
   `t.Check(ctx)` uses the session flags.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:561` —
-  `parse_time_from_num(number, DateTime, fsp, true, false, timezone)`, literals
-  rather than the caller's flags.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:571-620` now threads the
+  caller's `allow_zero_in_date` and `allow_invalid_date` through
+  `parse_datetime_core` into the numeric `parse_time_from_num` branch. The
+  focused source-derived regression and Ready evidence are recorded in
+  `rust/testport/receipts/types_float_string_invalid_date.md`.
 
 Distinguishing input: `sql_mode='ALLOW_INVALID_DATES'`,
-`ParseTimeFromFloatString('20200231', DATETIME, 0)` → Go `2020-02-31`, Rust
-`Err(InvalidDate)`.
+`ParseTimeFromFloatString('20200231', DATETIME, 0)` → Go and Rust
+`2020-02-31`.
 
-## T13–T16 (rank 4 / structural)
+## T13 (rank 3) — DATETIME maximum precision now follows `MaxDatetime` (FIXED 2026-09-04)
 
-- **T13** `Time::validate` (`mysql_time.rs:646-648`) replaces Go's
-  `compareTime(t, MaxDatetime) > 0` (`time.go:2167-2177`) with
-  `year > 9999 || month > 12`, so a microsecond in `1_000_000..1_048_575`
-  escapes: `from_date_checked(9999,12,31,23,59,59,1_000_000)` → Go
-  `ErrWrongValue`, Rust `Ok`.
-- **T14** Go's DST-adjusted `Convert` returns `Time{FromGoTime(tAdj)}`
-  (`time.go:467`), whose low 4 bits are zero, so the result's type reverts to
-  DATETIME and fsp to 0. Rust `convert_kind` (`mysql_time.rs:355-362`) keeps
-  `Timestamp` and the fsp. Same calendar value, different type metadata.
-- **T15** `ToPackedUint` (`time.go:646-657`) never validates; Rust
-  `to_packed_uint` (`mysql_time.rs:669-681` → `packed_time.rs:70-90`) rejects
-  `hour > 23` / `year > 9999` / `microsecond > 999_999`, turning an infallible
-  Go call into a fallible one.
-- **T16 (reachability unverified)** `AdjustedGoTime` (`time.go:191-209`) works
-  on the *normalized* `time.Date` result, so a `CoreTime` with hour ≥ 24 (e.g.
-  `2020-03-28 26:45` in `Europe/Amsterdam`) normalizes into the DST gap and
-  yields `2020-03-29 03:00 CEST`; Rust `adjusted_datetime`
-  (`core_time.rs:145-150` → `:298-309`) returns `InvalidCalendar` first. No
-  non-synthetic way to build such a `CoreTime` was found.
+Go's `checkDateRange` compares the complete `CoreTime` against
+`MaxDatetime = 9999-12-31 23:59:59.999999`. Rust's packed microsecond field is
+20 bits wide, so values from `1_000_000` through `1_048_575` can be constructed
+synthetically. `Time::validate` now rejects those values only at the exact
+`9999-12-31 23:59:59` ceiling while preserving Go's lexicographic acceptance
+of earlier dates. The regression is
+`mysql_time::tests::test_validate_datetime_max_precision_boundary`; the full
+inventory and Ready results are in
+`rust/testport/receipts/types_time_validate_max_datetime.md`.
 
-**Adjacent, out of scope:** `rust/crates/tidb-expr/src/time_fn/calendar.rs:1230`
-holds a *second, independent* `STR_TO_DATE` implementation that never calls
-`Time::str_to_date`. T9–T11 describe the `tidb-datatype` copy only; the
-expression copy needs its own pass.
+The TIMESTAMP ceiling and the other structural rows below remain separate.
+
+## T14–T16 (rank 4 / structural)
+
+- **T14 (FIXED 2026-09-04)** Go's DST-adjusted `Convert` returns
+  `Time{FromGoTime(tAdj)}` (`time.go:467`), whose low 4 bits are zero, so the
+  result's type reverts to DATETIME and fsp to 0. `convert_kind` now applies
+  the same reversion after the adjusted-instant substitution (kind →
+  DateTime, fsp → 0); pinned by
+  `mysql_time::tests::dst_adjusted_convert_reverts_to_datetime_with_zero_fsp`
+  and recorded in `rust/testport/receipts/types_time_dst_metadata.md`.
+- **T15 (FIXED 2026-09-04)** `ToPackedUint` (`time.go:646-657`) never
+  validates. Rust `Time::to_packed_uint` now performs the same direct bit pack;
+  the strict `PackedTime::from_parts` constructor remains reserved for callers
+  that explicitly request field-range validation. The raw-field regression and
+  Ready profile are recorded in
+  `rust/testport/receipts/types_time_packed_raw.md`.
+- **T16 (reachability CLOSED 2026-09-04 — synthetic-only)** `AdjustedGoTime`
+  (`time.go:191-209`) works on the *normalized* `time.Date` result, so a
+  `CoreTime` with hour ≥ 24 (e.g. `2020-03-28 26:45` in `Europe/Amsterdam`)
+  normalizes into the DST gap and yields `2020-03-29 03:00 CEST`; Rust
+  `adjusted_datetime` (`core_time.rs:145-150` → `:298-309`) returns
+  `InvalidCalendar` first. Reachability verified 2026-09-04: every
+  production constructor enforces hour ≤ 23 — the string parser's digit
+  checks, `validate()`'s `core.hour() >= 24` rejection
+  (`mysql_time.rs:721`), and the chunk decode paths (Go-written payloads are
+  normalized at write time; the strict `PackedTime::from_parts` constructor
+  validates on request). Only a deliberately corrupt packed payload outside
+  the decode contract could deliver an unnormalized `CoreTime`, and Go's own
+  read of such a payload diverges in error behavior anyway. The
+  normalization gap is therefore defensive-contract only, not a live
+  divergence.
+
+The expression crate also holds a *second*, independent `STR_TO_DATE`
+implementation at `rust/crates/tidb-expr/src/time_fn/calendar.rs:1230` that
+never calls `Time::str_to_date`. Its `%.'` punctuation token was separately
+aligned with the shared Go Unicode classifier in the expression follow-up
+recorded at `rust/testport/receipts/expression_collation_audit.md`; T9/T10
+remain datatype-only context boundaries.
 
 ---
 
@@ -528,10 +687,10 @@ ports of this one Go file.
   exponent parsing. **`Datum::Decimal` holds this one.**
 
 Where the two disagree, `mydecimal.rs` is almost always the one matching Go.
-Every finding below except M8 and M10 is against `decimal.rs`, i.e. against the
+Every remaining finding below except M8 and M10 is against `decimal.rs`, i.e. against the
 implementation the value path actually uses.
 
-## M1 (rank 1) — `shift_mysql` keeps a rounding carry Go throws away
+## M1 (rank 1) — `shift_mysql` keeps a rounding carry Go throws away (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:599-606` — after the truncating `Round`, Go tests
   the *digit geometry*, `if digitEnd <= digitBegin { *d = zeroMyDecimal;
@@ -554,7 +713,11 @@ Also reproducible at the reduced word limit the fixtures use:
 
 Control: `mydecimal.rs:632-639` has Go's check and is correct.
 
-## M2 (rank 1) — `parse_mysql` returns `BadNumber`+0 where Go escalates to `ErrOverflow`+max-decimal
+Fixed in the Rust decimal owner: `shift_mysql_with_word_limit` now checks the
+pre-round retained prefix before accepting a carry. The focused regression and
+owner validation are recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M2 (rank 1) — `parse_mysql` returns `BadNumber`+0 where Go escalates to `ErrOverflow`+max-decimal (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:498-510` — on a `strToInt` error Go does **not**
   stop. It zeroes `d`, keeps the clamped exponent (`strToInt` returns
@@ -575,7 +738,10 @@ because *that* exponent trips `uintCutOff` and `strToInt` returns 0; only
 exponents in `(i64::MAX, u64::MAX]` expose the bug. Control:
 `mydecimal.rs:859-886` reproduces Go exactly.
 
-## M3 (rank 1) — `from_f64` renders positionally instead of Go's `%g`
+Fixed in the Rust decimal parser; the clamped-exponent regression and Ready
+evidence are recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M3 (rank 1) — `from_f64` renders positionally instead of Go's `%g` (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:1165-1167` — `FromFloat64` is
   `strconv.FormatFloat(f, 'g', -1, 64)` then `FromString`, so large and small
@@ -596,7 +762,11 @@ Secondary: `from_f64` returns `Option<Self>` (`None` only for non-finite) and
 discards Go's `ErrTruncated`/`ErrOverflow` entirely. This compounds with D6
 above, where `Datum::to_decimal` also drops the parse error.
 
-## M4 (rank 2) — `div_mysql` / `rem_mysql` have no truncation/overflow channel
+Fixed in the Rust value layer: Go-compatible shortest-exponent formatting and
+the parse disposition are now retained; the focused regression and validation
+evidence are in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M4 (rank 2) — `div_mysql` / `rem_mysql` have no truncation/overflow channel (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:2281` — `fixWordCntError` inside `doDivMod`,
   plus the mod branch's `ErrOverflow`/`ErrTruncated` at `:2434-2447`.
@@ -612,7 +782,12 @@ Go: `fixWordCntError(3, 8)` → `(3, 6, ErrTruncated)`, `digitsFrac` clamped to
 **no warning**. The value printed at scale 30 is identical, so this is
 warning-loss rather than a wrong number.
 
-## M5 (rank 1 in-function, rank 4 in practice) — `ModeCeiling` scans every discarded digit; Go scans one
+Fixed in the Rust owner through `div_mysql_with_warning` and
+`true_div_with_warning`; the expression path consumes the warning. Focused
+datatype/expression tests and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
+
+## M5 (rank 1 in-function, rank 4 in practice) — `ModeCeiling` scans every discarded digit; Go scans one (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:901-909` — the non-word-aligned branch
   (`frac % 9 != 0`) computes `digAfterScale`, the **single** digit at position
@@ -620,47 +795,59 @@ warning-loss rather than a wrong number.
   source carries `/* TODO - fix this code as it won't work for CEILING mode */`
   immediately above. The word-aligned branch (`:871-881`) *does* scan later
   words — the inconsistency is Go's.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:1046` —
-  `discarded_nonzero = digits[split..].bytes().any(|d| d != b'0')`, i.e. the
-  aligned behaviour for all `frac`.
+- Rust: `Decimal::round_ceiling_to_scale` now preserves Go's branch split:
+  aligned cuts scan all discarded words, while non-word-aligned cuts inspect
+  only the first discarded digit.
 
-Distinguishing input: `1.0001` at `frac = 1`. Go `Round(&to, 1, ModeCeiling)` →
-**`1.0`**; Rust `round_ceiling_to_scale(1)` → **`1.1`**.
+Distinguishing input: `1.0001` at `frac = 1`. Go `Round(&to, 1, ModeCeiling)`
+and Rust `round_ceiling_to_scale(1)` now both return **`1.0`**.
 
 Why the `go_round_with_ceil` fixture misses it: every case there has a nonzero
 digit exactly at the cut (`15.17`@1, `123456789.987654321`@1), where the
 one-digit and all-digits rules agree.
 
 Practical blast radius: `grep -rn ModeCeiling pkg/` finds only
-`mydecimal_test.go` and `mydecimal_benchmark_test.go` — no production caller.
+`mydecimal_test.go` and `mydecimal_benchmark_test.go` — no SQL production
+caller. The focused Rust regression and owner Ready evidence are recorded in
+`rust/testport/receipts/types_decimal_round_ceiling.md`.
 
-## M6 (rank 1 in-function, unreachable via SQL) — add/sub overflow test is result-based
+## M6 (rank 1 in-function, FIXED 2026-09-04; unreachable via SQL) — add/sub overflow test is result-based
 
 - Go: `pkg/types/mydecimal.go:1909-1926` — `wordsIntTo = max(wordsInt1,
   wordsInt2)`, then `if x > wordMax-1 { wordsIntTo++ }` where `x` is the
   *leading word* of the wider operand. An operand heuristic that over-reports.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:467-487` derives `words_int`
-  from the actual result.
+- Rust: `rust/crates/tidb-datatype/src/decimal/mod.rs` now mirrors the source
+  precheck in `add_leading_word_overflow`, including the nine-word capacity
+  test, and applies it to `add_mysql` plus opposite-sign `sub_mysql`.
 
 Distinguishing input: `999999999` followed by 72 zeros (81 digits, so
 `wordBuf[0] == 999999999`) `+ 1` → Go `ErrOverflow` with the result overwritten
-by 81 nines; Rust the exact sum with no warning. Requires 81 integer digits,
-above `DECIMAL(65)`, so unreachable through ordinary SQL.
+by 81 nines; Rust now returns the same warning and max-value shape. Ordinary
+small additions such as `999999999 + 1` remain valid because the extra carry
+still fits in the nine-word buffer. Requires 81 integer digits, above
+`DECIMAL(65)`, so unreachable through ordinary SQL.
 
-## M7 (rank 3) — `from_bin` discards Go's `binSize` on a corrupt payload
+The focused regression is
+`decimal_tests::add_overflow_uses_go_leading_word_heuristic`; Ready evidence
+is recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M7 (rank 3) — `from_bin` discards Go's `binSize` on a corrupt payload (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:1532-1534, 1544-1546, 1557-1559, 1568-1570` —
   each corruption check does `*d = zeroMyDecimal; return binSize,
   ErrBadNumber`, so the caller still gets the consumed length and a usable
   zero.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:1974, 1987, 2001, 2013` —
-  `return Err(DecimalCodecError::BadNumber)`; no size, no value.
+- Rust: `Decimal::from_bin_with_failure` now carries Go's zero receiver,
+  fixed payload size, and `BadNumber`; the existing `from_bin` wrapper remains
+  strict and maps the structured failure back to the original error type.
 
 Distinguishing input: any `{precision: 10, frac: 0}` payload whose first full
 word decodes above `999999999`. Go's row decoder can advance the cursor past
-the field; the Rust caller cannot.
+the field; Rust callers can now obtain the same `consumed = 5` alongside the
+zero value and error. Focused regression and Ready evidence are recorded in
+`rust/testport/receipts/types_decimal_from_bin_failure.md`.
 
-## M8 (rank 3) — `mydecimal.rs` trims ASCII whitespace where Go trims Unicode whitespace
+## M8 (rank 3) — `mydecimal.rs` trims ASCII whitespace where Go trims Unicode whitespace (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:527` and `pkg/types/helper.go:134` both use
   `strings.TrimSpace`, whose `unicode.IsSpace` includes vertical tab `\x0b`.
@@ -672,19 +859,29 @@ Distinguishing inputs: `"1\x0b"` → Go `1` with no error, Rust `1` +
 `Truncated`. `"1e\x0b5"` → Go `100000` with no error, Rust `1` + `Truncated`.
 `decimal.rs:1347` uses `str::trim` (Unicode) and matches Go.
 
+Fixed in the Rust fixed-word parser: valid UTF-8 Unicode whitespace is now
+trimmed at both source boundaries while malformed bytes remain significant.
+The focused regression is recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
+
 ## M9 / M10 (rank 4)
 
-- **M9** `DecimalMul` overflow loses Go's `-0`. Go assigns `to.negative`
-  *before* the `err == ErrOverflow` early return
-  (`pkg/types/mydecimal.go:2070-2075`), so `ToString` emits `-0`; Rust
-  `decimal.rs:523-525` builds `Decimal::new(false, "0", 0)`. Input
-  `(-999…9, 81 digits) * (999…9, 81 digits)`. Unreachable at `DECIMAL(65)`.
-- **M10** Error identity for the no-digits case. Go
+- **M9 (FIXED 2026-09-04)** `DecimalMul` overflow loses Go's `-0`. Go assigns
+  `to.negative` *before* the `err == ErrOverflow` early return
+  (`pkg/types/mydecimal.go:2070-2075`), so `ToString` emits `-0`; Rust now
+  preserves the operand sign on every bounded overflow exit. Input
+  `(-999…9, 61 digits) * (999…9, 61 digits)` is covered by
+  `decimal_tests::decimal_mul_overflow_preserves_negative_zero`; complete
+  owner validation is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`. Unreachable at
+  `DECIMAL(65)`.
+- **M10 (FIXED 2026-09-04)** Error identity for the no-digits case. Go
   (`mydecimal.go:415, 443`) returns `ErrTruncatedWrongVal("DECIMAL", str)`
-  (MySQL 1292); `mydecimal.rs:772, 802` collapses it to
-  `DecimalError::BadNumber`, which Go uses for a *different* condition, so
-  `"abc"` and `"1e18446744073709551620"` become indistinguishable.
-  `decimal.rs:154, 184` keeps a distinct `TruncatedWrongValue` and is faithful.
+  (MySQL 1292); Rust now returns a distinct `DecimalError::TruncatedWrongValue`
+  for empty/digit-less input while retaining `BadNumber` for exponent overflow.
+  The focused `from_string_preserves_no_digit_error_identity` regression and
+  complete Ready profile are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 
 ## Decimal areas explicitly left uncertain
 
@@ -754,11 +951,12 @@ literally — early return for `Utf8Mb40900Bin`, then the full `IsBinCollation`
 membership — plus three rows appended to
 `source_need_restored_data_rows`. Note `rust/crates/tidb-datatype/src/collation.rs:301-306`
 already had a *correct* `is_bin_collation`; the field-type predicate simply was
-not using it. **The test has not been run.** `cargo check` and `cargo clippy` on
+not using it. Focused `test_need_restored_data` and
+`utf8mb4_0900_bin_never_needs_restored_data` now pass. `cargo check` and `cargo clippy` on
 `tidb-datatype` are clean (EXIT=0 each), as is `cargo check -p tidb-tablecodec
 -p tidb-codec` (EXIT=0), and `cargo fmt --all --check` is clean.
 
-## F2 (rank 1) — `FieldTypeBuilder::new()` starts at flen/decimal `-1`; Go's starts at `0`
+## F2 (rank 1, FIXED) — `FieldTypeBuilder::new()` starts at flen/decimal `-1`; Go's starts at `0`
 
 - Go: `pkg/types/field_type_builder.go:23-25` — `&FieldTypeBuilder{}` holds a
   **zero-value** `FieldType`, i.e. `flen = 0, decimal = 0`
@@ -779,51 +977,55 @@ column-definition `decimals` byte.
 
 Second distinguishing input:
 `NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP().CompactStr()` → Go
-`"varchar(0)"`; the Rust equivalent → `"varchar(5)"` (the `-1` gets substituted
-with the default flen).
+`"varchar(0)"`; Rust now returns the same zero-length rendering.
 
-## F3 (rank 1, reachability uncertain) — `is_binary_string()` answers "binary" for an EMPTY collation name
+Fixed in the Rust builder; the focused zero-value regression and package
+validation are recorded in `rust/testport/receipts/datatype_json_fieldtype_receipt.md`.
+
+## F3 — FIXED (verified 2026-09-03): `is_binary_string()` now compares the collation NAME
+
+## F3 (rank 1, FIXED 2026-09-04) — `is_binary_string()` answers "binary" for an EMPTY collation name
 
 - Go: `pkg/types/etc.go:125-127` — `IsBinaryStr` compares the collation
   **string** to `"binary"`.
-- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs:898-900` reads a cached
-  `Collation` **enum**. `FieldType::parser()` (`mod.rs:542-557`) seeds that enum
-  to `Collation::Binary` while `collation_name` is `""`, and
-  `From<JsonFieldType>` (`mod.rs:1424-1425`) falls back to `Collation::Binary`
-  for any name `Collation::from_name` rejects, including `""`.
+- Rust: `FieldType::is_binary_string` reads the stored collation spelling, as
+  Go does, while `FieldType::parser()` and `From<JsonFieldType>` may still seed
+  the cached enum to `Collation::Binary` for an empty/unrecognised name.
 
 Distinguishing input: a `ColumnInfo` whose `FieldType` JSON is
 `{"Tp":15,"Charset":"utf8mb4","Collate":""}` (a legacy column). Go:
 `IsBinaryStr = false`, `IsNonBinaryStr = true`, `NeedRestoredData = true`.
-Rust: `is_binary_string() = true`, `is_character_string() = false`,
-`need_restored_data() = false`. Inverted, again on the encoding path.
+Rust now returns `is_binary_string() = false`, `is_character_string() = true`,
+and `need_restored_data() = true`, matching Go on the encoding path.
 
-Left unfixed: whether an empty `Collate` occurs in currently-written meta could
-not be confirmed, and the fix is a representation change (keep the name, or
-carry an explicit "unrecognised" variant) rather than a boolean edit. The
-*unregistered-name* variant of this is not reachable — the 16 collations in the
-Rust enum exactly cover TiDB's new-collation set.
+The focused `field_type::json::tests::empty_collation_name_does_not_inherit_binary_cache`
+regression decodes the legacy JSON shape and verifies the character-string and
+restored-data outcomes. The *unregistered-name* variant is likewise
+spelling-authoritative; the 16 collations in the Rust enum only affect runtime
+collator fallback.
 
-## F4 (rank 4, latent) — `source_string()` / `Display` pins the display-width switch to the wrong value
+## F4 (rank 4, FIXED 2026-09-04) — `source_string()` / `Display` pins the display-width switch to the wrong value
 
 - Go: `pkg/parser/types/field_type.go:541-542` — `String()` calls
   `CompactStr()`, which reads the process global
   `TiDBStrictIntegerDisplayWidth`, set from `DeprecateIntegerDisplayWidth`,
   whose shipped default is `true` (`pkg/config/config.go:1279`, wired at
   `cmd/tidb-server/main.go:1154`).
-- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs:1158-1159` —
-  `vec![self.compact_str(false)]`, permanently the non-strict branch, which
-  **emits** the width.
+- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs` now passes the
+  runtime `STRICT_INTEGER_DISPLAY_WIDTH` default to `compact_str`, matching
+  the server-initialized Go policy.
 
 Distinguishing input: a `BIGINT` field type with `flen = 22` and `BinaryFlag`.
 A real tidb-server prints `bigint BINARY` (confirmed against recorded
-`tests/integrationtest/r/**`: `cast(..., bigint BINARY)`); Rust prints
-`bigint(22) BINARY`. Latent, not live: `type_desc`/`info_schema_str` callers
-correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
-(`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`), and
-`source_string` has no production caller.
+`tests/integrationtest/r/**`: `cast(..., bigint BINARY)`); Rust now does too,
+as pinned by `source_string_uses_strict_integer_display_width_default`.
+`type_desc`/`info_schema_str` callers continue to pass
+`STRICT_INTEGER_DISPLAY_WIDTH`
+(`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`),
+and `source_string` remains a formatter boundary rather than a SQL execution
+path.
 
-## F5 / F6 / F7 (rank 4)
+## F5 / F6 (now FIXED) / F7 (verified already aligned)
 
 - **F5** `default_field_type_for_value` gets `±Inf` flen wrong. Go
   (`pkg/types/field_type.go:273-278`) uses
@@ -835,22 +1037,31 @@ correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
   (`value.rs:280-285`) routes through `go_fixed_shortest_f64`
   (`value.rs:341-351`) and is correct, so the two twins disagree. Test/bench
   callers only today.
-- **F6** `restore_as_cast_type` refuses to emit an empty CHARSET clause Go
-  emits. Go `pkg/parser/types/field_type.go:642-645` writes
+- **F6 (now FIXED)** `restore_as_cast_type` refused to emit an empty CHARSET
+  clause Go emits. Go `pkg/parser/types/field_type.go:642-645` writes
   `" CHARSET " + ft.charset` whenever the charset is neither `binary` nor
   `utf8mb4` — an empty charset passes. Rust
-  (`field_type/mod.rs:1249-1255`) adds `&& !self.charset_name.is_empty()`.
-  Input `FieldType{tp: VarString, charset: "", collate: ""}` with
-  `explicitCharset = true` → Go `"CHAR CHARSET "`, Rust `"CHAR"`. No parser
-  path producing an empty cast charset was found, and Go's own output is
-  degenerate.
-- **F7** `SetElems(nil)` round-trips as `[]` instead of `null`. Go
-  (`pkg/parser/types/field_type.go:303-305, 761-773`) leaves `elems == nil`,
-  marshalling to `"Elems":null`; Rust (`field_type/mod.rs:1025-1028`)
-  unconditionally sets `elems_present = true`, so `:1407` emits `"Elems":[]`.
-  Byte-level meta divergence only — Go's unmarshal accepts both. The
-  `elems_present` mechanism is otherwise a correct model of Go's nil-vs-empty
-  distinction.
+  (`field_type/mod.rs:1249-1255`) previously added
+  `&& !self.charset_name.is_empty()`. Input
+  `FieldType{tp: VarString, charset: "", collate: ""}` with
+  `explicitCharset = true` now produces `"CHAR CHARSET "` on both sides.
+  The output is degenerate, but it is part of Go's observable formatter
+  contract and is covered by a focused Rust regression.
+- **F7 (verified already aligned)** `SetElems(nil)` must round-trip as
+  `null`, not `[]`. Go (`pkg/parser/types/field_type.go:303-305, 761-773`)
+  leaves `elems == nil`, while an allocated empty slice remains distinct.
+  Current Rust stores `Elems` as `GoSharedSlice<GoString>` and
+  `set_elems(None)` restores its unallocated state; serde consequently emits
+  `"Elems":null`, while `with_elems(Vec::new())` emits `"Elems":[]`. The
+  existing `field_type::json::tests::slice_json_preserves_go_growth_duplicate_and_null_element_rules`
+  regression covers both byte-level forms. The stale `elems_present`
+  implementation cited by the original audit no longer exists.
+
+F5 and F6 are fixed in this branch: the runtime default-type path now shares
+the source-compatible `+Inf`/`-Inf`/`NaN` spelling helpers with the
+parser-driver path, and `restore_as_cast_type` preserves Go's explicit empty
+charset clause. Focused regressions pin both boundaries. F7 was rechecked
+against the current shared-slice representation and is already aligned.
 
 Deliberate and documented, not a finding: `parse_set_value` returns
 `TooManyElements` (`enum_set.rs:289-291`) where Go panics with an
@@ -1104,7 +1315,7 @@ and `mod9[to.digitsInt]` ≡ `digits_int % 9` over the whole `int8` domain);
 forward-left-aligned-fraction word packing, the `MaxInt32/2` and `MinInt32/2`
 exponent thresholds, `allZero → negative=false`, `resultFrac = digitsFrac`);
 `strToInt` (`uintCutOff`/`intCutOff`/`hasNum`, clamped value with
-`ErrBadNumber`). Except M8's whitespace point.
+`ErrBadNumber`). Unicode whitespace handling (M8) is now aligned as well.
 
 **`decimal.rs` ↔ Go:** `fixWordCntError`; `digitsToWords`; `DecimalBinSize`
 (including the negative-`xInt`/`xFrac` `ErrBadNumber` path); `readWord`;
@@ -1116,7 +1327,7 @@ bounded by `originIntSize+originFracSize`, the final `bin[0] ^= 0x80`);
 **`FromBin`** (mask derivation, `binSize > 40` rejection, short-payload zero
 fill, both `fixWordCntError` branches, the `powers10[leadingDigits+1]` and
 `> wordMax` validations, leading-zero-word `digitsInt` decrements, trailing
-partial-word scaling) except M7's return shape; `ToHashKey`/`HashKeySize`
+partial-word scaling) plus M7's structured failure outcome; `ToHashKey`/`HashKeySize`
 (precision from stripped leading/trailing zeros, `prec == 0 → 1`,
 `ErrTruncated` suppression, appended `digitsFrac` byte); `PrecisionAndFrac`;
 **`ToInt`** (verified at `±i64::MAX`, `±i64::MIN`, `i64::MIN-1`, `2^64`; the
@@ -1126,7 +1337,8 @@ partial-word scaling) except M7's return shape; `ToHashKey`/`HashKeySize`
 (verified on `ROUND(12345,-2)`, `ROUND(12365,-2)`, `ROUND(12345,-5)`,
 `ROUND(92345,-5)`, `ROUND(600,-3)`, `ROUND(6000,-4)`, and Go's
 `digitsInt+frac < 0` early-zero falling out of the digit math without a special
-case); `Shift`'s overflow condition and bound-stripping (everything but M1);
+case); `Shift`'s overflow condition and bound-stripping, including the fixed
+M1 carry-discard rule;
 `DecimalMul`'s word loop (`add2`/`add` carry chain, both `idxTo < 0` overflow
 returns, the `-0.000` check, leading-zero-word compaction); `DecimalMod` value
 and sign; `DecimalDiv`'s fraction-word budget
@@ -1230,8 +1442,8 @@ the exact quotient word); `maxDecimal`/`NewMaxOrMinDec` including
 | MyDecimal (M) | 4 | 1 | 2 | 3 | 10 |
 | FieldType / Set / Enum (F) | 3 | 0 | 0 | 4 | 7 |
 
-(Findings that are rank 1 in-function but unreachable through SQL — M6, M9 —
-are counted at their in-function rank and flagged in place. D7 and F1 are
+(Findings that are rank 1 in-function but unreachable through SQL — fixed M6
+and M9 — are counted at their in-function rank and flagged in place. D7 and F1 are
 counted although they are fixed in this branch.)
 
 **Audited.** `compare.go`, `convert.go`, `truncate.go`, `context.go`,
@@ -1249,10 +1461,10 @@ counted although they are fixed in this branch.)
 side (`charset.rs`, `collation.rs`, the encoding tables). Treat their absence
 from the findings list as "not yet audited", **not** "clean".
 
-**What is unverified because nothing can execute here.** Everything. No test
-was run, no binary was executed, no differential sweep was performed. The two
-fixes in this branch (`4d2b945d4d`, `441fc392c9`) each ship a regression test
-that has **never been run**; they compile and lint clean and nothing more.
+**What remains unverified.** The focused regressions and package Ready profiles
+for the fixes recorded in this document now execute in this worktree. A full
+Go/Rust differential sweep is still unavailable, and the open questions below
+remain bounded rather than claimed clean.
 Concretely, the following remain open questions that one execution each would
 settle:
 
@@ -1271,7 +1483,7 @@ settle:
 1. The Rust tree carries **two** decimal implementations —
    `mydecimal.rs` (a faithful word-buffer port) and `decimal.rs` (a
    digit-string reimplementation). `Datum::Decimal` holds the latter, and every
-   decimal finding except M8 and M10 is against the latter. Any claim that
+   remaining decimal finding except M8 and M10 is against the latter. Any claim that
    "`MyDecimal` is ported" has to say which of the two the value path uses.
 2. The tree also carries **two** `STR_TO_DATE` implementations —
    `tidb-datatype/src/str_to_date.rs` and
@@ -1283,3 +1495,5 @@ settle:
    (`Time::round_frac` needs a timezone) are all instances. A single decision
    about how `tidb-datatype` threads conversion context would close a cluster,
    not one bug.
+
+F3 verification: `field_type/mod.rs:1020-1022` compares `collation_name == "binary"` (the string, matching Go `IsBinaryStr`'s `GetCollate() == charset.CollationBin` string compare), with an existing assertion (`mod.rs:1517`) covering the empty-collation case. The audit's `:898-900` enum-based predicate is gone.

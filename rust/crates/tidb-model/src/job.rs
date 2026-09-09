@@ -105,7 +105,6 @@ impl PersistedRawJson {
     /// Constructs the exact Go `json.RawMessage` byte slice without validating
     /// it. Direct Go struct construction permits arbitrary bytes; validation
     /// happens when an outer `encoding/json` marshal consumes the message.
-    #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self(GoSharedSlice::from_vec(bytes))
     }
@@ -113,7 +112,6 @@ impl PersistedRawJson {
     /// Constructs an allocated raw-message header with an explicit Go slice
     /// capacity. This is primarily useful when a caller already observed the
     /// source header rather than merely its visible bytes.
-    #[must_use]
     pub fn from_bytes_with_capacity(bytes: Vec<u8>, capacity: usize) -> Self {
         Self(GoSharedSlice::from_vec_with_capacity(bytes, capacity))
     }
@@ -121,19 +119,16 @@ impl PersistedRawJson {
     /// Returns a snapshot of the exact decoded JSON text before
     /// outer-marshaler compaction. A caller that mutates the source byte slice
     /// to invalid UTF-8 must inspect [`Self::bytes`] instead.
-    #[must_use]
     pub fn get(&self) -> String {
         String::from_utf8(self.bytes()).expect("RawMessage contains invalid UTF-8")
     }
 
     /// Returns an exact byte snapshot.
-    #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
         self.0.snapshot()
     }
 
     /// Returns the visible Go slice capacity.
-    #[must_use]
     pub const fn capacity(&self) -> usize {
         self.0.capacity()
     }
@@ -287,7 +282,6 @@ pub enum ResolvedTimeZone {
 
 impl ResolvedTimeZone {
     /// Returns the stable source-visible location name.
-    #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::Local => "Local".to_owned(),
@@ -297,7 +291,6 @@ impl ResolvedTimeZone {
     }
 
     /// Returns the exact source-visible location-name bytes.
-    #[must_use]
     pub fn name_bytes(&self) -> &[u8] {
         match self {
             Self::Local => b"Local",
@@ -374,6 +367,10 @@ pub struct MultiSchemaInfo {
     /// Runtime set of columns being modified.
     #[serde(skip)]
     pub modify_columns: GoSharedSlice<tidb_ast::CiString>,
+    /// In-progress schema objects locked by the multi-schema change (Go's
+    /// non-serialized `MultiSchemaInfo.InvolvingSchemaInfo`).
+    #[serde(skip)]
+    pub involving_schema_info: GoSharedSlice<InvolvingSchemaInfo>,
     /// Runtime set of indexes being added.
     #[serde(skip)]
     pub add_indexes: GoSharedSlice<tidb_ast::CiString>,
@@ -404,6 +401,7 @@ impl Default for MultiSchemaInfo {
             add_columns: GoSharedSlice::default(),
             drop_columns: GoSharedSlice::default(),
             modify_columns: GoSharedSlice::default(),
+            involving_schema_info: GoSharedSlice::default(),
             add_indexes: GoSharedSlice::default(),
             drop_indexes: GoSharedSlice::default(),
             alter_indexes: GoSharedSlice::default(),
@@ -463,13 +461,25 @@ pub struct SubJob {
     /// Analyze phase state stored with modify-column work.
     #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
+    /// Explicit scheduling-lock objects carried by the sub-job.
+    #[serde(
+        rename = "involving_schema_info",
+        default,
+        skip_serializing_if = "shared_slice_is_empty"
+    )]
+    pub involving_schema_info: GoSharedSlice<InvolvingSchemaInfo>,
     #[serde(skip)]
     pub(crate) args: GoSharedSlice<GoAny>,
 }
 
 impl SubJob {
+    /// Returns the typed `JobArgs` interface stored in Go's public `JobArgs`
+    /// field, or `None` for a nil/non-JobArgs interface.
+    pub fn job_args_value(&self) -> Option<&crate::JobArgsValue> {
+        self.job_args.job_args_value()
+    }
+
     /// Reports whether the sub-job is outside cancellation and rollback states.
-    #[must_use]
     pub fn is_normal(&self) -> bool {
         !matches!(
             self.state,
@@ -481,13 +491,11 @@ impl SubJob {
     }
 
     /// Reports whether the sub-job reached a terminal state.
-    #[must_use]
     pub fn is_finished(&self) -> bool {
         self.state.is_finished()
     }
 
     /// Builds the parent-shaped proxy job used to execute this sub-job.
-    #[must_use]
     pub fn to_proxy_job(&self, parent: &Job, sequence: i64) -> Job {
         let reorg_meta = parent.reorg_meta.as_ref().map(|parent_meta| {
             let meta = parent_meta.read().shallow_copy();
@@ -533,6 +541,7 @@ impl SubJob {
             trace_info: parent.trace_info.clone(),
             sql_mode: parent.sql_mode,
             session_vars: parent.session_vars.clone(),
+            involving_schema_info: self.involving_schema_info.clone(),
             ..Default::default()
         }
     }
@@ -553,6 +562,7 @@ impl SubJob {
         self.warning = proxy.warning.clone();
         self.row_count = proxy.row_count;
         self.schema_version = schema_version;
+        self.involving_schema_info = proxy.involving_schema_info.clone();
         if let Some(meta) = &proxy.reorg_meta {
             let meta = meta.read();
             self.reorg_type = meta.reorg_type;
@@ -563,7 +573,6 @@ impl SubJob {
 
     /// Go `SubJob.Clone`: copies persisted/runtime state but deliberately
     /// clears the private decoded-argument cache.
-    #[must_use]
     pub fn clone_without_args(&self) -> Self {
         let mut cloned = self.clone();
         cloned.args = GoSharedSlice::default();
@@ -597,13 +606,22 @@ impl SubJob {
     }
 
     /// Returns a copied Go slice header for the private argument cache.
-    #[must_use]
     pub fn decoded_args(&self) -> GoSharedSlice<GoAny> {
         self.args.clone()
     }
 }
 
 impl TimeZoneLocation {
+    /// Go's composite literal `model.TimeZoneLocation{Name, Offset}`: the
+    /// lazy location cache starts empty.
+    pub fn new(name: impl Into<GoString>, offset: i64) -> Self {
+        Self {
+            name: name.into(),
+            offset,
+            location: OnceLock::new(),
+        }
+    }
+
     /// Go `GetLocation`.
     pub fn get_location(&self) -> Result<GoShared<ResolvedTimeZone>, String> {
         if let Some(location) = self.location.get() {
@@ -795,7 +813,7 @@ pub struct Job {
         skip_serializing_if = "shared_map_is_none_or_empty"
     )]
     /// Session system variables captured for DDL execution.
-    pub session_vars: Option<GoShared<BTreeMap<GoString, GoString>>>,
+    pub session_vars: Option<GoShared<BTreeMap<String, GoString>>>,
     /// Latest schema version returned by the last execution step.
     #[serde(rename = "last_schema_version", default)]
     pub last_schema_version: i64,
@@ -813,7 +831,6 @@ pub struct JobW {
 impl JobW {
     /// Go `NewJobW`. The byte vector is retained unchanged, including empty
     /// and non-JSON payloads; construction does not decode it.
-    #[must_use]
     pub fn new(job: Option<GoShared<Job>>, bytes: GoSharedSlice<u8>) -> Self {
         Self { job, bytes }
     }
@@ -834,7 +851,6 @@ impl Job {
     }
 
     /// Returns the processed row count.
-    #[must_use]
     pub fn get_row_count(&self) -> i64 {
         let _guard = self.mu.lock();
         self.row_count
@@ -857,7 +873,6 @@ impl Job {
     }
 
     /// Returns aliases of the reorganization warning maps.
-    #[must_use]
     pub fn get_warnings(&self) -> JobWarnings {
         let _guard = self.mu.lock();
         let metadata = self
@@ -950,7 +965,6 @@ impl Job {
     }
 
     /// Returns a copied Go slice header for the private decoded argument cache.
-    #[must_use]
     pub fn decoded_args(&self) -> GoSharedSlice<GoAny> {
         self.args.clone()
     }
@@ -1031,7 +1045,6 @@ impl Job {
     /// Go `Job.Clone`: clones through the persisted codec, clears private
     /// decoded argument slices, and restores only each SubJob JobArgs
     /// interface value.
-    #[must_use]
     pub fn deep_clone(&mut self) -> Option<Self> {
         let bytes = self.encode(true).ok()?;
         let mut cloned = Self::default();
@@ -1059,84 +1072,68 @@ impl Job {
     }
 
     /// Reports whether the job reached any terminal finished state.
-    #[must_use]
     pub fn is_finished(&self) -> bool {
         self.state.is_finished()
     }
     /// Reports whether the job was cancelled.
-    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.state.is_cancelled()
     }
     /// Reports whether rollback completed.
-    #[must_use]
     pub fn is_rollback_done(&self) -> bool {
         self.state.is_rollback_done()
     }
     /// Reports whether rollback is in progress.
-    #[must_use]
     pub fn is_rollingback(&self) -> bool {
         self.state.is_rollingback()
     }
     /// Reports whether cancellation is in progress.
-    #[must_use]
     pub fn is_cancelling(&self) -> bool {
         self.state.is_cancelling()
     }
     /// Reports whether the job is paused.
-    #[must_use]
     pub fn is_paused(&self) -> bool {
         self.state.is_paused()
     }
     /// Reports whether the job is transitioning to paused.
-    #[must_use]
     pub fn is_pausing(&self) -> bool {
         self.state.is_pausing()
     }
     /// Reports whether schema synchronization completed.
-    #[must_use]
     pub fn is_synced(&self) -> bool {
         self.state.is_synced()
     }
     /// Reports whether normal execution completed.
-    #[must_use]
     pub fn is_done(&self) -> bool {
         self.state.is_done()
     }
     /// Reports whether the job is running.
-    #[must_use]
     pub fn is_running(&self) -> bool {
         self.state.is_running()
     }
     /// Reports whether the job is queued.
-    #[must_use]
     pub fn is_queueing(&self) -> bool {
         self.state.is_queueing()
     }
     /// Reports whether execution has not started.
-    #[must_use]
     pub fn not_started(&self) -> bool {
         self.state.not_started()
     }
     /// Reports whether execution has started.
-    #[must_use]
     pub fn started(&self) -> bool {
         !self.not_started()
     }
     /// Reports whether no further lifecycle transition is expected.
-    #[must_use]
     pub fn in_final_state(&self) -> bool {
         self.state.in_final_state()
     }
 
     /// Reports whether TiDB itself placed this job in the paused state.
-    #[must_use]
     pub fn is_paused_by_system(&self) -> bool {
         self.is_paused() && self.admin_operator == AdminCommandOperator::BY_SYSTEM
     }
 
     /// Reports whether the durable pause reason matches `reason`.
-    #[must_use]
     pub fn has_pause_reason(&self, reason: &str) -> bool {
         self.pause_reason
             .as_ref()
@@ -1157,7 +1154,6 @@ impl Job {
     }
 
     /// Reports whether the durable resume reason matches `reason`.
-    #[must_use]
     pub fn has_resume_reason(&self, reason: &str) -> bool {
         self.resume_reason
             .as_ref()
@@ -1177,13 +1173,11 @@ impl Job {
     }
 
     /// Reports a system pause caused by full TiKV disks.
-    #[must_use]
     pub fn is_paused_by_system_for_kv_disk_full(&self) -> bool {
         self.is_paused_by_system() && self.has_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL)
     }
 
     /// Reports a pending or completed system pause caused by full TiKV disks.
-    #[must_use]
     pub fn is_pausing_or_paused_by_system_for_kv_disk_full(&self) -> bool {
         (self.is_pausing() || self.is_paused())
             && self.admin_operator == AdminCommandOperator::BY_SYSTEM
@@ -1191,7 +1185,6 @@ impl Job {
     }
 
     /// Reports whether this action and state allow a pause request.
-    #[must_use]
     pub fn is_pausable(&self) -> bool {
         if self.type_ == ActionType::ACTION_ADD_COLUMNAR_INDEX
             && self.schema_state == SchemaState::WRITE_REORGANIZATION
@@ -1202,7 +1195,6 @@ impl Job {
     }
 
     /// Reports whether this action supports runtime alteration.
-    #[must_use]
     pub fn is_alterable(&self) -> bool {
         matches!(
             self.type_,
@@ -1213,34 +1205,36 @@ impl Job {
     }
 
     /// Reports whether the paused job can be resumed.
-    #[must_use]
     pub fn is_resumable(&self) -> bool {
         self.is_paused()
     }
 
     /// Inserts one captured session system variable.
-    pub fn add_system_var(&mut self, name: impl Into<GoString>, value: impl Into<GoString>) {
+    ///
+    /// Go's `SessionVars` is `map[string]string`, so the map is keyed by the
+    /// plain Rust string: [`GoString`] serializes through a JSON raw value,
+    /// which serde_json rejects as a map key.
+    pub fn add_system_var(&mut self, name: impl AsRef<str>, value: impl Into<GoString>) {
         self.session_vars
             .as_ref()
             .expect("assignment to entry in nil SessionVars map")
             .write()
-            .insert(name.into(), value.into());
+            .insert(name.as_ref().to_owned(), value.into());
     }
 
     /// Returns one captured session system variable.
-    #[must_use]
     pub fn get_system_var(&self, name: &str) -> Option<GoString> {
         self.session_vars
             .as_ref()
-            .and_then(|variables| variables.read().get(&GoString::from(name)).cloned())
+            .and_then(|variables| variables.read().get(name).cloned())
     }
 
     /// Reports whether this action may require data reorganization.
-    #[must_use]
     pub fn may_need_reorg(&self) -> bool {
         match self.type_ {
             ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
             | ActionType::ACTION_REORGANIZE_PARTITION
             | ActionType::ACTION_REMOVE_PARTITIONING
             | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
@@ -1266,7 +1260,6 @@ impl Job {
     }
 
     /// Reports whether the current action and schema state can be rolled back.
-    #[must_use]
     pub fn is_rollbackable(&self) -> bool {
         match self.type_ {
             ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => !matches!(
@@ -1276,6 +1269,10 @@ impl Job {
                     | SchemaState::WRITE_ONLY
             ),
             ActionType::ACTION_MODIFY_COLUMN => self.schema_state != SchemaState::PUBLIC,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => matches!(
+                self.schema_state,
+                SchemaState::NONE | SchemaState::WRITE_REORGANIZATION
+            ),
             ActionType::ACTION_ADD_TABLE_PARTITION => matches!(
                 self.schema_state,
                 SchemaState::NONE | SchemaState::REPLICA_ONLY
@@ -1323,7 +1320,6 @@ impl Job {
     }
 
     /// Returns explicit scheduling involvement or the schema/table fallback.
-    #[must_use]
     pub fn get_involving_schema_info(&self) -> GoSharedSlice<InvolvingSchemaInfo> {
         if !self.involving_schema_info.is_empty() {
             return self.involving_schema_info.clone();

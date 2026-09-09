@@ -16,9 +16,58 @@
 
 use super::*;
 
+/// Stable identity of one parsed Go `*ast.TableName` node.
+///
+/// Go keys semantic-resolution metadata by the table node's pointer. Rust AST
+/// values can move, so a shared zero-sized allocation supplies the same stable
+/// identity without tying correctness to an address on the Rust stack. Cloning
+/// a table reference copies the Go-pointer identity, as copying a Go pointer
+/// does; a newly parsed or constructed reference receives a fresh identity.
+#[derive(Clone)]
+pub struct TableIdentity(std::sync::Arc<()>);
+
+impl TableIdentity {
+    /// Creates the identity of a new table-name AST node.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(()))
+    }
+}
+
+impl Default for TableIdentity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for TableIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("TableIdentity")
+            .field(&(std::sync::Arc::as_ptr(&self.0) as usize))
+            .finish()
+    }
+}
+
+impl PartialEq for TableIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TableIdentity {}
+
+impl std::hash::Hash for TableIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(std::sync::Arc::as_ptr(&self.0) as usize);
+    }
+}
+
 /// A table reference in `FROM`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TableRef {
+    /// Go `*ast.TableName` pointer identity used by semantic resolution.
+    pub identity: TableIdentity,
     /// The dotted name path, e.g. `["db", "t"]` or `["t"]`.
     pub name: Vec<String>,
     /// An optional `PARTITION (name, ...)` clause restricting which
@@ -82,6 +131,17 @@ pub struct TableRef {
     /// Parses AFTER `hints` (confirmed via `godump restore`: `t USE INDEX
     /// (a) TABLESAMPLE REGION ()` is the only order accepted).
     pub sample: Option<TableSample>,
+}
+
+impl PartialEq for TableRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.partitions == other.partitions
+            && self.alias == other.alias
+            && self.as_of == other.as_of
+            && self.hints == other.hints
+            && self.sample == other.sample
+    }
 }
 
 impl TableRef {
@@ -167,18 +227,9 @@ impl TableRef {
 /// spelling (this crate's own [`SampleMethod::Region`]) always restores as
 /// the singular `REGION`, confirmed via `godump restore`.
 ///
-/// ALWAYS `Unsupported` at execution time, unconditionally — the SAME
-/// precedent [`TableRef::partitions`] already established, for a similar
-/// reason: confirmed via `gorun` that `TABLESAMPLE` has a REAL semantic
-/// effect on real TiDB's own result rows (tied to actual TiKV storage
-/// region boundaries — `SELECT a FROM t TABLESAMPLE REGIONS()` returned
-/// only 1 of 5 rows in one probe), which this crate's in-memory `Vec<Row>`
-/// table representation has no analogue for; faithfully reproducing it
-/// would need a genuine storage-region model, a much larger undertaking
-/// than parse/restore fidelity. `SYSTEM`/`BERNOULLI` are read but
-/// (confirmed via `gorun`) always reject at EXECUTION time in real TiDB
-/// too, since TiKV has no notion of either sampling method — so rejecting
-/// unconditionally here doesn't narrow real TiDB's own accepted behavior.
+/// The planner accepts `REGION(S)` and routes it through Go's dedicated
+/// physical sample operator. `SYSTEM` and `BERNOULLI` parse for AST parity but
+/// are rejected by preprocessing, as they are in Go.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableSample {
     /// The sampling method, if written.
@@ -471,6 +522,7 @@ impl crate::Visitable for TableRef {
             return visitor.leave(self);
         }
         let Self {
+            identity: _,
             name,
             partitions,
             alias,

@@ -14,7 +14,7 @@
 
 //! Stable Rust-native authority for `pkg/server/internal/handshake`.
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 
 /// A MySQL protocol string whose authority is the exact wire bytes.
@@ -65,6 +65,12 @@ impl WireString {
     }
 }
 
+impl Borrow<[u8]> for WireString {
+    fn borrow(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 impl From<&str> for WireString {
     fn from(value: &str) -> Self {
         Self(value.as_bytes().to_vec())
@@ -98,13 +104,10 @@ impl PartialEq<&str> for WireString {
 /// state, while preserving zero-value lookup and length behavior.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HandshakeResponse41 {
-    /// Client connection attributes. Duplicate keys follow Go map semantics:
-    /// the last value wins.
-    pub attrs: HashMap<String, String>,
-    /// Byte-exact connection attributes. This is the authority when a key or
-    /// value is not UTF-8; `attrs` is the lossy compatibility view used by
-    /// existing text-only consumers.
-    pub raw_attrs: HashMap<Vec<u8>, Vec<u8>>,
+    /// Client connection attributes. Go strings preserve arbitrary bytes, so
+    /// both keys and values retain their exact wire representation. Duplicate
+    /// keys follow Go map semantics: the last value wins.
+    pub attrs: HashMap<WireString, WireString>,
     /// Client user name.
     pub user: WireString,
     /// Optional initial database name.
@@ -123,8 +126,4 @@ pub struct HandshakeResponse41 {
     pub capability: u32,
     /// Client requested collation.
     pub collation: u8,
-    /// Source-generated connection-attribute warnings. Go writes these to its
-    /// logger; Rust retains them on the parsed response so no diagnostic is
-    /// silently discarded before the connection owner chooses a log sink.
-    pub attr_warnings: Vec<String>,
 }

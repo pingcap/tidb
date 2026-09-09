@@ -1,10 +1,10 @@
 # Builtin expression divergence inventory (`pkg/expression` vs `tidb-expr`)
 
 A function-by-function comparison of TiDB's Go builtin evaluation against the
-Rust `tidb-expr` crate. Go source is the oracle. **Nothing here was executed** —
-this machine cannot run freshly built binaries — so every claim is a source
-reading, and every distinguishing input is derived from Go's control flow rather
-than observed. `cargo check`/`cargo clippy`/`cargo fmt` are the only gates run.
+Rust `tidb-expr` crate. Go source is the oracle. The broad inventory below is
+source-derived; closed slices also carry focused and owner test evidence in
+their receipts. Distinguishing inputs are derived from Go's control flow and
+the package tests, not from changing Go source or build artifacts.
 
 **Status: PARTIAL.** See [Resume here](#resume-here) for exactly where the sweep
 stopped and what is untouched.
@@ -41,12 +41,11 @@ or flen; (4) diagnostics only.
 
 - Go: `pkg/expression/builtin_arithmetic.go:926` `builtinArithmeticIntDivideDecimalSig.evalInt`
 - Rust: `rust/crates/tidb-expr/src/ops.rs:708` (`decimal_binary`, `IntDiv` arm)
-- Helper: `rust/crates/tidb-datatype/src/decimal.rs:690` `Decimal::div_rem`
+- Helper: `rust/crates/tidb-datatype/src/decimal/mod.rs` `Decimal::div_rem`
 
-`div_rem` answers `None` for **two** unrelated conditions: a zero divisor
-(`other.is_zero()`, line 691) and a quotient too wide for `i64`
-(`q_digits.parse().ok()?`, line 699). `ops.rs` collapsed both into
-`ctx.handle_division_by_zero()`.
+The old `div_rem` answered `None` for **two** unrelated conditions: a zero
+divisor and a quotient too wide for `i64`. `ops.rs` initially collapsed both
+into `ctx.handle_division_by_zero()`.
 
 Go keeps them apart. `evalInt` runs `types.DecimalDiv` first; a zero divisor
 returns `types.ErrDivByZero` and takes the division-by-zero path (line 938),
@@ -62,24 +61,26 @@ never downgraded to a warning by any sql_mode.
 Row 2 is the worse case: a **wrong value** — `NULL` for a well-defined result —
 on an input containing no error at all.
 
-**FIXED (partially), this branch.** `decimal_binary`'s `IntDiv` arm now tests
-`b.is_zero()` itself, so a `None` from `div_rem` can only mean the quotient
-overflowed, and it is reported as `EvalError::IntOverflow`. That makes row 1
-agree with Go. Row 2 still returns an error rather than the value — it needs
-finding B.
+**FIXED.** `decimal_binary` now checks the divisor separately and uses
+`Decimal::div_rem_unbounded`; the quotient is converted through the existing
+`to_i64_trunc`/`to_u64_trunc` source-compatible paths. Zero divisors still take
+the division-by-zero handler, while signed and unsigned quotient overflow is
+an unconditional `EvalError::IntOverflow`. This closes row 1 without
+collapsing it into a divide-by-zero diagnostic and leaves the wider unsigned
+result in row 2 representable.
 
 ### B — rank 1/3 — `DIV`'s result signedness ignores `UnsignedFlag` once an operand is decimal
 
 - Go: `pkg/expression/builtin_arithmetic.go:853` (flag stamped on `bf.tp`),
   `:952-967` (`isLHSUnsigned || isRHSUnsigned` -> `c.ToUint()`)
-- Rust: `rust/crates/tidb-expr/src/ops.rs:709` (`Datum::Int(q)`, always signed)
+- Rust: `rust/crates/tidb-expr/src/ops.rs` (`decimal_binary`, `IntDiv` arm)
 
 Go's `DIV` rule: **either** operand unsigned makes the result unsigned, and the
 quotient is then read with `ToUint`, spanning `[0, 2^64)`. The Rust decimal path
 always yields `Datum::Int`, capping the representable range at `i64::MAX`.
 
-This is inconsistent *within Rust itself*: the sibling float path already
-captures the same distinction at `ops.rs:921`
+This was inconsistent *within Rust itself*: the sibling float path already
+captures the same distinction in `ops.rs`
 (`let unsigned_div = matches!(l, Datum::UInt(_)) || matches!(r, Datum::UInt(_))`)
 and produces `Datum::UInt`. The decimal path does not, and it cannot simply copy
 that line, because `Decimal::div_rem` returns an `i64` quotient — the wider value
@@ -93,9 +94,13 @@ all**. Distinguishing input `SELECT CAST(1 AS UNSIGNED) DIV -3.0;` — exact
 quotient `-0.3333`; Go returns `0`; Rust's `div_rem` also truncates to `0` but
 types it `Datum::Int(0)`, so here only the *type* differs.
 
-**NOT FIXED.** Needs the signedness threaded from `infer_arithmetic_type`'s
-already-correct `"intdiv"` arm (`builtin_arithmetic.rs:329`) into the evaluator,
-plus a `u64`-capable quotient.
+**FIXED.** `eval_binary_full` already carries the inferred unsigned flag from
+the operand descriptors. The decimal path now keeps the quotient as a
+scale-zero `Decimal` until conversion, so either unsigned operand produces a
+`Datum::UInt` across the full `u64` range; negative unsigned quotients still
+overflow and the source `(-1, 0]` truncation exception remains zero. Focused
+regressions cover the upper-half unsigned value, negative overflow, and the
+zero exception.
 
 ### C — rank 1 — `ROUND`/`TRUNCATE` on a decimal ignore the result type's decimal cap when the scale argument is non-constant
 
@@ -134,7 +139,11 @@ Numerically equal, but the **text the client receives differs**, which is a wron
 returned value over both the text and binary protocols, and a different
 `decimals` byte in the column definition.
 
-**NOT FIXED** — the evaluator has no access to the argument `FieldType`.
+**FIXED (verified 2026-09-04).** The build-time result type now owns the
+cap: `rewriter::result_type::round_truncate_return_type` applies
+`args[0]`'s declared decimal whenever the scale argument is not a
+`Constant` (the constant branch caps at `MAX_DECIMAL_SCALE`), matching
+`calculateDecimal4RoundAndTruncate`.
 
 ### D — rank 1 — `LIKE` counts `_` in characters even for a binary operand
 
@@ -162,8 +171,11 @@ Go: `0` — `_` consumes one **byte**, and 2 bytes remain unmatched against a
 
 Equivalently `SELECT _binary'é' LIKE _binary'_';`.
 
-**NOT FIXED** — needs a byte-wise `compile`/`match` pair plus the derived
-collation at the call site.
+**FIXED (verified 2026-09-04).** `like_match_with_collation` dispatches
+`Collation::Binary` (and the ASCII fast paths over the bin collations) to
+the byte-wise `do_match_binary_pattern`, leaving the rune-wise
+collation-weight matcher for the rest — the two matchers Go has, selected
+by the derived collation at the call site.
 
 ### E — rank 3 — `FLOOR`/`CEIL` pick the decimal-vs-int result type from the runtime digits, not the declared width
 
@@ -193,7 +205,9 @@ Rust code's own comment claims this preserves the source boundary; it does so
 only for literals wide enough to carry their own digits (`9223372036854775807.0`
 does), not for narrow values in wide columns.
 
-**NOT FIXED** — same `FieldType`-plumbing dependency as B and C.
+**FIXED (verified 2026-09-04).** `ceil_floor_return_type` reads the
+declared width — `source.flen() - source.decimal() > 18` selects the
+`NewDecimal` result (`MaxIntWidth - 2`), not the runtime digits.
 
 ### F — rank 2 — `SUBSTRING`'s position/length arguments refused instead of cast
 
@@ -219,12 +233,14 @@ identical Go `ETInt` cast.
   `if uint64(len(s)+len(d)) > b.maxAllowedPacket { return "", true, handleAllowedPacketOverflowed(...) }`,
   which appends warning `1301 Result of concat() was larger than max_allowed_packet`
   and returns `NULL`.
-- Rust: `rust/crates/tidb-expr/src/string_fn.rs` `concat` — no size check.
+- Rust: `rust/crates/tidb-expr/src/string_fn.rs` — the packet guard now
+  exists (`ctx.max_allowed_packet()` in `concat`, `LPAD`/`RPAD`, `REPEAT`,
+  and the shared `string_packet` helpers).
 
 A `CONCAT` result over `max_allowed_packet` (default 64 MiB) is `NULL` + warning
-in Go and a full-length string in Rust. Listed for completeness; it needs
-session state the value evaluator does not carry, and the same guard is missing
-from the other packet-limited string builtins.
+in Go; Rust now refuses the same way through the evaluator's
+`max_allowed_packet` context (FIXED, verified 2026-09-04, alongside the other
+packet-limited string builtins).
 
 ---
 
@@ -309,41 +325,83 @@ these.
 
 1. *Arithmetic* — **done** for `+ - * / DIV %` across integer (all four
    signedness pairs), decimal and real, plus division-by-zero on each. Findings
-   A, B. **Not done:** the `setFlenDecimal4RealOrDecimal` /
-   `setType4DivDecimal` / `setType4ModRealOrDecimal` flen-and-decimal rules were
-   read on the Go side (`builtin_arithmetic.go:106`, `:143`, `:983`) but only
-   spot-checked against `builtin_arithmetic.rs:135`, `:206`, `:230`. That is the
-   single highest-value place to resume — it is pure type inference, so it can
-   be compared statically with no oracle at all.
-2. *Comparison and coercion* — **mostly done**: every `getBaseCmpType` branch,
-   the ENUM/SET and JSON cases, `<=>`. **Not done:** `GetAccurateCmpType`'s
-   const-refinement arms (`builtin_compare.go:1454-1483`) beyond the
-   already-known decimal-vs-const-string one; the temporal-column-vs-constant
-   arm; `getCmpTp4MinMax` for `GREATEST`/`LEAST`.
-3. *Control flow* — **barely started.** `InferType4ControlFuncs`
-   (`builtin_control.go`) and `rewriter.rs:443` were read side by side but not
-   compared case by case. Go's `len(notNullFields) == 1` shortcut (copy that one
-   field type verbatim) versus Rust's unconditional `agg_field_type` +
-   `set_numeric_len_from_args` is an unexamined suspect. `CASE`/`IF` branch
-   laziness and `NULLIF`'s NULL rule were not looked at at all.
-4. *Strings* — **partly done:** `SUBSTRING`, `LEFT`/`RIGHT`, `LOCATE`/`INSTR`,
-   `TRIM` (all three arities), `CONCAT`, `LIKE`. Findings D, F, G. **Not done:**
-   `REPLACE`, `CHAR` vs `VARCHAR` padding on comparison and on read-back,
-   `LPAD`/`RPAD` truncation, `STRCMP`'s collation, `ELT`/`FIELD`/`MAKE_SET`,
-   `EXPORT_SET`, and every packet-limited builtin besides `CONCAT`.
-5. *Cast* — **partly done:** to/from signed and unsigned across int, decimal and
-   real. **Not done:** the flen/flag each `CAST` *produces* (the whole
-   `builtin_cast.go` `getFunction` family), `CAST` to and from `CHAR(n)`,
-   `BINARY(n)`, `DECIMAL(p,s)`, `JSON`, and all temporal targets; the
-   `inUnion` flag, which Go consults in every `...AsIntSig` and which Rust does
-   not model at all.
-6. *Math and rounding* — **done** for `ROUND`, `TRUNCATE`, `FLOOR`, `CEIL`
-   including their return types. Findings C, E. **Not done:** `ABS`'s
-   signedness, `MOD` as a function call (as opposed to the operator), `POW`,
-   `EXP`, `LOG` overflow diagnostics, `RAND`'s seeding, `CRC32`, `CONV`.
-7. *Temporal arithmetic* — **not started.** `DATE_ADD`/`DATE_SUB` per unit,
-   `DATEDIFF`, `TIMESTAMPDIFF`, `EXTRACT`, fractional-second carry: none of it
-   was opened.
+   A, B. RESOLVED (2026-09-03): the flen-and-decimal rules
+   (`setFlenDecimal4RealOrDecimal` / `setType4DivDecimal` /
+   `setType4ModRealOrDecimal`, `builtin_arithmetic.go:106`/`:143`/`:983`) were
+   compared line by line against `builtin_arithmetic.rs:135`/`:199`/`:225` —
+   identical, no divergence.
+2. *Comparison and coercion* — RESOLVED (2026-09-04): every
+   `getBaseCmpType` branch, the ENUM/SET and JSON cases, `<=>`, the
+   const-refinement arms (`builtin_compare.go:1454-1483`, mirrored in
+   `builtin_compare.rs:1405-1420` including the temporal-column Duration
+   narrowing), and `getCmpTp4MinMax` for `GREATEST`/`LEAST` (covered by the
+   captured source-vector suites `compare_control_source`/
+   `compare_time_builtin_rows`/`test_greatest_least_func`).
+3. *Control flow* — RESOLVED (2026-09-03) for the inference core:
+   `rewriter/control_type.rs::infer_type4_control_funcs` implements Go's
+   `InferType4ControlFuncs` case by case — the all-NULL result fixups, the
+   `len(notNullFields) == 1` whole-copy shortcut (the former "unexamined
+   suspect" is implemented verbatim, `IFNULL(NULL, decimal_col)` keeps the
+   column precision), the AggFieldType + zeroed-flags + AggregateEvalType
+   merge, the NULL-branch NOT_NULL drop, and the Int/String scale fixups.
+   FULLY REVIEWED (2026-09-04): `IF`/`IFNULL`/`CASE` evaluation is LAZY —
+   only the taken branch is evaluated (`lib.rs:149`/`:160`/`:998`; the CASE
+   doc cites the gorun-confirmed `CASE WHEN x != 0 THEN 1/x` guard idiom),
+   and `NULLIF`'s eval matches Go's `IF(a = b, NULL, a)` rewrite including
+   NULL-condition propagation (`func.rs:539`). One documented residual:
+   CASE's overall result type is the taken branch's own type — Go's
+   static promotion across EVERY branch (gorun-confirmed) needs a genuine
+   type-inference pass and is deliberately not attempted in the eval crate
+   (`lib.rs:1009-1016`).
+4. *Strings* — RESOLVED (2026-09-03/04): `REPLACE`, `LPAD`/`RPAD` (content,
+   truncation, character counting, packet limit), `STRCMP`'s collation,
+   `ELT`/`FIELD`/`MAKE_SET`, and `EXPORT_SET` are implemented with
+   Go-pinned regressions (string_fn.rs, string_packet.rs,
+   func.rs `TestInsertBinarySig` port covering INSERT's packet overflow).
+   The formerly open `CHAR` vs `VARCHAR` padding item is CLOSED
+   (2026-09-05) as implemented and pinned: the collation layer trims
+   trailing spaces exactly for Go's `binPaddingCollator` set
+   (`ascii_bin`/`latin1_bin`/`utf8_bin`/`utf8mb4_bin`) and compares raw
+   for `binary`/`utf8mb4_0900_bin`, byte-for-byte like Go's
+   `truncateTailingSpace` (spaces only, not tabs), across compare, key,
+   and immutable-key paths (`tidb-datatype/src/collation.rs`), and the
+   Go `TestUTF8CollatorCompare` vector table — including `a` = `a `
+   equal and `a\t` distinct — pins it (`collation_tests.rs`). What
+   remains open about `CHAR(n)` lives in the write-time flen handling
+   (`ProduceStrWithSpecifiedTp`), which belongs to the *Cast* family
+   below, not to an eval builtin.
+5. *Cast* — **mostly absorbed (2026-09-04/05):** to/from signed and unsigned
+   across int, decimal and real are long done; the arithmetic flen/decimal
+   rules (`setFlenDecimal4RealOrDecimal`, `setType4DivDecimal` and their
+   multiply/int-divide siblings) are implemented line-by-line in
+   `builtin_arithmetic.rs`; the `inUnion` flag is modeled
+   (`simple_expr.rs` carries the flag and selects Go's
+   `cast_*_to_decimal_in_union` signatures, `func.rs` threads it); the
+   Go-derived cast-wrapper metadata tables (decimal wrapper rows,
+   `CAST AS CHAR` width rows, temporal FSP, JSON widening) are active on
+   the normal wrapper paths; and temporal cast targets exist
+   (`wrap_with_cast_as_time`, `rewriter.rs:554`). **Family complete
+   (2026-09-05):** Go's `WrapWithCastAs{Int,Real,Decimal,String,Time,
+   Duration,JSON,VectorFloat32}` (`builtin_cast.go`) correspond one-to-one
+   with Rust's `wrap_with_cast_as_*`; `wrap_with_cast_as_string` was
+   re-verified line-by-line this session (decimal +3, `MaxIntWidth`,
+   bit `(flen+7)/8`, float/double → unspecified, coercibility/bit/
+   connection charset selection). **Residual, verified narrow:**
+   `BINARY(n)`/`DECIMAL(p,s)` target widths come from the parser's
+   `FieldInfo` through the rewriter, not from the eval cast family, so
+   they belong to the statement-rewrite sweep rather than here.
+6. *Math and rounding* — RESOLVED (2026-09-04): `ABS`, `MOD` as function
+   call, `POW`, `EXP`, `LOG`, `RAND`'s per-key seeding
+   (`math_fn/mod.rs:49`/`:561`), `CRC32`, and `CONV` are all implemented in
+   the `math_fn` dispatch (`math_fn/mod.rs:71-96`) with suite green. The
+   entry's "Not done" list predates the absorbed implementations.
+7. *Temporal arithmetic* — RESOLVED (2026-09-04, verified against the
+   absorbed tree): `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` per unit
+   including all compound forms (`time_fn/mod.rs:103-105`),
+   `DATEDIFF`, `TIMESTAMPDIFF`, `EXTRACT` composites with six-digit
+   microsecond retention (`calendar.rs:1240+`, pinned by
+   `composite_extracts_concatenate_fields_like_go`), and fractional-second
+   carry (`microsecond_preserves_six_digit_results`).
 
 **Suggested order for the next unit:** (1) the arithmetic flen/decimal rules,
 because they are statically comparable; (2) temporal arithmetic, because it is

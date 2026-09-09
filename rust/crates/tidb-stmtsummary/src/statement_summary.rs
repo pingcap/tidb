@@ -22,15 +22,19 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
-use tidb_exec::exec_details::{get_ia_remote_read_segment_stats, ExecDetails};
-use tidb_exec::slow_log_format::{RuDetailsSnapshot, TikvExecDetailsSnapshot};
+use tidb_exec::exec_details::{get_ia_remote_read_segment_stats, CopTasksSummary, ExecDetails};
 use tidb_kvcache::{CacheKey, InvalidCapacity, SimpleLruCache};
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
+use tikv_client::util::ExecDetailsSnapshot;
+#[cfg(test)]
+use tikv_client::util::TrafficDetailsSnapshot;
+use tikv_client::RuDetails;
 
 use crate::reader::StmtSummaryChecker;
 
 use crate::evicted::StmtSummaryByDigestEvicted;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `MaxEncodedPlanSizeInBytes`: the upper limit of the size of the plan and
 /// the binary plan in the stmt summary. Go declares it as a mutable package
@@ -54,7 +58,6 @@ pub struct StmtDigestKey {
 
 impl StmtDigestKey {
     /// Returns an empty key, matching Go's `&StmtDigestKey{}`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -106,7 +109,6 @@ impl StmtDigestKey {
     /// Only when the current SQL is `commit` is `prevSQL` recorded; otherwise
     /// `prevSQL` is empty. `prevSQL` is included in the key to distinguish
     /// different transactions.
-    #[must_use]
     pub fn hash(&self) -> &[u8] {
         &self.hash
     }
@@ -150,7 +152,6 @@ pub struct StmtSummaryStmtCtx {
 
 impl StmtSummaryStmtCtx {
     /// Go `stmtctx.NewStmtCtx`, restricted to this narrowing.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -161,7 +162,6 @@ impl StmtSummaryStmtCtx {
     }
 
     /// Go `(*StatementContext).AffectedRows`.
-    #[must_use]
     pub fn affected_rows(&self) -> u64 {
         self.affected_rows.load(Ordering::SeqCst)
     }
@@ -173,31 +173,9 @@ impl StmtSummaryStmtCtx {
     }
 
     /// Go `(*StatementContext).WarningCount`.
-    #[must_use]
     pub fn warning_count(&self) -> u32 {
         self.warning_count.load(Ordering::SeqCst)
     }
-}
-
-/// Go `execdetails.CopTasksSummary`: the coprocessor-task rollup
-/// `stmtSummaryStats.add` reads. Declared here because `tidb-exec` does not
-/// carry it yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CopTasksSummary {
-    /// Go `CopTasksSummary.NumCopTasks` (`int`).
-    pub num_cop_tasks: i64,
-    /// Go `CopTasksSummary.MaxProcessAddress`.
-    pub max_process_address: String,
-    /// Go `CopTasksSummary.MaxProcessTime`.
-    pub max_process_time: Duration,
-    /// Go `CopTasksSummary.TotProcessTime`.
-    pub tot_process_time: Duration,
-    /// Go `CopTasksSummary.MaxWaitAddress`.
-    pub max_wait_address: String,
-    /// Go `CopTasksSummary.MaxWaitTime`.
-    pub max_wait_time: Duration,
-    /// Go `CopTasksSummary.TotWaitTime`.
-    pub tot_wait_time: Duration,
 }
 
 /// The error Go returns as the third (`any`) result of
@@ -277,7 +255,7 @@ pub struct StmtExecInfo {
     /// Go `StmtExecInfo.ResultRows`.
     pub result_rows: i64,
     /// Go `StmtExecInfo.TiKVExecDetails`, already loaded out of its atomics.
-    pub tikv_exec_details: Option<TikvExecDetailsSnapshot>,
+    pub tikv_exec_details: Option<ExecDetailsSnapshot>,
     /// Go `StmtExecInfo.Prepared`.
     pub prepared: bool,
     /// Go `StmtExecInfo.KeyspaceName`.
@@ -286,8 +264,8 @@ pub struct StmtExecInfo {
     pub keyspace_id: u32,
     /// Go `StmtExecInfo.ResourceGroupName`.
     pub resource_group_name: String,
-    /// Go `StmtExecInfo.RUDetail`, already read through its accessors.
-    pub ru_detail: Option<RuDetailsSnapshot>,
+    /// Go `StmtExecInfo.RUDetail`.
+    pub ru_detail: Option<Arc<RuDetails>>,
     /// Go `StmtExecInfo.TotalRUV2`.
     pub total_ru_v2: f64,
     /// Go `StmtExecInfo.CPUUsages`.
@@ -322,19 +300,19 @@ pub struct StmtRuSummary {
 impl StmtRuSummary {
     /// Go `(*StmtRUSummary).Add`: adds a new sample value to the ru summary
     /// record.
-    pub fn add(&mut self, info: Option<&RuDetailsSnapshot>, total_ru_v2: f64) {
+    pub fn add(&mut self, info: Option<&RuDetails>, total_ru_v2: f64) {
         if let Some(info) = info {
-            let rru = info.rru;
+            let rru = info.read_ru();
             self.sum_rru += rru;
             if self.max_rru < rru {
                 self.max_rru = rru;
             }
-            let wru = info.wru;
+            let wru = info.write_ru();
             self.sum_wru += wru;
             if self.max_wru < wru {
                 self.max_wru = wru;
             }
-            let ru_wait_dur = info.ru_wait_duration;
+            let ru_wait_dur = info.ru_wait_duration();
             self.sum_ru_wait_duration += ru_wait_dur;
             if self.max_ru_wait_duration < ru_wait_dur {
                 self.max_ru_wait_duration = ru_wait_dur;
@@ -408,20 +386,18 @@ impl StmtNetworkTrafficSummary {
     }
 
     /// Go `(*StmtNetworkTrafficSummary).Add`.
-    pub fn add(&mut self, info: Option<&TikvExecDetailsSnapshot>) {
+    pub fn add(&mut self, info: Option<&ExecDetailsSnapshot>) {
         let Some(snapshot) = info else {
             return;
         };
-        self.unpacked_bytes_sent_tikv_total += snapshot.unpacked_bytes_sent_kv_total;
-        self.unpacked_bytes_received_tikv_total += snapshot.unpacked_bytes_received_kv_total;
-        self.unpacked_bytes_sent_tikv_cross_zone += snapshot.unpacked_bytes_sent_kv_cross_zone;
-        self.unpacked_bytes_received_tikv_cross_zone +=
-            snapshot.unpacked_bytes_received_kv_cross_zone;
-        self.unpacked_bytes_sent_tiflash_total += snapshot.unpacked_bytes_sent_mpp_total;
-        self.unpacked_bytes_received_tiflash_total += snapshot.unpacked_bytes_received_mpp_total;
-        self.unpacked_bytes_sent_tiflash_cross_zone += snapshot.unpacked_bytes_sent_mpp_cross_zone;
-        self.unpacked_bytes_received_tiflash_cross_zone +=
-            snapshot.unpacked_bytes_received_mpp_cross_zone;
+        self.unpacked_bytes_sent_tikv_total += snapshot.traffic.sent_kv_total;
+        self.unpacked_bytes_received_tikv_total += snapshot.traffic.received_kv_total;
+        self.unpacked_bytes_sent_tikv_cross_zone += snapshot.traffic.sent_kv_cross_zone;
+        self.unpacked_bytes_received_tikv_cross_zone += snapshot.traffic.received_kv_cross_zone;
+        self.unpacked_bytes_sent_tiflash_total += snapshot.traffic.sent_mpp_total;
+        self.unpacked_bytes_received_tiflash_total += snapshot.traffic.received_mpp_total;
+        self.unpacked_bytes_sent_tiflash_cross_zone += snapshot.traffic.sent_mpp_cross_zone;
+        self.unpacked_bytes_received_tiflash_cross_zone += snapshot.traffic.received_mpp_cross_zone;
     }
 }
 
@@ -523,6 +499,8 @@ pub struct StmtSummaryStats {
     pub sum_rocksdb_block_read_byte: u64,
     /// Go `maxRocksdbBlockReadByte`.
     pub max_rocksdb_block_read_byte: u64,
+    /// Go `iaExecCount`.
+    pub ia_exec_count: i64,
     /// Go `sumIARemoteReadSegmentCount`.
     pub sum_ia_remote_read_segment_count: u64,
     /// Go `maxIARemoteReadSegmentCount`.
@@ -604,9 +582,9 @@ pub struct StmtSummaryStats {
     /// Go `sumWriteSQLRespTotal`.
     pub sum_write_sql_resp_total: Duration,
     /// Go `sumTidbCPU`.
-    pub sum_tidb_cpu: Duration,
+    pub sum_tidb_cpu: i64,
     /// Go `sumTikvCPU`.
-    pub sum_tikv_cpu: Duration,
+    pub sum_tikv_cpu: i64,
     /// Go `sumResultRows`.
     pub sum_result_rows: i64,
     /// Go `maxResultRows`.
@@ -698,6 +676,7 @@ impl Default for StmtSummaryStats {
             max_rocksdb_block_read_count: 0,
             sum_rocksdb_block_read_byte: 0,
             max_rocksdb_block_read_byte: 0,
+            ia_exec_count: 0,
             sum_ia_remote_read_segment_count: 0,
             max_ia_remote_read_segment_count: 0,
             sum_ia_remote_read_segment_size: 0,
@@ -737,8 +716,8 @@ impl Default for StmtSummaryStats {
             sum_pd_total: Duration::ZERO,
             sum_backoff_total: Duration::ZERO,
             sum_write_sql_resp_total: Duration::ZERO,
-            sum_tidb_cpu: Duration::ZERO,
-            sum_tikv_cpu: Duration::ZERO,
+            sum_tidb_cpu: 0,
+            sum_tikv_cpu: 0,
             sum_result_rows: 0,
             max_result_rows: 0,
             min_result_rows: 0,
@@ -769,10 +748,15 @@ impl Default for StmtSummaryStats {
 /// `indexNames` store the values shown at the first time, because it compacts
 /// performance to update every time.
 ///
-/// Go returns `nil` when `GetEncodedPlan` errors; that becomes `None` here.
+/// Go substitutes [`PLAN_DISCARDED_ENCODED`] when `GetEncodedPlan` errors.
+/// The `Option` return is retained for the existing Rust construction API, but
+/// this function now returns `Some` for every `StmtExecInfo`, matching Go.
 #[must_use]
 pub fn new_stmt_summary_stats(sei: &StmtExecInfo) -> Option<StmtSummaryStats> {
-    let (mut sample_plan, plan_hint) = sei.lazy_info.encoded_plan().ok()?;
+    let (mut sample_plan, plan_hint) = sei
+        .lazy_info
+        .encoded_plan()
+        .unwrap_or_else(|_| (PLAN_DISCARDED_ENCODED.to_owned(), String::new()));
     let limit = MAX_ENCODED_PLAN_SIZE_IN_BYTES.load(Ordering::SeqCst);
     if sample_plan.len() > limit {
         sample_plan = PLAN_DISCARDED_ENCODED.to_owned();
@@ -892,11 +876,14 @@ impl StmtSummaryStats {
             if scan_detail.rocksdb_block_read_count > self.max_rocksdb_block_read_count {
                 self.max_rocksdb_block_read_count = scan_detail.rocksdb_block_read_count;
             }
-            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_byte;
-            if scan_detail.rocksdb_block_read_byte > self.max_rocksdb_block_read_byte {
-                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_byte;
+            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_bytes;
+            if scan_detail.rocksdb_block_read_bytes > self.max_rocksdb_block_read_byte {
+                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_bytes;
             }
             let ia_stats = get_ia_remote_read_segment_stats(Some(scan_detail));
+            if ia_stats.count > 0 {
+                self.ia_exec_count += 1;
+            }
             self.sum_ia_remote_read_segment_count += ia_stats.count;
             if ia_stats.count > self.max_ia_remote_read_segment_count {
                 self.max_ia_remote_read_segment_count = ia_stats.count;
@@ -926,7 +913,7 @@ impl StmtSummaryStats {
             if commit_details.get_commit_ts_time > self.max_get_commit_ts_time {
                 self.max_get_commit_ts_time = commit_details.get_commit_ts_time;
             }
-            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time;
+            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time_ns;
             self.sum_resolve_lock_time += resolve_lock_time;
             if resolve_lock_time > self.max_resolve_lock_time {
                 self.max_resolve_lock_time = resolve_lock_time;
@@ -935,34 +922,37 @@ impl StmtSummaryStats {
             if commit_details.local_latch_time > self.max_local_latch_time {
                 self.max_local_latch_time = commit_details.local_latch_time;
             }
-            self.sum_write_keys += commit_details.write_keys;
-            if commit_details.write_keys > self.max_write_keys {
-                self.max_write_keys = commit_details.write_keys;
+            let write_keys = commit_details.write_keys as i64;
+            self.sum_write_keys += write_keys;
+            if write_keys > self.max_write_keys {
+                self.max_write_keys = write_keys;
             }
-            self.sum_write_size += commit_details.write_size;
-            if commit_details.write_size > self.max_write_size {
-                self.max_write_size = commit_details.write_size;
+            let write_size = commit_details.write_size as i64;
+            self.sum_write_size += write_size;
+            if write_size > self.max_write_size {
+                self.max_write_size = write_size;
             }
             let prewrite_region_num = commit_details.prewrite_region_num;
             self.sum_prewrite_region_num += i64::from(prewrite_region_num);
             if prewrite_region_num > self.max_prewrite_region_num {
                 self.max_prewrite_region_num = prewrite_region_num;
             }
-            self.sum_txn_retry += commit_details.txn_retry;
-            if commit_details.txn_retry > self.max_txn_retry {
-                self.max_txn_retry = commit_details.txn_retry;
+            let transaction_retry = commit_details.transaction_retry as i64;
+            self.sum_txn_retry += transaction_retry;
+            if transaction_retry > self.max_txn_retry {
+                self.max_txn_retry = transaction_retry;
             }
-            let commit_backoff_time = commit_details.commit_backoff_time;
+            let commit_backoff_time = commit_details.detail.commit_backoff_time_ns;
             self.sum_commit_backoff_time += commit_backoff_time;
             if commit_backoff_time > self.max_commit_backoff_time {
                 self.max_commit_backoff_time = commit_backoff_time;
             }
-            self.sum_backoff_times += commit_details.prewrite_backoff_types.len() as i64;
-            for backoff_type in &commit_details.prewrite_backoff_types {
+            self.sum_backoff_times += commit_details.detail.prewrite_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.prewrite_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
-            self.sum_backoff_times += commit_details.commit_backoff_types.len() as i64;
-            for backoff_type in &commit_details.commit_backoff_types {
+            self.sum_backoff_times += commit_details.detail.commit_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.commit_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
         }
@@ -1021,19 +1011,19 @@ impl StmtSummaryStats {
             self.min_result_rows = 0;
         }
         if let Some(tikv) = sei.tikv_exec_details.as_ref() {
-            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_resp_duration);
-            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_resp_duration);
-            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration);
+            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_response_duration_ns);
+            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_response_duration_ns);
+            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration_ns);
         }
         self.sum_write_sql_resp_total += sei.write_sql_resp_duration;
-        self.sum_tidb_cpu += sei.cpu_usages.tidb_cpu_time;
-        self.sum_tikv_cpu += sei.cpu_usages.tikv_cpu_time;
+        self.sum_tidb_cpu = self.sum_tidb_cpu.wrapping_add(sei.cpu_usages.tidb_cpu_time);
+        self.sum_tikv_cpu = self.sum_tikv_cpu.wrapping_add(sei.cpu_usages.tikv_cpu_time);
 
         // network traffic
         self.network.add(sei.tikv_exec_details.as_ref());
 
         // request-units
-        self.ru.add(sei.ru_detail.as_ref(), sei.total_ru_v2);
+        self.ru.add(sei.ru_detail.as_deref(), sei.total_ru_v2);
 
         self.storage_kv = sei.stmt_ctx.is_tikv.load(Ordering::SeqCst);
         self.storage_mpp = sei.stmt_ctx.is_tiflash.load(Ordering::SeqCst);
@@ -1142,24 +1132,23 @@ impl StmtSummaryByDigest {
     /// Go `(*stmtSummaryByDigest).init`: creates a `stmtSummaryByDigest` from
     /// `StmtExecInfo`.
     ///
-    /// Go would nil-deref when `newStmtSummaryStats` returns nil; here the
-    /// initialization is skipped and `false` is returned.
+    /// Go initializes the summary even when encoded-plan generation fails; the
+    /// fallback marker is produced by [`new_stmt_summary_stats`].
     fn init(&mut self, sei: &StmtExecInfo) -> bool {
         // Use "," to separate table names to support FIND_IN_SET.
         let mut buffer = String::new();
-        let table_count = sei.stmt_ctx.tables.len();
-        for (i, value) in sei.stmt_ctx.tables.iter().enumerate() {
+        for value in &sei.stmt_ctx.tables {
             // In `create database` statement, DB name is not empty but table
             // name is empty.
             if value.table.is_empty() {
                 continue;
             }
-            buffer.push_str(&value.db.to_lowercase());
-            buffer.push('.');
-            buffer.push_str(&value.table.to_lowercase());
-            if i < table_count - 1 {
+            if !buffer.is_empty() {
                 buffer.push(',');
             }
+            buffer.push_str(&go_to_lower(&value.db));
+            buffer.push('.');
+            buffer.push_str(&go_to_lower(&value.table));
         }
         let table_names = buffer;
 
@@ -1256,7 +1245,6 @@ impl StmtSummaryByDigest {
     /// Go `(*stmtSummaryByDigest).collectHistorySummaries`: puts at most
     /// `historySize` summaries into an array.
     ///
-    #[must_use]
     pub fn collect_history_summaries(
         &self,
         checker: Option<&StmtSummaryChecker>,
@@ -1270,11 +1258,15 @@ impl StmtSummaryByDigest {
                 return Vec::new();
             }
         }
-        self.history
+        let mut summaries: Vec<_> = self
+            .history
             .iter()
+            .rev()
             .take(history_size)
             .map(Arc::clone)
-            .collect()
+            .collect();
+        summaries.reverse();
+        summaries
     }
 }
 
@@ -1376,9 +1368,23 @@ impl Default for StmtSummaryByDigestMap {
 }
 
 impl StmtSummaryByDigestMap {
+    /// Returns the normalized SQL for one digest from the live global map.
+    /// Go's `SQLDigestTextRetriever` performs the same digest-only lookup.
+    #[must_use]
+    pub fn normalized_sql_for_digest(&self, digest: &str) -> Option<String> {
+        let values: Vec<Arc<Mutex<StmtSummaryByDigest>>> = {
+            let inner = self.inner.lock().unwrap();
+            inner.summary_map.values().into_iter().cloned().collect()
+        };
+        values.into_iter().find_map(|summary| {
+            let summary = summary.lock().unwrap();
+            (summary.digest == digest && !summary.normalized_sql.is_empty())
+                .then(|| summary.normalized_sql.clone())
+        })
+    }
+
     /// Go `newStmtSummaryByDigestMap`: creates an empty
     /// `stmtSummaryByDigestMap`.
-    #[must_use]
     pub fn new() -> Self {
         // Go's `other: newStmtSummaryByDigestEvicted()`.
         let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
@@ -1398,7 +1404,6 @@ impl StmtSummaryByDigestMap {
 
     /// Go `newStmtSummaryByDigestMap` with the two narrowed collaborators
     /// injected.
-    #[must_use]
     pub fn with_sinks(evicted: Box<dyn EvictedSink>, metrics: Box<dyn WindowMetricsSink>) -> Self {
         // This initializes the map with "compiled defaults" (which are
         // regrettably duplicated from sessionctx/variable/tidb_vars.go).
@@ -1508,14 +1513,21 @@ impl StmtSummaryByDigestMap {
             Some(value) => Arc::clone(value),
             None => {
                 // Lazy initialize it to release ssMap.mutex ASAP.
-                let summary = Arc::new(Mutex::new(StmtSummaryByDigest::default()));
+                let summary = Arc::new(Mutex::new(StmtSummaryByDigest {
+                    // Go initializes `isInternal` from the first statement;
+                    // subsequent statements narrow it with logical AND.
+                    is_internal: sei.is_internal,
+                    ..StmtSummaryByDigest::default()
+                }));
                 inner.summary_map.put(key, Arc::clone(&summary));
                 summary
             }
         };
         {
             let mut summary = summary.lock().unwrap();
-            summary.is_internal = summary.is_internal && sei.is_internal;
+            if summary.initialized {
+                summary.is_internal = summary.is_internal && sei.is_internal;
+            }
             summary.add(sei, begin_time, interval_seconds, history_size);
         }
         self.update_metrics_locked(&inner);
@@ -1540,20 +1552,24 @@ impl StmtSummaryByDigestMap {
     /// summaries which are internal summaries.
     pub fn clear_internal(&self) {
         let mut inner = self.inner.lock().unwrap();
+        // Snapshot keys and values without calling `get`: Go's `Peek` keeps
+        // the LRU order unchanged while the record mutex protects
+        // `isInternal` from concurrent AddStatement updates.
         let hashes: Vec<Vec<u8>> = inner
             .summary_map
             .keys()
-            .iter()
-            .map(|key| key.hash().to_vec())
+            .into_iter()
+            .zip(inner.summary_map.values())
+            .filter_map(|(key, summary)| {
+                summary
+                    .lock()
+                    .unwrap()
+                    .is_internal
+                    .then(|| key.hash().to_vec())
+            })
             .collect();
         for hash in hashes {
-            let is_internal = match inner.summary_map.get(hash.as_slice()) {
-                Some(summary) => summary.lock().unwrap().is_internal,
-                None => continue,
-            };
-            if is_internal {
-                inner.summary_map.delete(hash.as_slice());
-            }
+            inner.summary_map.delete(hash.as_slice());
         }
         self.update_metrics_locked(&inner);
     }
@@ -1568,9 +1584,9 @@ impl StmtSummaryByDigestMap {
 
         for value in values {
             let mut ssbd = value.lock().unwrap();
-            if let Some(front) = ssbd.history.front().map(Arc::clone) {
+            if let Some(back) = ssbd.history.back().map(Arc::clone) {
                 let mut new_history = VecDeque::new();
-                new_history.push_front(front);
+                new_history.push_back(back);
                 ssbd.history = new_history;
             }
         }
@@ -1587,7 +1603,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).Enabled`.
-    #[must_use]
     pub fn enabled(&self) -> bool {
         self.opt_enabled.load(Ordering::SeqCst)
     }
@@ -1602,7 +1617,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).EnabledInternal`.
-    #[must_use]
     pub fn enabled_internal(&self) -> bool {
         self.opt_enable_internal_query.load(Ordering::SeqCst)
     }
@@ -1617,7 +1631,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).historyEnabled`.
-    #[must_use]
     pub fn history_enabled(&self) -> bool {
         self.opt_history_enabled.load(Ordering::SeqCst)
     }
@@ -1628,7 +1641,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).refreshInterval`.
-    #[must_use]
     pub fn refresh_interval(&self) -> i64 {
         self.opt_refresh_interval.load(Ordering::SeqCst)
     }
@@ -1639,7 +1651,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).historySize`.
-    #[must_use]
     pub fn history_size(&self) -> usize {
         self.opt_history_size.load(Ordering::SeqCst).max(0) as usize
     }
@@ -1660,7 +1671,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).GroupByUser`.
-    #[must_use]
     pub fn group_by_user(&self) -> bool {
         self.opt_group_by_user.load(Ordering::SeqCst)
     }
@@ -1676,7 +1686,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).maxStmtCount`.
-    #[must_use]
     pub fn max_stmt_count(&self) -> usize {
         self.opt_max_stmt_count.load(Ordering::SeqCst) as usize
     }
@@ -1695,7 +1704,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).maxSQLLength`.
-    #[must_use]
     pub fn max_sql_length(&self) -> usize {
         self.opt_max_sql_length.load(Ordering::SeqCst).max(0) as usize
     }
@@ -1706,13 +1714,11 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go's direct test reads of `ssMap.beginTimeForCurInterval`.
-    #[must_use]
     pub fn begin_time_for_cur_interval(&self) -> i64 {
         self.inner.lock().unwrap().begin_time_for_cur_interval
     }
 
     /// Go's `ssMap.summaryMap.Size()`.
-    #[must_use]
     pub fn summary_map_size(&self) -> usize {
         self.inner.lock().unwrap().summary_map.size()
     }
@@ -1724,7 +1730,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go's `ssMap.summaryMap.Values()`, in most-recently-used order.
-    #[must_use]
     pub fn summary_map_values(&self) -> Vec<Arc<Mutex<StmtSummaryByDigest>>> {
         self.inner
             .lock()
@@ -1748,7 +1753,6 @@ fn unix_now() -> i64 {
 ///
 /// Go slices raw bytes; this truncates at the nearest UTF-8 boundary at or
 /// below the limit, and reports Go's byte length.
-#[must_use]
 pub fn format_sql(sql: &str) -> String {
     let max_sql_length = STMT_SUMMARY_BY_DIGEST_MAP.max_sql_length();
     let length = sql.len();
@@ -1787,7 +1791,6 @@ pub fn format_backoff_types(backoff_map: &HashMap<String, i64>) -> Option<String
 }
 
 /// Go `avgInt`.
-#[must_use]
 pub fn avg_int(sum: i64, count: i64) -> i64 {
     if count > 0 {
         sum / count
@@ -1797,7 +1800,6 @@ pub fn avg_int(sum: i64, count: i64) -> i64 {
 }
 
 /// Go `avgFloat`.
-#[must_use]
 pub fn avg_float(sum: i64, count: i64) -> f64 {
     if count > 0 {
         sum as f64 / count as f64
@@ -1807,7 +1809,6 @@ pub fn avg_float(sum: i64, count: i64) -> f64 {
 }
 
 /// Go `avgFloat4Uint`.
-#[must_use]
 pub fn avg_float4_uint(sum: u64, count: i64) -> f64 {
     if count > 0 {
         sum as f64 / count as f64
@@ -1817,7 +1818,6 @@ pub fn avg_float4_uint(sum: u64, count: i64) -> f64 {
 }
 
 /// Go `avgSumFloat`.
-#[must_use]
 pub fn avg_sum_float(sum: f64, count: i64) -> f64 {
     if count > 0 {
         sum / count as f64
@@ -1841,7 +1841,8 @@ pub(crate) mod tests {
     use std::thread;
 
     use tidb_exec::exec_details::{
-        CommitDetails, CopExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
+        CommitDetails, CommitDetailsInner, CopExecDetails, ResolveLockDetail, ScanDetail,
+        TimeDetail,
     };
 
     use super::*;
@@ -1861,6 +1862,7 @@ pub(crate) mod tests {
         original_sql: String,
         plan: String,
         hint_str: String,
+        plan_error: bool,
         bin_plan: String,
         plan_digest: String,
         binding_sql: String,
@@ -1873,6 +1875,9 @@ pub(crate) mod tests {
         }
 
         fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
+            if self.plan_error {
+                return Err(EncodedPlanError("mock plan encoding error".to_owned()));
+            }
             Ok((self.plan.clone(), self.hint_str.clone()))
         }
 
@@ -1967,15 +1972,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(10000),
                     commit_time: Duration::from_nanos(1000),
                     local_latch_time: Duration::from_nanos(10),
-                    commit_backoff_time: 200,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 200,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 20000,
                     write_size: 200_000,
                     prewrite_region_num: 20,
-                    txn_retry: 2,
+                    transaction_retry: 2,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 2000,
+                        resolve_lock_time_ns: 2000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -1988,7 +1995,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -1997,6 +2004,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "129".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2012,27 +2020,29 @@ pub(crate) mod tests {
             exec_retry_time: Duration::ZERO,
             write_sql_resp_duration: Duration::ZERO,
             result_rows: 0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 10,
-                unpacked_bytes_received_kv_total: 1000,
-                unpacked_bytes_received_kv_cross_zone: 1,
-                unpacked_bytes_sent_kv_cross_zone: 100,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 10,
+                    received_kv_total: 1000,
+                    received_kv_cross_zone: 1,
+                    sent_kv_cross_zone: 100,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             prepared: false,
             keyspace_name: String::new(),
             keyspace_id: 0,
             resource_group_name: "rg1".to_owned(),
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 1.1,
-                wru: 2.5,
-                ru_wait_duration: Duration::from_millis(2),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                1.1,
+                2.5,
+                Duration::from_millis(2),
+            ))),
             total_ru_v2: 23456.0,
             cpu_usages: CpuUsages {
-                tidb_cpu_time: Duration::from_nanos(20),
-                tikv_cpu_time: Duration::from_nanos(100),
+                tidb_cpu_time: 20,
+                tikv_cpu_time: 100,
             },
             plan_cache_unqualified: String::new(),
             lazy_info: mock_lazy_info("original_sql1", "binding_sql1", "binding_digest1"),
@@ -2181,6 +2191,7 @@ pub(crate) mod tests {
             .commit_detail
             .as_mut()
             .unwrap()
+            .detail
             .prewrite_backoff_types = Vec::new();
         let mut key = StmtDigestKey::new();
         key.init(
@@ -2202,7 +2213,7 @@ pub(crate) mod tests {
             .unwrap();
         let time1 = info1.exec_detail.cop_exec_details.time_detail.clone();
         let tikv1 = info1.tikv_exec_details.unwrap();
-        let ru1 = info1.ru_detail.unwrap();
+        let ru1 = info1.ru_detail.as_ref().unwrap();
 
         let mut expected_element = StmtSummaryByDigestElement {
             begin_time: now + 60,
@@ -2244,18 +2255,18 @@ pub(crate) mod tests {
                 max_commit_time: commit1.commit_time,
                 sum_local_latch_time: commit1.local_latch_time,
                 max_local_latch_time: commit1.local_latch_time,
-                sum_commit_backoff_time: commit1.commit_backoff_time,
-                max_commit_backoff_time: commit1.commit_backoff_time,
-                sum_resolve_lock_time: commit1.resolve_lock.resolve_lock_time,
-                max_resolve_lock_time: commit1.resolve_lock.resolve_lock_time,
-                sum_write_keys: commit1.write_keys,
-                max_write_keys: commit1.write_keys,
-                sum_write_size: commit1.write_size,
-                max_write_size: commit1.write_size,
+                sum_commit_backoff_time: commit1.detail.commit_backoff_time_ns,
+                max_commit_backoff_time: commit1.detail.commit_backoff_time_ns,
+                sum_resolve_lock_time: commit1.resolve_lock.resolve_lock_time_ns,
+                max_resolve_lock_time: commit1.resolve_lock.resolve_lock_time_ns,
+                sum_write_keys: commit1.write_keys as i64,
+                max_write_keys: commit1.write_keys as i64,
+                sum_write_size: commit1.write_size as i64,
+                max_write_size: commit1.write_size as i64,
                 sum_prewrite_region_num: i64::from(commit1.prewrite_region_num),
                 max_prewrite_region_num: commit1.prewrite_region_num,
-                sum_txn_retry: commit1.txn_retry,
-                max_txn_retry: commit1.txn_retry,
+                sum_txn_retry: commit1.transaction_retry as i64,
+                max_txn_retry: commit1.transaction_retry as i64,
                 backoff_types: HashMap::new(),
                 sum_mem: info1.mem_max,
                 max_mem: info1.mem_max,
@@ -2265,28 +2276,27 @@ pub(crate) mod tests {
                 first_seen: info1.start_time,
                 last_seen: info1.start_time,
                 ru: StmtRuSummary {
-                    sum_rru: ru1.rru,
-                    max_rru: ru1.rru,
-                    sum_wru: ru1.wru,
-                    max_wru: ru1.wru,
-                    sum_ru_wait_duration: ru1.ru_wait_duration,
-                    max_ru_wait_duration: ru1.ru_wait_duration,
+                    sum_rru: ru1.read_ru(),
+                    max_rru: ru1.read_ru(),
+                    sum_wru: ru1.write_ru(),
+                    max_wru: ru1.write_ru(),
+                    sum_ru_wait_duration: ru1.ru_wait_duration(),
+                    max_ru_wait_duration: ru1.ru_wait_duration(),
                     sum_ru_v2: info1.total_ru_v2,
                     max_ru_v2: info1.total_ru_v2,
                 },
                 resource_group_name: info1.resource_group_name.clone(),
                 network: StmtNetworkTrafficSummary {
-                    unpacked_bytes_sent_tikv_total: tikv1.unpacked_bytes_sent_kv_total,
-                    unpacked_bytes_received_tikv_total: tikv1.unpacked_bytes_received_kv_total,
-                    unpacked_bytes_sent_tikv_cross_zone: tikv1.unpacked_bytes_sent_kv_cross_zone,
-                    unpacked_bytes_received_tikv_cross_zone: tikv1
-                        .unpacked_bytes_received_kv_cross_zone,
-                    unpacked_bytes_sent_tiflash_total: tikv1.unpacked_bytes_sent_mpp_total,
-                    unpacked_bytes_received_tiflash_total: tikv1.unpacked_bytes_received_mpp_total,
-                    unpacked_bytes_sent_tiflash_cross_zone: tikv1
-                        .unpacked_bytes_sent_mpp_cross_zone,
+                    unpacked_bytes_sent_tikv_total: tikv1.traffic.sent_kv_total,
+                    unpacked_bytes_received_tikv_total: tikv1.traffic.received_kv_total,
+                    unpacked_bytes_sent_tikv_cross_zone: tikv1.traffic.sent_kv_cross_zone,
+                    unpacked_bytes_received_tikv_cross_zone: tikv1.traffic.received_kv_cross_zone,
+                    unpacked_bytes_sent_tiflash_total: tikv1.traffic.sent_mpp_total,
+                    unpacked_bytes_received_tiflash_total: tikv1.traffic.received_mpp_total,
+                    unpacked_bytes_sent_tiflash_cross_zone: tikv1.traffic.sent_mpp_cross_zone,
                     unpacked_bytes_received_tiflash_cross_zone: tikv1
-                        .unpacked_bytes_received_mpp_cross_zone,
+                        .traffic
+                        .received_mpp_cross_zone,
                 },
                 storage_kv: info1.stmt_ctx.is_tikv.load(Ordering::SeqCst),
                 storage_mpp: info1.stmt_ctx.is_tiflash.load(Ordering::SeqCst),
@@ -2346,15 +2356,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(50000),
                     commit_time: Duration::from_nanos(5000),
                     local_latch_time: Duration::from_nanos(50),
-                    commit_backoff_time: 1000,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 1000,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 100_000,
                     write_size: 1_000_000,
                     prewrite_region_num: 100,
-                    txn_retry: 10,
+                    transaction_retry: 10,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 10000,
+                        resolve_lock_time_ns: 10000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -2367,7 +2379,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -2376,6 +2388,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "202".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2384,17 +2397,19 @@ pub(crate) mod tests {
             disk_max: 20000,
             start_time: start_time(10, 10, 20),
             succeed: true,
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 123.0,
-                wru: 45.6,
-                ru_wait_duration: Duration::from_secs(2),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                123.0,
+                45.6,
+                Duration::from_secs(2),
+            ))),
             total_ru_v2: 34567.0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 100,
-                unpacked_bytes_received_kv_total: 200,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 100,
+                    received_kv_total: 200,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             resource_group_name: "rg1".to_owned(),
             lazy_info: mock_lazy_info("original_sql2", "binding_sql2", "binding_digest2"),
@@ -2426,7 +2441,7 @@ pub(crate) mod tests {
             .clone()
             .unwrap();
         let time2 = info2.exec_detail.cop_exec_details.time_detail.clone();
-        let ru2 = info2.ru_detail.unwrap();
+        let ru2 = info2.ru_detail.as_ref().unwrap();
         {
             let s = &mut expected_element.stats;
             s.exec_count += 1;
@@ -2462,18 +2477,18 @@ pub(crate) mod tests {
             s.max_commit_time = commit2.commit_time;
             s.sum_local_latch_time += commit2.local_latch_time;
             s.max_local_latch_time = commit2.local_latch_time;
-            s.sum_commit_backoff_time += commit2.commit_backoff_time;
-            s.max_commit_backoff_time = commit2.commit_backoff_time;
-            s.sum_resolve_lock_time += commit2.resolve_lock.resolve_lock_time;
-            s.max_resolve_lock_time = commit2.resolve_lock.resolve_lock_time;
-            s.sum_write_keys += commit2.write_keys;
-            s.max_write_keys = commit2.write_keys;
-            s.sum_write_size += commit2.write_size;
-            s.max_write_size = commit2.write_size;
+            s.sum_commit_backoff_time += commit2.detail.commit_backoff_time_ns;
+            s.max_commit_backoff_time = commit2.detail.commit_backoff_time_ns;
+            s.sum_resolve_lock_time += commit2.resolve_lock.resolve_lock_time_ns;
+            s.max_resolve_lock_time = commit2.resolve_lock.resolve_lock_time_ns;
+            s.sum_write_keys += commit2.write_keys as i64;
+            s.max_write_keys = commit2.write_keys as i64;
+            s.sum_write_size += commit2.write_size as i64;
+            s.max_write_size = commit2.write_size as i64;
             s.sum_prewrite_region_num += i64::from(commit2.prewrite_region_num);
             s.max_prewrite_region_num = commit2.prewrite_region_num;
-            s.sum_txn_retry += commit2.txn_retry;
-            s.max_txn_retry = commit2.txn_retry;
+            s.sum_txn_retry += commit2.transaction_retry as i64;
+            s.max_txn_retry = commit2.transaction_retry as i64;
             s.sum_backoff_times += 1;
             s.backoff_types.insert(BO_TXN_LOCK_NAME.to_owned(), 1);
             s.sum_mem += info2.mem_max;
@@ -2484,12 +2499,12 @@ pub(crate) mod tests {
             s.max_disk = info2.disk_max;
             s.sum_affected_rows += info2.stmt_ctx.affected_rows();
             s.last_seen = info2.start_time;
-            s.ru.sum_rru += ru2.rru;
-            s.ru.max_rru = ru2.rru;
-            s.ru.sum_wru += ru2.wru;
-            s.ru.max_wru = ru2.wru;
-            s.ru.sum_ru_wait_duration += ru2.ru_wait_duration;
-            s.ru.max_ru_wait_duration = ru2.ru_wait_duration;
+            s.ru.sum_rru += ru2.read_ru();
+            s.ru.max_rru = ru2.read_ru();
+            s.ru.sum_wru += ru2.write_ru();
+            s.ru.max_wru = ru2.write_ru();
+            s.ru.sum_ru_wait_duration += ru2.ru_wait_duration();
+            s.ru.max_ru_wait_duration = ru2.ru_wait_duration();
             s.ru.sum_ru_v2 += info2.total_ru_v2;
             s.ru.max_ru_v2 = info2.total_ru_v2;
             s.network.add(info2.tikv_exec_details.as_ref());
@@ -2528,15 +2543,17 @@ pub(crate) mod tests {
                     prewrite_time: Duration::from_nanos(5000),
                     commit_time: Duration::from_nanos(500),
                     local_latch_time: Duration::from_nanos(5),
-                    commit_backoff_time: 100,
-                    prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
-                    commit_backoff_types: Vec::new(),
+                    detail: CommitDetailsInner {
+                        commit_backoff_time_ns: 100,
+                        prewrite_backoff_types: vec![BO_TXN_LOCK_NAME.to_owned()],
+                        ..CommitDetailsInner::default()
+                    },
                     write_keys: 10000,
                     write_size: 100_000,
                     prewrite_region_num: 10,
-                    txn_retry: 1,
+                    transaction_retry: 1,
                     resolve_lock: ResolveLockDetail {
-                        resolve_lock_time: 1000,
+                        resolve_lock_time_ns: 1000,
                     },
                     ..CommitDetails::default()
                 }),
@@ -2549,7 +2566,7 @@ pub(crate) mod tests {
                         rocksdb_key_skipped_count: 10,
                         rocksdb_block_cache_hit_count: 10,
                         rocksdb_block_read_count: 10,
-                        rocksdb_block_read_byte: 1000,
+                        rocksdb_block_read_bytes: 1000,
                         ..ScanDetail::default()
                     }),
                     time_detail: TimeDetail {
@@ -2558,6 +2575,7 @@ pub(crate) mod tests {
                         ..TimeDetail::default()
                     },
                     callee_address: "302".to_owned(),
+                    ..CopExecDetails::default()
                 },
                 ..ExecDetails::default()
             },
@@ -2565,19 +2583,21 @@ pub(crate) mod tests {
             mem_max: 200,
             disk_max: 200,
             start_time: start_time(10, 10, 0),
-            ru_detail: Some(RuDetailsSnapshot {
-                rru: 0.12,
-                wru: 0.34,
-                ru_wait_duration: Duration::from_micros(5),
-                ..RuDetailsSnapshot::default()
-            }),
+            ru_detail: Some(Arc::new(RuDetails::new_with(
+                0.12,
+                0.34,
+                Duration::from_micros(5),
+            ))),
             total_ru_v2: 123.0,
-            tikv_exec_details: Some(TikvExecDetailsSnapshot {
-                unpacked_bytes_sent_kv_total: 1,
-                unpacked_bytes_received_kv_total: 300,
-                unpacked_bytes_sent_mpp_total: 1,
-                unpacked_bytes_received_mpp_total: 300,
-                ..TikvExecDetailsSnapshot::default()
+            tikv_exec_details: Some(ExecDetailsSnapshot {
+                traffic: TrafficDetailsSnapshot {
+                    sent_kv_total: 1,
+                    received_kv_total: 300,
+                    sent_mpp_total: 1,
+                    received_mpp_total: 300,
+                    ..TrafficDetailsSnapshot::default()
+                },
+                ..ExecDetailsSnapshot::default()
             }),
             lazy_info: mock_lazy_info("original_sql3", "binding_sql3", "binding_digest3"),
             mem_arbitration: 200.0,
@@ -2593,7 +2613,7 @@ pub(crate) mod tests {
             .clone()
             .unwrap();
         let time3 = info3.exec_detail.cop_exec_details.time_detail.clone();
-        let ru3 = info3.ru_detail.unwrap();
+        let ru3 = info3.ru_detail.as_ref().unwrap();
         {
             let s = &mut expected_element.stats;
             s.exec_count += 1;
@@ -2613,12 +2633,12 @@ pub(crate) mod tests {
             s.sum_prewrite_time += commit3.prewrite_time;
             s.sum_commit_time += commit3.commit_time;
             s.sum_local_latch_time += commit3.local_latch_time;
-            s.sum_commit_backoff_time += commit3.commit_backoff_time;
-            s.sum_resolve_lock_time += commit3.resolve_lock.resolve_lock_time;
-            s.sum_write_keys += commit3.write_keys;
-            s.sum_write_size += commit3.write_size;
+            s.sum_commit_backoff_time += commit3.detail.commit_backoff_time_ns;
+            s.sum_resolve_lock_time += commit3.resolve_lock.resolve_lock_time_ns;
+            s.sum_write_keys += commit3.write_keys as i64;
+            s.sum_write_size += commit3.write_size as i64;
             s.sum_prewrite_region_num += i64::from(commit3.prewrite_region_num);
-            s.sum_txn_retry += commit3.txn_retry;
+            s.sum_txn_retry += commit3.transaction_retry as i64;
             s.sum_backoff_times += 1;
             s.backoff_types.insert(BO_TXN_LOCK_NAME.to_owned(), 2);
             s.sum_mem += info3.mem_max;
@@ -2626,9 +2646,9 @@ pub(crate) mod tests {
             s.sum_disk += info3.disk_max;
             s.sum_affected_rows += info3.stmt_ctx.affected_rows();
             s.first_seen = info3.start_time;
-            s.ru.sum_rru += ru3.rru;
-            s.ru.sum_wru += ru3.wru;
-            s.ru.sum_ru_wait_duration += ru3.ru_wait_duration;
+            s.ru.sum_rru += ru3.read_ru();
+            s.ru.sum_wru += ru3.write_ru();
+            s.ru.sum_ru_wait_duration += ru3.ru_wait_duration();
             s.ru.sum_ru_v2 += info3.total_ru_v2;
             s.network.add(info3.tikv_exec_details.as_ref());
             s.storage_kv = info3.stmt_ctx.is_tikv.load(Ordering::SeqCst);
@@ -2758,6 +2778,112 @@ pub(crate) mod tests {
 
         let datums = reader.get_stmt_summary_current_rows();
         assert_eq!(datums.len(), loops);
+    }
+
+    /// Go `TestAddStatementPlanEncodeError`: a lazy plan encoding failure
+    /// still records the statement with the discarded-plan marker.
+    #[test]
+    fn test_add_statement_plan_encode_error_uses_discarded_marker() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+
+        let mut info = generate_any_exec_info();
+        info.lazy_info = Arc::new(MockLazyInfo {
+            original_sql: "select 1".to_owned(),
+            plan_error: true,
+            ..MockLazyInfo::default()
+        });
+        ss_map.add_statement(&info);
+
+        let mut key = StmtDigestKey::new();
+        key.init(
+            &info.schema_name,
+            &info.digest,
+            &info.prev_sql_digest,
+            &info.plan_digest,
+            &info.resource_group_name,
+            "",
+        );
+        let summary = ss_map.summary_map_get(&key).expect("summary must exist");
+        let summary = summary.lock().unwrap();
+        let element = summary
+            .history
+            .back()
+            .expect("history must exist")
+            .lock()
+            .unwrap();
+        assert_eq!(element.stats.sample_plan, PLAN_DISCARDED_ENCODED);
+        assert_eq!(element.stats.plan_hint, "");
+        assert_eq!(element.stats.exec_count, 1);
+    }
+
+    /// Go `AddStatement` initializes `isInternal` from the first statement and
+    /// then narrows it with AND; `ClearInternal` removes only pure-internal
+    /// summaries.
+    #[test]
+    fn test_internal_summary_initialization_and_clear() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_enabled_internal_query(true);
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+
+        let mut internal_only = generate_any_exec_info();
+        internal_only.digest = "internal_only".to_owned();
+        internal_only.is_internal = true;
+        ss_map.add_statement(&internal_only);
+
+        let mut normal_old = generate_any_exec_info();
+        normal_old.digest = "normal_old".to_owned();
+        ss_map.add_statement(&normal_old);
+
+        let mut normal_new = generate_any_exec_info();
+        normal_new.digest = "normal_new".to_owned();
+        ss_map.add_statement(&normal_new);
+
+        let mut mixed_internal = generate_any_exec_info();
+        mixed_internal.digest = "mixed".to_owned();
+        mixed_internal.is_internal = true;
+        ss_map.add_statement(&mixed_internal);
+        let mut mixed_external = generate_any_exec_info();
+        mixed_external.digest = mixed_internal.digest.clone();
+        ss_map.add_statement(&mixed_external);
+
+        let before_clear: Vec<String> = ss_map
+            .summary_map_values()
+            .into_iter()
+            .map(|summary| summary.lock().unwrap().digest.clone())
+            .collect();
+        let mixed_summary = ss_map
+            .summary_map_values()
+            .into_iter()
+            .find(|summary| summary.lock().unwrap().digest == mixed_internal.digest)
+            .expect("mixed summary must exist");
+        assert!(!mixed_summary.lock().unwrap().is_internal);
+
+        ss_map.set_enabled_internal_query(false);
+        assert_eq!(ss_map.summary_map_size(), before_clear.len() - 1);
+        let after_clear: Vec<String> = ss_map
+            .summary_map_values()
+            .into_iter()
+            .map(|summary| summary.lock().unwrap().digest.clone())
+            .collect();
+        let expected_after_clear: Vec<String> = before_clear
+            .into_iter()
+            .filter(|digest| digest != &internal_only.digest)
+            .collect();
+        assert_eq!(after_clear, expected_after_clear);
+        let mut internal_key = StmtDigestKey::new();
+        internal_key.init(
+            &internal_only.schema_name,
+            &internal_only.digest,
+            &internal_only.prev_sql_digest,
+            &internal_only.plan_digest,
+            &internal_only.resource_group_name,
+            "",
+        );
+        assert!(ss_map.summary_map_get(&internal_key).is_none());
+        assert!(after_clear
+            .iter()
+            .any(|digest| digest == &mixed_internal.digest));
     }
 
     /// Go `TestMaxStmtCount`.
@@ -3200,9 +3326,28 @@ pub(crate) mod tests {
         let datum = reader.get_stmt_summary_history_rows();
         assert_eq!(datum.len(), 10);
 
+        let value = ss_map.summary_map_get(&key).expect("summary must exist");
+        let summary = value.lock().unwrap();
+        let history = summary.collect_history_summaries(None, 2);
+        let begin_times: Vec<i64> = history
+            .iter()
+            .map(|element| element.lock().unwrap().begin_time)
+            .collect();
+        assert_eq!(begin_times, vec![now + 100, now + 110]);
+        drop(summary);
+
         ss_map.set_history_size(5);
         let datum = reader.get_stmt_summary_history_rows();
         assert_eq!(datum.len(), 5);
+
+        ss_map.clear_history();
+        let summary = value.lock().unwrap();
+        assert_eq!(summary.history.len(), 1);
+        assert_eq!(
+            summary.history.back().unwrap().lock().unwrap().begin_time,
+            now + 110
+        );
+        drop(summary);
 
         // test eviction
         ss_map.clear();
@@ -3446,5 +3591,52 @@ pub(crate) mod tests {
         legacy.extend_from_slice(b"plan");
         legacy.extend_from_slice(b"rg");
         assert_eq!(off.hash(), legacy.as_slice());
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_statement_summary_returns_can_be_ignored() {
+        StmtDigestKey::new();
+        let key = StmtDigestKey::new();
+        key.hash();
+
+        StmtSummaryStmtCtx::new();
+        let ctx = StmtSummaryStmtCtx::new();
+        ctx.affected_rows();
+        ctx.warning_count();
+
+        let info = generate_any_exec_info();
+        let _ = new_stmt_summary_stats(&info);
+        let _ = StmtSummaryByDigestElement::new(&info, 0, 60, 0, 0);
+
+        let summary = StmtSummaryByDigest::default();
+        summary.collect_history_summaries(None, 1);
+
+        StmtSummaryByDigestMap::new();
+        StmtSummaryByDigestMap::with_sinks(
+            Box::new(NoopEvictedSink),
+            Box::new(NoopWindowMetricsSink),
+        );
+        let map = StmtSummaryByDigestMap::new();
+        map.enabled();
+        map.enabled_internal();
+        map.history_enabled();
+        map.refresh_interval();
+        map.history_size();
+        map.group_by_user();
+        map.max_stmt_count();
+        map.max_sql_length();
+        map.begin_time_for_cur_interval();
+        map.summary_map_size();
+        map.summary_map_values();
+        let _ = map.normalized_sql_for_digest("");
+        let _ = map.evicted();
+        let _ = map.summary_map_get(&key);
+
+        format_sql("select 1");
+        avg_int(1, 1);
+        avg_float(1, 1);
+        avg_float4_uint(1, 1);
+        avg_sum_float(1.0, 1);
     }
 }

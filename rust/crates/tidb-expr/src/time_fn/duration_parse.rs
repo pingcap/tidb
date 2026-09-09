@@ -503,6 +503,11 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
         Some((date, time)) => (date, time.trim()),
         None => (value, ""),
     };
+    if time.is_empty() {
+        if let Some(compact) = parse_compact_datetime(date) {
+            return Some(compact);
+        }
+    }
     let parts = calendar::split_numeric_components_for_time_diff(date)?;
     let year = calendar::expand_year_for_time_diff(parts[0].0, parts[0].1);
     let month = parts[1].0;
@@ -533,6 +538,51 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
         second,
         micros,
         fsp: fsp.min(MAX_FSP),
+    })
+}
+
+/// Go `ParseTimeWithString` accepts packed date/datetime spellings in addition
+/// to delimited dates. The ADDTIME/SUBTIME and TIMESTAMP string signatures
+/// reach this parser after integer arguments have been cast to text, so retain
+/// Go's width table instead of treating delimiter-free digits as unsupported.
+fn parse_compact_datetime(value: &str) -> Option<GoDateTime> {
+    let (digits, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if !matches!(digits.len(), 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 14) {
+        return None;
+    }
+    // Go's `ParseTime` gives a suffix on a date-only compact form a different
+    // meaning (for example `20170118.5` is an hour component).  The datetime
+    // fraction rows exercised by this family are the full 14-digit form;
+    // leave shorter date forms to the ordinary delimited parser so that their
+    // signature-specific handling is not guessed here.
+    if !fraction.is_empty() && digits.len() != 14 {
+        return None;
+    }
+    if !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let parsed = tidb_datatype::parse_time(
+        value,
+        tidb_datatype::TimeType::DateTime,
+        i64::from(get_fsp(value)),
+        false,
+        true,
+        false,
+        &chrono_tz::Tz::UTC,
+    )
+    .ok()?;
+    let core = parsed.time.core_time();
+    Some(GoDateTime {
+        year: i64::from(core.year()),
+        month: u32::from(core.month()),
+        day: u32::from(core.day()),
+        hour: u32::from(core.hour()),
+        minute: u32::from(core.minute()),
+        second: u32::from(core.second()),
+        micros: core.microsecond(),
+        fsp: parsed.time.fsp().into(),
     })
 }
 

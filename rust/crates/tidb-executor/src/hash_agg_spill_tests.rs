@@ -37,6 +37,15 @@ fn long() -> FieldType {
     FieldType::new(FieldTypeCode::LongLong)
 }
 
+/// AVG over an integer is a DECIMAL whose scale is
+/// `div_precision_increment` (four), the type Go's `typeInfer4Avg` gives it.
+fn avg_type() -> FieldType {
+    let mut field_type = FieldType::new(FieldTypeCode::NewDecimal);
+    field_type.set_flen(15);
+    field_type.set_decimal(4);
+    field_type
+}
+
 fn col(index: i64) -> Expression {
     let mut c = Column::new(index + 1, long());
     c.index = index;
@@ -64,7 +73,7 @@ fn out_schema() -> Schema {
         FieldType::new(FieldTypeCode::NewDecimal),
         long(),
         long(),
-        FieldType::new(FieldTypeCode::VarString),
+        avg_type(),
     ];
     Schema::new(
         types
@@ -124,14 +133,16 @@ impl Executor for ManyChunkSource {
     }
 }
 
-/// `SELECT g, COUNT(v), SUM(v), MIN(v), MAX(v), GROUP_CONCAT(v) FROM t
-/// GROUP BY g`.
+/// `SELECT g, COUNT(v), SUM(v), MIN(v), MAX(v), AVG(v) FROM t GROUP BY g`.
 ///
-/// GROUP_CONCAT is here to make ROW ORDER WITHIN A GROUP observable: the other
-/// five are order-insensitive, so they cannot tell a spill that preserved a
-/// group's row order from one that reversed it. Go's rounds do preserve it --
-/// a group is either OPEN this round (and every one of its rows folds in) or
-/// deferred whole, so no group is ever fed its rows out of order.
+/// This is Go's own aggregate set from `buildHashAggExecutor` minus the
+/// `FIRST_ROW` key carrier. None of them is order-sensitive, on purpose: Go's
+/// `generateResult` sorts the result rows before comparing, and Go never
+/// asserts an intra-group order, because the parallel pipeline does not
+/// promise one (a group's rows are split across partial workers, and a spill
+/// re-partitions their partial states). A `GROUP_CONCAT` oracle would assert
+/// something neither engine guarantees -- the reference run itself already
+/// emits a group's values in worker order, not input order.
 fn grouped(rows: &[(i64, i64)], batch: usize, memory: StatementMemory) -> HashAggExec<NoColumns> {
     let source = ManyChunkSource {
         meta: ExecutorMeta::new(schema_of(2), 0, batch, batch),
@@ -148,12 +159,7 @@ fn grouped(rows: &[(i64, i64)], batch: usize, memory: StatementMemory) -> HashAg
             AggFunc::new(AggKind::Sum, Some(col(1))),
             AggFunc::new(AggKind::Min, Some(col(1))),
             AggFunc::new(AggKind::Max, Some(col(1))),
-            AggFunc::new(
-                AggKind::GroupConcat {
-                    separator: ",".to_owned(),
-                },
-                Some(col(1)),
-            ),
+            AggFunc::new(AggKind::Avg, Some(col(1))),
         ],
         Box::new(source),
         NoColumns,
@@ -202,14 +208,14 @@ fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 /// The five aggregate cells of one output row, as datums: COUNT, SUM
-/// (decimal), MIN, MAX, GROUP_CONCAT.
+/// (decimal), MIN, MAX, AVG (decimal scaled by `div_precision_increment`).
 fn agg_values(row: &tidb_chunk::row::Row<'_>) -> Vec<Datum> {
     let types = [
         long(),
         FieldType::new(FieldTypeCode::NewDecimal),
         long(),
         long(),
-        FieldType::new(FieldTypeCode::VarString),
+        avg_type(),
     ];
     (1..6).map(|c| row.get_datum(c, &types[c - 1])).collect()
 }
@@ -231,14 +237,21 @@ const GROUPS: i64 = 2000;
 ///   interleaved layout alone, no two rows in a chunk share a group, and a
 ///   spill that reversed them would change nothing.
 fn interleaved_rows() -> Vec<(i64, i64)> {
+    interleaved_rows_with(GROUPS)
+}
+
+/// The same two-layout input for an arbitrary group count. The budget test
+/// needs a state table several times the quota, so that a round ends while
+/// input is still arriving and the NEXT round has to cross the limit again.
+fn interleaved_rows_with(groups: i64) -> Vec<(i64, i64)> {
     let mut rows = Vec::new();
-    let split = GROUPS / 2;
+    let split = groups / 2;
     for pass in 0..3i64 {
         for g in 0..split {
             rows.push((g, g * 10 + pass));
         }
     }
-    for g in split..GROUPS {
+    for g in split..groups {
         for pass in 0..3i64 {
             rows.push((g, g * 10 + pass));
         }
@@ -415,11 +428,22 @@ fn test_random_fail() {
 fn each_round_gives_the_statements_budget_back() {
     let dir = scratch_temp_dir("hashaggbudget");
 
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+    // The state table is several times the quota, so at least one round ends
+    // before the child is drained and a later round must cross the limit again.
+    //
+    // The overrun action is LOG, which is what Go's spill tests actually run
+    // under: `GlobalSystemVariableInitialValue` rewrites `tidb_mem_oom_action`
+    // to LOG when `intest.InTest` is set, and Go's `initCtx` installs a mock
+    // root action. A round can therefore overshoot the hard limit while the
+    // partial workers finish the chunks already dispatched -- Go records that,
+    // it does not kill the statement. The cancellation boundary itself is
+    // covered by `test_fall_back_action`, which uses CANCEL.
+    let groups = GROUPS * 4;
+    let memory = StatementMemory::new(tight_quota(), OomAction::Log, 42)
         .with_spill_storage(test_storage(&dir));
-    let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
+    let mut exec = grouped(&interleaved_rows_with(groups), 64, memory.clone());
     let got = drain(&mut exec);
-    assert_eq!(got.len(), GROUPS as usize);
+    assert_eq!(got.len(), groups as usize);
     assert!(exec.spill_times() > 1, "this test needs several rounds");
     exec.close().unwrap();
     assert_eq!(

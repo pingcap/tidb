@@ -1,0 +1,21 @@
+[package]
+name = "tidb-allocator-stats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+tikv-jemalloc-sys = { version = "0.7", optional = true, features = ["profiling"] }
+
+[features]
+default = []
+jemalloc = ["dep:tikv-jemalloc-sys"]

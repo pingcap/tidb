@@ -12,24 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/util/disk`: the temporary-storage directory every
-//! spilling operator writes into, and the disk-usage tracker.
-//!
-//! Go `tracker.go` is one line -- `type Tracker = memory.Tracker` -- so the
-//! disk tracker here is [`crate::memory::Tracker`] re-exported under the same
-//! name, and `NewTracker` is [`new_tracker`].
-//!
-//! [`SpillStorage`] is the one immutable process authority for path,
-//! encryption, quota, directory lease, stale-file cleanup, and secure file
-//! creation. Keeping those decisions together prevents a query operator from
-//! silently bypassing startup policy through a second mutable global.
+//! Transcreation of Go `pkg/util/disk`: temporary-storage directory lifecycle
+//! and disk-usage tracker constructors.
 
-pub mod spill_storage;
+mod temp_dir;
 
-pub use spill_storage::{
-    SpillEncryptionMethod, SpillEncryptionParseError, SpillStorage, SpillStorageOpenError,
-    SpillStorageSpec, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR,
-};
+pub use temp_dir::{check_and_create_dir, check_and_init_temp_dir, clean_up, initialize_temp_dir};
 
 use std::sync::Arc;
 
@@ -37,7 +25,25 @@ use std::sync::Arc;
 pub type Tracker = crate::memory::Tracker;
 
 /// Go `disk.NewTracker`.
-#[must_use]
 pub fn new_tracker(label: i64, bytes_limit: i64) -> Arc<Tracker> {
     Tracker::new(label, bytes_limit)
+}
+
+/// Go `disk.NewGlobalTracker`.
+pub fn new_global_tracker(label: i64, bytes_limit: i64) -> Arc<Tracker> {
+    Tracker::new_global(label, bytes_limit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go permits callers to discard these constructor results; Rust must not
+    // add a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        new_tracker(0, 0);
+        new_global_tracker(0, 0);
+    }
 }

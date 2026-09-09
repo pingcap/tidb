@@ -22,7 +22,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 struct TestStorage {
     authority: Option<Arc<SpillStorage>>,
@@ -36,6 +36,7 @@ impl TestStorage {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create test spill directory");
         let authority = Arc::new(
             SpillStorage::open(SpillStorageSpec {
                 path: path.clone(),

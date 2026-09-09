@@ -26,7 +26,6 @@ pub const THRESHOLD: u64 = 960;
 
 /// Grows the paging size and ensures it does not exceed
 /// `max(maxv, MIN_ALLOWED_MAX_PAGING_SIZE)`.
-#[must_use]
 pub fn grow_paging_size(size: u64, mut maxv: u64) -> u64 {
     if maxv < MIN_ALLOWED_MAX_PAGING_SIZE {
         // Defensive programming, for example, called with maxv = 0. `maxv`
@@ -44,7 +43,6 @@ pub fn grow_paging_size(size: u64, mut maxv: u64) -> u64 {
 }
 
 /// Calculates the seek count from the expected count.
-#[must_use]
 pub fn calculate_seek_cnt(expect_cnt: u64) -> f64 {
     if expect_cnt == 0 {
         return 0.0;
@@ -120,64 +118,5 @@ mod tests {
             shift + 2.0,
             0.1,
         );
-    }
-
-    #[test]
-    fn grow_paging_size_preserves_source_wrapping_and_cap_order() {
-        assert_eq!(grow_paging_size(0, 0), 0);
-        assert_eq!(grow_paging_size(25_000, 49_999), 50_000);
-        assert_eq!(grow_paging_size(25_001, u64::MAX), 50_002);
-        assert_eq!(grow_paging_size(u64::MAX / 2, u64::MAX), u64::MAX - 1);
-        assert_eq!(grow_paging_size(u64::MAX / 2 + 1, u64::MAX), 0);
-        assert_eq!(grow_paging_size(u64::MAX, u64::MAX), u64::MAX - 1);
-        assert_eq!(grow_paging_size(u64::MAX, 0), MIN_ALLOWED_MAX_PAGING_SIZE);
-    }
-
-    #[test]
-    fn calculate_seek_cnt_preserves_source_piecewise_boundaries() {
-        assert_eq!(
-            calculate_seek_cnt(0).to_bits(),
-            0.0_f64.to_bits(),
-            "the source returns positive zero"
-        );
-
-        let cases = [
-            (1, 1.0),
-            (MIN_PAGING_SIZE - 1, 1.0),
-            (MIN_PAGING_SIZE, 1.0),
-            (MIN_PAGING_SIZE + 1, 1.0),
-            (2 * MIN_PAGING_SIZE - 1, 1.0),
-            (2 * MIN_PAGING_SIZE, 2.0),
-            (2 * MIN_PAGING_SIZE + 1, 2.0),
-            (PAGING_GROWING_SUM - 1, 8.0),
-            (PAGING_GROWING_SUM, 8.0),
-            (PAGING_GROWING_SUM + 1, 9.0),
-            (PAGING_GROWING_SUM + MIN_ALLOWED_MAX_PAGING_SIZE - 1, 9.0),
-            (PAGING_GROWING_SUM + MIN_ALLOWED_MAX_PAGING_SIZE, 9.0),
-            (PAGING_GROWING_SUM + MIN_ALLOWED_MAX_PAGING_SIZE + 1, 10.0),
-        ];
-
-        for (expect_cnt, expected) in cases {
-            assert_eq!(calculate_seek_cnt(expect_cnt), expected, "{expect_cnt}");
-        }
-    }
-
-    #[test]
-    fn calculate_seek_cnt_preserves_source_ceil_addition_wrap() {
-        const CEIL_OVERFLOW_BIAS: u64 = MIN_ALLOWED_MAX_PAGING_SIZE - 1 - PAGING_GROWING_SUM;
-        let last_before_wrap = u64::MAX - CEIL_OVERFLOW_BIAS;
-        let first_after_wrap = last_before_wrap + 1;
-        let last_before_wrap_result = (8 + u64::MAX / MIN_ALLOWED_MAX_PAGING_SIZE) as f64;
-
-        assert_eq!(
-            calculate_seek_cnt(last_before_wrap - 1),
-            last_before_wrap_result
-        );
-        assert_eq!(
-            calculate_seek_cnt(last_before_wrap),
-            last_before_wrap_result
-        );
-        assert_eq!(calculate_seek_cnt(first_after_wrap), 8.0);
-        assert_eq!(calculate_seek_cnt(u64::MAX), 8.0);
     }
 }

@@ -15,7 +15,7 @@ use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_executor::cluster_storage::SnapshotPairs;
+use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
@@ -32,6 +32,8 @@ use tidb_txnkv::Key;
 pub(super) struct MockCluster {
     pub(super) advisory_locks: tidb_executor::advisory_lock_state::LocalAdvisoryLockService,
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+    /// Resource groups observed at snapshot/transaction request boundaries.
+    pub(super) resource_groups: Mutex<Vec<String>>,
     /// The timestamp of the last commit that touched each key, which is
     /// what a prewrite at `start_ts` is checked against -- TiKV's own
     /// write-conflict rule in miniature.
@@ -51,6 +53,14 @@ pub(super) struct MockCluster {
     pub(super) opened_at_max_ts: AtomicUsize,
     /// Explicit transactions opened by `BEGIN`.
     pub(super) begun: AtomicUsize,
+    /// Explicit transactions opened specifically in pessimistic mode.
+    pub(super) pessimistic_begun: AtomicUsize,
+    /// One-shot failure for the next explicit transaction open. DDL subscriber
+    /// tests use it after catalog publication to model a restricted-session
+    /// statistics failure.
+    pub(super) fail_next_begin: AtomicBool,
+    /// Makes the next pessimistic statement lock report a newer read timestamp.
+    pub(super) retry_next_pessimistic_lock: AtomicBool,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -94,6 +104,13 @@ impl MockCluster {
 
     pub(super) fn timestamp(&self) -> u64 {
         self.clock.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub(super) fn record_resource_group(&self, resource_group: &str) {
+        self.resource_groups
+            .lock()
+            .expect("resource groups")
+            .push(resource_group.to_owned());
     }
 
     /// Commits, as some other session, a new value for whatever single row the
@@ -251,7 +268,11 @@ impl PendingClusterSnapshot for MockPendingSnapshot {
 }
 
 impl ClusterTransactions for MockTransactions {
-    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+    fn prepare_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.prepared.fetch_add(1, Ordering::AcqRel);
         if self
             .0
@@ -282,7 +303,8 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+    fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.opened.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);
         // The order is the whole point: this statement's rows and its
@@ -324,7 +346,11 @@ impl ClusterTransactions for MockTransactions {
         )
     }
 
-    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+    fn open_max_ts_snapshot(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.opened_at_max_ts.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);
         // No `timestamp()` call: that absence IS what this branch buys, and
@@ -339,25 +365,27 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn begin_max_ts(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        Ok(Box::new(MockSessionTransaction {
-            start_ts: u64::MAX,
-            data: self.0.snapshot(),
-            cluster: Arc::clone(&self.0),
-            max_ts: true,
-        }))
-    }
-
-    fn begin_autocommit_write(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin_autocommit_write(
+        &self,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.0.record_resource_group(resource_group);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
             max_ts: false,
+            pessimistic: false,
         }))
     }
 
-    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+    fn commit(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        self.0.record_resource_group(resource_group);
         let staged = buffer.snapshot();
         if staged.is_empty() {
             return Ok(());
@@ -405,13 +433,25 @@ impl ClusterTransactions for MockTransactions {
         Ok(())
     }
 
-    fn begin(&self, _pessimistic: bool) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin(
+        &self,
+        pessimistic: bool,
+        resource_group: &str,
+    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        self.0.record_resource_group(resource_group);
         self.0.begun.fetch_add(1, Ordering::AcqRel);
+        if self.0.fail_next_begin.swap(false, Ordering::AcqRel) {
+            return Err("mock transaction begin failed".to_owned());
+        }
+        if pessimistic {
+            self.0.pessimistic_begun.fetch_add(1, Ordering::AcqRel);
+        }
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
             max_ts: false,
+            pessimistic,
         }))
     }
 }
@@ -425,11 +465,17 @@ pub(super) struct MockSessionTransaction {
     pub(super) data: BTreeMap<Vec<u8>, Vec<u8>>,
     pub(super) cluster: Arc<MockCluster>,
     pub(super) max_ts: bool,
+    pub(super) pessimistic: bool,
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
     fn start_ts(&self) -> u64 {
         self.start_ts
+    }
+
+    fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
+        self.cluster.record_resource_group(name);
+        Ok(())
     }
 
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -455,6 +501,19 @@ impl OpenClusterTransaction for MockSessionTransaction {
         if staged.is_empty() {
             return Ok(());
         }
+        for key in buffer.presume_not_exists_keys() {
+            if self.data.contains_key(&key) {
+                let hint = buffer
+                    .duplicate_key_hint_for(&key)
+                    .expect("a presumed INSERT key carries its duplicate error text");
+                buffer.reset();
+                return Err(SqlQueryError::new(
+                    1062,
+                    *b"23000",
+                    format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
+                ));
+            }
+        }
         let outcome = self.cluster.publish(staged, self.start_ts);
         commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
         buffer.reset();
@@ -463,5 +522,43 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn rollback(self: Box<Self>) -> Result<(), String> {
         Ok(())
+    }
+
+    fn is_pessimistic(&self) -> bool {
+        self.pessimistic
+    }
+
+    fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.cluster.live.fetch_add(1, Ordering::AcqRel);
+        Ok(Box::new(MockSnapshot {
+            data: self.cluster.snapshot(),
+            cluster: Arc::clone(&self.cluster),
+            start_ts: read_ts,
+        }))
+    }
+
+    fn lock_staged_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        _presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
+        _duplicate_hints: std::collections::BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String> {
+        if !self.pessimistic {
+            return Err("only a pessimistic transaction locks statement keys".to_owned());
+        }
+        if self
+            .cluster
+            .retry_next_pessimistic_lock
+            .swap(false, Ordering::AcqRel)
+        {
+            return Ok(LockKeysOutcome::RetryStatement {
+                for_update_ts: self.cluster.timestamp(),
+                newly_locked: keys,
+            });
+        }
+        Ok(LockKeysOutcome::Locked {
+            for_update_ts: self.start_ts,
+            newly_locked: keys,
+        })
     }
 }

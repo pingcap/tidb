@@ -219,7 +219,7 @@ impl MySqlDuration {
         }
     }
 
-    /// Rounds fractional seconds with TiDB's half-up rule.
+    /// Rounds fractional seconds with Go's nearest-value `Time.Round` rule.
     pub fn round_frac(self, fsp: i64) -> Result<Self, DurationRoundError> {
         let rounded = round_duration_fsp(self.nanoseconds, self.fsp, fsp)?;
         Ok(Self {
@@ -914,8 +914,11 @@ fn trim_ascii_space(input: &[u8]) -> &[u8] {
     &input[start..end]
 }
 
-/// Rounds duration nanoseconds using Go `Duration.RoundFrac`'s half-away-from
-/// zero rule and returns normalized FSP metadata.
+/// Rounds duration nanoseconds using Go `Duration.RoundFrac`'s nearest-value
+/// rule and returns normalized FSP metadata. Non-halfway values round away
+/// from zero when their magnitude is past the midpoint; an exact negative
+/// halfway value rounds toward zero because Go delegates to `Time.Round`,
+/// whose tie rule is toward positive infinity.
 ///
 /// The target FSP is normalized first, then compared with `current_fsp`,
 /// matching Go's early return. A target FSP above six is clamped by
@@ -933,11 +936,16 @@ pub fn round_duration_fsp(
     let unit = 10_i128.pow((9 - fsp) as u32);
     let half = unit / 2;
     let value = i128::from(nanoseconds);
-    let rounded = if value >= 0 {
-        (value + half) / unit * unit
+    let rounded_units = if value >= 0 {
+        (value + half) / unit
     } else {
-        (value - half) / unit * unit
+        // Rust integer division truncates toward zero. Subtracting one from
+        // the positive magnitude before division makes an exact half round
+        // toward zero while any remainder strictly above half rounds away.
+        let magnitude = -value;
+        -((magnitude + half - 1) / unit)
     };
+    let rounded = rounded_units * unit;
     let nanoseconds = i64::try_from(rounded).map_err(|_| DurationRoundError::Overflow)?;
     Ok(RoundedDuration { nanoseconds, fsp })
 }

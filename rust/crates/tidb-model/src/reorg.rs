@@ -420,9 +420,30 @@ fn zero_terror_error() -> TerrorError {
 }
 
 impl DDLReorgMeta {
+    /// Go `NewDDLReorgMeta` before the caller applies
+    /// `SetConcurrency`/`SetBatchSize`/`SetMaxWriteSpeed`: the empty warning
+    /// maps Go allocates eagerly, the recorded mode/zone/resource group, and
+    /// the current metadata version. The collation flag takes the runtime
+    /// `new_collation_enabled()` value Go reads from `collate`.
+    pub fn new(
+        sql_mode: u64,
+        location: TimeZoneLocation,
+        resource_group_name: impl Into<GoString>,
+    ) -> Self {
+        Self {
+            sql_mode,
+            warnings: Some(GoShared::new(BTreeMap::new())),
+            warnings_count: Some(GoShared::new(BTreeMap::new())),
+            location: Some(GoShared::new(location)),
+            resource_group_name: resource_group_name.into(),
+            version: CURRENT_REORG_META_VERSION,
+            use_new_collate: Some(GoShared::new(tidb_datatype::new_collation_enabled())),
+            ..Self::default()
+        }
+    }
+
     /// Go `ShallowCopy`: allocates a new outer pointer, shares every map and
     /// pointer field, and copies each atomic value into an independent cell.
-    #[must_use]
     pub fn shallow_copy(&self) -> GoShared<Self> {
         GoShared::new(self.clone())
     }
@@ -435,7 +456,6 @@ impl DDLReorgMeta {
     }
 
     /// Returns persisted concurrency, or the current process default when zero.
-    #[must_use]
     pub fn get_concurrency(&self, defaults: DDLReorgProcessDefaults) -> i64 {
         let concurrency = self.concurrency.load(Ordering::SeqCst);
         if concurrency == 0 {
@@ -451,7 +471,6 @@ impl DDLReorgMeta {
     }
 
     /// Returns persisted batch size, or the current process default when zero.
-    #[must_use]
     pub fn get_batch_size(&self, defaults: DDLReorgProcessDefaults) -> i64 {
         let batch_size = self.batch_size.load(Ordering::SeqCst);
         if batch_size == 0 {
@@ -467,7 +486,6 @@ impl DDLReorgMeta {
     }
 
     /// Returns the maximum write speed, where zero means unlimited.
-    #[must_use]
     pub fn get_max_write_speed(&self) -> i64 {
         self.max_write_speed.load(Ordering::SeqCst)
     }
@@ -479,7 +497,6 @@ impl DDLReorgMeta {
     }
 
     /// Returns the captured collation mode or `default_value` for old metadata.
-    #[must_use]
     pub fn get_use_new_collate_or_default(&self, default_value: bool) -> bool {
         self.use_new_collate
             .as_ref()
@@ -621,7 +638,6 @@ impl ReorgType {
     pub const TXN_MERGE: ReorgType = ReorgType(3);
 
     /// Go `NeedMergeProcess`: whether this strategy has a temp-index merge.
-    #[must_use]
     pub fn need_merge_process(self) -> bool {
         self == ReorgType::INGEST || self == ReorgType::TXN_MERGE
     }
@@ -853,6 +869,20 @@ mod tests {
 
     const TEST_DEFAULTS: DDLReorgProcessDefaults =
         DDLReorgProcessDefaults::new(test_worker_count, test_batch_size);
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_reorg_returns_may_be_ignored_like_go() {
+        DDLReorgMeta::new(0, TimeZoneLocation::default(), "");
+
+        let meta = DDLReorgMeta::default();
+        meta.shallow_copy();
+        meta.get_concurrency(TEST_DEFAULTS);
+        meta.get_batch_size(TEST_DEFAULTS);
+        meta.get_max_write_speed();
+        meta.get_use_new_collate_or_default(false);
+        ReorgType::INGEST.need_merge_process();
+    }
 
     #[test]
     fn backfill_state_strings() {

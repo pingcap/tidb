@@ -26,9 +26,9 @@ mod go_trig;
 
 use std::cmp::Ordering;
 
-use tidb_ast::Expr;
+use tidb_ast::{BinaryOp, Expr, UnaryOp};
 
-use crate::coerce::coerce_str;
+use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
 use crate::{Columns, Datum, EvalError, MysqlRng};
 
@@ -50,6 +50,97 @@ pub(crate) fn dispatch(
         return Some(eval_rand(args, vals, cols, function_key));
     }
     dispatch_values(name, vals, cols)
+        .map(|result| result.map_err(|error| ast_math_overflow_error(name, args, error)))
+}
+
+/// Go's math signatures attach the source expression to their 1690 overflow.
+/// The AST evaluator has the original nodes, so it can preserve that text
+/// before the values-only implementation returns its datum-level carrier.
+fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalError {
+    let value = match (name, &error) {
+        ("ABS", EvalError::IntOverflow) => "BIGINT",
+        ("COT" | "EXP" | "POW" | "POWER", EvalError::FloatOverflow) => "DOUBLE",
+        _ => return error,
+    };
+    let args = args
+        .iter()
+        .map(render_ast_expression)
+        .collect::<Option<Vec<_>>>();
+    let Some(args) = args else {
+        return error;
+    };
+    let expression = format!("{}({})", name.to_ascii_lowercase(), args.join(", "));
+    EvalError::DataOutOfRange { value, expression }
+}
+
+/// Renders the expression text Go includes in a function-owned overflow.
+/// The value-tier helper has no AST and therefore cannot use this boundary.
+pub(crate) fn render_ast_expression(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Int(value) => Some(value.clone()),
+        Expr::Float(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
+        Expr::Decimal(value) => Some(value.clone()),
+        Expr::Null => Some("NULL".to_owned()),
+        Expr::Column(path) => Some(path.join(".")),
+        Expr::Unary(UnaryOp::Plus, expression) => {
+            Some(format!("+{}", render_ast_expression(expression)?))
+        }
+        Expr::Unary(UnaryOp::Minus, expression) => {
+            Some(format!("-{}", render_ast_expression(expression)?))
+        }
+        Expr::Paren(expression) => Some(format!("({})", render_ast_expression(expression)?)),
+        Expr::Binary(operator, left, right) => render_ast_binary_expression(*operator, left, right),
+        Expr::Func { name, args, .. } => {
+            let args = args
+                .iter()
+                .map(render_ast_expression)
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!(
+                "{}({})",
+                name.to_ascii_lowercase(),
+                args.join(", ")
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Renders a binary AST expression with the same parenthesized source shape
+/// used by Go's arithmetic overflow signatures.
+pub(crate) fn render_ast_binary_expression(
+    operator: BinaryOp,
+    left: &Expr,
+    right: &Expr,
+) -> Option<String> {
+    let operator = match operator {
+        BinaryOp::Plus => "+",
+        BinaryOp::Minus => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Mod => "%",
+        BinaryOp::IntDiv => "DIV",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitXor => "^",
+        BinaryOp::LeftShift => "<<",
+        BinaryOp::RightShift => ">>",
+        BinaryOp::Eq => "=",
+        BinaryOp::NullEq => "<=>",
+        BinaryOp::Ge => ">=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Le => "<=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Ne => "!=",
+        BinaryOp::LogicAnd => "AND",
+        BinaryOp::LogicOr => "OR",
+        BinaryOp::LogicXor => "XOR",
+    };
+    Some(format!(
+        "({} {} {})",
+        render_ast_expression(left)?,
+        operator,
+        render_ast_expression(right)?
+    ))
 }
 
 /// The values-only subset of [`dispatch`]: every math builtin whose result is
@@ -134,10 +225,10 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::BinaryLiteral(literal) => {
             let bit_literal = literal.to_bit_literal_string(true);
             let digits = &bit_literal[2..];
-            let Some(converted) = conv_text(digits, 2, from) else {
-                return Ok(Datum::Null);
-            };
-            converted
+            match conv_text(digits, 2, from)? {
+                Some(text) => text,
+                None => return Ok(Datum::Null),
+            }
         }
         value => {
             let Some(text) = coerce_str(value)? else {
@@ -146,10 +237,13 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
             text
         }
     };
-    Ok(conv_text(&n, from, to).map_or(Datum::Null, Datum::new_string))
+    match conv_text(&n, from, to)? {
+        Some(text) => Ok(Datum::new_string(text)),
+        None => Ok(Datum::Null),
+    }
 }
 
-fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
+fn conv_text(n: &str, mut from: i64, mut to: i64) -> Result<Option<String>, EvalError> {
     let signed = from < 0;
     let ignore_sign = to < 0;
     if signed {
@@ -159,11 +253,11 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
         to = -to;
     }
     if !(2..=36).contains(&from) || !(2..=36).contains(&to) {
-        return None;
+        return Ok(None);
     }
     let prefix = conv_valid_prefix(n.trim(), from as u32);
     if prefix.is_empty() {
-        return Some("0".to_owned());
+        return Ok(Some("0".to_owned()));
     }
     let (mut negative, digits) = match prefix.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -172,9 +266,22 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
     let mut val: u64 = 0;
     for c in digits.chars() {
         // `c` is guaranteed a valid `from`-base digit by `conv_valid_prefix`.
-        val = val
-            .wrapping_mul(u64::from(from as u32))
-            .wrapping_add(u64::from(c.to_digit(from as u32).unwrap()));
+        // Go's `conv` helper parses the digits through `strconv.ParseUint`,
+        // whose range failure becomes a 1690 quoting the digit string
+        // (sign already stripped) -- not a wrapped value.
+        let digit = u64::from(c.to_digit(from as u32).unwrap());
+        val = match val
+            .checked_mul(u64::from(from as u32))
+            .and_then(|partial| partial.checked_add(digit))
+        {
+            Some(next) => next,
+            None => {
+                return Err(EvalError::DataOutOfRange {
+                    value: "BIGINT UNSIGNED",
+                    expression: digits.to_string(),
+                })
+            }
+        };
     }
     // Signed clamping to the i64 range, mirroring the Go `conv` helper.
     if signed {
@@ -198,7 +305,7 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
     if negative && ignore_sign {
         out.insert(0, '-');
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 /// The longest valid `CONV` prefix in `base` (a port of
@@ -240,11 +347,16 @@ fn to_radix_upper(mut value: u64, radix: u32) -> String {
 /// `CRC32(str)`: the IEEE CRC-32 checksum (polynomial `0xEDB88320`) as an
 /// unsigned integer; `NULL` propagates.
 pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(s) = coerce_str(&vals[0])? else {
+    // Go's `builtinCRC32Sig.evalInt` hashes the byte sequence returned by
+    // `EvalString`; it does not require the bytes to be valid UTF-8.  This is
+    // observable for a non-legacy connection charset: the rewriter's
+    // `to_binary` wrapper hands CRC32 GBK bytes such as `D2 BB`, which must be
+    // hashed directly rather than rejected by a UTF-8 conversion.
+    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     let mut crc: u32 = 0xFFFF_FFFF;
-    for &byte in s.as_bytes() {
+    for byte in bytes {
         crc ^= u32::from(byte);
         for _ in 0..8 {
             let mask = (crc & 1).wrapping_neg();
@@ -310,7 +422,7 @@ fn sign(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// prefix rule (so `SQRT('4')` is 2 and `SIN('abc')` is 0). `ctx` carries the
 /// statement warning sink that the string case raises 1292 on; every other
 /// kind converts exactly and raises nothing.
-fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, EvalError> {
+pub(crate) fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, EvalError> {
     match v {
         Datum::Null => Ok(None),
         Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v, ctx)?)),

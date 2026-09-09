@@ -6,7 +6,7 @@
 #![allow(non_upper_case_globals)]
 
 /// The SQL spelling of the synthetic all-privileges value.
-pub const ALL_PRIVILEGE_LITERAL: &str = "ALL PRIVILEGES";
+const ALL_PRIVILEGE_LITERAL: &str = "ALL PRIVILEGES";
 
 /// Stable privilege bit value used by privilege tables and verification.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -49,7 +49,8 @@ privileges! {
     CreateRoutinePriv = 23; AlterRoutinePriv = 24; EventPriv = 25;
     ShutdownPriv = 26; ReloadPriv = 27; FilePriv = 28; ConfigPriv = 29;
     CreateTablespacePriv = 30; ReplicationClientPriv = 31;
-    ReplicationSlavePriv = 32; AllPriv = 33; ExtendedPriv = 34;
+    ReplicationSlavePriv = 32; OperateViewPriv = 33; AllPriv = 34;
+    ExtendedPriv = 35;
 }
 
 /// Mask with every real static privilege bit below `AllPriv` set.
@@ -76,6 +77,7 @@ pub const PRIVILEGE_NAMES: &[(PrivilegeType, &str)] = &[
     (IndexPriv, "Index"),
     (CreateViewPriv, "Create View"),
     (ShowViewPriv, "Show View"),
+    (OperateViewPriv, "Operate View"),
     (CreateRolePriv, "Create Role"),
     (DropRolePriv, "Drop Role"),
     (CreateTMPTablePriv, "CREATE TEMPORARY TABLES"),
@@ -113,6 +115,7 @@ pub const PRIVILEGE_SET_NAMES: &[(PrivilegeType, &str)] = &[
     (IndexPriv, "Index"),
     (CreateViewPriv, "Create View"),
     (ShowViewPriv, "Show View"),
+    (OperateViewPriv, "Operate View"),
     (CreateRolePriv, "Create Role"),
     (DropRolePriv, "Drop Role"),
     (ShutdownPriv, "Shutdown Role"),
@@ -139,6 +142,7 @@ pub const SET_ENUM_PRIVILEGES: &[(&str, PrivilegeType)] = &[
     ("Index", IndexPriv),
     ("Create View", CreateViewPriv),
     ("Show View", ShowViewPriv),
+    ("Operate View", OperateViewPriv),
     ("Trigger", TriggerPriv),
 ];
 
@@ -163,6 +167,7 @@ pub const PRIVILEGE_USER_COLUMNS: &[(PrivilegeType, &str)] = &[
     (IndexPriv, "Index_priv"),
     (CreateViewPriv, "Create_view_priv"),
     (ShowViewPriv, "Show_view_priv"),
+    (OperateViewPriv, "Operate_view_priv"),
     (CreateRolePriv, "Create_role_priv"),
     (DropRolePriv, "Drop_role_priv"),
     (CreateTMPTablePriv, "Create_tmp_table_priv"),
@@ -180,17 +185,14 @@ pub const PRIVILEGE_USER_COLUMNS: &[(PrivilegeType, &str)] = &[
 
 impl PrivilegeType {
     /// SQL identifier used by GRANT/SHOW output, or empty for an unknown bit.
-    #[must_use]
     pub fn as_str(self) -> &'static str {
         lookup_forward(PRIVILEGE_NAMES, self)
     }
     /// mysql.user/mysql.db column name, or empty for an unknown bit.
-    #[must_use]
     pub fn column_string(self) -> &'static str {
         lookup_forward(PRIVILEGE_USER_COLUMNS, self)
     }
     /// SET enum spelling, or empty for a privilege excluded by the source map.
-    #[must_use]
     pub fn set_string(self) -> &'static str {
         lookup_forward(PRIVILEGE_SET_NAMES, self)
     }
@@ -213,7 +215,6 @@ fn lookup_forward(
 }
 
 /// Constructs a privilege from an exact privilege-table column name.
-#[must_use]
 pub fn privilege_from_column(column: &str) -> Option<PrivilegeType> {
     PRIVILEGE_USER_COLUMNS
         .iter()
@@ -221,7 +222,6 @@ pub fn privilege_from_column(column: &str) -> Option<PrivilegeType> {
 }
 
 /// Constructs a privilege from an exact privilege SET spelling.
-#[must_use]
 pub fn privilege_from_set_enum(value: &str) -> Option<PrivilegeType> {
     SET_ENUM_PRIVILEGES
         .iter()
@@ -229,7 +229,6 @@ pub fn privilege_from_set_enum(value: &str) -> Option<PrivilegeType> {
 }
 
 /// Returns whether `privileges` contains `privilege`.
-#[must_use]
 pub fn has_privilege(privileges: &[PrivilegeType], privilege: PrivilegeType) -> bool {
     privileges.contains(&privilege)
 }
@@ -254,6 +253,7 @@ pub const ALL_GLOBAL_PRIVILEGES: &[PrivilegeType] = &[
     TriggerPriv,
     CreateViewPriv,
     ShowViewPriv,
+    OperateViewPriv,
     CreateRolePriv,
     DropRolePriv,
     CreateTMPTablePriv,
@@ -287,6 +287,7 @@ pub const ALL_DATABASE_PRIVILEGES: &[PrivilegeType] = &[
     IndexPriv,
     CreateViewPriv,
     ShowViewPriv,
+    OperateViewPriv,
     TriggerPriv,
 ];
 /// All privileges legal in table scope, in source order.
@@ -302,6 +303,7 @@ pub const ALL_TABLE_PRIVILEGES: &[PrivilegeType] = &[
     AlterPriv,
     CreateViewPriv,
     ShowViewPriv,
+    OperateViewPriv,
     TriggerPriv,
 ];
 /// All privileges legal in column scope, in source order.

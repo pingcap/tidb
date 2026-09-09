@@ -68,7 +68,6 @@ impl KeyspaceCodec for CodecV1 {
 
 /// Go `MakeKeyspaceEtcdNamespace`: empty for API v1, the keyspace path
 /// otherwise.
-#[must_use]
 pub fn make_keyspace_etcd_namespace(codec: &dyn KeyspaceCodec) -> String {
     if codec.is_api_v1() {
         return String::new();
@@ -77,7 +76,6 @@ pub fn make_keyspace_etcd_namespace(codec: &dyn KeyspaceCodec) -> String {
 }
 
 /// Go `MakeKeyspaceEtcdNamespaceSlash`: the same path with a trailing slash.
-#[must_use]
 pub fn make_keyspace_etcd_namespace_slash(codec: &dyn KeyspaceCodec) -> String {
     if codec.is_api_v1() {
         return String::new();
@@ -86,7 +84,6 @@ pub fn make_keyspace_etcd_namespace_slash(codec: &dyn KeyspaceCodec) -> String {
 }
 
 /// Go `GetKeyspaceNameBySettings`.
-#[must_use]
 pub fn get_keyspace_name_by_settings() -> String {
     get_global_keyspace_name()
 }
@@ -97,7 +94,6 @@ static KEYSPACE_NAME_BYTES: OnceLock<Option<Vec<u8>>> = OnceLock::new();
 /// Go `GetKeyspaceNameBytesBySettings`: the keyspace name as bytes, computed
 /// once; `None` (Go's nil slice) on a classic kernel, where the once-guard
 /// stores nothing.
-#[must_use]
 pub fn get_keyspace_name_bytes_by_settings() -> Option<&'static [u8]> {
     KEYSPACE_NAME_BYTES
         .get_or_init(|| {
@@ -110,14 +106,12 @@ pub fn get_keyspace_name_bytes_by_settings() -> Option<&'static [u8]> {
 }
 
 /// Go `IsKeyspaceNameEmpty`.
-#[must_use]
 pub fn is_keyspace_name_empty(keyspace_name: &str) -> bool {
     keyspace_name.is_empty()
 }
 
 /// The log field Go's `WrapZapcoreWithKeyspace` stamps onto every record:
 /// `keyspaceName`, present only when the name is set.
-#[must_use]
 pub fn keyspace_name_log_field() -> Option<Field> {
     let keyspace_name = get_keyspace_name_by_settings();
     if is_keyspace_name_empty(&keyspace_name) {
@@ -136,7 +130,6 @@ pub enum ApiContext {
 }
 
 /// Go `BuildAPIContext`.
-#[must_use]
 pub fn build_api_context(keyspace_name: &str) -> ApiContext {
     if keyspace_name.is_empty() {
         ApiContext::V1
@@ -176,7 +169,6 @@ pub enum UsernamePolicy {
 
 /// Go `GetUsernamePolicy`: the prefix policy in Starter deployments, the
 /// permissive default otherwise.
-#[must_use]
 pub fn get_username_policy() -> UsernamePolicy {
     if deploymode::is_starter() {
         UsernamePolicy::Prefix {
@@ -208,7 +200,6 @@ impl UsernamePolicy {
     }
 
     /// Go `ValidateUsernameFormat`: a prefixed name has exactly one dot.
-    #[must_use]
     pub fn validate_username_format(&self, username: &str) -> bool {
         match self {
             Self::Default => true,
@@ -218,7 +209,6 @@ impl UsernamePolicy {
 
     /// Go `GetUsernameVariants`: the prefixed spelling of an unprefixed name,
     /// or nothing when the name already carries the prefix.
-    #[must_use]
     pub fn username_variants(&self, username: &str) -> Vec<String> {
         let Self::Prefix { user_prefix } = self else {
             return Vec::new();
@@ -231,7 +221,6 @@ impl UsernamePolicy {
 
     /// Go `GetOriginalUsername`: strips the prefix, or answers empty when the
     /// policy does not transform this input.
-    #[must_use]
     pub fn original_username(&self, username: &str) -> String {
         let Self::Prefix { user_prefix } = self else {
             return String::new();
@@ -262,6 +251,27 @@ mod tests {
         fn keyspace_id(&self) -> u32 {
             self.keyspace_id
         }
+    }
+
+    // Go permits callers to discard these function results; Rust must not add
+    // a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let codec = CodecV1;
+        make_keyspace_etcd_namespace(&codec);
+        make_keyspace_etcd_namespace_slash(&codec);
+        get_keyspace_name_by_settings();
+        get_keyspace_name_bytes_by_settings();
+        is_keyspace_name_empty("");
+        keyspace_name_log_field();
+        build_api_context("");
+        get_username_policy();
+
+        let policy = UsernamePolicy::Default;
+        policy.validate_username_format("user");
+        policy.username_variants("user");
+        policy.original_username("user");
     }
 
     // Go `MakeKeyspaceEtcdNamespace`/`Slash`: v1 has no namespace, v2 scopes

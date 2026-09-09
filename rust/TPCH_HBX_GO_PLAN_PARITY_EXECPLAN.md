@@ -1564,3 +1564,18 @@ source-correct rather than a workload-specific default override; the strict
 one-client performance no-regression gate remains open, and no Go executable,
 full Go suite, Ready-profile `make lint`, or complete hbx-web3/TPC-H catalog is
 available locally. The commit subject retains the literal `go 代码` phrase.
+
+Revision note, 2026-08-31 (`pkg/ddl/schemaver` atomic parity): the complete
+pinned package at Go commit `e2788410d8d696605e8cb002585877a063ccc909`
+was re-read and audited against `tidb-schemaver`. Rust now carries
+`SyncSummary`, general live-server selection (including nextgen assumed
+servers), exact session retry/context behavior, exact and prefix watches,
+the range-to-watch revision handoff, the complete per-job mirror, and all
+seven pinned tests. The production PD adapter adds the missing revision CAS
+and watch metadata, and the server now shares one initialized syncer between
+the follower report loop and the DDL owner. The former direct PUT/session
+logic, separate manual owner wait, two ignored gap tests, and Rust-only
+synthetic schemaver tests were removed. The atomic inventory and validation
+are recorded in `testport/receipts/ddl_schemaver.md`. This remains a WIP
+profile package batch rather than a Ready claim; no live PD/TiKV integration
+or workspace lint was run.

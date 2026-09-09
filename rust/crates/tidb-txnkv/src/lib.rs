@@ -77,15 +77,18 @@ mod kv_contract;
 pub mod lock;
 mod mem_storage;
 mod mpp;
+mod mpp_probe;
 mod mvcc_metadata;
 mod new_txn;
 mod option;
 pub mod pd_capability;
 mod pd_loader;
 mod prefix_ops;
+mod range_diagnostics;
 mod read_runtime;
 pub mod region;
 mod resource_group;
+mod resource_group_tag;
 mod retry;
 pub mod rpc;
 mod tiflash;
@@ -114,8 +117,9 @@ pub use checker::{
 pub use client::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
     ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
-    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, PdOptions, SecurityConfig,
-    TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
+    DriverDefaults, DriverOptions, EndpointType, LockWaitInfoClient, PdClientConfig, PdOptions,
+    SecurityConfig, SynchronousBatchRequestDispatcher, TikvClientConfig, TikvDriverConfig,
+    TraceInfo, TxnLocalLatchesConfig,
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
 pub use driver::mem_buffer::{
@@ -132,13 +136,15 @@ pub use driver::tikv_opener::{
 pub use driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{
-    gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_txn_too_large_err,
-    gen_write_conflict_in_tidb_err, is_err_not_found, is_txn_retryable_error, ErrorClass, KvError,
-    MysqlErrorCode, ERR_ASSERTION_FAILED, ERR_CANNOT_SET_NIL_VALUE, ERR_ENTRY_TOO_LARGE,
-    ERR_INVALID_TXN, ERR_KEY_EXISTS, ERR_KEY_TOO_LARGE, ERR_LOCK_EXPIRE, ERR_NOT_EXIST,
-    ERR_NOT_IMPLEMENTED, ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE, ERR_WRITE_CONFLICT,
-    ERR_WRITE_CONFLICT_IN_TIDB, TXN_RETRYABLE_MARK,
+    gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_shared_lock_lost_err,
+    gen_txn_too_large_err, gen_write_conflict_in_tidb_err, is_err_not_found,
+    is_txn_retryable_error, ErrorClass, KvError, MysqlErrorCode, ERR_ASSERTION_FAILED,
+    ERR_CANNOT_SET_NIL_VALUE, ERR_ENTRY_TOO_LARGE, ERR_INVALID_TXN, ERR_KEY_EXISTS,
+    ERR_KEY_TOO_LARGE, ERR_LOCK_EXPIRE, ERR_NOT_EXIST, ERR_NOT_IMPLEMENTED, ERR_SHARED_LOCK_LOST,
+    ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE, ERR_WRITE_CONFLICT, ERR_WRITE_CONFLICT_IN_TIDB,
+    TXN_RETRYABLE_MARK,
 };
+pub use farmhash::fingerprint64;
 pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
     InjectionConfig, KvSnapshot, KvStorage, KvTransaction,
@@ -169,17 +175,23 @@ pub use kv_api::{
     Storage, StorageWithPd, Transaction,
 };
 pub use kv_contract::{
-    find_keys_in_stage, set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit,
-    txn_total_size_limit, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
-    PartitionedKeyRanges, Priority, Request, RequestType, RunawayAction, RunawayChecker,
-    StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT, DEFAULT_TXN_TOTAL_SIZE_LIMIT,
-    GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
+    find_keys_in_stage, new_copr_request_limiter, new_query_cop_store_limiter,
+    set_txn_entry_size_limit, set_txn_total_size_limit, txn_entry_size_limit, txn_total_size_limit,
+    CoprRequestLimiter, CoprocessorRequestAdjuster, IsolationLevel, Paging, PartitionIdAndRanges,
+    PartitionedKeyRanges, Priority, QueryCopStoreLimiter, Request, RequestType, RunawayAction,
+    RunawayChecker, StoreLabel, StoreType, DEFAULT_TXN_ENTRY_SIZE_LIMIT,
+    DEFAULT_TXN_TOTAL_SIZE_LIMIT, GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{
     CancelMppTasksParam, DispatchMppTaskParam, EstablishMppConnsParam, MppBuildTasksRequest,
     MppClient, MppCoordinator, MppDispatchRequest, MppQueryId, MppTask, MppTaskLocation,
     MppTaskMeta, MppTaskState, MppVersion,
+};
+pub use mpp_probe::{
+    global_mpp_failed_store_prober, global_mpp_server_info_manager, MppAliveClient,
+    MppFailedStoreProber, MppServerInfo, MppServerInfoManager, DETECT_PERIOD, DETECT_TIMEOUT_LIMIT,
+    MAX_OBSOLETE_TIME_LIMIT, MAX_RECOVERY_TIME_LIMIT, MPP_SERVER_INFO_CACHE_SIZE,
 };
 pub use mvcc_metadata::{
     decode_extra_txn_status_key, decode_key_ts, encode_extra_txn_status_key, encode_write_cf_value,
@@ -204,11 +216,19 @@ pub use option::{
 };
 pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
-pub use read_runtime::{SharedReadAuthority, SharedReadOpener, SharedReadRuntime};
+pub use range_diagnostics::{
+    ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,
+    range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
+};
+pub use read_runtime::{
+    ResolvingLock, ResolvingLocksGuard, SharedReadAuthority, SharedReadOpener, SharedReadRuntime,
+};
 pub use resource_group::{
+    set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+};
+pub use resource_group_tag::{
     decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,
-    set_decode_table_id, FirstKeyRequest, ResourceGroupTagBuilder, ResourceGroupTagDecodeError,
-    ResourceGroupTaggedRequest,
+    FirstKeyRequest, ResourceGroupTagDecodeError,
 };
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,
@@ -224,8 +244,7 @@ pub use rpc::{
     DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tiflash::{
-    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead, TiFlashReplicaRead,
-    ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
+    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
 };
 pub use trxevents::{

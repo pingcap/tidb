@@ -41,7 +41,6 @@ impl KeyRange {
     }
 
     /// Go `(*KeyRange).Contains`: whether `[start, end)` contains `key`.
-    #[must_use]
     pub fn contains(&self, key: &[u8]) -> bool {
         key >= self.start_key.as_slice()
             && (self.end_key.is_empty() || key < self.end_key.as_slice())
@@ -49,7 +48,6 @@ impl KeyRange {
 
     /// Go `(*KeyRange).ContainsRange`: whether this range contains a region's
     /// key range.
-    #[must_use]
     pub fn contains_range(&self, start_key: &[u8], end_key: &[u8]) -> bool {
         start_key >= self.start_key.as_slice()
             && (self.end_key.is_empty() || end_key <= self.end_key.as_slice())
@@ -147,7 +145,6 @@ impl<F> Range<F> {
 
 impl<F: RangeFile> Range<F> {
     /// Go `(*Range).BytesAndKeys`: total bytes and keys in a range.
-    #[must_use]
     pub fn bytes_and_keys(&self) -> (u64, u64) {
         let mut bytes = 0u64;
         let mut keys = 0u64;
@@ -206,7 +203,6 @@ impl<F> Default for RangeStatsTree<F> {
 
 impl<F: RangeFile> RangeStatsTree<F> {
     /// Go `NewRangeStatsTree`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -214,7 +210,6 @@ impl<F: RangeFile> RangeStatsTree<F> {
     }
 
     /// Go's promoted `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.tree.len()
     }
@@ -291,7 +286,6 @@ fn decode_keyspace_key(key: &[u8]) -> Option<&[u8]> {
 }
 
 /// Go `NeedsMerge`: whether two adjacent ranges may be fused.
-#[must_use]
 pub fn needs_merge<F: RangeFile>(
     left: &RangeStats<F>,
     right: &RangeStats<F>,
@@ -375,7 +369,6 @@ impl<F> Default for ProgressRange<F> {
 
 impl<F: RangeFile> RangeTree<F> {
     /// Go `NewRangeTree`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -387,7 +380,6 @@ impl<F: RangeFile> RangeTree<F> {
     ///
     /// `FreeListG` is a Go allocation-reuse knob with no observable behavior,
     /// so only the physical ID survives the crossing.
-    #[must_use]
     pub fn new_with_physical_id(physical_id: i64) -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -396,7 +388,6 @@ impl<F: RangeFile> RangeTree<F> {
     }
 
     /// Go's promoted `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.tree.len()
     }
@@ -622,7 +613,6 @@ pub struct ProgressRangeTree<F> {
 
 impl<F: RangeFile> ProgressRangeTree<F> {
     /// Go `NewProgressRangeTree`.
-    #[must_use]
     pub fn new(meta_writer: Option<Box<dyn MetaSink<F>>>, skip_checksum: bool) -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -634,7 +624,6 @@ impl<F: RangeFile> ProgressRangeTree<F> {
     }
 
     /// Go's promoted `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.tree.len()
     }
@@ -651,7 +640,6 @@ impl<F: RangeFile> ProgressRangeTree<F> {
     }
 
     /// Go `(*ProgressRangeTree).GetChecksumMap`.
-    #[must_use]
     pub fn get_checksum_map(&self) -> &BTreeMap<i64, ChecksumStats> {
         &self.checksum_map
     }
@@ -1266,6 +1254,41 @@ mod tests {
             // Both keys address index 1 of table 42, so the merge is allowed.
             assert!(needs_merge(&left, &right, 42, 42));
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn direct_source_returns_may_be_ignored_like_go() {
+        let key_range = KeyRange::new(b"a", b"b");
+        key_range.contains(b"a");
+        key_range.contains_range(b"a", b"b");
+
+        let left: RangeStats<TestFile> = RangeStats {
+            range: Range::new(b"a", b"b"),
+            size: 0,
+            count: 0,
+        };
+        let right: RangeStats<TestFile> = RangeStats {
+            range: Range::new(b"b", b"c"),
+            size: 0,
+            count: 0,
+        };
+        left.range.bytes_and_keys();
+
+        RangeStatsTree::<TestFile>::new();
+        let stats_tree = RangeStatsTree::<TestFile>::default();
+        stats_tree.len();
+        needs_merge(&left, &right, 1, 1);
+
+        RangeTree::<TestFile>::new();
+        RangeTree::<TestFile>::new_with_physical_id(1);
+        let range_tree = RangeTree::<TestFile>::default();
+        range_tree.len();
+
+        ProgressRangeTree::<TestFile>::new(None, false);
+        let progress_tree = ProgressRangeTree::<TestFile>::new(None, false);
+        progress_tree.len();
+        progress_tree.get_checksum_map();
     }
 
     fn build_progress_range(start_key: &str, end_key: &str) -> ProgressRange<TestFile> {

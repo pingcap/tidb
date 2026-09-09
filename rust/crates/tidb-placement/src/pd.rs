@@ -166,7 +166,6 @@ impl Rule {
     /// location-label backing arrays with its source. Neither this package nor
     /// its callers mutate those elements in place — every mutation replaces the
     /// whole slice — so the deep Rust clone is observationally identical.
-    #[must_use]
     pub fn clone_rule(&self) -> Self {
         self.clone()
     }

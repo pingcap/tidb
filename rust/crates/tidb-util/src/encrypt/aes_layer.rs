@@ -19,8 +19,7 @@ use crate::layered_io::{CloseWrite, ReadAt, ReadAtResult};
 use std::io::{self, Write};
 use std::sync::Arc;
 
-/// Source default encrypt block size in bytes.
-pub const DEFAULT_ENCRYPT_BLOCK_SIZE: i64 = 1024;
+const DEFAULT_ENCRYPT_BLOCK_SIZE: i64 = 1024;
 
 /// AES-CTR key, nonce, and random-access block geometry.
 #[derive(Clone)]
@@ -164,7 +163,6 @@ where
     W: CloseWrite,
 {
     /// Creates an encrypting writer over `underlying`.
-    #[must_use]
     pub fn new(underlying: W, cipher: &CtrCipher) -> Self {
         let buffer_size =
             usize::try_from(cipher.encrypt_block_size).expect("negative encrypt block size");
@@ -179,13 +177,11 @@ where
     }
 
     /// Returns unused bytes in the current buffer.
-    #[must_use]
     pub fn available_size(&self) -> usize {
         self.buffer.len() - self.used
     }
 
     /// Returns buffered plaintext bytes.
-    #[must_use]
     pub fn buffered(&self) -> usize {
         self.used
     }
@@ -202,7 +198,7 @@ where
             .xor_key_stream(&mut self.buffer[..self.used]);
         let result = match self.underlying.write(&self.buffer[..self.used]) {
             Ok(n) => {
-                self.flushed_user_data_count += n as i64;
+                self.flushed_user_data_count = self.flushed_user_data_count.wrapping_add(n as i64);
                 if n < self.used {
                     Err(io::Error::new(io::ErrorKind::WriteZero, "short write"))
                 } else {
@@ -219,13 +215,11 @@ where
     }
 
     /// Returns plaintext not yet flushed to the underlying object.
-    #[must_use]
     pub fn get_cache(&self) -> &[u8] {
         &self.buffer[..self.used]
     }
 
     /// Returns the logical offset of the cached plaintext.
-    #[must_use]
     pub const fn get_cache_data_offset(&self) -> i64 {
         self.flushed_user_data_count
     }
@@ -296,7 +290,6 @@ where
     R: ReadAt,
 {
     /// Creates a decrypting positional reader.
-    #[must_use]
     pub fn new(underlying: R, cipher: &CtrCipher) -> Self {
         Self {
             underlying,
@@ -313,16 +306,10 @@ where
         if destination.is_empty() {
             return ReadAtResult::ok(0);
         }
-        if offset < 0 {
-            return ReadAtResult::io(
-                0,
-                io::Error::new(io::ErrorKind::InvalidInput, "negative read offset"),
-            );
-        }
         let block_size = self.cipher.encrypt_block_size;
         let offset_in_block = offset % block_size;
-        let counter = (offset / block_size) * self.cipher.aes_block_count;
-        let mut cursor = offset - offset_in_block;
+        let counter = (offset / block_size).wrapping_mul(self.cipher.aes_block_count);
+        let mut cursor = offset.wrapping_sub(offset_in_block);
         let mut block_offset = offset_in_block as usize;
         let mut buffer = vec![0; block_size as usize];
         let mut stream = self.cipher.stream(counter as u64);
@@ -338,7 +325,7 @@ where
                     };
                 }
             }
-            cursor += result.n as i64;
+            cursor = cursor.wrapping_add(result.n as i64);
             stream.xor_key_stream(&mut buffer[..result.n]);
             let available = &buffer[block_offset..result.n];
             let copied = available.len().min(destination.len() - total);
@@ -466,5 +453,23 @@ mod tests {
             Reader::new(Reader::new(file, &cipher1), &cipher2),
             logical_length,
         );
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        crate::encrypt::pkcs7_pad(&[], 16);
+        crate::encrypt::derive_key_mysql(&[], 16);
+        crate::encrypt::sql_decode(b"value", b"password");
+        crate::encrypt::sql_encode(b"value", b"password");
+
+        let cipher = CtrCipher::new().expect("create cipher");
+        Writer::new(MemoryFile::default(), &cipher);
+        let writer = Writer::new(MemoryFile::default(), &cipher);
+        writer.available_size();
+        writer.buffered();
+        writer.get_cache();
+        writer.get_cache_data_offset();
+        Reader::new(MemoryFile::default(), &cipher);
     }
 }

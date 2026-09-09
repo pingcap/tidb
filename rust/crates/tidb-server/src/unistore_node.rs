@@ -234,7 +234,7 @@ pub(crate) fn unistore_session_factory(
 /// only the store underneath differs, which is the entire point.
 pub(crate) fn run_unistore_node(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = configured_account_store(&config)?;
@@ -259,8 +259,8 @@ pub(crate) fn run_unistore_node(
             &config.status_host,
             config.status_port,
             node.tracker(),
-            config.version_info.server_version.clone(),
-            config.version_info.git_hash.clone(),
+            tidb_mysql::runtime_versions().server_version,
+            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
         ) {
             Ok(server) => {
                 eprintln!(
@@ -308,31 +308,42 @@ pub(crate) fn run_unistore_node(
 /// the reload ticks still run, against this process's own store.
 pub(crate) fn run_unistore_cluster_session(
     config: crate::node_config::NodeConfig,
-    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), crate::real_tikv_node::RunConfiguredNodeError> {
     use crate::real_tikv_node::RunConfiguredNodeError;
 
     let users = configured_account_store(&config)?;
     let users = Arc::new(users);
-    let stack = unistore_cluster_session_stack(&config, &users)?;
+    let stack =
+        unistore_cluster_session_stack(&config, &users, Some(spill_storage), memory_arbitrator)?;
     let UnistoreClusterStack {
         factory,
         schema_version,
         stats,
-        cop_source: _,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
+        _async_stats_loader,
         _read_authority: read_authority,
     } = stack;
-    let factory = factory.with_spill_storage(spill_storage);
-    let factory = match memory_arbitrator {
-        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
-        None => factory,
-    };
-    let factory = Arc::new(factory);
+    if tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load()
+    {
+        factory
+            .campaign_stats_owner(config.stats_lease)
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                    "campaign stats owner failed: {error}"
+                )))
+            })?;
+    }
+    factory.start_stats_usage_workers(config.stats_lease);
+    factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
+    factory.start_historical_stats_worker();
     let stats_receipt = stats.receipt();
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
@@ -347,8 +358,8 @@ pub(crate) fn run_unistore_cluster_session(
             &config.status_host,
             config.status_port,
             node.tracker(),
-            config.version_info.server_version.clone(),
-            config.version_info.git_hash.clone(),
+            tidb_mysql::runtime_versions().server_version,
+            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
             crate::http_status::StatusRoutes {
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
                 // The SAME bytes the startup log prints, so the log and the
@@ -400,20 +411,16 @@ pub(crate) fn run_unistore_cluster_session(
 /// catalog, and `CopScanSource` the live `--store unistore
 /// --cluster-session` process serves.
 pub(crate) struct UnistoreClusterStack {
-    pub(crate) factory: crate::cluster_session_node::ClusterSessionFactory,
+    pub(crate) factory: Arc<crate::cluster_session_node::ClusterSessionFactory>,
     pub(crate) schema_version: i64,
     pub(crate) stats: Arc<tidb_exec::stats_watch::SharedStats>,
-    /// The node's one coprocessor, kept concrete so a test can read the
-    /// served/refused receipt the live proof reads. The run path serves it
-    /// only through the factory's `dyn` handle above.
-    #[allow(dead_code)]
-    pub(crate) cop_source: Arc<tidb_exec::cop_scan::CopScanSource<InProcessReadSessionFactory>>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
     pub(crate) _sysvar_reloader: crate::cluster_sysvar_seam::SysvarReloader,
     pub(crate) _stats_reloader: tidb_exec::stats_watch::StatsReloader,
     pub(crate) _binding_reloader: crate::cluster_binding_seam::BindingReloader,
+    pub(crate) _async_stats_loader: tidb_exec::stats_watch::AsyncStatsLoader,
     pub(crate) _read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
 }
 
@@ -423,6 +430,8 @@ pub(crate) struct UnistoreClusterStack {
 pub(crate) fn unistore_cluster_session_stack(
     config: &crate::node_config::NodeConfig,
     users: &Arc<crate::ConfiguredUserStore>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<UnistoreClusterStack, crate::real_tikv_node::RunConfiguredNodeError> {
     use crate::cluster_session_node::{
         ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
@@ -471,10 +480,10 @@ pub(crate) fn unistore_cluster_session_stack(
     let (catalog, reloader) =
         crate::real_tikv_node::spawn_catalog_reloader(startup, opener.clone(), config.schema_lease)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+    let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         opener.clone(),
-        config.schema_lease,
+        config.stats_lease,
         IN_PROCESS_TIMEOUT,
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
@@ -498,31 +507,52 @@ pub(crate) fn unistore_cluster_session_stack(
     // With no etcd client the syncer publishes nothing and answers reads
     // with this node alone -- Go's `etcdCli == nil` path, and exactly what
     // `information_schema.TIDB_SERVERS_INFO` shows on a single node.
-    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
-        crate::serverinfo_etcd::node_server_info(config),
+    let server_info = Arc::new(
+        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+            crate::serverinfo_etcd::node_server_info(config),
+            None,
+            config.report_status,
+        ),
+    );
+    let stats_owner: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::MockManager::new(
+        tidb_owner::Context::background(),
+        server_info.local_server_info().static_info.id.clone(),
         None,
+        crate::cluster_session_node::STATS_OWNER_KEY,
     ));
-    let cop_source = Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
-        Arc::clone(&cop_source) as _;
-
+        Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
     let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
-        opener.clone(), Arc::clone(&catalog), users.global_vars(), IN_PROCESS_TIMEOUT,
-    ).map_err(|error| engine(SqlQueryError::unknown(error)))?;
-
-    let factory = ClusterSessionFactory::new(
-        Arc::new(RealClusterTransactions::new(
-            opener.clone(),
-            IN_PROCESS_TIMEOUT,
-        )),
-        Arc::new(RealClusterDdl::new(
+        opener.clone(),
+        Arc::clone(&catalog),
+        users.global_vars(),
+        IN_PROCESS_TIMEOUT,
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    let cluster_ddl = Arc::new(
+        RealClusterDdl::new(
             opener.clone(),
             Arc::clone(&catalog),
             IN_PROCESS_TIMEOUT,
             // No etcd: schema changes announce themselves to nobody, and the
             // reload tick above is the only follower -- correct for one node.
             None,
+            Arc::clone(&server_info),
+            None,
+        )
+        .map_err(|error| {
+            crate::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "campaign DDL owner failed: {error}"
+            )))
+        })?,
+    );
+
+    let factory = ClusterSessionFactory::new(
+        Arc::new(RealClusterTransactions::new(
+            opener.clone(),
+            IN_PROCESS_TIMEOUT,
         )),
+        cluster_ddl,
         Arc::new(crate::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),
             users.accounts(),
@@ -540,6 +570,11 @@ pub(crate) fn unistore_cluster_session_stack(
             Arc::new(opener.clone()),
             Arc::clone(&stats),
             IN_PROCESS_TIMEOUT,
+            config.stats_lease.slow_save_interval(),
+        )),
+        Arc::new(crate::cluster_stats_lock_seam::RealClusterStatsLock::new(
+            Arc::new(opener.clone()),
+            IN_PROCESS_TIMEOUT,
         )),
         catalog,
         users.accounts(),
@@ -551,18 +586,27 @@ pub(crate) fn unistore_cluster_session_stack(
         )),
     )
     .with_cop_scans(cop_scans)
-    .with_bindings(bindings)
-    .with_server_info(server_info);
+    .with_server_info(server_info)
+    .with_stats_owner(stats_owner);
+    let factory = match spill_storage {
+        Some(storage) => factory.with_spill_storage(storage),
+        None => factory,
+    };
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = factory.with_bindings(bindings);
 
     Ok(UnistoreClusterStack {
         factory,
         schema_version,
         stats,
-        cop_source,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
+        _async_stats_loader: async_stats_loader,
         _read_authority: read_authority,
     })
 }

@@ -297,7 +297,12 @@ fn apply_schema_diff<S: MetaSnapshot>(
         ActionType::ACTION_DROP_SCHEMA => {
             catalog.databases.retain(|db| db.info.id != diff.schema_id);
         }
-        ActionType::ACTION_CREATE_TABLE => {
+        // Go `getTableIDs` classifies a materialized view or view log create
+        // exactly like `ActionCreateTable`: the diff's own table ID names the
+        // new physical table (Go master `94a9cbedab`).
+        ActionType::ACTION_CREATE_TABLE
+        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
+        | ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
             if let Err(reason) =
                 create_table(snapshot, catalog, version, diff.schema_id, diff.table_id)?
             {

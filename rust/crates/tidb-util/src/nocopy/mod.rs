@@ -12,49 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native Rust equivalent of `pkg/util/nocopy/nocopy.go`.
-//!
-//! Go's marker relies on `go vet` recognizing its `Lock` method. Rust makes
-//! implicit copying impossible directly: this zero-sized marker intentionally
-//! implements neither [`Copy`] nor [`Clone`]. Explicit ownership moves remain
-//! valid, just as moving an owning Rust value remains valid generally.
+//! Marker for types that must not be copied.
 
 /// Zero-sized marker that prevents an embedding Rust type from becoming
 /// implicitly copyable.
-///
-/// ```compile_fail
-/// use tidb_util::nocopy::NoCopy;
-///
-/// let marker = NoCopy::new();
-/// let moved = marker;
-/// let copied_again = marker;
-/// ```
-#[derive(Debug, Default)]
 pub struct NoCopy;
 
 impl NoCopy {
-    /// Constructs the source zero value.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
+    /// No-op lock marker method.
+    pub fn lock(&self) {}
 
-    /// Source-compatible no-op `sync.Locker.Lock` method.
-    pub const fn lock(&self) {}
-
-    /// Source-compatible no-op `sync.Locker.Unlock` method.
-    pub const fn unlock(&self) {}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::NoCopy;
-
-    #[test]
-    fn source_zero_value_and_no_op_methods_are_preserved() {
-        let marker = NoCopy::new();
-        marker.lock();
-        marker.unlock();
-        assert_eq!(std::mem::size_of_val(&marker), 0);
-    }
+    /// No-op unlock marker method.
+    pub fn unlock(&self) {}
 }

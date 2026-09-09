@@ -84,3 +84,24 @@ impl fmt::Display for TaskType {
         formatter.write_str(self.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TaskType;
+
+    #[test]
+    fn integer_values_and_strings_match_go() {
+        let cases = [
+            (0, TaskType::Root, "rootTask"),
+            (1, TaskType::CopSingleRead, "copSingleReadTask"),
+            (2, TaskType::CopMultiRead, "copMultiReadTask"),
+            (3, TaskType::Mpp, "mppTask"),
+            (9, TaskType::Unknown(9), "UnknownTaskType"),
+        ];
+        for (raw, task, label) in cases {
+            assert_eq!(TaskType::from_raw(raw), task);
+            assert_eq!(task.raw(), raw);
+            assert_eq!(task.to_string(), label);
+        }
+    }
+}

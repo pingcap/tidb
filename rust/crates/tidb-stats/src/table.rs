@@ -15,6 +15,7 @@
 //! Aggregate `HistColl` and `Table` ownership from `pkg/statistics/table.go`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
@@ -24,6 +25,30 @@ use crate::{
 
 pub const PSEUDO_VERSION: u64 = 0;
 pub const PSEUDO_ROW_COUNT: i64 = 10_000;
+
+/// Atomic floating-point value used for Go's process-wide statistics policy.
+pub struct AtomicF64(AtomicU64);
+
+impl AtomicF64 {
+    /// Creates an atomic value.
+    pub const fn new(value: f64) -> Self {
+        Self(AtomicU64::new(value.to_bits()))
+    }
+
+    /// Loads the current value.
+    pub fn load(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Stores a new value.
+    pub fn store(&self, value: f64) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Go `statistics.RatioOfPseudoEstimate`: modifications above this fraction
+/// of the analyzed row count make statistics outdated.
+pub static RATIO_OF_PSEUDO_ESTIMATE: AtomicF64 = AtomicF64::new(0.7);
 
 pub type SharedColumn = Arc<RwLock<Column>>;
 pub type SharedIndex = Arc<RwLock<Index>>;
@@ -38,21 +63,18 @@ pub struct TableMemoryUsage {
 }
 
 impl TableMemoryUsage {
-    #[must_use]
     pub fn total_index_tracking_mem_usage(&self) -> i64 {
         self.indices_mem_usage.values().fold(0_i64, |sum, usage| {
             sum.wrapping_add(usage.tracking_mem_usage())
         })
     }
 
-    #[must_use]
     pub fn total_column_tracking_mem_usage(&self) -> i64 {
         self.columns_mem_usage.values().fold(0_i64, |sum, usage| {
             sum.wrapping_add(usage.tracking_mem_usage())
         })
     }
 
-    #[must_use]
     pub fn total_tracking_mem_usage(&self) -> i64 {
         self.total_index_tracking_mem_usage()
             .wrapping_add(self.total_column_tracking_mem_usage())
@@ -237,7 +259,6 @@ pub struct HistColl {
 }
 
 impl HistColl {
-    #[must_use]
     pub fn new(
         physical_id: i64,
         realtime_count: i64,
@@ -362,7 +383,6 @@ impl HistColl {
     }
 
     /// Stable column-first, index-second source order.
-    #[must_use]
     pub fn analyze_row_count(&self) -> f64 {
         for column in self.stable_columns() {
             let column = read(&column);
@@ -382,7 +402,6 @@ impl HistColl {
         -1.0
     }
 
-    #[must_use]
     pub fn scaled_realtime_and_modify_count(&self, index: Option<&Index>) -> (i64, i64) {
         let Some(index) = index else {
             return (self.realtime_count, self.modify_count);
@@ -404,7 +423,6 @@ impl HistColl {
 
     /// Go `ID2UniqueID`. Statistics payloads remain shared; only the column
     /// map and its keys are rebuilt.
-    #[must_use]
     pub fn id_to_unique_id(&self, columns: &[QueryColumn]) -> Self {
         let source_columns = read(&self.columns);
         let mapped = columns
@@ -430,7 +448,6 @@ impl HistColl {
     /// Go `GenerateHistCollFromColumnInfo`. `prepare_mv_columns` is the
     /// planner-owned `PrepareCols4MVIndex` callback reduced to the unique IDs
     /// retained by this crate's query map.
-    #[must_use]
     pub fn generate_from_column_info(
         &self,
         table_info: &QueryTableInfo,
@@ -548,7 +565,6 @@ impl HistColl {
 }
 
 /// Go `PseudoHistColl`.
-#[must_use]
 pub fn pseudo_hist_coll(physical_id: i64, allow_trigger_loading: bool) -> HistColl {
     let mut coll = HistColl::new(physical_id, PSEUDO_ROW_COUNT, 0, 0, 0);
     coll.pseudo = true;
@@ -570,7 +586,6 @@ pub struct Table {
 impl Table {
     /// Go `(*Table).MemoryUsage`; only column and index statistics payloads
     /// contribute, while table metadata is intentionally excluded.
-    #[must_use]
     pub fn memory_usage(&self) -> TableMemoryUsage {
         let mut result = TableMemoryUsage {
             table_id: self.hist_coll.physical_id,
@@ -607,7 +622,6 @@ impl Table {
         }
     }
 
-    #[must_use]
     pub fn copy_as(&self, intent: CopyIntent) -> Self {
         let (columns, indices) = match intent {
             CopyIntent::MetaOnly => (
@@ -662,22 +676,18 @@ impl Table {
         }
     }
 
-    #[must_use]
     pub const fn is_analyzed(&self) -> bool {
         self.last_analyze_version > 0
     }
 
-    #[must_use]
     pub fn meets_auto_analyze_min_count(&self, threshold: i64) -> bool {
         self.hist_coll.realtime_count >= threshold
     }
 
-    #[must_use]
     pub fn is_eligible_for_analysis(&self, threshold: i64) -> bool {
         self.meets_auto_analyze_min_count(threshold) && !self.hist_coll.pseudo
     }
 
-    #[must_use]
     pub fn stats_healthy(&self) -> (i64, bool) {
         if self.hist_coll.pseudo {
             return (0, false);
@@ -701,7 +711,6 @@ impl Table {
         (healthy, true)
     }
 
-    #[must_use]
     pub fn column_load_needed(
         &self,
         id: i64,
@@ -730,7 +739,6 @@ impl Table {
         (Some(column), needed, true)
     }
 
-    #[must_use]
     pub fn index_load_needed(&self, id: i64) -> (Option<SharedIndex>, bool) {
         let index = self.hist_coll.get_index(id);
         let map = self
@@ -747,7 +755,6 @@ impl Table {
         (index, needed)
     }
 
-    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.hist_coll
             .stable_columns()
@@ -760,15 +767,15 @@ impl Table {
                 .any(|index| read(index).stats_loaded_status.stats_initialized())
     }
 
-    #[must_use]
-    pub fn is_outdated(&self, ratio: f64) -> bool {
+    pub fn is_outdated(&self) -> bool {
         let analyzed = self.hist_coll.analyze_row_count();
         let row_count = if analyzed < 0.0 {
             self.hist_coll.realtime_count as f64
         } else {
             analyzed
         };
-        row_count > 0.0 && self.hist_coll.modify_count as f64 / row_count > ratio
+        row_count > 0.0
+            && self.hist_coll.modify_count as f64 / row_count > RATIO_OF_PSEUDO_ESTIMATE.load()
     }
 
     /// Go `GetStatsInfo`. `need_copy == false` returns an alias to the cache
@@ -822,7 +829,6 @@ impl Table {
 
 /// Go `PseudoTable`, including public/hidden schema filtering and the option
 /// to omit histogram metadata while retaining the existence map.
-#[must_use]
 pub fn pseudo_table(
     table_info: &PseudoTableInfo,
     allow_trigger_loading: bool,

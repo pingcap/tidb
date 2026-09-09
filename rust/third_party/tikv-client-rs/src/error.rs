@@ -133,6 +133,21 @@ impl fmt::Display for DeadlockError {
 
 impl StdError for DeadlockError {}
 
+/// TiKV confirmed that a transaction lost ownership of a shared lock while
+/// upgrading it. Rollback remains valid, but the transaction cannot continue.
+#[derive(Debug)]
+pub struct SharedLockLostError {
+    pub shared_lock_lost: kvrpcpb::SharedLockLost,
+}
+
+impl fmt::Display for SharedLockLostError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&protobuf_text(&self.shared_lock_lost))
+    }
+}
+
+impl StdError for SharedLockLostError {}
+
 #[derive(Debug)]
 pub struct PdError {
     pub error: pdpb::Error,
@@ -465,6 +480,18 @@ pub fn is_write_conflict(error: &(dyn StdError + 'static)) -> bool {
                 })
             })
     })
+}
+
+/// Whether the error chain reports an immediate pessimistic-lock failure
+/// requested with `LOCK_NO_WAIT`.
+pub fn is_lock_acquire_fail_and_no_wait_set(error: &(dyn StdError + 'static)) -> bool {
+    has_static_error(error, StaticError::LockAcquireFailedNoWait)
+}
+
+/// Whether the error chain reports that a pessimistic lock exceeded its
+/// configured wait limit.
+pub fn is_lock_wait_timeout(error: &(dyn StdError + 'static)) -> bool {
+    has_static_error(error, StaticError::LockWaitTimeout)
 }
 
 fn has_static_error(error: &(dyn StdError + 'static), expected: StaticError) -> bool {

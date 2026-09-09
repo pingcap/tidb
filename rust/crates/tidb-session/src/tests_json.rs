@@ -453,9 +453,9 @@ fn json_and_approximate_aggregates() {
     // A window call still refuses DISTINCT, whatever the function.
     assert!(matches!(
         session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t"),
-        Err(DriverError::NotSupportedYet(
+        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
             "<window function>(DISTINCT ..)"
-        ))
+        )))
     ));
 }
 

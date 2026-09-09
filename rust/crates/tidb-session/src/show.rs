@@ -27,6 +27,7 @@
 use crate::show_index::{show_index_rows, SHOW_INDEX_COLUMNS};
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
+use tidb_util::stringutil::go_to_lower;
 
 /// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
 /// `col.GetTypeDesc()`.
@@ -118,10 +119,14 @@ fn escape_name(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Go's `TABLE_TYPE` / `Table_type` value for an object.
-fn table_type_of(is_view: bool) -> &'static str {
+/// Go's `TABLE_TYPE` / `Table_type` value for an object — `getTableType`
+/// (`executor/show.go:519-528`): a view is VIEW, a sequence is SEQUENCE,
+/// everything this tier lists is BASE TABLE.
+fn table_type_of(is_view: bool, is_sequence: bool) -> &'static str {
     if is_view {
         "VIEW"
+    } else if is_sequence {
+        "SEQUENCE"
     } else {
         "BASE TABLE"
     }
@@ -473,6 +478,25 @@ fn show_create_table_text(
         clauses.push(clause);
     }
 
+    // Go emits public CHECK constraints after every foreign key. The stored
+    // expression is already normalized by DDL; SHOW adds one parenthesis
+    // pair for CHECK and another around the expression itself.
+    for constraint in table
+        .check_constraint_infos()
+        .iter()
+        .filter(|constraint| constraint.state == tidb_model::SchemaState::PUBLIC)
+    {
+        let mut clause = format!(
+            "  CONSTRAINT {} CHECK (({}))",
+            escape_name(constraint.name.original()),
+            constraint.expr_string
+        );
+        if !constraint.enforced {
+            clause.push_str(" /*!80016 NOT ENFORCED */");
+        }
+        clauses.push(clause);
+    }
+
     out.push_str(&clauses.join(",\n"));
     out.push_str(&format!(
         "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
@@ -484,6 +508,18 @@ fn show_create_table_text(
             " COMMENT='{}'",
             tidb_util::format::output_format(table.comment())
         ));
+    }
+    // Go `ShowCreateTable` (`executor/show.go:1373-1375`): the compression
+    // setting, printed before the auto-increment option when non-empty.
+    if !table.compression().is_empty() {
+        out.push_str(&format!(" COMPRESSION='{}'", table.compression()));
+    }
+    // Go `ShowCreateTable` (`executor/show.go:1383-1387`): the MySQL-compatible
+    // ungated `AUTO_INCREMENT=%d`, printed when the table has an auto-increment
+    // column and the allocator's next value exceeds 1 (fresh tables with no
+    // inserts print nothing).
+    if let Some(next) = table.next_auto_increment().filter(|next| *next > 1) {
+        out.push_str(&format!(" AUTO_INCREMENT={next}"));
     }
     // Go `ShowCreateTable`: printed only when the table set one.
     if table.auto_id_cache() != 0 {
@@ -1150,7 +1186,7 @@ impl ShowLikePattern {
         };
         Self {
             value: if extracted_literal {
-                value.map(|pattern| pattern.to_lowercase())
+                value.map(go_to_lower)
             } else {
                 value
             },
@@ -1171,7 +1207,7 @@ impl ShowLikePattern {
         };
         if self.fold_lowercase {
             tidb_executor::like_match_with_collation(
-                text.to_lowercase(),
+                go_to_lower(text),
                 pattern,
                 None,
                 tidb_datatype::Collation::Utf8Mb4Bin,
@@ -1223,6 +1259,269 @@ fn filter_show_output(
 }
 
 impl Session {
+    /// Pinned Go `ShowExec.fetchShowColumnStatsUsage`: load the persisted map
+    /// once, then walk every schema, table, logical/global table ID, physical
+    /// partition ID, and column in infoschema order.
+    fn column_stats_usage_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let usage = match self.column_stats_usage.clone() {
+            Some(provider) => provider
+                .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
+                .map_err(DriverError::unsupported)?,
+            None => std::collections::HashMap::new(),
+        };
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let mut targets = vec![(
+                        table.table_id,
+                        tidb_executor::show_stats::column_stats_usage_label(
+                            table.partition().is_some(),
+                            None,
+                        ),
+                    )];
+                    if let Some(partition) = table.partition() {
+                        targets.extend(partition.definitions.iter().map(|definition| {
+                            (
+                                definition.id,
+                                tidb_executor::show_stats::column_stats_usage_label(
+                                    false,
+                                    Some(&definition.name),
+                                ),
+                            )
+                        }));
+                    }
+                    for (physical_id, partition) in targets {
+                        for column in table.columns() {
+                            let item = tidb_model::TableItemID {
+                                table_id: physical_id,
+                                id: column.id,
+                                is_index: false,
+                                is_sync_load_failed: false,
+                            };
+                            let Some((last_used_at, last_analyzed_at)) = usage.get(&item) else {
+                                continue;
+                            };
+                            rows.push(tidb_executor::show_stats::column_stats_usage_row(
+                                &database,
+                                &name,
+                                &partition,
+                                &column.name,
+                                *last_used_at,
+                                *last_analyzed_at,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Last_used_at".to_owned(), datetime()),
+                ("Last_analyzed_at".to_owned(), datetime()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Pinned Go `fetchShowAnalyzeStatus` and
+    /// `dataForAnalyzeStatusHelper`: read the thirty newest persisted jobs,
+    /// apply table visibility, project UTC timestamps into the session zone,
+    /// and calculate progress only for running non-global-merge jobs.
+    fn analyze_status_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let jobs = match self.analyze_status.clone() {
+            Some(provider) => provider
+                .load_analyze_status(&self.active_resource_group)
+                .map_err(DriverError::unsupported)?,
+            None => Vec::new(),
+        };
+        let session_zone = self.session_time_zone();
+        let display_time = |mut value: tidb_datatype::Time| -> Result<Datum, DriverError> {
+            value
+                .convert_time_zone(&chrono::Utc, &session_zone)
+                .map_err(|error| DriverError::unsupported(error.to_string()))?;
+            tidb_datatype::Time::new(value.core_time(), tidb_datatype::TimeType::DateTime, 0)
+                .map(Datum::Time)
+                .map_err(|error| DriverError::unsupported(error.to_string()))
+        };
+        let mut result_rows = Vec::new();
+        for job in jobs {
+            // Go asks for `mysql.AllPrivMask`: any effective static table
+            // privilege makes the row visible.
+            if !self.has_any_scoped_privilege(
+                &job.table_schema,
+                &job.table_name,
+                privilege::all_privs_mask(),
+            ) {
+                continue;
+            }
+            let start_time = job
+                .start_time
+                .map(display_time)
+                .transpose()?
+                .unwrap_or(Datum::Null);
+            let end_time = job
+                .end_time
+                .map(display_time)
+                .transpose()?
+                .unwrap_or(Datum::Null);
+            let mut remaining = Datum::Null;
+            let mut progress = Datum::Null;
+            let mut estimated = Datum::Null;
+            if job.state == tidb_stats::ANALYZE_RUNNING
+                && !job.job_info.starts_with("merge global stats")
+            {
+                let Some(start) = job.start_time else {
+                    return Err(DriverError::unsupported("invalid start time"));
+                };
+                let table_count = self.with_catalog_mut(|catalog| {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&job.table_schema, &job.table_name)
+                    else {
+                        return Ok(None);
+                    };
+                    let physical_id = if job.partition_name.is_empty() {
+                        table.table_id
+                    } else {
+                        table
+                            .partition()
+                            .and_then(|partition| {
+                                partition.definitions.iter().find(|definition| {
+                                    definition.name.eq_ignore_ascii_case(&job.partition_name)
+                                })
+                            })
+                            .map_or(0, |definition| definition.id)
+                    };
+                    Ok(Some((
+                        physical_id,
+                        catalog
+                            .table_statistics(physical_id)
+                            .map_or(0, |statistics| statistics.row_count),
+                    )))
+                })?;
+                if let Some((physical_id, mut total_rows)) = table_count {
+                    if (physical_id > 0 && total_rows == 0) || job.processed_rows > total_rows {
+                        total_rows = self.analyze_status.as_ref().map_or(0, |provider| {
+                            provider.approximate_table_count(
+                                &self.active_resource_group,
+                                physical_id,
+                                &job.table_schema,
+                                &job.table_name,
+                                &job.partition_name,
+                            )
+                        });
+                    }
+                    let start = start
+                        .core_time()
+                        .to_datetime(&chrono::Utc)
+                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let elapsed_seconds = chrono::Utc::now()
+                        .signed_duration_since(start)
+                        .num_nanoseconds()
+                        .map_or(0.0, |nanoseconds| nanoseconds as f64 / 1_000_000_000.0);
+                    let (remaining_seconds, progress_ratio) =
+                        tidb_executor::show_stats::analyze_progress(
+                            total_rows,
+                            job.processed_rows,
+                            elapsed_seconds,
+                        );
+                    remaining = Datum::new_string(
+                        tidb_executor::show_stats::format_analyze_remaining_seconds(
+                            remaining_seconds,
+                        )
+                        .into_bytes(),
+                    );
+                    progress = Datum::Real(progress_ratio);
+                    estimated = Datum::Int(total_rows);
+                } else {
+                    // Go logs the table-lookup failure but still projects the
+                    // helper's named zero return values for these two fields.
+                    progress = Datum::Real(0.0);
+                    estimated = Datum::Int(0);
+                }
+            }
+            result_rows.push(vec![
+                Datum::new_string(job.table_schema.into_bytes()),
+                Datum::new_string(job.table_name.into_bytes()),
+                Datum::new_string(job.partition_name.into_bytes()),
+                Datum::new_string(job.job_info.into_bytes()),
+                Datum::Int(job.processed_rows),
+                start_time,
+                end_time,
+                Datum::new_string(job.state.into_bytes()),
+                job.fail_reason
+                    .map_or(Datum::Null, |value| Datum::new_string(value.into_bytes())),
+                Datum::new_string(job.instance.into_bytes()),
+                job.process_id.map_or(Datum::Null, Datum::UInt),
+                remaining,
+                progress,
+                estimated,
+            ]);
+        }
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Table_schema".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Job_info".to_owned(), varchar()),
+                ("Processed_rows".to_owned(), longlong()),
+                ("Start_time".to_owned(), datetime()),
+                ("End_time".to_owned(), datetime()),
+                ("State".to_owned(), varchar()),
+                ("Fail_reason".to_owned(), varchar()),
+                ("Instance".to_owned(), varchar()),
+                ("Process_ID".to_owned(), longlong()),
+                ("Remaining_seconds".to_owned(), varchar()),
+                ("Progress".to_owned(), double()),
+                ("Estimated_total_rows".to_owned(), longlong()),
+            ],
+            rows: result_rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
     /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):
     /// one row per table or partition whose statistics this session has
     /// loaded, with the two TSOs of the stored `mysql.stats_meta` row
@@ -1244,16 +1543,17 @@ impl Session {
             None => (None, None),
             Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
                 let value = datum_text(&self.eval_value(expr)?);
-                (
-                    Some(ShowLikePattern::from_expr(expr, value, true)),
-                    None,
-                )
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
             }
             Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
         };
         // Go renders through `oracle.GetTimeFromTS`, which builds the
         // `time.Time` in the process's LOCAL zone -- not the session zone --
         // so both servers on one host render identical strings.
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
@@ -1272,52 +1572,27 @@ impl Session {
                             partition
                                 .definitions
                                 .iter()
-                                .map(|definition| {
-                                    (definition.id, definition.name.clone())
-                                })
+                                .map(|definition| (definition.id, definition.name.clone()))
                                 .collect()
                         })
                         .unwrap_or_default();
-                    // Go branches on `IsDynamicPartitionPruneEnabled()` here;
-                    // `tidb_partition_prune_mode` defaults to `dynamic`, and
-                    // every session of this node runs under that default.
                     for target in tidb_executor::show_stats::PartitionTargets::for_table(
                         table.table_id,
                         &partitions,
-                        true,
+                        dynamic_partition_prune,
                     ) {
-                        let Some(statistics) = catalog.table_statistics(target.physical_id)
-                        else {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
                             continue;
                         };
-                        let update_time =
-                            tidb_executor::show_stats::version_to_time(
-                                statistics.version,
-                                &chrono::Local,
-                            )
-                            .map_or(Datum::Null, Datum::Time);
-                        // Go's `IsAnalyzed()`: `LastAnalyzeVersion > 0`. A
-                        // table with a stats row but no analysis keeps the
-                        // last column NULL rather than inventing a time.
-                        let last_analyze_time =
-                            if statistics.last_analyze_version > 0 {
-                                tidb_executor::show_stats::version_to_time(
-                                    statistics.last_analyze_version,
-                                    &chrono::Local,
-                                )
-                                .map_or(Datum::Null, Datum::Time)
-                            } else {
-                                Datum::Null
-                            };
-                        rows.push(vec![
-                            Datum::new_string(database.as_bytes().to_vec()),
-                            Datum::new_string(name.as_bytes().to_vec()),
-                            Datum::new_string(target.label.as_str().as_bytes().to_vec()),
-                            update_time,
-                            Datum::Int(statistics.modify_count),
-                            Datum::Int(statistics.row_count),
-                            last_analyze_time,
-                        ]);
+                        if let Some(row) = tidb_executor::show_stats::table_statistics_meta_row(
+                            &database,
+                            &name,
+                            &target.label,
+                            &statistics,
+                            &chrono::Local,
+                        ) {
+                            rows.push(row);
+                        }
                     }
                 }
             }
@@ -1336,6 +1611,605 @@ impl Session {
                 ("Modify_count".to_owned(), longlong()),
                 ("Row_count".to_owned(), longlong()),
                 ("Last_analyze_time".to_owned(), datetime()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `ShowExec.fetchShowStatsLocked`: enumerate every physical table in
+    /// the current prune mode, intersect it with the persisted lock rows, and
+    /// emit in ascending physical-ID order.
+    fn stats_locked_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsLockedStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsLockedFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsLockedFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let context = self.statement_context(false);
+        let rows = {
+            let catalog = self
+                .catalog
+                .lock()
+                .map_err(|_| DriverError::CatalogPoisoned)?;
+            let locked =
+                tidb_executor::stats_lock::query_catalog_locked_tables(&catalog, &context)?;
+            let mut physical = std::collections::BTreeMap::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        physical.insert(
+                            target.physical_id,
+                            (database.clone(), name.clone(), target.label),
+                        );
+                    }
+                }
+            }
+            physical
+                .into_iter()
+                .filter(|(physical_id, _)| locked.contains(physical_id))
+                .map(|(_, (database, table, partition))| {
+                    tidb_executor::show_stats::stats_locked_row(&database, &table, &partition)
+                })
+                .collect()
+        };
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Status".to_owned(), varchar()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `ShowExec.fetchShowStatsHealthy`: one health percentage for every
+    /// non-pseudo physical statistics object visible under this prune mode.
+    fn stats_healthy_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if let Some(row) = tidb_executor::show_stats::healthy_row(
+                            &database,
+                            &name,
+                            &target.label,
+                            &statistics,
+                        ) {
+                            rows.push(row);
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Healthy".to_owned(), longlong()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `ShowExec.fetchShowStatsHistogram`: expose every initialized
+    /// resident column and index statistics object through the ordinary
+    /// statistics cache traversal.
+    fn stats_histograms_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsHistogramsStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsHistogramsFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsHistogramsFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let zone = chrono::Local;
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if statistics.is_synthetic_pseudo() {
+                            continue;
+                        }
+                        for (offset, column) in table.columns().iter().enumerate() {
+                            let Some(column_stats) = statistics.columns.get(&column.id) else {
+                                continue;
+                            };
+                            let Some(status) = statistics.column_load_status.get(&column.id) else {
+                                continue;
+                            };
+                            if !status.stats_initialized() {
+                                continue;
+                            }
+                            let row_size =
+                                tidb_planner::cardinality::row_size::RowSizeColumnStats::new(
+                                    tidb_planner::cardinality::row_size::RowSizeType::from_field_type_code(
+                                        column.field_type.code(),
+                                    ),
+                                    column_stats.histogram.tot_col_size,
+                                    column_stats.histogram.null_count,
+                                    column_stats.total_row_count(),
+                                    table.pk_handle_offset() == Some(offset),
+                                );
+                            let avg_col_size =
+                                tidb_planner::cardinality::row_size::avg_col_size(
+                                    &row_size,
+                                    statistics.row_count,
+                                    false,
+                                );
+                            rows.push(tidb_executor::show_stats::histogram_row(
+                                &database,
+                                &name,
+                                &target.label,
+                                &column.name,
+                                false,
+                                &column_stats.histogram,
+                                avg_col_size,
+                                status.status_to_string(),
+                                column_stats.memory_usage().into(),
+                                &zone,
+                            ));
+                        }
+                        for index in table.indexes() {
+                            let Some(index_stats) = statistics.indexes.get(&index.id) else {
+                                continue;
+                            };
+                            let Some(status) = statistics.index_load_status.get(&index.id) else {
+                                continue;
+                            };
+                            if !status.stats_initialized() {
+                                continue;
+                            }
+                            rows.push(tidb_executor::show_stats::histogram_row(
+                                &database,
+                                &name,
+                                &target.label,
+                                &index.name,
+                                true,
+                                &index_stats.histogram,
+                                0.0,
+                                status.status_to_string(),
+                                index_stats.memory_usage().into(),
+                                &zone,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
+        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Is_index".to_owned(), tiny()),
+                ("Update_time".to_owned(), datetime()),
+                ("Distinct_count".to_owned(), longlong()),
+                ("Null_count".to_owned(), longlong()),
+                ("Avg_col_size".to_owned(), double()),
+                ("Correlation".to_owned(), double()),
+                ("Load_status".to_owned(), varchar()),
+                ("Total_mem_usage".to_owned(), longlong()),
+                ("Hist_mem_usage".to_owned(), longlong()),
+                ("Topn_mem_usage".to_owned(), longlong()),
+                ("Cms_mem_usage".to_owned(), longlong()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `ShowExec.fetchShowStatsTopN`: render every resident TopN value
+    /// through the session-aware statistics value decoder.
+    fn stats_topn_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsTopNStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsTopNFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsTopNFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let zone = self.session_time_zone();
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if statistics.is_synthetic_pseudo() {
+                            continue;
+                        }
+                        for (id, column_stats) in &statistics.columns {
+                            let Some(column) =
+                                table.columns().iter().find(|column| column.id == *id)
+                            else {
+                                continue;
+                            };
+                            let column_types = [column.field_type.code()];
+                            let mut render = |value: &Datum,
+                                              num_columns: usize,
+                                              types: &[tidb_datatype::FieldTypeCode]| {
+                                tidb_stats::histogram::value_to_string(
+                                    value,
+                                    num_columns,
+                                    Some(types),
+                                    Some(&zone),
+                                )
+                                .map_err(|error| {
+                                    DriverError::Exec(tidb_executor::ExecError::internal(
+                                        error.to_string(),
+                                    ))
+                                })
+                            };
+                            rows.extend(tidb_executor::show_stats::topn_to_rows(
+                                &database,
+                                &name,
+                                &target.label,
+                                &column.name,
+                                1,
+                                false,
+                                column_stats.topn.as_ref(),
+                                &column_types,
+                                &mut render,
+                            )?);
+                        }
+                        for (id, index_stats) in &statistics.indexes {
+                            let Some(index) = table.indexes().iter().find(|index| index.id == *id)
+                            else {
+                                continue;
+                            };
+                            let column_types = index
+                                .column_offsets
+                                .iter()
+                                .filter_map(|offset| table.columns().get(*offset))
+                                .map(|column| column.field_type.code())
+                                .collect::<Vec<_>>();
+                            let mut render = |value: &Datum,
+                                              num_columns: usize,
+                                              types: &[tidb_datatype::FieldTypeCode]| {
+                                tidb_stats::histogram::value_to_string(
+                                    value,
+                                    num_columns,
+                                    Some(types),
+                                    Some(&zone),
+                                )
+                                .map_err(|error| {
+                                    DriverError::Exec(tidb_executor::ExecError::internal(
+                                        error.to_string(),
+                                    ))
+                                })
+                            };
+                            rows.extend(tidb_executor::show_stats::topn_to_rows(
+                                &database,
+                                &name,
+                                &target.label,
+                                &index.name,
+                                index.column_offsets.len(),
+                                true,
+                                index_stats.topn.as_ref(),
+                                &column_types,
+                                &mut render,
+                            )?);
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Is_index".to_owned(), tiny()),
+                ("Value".to_owned(), varchar()),
+                ("Count".to_owned(), longlong()),
+            ],
+            rows,
+        };
+        filter_show_output(output, like_pattern, where_clause)
+    }
+
+    /// Go `ShowExec.fetchShowStatsBuckets`: expose the resident cumulative
+    /// histogram buckets in stable column/index ID order.
+    fn stats_buckets_stmt(
+        &mut self,
+        show: &tidb_ast::ShowStatsBucketsStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match show.filter.as_ref() {
+            None => (None, None),
+            Some(tidb_ast::ShowStatsBucketsFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowStatsBucketsFilter::Where(expr)) => (None, Some(expr)),
+        };
+        let dynamic_partition_prune = !self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+        let zone = self.session_time_zone();
+        let rows = self.with_catalog_mut(|catalog| {
+            let mut rows = Vec::new();
+            for database in catalog.database_names() {
+                let Some(names) = catalog.table_names(&database) else {
+                    continue;
+                };
+                for name in names {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let partitions = table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| (definition.id, definition.name.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for target in tidb_executor::show_stats::PartitionTargets::for_table(
+                        table.table_id,
+                        &partitions,
+                        dynamic_partition_prune,
+                    ) {
+                        let Some(statistics) = catalog.table_statistics(target.physical_id) else {
+                            continue;
+                        };
+                        if statistics.is_synthetic_pseudo() {
+                            continue;
+                        }
+                        for (id, column_stats) in &statistics.columns {
+                            let Some(column) =
+                                table.columns().iter().find(|column| column.id == *id)
+                            else {
+                                continue;
+                            };
+                            let mut render = |value: &Datum,
+                                              num_columns: usize,
+                                              types: &[tidb_datatype::FieldTypeCode]| {
+                                tidb_stats::histogram::value_to_string(
+                                    value,
+                                    num_columns,
+                                    Some(types),
+                                    Some(&zone),
+                                )
+                                .map_err(|error| {
+                                    DriverError::Exec(tidb_executor::ExecError::internal(
+                                        error.to_string(),
+                                    ))
+                                })
+                            };
+                            rows.extend(tidb_executor::show_stats::buckets_to_rows(
+                                &database,
+                                &name,
+                                &target.label,
+                                &column.name,
+                                0,
+                                &column_stats.histogram,
+                                &[],
+                                &mut render,
+                            )?);
+                        }
+                        for (id, index_stats) in &statistics.indexes {
+                            let Some(index) = table.indexes().iter().find(|index| index.id == *id)
+                            else {
+                                continue;
+                            };
+                            let column_types = index
+                                .column_offsets
+                                .iter()
+                                .filter_map(|offset| table.columns().get(*offset))
+                                .map(|column| column.field_type.code())
+                                .collect::<Vec<_>>();
+                            let mut render = |value: &Datum,
+                                              num_columns: usize,
+                                              types: &[tidb_datatype::FieldTypeCode]| {
+                                tidb_stats::histogram::value_to_string(
+                                    value,
+                                    num_columns,
+                                    Some(types),
+                                    Some(&zone),
+                                )
+                                .map_err(|error| {
+                                    DriverError::Exec(tidb_executor::ExecError::internal(
+                                        error.to_string(),
+                                    ))
+                                })
+                            };
+                            rows.extend(tidb_executor::show_stats::buckets_to_rows(
+                                &database,
+                                &name,
+                                &target.label,
+                                &index.name,
+                                index.column_offsets.len(),
+                                &index_stats.histogram,
+                                &column_types,
+                                &mut render,
+                            )?);
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })?;
+        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
+        let output = StmtOutput::Rows {
+            columns: vec![
+                ("Db_name".to_owned(), varchar()),
+                ("Table_name".to_owned(), varchar()),
+                ("Partition_name".to_owned(), varchar()),
+                ("Column_name".to_owned(), varchar()),
+                ("Is_index".to_owned(), tiny()),
+                ("Bucket_id".to_owned(), longlong()),
+                ("Count".to_owned(), longlong()),
+                ("Repeats".to_owned(), longlong()),
+                ("Lower_Bound".to_owned(), varchar()),
+                ("Upper_Bound".to_owned(), varchar()),
+                ("Ndv".to_owned(), longlong()),
             ],
             rows,
         };
@@ -1457,11 +2331,31 @@ impl Session {
             tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
                 self.analyze_stmt(admin)
             }
-            // `LOAD STATS 'file.json'`: a statistics dump installed into the
-            // same catalog slot `ANALYZE` publishes to. See
-            // `crate::load_stats_arm` for Go's three-layer split and where
-            // each half lives here.
-            tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(load),
+            // Go receives LOAD STATS bytes through the MySQL client-local
+            // transfer handler and persists them through the statistics
+            // handle. The standalone session has neither boundary; the
+            // cluster connection owns the complete path.
+            tidb_ast::AdminStmt::LoadStats(_) => Err(DriverError::unsupported(
+                "LOAD STATS requires client-local file transfer",
+            )),
+            tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
+            tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
+            tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
+                if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super) {
+                    return Err(DriverError::SpecificAccessDenied("SUPER".to_owned()));
+                }
+                let worker = self.workload_repository.as_ref().ok_or_else(|| {
+                    DriverError::NotSupportedYet("Workload repository is not enabled".into())
+                })?;
+                worker.take_snapshot().map_err(|error| {
+                    if error == "Workload repository is not enabled" {
+                        DriverError::NotSupportedYet(error.into())
+                    } else {
+                        DriverError::unsupported(error)
+                    }
+                })?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
             // `ADMIN RELOAD <blacklist>`: Go's `ReloadExprPushdownBlacklist`
             // and `ReloadOptRuleBlacklist` executors, each of which reads its
             // `mysql.*` table and publishes what the optimizer consults. Both
@@ -1597,8 +2491,8 @@ impl Session {
             // absent value rather than invented: Cardinality is 0 (no
             // statistics tier), Sub_part and Packed are NULL (no prefix
             // or packed indexes here), Comment/Index_comment are empty,
-            // Expression is NULL (no expression indexes), and Global is
-            // NO (no partitioned global indexes).
+            // Expression is NULL when no expression key part exists; Global
+            // is the stored `IndexInfo.Global` flag.
             tidb_ast::AdminStmt::ShowIndex(show) => {
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
@@ -1916,6 +2810,12 @@ impl Session {
                     rows: included.then_some(row).into_iter().collect(),
                 }))
             }
+            tidb_ast::AdminStmt::ShowStatsTopN(show) => self.stats_topn_stmt(show).map(Some),
+            tidb_ast::AdminStmt::ShowStatsBuckets(show) => self.stats_buckets_stmt(show).map(Some),
+            tidb_ast::AdminStmt::ShowStatsHistograms(show) => {
+                self.stats_histograms_stmt(show).map(Some)
+            }
+            tidb_ast::AdminStmt::ShowStatsLocked(show) => self.stats_locked_stmt(show).map(Some),
             // Go `fetchShowCollation`: one row per collation in the
             // parser's registry (`Collation | Charset | Id | Default |
             // Compiled | Sortlen | Pad_attribute`).
@@ -2042,6 +2942,13 @@ impl Session {
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
             tidb_ast::AdminStmt::ShowInspection(show) => {
+                // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
+                // rejects execution because extended statistics was removed.
+                if show.kind == tidb_ast::ShowInspectionKind::StatsExtended {
+                    return Err(DriverError::unsupported(
+                        "Extended statistics feature has been removed",
+                    ));
+                }
                 // Go `ShowExec.fetchShowBindingCacheStatus`; see
                 // `crate::binding_arm`.
                 if show.kind == tidb_ast::ShowInspectionKind::BindingCacheStatus {
@@ -2058,6 +2965,35 @@ impl Session {
                 // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
                 if show.kind == tidb_ast::ShowInspectionKind::StatsMeta {
                     return self.stats_meta_stmt(show.filter.as_ref()).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {
+                    return self.stats_healthy_stmt(show.filter.as_ref()).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::ColumnStatsUsage {
+                    return self.column_stats_usage_stmt(show.filter.as_ref()).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::HistogramsInFlight {
+                    let (like_pattern, where_clause) = match show.filter.as_ref() {
+                        None => (None, None),
+                        Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                            let value = datum_text(&self.eval_value(expr)?);
+                            (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                        }
+                        Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+                    };
+                    let count = self
+                        .with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
+                    let output = StmtOutput::Rows {
+                        columns: vec![(
+                            "HistogramsInFlight".to_owned(),
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )],
+                        rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
+                    };
+                    return filter_show_output(output, like_pattern, where_clause).map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::AnalyzeStatus {
+                    return self.analyze_status_stmt(show.filter.as_ref()).map(Some);
                 }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);
@@ -2190,11 +3126,9 @@ impl Session {
                             None,
                             false,
                         )),
-                        tidb_executor::TableEntry::Mem(_) | tidb_executor::TableEntry::Cte(_) => {
-                            Err(DriverError::unsupported(
-                                "SHOW CREATE TABLE needs a storage-backed table",
-                            ))
-                        }
+                        tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
+                            "SHOW CREATE TABLE needs a storage-backed table",
+                        )),
                     }
                 });
                 let (text, reported, view_charset, is_sequence) = shown?;
@@ -2347,7 +3281,8 @@ impl Session {
                             .into_iter()
                             .map(|name| {
                                 let is_view = catalog.is_view_in(&database, &name);
-                                (name, is_view)
+                                let is_sequence = catalog.is_sequence_in(&database, &name);
+                                (name, is_view, is_sequence)
                             })
                             .collect::<Vec<_>>()
                     }))
@@ -2363,14 +3298,14 @@ impl Session {
                 // SCHEMA visible but lists no table.
                 let listed: Vec<_> = listed
                     .into_iter()
-                    .filter(|(name, _)| {
+                    .filter(|(name, ..)| {
                         self.has_any_scoped_privilege(
                             &database,
                             name,
                             privilege::show_tables_priv_mask(),
                         )
                     })
-                    .filter(|(name, _)| {
+                    .filter(|(name, ..)| {
                         like_pattern
                             .as_ref()
                             .is_none_or(|pattern| pattern.matches(name))
@@ -2390,10 +3325,12 @@ impl Session {
                     vec![name_column.as_str()]
                 };
                 let mut rows = Vec::with_capacity(listed.len());
-                for (name, is_view) in listed {
+                for (name, is_view, is_sequence) in listed {
                     let mut row = vec![Datum::Bytes(name.into_bytes())];
                     if full {
-                        row.push(Datum::Bytes(table_type_of(is_view).as_bytes().to_vec()));
+                        row.push(Datum::Bytes(
+                            table_type_of(is_view, is_sequence).as_bytes().to_vec(),
+                        ));
                     }
                     if let Some(predicate) = where_clause {
                         if !show_row_matches(predicate, &column_names, &row)? {

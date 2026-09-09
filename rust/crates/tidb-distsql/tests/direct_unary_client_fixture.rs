@@ -29,11 +29,11 @@
 
 #![allow(missing_docs)]
 
-pub use std::cell::RefCell;
+pub use std::cell::{Cell, RefCell};
 pub use std::collections::VecDeque;
 pub use std::rc::Rc;
-pub use std::sync::{Arc, Mutex};
 pub use std::sync::atomic::{AtomicBool, Ordering};
+pub use std::sync::{Arc, Mutex};
 pub use std::time::Duration;
 
 pub use prost::Message;
@@ -62,13 +62,13 @@ pub use tidb_txnkv::region::{
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
 pub use tidb_txnkv::rpc::{
-    completion_pair, AsyncRequestDispatcher, AsyncRequestPublication, CompletionError,
-    CompletionNotifier, CompletionPull, CompletionRequest, CompletionRunLoop, PendingRequest,
+    completion_pair, AsyncRequestDispatcher, CompletionError, CompletionNotifier, CompletionPull, CompletionRequest,
+    CompletionRunLoop, PendingRequest,
 };
 pub use tidb_txnkv::UnaryCallContext;
 pub use tidb_txnkv::{
     ClientReplicaReadType, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass,
+    DirectUnaryTransportClass, SynchronousBatchRequestDispatcher,
 };
 
 pub const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
@@ -143,7 +143,10 @@ impl RegionRecoveryLoader for ScriptedLoader {
         &mut self,
         metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.load_region(&metadata.encoded_start_key)
     }
@@ -156,7 +159,7 @@ pub struct ScriptedClient {
     pub liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
     pub batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
     pub batch_ready_immediately: RefCell<VecDeque<bool>>,
-    pub batch_completion_gate: Option<Arc<AtomicBool>>,
+    pub batch_begin_count: Option<Rc<Cell<usize>>>,
 }
 
 pub struct ScriptedPending {
@@ -165,27 +168,11 @@ pub struct ScriptedPending {
         CompletionRequest<DirectUnaryResponse, DirectUnaryClientError>,
         Result<DirectUnaryResponse, DirectUnaryClientError>,
     )>,
-    pub publication: Option<AsyncRequestPublication>,
-    pub completion_gate: Option<Arc<AtomicBool>>,
 }
 
 impl PendingRequest for ScriptedPending {
-    fn try_publication(&self) -> Option<AsyncRequestPublication> {
-        // Deferred fixtures expose identity only when driven to completion,
-        // exercising admission that races ahead of receipt observation.
-        self.deferred.is_none().then(|| self.publication.clone()).flatten()
-    }
-
     fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
         self.completion.set_notifier(notifier, token);
-    }
-
-    fn publication(&self) -> Option<AsyncRequestPublication> {
-        assert!(
-            self.deferred.is_none() || self.completion_gate.is_some(),
-            "an unobserved deferred attempt must not wait for admission"
-        );
-        self.publication.clone()
     }
 
     fn try_complete(
@@ -198,12 +185,6 @@ impl PendingRequest for ScriptedPending {
         &mut self,
         call: &UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
-        if let Some(gate) = &self.completion_gate {
-            assert!(
-                gate.load(Ordering::SeqCst),
-                "publication observer must run before pending completion"
-            );
-        }
         if let Some((completion, result)) = self.deferred.take() {
             completion.schedule(result);
         }
@@ -363,14 +344,32 @@ impl AsyncRequestDispatcher for ScriptedClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError> {
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        self.begin_with_run_loop(
+            physical_address,
+            forwarded_host,
+            request,
+            call,
+            CompletionRunLoop::new(),
+        )
+    }
+
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
+        _forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+        run_loop: CompletionRunLoop,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        if let Some(count) = &self.batch_begin_count {
+            count.set(count.get() + 1);
+        }
+        let (completion, pull) = completion_pair(run_loop, || {});
         if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
             completion.schedule(Err(error));
             return Ok(ScriptedPending {
                 completion: pull,
                 deferred: None,
-                publication: None,
-                completion_gate: self.batch_completion_gate.clone(),
             });
         }
         let result = self.send_request_with_context(physical_address, request, call);
@@ -388,19 +387,29 @@ impl AsyncRequestDispatcher for ScriptedClient {
         Ok(ScriptedPending {
             completion: pull,
             deferred,
-            publication: Some(AsyncRequestPublication::new(
-                physical_address,
-                7,
-                11,
-                forwarded_host.map(str::to_owned),
-            )),
-            completion_gate: self.batch_completion_gate.clone(),
         })
     }
 }
 
-impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
+impl SynchronousBatchRequestDispatcher for ScriptedClient {
+    fn send_batch_request_with_route(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if let Some(count) = &self.batch_begin_count {
+            count.set(count.get() + 1);
+        }
+        if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
+            return Err(error);
+        }
+        self.send_request_recorded(physical_address, forwarded_host, request, call.timeout())
+    }
+}
 
+impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -421,7 +430,6 @@ impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
             "unexpected lock in scripted read".to_owned(),
         ))
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -456,7 +464,9 @@ pub fn metadata(start: &str, end: &str) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag-read".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(start, end)]));
+    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range(
+        start, end,
+    )]));
     metadata.keep_order = true;
     // Keep the generic dispatch fixture focused on routing/order. Paging
     // tests opt in explicitly; production defaults are covered by
@@ -753,7 +763,7 @@ pub fn batch_first_transport_with_config(
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(ready_immediately.into_iter().collect()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -807,7 +817,7 @@ pub fn transport_with_loader_calls_and_config(
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id,
@@ -836,7 +846,7 @@ pub fn transport_with_transport_failures(
             liveness: RefCell::new(liveness.into_iter().collect()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -853,7 +863,9 @@ pub fn select_result(
     runtime: &mut InjectedQueryRuntime<DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader>>,
     request: &TransportRequest,
 ) -> tidb_distsql::query_runtime::QuerySelectResult<
-    tidb_distsql::CopIterator<tidb_distsql::DirectUnaryQueryResponse<ScriptedClient, ScriptedLoader>>,
+    tidb_distsql::CopIterator<
+        tidb_distsql::DirectUnaryQueryResponse<ScriptedClient, ScriptedLoader>,
+    >,
 > {
     runtime
         .select_with_runtime_stats(

@@ -44,6 +44,11 @@ impl Session {
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
             return Err(DriverError::unsupported("unknown EXPLAIN format name"));
         };
+        if explain.analyze && matches!(format, tidb_executor::ExplainFormat::PlanTree) {
+            return Err(DriverError::unsupported(
+                "explain format 'plan_tree' with analyze is not supported now",
+            ));
+        }
         let Some(target) = explain.statement() else {
             return Err(DriverError::unsupported(
                 "EXPLAIN of a plan digest is not supported yet",
@@ -55,7 +60,11 @@ impl Session {
         // produces -- which is how TiDB's own `bindinfo` suite checks that a
         // binding took effect at all.
         let bound = self.bind_statement_hints(target);
+        if let Some(bound) = bound.as_ref() {
+            self.apply_set_var_hints(bound)?;
+        }
         let target = bound.as_ref().unwrap_or(target);
+        self.activate_statement_resource_group(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see
         // `tidb_executor::explain`), using the context of the statement

@@ -201,3 +201,58 @@ fn a_unique_index_entry_points_at_its_row() {
         None
     );
 }
+
+#[test]
+fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
+    use tidb_planner::physical::PhysicalPlan;
+
+    fn lookup(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalIndexLookUpReader> {
+        match plan {
+            PhysicalPlan::IndexLookUpReader(reader) => Some(reader),
+            _ => plan.children().iter().find_map(lookup),
+        }
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE lookup_hint (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia(a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO lookup_hint VALUES (1, 2, 10), (2, 1, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let physical = |sql: &str, context: &crate::StmtContext| {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("not a SELECT");
+        };
+        crate::driver::planner_bridge::physical_select_plan(&select, &catalog, "test", context)
+            .unwrap()
+    };
+
+    let hinted =
+        "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) */ b FROM lookup_hint WHERE a > 0";
+    let plan = physical(hinted, &ctx);
+    assert!(lookup(&plan).is_some_and(|reader| reader.index_lookup_push_down));
+    assert_eq!(
+        run_select_on(hinted, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]
+    );
+
+    let conflict_ctx = crate::StmtContext::for_query();
+    let conflict = "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) NO_INDEX_LOOKUP_PUSHDOWN(lookup_hint) */ b FROM lookup_hint WHERE a > 0";
+    let plan = physical(conflict, &conflict_ctx);
+    assert!(lookup(&plan).is_none_or(|reader| !reader.index_lookup_push_down));
+    assert!(conflict_ctx.take_warnings().iter().any(|(_, _, message)| {
+        message
+            == "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified"
+    }));
+}

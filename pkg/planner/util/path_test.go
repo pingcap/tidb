@@ -18,7 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
@@ -120,4 +123,29 @@ func TestOnlyPointRange(t *testing.T) {
 	indexPath.Index.Columns = make([]*model.IndexColumn, 2)
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
 	require.False(t, indexPath.OnlyPointRange(tc))
+}
+
+func TestSplitCorColAccessCondMarksConstColumn(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+
+	idxCol := &expression.Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	corCol := &expression.CorrelatedColumn{Column: *idxCol}
+	filter, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), idxCol, corCol)
+	require.NoError(t, err)
+
+	path := &util.AccessPath{
+		IdxCols:    []*expression.Column{idxCol},
+		IdxColLens: []int{types.UnspecifiedLength},
+		TableFilters: []expression.Expression{
+			filter,
+		},
+	}
+	access, remained := path.SplitCorColAccessCondFromFilters(sctx.GetPlanCtx(), 0)
+
+	require.Len(t, access, 1)
+	require.Empty(t, remained)
+	require.Equal(t, []bool{true}, path.ConstCols)
 }

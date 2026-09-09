@@ -91,3 +91,14 @@ fn categories_without_an_exact_source_mapping_are_explicit_unknown() {
     assert_eq!(packet.state, b"HY000");
     assert_eq!(packet.message, [0xff, 0x00, b'!']);
 }
+
+#[test]
+fn invalid_type_maps_to_go_err_invalid_type() {
+    // Go column.go wraps an unrenderable datum in err.ErrInvalidType (8057);
+    // the wire packet must carry that errno, not the unknown fallback.
+    let descriptor = ErrorDescriptor::new(ErrorKind::InvalidType, b"invalid type");
+    let encoded = encode_error_packet(&error_packet_from_descriptor(&descriptor, true));
+    assert_eq!(&encoded[0], &0xff);
+    // 8057 little-endian.
+    assert_eq!(&encoded[1..3], &[0x79, 0x1f]);
+}

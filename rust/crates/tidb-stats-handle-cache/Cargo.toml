@@ -1,0 +1,35 @@
+[package]
+name = "tidb-stats-handle-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle cache."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+fail = { version = "0.4", optional = true }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }
+tidb-stats-handle-cache-internal-lfu = { path = "../tidb-stats-handle-cache-internal-lfu" }
+tidb-stats-handle-cache-internal-mapcache = { path = "../tidb-stats-handle-cache-internal-mapcache" }
+tidb-stats-handle-cache-metrics = { path = "../tidb-stats-handle-cache-metrics" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+tidb-stats-handle-cache-internal-testutil = { path = "../tidb-stats-handle-cache-internal-testutil" }
+
+[[bench]]
+name = "statscache"
+harness = false

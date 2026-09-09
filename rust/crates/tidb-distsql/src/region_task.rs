@@ -291,7 +291,7 @@ pub(crate) fn build_region_tasks(
     }
 
     let mut ranges = KeyRanges::new(original_ranges.clone());
-    let reordered = ensure_monotonic_key_ranges(&mut ranges);
+    let reordered = tidb_txnkv::ensure_monotonic_key_ranges(&mut ranges);
     let hints = (!reordered && hints_shape_valid).then_some(original_hints.as_slice());
     if ranges.is_empty() {
         return Some(Vec::new());
@@ -357,10 +357,11 @@ pub(crate) fn build_region_tasks(
     if !all_ranges_covered(&sorted_ranges, &tasks) {
         return None;
     }
-    if metadata.store_batch_size > 0 && hints.is_some() {
+    if metadata.store_batch_size > 0 && (hints.is_some() || metadata.allow_batch_task_data_merge) {
         tasks = batch_tasks(
             tasks,
             u64::try_from(metadata.store_batch_size).unwrap_or(u64::MAX),
+            metadata.allow_batch_task_data_merge,
         );
     }
     // Go batches while visiting regions in ascending key order, then reverses
@@ -370,28 +371,6 @@ pub(crate) fn build_region_tasks(
         tasks.reverse();
     }
     Some(tasks)
-}
-
-fn ensure_monotonic_key_ranges(ranges: &mut KeyRanges) -> bool {
-    let ordered = (0..ranges.len()).all(|index| {
-        let range = ranges.ref_at(index);
-        range.end_key.as_bytes().is_empty() || range.start_key <= range.end_key
-    }) && (1..ranges.len()).all(|index| {
-        let previous = ranges.ref_at(index - 1);
-        let current = ranges.ref_at(index);
-        !previous.end_key.as_bytes().is_empty() && previous.end_key <= current.start_key
-    });
-    if ordered {
-        return false;
-    }
-    let mut sorted = ranges.to_ranges();
-    sorted.sort_by(|left, right| {
-        left.start_key
-            .cmp(&right.start_key)
-            .then_with(|| left.end_key.cmp(&right.end_key))
-    });
-    ranges.reset(sorted);
-    true
 }
 
 fn topology_is_valid(topology: &[RegionTaskTopology]) -> bool {
@@ -629,14 +608,18 @@ mod tests {
     }
 }
 
-fn batch_tasks(tasks: Vec<RegionTaskEnvelope>, batch_size: u64) -> Vec<RegionTaskEnvelope> {
+fn batch_tasks(
+    tasks: Vec<RegionTaskEnvelope>,
+    batch_size: u64,
+    allow_unhinted_merge: bool,
+) -> Vec<RegionTaskEnvelope> {
     let batch_size = usize::try_from(batch_size).unwrap_or(usize::MAX).max(1);
     let mut result = Vec::new();
     let mut store_parent = BTreeMap::<u64, usize>::new();
     for (index, mut task) in tasks.into_iter().enumerate() {
         task.task_id = u64::try_from(index + 1).unwrap_or(u64::MAX);
-        let small =
-            task.store_batch_eligible && task.row_count_hint > 0 && task.row_count_hint <= 32;
+        let small = task.store_batch_eligible
+            && (allow_unhinted_merge || (task.row_count_hint > 0 && task.row_count_hint <= 32));
         if !small {
             result.push(task);
             continue;
@@ -662,7 +645,12 @@ fn batch_tasks(tasks: Vec<RegionTaskEnvelope>, batch_size: u64) -> Vec<RegionTas
         parent.store_busy_threshold_ms = 0;
         parent.paging = false;
         parent.paging_size = 0;
-        parent.row_count_hint = parent.row_count_hint.saturating_add(task.row_count_hint);
+        parent.row_count_hint =
+            if allow_unhinted_merge && (parent.row_count_hint <= 0 || task.row_count_hint <= 0) {
+                -1
+            } else {
+                parent.row_count_hint.saturating_add(task.row_count_hint)
+            };
         parent.batch_task_list.push(task);
     }
     result

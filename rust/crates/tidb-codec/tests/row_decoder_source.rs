@@ -37,8 +37,7 @@ fn raw_decoder_looks_up_sorted_partitions_without_typed_schema_state() {
             tidb_codec::RawRowColumn { id: 1, value: None },
         ],
         &mut encoded,
-    )
-    .expect("source row encoding");
+    );
     encoded.extend_from_slice(b"suffix");
 
     let (decoder, remainder) = RowDecoder::parse(&encoded).expect("source row decoding");
@@ -89,24 +88,22 @@ fn raw_decoder_preserves_compact_signed_and_unsigned_widths() {
 }
 
 #[test]
-fn raw_decoder_rejects_malformed_compact_integer_boundaries() {
-    for width in [0, 3, 5, 6, 7, 9] {
-        let payload = vec![0_u8; width];
-        assert_eq!(
-            decode_raw_int(&payload),
-            Err(RowDecodeError::InvalidIntegerWidth {
-                signed: true,
-                width,
-            })
-        );
-        assert_eq!(
-            decode_raw_uint(&payload),
-            Err(RowDecodeError::InvalidIntegerWidth {
-                signed: false,
-                width,
-            })
-        );
-    }
+fn raw_decoder_default_branch_ignores_bytes_after_eight() {
+    let payload = [1, 2, 3, 4, 5, 6, 7, 8, 0xff];
+    assert_eq!(decode_raw_int(&payload), Ok(0x0807_0605_0403_0201));
+    assert_eq!(decode_raw_uint(&payload), Ok(0x0807_0605_0403_0201));
+}
+
+#[test]
+#[should_panic]
+fn raw_signed_decoder_short_default_branch_panics_like_go() {
+    let _ = decode_raw_int(&[0; 3]);
+}
+
+#[test]
+#[should_panic]
+fn raw_unsigned_decoder_short_default_branch_panics_like_go() {
+    let _ = decode_raw_uint(&[0; 7]);
 }
 
 #[test]
@@ -120,15 +117,12 @@ fn raw_decoder_keeps_row_layout_boundary_errors_typed() {
         ))
     );
 
+}
+
+#[test]
+#[should_panic]
+fn raw_decoder_truncated_data_panics_like_go() {
     let mut truncated = vec![ROW_CODEC_VERSION, 0, 1, 0, 0, 0, 7];
     truncated.extend_from_slice(&1_u16.to_le_bytes());
-    assert!(matches!(
-        RowDecoder::parse(&truncated),
-        Err(RowDecodeError::Layout(
-            tidb_codec::RowCodecError::InsufficientBytes {
-                section: "row data",
-                ..
-            }
-        ))
-    ));
+    let _ = RowDecoder::parse(&truncated);
 }

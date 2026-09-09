@@ -16,11 +16,11 @@ The package contains exactly 13 Go artifacts and 3,478 lines: eight production f
 | `rate_limit.go` | 73 | `37f9a143a212e8cd25edd911b33d3ad960f23ab520d2efe49b3bc43bb1ec5abe` | `src/util/rate_limit.rs` |
 | `request_source.go` | 190 | `584a1879d137339adad74a92b35917c844104ed3ebe61142266530347dcd4c7c` | `src/util/request_source.rs` and transaction/snapshot call sites |
 | `ts_set.go` | 74 | `a3969d914b4aec481e0f8918ee48d252f9479d44f1cf02c205e1ca6d413ceb86` | `src/util/ts_set.rs` and snapshot read-lock context |
-| `execdetails_test.go` | 972 | `be1f527187e1f1dee4d4e1503eb176b4718ed6b636fd9c1d99b51d41b6c87322` | 23 independently named `source_test_*` ports in `src/util/execdetails.rs` |
+| `execdetails_test.go` | 972 | `be1f527187e1f1dee4d4e1503eb176b4718ed6b636fd9c1d99b51d41b6c87322` | 23 exact `source_go_util_execdetails_test_Test*` identities in `src/util/execdetails.rs` |
 | `misc_test.go` | 140 | `72b530fa37b3acfa50dec945738fd368bcb043e24999be0f627e969e7e79e52d` | four independently named ports in `misc.rs`/`execdetails.rs` |
 | `rate_limit_test.go` | 70 | `0cd0b82982be5680f72d63a938d7d4d6c63826c1d961c3edfa6058fd3c4e0bd7` | independently named cancellation/blocking/redundant-token port in `rate_limit.rs` |
 | `request_source_test.go` | 95 | `5eeb8d4595fb229475320cf62b60a07a31f3ef137c174e8c6071a41409704a3c` | two independently named source/build ports in `request_source.rs` |
-| `main_test.go` | 25 | `40d5549f5ecd71526173d7943a9808e6a168b117d3706f793aadb1ce0daf285` | all native helper tasks are scoped and joined; full library suites are the leak/lifecycle gate |
+| `main_test.go` | 25 | `40d5549f5ecd71526173d7943a9808e6a168b117d370f6f793aadb1ce0daf285` | all native helper tasks are scoped and joined; full library suites are the leak/lifecycle gate |
 
 There is no `doc.go`, benchmark, example test, fixture, package metadata/`OWNERS`, generated input/output, package-local build file, Go build tag, platform variant, or non-Go artifact in this package.
 
@@ -31,15 +31,15 @@ There is no `doc.go`, benchmark, example test, fixture, package metadata/`OWNERS
 | custom DNS dialer | `CustomDnsDialer` applies the source's exact `host:port` domain rule, sends A and AAAA packets to the explicitly configured DNS server with the same ten-second dial bound, parses compressed DNS answers, and attempts every returned address. A loopback UDP-DNS/TCP test proves that the system resolver is not substituted. |
 | execution-detail context keys | Typed `TraceContext` carriers own commit, lock, execution, RU, request-source, resource-group, and session values without Go key collisions. Async task-local scopes preserve propagation across every awaited physical RPC. |
 | `ContextWithTraceExecDetails`, `TraceExecDetailsEnabled` | Existing `trace::with_trace_exec_details` reconstructs and emits the source TiKV execution tree; `trace_exec_details_enabled` exposes the current-scope predicate. |
-| `TiKVExecDetails`, `ReqDetailInfo` | Optional protobuf time/scan/write details merge into native aggregates and format in source order with empty components omitted. |
-| `CommitTSLagDetails`, `CommitDetails` | All durations, counters, backoff vectors, slowest prewrite/primary selection, request-detail merges, no-op flush hook, resolve-lock total, and deep clone behavior are present. The source-specific omission of `PrewriteReqNum` from clone/merge is retained. |
-| `LockKeysDetails` | Merge, one-per-merge retry count, deep clone, backoff order, conflict/aggressive counters, RPC totals, and strict slowest-request replacement match the source. |
+| `TiKVExecDetails`, `ReqDetailInfo` | Optional protobuf time/scan/write details merge into native aggregates and format in exact source order, including Go's separators around present-but-empty components. Nested detail records use `Arc`, preserving Go's shallow pointer copy across request-detail clone/merge while the enclosing vectors remain independent. |
+| `CommitTSLagDetails`, `CommitDetails` | All durations, counters, backoff vectors, slowest prewrite/primary selection, request-detail merges, no-op flush hook, resolve-lock total, backoff-vector deep copying, and nested request-detail pointer sharing are present. The source-specific omission of `PrewriteReqNum` from clone/merge is retained. |
+| `LockKeysDetails` | Merge, one-per-merge retry count, backoff-vector deep copying, nested request-detail pointer sharing, backoff order, conflict/aggressive counters, RPC totals, and strict slowest-request replacement match the source. |
 | `ExecDetails`, `TrafficDetails` | Independently atomic backoff, PD/KV wait, KV/MPP, and cross-zone counters retain source concurrent observation semantics. Existing region-sender traffic integration remains authoritative. |
-| `FormatDuration`, `PoolTaskDetails` | Exact precision pruning, task/sample counts, zero-as-present minimum handling, aggregate merge associativity, average divisors, fair-queue semantics, clone/empty behavior, and source strings are covered. |
-| `ScanDetail`, `WriteDetail`, `TimeDetail`, `ResolveLockDetail` | Every protobuf field, IA field, duration conversion, additive merge, empty rule, and source diagnostic string is implemented. |
-| `RUDetails` | Concurrent RRU/WRU/wait/TiFlash/scaled-TiKV values and all raw RU-v2 counters support update, TiFlash update, deep clone, merge, add, nondestructive peer merge, and destructive drain. |
+| `FormatDuration`, `PoolTaskDetails` | Exact precision pruning, Go minute/hour composite rendering, task/sample counts, zero-as-present minimum handling, aggregate merge associativity, average divisors, fair-queue semantics, clone/empty behavior, wrapping counters, and source strings are covered. A deterministic differential sweep matched pinned Go for 36,961 duration inputs. |
+| `ScanDetail`, `WriteDetail`, `TimeDetail`, `ResolveLockDetail` | Every protobuf field, IA field, duration conversion, additive merge, empty rule, and source diagnostic string is implemented. Integer counters and protobuf `uint64`→Go-`int64` conversions wrap instead of panicking or saturating. |
+| `RUDetails` | Concurrent RRU/WRU/wait/TiFlash/scaled-TiKV values and all raw RU-v2 counters support update, TiFlash update, clone, merge, add, nondestructive peer merge, and destructive drain. Source values are snapshotted before destination locks so self-merge doubles atomically instead of deadlocking; diagnostic `NaN`/`+Inf`/`-Inf` spellings match Go. |
 | failpoint façade | One explicit process-wide enable gate and the exact `tikvclient/` prefix wrap the existing Rust failpoint runtime; disabled access returns the source error. |
-| GC time/recovery/session/bytes/ranges | The parser accepts both persisted fractional forms and exactly one trailing legacy zone token; recovery invokes its hook on success and panic before logging the captured stack; typed session IDs, byte formatting, and unbounded range-key rules match source behavior. |
+| GC time/recovery/session/bytes/ranges | The parser accepts both persisted fractional forms and exactly one trailing legacy zone token; recovery invokes its hook on success and panic before logging the captured stack; typed session IDs, Go general-float/scientific byte formatting, and unbounded range-key rules match source behavior. A deterministic differential sweep matched pinned Go for 14,775 byte-format inputs. |
 | `Option`, `Some`, `None` | Rust's standard `Option<T>` is the native zero-cost owner and is already used by union-store/locate behavior; no duplicate wrapper is introduced. |
 | `RateLimit` | Atomic token admission plus `Notify` preserves fixed capacity, cancellation while blocked, wakeup, and the exact redundant-put panic. Rust's borrow/lifetime rules replace channel misuse races without changing observable admission. |
 | request source | All constants, explicit-type list/order, setters, unknown/internal/external formatting, duplicate explicit-type elision, context extraction, internal predicate, resource-group context, and transaction call sites share one `util::RequestSource`. |
@@ -54,38 +54,40 @@ The declaration-level mapping is exact:
 
 | Original declaration | Rust port |
 | --- | --- |
-| `TestRUDetailsDrainRUV2` | `source_test_ru_details_drain_ru_v2` |
-| `TestRUDetailsCloneAndMergeRawRUV2` | `source_test_ru_details_clone_and_merge_raw_ru_v2` |
-| `TestPoolTaskDetailsStringUsesAverageTimes` | `source_test_pool_task_details_string_uses_average_times` |
-| `TestPoolTaskDetailsStringOmitsZeroTimes` | `source_test_pool_task_details_string_omits_zero_times` |
-| `TestPoolTaskDetailsStringOmitsAverageWithNoSamples` | `source_test_pool_task_details_string_omits_average_with_no_samples` |
-| `TestPoolTaskDetailsMergeFromPBAndMerge` | `source_test_pool_task_details_merge_from_pb_and_merge` |
-| `TestPoolTaskDetailsMergeMinimumPresence` | `source_test_pool_task_details_merge_minimum_presence` |
-| `TestPoolTaskDetailsStringFormatsFractionalCountAverages` | `source_test_pool_task_details_string_formats_fractional_count_averages` |
-| `TestPoolTaskDetailsStringKeepsZeroFairQueueWait` | `source_test_pool_task_details_string_keeps_zero_fair_queue_wait` |
-| `TestPoolTaskDetailsEmptyAndClone` | `source_test_pool_task_details_empty_and_clone` |
-| `TestScanDetailMergeFromScanDetailV2IncludesIAFields` | `source_test_scan_detail_merge_from_scan_detail_v2_includes_ia_fields` |
-| `TestScanDetailMergeIncludesIAFields` | `source_test_scan_detail_merge_includes_ia_fields` |
-| `TestLockKeysDetailsMerge` | `source_test_lock_keys_details_merge` |
-| `TestLockKeysDetailsMergeSlowestNotReplaced` | `source_test_lock_keys_details_merge_slowest_not_replaced` |
-| `TestLockKeysDetailsClone` | `source_test_lock_keys_details_clone` |
-| `TestCommitDetailsMerge` | `source_test_commit_details_merge` |
-| `TestCommitDetailsMergeSlowestNotReplaced` | `source_test_commit_details_merge_slowest_not_replaced` |
-| `TestCommitDetailsClone` | `source_test_commit_details_clone` |
-| `TestScanDetailMerge` | `source_test_scan_detail_merge` |
-| `TestWriteDetailMerge` | `source_test_write_detail_merge` |
-| `TestTimeDetailMerge` | `source_test_time_detail_merge` |
-| `TestTimeDetailMergeNil` | `source_test_time_detail_merge_nil` |
-| `TestRUDetailsUpdateTiFlash` | `source_test_ru_details_update_tiflash` |
-| `TestCompatibleParseGCTime` | `source_test_compatible_parse_gc_time` |
-| `TestTimeDetail` | `source_test_time_detail` |
-| `TestGetMaxStartKey` | `source_test_get_max_start_key` |
-| `TestGetMinEndKey` | `source_test_get_min_end_key` |
-| `TestRateLimit` | `source_test_rate_limit` |
-| `TestGetRequestSource` | `source_test_get_request_source` |
-| `TestBuildRequestSource` | `source_test_build_request_source` |
+| `TestRUDetailsDrainRUV2` | `source_go_util_execdetails_test_TestRUDetailsDrainRUV2` |
+| `TestRUDetailsCloneAndMergeRawRUV2` | `source_go_util_execdetails_test_TestRUDetailsCloneAndMergeRawRUV2` |
+| `TestPoolTaskDetailsStringUsesAverageTimes` | `source_go_util_execdetails_test_TestPoolTaskDetailsStringUsesAverageTimes` |
+| `TestPoolTaskDetailsStringOmitsZeroTimes` | `source_go_util_execdetails_test_TestPoolTaskDetailsStringOmitsZeroTimes` |
+| `TestPoolTaskDetailsStringOmitsAverageWithNoSamples` | `source_go_util_execdetails_test_TestPoolTaskDetailsStringOmitsAverageWithNoSamples` |
+| `TestPoolTaskDetailsMergeFromPBAndMerge` | `source_go_util_execdetails_test_TestPoolTaskDetailsMergeFromPBAndMerge` |
+| `TestPoolTaskDetailsMergeMinimumPresence` | `source_go_util_execdetails_test_TestPoolTaskDetailsMergeMinimumPresence` |
+| `TestPoolTaskDetailsStringFormatsFractionalCountAverages` | `source_go_util_execdetails_test_TestPoolTaskDetailsStringFormatsFractionalCountAverages` |
+| `TestPoolTaskDetailsStringKeepsZeroFairQueueWait` | `source_go_util_execdetails_test_TestPoolTaskDetailsStringKeepsZeroFairQueueWait` |
+| `TestPoolTaskDetailsEmptyAndClone` | `source_go_util_execdetails_test_TestPoolTaskDetailsEmptyAndClone` |
+| `TestScanDetailMergeFromScanDetailV2IncludesIAFields` | `source_go_util_execdetails_test_TestScanDetailMergeFromScanDetailV2IncludesIAFields` |
+| `TestScanDetailMergeIncludesIAFields` | `source_go_util_execdetails_test_TestScanDetailMergeIncludesIAFields` |
+| `TestLockKeysDetailsMerge` | `source_go_util_execdetails_test_TestLockKeysDetailsMerge` |
+| `TestLockKeysDetailsMergeSlowestNotReplaced` | `source_go_util_execdetails_test_TestLockKeysDetailsMergeSlowestNotReplaced` |
+| `TestLockKeysDetailsClone` | `source_go_util_execdetails_test_TestLockKeysDetailsClone` |
+| `TestCommitDetailsMerge` | `source_go_util_execdetails_test_TestCommitDetailsMerge` |
+| `TestCommitDetailsMergeSlowestNotReplaced` | `source_go_util_execdetails_test_TestCommitDetailsMergeSlowestNotReplaced` |
+| `TestCommitDetailsClone` | `source_go_util_execdetails_test_TestCommitDetailsClone` |
+| `TestScanDetailMerge` | `source_go_util_execdetails_test_TestScanDetailMerge` |
+| `TestWriteDetailMerge` | `source_go_util_execdetails_test_TestWriteDetailMerge` |
+| `TestTimeDetailMerge` | `source_go_util_execdetails_test_TestTimeDetailMerge` |
+| `TestTimeDetailMergeNil` | `source_go_util_execdetails_test_TestTimeDetailMergeNil` |
+| `TestRUDetailsUpdateTiFlash` | `source_go_util_execdetails_test_TestRUDetailsUpdateTiFlash` |
+| `TestCompatibleParseGCTime` | `source_go_util_misc_test_TestCompatibleParseGCTime` |
+| `TestTimeDetail` | `source_go_util_misc_test_TestTimeDetail` |
+| `TestGetMaxStartKey` | `source_go_util_misc_test_TestGetMaxStartKey` |
+| `TestGetMinEndKey` | `source_go_util_misc_test_TestGetMinEndKey` |
+| `TestRateLimit` | `source_go_util_rate_limit_test_TestRateLimit` |
+| `TestGetRequestSource` | `source_go_util_request_source_test_TestGetRequestSource` |
+| `TestBuildRequestSource` | `source_go_util_request_source_test_TestBuildRequestSource` |
 
-The assertion-level re-audit expanded earlier grouped evidence that was too weak for an atomic test-port claim. The clone path now rechecks nested RU executor data; the second pool-task merge compares every field; GC parsing verifies the exact `+0800` formatted result for every valid row; both range-helper tables execute every row in both argument orders; and the rate-limit test checks the exact panic text and source operation order. Go nil receivers map to non-null Rust values plus explicit absence/default tests. Go's one consumable `done` send maps to a fresh native cancellation handle after the cancellation assertion; production callers close their exit channel, for which Rust's persistent cancellation is exact.
+The assertion-level re-audit expanded earlier grouped evidence that was too weak for an atomic test-port claim. A mechanical declaration gate reports exactly 30 Go declarations and 30 unique Rust identities, with no omissions, extras, or duplicates. The clone path rechecks nested RU executor data; the second pool-task merge compares every field; GC parsing verifies the exact `+0800` formatted result for every valid row; both range-helper tables execute every row in both argument orders; and the rate-limit test checks the exact panic text and source operation order. Go nil receivers map to non-null Rust values plus explicit absence/default tests. Go's one consumable `done` send maps to a fresh native cancellation handle after the cancellation assertion; production callers close their exit channel, for which Rust's persistent cancellation is exact.
+
+Source-uncovered gates and source inspection found and fixed seven behavior classes: composite minute/hour duration rendering; Go scientific byte formatting; present-but-empty execution-detail separators; wrapping protobuf and aggregate integer conversions; RU self-merge deadlock; Go special-float spellings; and shallow sharing of nested request-detail pointers. The duration and byte formatters were then compared directly with the pinned Go functions over deterministic corpora, with 36,961 and 14,775 matching rows respectively and no mismatch.
 
 The source `TestMain` uses goleak. No Rust utility starts an unowned worker: the DNS test joins both UDP and TCP tasks, the PD decorator is taskless, token waiters are caller-owned futures, and every task-local scope ends with its future. Complete default/all-feature library suites therefore serve as the package lifecycle gate.
 
@@ -99,13 +101,13 @@ Completed consumers are `config`/`config/retry`, `error`, `internal/client`, `in
 
 Package completion requires both feature configurations of the focused and full library suites, all-target compilation, Clippy, rustdoc/doctests, rustfmt/diff checks, exact source identity/hashes/line counts, exact 58-importer/symbol reconciliation, and leak-free completion on `nightly-2026-08-22-aarch64-apple-darwin`. No live TiKV or PD cluster is required: DNS and PD interception use deterministic loopback/in-memory fakes, and all remaining behavior is local aggregation or context propagation.
 
-The completion run passes exact Go 1.25.12 `go test ./util`, all 72 focused
-Rust utility tests, 174 source-derived tests in each feature configuration,
-the no-default workspace suite (1,008 active library tests, one intentional
-ignore, every external/crate target, and 51 doctests), and the all-feature
-library suite (1,005 active tests and one intentional ignore). Workspace
-all-target/all-feature check, Clippy with warnings denied, private-item rustdoc,
-all-feature doctests, rustfmt, source hashes/line counts, declaration matching,
-58-importer reconciliation, and whitespace checks also pass. The extracted Go
-toolchain has no `runtime/race`, so `go test -race ./util` cannot link locally;
-the complete Rust concurrency and lifecycle suites remain green.
+The completion run passes exact Go 1.25.12 package tests in all four modes:
+legacy, NextGen, legacy race, and NextGen race. Both Rust feature selections
+pass all 81 focused utility tests. The complete no-default Nextest matrix passes
+1,414 of 1,414 executed tests with two configured skips; the complete
+all-feature library matrix passes 1,378 of 1,378 executed tests with six
+configured skips. Workspace all-target/all-feature check, strict Clippy,
+rustfmt, private-item rustdoc, all 51 all-feature doctests, source hashes/line
+counts, the exact 30↔30 test-identity reconciliation, 58-importer
+reconciliation, and whitespace checks also pass on
+`nightly-2026-08-22-aarch64-apple-darwin`.

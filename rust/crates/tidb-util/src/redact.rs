@@ -18,7 +18,7 @@
 //! - The redact modes are `github.com/pingcap/errors`'s string constants
 //!   `"ON"`, `"OFF"`, `"MARKER"`; the process-wide enable flag defaults to
 //!   the empty string, exactly like `errors.RedactLogEnabled`.
-//! - [`de_redact`] reproduces Go's rune-by-rune, line-by-line state machine
+//! - [`de_redact`] reproduces Go's reader/writer, rune-by-rune, line-by-line state machine
 //!   (marker `‹`/`›` with doubled delimiters escaped), including its error
 //!   on a truncated escape.
 //!
@@ -30,19 +30,11 @@ use tidb_proto::backup;
 
 mod compact_text;
 
-/// `errors.RedactLogEnable`: redaction on, values replaced.
-pub const REDACT_LOG_ENABLE: &str = "ON";
-/// `errors.RedactLogDisable`: redaction off.
-pub const REDACT_LOG_DISABLE: &str = "OFF";
-/// `errors.RedactLogMarker`: redaction by wrapping values in `‹...›`.
-pub const REDACT_LOG_MARKER: &str = "MARKER";
-
 /// Go `redact.String`: redacts `input` according to `mode`.
 ///
 /// `MARKER` wraps the value in `‹...›`, doubling any interior marker rune;
 /// `OFF` returns the input unchanged; `ON` erases it. Any other mode is a
 /// programming error and yields the empty string (Go asserts in tests).
-#[must_use]
 pub fn string(mode: &str, input: &str) -> String {
     match mode {
         "MARKER" => {
@@ -70,14 +62,16 @@ pub fn string(mode: &str, input: &str) -> String {
 
 /// Go `redact.Stringer`: a [`std::fmt::Display`] adapter that redacts the
 /// wrapped value's rendering according to `mode`, like [`string`].
-pub struct RedactStringer<'a> {
+struct RedactStringer<'a> {
     mode: &'a str,
     inner: &'a dyn std::fmt::Display,
 }
 
 /// Go `redact.Stringer`: wraps `input` so its `Display` output is redacted.
-#[must_use]
-pub fn stringer<'a>(mode: &'a str, input: &'a dyn std::fmt::Display) -> RedactStringer<'a> {
+pub fn stringer<'a>(
+    mode: &'a str,
+    input: &'a dyn std::fmt::Display,
+) -> impl std::fmt::Display + 'a {
     RedactStringer { mode, inner: input }
 }
 
@@ -87,66 +81,52 @@ impl std::fmt::Display for RedactStringer<'_> {
     }
 }
 
-/// A truncated marker escape: a `‹` in marker context with no following
-/// rune, mirroring the error Go returns from `bufio.Reader.ReadRune`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeRedactError;
-
-impl std::fmt::Display for DeRedactError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("unexpected EOF in the middle of a redact marker escape")
-    }
-}
-
-impl std::error::Error for DeRedactError {}
-
-/// Go `redact.DeRedact`: de-redacts marker-wrapped content, working line by
-/// line. `remove` replaces each redacted span with `?`; otherwise it unwraps
-/// the span. `sep` is written after every scanned line (Go passes `"\n"`).
+/// Go `redact.DeRedact`: de-redacts marker-wrapped content from `input` into
+/// `output`, working line by line. `remove` replaces each redacted span with
+/// `?`; otherwise it unwraps the span. `sep` is written after every scanned
+/// line (Go passes `"\n"`).
 ///
 /// This ports Go's `bufio.Scanner`/`bufio.Reader` state machine directly: a
 /// line is scanned rune by rune; `‹` opens a span (interior `‹‹`/`››`
 /// collapse to one), `›` closes it. An unterminated `‹` is emitted verbatim
 /// at end of line (Go writes back the buffered content).
-pub fn de_redact(remove: bool, input: &str, sep: &str) -> Result<String, DeRedactError> {
-    de_redact_bytes(remove, input.as_bytes(), sep)
-}
+pub fn de_redact(
+    remove: bool,
+    input: impl std::io::Read,
+    output: impl std::io::Write,
+    sep: &str,
+) -> std::io::Result<()> {
+    use std::io::BufRead;
 
-fn de_redact_bytes(remove: bool, input: &[u8], sep: &str) -> Result<String, DeRedactError> {
-    let mut out = String::new();
-    for line in scan_lines(input) {
-        de_redact_line(remove, &decode_go_utf8(line), &mut out)?;
-        out.push_str(sep);
-    }
-    Ok(out)
-}
-
-/// Splits like Go's default `bufio.ScanLines`: on `\n`, dropping a single
-/// trailing `\r`, yielding a final unterminated line if non-empty, and
-/// silently stopping when a token reaches `bufio.MaxScanTokenSize`. Go's
-/// `DeRedact` deliberately does not inspect `Scanner.Err()`.
-fn scan_lines(input: &[u8]) -> Vec<&[u8]> {
     const MAX_SCAN_TOKEN_SIZE: usize = 64 * 1024;
 
-    let mut lines = Vec::new();
-    let mut start = 0usize;
-    while start < input.len() {
-        let newline = input[start..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| start + offset);
-        let end = newline.unwrap_or(input.len());
-        let raw = &input[start..end];
-        if raw.len() >= MAX_SCAN_TOKEN_SIZE {
+    let mut input = std::io::BufReader::new(input);
+    let mut output = std::io::BufWriter::new(output);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = match input.read_until(b'\n', &mut line) {
+            Ok(read) => read,
+            // Go deliberately does not inspect Scanner.Err().
+            Err(_) => break,
+        };
+        if read == 0 {
             break;
         }
-        lines.push(raw.strip_suffix(b"\r").unwrap_or(raw));
-        let Some(newline) = newline else {
+        if line.last() == Some(&b'\n') {
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+        }
+        if line.len() >= MAX_SCAN_TOKEN_SIZE {
             break;
         };
-        start = newline + 1;
+        de_redact_line(remove, &decode_go_utf8(&line), &mut output)?;
+        let _ = std::io::Write::write_all(&mut output, sep.as_bytes());
     }
-    lines
+    let _ = std::io::Write::flush(&mut output);
+    Ok(())
 }
 
 /// Go's `bufio.Reader.ReadRune` consumes one byte for each malformed UTF-8
@@ -173,7 +153,7 @@ fn decode_go_utf8(input: &[u8]) -> String {
 }
 
 /// The per-line core of [`de_redact`], appending to `out`.
-fn de_redact_line(remove: bool, line: &str, out: &mut String) -> Result<(), DeRedactError> {
+fn de_redact_line(remove: bool, line: &str, out: &mut impl std::io::Write) -> std::io::Result<()> {
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0usize;
     let mut start = false;
@@ -193,7 +173,12 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> Result<(), DeRe
             if start {
                 // Must read the escaped rune; EOF here is Go's error path.
                 match read(&mut i) {
-                    None => return Err(DeRedactError),
+                    None => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected EOF in the middle of a redact marker escape",
+                        ));
+                    }
                     Some(pch) if pch == ch => buf.push(ch),
                     Some(pch) => {
                         buf.push(ch);
@@ -217,23 +202,25 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> Result<(), DeRe
                         i -= 1; // unread
                     }
                     if remove {
-                        out.push('?');
+                        let _ = std::io::Write::write_all(out, b"?");
                     } else {
-                        out.push_str(&buf);
+                        std::io::Write::write_all(out, buf.as_bytes())?;
                     }
                 }
             } else {
-                out.push(ch);
+                let mut encoded = [0; 4];
+                let _ = std::io::Write::write_all(out, ch.encode_utf8(&mut encoded).as_bytes());
             }
         } else if start {
             buf.push(ch);
         } else {
-            out.push(ch);
+            let mut encoded = [0; 4];
+            let _ = std::io::Write::write_all(out, ch.encode_utf8(&mut encoded).as_bytes());
         }
     }
     if start {
-        out.push('‹');
-        out.push_str(&buf);
+        let _ = std::io::Write::write_all(out, "‹".as_bytes());
+        let _ = std::io::Write::write_all(out, buf.as_bytes());
     }
     Ok(())
 }
@@ -241,10 +228,10 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> Result<(), DeRe
 /// Go `redact.DeRedactFile`: de-redacts `input` into `output` (a path, or
 /// `"-"` for standard output), line by line with `\n` separators.
 pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Result<()> {
-    use std::io::{Read, Write};
+    use std::io::Write;
 
-    let mut input_file = std::fs::File::open(input)?;
-    let mut output_file: Box<dyn Write> = if output == "-" {
+    let input_file = std::fs::File::open(input)?;
+    let output_file: Box<dyn Write> = if output == "-" {
         Box::new(std::io::stdout())
     } else {
         let mut options = std::fs::OpenOptions::new();
@@ -257,43 +244,26 @@ pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Resul
         Box::new(options.open(output)?)
     };
 
-    let mut content = Vec::new();
-    input_file.read_to_end(&mut content)?;
-    let result = de_redact_bytes(remove, &content, "\n")
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    output_file.write_all(result.as_bytes())
+    de_redact(remove, input_file, output_file, "\n")
 }
 
 /// Go `redact.InitRedact`: sets the process-wide flag to `ON`/`OFF`.
 pub fn init_redact(redact_log: bool) {
     let mode = if redact_log {
-        REDACT_LOG_ENABLE
+        tidb_error::mysql::RedactionMode::Enabled
     } else {
-        REDACT_LOG_DISABLE
-    };
-    set_redact_mode(mode);
-}
-
-/// Publishes the validated `tidb_redact_log` value to the one process-wide
-/// redaction authority shared by errors and utility helpers.
-pub fn set_redact_mode(mode: &str) {
-    let mode = match mode {
-        REDACT_LOG_ENABLE => tidb_error::mysql::RedactionMode::Enabled,
-        REDACT_LOG_MARKER => tidb_error::mysql::RedactionMode::Marker,
-        _ => tidb_error::mysql::RedactionMode::Disabled,
+        tidb_error::mysql::RedactionMode::Disabled
     };
     tidb_error::mysql::set_redaction_mode(mode);
 }
 
 /// Go `redact.NeedRedact`: whether redaction is currently enabled (the flag
 /// is neither `OFF` nor its uninitialized empty value).
-#[must_use]
 pub fn need_redact() -> bool {
     tidb_error::mysql::redaction_mode() != tidb_error::mysql::RedactionMode::Disabled
 }
 
 /// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.
-#[must_use]
 pub fn value(arg: &str) -> String {
     if need_redact() {
         "?".to_owned()
@@ -304,7 +274,6 @@ pub fn value(arg: &str) -> String {
 
 /// Go `redact.Key`: `?` when redaction is enabled, else the upper-case hex
 /// encoding of `key` (`strings.ToUpper(hex.EncodeToString(key))`).
-#[must_use]
 pub fn key(key: &[u8]) -> String {
     if need_redact() {
         return "?".to_owned();
@@ -321,11 +290,11 @@ pub fn key(key: &[u8]) -> String {
 ///
 /// `MARKER` wraps `v` in `‹...›`; `ON` writes `?`; anything else writes `v`.
 pub fn write_redact(build: &mut String, v: &str, redact: &str) {
-    if redact == REDACT_LOG_MARKER {
+    if redact == "MARKER" {
         build.push('‹');
         build.push_str(v);
         build.push('›');
-    } else if redact == REDACT_LOG_ENABLE {
+    } else if redact == "ON" {
         build.push('?');
     } else {
         build.push_str(v);
@@ -379,448 +348,78 @@ impl std::fmt::Display for TaskInfoRedacted<'_> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn de_redact_keeps_go_scanner_and_invalid_utf8_behavior() {
-        let accepted = format!("{}\nTAIL", "x".repeat(65_535));
-        let output = de_redact(false, &accepted, "|").unwrap();
-        assert_eq!(output.len(), 65_541);
-        assert!(output.ends_with("xx|TAIL|"));
-
-        let rejected = format!("{}\nTAIL", "x".repeat(65_536));
-        assert_eq!(de_redact(false, &rejected, "|").unwrap(), "");
-
-        assert_eq!(
-            de_redact_bytes(false, &[b'a', 0xff, 0xfe, b'b'], "").unwrap(),
-            "a\u{fffd}\u{fffd}b"
-        );
+    fn redaction_mode_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GUARD.lock().unwrap_or_else(|error| error.into_inner())
     }
 
     #[test]
-    fn de_redact_file_accepts_go_style_invalid_utf8() {
-        let directory = tempfile::tempdir().unwrap();
-        let input = directory.path().join("input.log");
-        let output = directory.path().join("output.log");
-        std::fs::write(&input, [b'a', 0xff, 0xfe, b'b']).unwrap();
-
-        de_redact_file(false, input.to_str().unwrap(), output.to_str().unwrap()).unwrap();
-        assert_eq!(
-            std::fs::read(output).unwrap(),
-            "a\u{fffd}\u{fffd}b\n".as_bytes()
-        );
+    fn test_redact() {
+        for (mode, input, output) in [
+            ("OFF", "fxcv", "fxcv"),
+            ("OFF", "f‹xcv", "f‹xcv"),
+            ("ON", "f‹xcv", ""),
+            ("MARKER", "f‹xcv", "‹f‹‹xcv›"),
+            ("MARKER", "f›xcv", "‹f››xcv›"),
+        ] {
+            assert_eq!(string(mode, input), output);
+            assert_eq!(stringer(mode, &input).to_string(), output);
+        }
     }
 
     #[test]
-    fn de_redact_file_keeps_go_same_path_open_order() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("same.log");
-        std::fs::write(&path, "‹secret›").unwrap();
-
-        de_redact_file(false, path.to_str().unwrap(), path.to_str().unwrap()).unwrap();
-        assert_eq!(std::fs::read(path).unwrap(), b"");
+    fn test_de_redact() {
+        for (remove, input, output) in [
+            (true, "‹fxcv›ggg", "?ggg"),
+            (false, "‹fxcv›ggg", "fxcvggg"),
+            (true, "fxcv", "fxcv"),
+            (false, "fxcv", "fxcv"),
+            (true, "‹fxcv›ggg‹fxcv›eee", "?ggg?eee"),
+            (false, "‹fxcv›ggg‹fxcv›eee", "fxcvgggfxcveee"),
+            (true, "‹›", "?"),
+            (false, "‹›", ""),
+            (true, "gg‹ee", "gg‹ee"),
+            (false, "gg‹ee", "gg‹ee"),
+            (true, "gg›ee", "gg›ee"),
+            (false, "gg›ee", "gg›ee"),
+            (true, "gg‹ee‹ee", "gg‹ee‹ee"),
+            (false, "gg‹ee‹gg", "gg‹ee‹gg"),
+            (true, "gg›ee›gg", "gg›ee›gg"),
+            (false, "gg›ee›ee", "gg›ee›ee"),
+        ] {
+            let mut actual = Vec::new();
+            de_redact(remove, input.as_bytes(), &mut actual, "").unwrap();
+            assert_eq!(String::from_utf8(actual).unwrap(), output);
+        }
     }
 
-    // Cross-check with tidb-error's shared flag (extension beyond the Go
-    // test): Go's helpers and SQL-error formatting read the same
-    // `errors.RedactLogEnabled` singleton, so a mode written through that
-    // owner must be visible here too, including MARKER (which `NeedRedact`
-    // treats as enabled).
     #[test]
-    fn redact_init_visible_via_tidb_error_mode() {
+    fn test_redact_init_and_value_and_key() {
+        let _guard = redaction_mode_guard();
         let secret = "secret";
+
         init_redact(false);
-        tidb_error::mysql::set_redaction_mode(tidb_error::mysql::RedactionMode::Marker);
-        assert!(need_redact());
+        assert_eq!(value(secret), secret);
+        assert_eq!(key(secret.as_bytes()), "736563726574");
+
+        init_redact(true);
         assert_eq!(value(secret), "?");
         assert_eq!(key(secret.as_bytes()), "?");
 
         init_redact(false);
     }
 
-    // WriteRedact mirrors String's three branches.
+    // Go permits callers to discard the direct redact helper results. Keep
+    // this package from adding a Rust-only diagnostic contract.
     #[test]
-    fn write_redact_modes() {
-        let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_MARKER);
-        assert_eq!(b, "‹v›");
-        let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_ENABLE);
-        assert_eq!(b, "?");
-        let mut b = String::new();
-        write_redact(&mut b, "v", REDACT_LOG_DISABLE);
-        assert_eq!(b, "v");
-    }
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let input = "secret";
 
-    // BR TestRedactBackend: exact compact protobuf text plus the source
-    // object's non-mutation contract for every credential-bearing backend.
-    #[test]
-    fn task_info_redacts_backends_without_mutating_source() {
-        use tidb_proto::backup::{
-            storage_backend, AzureBlobStorage, AzureCustomerKey, Gcs, StorageBackend,
-            StreamBackupTaskInfo, S3,
-        };
-
-        let mut info = StreamBackupTaskInfo {
-            name: "test".to_owned(),
-            storage: Some(StorageBackend {
-                backend: Some(storage_backend::Backend::S3(S3 {
-                    endpoint: "http://".to_owned(),
-                    bucket: "test".to_owned(),
-                    prefix: "test".to_owned(),
-                    access_key: "12abCD!@#[]{}?/\\".to_owned(),
-                    secret_access_key: "12abCD!@#[]{}?/\\".to_owned(),
-                    ..Default::default()
-                })),
-            }),
-            ..Default::default()
-        };
-
-        let original = info.clone();
-        assert_eq!(
-            TaskInfoRedacted { info: Some(&info) }.to_string(),
-            "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" "
-        );
-        assert_eq!(info, original);
-
-        info.storage = Some(StorageBackend {
-            backend: Some(storage_backend::Backend::Gcs(Gcs {
-                endpoint: "http://".to_owned(),
-                bucket: "test".to_owned(),
-                prefix: "test".to_owned(),
-                credentials_blob: "12abCD!@#[]{}?/\\".to_owned(),
-                ..Default::default()
-            })),
-        });
-        let original = info.clone();
-        assert_eq!(
-            TaskInfoRedacted { info: Some(&info) }.to_string(),
-            "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" "
-        );
-        assert_eq!(info, original);
-
-        info.storage = Some(StorageBackend {
-            backend: Some(storage_backend::Backend::AzureBlobStorage(
-                AzureBlobStorage {
-                    endpoint: "http://".to_owned(),
-                    bucket: "test".to_owned(),
-                    prefix: "test".to_owned(),
-                    shared_key: "12abCD!@#[]{}?/\\".to_owned(),
-                    access_sig: "12abCD!@#[]{}?/\\".to_owned(),
-                    encryption_key: Some(AzureCustomerKey {
-                        encryption_key: "12abCD!@#[]{}?/\\".to_owned(),
-                        encryption_key_sha256: "12abCD!@#[]{}?/\\".to_owned(),
-                    }),
-                    ..Default::default()
-                },
-            )),
-        });
-        let original = info.clone();
-        assert_eq!(
-            TaskInfoRedacted { info: Some(&info) }.to_string(),
-            "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" "
-        );
-        assert_eq!(info, original);
-    }
-
-    #[test]
-    fn task_info_preserves_noncredential_backends_and_compact_text_rules() {
-        use std::collections::HashMap;
-
-        use tidb_proto::backup::{
-            storage_backend, Bucket, CloudDynamic, Hdfs, Local, Noop, StorageBackend,
-            StreamBackupTaskInfo,
-        };
-
-        assert_eq!(TaskInfoRedacted { info: None }.to_string(), "nil");
-
-        let cases = [
-            (
-                storage_backend::Backend::Noop(Noop {}),
-                r#"storage:<noop:<> > "#,
-            ),
-            (
-                storage_backend::Backend::Local(Local {
-                    path: "a\n\"\\\x01".to_owned(),
-                }),
-                r#"storage:<local:<path:"a\n\"\\\001" > > "#,
-            ),
-            (
-                storage_backend::Backend::CloudDynamic(CloudDynamic {
-                    bucket: Some(Bucket {
-                        endpoint: "e".to_owned(),
-                        ..Default::default()
-                    }),
-                    provider_name: "p".to_owned(),
-                    attrs: HashMap::from([
-                        ("z".to_owned(), "2".to_owned()),
-                        ("a".to_owned(), "1".to_owned()),
-                    ]),
-                }),
-                r#"storage:<cloud_dynamic:<bucket:<endpoint:"e" > provider_name:"p" attrs:<key:"a" value:"1" > attrs:<key:"z" value:"2" > > > "#,
-            ),
-            (
-                storage_backend::Backend::Hdfs(Hdfs {
-                    remote: "hdfs:///x".to_owned(),
-                }),
-                r#"storage:<hdfs:<remote:"hdfs:///x" > > "#,
-            ),
-        ];
-
-        for (backend, expected) in cases {
-            let info = StreamBackupTaskInfo {
-                storage: Some(StorageBackend {
-                    backend: Some(backend),
-                }),
-                ..Default::default()
-            };
-            let original = info.clone();
-            assert_eq!(TaskInfoRedacted { info: Some(&info) }.to_string(), expected);
-            assert_eq!(info, original);
-        }
-    }
-
-    #[test]
-    fn task_info_preserves_dependency_closed_security_config() {
-        use tidb_proto::{
-            backup::{
-                stream_backup_task_security_config, CipherInfo, CompressionType, MasterKeyConfig,
-                StreamBackupTaskInfo, StreamBackupTaskSecurityConfig,
-            },
-            encryptionpb::{
-                master_key, AwsKms, AzureKms, EncryptionMethod, GcpKms, MasterKey, MasterKeyFile,
-                MasterKeyKms, MasterKeyPlaintext,
-            },
-        };
-
-        let plain = StreamBackupTaskInfo {
-            start_ts: 1,
-            end_ts: 2,
-            name: "n".to_owned(),
-            table_filter: vec!["a".to_owned(), "b".to_owned()],
-            compression_type: CompressionType::Zstd as i32,
-            security_config: Some(StreamBackupTaskSecurityConfig {
-                encryption: Some(
-                    stream_backup_task_security_config::Encryption::PlaintextDataKey(CipherInfo {
-                        cipher_type: EncryptionMethod::Aes256Ctr as i32,
-                        cipher_key: vec![0, b'\n', b'\\', b'"', 0xff],
-                    }),
-                ),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            TaskInfoRedacted { info: Some(&plain) }.to_string(),
-            r#"start_ts:1 end_ts:2 name:"n" table_filter:"a" table_filter:"b" compression_type:ZSTDZSTD security_config:<plaintext_data_key:<cipher_type:AES256_CTRAES256_CTR cipher_key:"\000\n\\\"\377" > > "#
-        );
-
-        let master = StreamBackupTaskInfo {
-            security_config: Some(StreamBackupTaskSecurityConfig {
-                encryption: Some(
-                    stream_backup_task_security_config::Encryption::MasterKeyConfig(
-                        MasterKeyConfig {
-                            encryption_type: EncryptionMethod::Aes128Ctr as i32,
-                            master_keys: vec![
-                                MasterKey {
-                                    backend: Some(master_key::Backend::Plaintext(
-                                        MasterKeyPlaintext {},
-                                    )),
-                                },
-                                MasterKey {
-                                    backend: Some(master_key::Backend::File(MasterKeyFile {
-                                        path: "/k".to_owned(),
-                                    })),
-                                },
-                                MasterKey {
-                                    backend: Some(master_key::Backend::Kms(Box::new(
-                                        MasterKeyKms {
-                                            vendor: "v".to_owned(),
-                                            key_id: "id".to_owned(),
-                                            azure_kms: Some(AzureKms {
-                                                tenant_id: "t".to_owned(),
-                                                ..Default::default()
-                                            }),
-                                            gcp_kms: Some(GcpKms {
-                                                credential: "c".to_owned(),
-                                            }),
-                                            aws_kms: Some(AwsKms {
-                                                access_key: "a".to_owned(),
-                                                secret_access_key: "s".to_owned(),
-                                            }),
-                                            ..Default::default()
-                                        },
-                                    ))),
-                                },
-                            ],
-                        },
-                    ),
-                ),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            TaskInfoRedacted {
-                info: Some(&master)
-            }
-            .to_string(),
-            r#"security_config:<master_key_config:<encryption_type:AES128_CTRAES128_CTR master_keys:<plaintext:<> > master_keys:<file:<path:"/k" > > master_keys:<kms:<vendor:"v" key_id:"id" azure_kms:<tenant_id:"t" > gcp_kms:<credential:"c" > aws_kms:<access_key:"a" secret_access_key:"s" > > > > > "#
-        );
-    }
-
-    #[test]
-    fn task_info_matches_go_all_fields_goldens() {
-        use std::collections::HashMap;
-
-        use tidb_proto::{
-            backup::{
-                storage_backend, stream_backup_task_security_config, AzureBlobStorage,
-                AzureCustomerKey, Bucket, CloudDynamic, Gcs, MasterKeyConfig, StorageBackend,
-                StreamBackupTaskInfo, StreamBackupTaskSecurityConfig, S3,
-            },
-            encryptionpb::{
-                master_key, AwsKms, AzureKms, EncryptionMethod, GcpKms, MasterKey, MasterKeyKms,
-            },
-        };
-
-        fn check(info: &StreamBackupTaskInfo, expected: &str) {
-            let original = info.clone();
-            assert_eq!(TaskInfoRedacted { info: Some(info) }.to_string(), expected);
-            assert_eq!(*info, original);
-        }
-
-        let s3 = StreamBackupTaskInfo {
-            storage: Some(StorageBackend {
-                backend: Some(storage_backend::Backend::S3(S3 {
-                    endpoint: "1".to_owned(),
-                    region: "2".to_owned(),
-                    bucket: "3".to_owned(),
-                    prefix: "4".to_owned(),
-                    storage_class: "5".to_owned(),
-                    sse: "6".to_owned(),
-                    acl: "7".to_owned(),
-                    access_key: "8".to_owned(),
-                    secret_access_key: "9".to_owned(),
-                    force_path_style: true,
-                    sse_kms_key_id: "11".to_owned(),
-                    role_arn: "12".to_owned(),
-                    external_id: "13".to_owned(),
-                    object_lock_enabled: true,
-                    session_token: "15".to_owned(),
-                    provider: "16".to_owned(),
-                    profile: "17".to_owned(),
-                })),
-            }),
-            ..Default::default()
-        };
-        check(
-            &s3,
-            r#"storage:<s3:<endpoint:"1" region:"2" bucket:"3" prefix:"4" storage_class:"5" sse:"6" acl:"7" access_key:"[REDACTED]" secret_access_key:"[REDACTED]" force_path_style:true sse_kms_key_id:"[REDACTED]" role_arn:"12" external_id:"13" object_lock_enabled:true session_token:"15" provider:"16" profile:"17" > > "#,
-        );
-
-        let gcs = StreamBackupTaskInfo {
-            storage: Some(StorageBackend {
-                backend: Some(storage_backend::Backend::Gcs(Gcs {
-                    endpoint: "1".to_owned(),
-                    bucket: "2".to_owned(),
-                    prefix: "3".to_owned(),
-                    storage_class: "4".to_owned(),
-                    predefined_acl: "5".to_owned(),
-                    credentials_blob: "6".to_owned(),
-                })),
-            }),
-            ..Default::default()
-        };
-        check(
-            &gcs,
-            r#"storage:<gcs:<endpoint:"1" bucket:"2" prefix:"3" storage_class:"4" predefined_acl:"5" credentials_blob:"[REDACTED]" > > "#,
-        );
-
-        let azure = StreamBackupTaskInfo {
-            storage: Some(StorageBackend {
-                backend: Some(storage_backend::Backend::AzureBlobStorage(
-                    AzureBlobStorage {
-                        endpoint: "1".to_owned(),
-                        bucket: "2".to_owned(),
-                        prefix: "3".to_owned(),
-                        storage_class: "4".to_owned(),
-                        account_name: "5".to_owned(),
-                        shared_key: "6".to_owned(),
-                        access_sig: "8".to_owned(),
-                        encryption_scope: "9".to_owned(),
-                        encryption_key: Some(AzureCustomerKey {
-                            encryption_key: "10a".to_owned(),
-                            encryption_key_sha256: "10b".to_owned(),
-                        }),
-                    },
-                )),
-            }),
-            ..Default::default()
-        };
-        check(
-            &azure,
-            r#"storage:<azure_blob_storage:<endpoint:"1" bucket:"2" prefix:"3" storage_class:"4" account_name:"5" shared_key:"[REDACTED]" access_sig:"[REDACTED]" encryption_scope:"9" encryption_key:<encryption_key:"[REDACTED]" > > > "#,
-        );
-
-        let cloud = StreamBackupTaskInfo {
-            storage: Some(StorageBackend {
-                backend: Some(storage_backend::Backend::CloudDynamic(CloudDynamic {
-                    bucket: Some(Bucket {
-                        endpoint: "1".to_owned(),
-                        region: "3".to_owned(),
-                        bucket: "4".to_owned(),
-                        prefix: "5".to_owned(),
-                        storage_class: "6".to_owned(),
-                    }),
-                    provider_name: "2".to_owned(),
-                    attrs: HashMap::from([("k".to_owned(), "v".to_owned())]),
-                })),
-            }),
-            ..Default::default()
-        };
-        check(
-            &cloud,
-            r#"storage:<cloud_dynamic:<bucket:<endpoint:"1" region:"3" bucket:"4" prefix:"5" storage_class:"6" > provider_name:"2" attrs:<key:"k" value:"v" > > > "#,
-        );
-
-        let kms = StreamBackupTaskInfo {
-            security_config: Some(StreamBackupTaskSecurityConfig {
-                encryption: Some(
-                    stream_backup_task_security_config::Encryption::MasterKeyConfig(
-                        MasterKeyConfig {
-                            encryption_type: EncryptionMethod::Sm4Ctr as i32,
-                            master_keys: vec![MasterKey {
-                                backend: Some(master_key::Backend::Kms(Box::new(MasterKeyKms {
-                                    vendor: "1".to_owned(),
-                                    key_id: "2".to_owned(),
-                                    region: "3".to_owned(),
-                                    endpoint: "4".to_owned(),
-                                    azure_kms: Some(AzureKms {
-                                        tenant_id: "1".to_owned(),
-                                        client_id: "2".to_owned(),
-                                        client_secret: "3".to_owned(),
-                                        key_vault_url: "4".to_owned(),
-                                        hsm_name: "5".to_owned(),
-                                        hsm_url: "6".to_owned(),
-                                        client_certificate: "7".to_owned(),
-                                        client_certificate_path: "8".to_owned(),
-                                        client_certificate_password: "9".to_owned(),
-                                    }),
-                                    gcp_kms: Some(GcpKms {
-                                        credential: "6".to_owned(),
-                                    }),
-                                    aws_kms: Some(AwsKms {
-                                        access_key: "7".to_owned(),
-                                        secret_access_key: "8".to_owned(),
-                                    }),
-                                }))),
-                            }],
-                        },
-                    ),
-                ),
-            }),
-            ..Default::default()
-        };
-        check(
-            &kms,
-            r#"security_config:<master_key_config:<encryption_type:SM4_CTRSM4_CTR master_keys:<kms:<vendor:"1" key_id:"2" region:"3" endpoint:"4" azure_kms:<tenant_id:"1" client_id:"2" client_secret:"3" key_vault_url:"4" hsm_name:"5" hsm_url:"6" client_certificate:"7" client_certificate_path:"8" client_certificate_password:"9" > gcp_kms:<credential:"6" > aws_kms:<access_key:"7" secret_access_key:"8" > > > > > "#,
-        );
+        string("OFF", input);
+        stringer("OFF", &input);
+        need_redact();
+        value(input);
+        key(input.as_bytes());
     }
 }

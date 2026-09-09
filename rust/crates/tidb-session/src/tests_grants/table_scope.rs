@@ -100,6 +100,22 @@ fn select_demands_select_on_every_table_it_reads() {
     assert!(bob.run("SELECT * FROM t JOIN u ON t.a = u.a").is_ok());
 }
 
+/// Go `pkg/ddl/sequence_test.go:77-93`: CREATE SEQUENCE appends a
+/// table-scoped `CreatePriv` visit-info entry for the sequence name. A caller
+/// with only an unrelated schema-visible grant is denied with 1142, while the
+/// same statement succeeds once `CREATE` is granted on the schema.
+#[test]
+fn create_sequence_requires_create_privilege() {
+    let (_, mut boot, mut bob) = scoped();
+
+    assert_eq!(
+        denied(&mut bob, "CREATE SEQUENCE my_seq"),
+        table_denied("CREATE", "my_seq")
+    );
+    boot.run("GRANT CREATE ON test.* TO 'bob'@'%'").unwrap();
+    assert!(bob.run("CREATE SEQUENCE my_seq").is_ok());
+}
+
 /// A CTE is referenced through the table grammar but is not a table, so it
 /// demands nothing -- the one shape a naive `TableRef` sweep would refuse
 /// that Go allows.

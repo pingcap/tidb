@@ -464,3 +464,25 @@ fn test_restore_with_error() {
         "SELECT 1 MEMBER OF (_UTF8MB4'[1]')"
     );
 }
+
+/// Go parser.y's `CHAR OptFieldLen OptBinary` rule resolves an explicit
+/// charset with `charset.GetDefaultCollation` and turns an unknown name into
+/// a parse error (`Get collation error for charset: %s`). The `CAST`/`CONVERT`
+/// CHAR family shares the rule.
+#[test]
+fn cast_char_charset_clause_resolves_and_refuses_like_go() {
+    for sql in [
+        r#"SELECT CAST('hi' AS CHAR(5) CHARSET binary)"#,
+        r#"SELECT CAST('hi' AS CHAR(5) CHARSET laTiN1)"#,
+    ] {
+        assert!(parse(sql).is_ok(), "known charset parses: {sql}");
+    }
+
+    let error = parse(r#"SELECT CAST('hi' AS CHAR(5) CHARSET unknowncs)"#)
+        .unwrap_err()
+        .message;
+    assert!(
+        error.contains("Get collation error for charset"),
+        "Go's parse diagnostic, got: {error}"
+    );
+}

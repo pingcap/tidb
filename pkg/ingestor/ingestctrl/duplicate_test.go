@@ -156,8 +156,8 @@ func TestBuildIndexDupTaskEncodesKeyspaceRange(t *testing.T) {
 	require.NoError(t, err)
 
 	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Id:   42,
-		Name: "test_keyspace",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "test_keyspace",
 	})
 	require.NoError(t, err)
 

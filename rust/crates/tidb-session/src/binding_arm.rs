@@ -26,6 +26,27 @@ use tidb_executor::DriverError;
 
 use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
+use tidb_util::stringutil::go_to_lower;
+
+/// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
+/// binding-capable SELECT source. Keep the filter at the matcher boundary so
+/// stored bindings remain visible to administrative operations while ordinary
+/// DML and EXPLAIN do not report a false match.
+fn may_have_sql_binding(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Query(_) => true,
+        Stmt::Dml(dml) => may_have_dml_binding(dml),
+        _ => true,
+    }
+}
+
+fn may_have_dml_binding(dml: &tidb_ast::DmlStmt) -> bool {
+    match dml {
+        tidb_ast::DmlStmt::With { statement, .. } => may_have_dml_binding(statement),
+        tidb_ast::DmlStmt::Insert(insert) => insert.source.is_some(),
+        _ => true,
+    }
+}
 
 /// Persisted binding projection. Cluster sessions match against a node-owned
 /// committed cache; standalone in-memory sessions read their local catalog.
@@ -268,7 +289,7 @@ impl Session {
                 Datum::new_string(binding.bind_sql.clone()),
                 // Go lowercases the schema on the way in
                 // (`strings.ToLower(binding.Db)`).
-                Datum::new_string(binding.db.to_lowercase()),
+                Datum::new_string(go_to_lower(&binding.db)),
                 Datum::new_string(binding.status.to_owned()),
                 Datum::new_string(now.clone()),
                 Datum::new_string(now),
@@ -460,7 +481,10 @@ impl Session {
     /// Returns the statement to plan. The caller keeps the original when
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
-    pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
+    pub(crate) fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
+        if !may_have_sql_binding(stmt) {
+            return None;
+        }
         // Go gates the whole step on `SessionVars.UsePlanBaselines`.
         if !self.session_bool("tidb_use_plan_baselines", true) {
             return None;
@@ -482,41 +506,54 @@ impl Session {
         // Session bindings shadow global ones, which is Go's order in
         // `planner.optimize`: `getBindingFromSession` first, the domain
         // handle only on a miss.
-        let hints = match self.session_bindings.match_statement(
+        let (hints, bind_sql) = match self.session_bindings.match_statement(
             &no_db_digest,
             &table_names,
             &self.current_db,
             fuzzy_enabled,
         ) {
-            Some(matched) => matched.hints.clone(),
-            None if global.is_some() => global
-                .as_ref()?
-                .matching_binding(&no_db_digest, &table_names, &self.current_db, fuzzy_enabled)?
-                .hints
-                .clone(),
+            Some(matched) => (matched.hints.clone(), matched.bind_sql.clone()),
+            None if global.is_some() => {
+                let matched = global.as_ref()?.matching_binding(
+                    &no_db_digest,
+                    &table_names,
+                    &self.current_db,
+                    fuzzy_enabled,
+                )?;
+                (matched.hints.clone(), matched.bind_sql.clone())
+            }
             None => {
                 let global = self.load_global_bindings().ok()?;
-                global
-                    .match_statement(&no_db_digest, &table_names, &self.current_db, fuzzy_enabled)?
-                    .hints
-                    .clone()
+                let matched = global.match_statement(
+                    &no_db_digest,
+                    &table_names,
+                    &self.current_db,
+                    fuzzy_enabled,
+                )?;
+                (matched.hints.clone(), matched.bind_sql.clone())
             }
         };
         let mut bound = stmt.clone();
         binding::bind_hints(&mut bound, &hints);
+        for warning in crate::dispatch::filter_sem_restricted_hints(&mut bound) {
+            self.append_warning(crate::WarningLevel::Warning, 1105, warning);
+        }
         self.found_in_binding = true;
-        Some(bound)
+        Some((bound, bind_sql))
     }
 
-    /// Whether session or global SQL bindings can affect this plan. Prepared fast paths refuse
-    /// the optimization while bindings exist, because a matching binding can
-    /// replace the statement's access hints before planning.
-    pub fn has_plan_bindings(&self) -> bool {
-        !self.session_bindings.is_empty()
-            || self
-                .global_binding_cache
-                .as_ref()
-                .is_some_and(|cache| cache.load().size() != 0)
+    pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
+        self.bind_statement_hints_with_sql(stmt)
+            .map(|(statement, _)| statement)
+    }
+
+    /// Applies the binding selected for this EXECUTE and returns its exact
+    /// `BindSQL`, which Go includes in the prepared-plan cache key. A miss
+    /// returns an unchanged clone and no key component.
+    #[must_use]
+    pub fn prepared_statement_with_binding(&mut self, stmt: &Stmt) -> (Stmt, Option<String>) {
+        self.bind_statement_hints_with_sql(stmt)
+            .map_or_else(|| (stmt.clone(), None), |(stmt, sql)| (stmt, Some(sql)))
     }
 
     /// Whether `@@last_plan_from_binding` should report a hit, which is the
@@ -650,7 +687,7 @@ impl Session {
     /// quotes freely) can never break out of its literal.
     fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError> {
         let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        let ctx = self.statement_context(true);
+        let ctx = self.statement_context_for_update_read(false);
         self.with_catalog_mut(|catalog| match text.trim_start().get(..6) {
             Some(word) if word.eq_ignore_ascii_case("INSERT") => {
                 tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)

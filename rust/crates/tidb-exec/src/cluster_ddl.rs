@@ -15,8 +15,8 @@
 //! Writing the catalog: `CREATE`/`DROP` for databases, tables and indexes,
 //! planned as one set of meta-key mutations over one snapshot.
 //!
-//! Go source of truth is the *final meta mutation* of a DDL job, not the job
-//! queue around it:
+//! Go source of truth for every published schema is the DDL worker's meta
+//! mutation:
 //!
 //! * `pkg/meta/meta.go` `GenGlobalIDs` — `Inc(NextGlobalID, n)` returns the new
 //!   maximum, and the allocated IDs are `old+1 ..= new`. The key holds the max
@@ -28,32 +28,18 @@
 //!   (`Inc(SchemaVersionKey, 1)`) then `SetSchemaDiff` writes `Diff:<version>`
 //!   describing exactly what that version changed.
 //!
-//! Two deliberate differences from Go, both stated rather than hidden:
+//! CHECK actions follow Go's durable path: submission first inserts the full
+//! job envelope in `mysql.tidb_ddl_job`, each owner transaction reloads that
+//! envelope and publishes one state transition, and terminal handling moves
+//! the job to both Go history stores. Other actions still use the ordinary
+//! one-write planner below and must not borrow CHECK-specific recovery state.
 //!
-//! * **Single owner.** There is no job queue and no owner election. Go moves a
-//!   `DROP TABLE` through write-only and delete-only before it deletes the meta
-//!   key, because other TiDB nodes may still be reading the table at an older
-//!   schema version; this node performs the whole change in one version. That
-//!   is only safe while this node is the only writer of the catalog, so a
-//!   concurrent DDL must FAIL rather than interleave — see
-//!   [`plan_ddl`] on the `SchemaVersionKey` write.
-//!
-//!   `CREATE INDEX` widens that assumption, and this is the one place it is
-//!   written down: Go's `delete only` -> `write only` -> `reorg` -> `public`
-//!   ladder exists so a concurrent `INSERT` maintains the half-built index
-//!   while the reorg scans. This node has no such states — the index and every
-//!   entry the existing rows owe it become visible at ONE commit — so a row
-//!   another writer commits between this transaction's `start_ts` and its
-//!   commit is indexed by neither the scan nor the writer. The assumption is
-//!   therefore no longer "no concurrent DDL" but "no concurrent WRITE to the
-//!   table being indexed", and unlike the DDL half it is NOT enforced by a
-//!   write conflict.
-//! * **Bounded surface.** Only the column shapes this node can also serve are
-//!   admitted, and every refusal happens in [`lower_ddl`], before a timestamp is
-//!   spent or a single byte is written.
+//! Only shapes this node can also serve are admitted, and every refusal
+//! happens in [`lower_ddl`], before a timestamp is spent or a byte is written.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tidb_ast::CiString;
 use tidb_ast::{
@@ -61,25 +47,34 @@ use tidb_ast::{
     DropTableStmt, IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_meta::{key, value};
+use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
+use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
+use tidb_model::serde_helpers::GoValueSlice;
 use tidb_model::table_info::TableInfo;
-use tidb_model::GoShared;
+use tidb_model::{
+    get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
+    GoSharedPointerSlice, GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
+};
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
+use crate::ddl_job_submit::GlobalIdAllocator;
 use crate::table_info_build::{
     build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
-    ClusteredIndexDefMode,
+    ClusteredIndexDefMode, GENERIC_ERROR_CODE,
 };
+use tidb_hack::GoToLower;
 
 pub use crate::table_info_build::DdlAdmissionError;
 
@@ -92,6 +87,11 @@ pub use crate::table_info_build::DdlAdmissionError;
 const CATALOG_CHARSET: &str = "utf8mb4";
 /// The catalog collation paired with [`CATALOG_CHARSET`].
 const CATALOG_COLLATION: &str = "utf8mb4_bin";
+
+// Go's job scheduler owns one process-local atomic sequence allocator shared
+// by all workers. It is intentionally not reconstructed from history after a
+// restart.
+static DDL_HISTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// A validated `CREATE TABLE` recipe whose final metadata waits for `DBInfo`.
 #[derive(Clone)]
@@ -186,6 +186,8 @@ pub enum AlterColumnAction {
         if_not_exists: bool,
         /// The index, complete except for id and column offsets.
         index: Box<IndexInfo>,
+        /// Whether Go's AUTO pre-split marker was present on this sub-action.
+        auto_pre_split: bool,
     },
     /// `DROP INDEX`/`DROP KEY`.
     DropIndex {
@@ -193,6 +195,14 @@ pub enum AlterColumnAction {
         if_exists: bool,
         /// The index name as written.
         name: String,
+    },
+    /// A table-level CHECK split out of grouped `ADD COLUMN (...)` by Go's
+    /// `resolveAlterTableAddColumns`.
+    AddCheck {
+        /// The parsed CHECK declaration.
+        definition: Box<tidb_ast::CheckConstraintDefinition>,
+        /// The statement context used to resolve and validate it.
+        context: DdlStatementContext,
     },
 }
 
@@ -273,11 +283,10 @@ pub enum DdlStatement {
         /// Signedness written by the new column definition.
         unsigned: bool,
     },
-    /// The single-action `ALTER TABLE ... ADD COLUMN` this node serves:
-    /// one nullable, defaultless column appended at the end. Existing rows
-    /// read the implicit NULL with no rewrite, which is MySQL's answer for
-    /// the same shape; everything needing a row rewrite is refused by name
-    /// at admission (`build_added_column`).
+    /// The single-action `ALTER TABLE ... ADD COLUMN` this node serves,
+    /// including Go's default/origin-default shapes and virtual generated
+    /// columns. Stored generated ADD remains Go's own 3106 refusal because it
+    /// would require a backfill.
     AddColumn {
         /// The resolved database name.
         schema: String,
@@ -298,6 +307,96 @@ pub enum DdlStatement {
         /// (`CreateTableBuild`) hides it the same way.
         #[allow(missing_docs)]
         context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... ADD [CONSTRAINT name] CHECK (...)`.
+    AddCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table receiving the constraint.
+        table: String,
+        /// The parsed CHECK declaration.
+        definition: Box<tidb_ast::CheckConstraintDefinition>,
+        /// The statement context used to resolve and type-check the expression.
+        context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... DROP CONSTRAINT name` for a CHECK constraint.
+    DropCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table losing the constraint.
+        table: String,
+        /// Constraint name as written.
+        name: String,
+        /// Session context whose complete SQL mode Go persists in the job.
+        context: DdlStatementContext,
+    },
+    /// `ALTER TABLE ... ALTER CONSTRAINT name [NOT] ENFORCED`.
+    AlterCheckConstraint {
+        /// Database containing the table.
+        schema: String,
+        /// Table owning the constraint.
+        table: String,
+        /// Constraint name as written.
+        name: String,
+        /// Desired enforcement state.
+        enforced: bool,
+        /// Evaluation context used when enabling the constraint.
+        context: DdlStatementContext,
+    },
+    /// An ADD/ALTER CHECK discarded while
+    /// `tidb_enable_check_constraint=OFF`.
+    IgnoredCheckConstraint {
+        /// Database containing the table, which Go still resolves.
+        schema: String,
+        /// Table named by the statement.
+        table: String,
+    },
+    /// `ALTER TABLE ... ADD PARTITION`, validated and applied by the same
+    /// partition implementation used by the ordinary local executor.
+    AddPartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL retained so the shared partition DDL implementation
+        /// parses and applies exactly the source action.
+        sql: String,
+    },
+    /// `ALTER TABLE ... DROP PARTITION`, through the ordinary partition DDL
+    /// implementation.
+    DropPartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL for the shared partition DDL implementation.
+        sql: String,
+    },
+    /// `ALTER TABLE ... TRUNCATE PARTITION`, through the ordinary partition
+    /// DDL implementation with fresh cluster-global physical IDs.
+    TruncatePartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Canonical SQL for the shared partition DDL implementation.
+        sql: String,
+    },
+    /// `ALTER TABLE ... EXCHANGE PARTITION ... WITH TABLE ...`, Go
+    /// `ActionExchangeTablePartition`.
+    ExchangePartition {
+        /// Database containing the partitioned table.
+        schema: String,
+        /// Partitioned table.
+        table: String,
+        /// Named partition to exchange.
+        partition: String,
+        /// Database containing the standalone table.
+        standalone_schema: String,
+        /// Standalone table whose records and physical ID are exchanged.
+        standalone_table: String,
+        /// Whether rows must be proven to belong to the named partition.
+        with_validation: bool,
     },
     /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
     ///
@@ -450,6 +549,11 @@ pub enum DdlStatement {
         /// offsets the publishing transaction resolves against the stored
         /// table.
         index: Box<IndexInfo>,
+        /// Go `IndexArg.AutoPreSplit`: request best-effort automatic
+        /// leading-column region boundaries while the index is built.
+        /// Explicit `split_opt` boundaries are represented by the caller's
+        /// separate manual path and take precedence over this marker.
+        auto_pre_split: bool,
     },
     /// `DROP INDEX name ON [schema.]table`.
     DropIndex {
@@ -519,8 +623,73 @@ pub enum DdlStatement {
         source_schema: String,
         /// The source table's name as written.
         source_table: String,
+        /// The target's requested temporary-table kind.
+        temporary: tidb_ast::CreateTableTemporary,
+        /// Whether the global temporary target discards rows at commit.
+        on_commit_delete: bool,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
+    },
+    /// Go `ast.CreateMaterializedViewStmt` lowered with its resolved target
+    /// names (master `94a9cbedab`). Planning runs Go's admission checks in
+    /// source order; valid statements stop at the job-execution seam, which
+    /// the materialized-view worker sub-batch wires. The statement context
+    /// carries the envelope Go's executor stamps onto the DDL job (SQL mode,
+    /// CDC write source, tracing, canonical query text).
+    CreateMaterializedView {
+        stmt: Box<tidb_ast::CreateMaterializedViewStmt>,
+        schema: String,
+        table: String,
+        context: DdlStatementContext,
+    },
+    /// Go `ast.CreateMaterializedViewLogStmt` lowered likewise. Unlike the
+    /// view create, the log create's job arguments are fully buildable in
+    /// this tier, so it submits through
+    /// [`prepare_materialized_view_job_submission`] like Go's
+    /// `DoDDLJobWrapper`.
+    CreateMaterializedViewLog {
+        stmt: Box<tidb_ast::CreateMaterializedViewLogStmt>,
+        schema: String,
+        table: String,
+        context: DdlStatementContext,
+    },
+    /// `ALTER MATERIALIZED VIEW ...` — Go master `94a9cbedab` parses this
+    /// (parser.y:5868) but neither its planner nor its executor handles it:
+    /// `buildDDL` has no case, so it plans as the generic `DDL` plan, and
+    /// `DDLExec.Next` leaves `err` nil. The statement therefore SUCCEEDS as
+    /// a no-op — no job, no catalog change, no privilege check. This
+    /// variant is that no-op, not a refusal: refusing would diverge from
+    /// the pinned master's observable behavior.
+    AlterMaterializedViewNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The view name as written.
+        view: String,
+    },
+    /// `ALTER MATERIALIZED VIEW LOG ON ...` — the same parser-only,
+    /// succeeds-as-a-no-op shape (parser.y:5904; likewise absent from
+    /// `buildDDL` and `DDLExec.Next`).
+    AlterMaterializedViewLogNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The base table name as written.
+        table: String,
+    },
+    /// `DROP MATERIALIZED VIEW ...` — likewise parser-only in Go master
+    /// `94a9cbedab`: zero mentions in `buildDDL` or `DDLExec.Next`, so the
+    /// statement succeeds as a no-op (any `IF EXISTS` is absorbed here).
+    DropMaterializedViewNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The view name as written.
+        view: String,
+    },
+    /// `DROP MATERIALIZED VIEW LOG ON ...` — likewise parser-only, no-op.
+    DropMaterializedViewLogNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The base table name as written.
+        table: String,
     },
     /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
     /// `ALTER TABLE ... CHARACTER SET = x`, Go's
@@ -687,9 +856,10 @@ fn database_charset_collation(
             DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
             DatabaseOption::Collate(value) => collate = Some(value.as_str()),
             other => {
-                return Err(DdlAdmissionError::new(format!(
-                    "CREATE DATABASE option {other:?} is not supported by this node"
-                )))
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("CREATE DATABASE option {other:?} is not supported by this node"),
+                ))
             }
         }
     }
@@ -735,9 +905,12 @@ pub fn lower_ddl_with_context(
                     DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
                     DatabaseOption::Collate(value) => collate = Some(value.as_str()),
                     other => {
-                        return Err(DdlAdmissionError::new(format!(
-                            "ALTER DATABASE option {other:?} is not supported by this node"
-                        )))
+                        return Err(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!(
+                                "ALTER DATABASE option {other:?} is not supported by this node"
+                            ),
+                        ))
                     }
                 }
             }
@@ -767,6 +940,42 @@ pub fn lower_ddl_with_context(
         })),
         DdlStmt::CreateTable(create) => {
             lower_create_table(create, default_schema, context).map(Some)
+        }
+        DdlStmt::CreateMaterializedView(create) => {
+            lower_create_materialized_view(create, default_schema, context).map(Some)
+        }
+        DdlStmt::CreateMaterializedViewLog(create) => {
+            lower_create_materialized_view_log(create, default_schema, context).map(Some)
+        }
+        DdlStmt::AlterMaterializedView(alter) => {
+            // Go plans this as the generic DDL plan and no-ops it; see the
+            // `AlterMaterializedViewNoOp` variant for the pinned evidence.
+            let (schema, view) = split_name(&alter.view_name, default_schema, "view")?;
+            Ok(Some(DdlStatement::AlterMaterializedViewNoOp {
+                schema,
+                view,
+            }))
+        }
+        DdlStmt::AlterMaterializedViewLog(alter) => {
+            let (schema, table) = split_name(&alter.table, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterMaterializedViewLogNoOp {
+                schema,
+                table,
+            }))
+        }
+        DdlStmt::DropMaterializedView(drop) => {
+            let (schema, view) = split_name(&drop.view_name, default_schema, "view")?;
+            Ok(Some(DdlStatement::DropMaterializedViewNoOp {
+                schema,
+                view,
+            }))
+        }
+        DdlStmt::DropMaterializedViewLog(drop) => {
+            let (schema, table) = split_name(&drop.table, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropMaterializedViewLogNoOp {
+                schema,
+                table,
+            }))
         }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::DropView { if_exists, names } => {
@@ -808,7 +1017,7 @@ pub fn lower_ddl_with_context(
             name: drop.name.clone(),
             if_exists: drop.if_exists,
         })),
-        DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
+        DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema, context),
         DdlStmt::RenameTable(rename) => lower_rename_table_stmt(rename, default_schema),
         DdlStmt::TruncateTable(name) => {
             let (schema, table) = split_name(name, default_schema, "table")?;
@@ -818,13 +1027,11 @@ pub fn lower_ddl_with_context(
     }
 }
 
-/// Admits the single-action `ALTER TABLE` spelling of an index change.
+/// Admits the `ALTER TABLE` spelling of an index change.
 ///
-/// Go lowers these actions to the same add/drop-index jobs as their standalone
-/// statements.  Reusing the existing lowered statement keeps catalog changes
-/// and backfill ownership in one place.  Multi-action ALTERs stay refused: the
-/// catalog transaction has no representation for their atomic job bundle, so
-/// accepting only its index action would silently half-apply the SQL.
+/// Go lowers these actions to add/drop-index jobs and folds multi-action ALTER
+/// sub-jobs over one evolving table. Reusing the same lowered representation
+/// keeps catalog changes and ordered backfills in one transaction.
 /// Go `SetDirectPlacementOpt` (`ddl/placement_policy.go:530`): folds the
 /// source-ordered options into one settings record, a later option of the
 /// same kind overwriting an earlier one.
@@ -850,9 +1057,10 @@ fn rebuilt_bundles_for_policy(
     settings: &tidb_model::PlacementSettings,
 ) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
     let bundle = tidb_placement::new_bundle_from_options(Some(settings)).map_err(|error| {
-        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "building placement rules: {error}"
-        )))
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("building placement rules: {error}"),
+        ))
     })?;
     let names = |reference: &Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>| {
         reference
@@ -918,9 +1126,7 @@ impl tidb_placement::PolicyGetter for SnapshotPolicies {
 }
 
 /// Every stored policy, read from the statement's own snapshot.
-fn load_policies<S: MetaSnapshot>(
-    snapshot: &mut S,
-) -> Result<SnapshotPolicies, DdlPlanError> {
+fn load_policies<S: MetaSnapshot>(snapshot: &mut S) -> Result<SnapshotPolicies, DdlPlanError> {
     let mut policies = Vec::new();
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
@@ -965,14 +1171,19 @@ fn policy_referenced(catalog: &ClusterCatalog, policy: &CiString) -> bool {
                 return true;
             }
             table.partition.as_ref().is_some_and(|partition| {
-                partition.read().definitions.snapshot().iter().any(|definition| {
-                    definition
-                        .placement_policy_ref
-                        .as_ref()
-                        .is_some_and(|reference| {
-                            reference.read().name.lowercase() == policy.lowercase()
-                        })
-                })
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .iter()
+                    .any(|definition| {
+                        definition
+                            .placement_policy_ref
+                            .as_ref()
+                            .is_some_and(|reference| {
+                                reference.read().name.lowercase() == policy.lowercase()
+                            })
+                    })
             })
         })
     })
@@ -1022,6 +1233,7 @@ fn placement_settings_from_options(
 fn lower_alter_table_catalog(
     alter: &AlterTableStmt,
     default_schema: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
     let [action] = alter.actions.as_slice() else {
         // Go's one ActionMultiSchemaChange job: expressible here exactly when
@@ -1038,7 +1250,7 @@ fn lower_alter_table_catalog(
                         if_not_exists: *if_not_exists,
                         column: Box::new(column.clone()),
                         position: position.clone(),
-                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                        context: DdlStatementContext(context.clone()),
                     });
                 }
                 tidb_ast::AlterTableAction::ChangeColumn {
@@ -1061,7 +1273,8 @@ fn lower_alter_table_catalog(
                         ));
                     }
                     let [old] = old_name.as_slice() else {
-                        return Err(DdlAdmissionError::new(
+                        return Err(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
                             "CHANGE COLUMN takes an unqualified source column name here",
                         ));
                     };
@@ -1071,7 +1284,7 @@ fn lower_alter_table_catalog(
                         table,
                         column: Box::new(column.clone()),
                         position: position.clone(),
-                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                        context: DdlStatementContext(context.clone()),
                         rename_from: Some(old.clone()),
                     }));
                 }
@@ -1097,10 +1310,12 @@ fn lower_alter_table_catalog(
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
+                            auto_pre_split,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
                             index,
+                            auto_pre_split,
                         }),
                         other => {
                             unreachable!(
@@ -1182,11 +1397,15 @@ fn lower_alter_table_catalog(
                 return Ok(None);
             };
             if let tidb_ast::TableOption::AutoIdCache(value) = option {
-                let new_cache = value
-                    .parse::<u64>()
-                    .map_err(|_| DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value"))?;
+                let new_cache = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "AUTO_ID_CACHE needs an integer value",
+                    )
+                })?;
                 if new_cache > i64::MAX as u64 {
-                    return Err(DdlAdmissionError::new(
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
                         "table option auto_id_cache overflows int64",
                     ));
                 }
@@ -1235,10 +1454,12 @@ fn lower_alter_table_catalog(
                 // Go parses the option into `opt.UintValue`, so the written
                 // value is an unsigned literal that is then handed to
                 // `RebaseAutoID` as an `int64`.
-                let new_base = value
-                    .parse::<u64>()
-                    .map_err(|_| DdlAdmissionError::new("AUTO_INCREMENT needs an integer value"))?
-                    as i64;
+                let new_base = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "AUTO_INCREMENT needs an integer value",
+                    )
+                })? as i64;
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
                 return Ok(Some(DdlStatement::RebaseAutoIncrementId {
                     schema,
@@ -1257,7 +1478,9 @@ fn lower_alter_table_catalog(
                     &table,
                     &tidb_executor::StmtContext::for_query().with_strict(true),
                 )
-                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+                .map_err(|error| {
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+                })?;
                 return Ok(Some(DdlStatement::ModifyTableComment {
                     schema,
                     table,
@@ -1269,10 +1492,12 @@ fn lower_alter_table_catalog(
                 tidb_ast::TableOption::ForceAutoRandomBase(value) => (value, true),
                 _ => return Ok(None),
             };
-            let next = value
-                .parse::<u64>()
-                .map_err(|_| DdlAdmissionError::new("AUTO_RANDOM_BASE needs an integer value"))?
-                as i64;
+            let next = value.parse::<u64>().map_err(|_| {
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    "AUTO_RANDOM_BASE needs an integer value",
+                )
+            })? as i64;
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::RebaseAutoRandom {
                 schema,
@@ -1312,7 +1537,7 @@ fn lower_alter_table_catalog(
                     table,
                     column: Box::new(column.clone()),
                     position: position.clone(),
-                    context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                    context: DdlStatementContext(context.clone()),
                     rename_from: None,
                 }));
             };
@@ -1354,7 +1579,8 @@ fn lower_alter_table_catalog(
                 ));
             }
             let [old] = old_name.as_slice() else {
-                return Err(DdlAdmissionError::new(
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
                     "CHANGE COLUMN takes an unqualified source column name here",
                 ));
             };
@@ -1364,7 +1590,7 @@ fn lower_alter_table_catalog(
                 table,
                 column: Box::new(column.clone()),
                 position: position.clone(),
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
                 rename_from: Some(old.clone()),
             }));
         }
@@ -1415,17 +1641,17 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::AlterColumnDefault(action) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             let Some(column) = action.name.last() else {
-                return Err(DdlAdmissionError::new("ALTER COLUMN needs a column name"));
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    "ALTER COLUMN needs a column name",
+                ));
             };
             Ok(Some(DdlStatement::SetColumnDefault {
                 schema,
                 table,
                 column: column.clone(),
                 default_value: action.default_value.clone().map(Box::new),
-                // The surrounding lowering does not carry the session's
-                // context, so this matches the sibling ADD COLUMN arm: the
-                // strict-mode default under which Go admits a DDL.
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
             }))
         }
         tidb_ast::AlterTableAction::OrderByColumns { .. } => {
@@ -1441,6 +1667,69 @@ fn lower_alter_table_catalog(
                 invisible: action.visibility == tidb_ast::IndexVisibility::Invisible,
             }))
         }
+        tidb_ast::AlterTableAction::AddColumns {
+            if_not_exists,
+            columns,
+            constraints,
+        } => {
+            // Go `resolveAlterTableAddColumns`: every column first, followed
+            // by every table constraint, all inside one multi-schema job.
+            let mut actions = Vec::with_capacity(columns.len() + constraints.len());
+            for column in columns {
+                actions.push(AlterColumnAction::Add {
+                    if_not_exists: *if_not_exists,
+                    column: Box::new(column.clone()),
+                    position: tidb_ast::ColumnPosition::Default,
+                    context: DdlStatementContext(context.clone()),
+                });
+            }
+            for constraint in constraints {
+                match constraint {
+                    tidb_ast::TableConstraint::Check(definition) => {
+                        if context.enable_check_constraint() {
+                            actions.push(AlterColumnAction::AddCheck {
+                                definition: Box::new(definition.clone()),
+                                context: DdlStatementContext(context.clone()),
+                            });
+                        } else {
+                            context
+                                .append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                        }
+                    }
+                    tidb_ast::TableConstraint::Index(index) => {
+                        match lower_alter_add_index(alter, index, default_schema)? {
+                            DdlStatement::CreateIndex {
+                                if_not_exists,
+                                index,
+                                auto_pre_split,
+                                ..
+                            } => actions.push(AlterColumnAction::AddIndex {
+                                if_not_exists,
+                                index,
+                                auto_pre_split,
+                            }),
+                            other => unreachable!(
+                                "lower_alter_add_index lowers to CreateIndex, got {other:?}"
+                            ),
+                        }
+                    }
+                    tidb_ast::TableConstraint::ForeignKey(_) => {
+                        return Err(DdlAdmissionError::unsupported(
+                            "grouped ADD COLUMN with a FOREIGN KEY is not supported by this node",
+                        ));
+                    }
+                }
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if actions.is_empty() {
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            }))
+        }
         tidb_ast::AlterTableAction::AddColumn {
             if_not_exists,
             column,
@@ -1453,7 +1742,95 @@ fn lower_alter_table_catalog(
                 if_not_exists: *if_not_exists,
                 column: Box::new(column.clone()),
                 position: position.clone(),
-                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::AddCheck(definition) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::AddCheckConstraint {
+                schema,
+                table,
+                definition: Box::new(definition.clone()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::DropCheck(drop) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropCheckConstraint {
+                schema,
+                table,
+                name: drop.name.clone(),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::AlterCheck(action) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                return Ok(Some(DdlStatement::IgnoredCheckConstraint { schema, table }));
+            }
+            Ok(Some(DdlStatement::AlterCheckConstraint {
+                schema,
+                table,
+                name: action.name.clone(),
+                enforced: action.enforced,
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add { .. }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AddPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop { .. }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
+            ..
+        }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::TruncatePartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
+            partition,
+            table: standalone,
+            with_validation,
+        }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            let (standalone_schema, standalone_table) =
+                split_name(standalone, default_schema, "exchange table")?;
+            Ok(Some(DdlStatement::ExchangePartition {
+                schema,
+                table,
+                partition: partition.clone(),
+                standalone_schema,
+                standalone_table,
+                with_validation: *with_validation,
             }))
         }
         _ => Ok(None),
@@ -1475,7 +1852,10 @@ fn lower_rename_table_stmt(
         .map(|(from, to)| lower_rename_table_pair(from, to, default_schema))
         .collect::<Result<Vec<_>, _>>()?;
     match pairs.as_slice() {
-        [] => Err(DdlAdmissionError::new("RENAME TABLE names no table")),
+        [] => Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "RENAME TABLE names no table",
+        )),
         [pair] => Ok(Some(DdlStatement::RenameTable {
             from_schema: pair.from_schema.clone(),
             from_table: pair.from_table.clone(),
@@ -1577,7 +1957,7 @@ fn apply_add_column(
     if_not_exists: bool,
     context: &tidb_executor::StmtContext,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
-    let wanted = column.name.to_lowercase();
+    let wanted = column.name.go_to_lower();
     if info
         .columns
         .iter_deref()
@@ -1596,9 +1976,22 @@ fn apply_add_column(
     // flattened that to the generic 1105 and prefixed the client's message
     // with "catalog encode failed", which names an internal step the
     // statement never reached.
-    let mut added =
-        crate::table_info_build::build_added_column(column, &info.charset, &info.collate, context)
-            .map_err(DdlPlanError::Admission)?;
+    let appended = info.columns.len();
+    let destination = locate_offset_to_move(appended, position, info)?;
+    let generated_preceding = info
+        .columns
+        .iter_deref()
+        .take(destination)
+        .map(|column| column.read().clone_like_go())
+        .collect::<Vec<_>>();
+    let mut added = crate::table_info_build::build_added_column(
+        column,
+        &info.charset,
+        &info.collate,
+        context,
+        Some(&generated_preceding),
+    )
+    .map_err(DdlPlanError::Admission)?;
     // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
     // never reused.
     info.max_column_id += 1;
@@ -1609,8 +2002,6 @@ fn apply_add_column(
     // Go `onAddColumn`'s write-reorganization step: the column is APPENDED
     // first and only then moved to where `FIRST`/`AFTER` asked for, which
     // is why the destination is computed against the appended layout.
-    let appended = info.columns.len() - 1;
-    let destination = locate_offset_to_move(appended, position, info)?;
     move_column_info(info, appended, destination);
     Ok(AlterColumnOutcome::Applied)
 }
@@ -1631,7 +2022,7 @@ fn locate_offset_to_move(
         tidb_ast::ColumnPosition::Default => Ok(current_offset),
         tidb_ast::ColumnPosition::First => Ok(0),
         tidb_ast::ColumnPosition::After(name) => {
-            let wanted = name.to_lowercase();
+            let wanted = name.go_to_lower();
             let mut anchor = None;
             for column in info.columns.iter_deref() {
                 let column = column.read();
@@ -1716,7 +2107,7 @@ fn apply_drop_column(
     column: &str,
     if_exists: bool,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
-    let wanted = column.to_lowercase();
+    let wanted = column.go_to_lower();
     let Some(dropped_offset) = info
         .columns
         .iter_deref()
@@ -1766,6 +2157,25 @@ fn apply_drop_column(
             )));
         }
     }
+    // Go `IsColumnDroppableWithCheckConstraint`: a CHECK that also names
+    // another column cannot survive this DROP, so refuse it with 3959. A
+    // single-column CHECK is allowed; `table.LoadCheckConstraint` removes
+    // that now-invalid metadata lazily when the post-DDL table is loaded.
+    if let Some(constraint) = info.constraints.iter_deref().find(|constraint| {
+        let constraint = constraint.read();
+        constraint.constraint_cols.len() > 1
+            && tidb_executor::ddl::check_constraint::uses_column(&constraint, column)
+    }) {
+        let constraint = constraint.read();
+        let error = tidb_executor::ddl::check_constraint::column_dependency_error(
+            constraint.name.original(),
+            column,
+        );
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            error.code,
+            error.message,
+        )));
+    }
     // Go `listIndicesWithColumn`: a single-column secondary index on the
     // dropped column goes with it.
     let surviving: Vec<_> = (0..info.indices.len())
@@ -1785,6 +2195,16 @@ fn apply_drop_column(
         .collect();
     info.indices = tidb_model::GoSharedPointerSlice::from_handles(surviving);
     info.columns.delete_go(dropped_offset, dropped_offset + 1);
+    info.constraints = tidb_model::GoSharedPointerSlice::from_handles(
+        info.constraints
+            .iter_deref()
+            .filter_map(|constraint| {
+                let constraint = constraint.read();
+                (!tidb_executor::ddl::check_constraint::uses_column(&constraint, column))
+                    .then(|| Some(GoShared::new(constraint.clone())))
+            })
+            .collect(),
+    );
     // Every later column shifts down one offset, and every index column
     // referring to one follows it.
     for column in info.columns.iter_deref() {
@@ -1832,10 +2252,13 @@ fn split_name(
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
-        _ => Err(DdlAdmissionError::new(format!(
-            "{what} name `{}` is not a `[schema.]name` path",
-            path.join(".")
-        ))),
+        _ => Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{what} name `{}` is not a `[schema.]name` path",
+                path.join(".")
+            ),
+        )),
     }
 }
 
@@ -1844,12 +2267,14 @@ fn lower_drop_table(
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     if drop.temporary != tidb_ast::DropTemporary::None {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "DROP TEMPORARY TABLE is not supported: this node never creates temporary tables",
         ));
     }
     let [name] = drop.names.as_slice() else {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "DROP TABLE names exactly one table on this node, so a failed drop \
              cannot leave the others half-applied",
         ));
@@ -1867,6 +2292,15 @@ fn lower_create_table(
     default_schema: &str,
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
+    // LOCAL temporary metadata belongs to the issuing session and must never
+    // be persisted by a cluster DDL job. The server routes it through the
+    // session executor before lowering; retain this guard for direct callers.
+    if create.temporary == tidb_ast::CreateTableTemporary::Local {
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "LOCAL temporary-table DDL belongs to the session catalog",
+        ));
+    }
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
     // Go `BuildTableInfoWithLike` copies a table that already exists, so the
     // statement carries no column list to build from and the source has to be
@@ -1878,6 +2312,8 @@ fn lower_create_table(
             table,
             source_schema,
             source_table,
+            temporary: create.temporary,
+            on_commit_delete: create.on_commit_delete,
             if_not_exists: create.if_not_exists,
         });
     }
@@ -1921,12 +2357,10 @@ fn lower_create_table(
 /// Admits a `CREATE INDEX`, refusing every shape whose entries this node would
 /// not go on to maintain.
 ///
-/// The gate is not a taste judgement: [`crate::cluster_catalog`]'s loader and
-/// the session's table builder refuse a prefix index and a generated column
-/// outright, so publishing one here would write a `TableInfo` this very node
-/// then drops from its own catalog — the table would vanish from the
-/// connection that just indexed it. Each refusal names which half cannot carry
-/// the shape.
+/// The gate is not a taste judgement: [`crate::cluster_catalog`]'s bounded
+/// loader still refuses a prefix index, so publishing one here would write a
+/// `TableInfo` that path cannot serve. The refusal names the unsupported
+/// storage shape.
 fn lower_create_index(
     create: &CreateIndexStmt,
     default_schema: &str,
@@ -1947,12 +2381,6 @@ fn lower_create_index(
             "a partial index (CREATE INDEX ... WHERE) is not supported by this node: \
              nothing here evaluates the condition, so every row would be indexed under \
              a partial index's name",
-        ));
-    }
-    if create.options.global {
-        return Err(DdlAdmissionError::unsupported(
-            "a GLOBAL index is not supported by this node, which does not serve \
-             partitioned tables",
         ));
     }
     let mut columns = Vec::with_capacity(create.parts.len());
@@ -1981,12 +2409,16 @@ fn lower_create_index(
         });
     }
     if columns.is_empty() {
-        return Err(DdlAdmissionError::new("CREATE INDEX names no column"));
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "CREATE INDEX names no column",
+        ));
     }
     Ok(DdlStatement::CreateIndex {
         schema,
         table,
         if_not_exists: create.if_not_exists,
+        auto_pre_split: create.options.auto_pre_split && create.options.pre_split_regions.is_none(),
         index: Box::new(IndexInfo {
             // The publishing transaction allocates it from the table's own
             // space, which is `TableInfo.MaxIndexID` and not the global one.
@@ -2002,9 +2434,37 @@ fn lower_create_index(
             unique,
             primary: false,
             invisible: create.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
+            global: create.options.global,
             ..IndexInfo::default()
         }),
     })
+}
+
+/// Go `setGlobalIndexVersion`: chooses the persisted key format for a newly
+/// created global index from the cluster capability and table/index shape.
+pub(crate) fn set_global_index_version(table: &TableInfo, index: &mut IndexInfo) {
+    index.global_index_version = tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY;
+    if !tidb_model::index::get_global_index_v1_supported()
+        || !index.global
+        || table.has_clustered_index()
+    {
+        return;
+    }
+    let needs_partition_in_key = !index.unique
+        || index.columns.iter_deref().any(|part| {
+            usize::try_from(part.read().offset)
+                .ok()
+                .and_then(|offset| table.cols().get(offset))
+                .is_some_and(|column| {
+                    !column
+                        .read()
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                })
+        });
+    if needs_partition_in_key {
+        index.global_index_version = tidb_model::index::GLOBAL_INDEX_VERSION_V1;
+    }
 }
 
 fn lower_drop_index(
@@ -2197,6 +2657,24 @@ impl From<MutationSetError> for DdlPlanError {
     }
 }
 
+impl From<crate::mlog_purge_info_table::MlogPurgeInfoTableError> for DdlPlanError {
+    fn from(error: crate::mlog_purge_info_table::MlogPurgeInfoTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
+impl From<crate::mview_refresh_info_table::MviewRefreshInfoTableError> for DdlPlanError {
+    fn from(error: crate::mview_refresh_info_table::MviewRefreshInfoTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
+impl From<crate::mview_alert_table::MviewAlertTableError> for DdlPlanError {
+    fn from(error: crate::mview_alert_table::MviewAlertTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
 /// What one planned catalog change will publish.
 #[derive(Clone, Debug)]
 pub enum DdlPlan {
@@ -2213,9 +2691,1907 @@ pub enum DdlPlan {
     Write(Box<DdlWrite>),
 }
 
+/// One worker transaction decoded from a persisted active DDL job.
+#[derive(Clone, Debug)]
+pub struct PersistedDdlJobStep {
+    /// Catalog and active-job mutations committed atomically by the worker.
+    pub write: DdlWrite,
+    /// Whether this transaction removes the job from the active table.
+    pub terminal: bool,
+}
+
+/// Plans pinned Go CHECK-job admission and queue insertion.
+///
+/// `None` means the statement is not one of the three CHECK job actions. The
+/// returned write set deliberately contains no table, schema-version, schema
+/// diff, notifier, or MDL mutation: Go's `GenGIDAndInsertJobsWithRetry`
+/// commits before the DDL owner executes the first step.
+pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let (job, args) = match statement {
+        DdlStatement::AddCheckConstraint {
+            schema,
+            table,
+            definition,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut candidate = stored.clone_like_go();
+            let prior_len = candidate.constraints.len();
+            crate::table_info_build::append_check_constraints(
+                &mut candidate,
+                &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                    definition: (**definition).clone(),
+                    in_column: None,
+                }],
+                &context.0,
+            )
+            .map_err(DdlPlanError::Admission)?;
+            let mut constraint = candidate
+                .constraints
+                .iter_deref()
+                .nth(prior_len)
+                .expect("one ADD CHECK input appends one constraint")
+                .read()
+                .clone();
+            if catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == schema_id)
+                .is_some_and(|database| {
+                    database.tables.iter().any(|candidate| {
+                        candidate.constraints.iter_deref().any(|existing| {
+                            existing.read().name.lowercase() == constraint.name.lowercase()
+                        })
+                    })
+                })
+            {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                    format!("Duplicate check constraint name '{}'.", constraint.name),
+                )));
+            }
+            // Go's executor submits StateNone/ID zero. The first owner step
+            // allocates the durable constraint ID.
+            constraint.id = 0;
+            constraint.state = SchemaState::NONE;
+            let job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+                &context.0,
+            );
+            let args = GoShared::new(AddCheckConstraintArgs {
+                constraint: GoField::new(Some(GoShared::new(constraint))),
+            });
+            (job, JobArgsValue::AddCheckConstraint(Some(args)))
+        }
+        DdlStatement::DropCheckConstraint {
+            schema,
+            table,
+            name,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let constraint = stored
+                .constraints
+                .iter_deref()
+                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{name}' does not exist."),
+                    ))
+                })?;
+            let job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+                &context.0,
+            );
+            let args = GoShared::new(CheckConstraintArgs {
+                constraint_name: GoField::new(constraint.read().name.clone()),
+                enforced: GoField::new(false),
+            });
+            (job, JobArgsValue::CheckConstraint(Some(args)))
+        }
+        DdlStatement::AlterCheckConstraint {
+            schema,
+            table,
+            name,
+            enforced,
+            context,
+        } => {
+            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let constraint = stored
+                .constraints
+                .iter_deref()
+                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{name}' does not exist."),
+                    ))
+                })?;
+            let job = new_check_constraint_job(
+                schema_id,
+                schema,
+                stored,
+                ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+                &context.0,
+            );
+            let args = GoShared::new(CheckConstraintArgs {
+                constraint_name: GoField::new(constraint.read().name.clone()),
+                enforced: GoField::new(*enforced),
+            });
+            (job, JobArgsValue::CheckConstraint(Some(args)))
+        }
+        _ => return Ok(None),
+    };
+
+    let mut specs = [crate::ddl_job_submit::JobSpec {
+        job,
+        args,
+        id_allocated: true,
+    }];
+    crate::ddl_job_submit::prepare_submit_batch(
+        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+    )?;
+    let [spec] = specs;
+    Ok(Some(spec))
+}
+
+fn new_check_constraint_job(
+    schema_id: i64,
+    schema: &str,
+    table: &TableInfo,
+    action: ActionType,
+    context: &tidb_executor::StmtContext,
+) -> Job {
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = schema_id;
+    job.table_id = table.id;
+    job.schema_name = schema.go_to_lower().into();
+    job.table_name = table.name.lowercase().to_owned().into();
+    job.type_ = action;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.query = context.ddl_query().into();
+    job.sql_mode = context.ddl_sql_mode();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+        job.priority = context.ddl_reorg_priority();
+    }
+    job.trace_info = Some(GoShared::new(TraceInfo {
+        session_alias: context.ddl_session_alias().into(),
+        trace_id: context.ddl_trace_id().to_vec().into(),
+        connection_id: context.ddl_connection_id(),
+    }));
+    job
+}
+
+/// Plans one CHECK worker step from `mysql.tidb_ddl_job` and current table
+/// metadata, matching pinned Go `runOneJobStep` plus the three CHECK action
+/// handlers.
+///
+/// The active row is the operation authority; no statement-local continuation
+/// is accepted. A process may therefore disappear after any committed phase
+/// and a later owner can call this function with the same job ID.
+pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if !matches!(
+        active.job.type_,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+            | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+            | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+    ) {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} has unsupported action {}",
+            active.job.type_
+        )));
+    }
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if active.job.state != JobState::ROLLINGBACK {
+        active.job.state = JobState::RUNNING;
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let stored = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id)
+        .ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: database.info.name.original().to_owned(),
+            table: active.job.table_name.to_string(),
+        })?;
+    let mut info = stored.clone_like_go();
+    let mut validation = None;
+    let mut terminal = false;
+    let mut schema_changed = true;
+    let mut update_raw_args = true;
+
+    match active.job.type_ {
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_add_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("ADD CHECK job has nil args".to_owned()))?;
+            let constraint_handle = args.read().constraint.get().ok_or_else(|| {
+                DdlPlanError::Encode("ADD CHECK job has nil constraint".to_owned())
+            })?;
+            let mut wanted = constraint_handle.read().name.lowercase().to_owned();
+            let mut position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted);
+
+            if active.job.state == JobState::ROLLINGBACK {
+                if let Some(position) = position {
+                    info.constraints = info
+                        .constraints
+                        .iter_deref()
+                        .enumerate()
+                        .filter_map(|(offset, constraint)| {
+                            (offset != position).then(|| constraint.read().clone())
+                        })
+                        .collect::<Vec<_>>()
+                        .into();
+                    active.job.state = JobState::ROLLBACK_DONE;
+                    terminal = true;
+                } else {
+                    active.job.state = JobState::CANCELLED;
+                    terminal = true;
+                    schema_changed = false;
+                }
+            } else {
+                if position.is_none() {
+                    let mut constraint = constraint_handle.read().clone();
+                    info.max_constraint_id += 1;
+                    constraint.id = info.max_constraint_id;
+                    if constraint.name.original().is_empty() {
+                        let names = info
+                            .constraints
+                            .iter_deref()
+                            .map(|constraint| constraint.read().name.lowercase().to_owned())
+                            .collect::<std::collections::HashSet<_>>();
+                        let mut suffix = 1_i64;
+                        loop {
+                            let generated = format!("{}_chk_{suffix}", info.name.lowercase());
+                            if !names.contains(&generated) {
+                                constraint.name = CiString::new(generated);
+                                break;
+                            }
+                            suffix += 1;
+                        }
+                    }
+                    wanted = constraint.name.lowercase().to_owned();
+                    if database.tables.iter().any(|table| {
+                        table
+                            .constraints
+                            .iter_deref()
+                            .any(|existing| existing.read().name.lowercase() == wanted)
+                    }) {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                            format!("Duplicate check constraint name '{}'.", constraint.name),
+                        )));
+                    }
+                    for dependency in &constraint.constraint_cols {
+                        if !info.columns.iter_deref().any(|column| {
+                            let column = column.read();
+                            column.state == SchemaState::PUBLIC
+                                && column.name.lowercase() == dependency.lowercase()
+                        }) {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrTableCheckConstraintReferUnknown,
+                                format!(
+                                    "Check constraint '{}' refers to non-existing column '{}'.",
+                                    constraint.name, dependency
+                                ),
+                            )));
+                        }
+                    }
+                    *constraint_handle.write() = constraint.clone();
+                    info.constraints.push_go(constraint);
+                    position = Some(info.constraints.len() - 1);
+                }
+                let position = position.expect("ADD created or found its constraint");
+                let handle = info
+                    .constraints
+                    .get(position)
+                    .expect("ADD constraint position exists");
+                let mut constraint = handle.write();
+                if !constraint.enforced {
+                    constraint.state = SchemaState::PUBLIC;
+                    terminal = true;
+                } else {
+                    match constraint.state {
+                        SchemaState::NONE => {
+                            constraint.state = SchemaState::WRITE_ONLY;
+                            active.job.schema_state = SchemaState::WRITE_ONLY;
+                        }
+                        SchemaState::WRITE_ONLY => {
+                            constraint.state = SchemaState::WRITE_REORGANIZATION;
+                            active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+                        }
+                        SchemaState::WRITE_REORGANIZATION => {
+                            constraint.state = SchemaState::PUBLIC;
+                            let constraint_name = constraint.name.original().to_owned();
+                            drop(constraint);
+                            validation = Some(CheckConstraintValidation {
+                                table: Box::new(info.clone_like_go()),
+                                constraint_name,
+                                context: DdlStatementContext(default_ddl_statement_context()),
+                            });
+                            terminal = true;
+                        }
+                        state => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrInvalidDDLState,
+                                format!("invalid CHECK constraint state {state:?}"),
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("DROP CHECK job has nil args".to_owned()))?;
+            let wanted = args.read().constraint_name.get().lowercase().to_owned();
+            let position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted)
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{wanted}' does not exist."),
+                    ))
+                })?;
+            let state = info
+                .constraints
+                .get(position)
+                .expect("DROP constraint position exists")
+                .read()
+                .state;
+            if active.job.state == JobState::ROLLINGBACK && state == SchemaState::PUBLIC {
+                active.job.state = JobState::CANCELLED;
+                terminal = true;
+                schema_changed = false;
+            } else {
+                active.job.state = JobState::RUNNING;
+                match state {
+                    SchemaState::PUBLIC => {
+                        info.constraints
+                            .get(position)
+                            .expect("DROP constraint position exists")
+                            .write()
+                            .state = SchemaState::WRITE_ONLY;
+                        active.job.schema_state = SchemaState::WRITE_ONLY;
+                    }
+                    SchemaState::WRITE_ONLY => {
+                        info.constraints = info
+                            .constraints
+                            .iter_deref()
+                            .enumerate()
+                            .filter_map(|(offset, constraint)| {
+                                (offset != position).then(|| constraint.read().clone())
+                            })
+                            .collect::<Vec<_>>()
+                            .into();
+                        terminal = true;
+                    }
+                    state => {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrInvalidDDLState,
+                            format!("invalid CHECK constraint state {state:?}"),
+                        )));
+                    }
+                }
+            }
+        }
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+            let args = tidb_model::get_check_constraint_args(&mut active.job)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .ok_or_else(|| DdlPlanError::Encode("ALTER CHECK job has nil args".to_owned()))?;
+            let args = args.read();
+            let wanted = args.constraint_name.get().lowercase().to_owned();
+            let enforced = args.enforced.get();
+            let position = info
+                .constraints
+                .iter_deref()
+                .position(|constraint| constraint.read().name.lowercase() == wanted)
+                .ok_or_else(|| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                        format!("Constraint '{wanted}' does not exist."),
+                    ))
+                })?;
+            let handle = info
+                .constraints
+                .get(position)
+                .expect("ALTER constraint position exists");
+            let mut constraint = handle.write();
+            if active.job.state == JobState::ROLLINGBACK {
+                if constraint.state == SchemaState::PUBLIC {
+                    active.job.state = JobState::CANCELLED;
+                    terminal = true;
+                    schema_changed = false;
+                } else {
+                    constraint.enforced = !enforced;
+                    constraint.state = SchemaState::PUBLIC;
+                    active.job.state = JobState::ROLLBACK_DONE;
+                    terminal = true;
+                }
+            } else if constraint.state == SchemaState::PUBLIC && constraint.enforced == enforced {
+                terminal = true;
+                schema_changed = false;
+            } else if !enforced {
+                constraint.enforced = false;
+                terminal = true;
+            } else {
+                match constraint.state {
+                    SchemaState::PUBLIC => {
+                        constraint.state = SchemaState::WRITE_REORGANIZATION;
+                        constraint.enforced = true;
+                        active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+                    }
+                    SchemaState::WRITE_REORGANIZATION => {
+                        constraint.state = SchemaState::WRITE_ONLY;
+                        active.job.schema_state = SchemaState::WRITE_ONLY;
+                    }
+                    SchemaState::WRITE_ONLY => {
+                        constraint.state = SchemaState::PUBLIC;
+                        let constraint_name = constraint.name.original().to_owned();
+                        drop(constraint);
+                        validation = Some(CheckConstraintValidation {
+                            table: Box::new(info.clone_like_go()),
+                            constraint_name,
+                            context: DdlStatementContext(default_ddl_statement_context()),
+                        });
+                        terminal = true;
+                    }
+                    state => {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrInvalidDDLState,
+                            format!("invalid CHECK constraint state {state:?}"),
+                        )));
+                    }
+                }
+            }
+        }
+        _ => unreachable!("the action was checked above"),
+    }
+
+    let schema_version = if schema_changed {
+        catalog.schema_version + 1
+    } else {
+        0
+    };
+    let mut mutations = Vec::new();
+    let diff = if schema_changed {
+        info.update_ts = start_ts;
+        mutations.push(OptimisticMutation::meta_put(
+            key::table_kv_key(database.info.id, info.id),
+            value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        let diff = SchemaDiff {
+            version: schema_version,
+            action_type: active.job.type_,
+            schema_id: database.info.id,
+            table_id: info.id,
+            ..SchemaDiff::default()
+        };
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_version_kv_key(),
+            value::encode_int_value(schema_version),
+        )?);
+        mutations.push(OptimisticMutation::meta_put(
+            key::schema_diff_kv_key(schema_version),
+            value::serialize_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        )?);
+        active.job.last_schema_version = schema_version;
+        diff
+    } else {
+        update_raw_args = false;
+        SchemaDiff::default()
+    };
+
+    if terminal {
+        if !matches!(
+            active.job.state,
+            JobState::ROLLBACK_DONE | JobState::CANCELLED
+        ) {
+            active.job.finish_table_job(
+                JobState::DONE,
+                if active.job.type_ == ActionType::ACTION_DROP_CHECK_CONSTRAINT {
+                    SchemaState::NONE
+                } else {
+                    SchemaState::PUBLIC
+                },
+                schema_version,
+                Some(GoShared::new(info.clone_like_go())),
+            );
+        }
+        active
+            .job
+            .binlog_info
+            .as_ref()
+            .expect("CHECK jobs always carry BinlogInfo")
+            .write()
+            .finished_ts = start_ts;
+        active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+        let encoded = active
+            .job
+            .encode(true)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+            let _ =
+                history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+        }
+        mutations.push(OptimisticMutation::meta_put(
+            key::ddl_job_history_kv_key(active.job.id),
+            encoded,
+        )?);
+        job_table
+            .append_delete(&active, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    } else {
+        job_table
+            .append_update(&mut active, update_raw_args, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    }
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: validation,
+            mdl_info_update: schema_changed
+                .then(|| mdl_info_update(&catalog, info.id))
+                .transpose()?,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal,
+    })
+}
+
+/// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
+/// the one owner transaction that turns a submitted create-log job into the
+/// created `$mlog$` table, the base table's `MLogID` back-reference, the
+/// `mysql.tidb_mlog_purge_info` schedule row, the schema-version bump with
+/// its create-table event, and the job's terminal state.
+///
+/// The log's purge schedule derives through the driver's FROM-less SELECT
+/// under the recorded SQL mode and schedule zone (Go evaluates the same
+/// expressions through the owner session's internal SQL).
+///
+/// The active row is the operation authority; a process may disappear after
+/// any committed phase and a later owner can call this function with the
+/// same job ID.
+pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    use crate::mlog_purge_info_table::{MlogPurgeDerived, MlogPurgeInfoTable};
+
+    const PURGE_INFO_MISSING: &str = "create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist";
+
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} is not a create materialized view log job"
+        )));
+    }
+
+    // Go decodes and validates the typed arguments first; a decode failure
+    // or missing metadata cancels the job.
+    let Some(args) = tidb_model::get_create_materialized_view_log_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid job args",
+        );
+    };
+    let table_shared = args
+        .read()
+        .table_info
+        .get()
+        .ok_or_else(|| DdlPlanError::Encode("invalid job args".to_owned()))?;
+    let Some(log_meta_shared) = table_shared.read().materialized_view_log.clone() else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid job args",
+        );
+    };
+    let base_table_id = log_meta_shared.read().base_table_id;
+    if base_table_id == 0 {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid base table id",
+        );
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    // The purge-schedule row storage. Go converts a missing system table
+    // into ErrInvalidDDLJob, which rolls the job back; this plan surfaces
+    // the same refusal before any mutation is built.
+    let purge_table = MlogPurgeInfoTable::locate(&catalog).map_err(|_| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+            PURGE_INFO_MISSING,
+        ))
+    })?;
+
+    if active.job.state == JobState::ROLLINGBACK {
+        return plan_rollback_materialized_view_log_step(
+            &catalog,
+            &job_table,
+            active,
+            &purge_table,
+            snapshot,
+            start_ts,
+        );
+    }
+
+    // Go's worker-side base-table checks run again at execution time: the
+    // catalog may have moved between submission and ownership.
+    let Some(base) = database
+        .tables
+        .iter()
+        .find(|table| table.id == base_table_id)
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "Table '{}.{}' doesn't exist",
+                database.info.name.original(),
+                log_meta_shared.read().columns.len()
+            ),
+        );
+    };
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+        || base.materialized_view.is_some()
+        || base.materialized_view_log.is_some()
+    {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "'{}.{}' is not BASE TABLE",
+                database.info.name.original(),
+                base.name.original()
+            ),
+        );
+    }
+    if base.partition.is_some() {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "CREATE MATERIALIZED VIEW LOG on partition table",
+        );
+    }
+    if base.state != SchemaState::PUBLIC {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "table {} is not in public, but {}",
+                base.name.original(),
+                base.state
+            ),
+        );
+    }
+    if base
+        .materialized_view_base
+        .as_ref()
+        .is_some_and(|info| info.read().mlog_id != 0)
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTableExists,
+            format!(
+                "Table '{}.{}' already exists",
+                database.info.name.original(),
+                table_shared.read().name.original()
+            ),
+        )));
+    }
+
+    // Go `createTable`: the submitted table info lands PUBLIC at this
+    // transaction's timestamp, then the base gains its MLogID.
+    let mut mlog_info = table_shared.read().clone_like_go();
+    mlog_info.state = SchemaState::PUBLIC;
+    mlog_info.update_ts = start_ts;
+    let mlog_id = mlog_info.id;
+
+    let mut base_info = base.clone_like_go();
+    if base_info.materialized_view_base.is_none() {
+        base_info.materialized_view_base = Some(GoShared::new(
+            tidb_model::MaterializedViewBaseInfo::default(),
+        ));
+    }
+    {
+        let base_handle = base_info.materialized_view_base.as_ref().expect("just set");
+        let mut base_meta = base_handle.write();
+        if base_meta.mlog_id != 0 && base_meta.mlog_id != mlog_id {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!(
+                    "base table {} already has a materialized view log",
+                    base_info.name.original()
+                ),
+            )));
+        }
+        base_meta.mlog_id = mlog_id;
+    }
+
+    // Go `upsertCreateMaterializedViewLogPurgeInfo`: the schedule derivation
+    // evaluates the log's expressions through the owner's SQL — here the
+    // driver's FROM-less SELECT under the recorded SQL mode and schedule
+    // zone; a log without a schedule derives `(None, true)` with no
+    // evaluation at all.
+    let log_meta = log_meta_shared.read();
+    // The derivation installs the log's recorded SQL mode and schedule zone
+    // on the evaluation context; the statement-level state is irrelevant.
+    let derived = MlogPurgeDerived::derive(&log_meta, &tidb_executor::StmtContext::for_query())
+        .map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                format!("create materialized view log: {error}"),
+            ))
+        })?;
+    let existing_purge_row = purge_table.find(snapshot, mlog_id)?;
+    let mut mutations = Vec::new();
+    purge_table.append_upsert(
+        mlog_id,
+        derived,
+        existing_purge_row.as_ref(),
+        &mut mutations,
+    )?;
+
+    mutations.push(OptimisticMutation::meta_put(
+        key::table_kv_key(db_id, mlog_id),
+        value::serialize_table_info(&mlog_info)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::table_kv_key(db_id, base_info.id),
+        value::serialize_table_info(&base_info)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    let schema_version = catalog.schema_version + 1;
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: mlog_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    active.job.last_schema_version = schema_version;
+
+    // Go `asyncNotifyEvent(notifier.NewCreateTableEvent(mlogTableInfo))`.
+    append_schema_change_mutations(
+        snapshot,
+        &catalog,
+        active.job.id,
+        &[(
+            -1,
+            SchemaChangeEvent::create_table(mlog_info.clone_like_go()),
+        )],
+        &mut mutations,
+    )?;
+
+    // Go `FinishMultipleTableJob(Done, Public, ver, [base, mlog])`.
+    let finished = GoSharedPointerSlice::from_handles(vec![
+        Some(GoShared::new(base_info.clone_like_go())),
+        Some(GoShared::new(mlog_info)),
+    ]);
+    active.job.finish_multiple_table_job(
+        JobState::DONE,
+        SchemaState::PUBLIC,
+        schema_version,
+        &finished,
+    );
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    // Go `updateSchemaVersion` hands the base table's readers an MDL marker
+    // in the same transaction, so a session reading the base cannot miss the
+    // metadata revision its snapshot chose.
+    let mdl_info_update = mdl_info_update(&catalog, base_info.id)?;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: Some(mlog_id),
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: Some(mdl_info_update),
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// Cancels a create-log job whose execution-time checks failed: Go sets
+/// `job.State = Cancelled` and returns, and the terminal handler then moves
+/// the cancelled job to history without touching schema metadata. The plan
+/// carries only the terminal row moves; the error carries Go's refusal text
+/// for the statement waiting on the job.
+/// Go's build-failure shape for the initial build: the job moves to
+/// `Rollingback` — non-terminal, the error recorded with the step's warning
+/// — and the NEXT tick runs `rollbackCreateMaterializedView`.
+fn rolling_back_step(
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    error: &DdlPlanError,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    active.job.state = JobState::ROLLINGBACK;
+    let mut mutations = Vec::new();
+    job_table
+        .append_update(active, true, &mut mutations)
+        .map_err(|encode_error| DdlPlanError::Encode(encode_error.to_string()))?;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version: 0,
+            diff: SchemaDiff::default(),
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: Some(error.to_string()),
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: false,
+    })
+}
+
+fn cancelled_step(
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    reason: &str,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    active.job.state = JobState::CANCELLED;
+    let mut mutations = Vec::new();
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = 0;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Err(DdlPlanError::Encode(reason.to_owned()))
+}
+
+/// Plans pinned Go `rollbackCreateMaterializedViewLog`: the created log
+/// table (if the phase committed) is dropped with its auto-ID accessors, the
+/// base table's `MLogID` is cleared, and the purge-schedule row is removed.
+fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
+    purge_table: &crate::mlog_purge_info_table::MlogPurgeInfoTable,
+    snapshot: &mut S,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    // Go reads the ACTUAL table by `job.TableID` and drops whatever is
+    // there; a missing table (nothing committed yet) just skips the drop.
+    let actual = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id);
+    let mut mutations = Vec::new();
+    if let Some(dropping) = actual {
+        let dropping = dropping.clone_like_go();
+        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            db_id,
+            dropping.id,
+        ))?);
+        // Go `GetAutoIDAccessors(dbID, tblID).Del()`, keyed existence check
+        // per allocator exactly as `HDel` behaves.
+        for allocator in [
+            key::auto_table_id_kv_key(db_id, dropping.id),
+            key::auto_increment_id_kv_key(db_id, dropping.id),
+            key::auto_random_table_id_kv_key(db_id, dropping.id),
+        ] {
+            if snapshot.get(&allocator)?.is_some() {
+                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+            }
+        }
+        // Go `updateMaterializedViewBaseInfoOnDrop`'s log arm: clear the
+        // MLogID this job recorded and drop the now-empty base metadata.
+        if let Some(base_table_id) = dropping
+            .materialized_view_log
+            .as_ref()
+            .map(|log| log.read().base_table_id)
+        {
+            if let Some(base) = database
+                .tables
+                .iter()
+                .find(|table| table.id == base_table_id)
+            {
+                let mut base_info = base.clone_like_go();
+                let cleared = base_info
+                    .materialized_view_base
+                    .as_ref()
+                    .map(|handle| {
+                        let mut meta = handle.write();
+                        if meta.mlog_id == dropping.id {
+                            meta.mlog_id = 0;
+                        }
+                        meta.mlog_id == 0 && meta.mview_ids.is_empty()
+                    })
+                    .unwrap_or(false);
+                if cleared {
+                    base_info.materialized_view_base = None;
+                }
+                mutations.push(OptimisticMutation::meta_put(
+                    key::table_kv_key(db_id, base_info.id),
+                    value::serialize_table_info(&base_info)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                )?);
+            }
+        }
+    }
+
+    if let Some(row) = purge_table.find(snapshot, active.job.table_id)? {
+        purge_table.append_delete(&row, &mut mutations)?;
+    }
+
+    active.job.state = JobState::ROLLBACK_DONE;
+    active.job.schema_state = SchemaState::NONE;
+    let schema_version = catalog.schema_version + 1;
+    active.job.last_schema_version = schema_version;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: active.job.table_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// The view name for schedule-derivation log fields.
+fn view_info_name(table_shared: &GoShared<TableInfo>) -> String {
+    table_shared.read().name.original().to_owned()
+}
+
+/// The view table's ID.
+fn view_info_id(table_shared: &GoShared<TableInfo>) -> i64 {
+    table_shared.read().id
+}
+
+/// Go's post-build result for the view create's `StateWriteReorganization`
+/// phase: the read TS the data build ran at (Go `job.SnapshotVer`).
+///
+/// The data-movement execution itself (import-into / insert-select at that
+/// read TS) is the standing reorg-infra seam; a caller that has executed the
+/// build hands its outcome here for the completion transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MviewBuildOutcome {
+    /// The snapshot the build read the base rows at.
+    pub read_ts: u64,
+}
+
+impl crate::mview_schedule_derive::ScheduleDecision {
+    /// Go's `(next, shouldUpdate)` tuple shape.
+    pub fn into_parts(self) -> (Option<i64>, bool) {
+        (self.next_unix_seconds, self.should_update)
+    }
+}
+
+/// Plans pinned Go `onCreateMaterializedView` (master `94a9cbedab`), the
+/// view create's two-phase worker, over the persisted active row:
+///
+/// * `StateNone` — Go's first arm: the per-base re-checks
+///   (`onCreateMaterializedViewBaseCheck`), the view `TableInfo` landing
+///   PUBLIC through `createTable`, each base gaining the view ID in its
+///   `MaterializedViewBase.MViewIDs` (`updateMaterializedViewBaseInfoOnCreate`),
+///   the schema-version bump with the create-table event, the
+///   `mysql.tidb_mview_refresh_info` prewrite row, and the transition to
+///   `StateWriteReorganization`/`Running` as a NON-terminal step;
+/// * `StateWriteReorganization` — the initial build. Go moves the base
+///   table's rows into the view through import-into or insert-select at the
+///   build read TS (`buildCreateMaterializedViewData`); that data-movement
+///   engine is not ported, so this planner refuses with a retryable error
+///   and leaves the queued job exactly where Go's own
+///   `ErrWaitReorgTimeout` tick would — still `Running` at
+///   `StateWriteReorganization`, resumable by a later owner;
+/// * `Rollingback` — `rollbackCreateMaterializedView`: the created view (if
+///   the phase committed) drops with its auto-ID allocators, every base's
+///   `MViewIDs` loses the view (Go's `updateMaterializedViewBaseInfoOnDrop`
+///   view arm, dropping the now-empty metadata), the refresh-info row is
+///   deleted, and the job ends `RollbackDone`/`StateNone`.
+///
+/// The active row is the operation authority; a process may disappear after
+/// any committed phase and a later owner can call this function with the
+/// same job ID.
+pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+    build: Option<MviewBuildOutcome>,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    use crate::mview_refresh_info_table::MviewRefreshInfoTable;
+
+    const REFRESH_INFO_MISSING: &str = "create materialized view: required system table mysql.tidb_mview_refresh_info does not exist";
+
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} is not a create materialized view job"
+        )));
+    }
+
+    // Go decodes and validates the typed arguments first.
+    let Some(args) = tidb_model::get_create_materialized_view_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    };
+    let table_shared = args.read().table_info.get().ok_or_else(|| {
+        DdlPlanError::Encode("create materialized view: invalid job args".to_owned())
+    })?;
+    let Some(view_meta_shared) = table_shared.read().materialized_view.clone() else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    };
+    let base_table_ids: Vec<i64> = view_meta_shared
+        .read()
+        .base_table_ids
+        .iter()
+        .copied()
+        .collect();
+    if base_table_ids.is_empty() {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    }
+    let mut seen = std::collections::HashSet::with_capacity(base_table_ids.len());
+    for id in &base_table_ids {
+        if *id == 0 {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid base table id",
+            );
+        }
+        if !seen.insert(*id) {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: duplicate base table id",
+            );
+        }
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    let refresh_table = MviewRefreshInfoTable::locate(&catalog).map_err(|_| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+            REFRESH_INFO_MISSING,
+        ))
+    })?;
+
+    if active.job.state == JobState::ROLLINGBACK {
+        return plan_rollback_materialized_view_create_step(
+            &catalog,
+            &job_table,
+            active,
+            &refresh_table,
+            snapshot,
+            start_ts,
+        );
+    }
+
+    // Go `onCreateMaterializedViewBaseCheck` per base, plus the log-side
+    // metadata and public-state checks.
+    let mut bases = Vec::with_capacity(base_table_ids.len());
+    for base_table_id in &base_table_ids {
+        let Some(base) = database
+            .tables
+            .iter()
+            .find(|table| table.id == *base_table_id)
+        else {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "Table '{}.{}' doesn't exist",
+                    database.info.name.original(),
+                    base_table_id
+                ),
+            );
+        };
+        if base.is_view()
+            || base.is_sequence()
+            || base.temp_table_type != tidb_model::TempTableType::NONE
+        {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "'{}.{}' is not BASE TABLE",
+                    database.info.name.original(),
+                    base.name.original()
+                ),
+            );
+        }
+        if base.partition.is_some() {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "CREATE MATERIALIZED VIEW on partition table",
+            );
+        }
+        if base.state != SchemaState::PUBLIC {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "table {} is not in public, but {}",
+                    base.name.original(),
+                    base.state
+                ),
+            );
+        }
+        let mlog_id = base
+            .materialized_view_base
+            .as_ref()
+            .map(|handle| handle.read().mlog_id)
+            .unwrap_or_default();
+        if mlog_id == 0 {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: base table has no materialized view log",
+            );
+        }
+        let Some(mlog) = database.tables.iter().find(|table| table.id == mlog_id) else {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid materialized view log metadata",
+            );
+        };
+        let mlog_ok = mlog
+            .materialized_view_log
+            .as_ref()
+            .map(|handle| handle.read().base_table_id == base.id)
+            .unwrap_or(false);
+        if !mlog_ok {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid materialized view log metadata",
+            );
+        }
+        if mlog.state != SchemaState::PUBLIC {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "table {} is not in public, but {}",
+                    mlog.name.original(),
+                    mlog.state
+                ),
+            );
+        }
+        bases.push(base.clone_like_go());
+    }
+
+    match active.job.schema_state {
+        SchemaState::NONE => {
+            // Go `createTable`: the submitted view TableInfo lands PUBLIC at
+            // this transaction's timestamp.
+            let mut view_info = table_shared.read().clone_like_go();
+            view_info.state = SchemaState::PUBLIC;
+            view_info.update_ts = start_ts;
+            let view_id = view_info.id;
+
+            // Go `updateMaterializedViewBaseInfoOnCreate`'s view arm: every
+            // base's `MViewIDs` gains the view (duplicates are skipped).
+            let mut updated_bases = Vec::with_capacity(bases.len());
+            for base in &bases {
+                let mut base_info = base.clone_like_go();
+                if base_info.materialized_view_base.is_none() {
+                    base_info.materialized_view_base = Some(GoShared::new(
+                        tidb_model::MaterializedViewBaseInfo::default(),
+                    ));
+                }
+                let handle = base_info.materialized_view_base.as_ref().expect("just set");
+                let mut meta = handle.write();
+                let mut ids: Vec<i64> = meta.mview_ids.iter().copied().collect();
+                if ids.contains(&view_id) {
+                    continue;
+                }
+                ids.push(view_id);
+                meta.mview_ids = GoValueSlice::from(ids);
+                drop(meta);
+                updated_bases.push(base_info);
+            }
+
+            let mut mutations = Vec::new();
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, view_id),
+                value::serialize_table_info(&view_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            for base_info in &updated_bases {
+                mutations.push(OptimisticMutation::meta_put(
+                    key::table_kv_key(db_id, base_info.id),
+                    value::serialize_table_info(base_info)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                )?);
+            }
+
+            let schema_version = catalog.schema_version + 1;
+            let diff = SchemaDiff {
+                version: schema_version,
+                action_type: active.job.type_,
+                schema_id: db_id,
+                table_id: view_id,
+                ..SchemaDiff::default()
+            };
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_version_kv_key(),
+                value::encode_int_value(schema_version),
+            )?);
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_diff_kv_key(schema_version),
+                value::serialize_schema_diff(&diff)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            active.job.last_schema_version = schema_version;
+
+            // Go `asyncNotifyEvent(notifier.NewCreateTableEvent(mviewTableInfo))`.
+            append_schema_change_mutations(
+                snapshot,
+                &catalog,
+                active.job.id,
+                &[(
+                    -1,
+                    SchemaChangeEvent::create_table(view_info.clone_like_go()),
+                )],
+                &mut mutations,
+            )?;
+
+            // Go `prewriteCreateMaterializedViewRefreshInfo`: the phase's own
+            // `(view_id, read_ts = start_ts, NULL, NULL)` row in the
+            // should_update = false shape.
+            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
+            refresh_table.append_upsert(
+                view_id,
+                start_ts,
+                None,
+                None,
+                false,
+                existing_refresh_row.as_ref(),
+                &mut mutations,
+            )?;
+
+            // Go `job.SchemaState = StateWriteReorganization; job.State =
+            // JobStateRunning` — the build phase owns the rest.
+            active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+            active.job.state = JobState::RUNNING;
+            active.job.table_id = view_id;
+            job_table
+                .append_update(&mut active, true, &mut mutations)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+            let mdl_info_update = mdl_info_update(&catalog, view_id)?;
+            Ok(PersistedDdlJobStep {
+                write: DdlWrite {
+                    ddl_job_id,
+                    mutations,
+                    schema_version,
+                    diff,
+                    created_id: Some(view_id),
+                    backfill: Vec::new(),
+                    auto_pre_split: false,
+                    exchange_partition_validation: None,
+                    check_constraint_validation: None,
+                    mdl_info_update: Some(mdl_info_update),
+                    exchange_partition_label_swap: None,
+                    warning: None,
+                    placement_bundles: Vec::new(),
+                    placement_rollback_bundles: Vec::new(),
+                },
+                terminal: false,
+            })
+        }
+        SchemaState::WRITE_REORGANIZATION => {
+            // Go `runReorgJob(buildCreateMaterializedViewData)`: the initial
+            // build moves the base rows in through import-into or
+            // insert-select at the build read TS. With no caller-supplied
+            // outcome the tick runs the pure-tier build itself
+            // ([`crate::mview_build_engine`]): the definition SELECT executes
+            // over the snapshot's base rows and every view row lands as a
+            // mutation in THIS transaction, making the build and its
+            // completion atomic. Go commits the two separately — which is
+            // exactly why its phase probes for residual rows on a fresh
+            // tick; the engine keeps that probe for Go fidelity.
+            //
+            // A caller that executed the build out of band instead supplies
+            // the finished build's read TS (Go's `job.SnapshotVer`) and this
+            // step records the post-build state without touching rows.
+            let built = match build {
+                None => {
+                    match crate::mview_build_engine::derive_materialized_view_build(
+                        snapshot,
+                        &database.info.name.original().to_owned(),
+                        db_id,
+                        &table_shared.read().clone_like_go(),
+                        &bases,
+                        start_ts,
+                    ) {
+                        Ok(plan) => Some(plan),
+                        // Go: `job.State = JobStateRollingback` and the
+                        // error rides with the job; the NEXT tick runs
+                        // `rollbackCreateMaterializedView`. The transition
+                        // itself persists here as a non-terminal step.
+                        Err(error) => {
+                            return rolling_back_step(&mut active, &job_table, &error);
+                        }
+                    }
+                }
+                Some(_) => None,
+            };
+            let outcome = match (&built, build) {
+                (Some(plan), _) => MviewBuildOutcome {
+                    read_ts: plan.read_ts,
+                },
+                (None, Some(outcome)) => outcome,
+                (None, None) => unreachable!("the match above leaves exactly one arm"),
+            };
+
+            // Go `upsertCreateMaterializedViewRefreshInfo`: the refresh
+            // deadline derives from the view's own REFRESH schedule through
+            // the shared decision tree, and the build's success time is the
+            // owner's wall clock.
+            let view_meta = view_meta_shared.read();
+            let view_table_shared = table_shared.clone();
+            let view_id = view_info_id(&view_table_shared);
+            let (next_refresh, should_update) = {
+                let zone = view_meta
+                    .refresh_schedule_time_zone
+                    .get_location()
+                    .map_err(|error| DdlPlanError::Encode(format!("refresh schedule zone: {error}")))?
+                    .read()
+                    .clone();
+                crate::mview_schedule_derive::derive_schedule_decision(
+                    &view_meta.refresh_start_with,
+                    &view_meta.refresh_next,
+                    &zone,
+                    view_meta.definition_sql_mode,
+                    "",
+                    &view_info_name(&view_table_shared),
+                    &tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_next_unix_seconds_update_null,
+                )
+                .map_err(DdlPlanError::Encode)?
+            }
+            .into_parts();
+            let last_success = chrono::Utc::now().timestamp();
+
+            // The build's row mutations lead the transaction: Go commits the
+            // data movement before the completion bookkeeping.
+            let mut mutations = Vec::new();
+            if let Some(plan) = &built {
+                mutations.extend(plan.mutations.iter().cloned());
+            }
+            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
+            refresh_table.append_upsert(
+                view_id,
+                outcome.read_ts,
+                Some(last_success),
+                next_refresh,
+                should_update,
+                existing_refresh_row.as_ref(),
+                &mut mutations,
+            )?;
+
+            // Go `InitBuildState = StateReady` + `updateTable`.
+            let mut view_info = table_shared.read().clone_like_go();
+            view_info.update_ts = start_ts;
+            if let Some(meta) = view_info.materialized_view.as_ref() {
+                meta.write().init_build_state = tidb_model::MViewInitBuildState::INIT_BUILD_READY;
+            }
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, view_info.id),
+                value::serialize_table_info(&view_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+
+            let schema_version = catalog.schema_version + 1;
+            let diff = SchemaDiff {
+                version: schema_version,
+                action_type: active.job.type_,
+                schema_id: db_id,
+                table_id: view_info.id,
+                ..SchemaDiff::default()
+            };
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_version_kv_key(),
+                value::encode_int_value(schema_version),
+            )?);
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_diff_kv_key(schema_version),
+                value::serialize_schema_diff(&diff)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            active.job.last_schema_version = schema_version;
+
+            // Go `FinishMultipleTableJob(Done, Public, ver, [bases.., mview])`.
+            let mut finished_tables: Vec<tidb_model::TableInfo> =
+                bases.iter().map(|base| base.clone_like_go()).collect();
+            finished_tables.push(view_info.clone_like_go());
+            let finished = GoSharedPointerSlice::from_handles(
+                finished_tables
+                    .into_iter()
+                    .map(|table| Some(GoShared::new(table)))
+                    .collect(),
+            );
+            active.job.finish_multiple_table_job(
+                JobState::DONE,
+                SchemaState::PUBLIC,
+                schema_version,
+                &finished,
+            );
+            active
+                .job
+                .binlog_info
+                .as_ref()
+                .expect("submitted jobs always carry BinlogInfo")
+                .write()
+                .finished_ts = start_ts;
+            active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+            let encoded = active
+                .job
+                .encode(true)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+                let _ = history_table.append_insert_ignore(
+                    snapshot,
+                    &active.job,
+                    &encoded,
+                    &mut mutations,
+                );
+            }
+            mutations.push(OptimisticMutation::meta_put(
+                key::ddl_job_history_kv_key(active.job.id),
+                encoded,
+            )?);
+            job_table
+                .append_delete(&active, &mut mutations)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+            let mdl_info_update = mdl_info_update(&catalog, view_info.id)?;
+            Ok(PersistedDdlJobStep {
+                write: DdlWrite {
+                    ddl_job_id,
+                    mutations,
+                    schema_version,
+                    diff,
+                    created_id: Some(view_info.id),
+                    backfill: Vec::new(),
+                    auto_pre_split: false,
+                    exchange_partition_validation: None,
+                    check_constraint_validation: None,
+                    mdl_info_update: Some(mdl_info_update),
+                    exchange_partition_label_swap: None,
+                    warning: None,
+                    placement_bundles: Vec::new(),
+                    placement_rollback_bundles: Vec::new(),
+                },
+                terminal: true,
+            })
+        }
+        state => Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLState,
+            format!("invalid create materialized view schema state {state:?}"),
+        ))),
+    }
+}
+
+/// Plans pinned Go `rollbackCreateMaterializedView` for the view create: the
+/// created view (if the phase committed) drops with its auto-ID allocators,
+/// every base loses the view from `MViewIDs` (empty metadata is removed),
+/// the refresh-info row is deleted, and the job ends
+/// `RollbackDone`/`StateNone`.
+fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
+    refresh_table: &crate::mview_refresh_info_table::MviewRefreshInfoTable,
+    snapshot: &mut S,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    let actual = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id);
+    let mut mutations = Vec::new();
+    if let Some(dropping) = actual {
+        let dropping = dropping.clone_like_go();
+        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            db_id,
+            dropping.id,
+        ))?);
+        for allocator in [
+            key::auto_table_id_kv_key(db_id, dropping.id),
+            key::auto_increment_id_kv_key(db_id, dropping.id),
+            key::auto_random_table_id_kv_key(db_id, dropping.id),
+        ] {
+            if snapshot.get(&allocator)?.is_some() {
+                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+            }
+        }
+        // Go `updateMaterializedViewBaseInfoOnDrop`'s view arm: every base's
+        // `MViewIDs` loses the view; metadata with neither a log nor any
+        // view is removed outright.
+        if let Some(view_meta) = dropping.materialized_view.as_ref() {
+            for base_table_id in view_meta.read().base_table_ids.iter().copied() {
+                if let Some(base) = database
+                    .tables
+                    .iter()
+                    .find(|table| table.id == base_table_id)
+                {
+                    let mut base_info = base.clone_like_go();
+                    let emptied = base_info
+                        .materialized_view_base
+                        .as_ref()
+                        .map(|handle| {
+                            let mut meta = handle.write();
+                            let kept: Vec<i64> = meta
+                                .mview_ids
+                                .iter()
+                                .copied()
+                                .filter(|id| *id != dropping.id)
+                                .collect();
+                            meta.mview_ids = kept.into();
+                            meta.mlog_id == 0 && meta.mview_ids.is_empty()
+                        })
+                        .unwrap_or(false);
+                    if emptied {
+                        base_info.materialized_view_base = None;
+                    }
+                    mutations.push(OptimisticMutation::meta_put(
+                        key::table_kv_key(db_id, base_info.id),
+                        value::serialize_table_info(&base_info)
+                            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                    )?);
+                }
+            }
+        }
+    }
+
+    if let Some(row) = refresh_table.find(snapshot, active.job.table_id)? {
+        refresh_table.append_delete(&row, &mut mutations)?;
+    }
+    // Go `deleteCreateMaterializedViewRefreshAlert`: the create rollback also
+    // removes the view's alert row (written only by refresh workers, so this
+    // is normally a no-op on the create path).
+    if let Ok(alert_table) = crate::mview_alert_table::MviewAlertTable::locate(catalog) {
+        if let Some(row) = alert_table.find(snapshot, active.job.table_id)? {
+            alert_table.append_delete(&row, &mut mutations)?;
+        }
+    }
+
+    active.job.state = JobState::ROLLBACK_DONE;
+    active.job.schema_state = SchemaState::NONE;
+    let schema_version = catalog.schema_version + 1;
+    active.job.last_schema_version = schema_version;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: active.job.table_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// Persists Go's `Running -> Rollingback` transition after CHECK validation
+/// returns 3819. No schema metadata changes in this transaction; the next
+/// ordinary worker step reads this state and performs the action-specific
+/// rollback.
+pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    error_code: u16,
+    error_message: &str,
+) -> Result<Vec<OptimisticMutation>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+    active.job.state = JobState::ROLLINGBACK;
+    active.job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+        tidb_error::terror::TerrorCode::new(
+            isize::try_from(error_code).expect("u16 error code fits isize"),
+        ),
+        error_message,
+    )));
+    active.job.error_count += 1;
+    let mut mutations = Vec::new();
+    job_table
+        // This is a separate transaction after the validation step. The job
+        // was freshly decoded from `job_meta`, so its private decoded-args
+        // cache is intentionally empty; refreshing raw args here would erase
+        // the durable action arguments. Go's `countForError` retains the raw
+        // arguments when it persists this envelope-only state transition.
+        .append_update(&mut active, false, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Ok(mutations)
+}
+
 /// One catalog change's complete write set.
 #[derive(Clone, Debug)]
 pub struct DdlWrite {
+    /// Go `model.Job.ID`, allocated after IDs owned by the job.
+    pub ddl_job_id: i64,
     /// Every meta-key mutation, in a deterministic order.
     pub mutations: Vec<OptimisticMutation>,
     /// The schema version this change produces.
@@ -2234,7 +4610,23 @@ pub struct DdlWrite {
     /// (see [`crate::real_tikv_ddl::commit_cluster_ddl_with_backfill`]), so the
     /// index and its contents become visible at one commit timestamp and no
     /// reader can see one without the other.
-    pub backfill: Option<IndexBackfill>,
+    pub backfill: Vec<IndexBackfill>,
+    /// Automatic index pre-split request carried from the add-index option.
+    /// Planning the concrete boundaries is deliberately separate from the
+    /// catalog mutation so a caller can provide statistics at the same
+    /// snapshot and keep AUTO best-effort.
+    pub auto_pre_split: bool,
+    /// The row-routing proof owed by `EXCHANGE PARTITION ... WITH
+    /// VALIDATION`, evaluated from the same snapshot before this write set is
+    /// committed. `None` is Go's `WITHOUT VALIDATION` path.
+    pub exchange_partition_validation: Option<ExchangePartitionValidation>,
+    /// Existing-row validation owed before an enforced CHECK becomes public.
+    pub check_constraint_validation: Option<CheckConstraintValidation>,
+    /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
+    /// this schema phase before the owner waits for acknowledgements.
+    pub mdl_info_update: Option<MdlInfoUpdate>,
+    /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
+    pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
     /// The warning the change raises, if any.
     ///
     /// Go carries this as `job.Warning` (and, for the same adjustment made at
@@ -2252,6 +4644,195 @@ pub struct DdlWrite {
     /// catalog that claims placement PD never accepted is a table whose rows
     /// live somewhere other than where it says they do.
     pub placement_bundles: Vec<tidb_placement::Bundle>,
+    /// The pre-change placement bundles for an exchange-partition attempt.
+    ///
+    /// Rust publishes the catalog change with an optimistic transaction, so
+    /// it must undo the already-delivered PD change if that transaction loses
+    /// its commit race. These bundles come from the same metadata snapshot as
+    /// the forward bundles; deriving them here avoids a PD read that Go's
+    /// exchange path never performs.
+    pub placement_rollback_bundles: Vec<tidb_placement::Bundle>,
+}
+
+/// Go `checkExchangePartitionRecordValidation` expressed as a data obligation
+/// on the final metadata write.
+#[derive(Clone, Debug)]
+pub struct ExchangePartitionValidation {
+    /// Partitioned table before the physical-ID swap.
+    pub partitioned: Box<TableInfo>,
+    /// Standalone table whose existing rows must all route to `partition_id`.
+    pub standalone: Box<TableInfo>,
+    /// Physical ID of the named partition before the swap.
+    pub partition_id: i64,
+}
+
+/// One Go `registerMDLInfo` replacement associated with a committed CHECK
+/// schema phase.
+#[derive(Clone, Debug)]
+pub struct MdlInfoUpdate {
+    /// Stored `mysql.tidb_mdl_info` table definition used by the ordinary
+    /// clustered-row encoder.
+    pub table: Box<TableInfo>,
+    /// Tables touched by the job, stored as Go's comma-separated ID list.
+    pub table_ids: Vec<i64>,
+}
+
+impl MdlInfoUpdate {
+    fn row_values(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+    ) -> Result<crate::system_row_write::RowValues, DdlPlanError> {
+        let column_id = |name: &str| {
+            self.table
+                .cols()
+                .iter_deref()
+                .find(|column| column.read().name.lowercase() == name)
+                .map(|column| column.read().id)
+                .ok_or_else(|| {
+                    DdlPlanError::Encode(format!("mysql.tidb_mdl_info has no column `{name}`"))
+                })
+        };
+        let mut values = crate::system_row_write::RowValues::new();
+        values.insert(column_id("job_id")?, Datum::Int(ddl_job_id));
+        values.insert(column_id("version")?, Datum::Int(schema_version));
+        values.insert(
+            column_id("table_ids")?,
+            Datum::Bytes(
+                self.table_ids
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into_bytes(),
+            ),
+        );
+        values.insert(
+            column_id("owner_id")?,
+            Datum::Bytes(owner_id.as_bytes().to_vec()),
+        );
+        Ok(values)
+    }
+
+    /// Appends the clustered system-row mutations for this phase.
+    ///
+    /// Go deletes the row after every successful schema-sync wait, so each
+    /// following phase inserts a fresh row rather than updating the preceding
+    /// phase's value.
+    pub fn append_mutations(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+        mutations: &mut Vec<OptimisticMutation>,
+    ) -> Result<(), DdlPlanError> {
+        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
+        mutations.extend(
+            crate::system_row_write::replace_unindexed_clustered_row(&self.table, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
+        Ok(())
+    }
+
+    /// Appends Go `cleanMDLInfo`'s clustered-row deletion after a successful
+    /// schema-sync wait.
+    pub fn append_delete_mutations(
+        &self,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+        mutations: &mut Vec<OptimisticMutation>,
+    ) -> Result<(), DdlPlanError> {
+        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
+        mutations.extend(
+            crate::system_row_write::delete_unindexed_clustered_row(&self.table, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
+        Ok(())
+    }
+}
+
+/// The names and post-exchange physical IDs Go uses to swap the standalone
+/// table and partition label rules in PD.
+#[derive(Clone, Debug)]
+pub struct ExchangePartitionLabelSwap {
+    /// Partitioned-table database name.
+    pub partitioned_schema: String,
+    /// Partitioned-table name.
+    pub partitioned_table: String,
+    /// Exchanged partition name.
+    pub partition: String,
+    /// Standalone-table database name.
+    pub standalone_schema: String,
+    /// Standalone-table name.
+    pub standalone_table: String,
+    /// Physical ID now owned by the named partition.
+    pub partition_id: i64,
+    /// Physical ID now owned by the standalone table.
+    pub standalone_id: i64,
+}
+
+impl ExchangePartitionLabelSwap {
+    /// The two existing rule IDs Go fetches before constructing its patch.
+    pub fn rule_ids(&self, codec: &dyn tidb_executor::ddl_label::LabelCodec) -> [String; 2] {
+        [
+            tidb_executor::ddl_label::new_rule_id(
+                codec,
+                &self.standalone_schema,
+                &self.standalone_table,
+                "",
+            ),
+            tidb_executor::ddl_label::new_rule_id(
+                codec,
+                &self.partitioned_schema,
+                &self.partitioned_table,
+                &self.partition,
+            ),
+        ]
+    }
+
+    /// Pinned Go `onExchangeTablePartition`'s four-way label-rule patch.
+    pub fn patch(
+        &self,
+        codec: &dyn tidb_executor::ddl_label::LabelCodec,
+        rules: &[tidb_executor::ddl_label::Rule],
+    ) -> tidb_executor::ddl_label::LabelRulePatch {
+        let [standalone_rule_id, partition_rule_id] = self.rule_ids(codec);
+        let standalone_rule = rules.iter().find(|rule| rule.id == standalone_rule_id);
+        let partition_rule = rules.iter().find(|rule| rule.id == partition_rule_id);
+        let mut set_rules = Vec::with_capacity(2);
+        let mut delete_rules = Vec::with_capacity(1);
+        if let Some(rule) = standalone_rule {
+            let mut rule = rule.clone_rule();
+            rule.reset(
+                codec,
+                &self.partitioned_schema,
+                &self.partitioned_table,
+                &self.partition,
+                &[self.partition_id],
+            );
+            set_rules.push(rule);
+            if partition_rule.is_none() {
+                delete_rules.push(standalone_rule_id);
+            }
+        }
+        if let Some(rule) = partition_rule {
+            let mut rule = rule.clone_rule();
+            rule.reset(
+                codec,
+                &self.standalone_schema,
+                &self.standalone_table,
+                "",
+                &[self.standalone_id],
+            );
+            set_rules.push(rule);
+            if standalone_rule.is_none() {
+                delete_rules.push(partition_rule_id);
+            }
+        }
+        tidb_executor::ddl_label::new_rule_patch(set_rules, delete_rules)
+    }
 }
 
 /// The data half of an index change: which table's rows to walk, and what to
@@ -2280,6 +4861,18 @@ pub struct IndexBackfill {
     /// Whether the entries are being written (`CREATE INDEX`) or removed
     /// (`DROP INDEX`).
     pub add: bool,
+}
+
+/// The candidate table shape whose enforced CHECK must hold for every
+/// existing row before its metadata can be published.
+#[derive(Clone, Debug)]
+pub struct CheckConstraintValidation {
+    /// Candidate metadata, including the newly enforced constraint.
+    pub table: Box<TableInfo>,
+    /// The constraint whose violation Go reports as 3819.
+    pub constraint_name: String,
+    /// Evaluation context captured from the DDL statement.
+    pub context: DdlStatementContext,
 }
 
 /// Plans one catalog change against one snapshot.
@@ -2365,6 +4958,318 @@ pub fn plan_ddl<S: MetaSnapshot>(
     plan_ddl_with_collation(snapshot, statement, start_ts, new_collation_enabled())
 }
 
+fn apply_partition_change(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+    sql: &str,
+) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
+    use tidb_executor::ddl::StoredPartitionDefinition;
+    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
+
+    let partition = stored.partition.as_ref().ok_or_else(|| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            1505,
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ))
+    })?;
+    let partition = partition.read();
+    let names = stored
+        .columns
+        .iter_deref()
+        .map(|column| column.read().name.original().to_owned())
+        .collect::<Vec<_>>();
+    let types = stored
+        .columns
+        .iter_deref()
+        .map(|column| column.read().field_type.clone())
+        .collect::<Vec<_>>();
+    let definitions = partition
+        .definitions
+        .snapshot()
+        .into_iter()
+        .map(|definition| StoredPartitionDefinition {
+            id: definition.id,
+            name: definition.name.original().to_owned(),
+            comment: definition.comment.clone(),
+            less_than: definition.less_than.snapshot(),
+            in_values: definition
+                .in_values
+                .snapshot()
+                .into_iter()
+                .map(|tuple| tuple.snapshot())
+                .collect(),
+            placement_policy: definition
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().clone()),
+        })
+        .collect::<Vec<_>>();
+    let columns = partition
+        .columns
+        .snapshot()
+        .into_iter()
+        .map(|column| column.original().to_owned())
+        .collect::<Vec<_>>();
+    let overlapping_dropping_partition_indices = (0..definitions.len())
+        .map(|index| {
+            usize::try_from(partition.get_overlapping_dropping_partition_idx(index as isize)).ok()
+        })
+        .collect::<Vec<_>>();
+    let spec = tidb_executor::ddl::partition_spec_from_metadata(
+        partition.partition_type,
+        &partition.expr,
+        &columns,
+        partition.is_empty_columns,
+        &definitions,
+        &overlapping_dropping_partition_indices,
+        &names,
+        &types,
+    )
+    .map_err(|error| {
+        let error = error.to_mysql_error();
+        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    })?;
+
+    let kv_columns = stored
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            KvColumn {
+                name: column.name.original().to_owned(),
+                id: column.id,
+                field_type: column.field_type.clone(),
+                column_info_version: column.version,
+                default_value: None,
+                origin_default: None,
+                comment: column.comment.clone(),
+                generated: None,
+            }
+        })
+        .collect();
+    let mut kv_table = KvTable::new(stored.id, kv_columns);
+    kv_table.name = table.to_owned();
+    kv_table.set_tiflash_replica(
+        stored
+            .tiflash_replica
+            .as_ref()
+            .map(|replica| replica.read().clone()),
+    );
+    kv_table.set_partition(spec);
+    let mut catalog = Catalog::default();
+    catalog.create_database(schema);
+    catalog
+        .register_kv_in(schema, table, kv_table)
+        .map_err(|error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        })?;
+    let context = tidb_executor::StmtContext::for_query();
+    tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, &context).map_err(
+        |error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        },
+    )?;
+    let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
+        unreachable!("the temporary partition catalog retains its table")
+    };
+    Ok(table
+        .partition()
+        .expect("ALTER ADD/DROP PARTITION retains partitioning")
+        .clone())
+}
+
+fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_code(code, message.into()))
+}
+
+/// Pinned Go `checkFieldTypeCompatible`.
+fn exchange_field_type_compatible(left: &FieldType, right: &FieldType) -> bool {
+    const COMPARED_FLAGS: u32 = FieldTypeFlags::UNSIGNED
+        | FieldTypeFlags::AUTO_INCREMENT
+        | FieldTypeFlags::NOT_NULL
+        | FieldTypeFlags::ZEROFILL
+        | FieldTypeFlags::BINARY
+        | FieldTypeFlags::PRI_KEY;
+    left.code() == right.code()
+        && left.decimal() == right.decimal()
+        && left.charset_name() == right.charset_name()
+        && left.collation_name() == right.collation_name()
+        && (left.flen() == right.flen() || left.storage_length() != tidb_datatype::VAR_STORAGE_LEN)
+        && left.flags() & COMPARED_FLAGS == right.flags() & COMPARED_FLAGS
+        && left.elems_snapshot() == right.elems_snapshot()
+}
+
+fn exchange_tiflash_compatible(left: &TableInfo, right: &TableInfo) -> bool {
+    match (&left.tiflash_replica, &right.tiflash_replica) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            let left = left.read();
+            let right = right.read();
+            left.count == right.count
+                && left.available == right.available
+                && left.location_labels == right.location_labels
+        }
+        _ => false,
+    }
+}
+
+/// Pinned Go `checkExchangePartition` plus `checkTableDefCompatible`.
+fn check_exchange_tables(
+    partitioned: &TableInfo,
+    standalone: &TableInfo,
+) -> Result<(), DdlPlanError> {
+    if standalone.is_view() || standalone.is_sequence() {
+        return Err(exchange_refusal(1177, "Can't open table"));
+    }
+    if partitioned.partition.is_none() {
+        return Err(exchange_refusal(
+            1505,
+            "Partition management on a not partitioned table is not possible",
+        ));
+    }
+    if standalone.partition.is_some() {
+        return Err(exchange_refusal(
+            1732,
+            format!(
+                "Table '{}' is partitioned. It cannot be used in EXCHANGE PARTITION",
+                standalone.name
+            ),
+        ));
+    }
+    if standalone.affinity.is_some() || partitioned.affinity.is_some() {
+        return Err(exchange_refusal(
+            8200,
+            "Unsupported DDL operation: EXCHANGE PARTITION of a table with AFFINITY option",
+        ));
+    }
+    if !standalone.foreign_keys.is_empty() {
+        return Err(exchange_refusal(
+            1740,
+            format!(
+                "Table '{}' has foreign key constraint. It cannot be used in EXCHANGE PARTITION",
+                standalone.name
+            ),
+        ));
+    }
+    if standalone.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(exchange_refusal(
+            1733,
+            format!(
+                "Table to exchange with partition is temporary: '{}'",
+                standalone.name
+            ),
+        ));
+    }
+    let different_metadata = || exchange_refusal(1736, "Tables have different definitions");
+    if partitioned.auto_random_bits != standalone.auto_random_bits
+        || partitioned.auto_random_range_bits != standalone.auto_random_range_bits
+        || partitioned.charset != standalone.charset
+        || partitioned.collate != standalone.collate
+        || partitioned.shard_row_id_bits != standalone.shard_row_id_bits
+        || partitioned.max_shard_row_id_bits != standalone.max_shard_row_id_bits
+        || partitioned.pk_is_handle != standalone.pk_is_handle
+        || partitioned.is_common_handle != standalone.is_common_handle
+        || !exchange_tiflash_compatible(partitioned, standalone)
+        || partitioned.cols().len() != standalone.cols().len()
+    {
+        return Err(different_metadata());
+    }
+    for (source, target) in partitioned
+        .cols()
+        .iter_deref()
+        .zip(standalone.cols().iter_deref())
+    {
+        let source = source.read();
+        let target = target.read();
+        if source.is_virtual_generated() != target.is_virtual_generated() {
+            return Err(exchange_refusal(
+                3106,
+                "'Exchanging partitions for non-generated columns' is not supported for generated columns.",
+            ));
+        }
+        if source.name.lowercase() != target.name.lowercase()
+            || source.hidden != target.hidden
+            || !exchange_field_type_compatible(&source.field_type, &target.field_type)
+            || source.generated_expr_string != target.generated_expr_string
+            || source.state != SchemaState::PUBLIC
+            || target.state != SchemaState::PUBLIC
+        {
+            return Err(different_metadata());
+        }
+        if source.id != target.id {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'column: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+    }
+    if partitioned.indices.len() != standalone.indices.len() {
+        return Err(different_metadata());
+    }
+    for source in partitioned.indices.iter_deref() {
+        let source = source.read();
+        if source.global {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'global index: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+        let Some(target) = standalone
+            .indices
+            .iter_deref()
+            .find(|candidate| candidate.read().name.lowercase() == source.name.lowercase())
+        else {
+            return Err(different_metadata());
+        };
+        let target = target.read();
+        if source.tp != target.tp
+            || source.unique != target.unique
+            || source.primary != target.primary
+            || source.columns.len() != target.columns.len()
+        {
+            return Err(different_metadata());
+        }
+        for (source_column, target_column) in
+            source.columns.iter_deref().zip(target.columns.iter_deref())
+        {
+            let source_column = source_column.read();
+            let target_column = target_column.read();
+            if source_column.length != target_column.length
+                || source_column.name.lowercase() != target_column.name.lowercase()
+            {
+                return Err(different_metadata());
+            }
+        }
+        if source.id != target.id {
+            return Err(exchange_refusal(
+                1731,
+                format!(
+                    "Non matching attribute 'index: {}' between partition and table",
+                    source.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn read_auto_id<S: MetaSnapshot>(snapshot: &mut S, key: &[u8]) -> Result<i64, DdlPlanError> {
+    match snapshot.get(key)? {
+        Some(encoded) => value::parse_int_value(&encoded)
+            .map_err(|error| DdlPlanError::Encode(error.to_string())),
+        None => Ok(0),
+    }
+}
+
 /// [`plan_ddl`] with an already captured persisted collation mode.
 ///
 /// This is the source-shaped equivalent of Go carrying
@@ -2381,11 +5286,18 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     // placement; empty for every other statement, and an empty list is never
     // sent.
     let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
+    let mut placement_rollback_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
+    let mut global_ids = GlobalIdAllocator::load(snapshot)?;
     let mut created_id = None;
-    let mut backfill = None;
+    let mut backfill = Vec::new();
+    let mut auto_pre_split = false;
+    let mut exchange_partition_validation = None;
+    let mut check_constraint_validation = None;
+    let mut exchange_partition_label_swap = None;
     let mut warning = None;
+    let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
     let mut diff = SchemaDiff {
         version: schema_version,
         ..SchemaDiff::default()
@@ -2435,7 +5347,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     )));
                 }
                 (None, _, _) => {
-                    let policy_id = allocate(snapshot, &mut writes, 1)?[0];
+                    let policy_id = global_ids.allocate(1)?[0];
                     created_id = Some(policy_id);
                     let policy = tidb_model::PolicyInfo {
                         placement_settings: Some(tidb_model::GoShared::new(settings.clone())),
@@ -2461,9 +5373,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         } => {
             let Some(found) = find_policy(snapshot, name)? else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "placement policy `{name}` does not exist"
-                    )));
+                    return Ok(already(format!("placement policy `{name}` does not exist")));
                 }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
@@ -2497,9 +5407,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         DdlStatement::DropPlacementPolicy { name, if_exists } => {
             let Some(found) = find_policy(snapshot, name)? else {
                 if *if_exists {
-                    return Ok(already(format!(
-                        "placement policy `{name}` does not exist"
-                    )));
+                    return Ok(already(format!("placement policy `{name}` does not exist")));
                 }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
@@ -2537,7 +5445,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
-            let db_id = allocate(snapshot, &mut writes, 1)?[0];
+            let db_id = global_ids.allocate(1)?[0];
             created_id = Some(db_id);
             let info = DBInfo {
                 id: db_id,
@@ -2576,6 +5484,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             ))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
+            if !tidb_metadef::is_mem_or_sys_db(&name.go_to_lower()) {
+                let tables_per_event = if database.tables.len() > 100_000 {
+                    500
+                } else {
+                    100
+                };
+                for (sub_job_id, tables) in database.tables.chunks(tables_per_event).enumerate() {
+                    schema_change_events.push((
+                        i64::try_from(sub_job_id).expect("drop-schema event count fits in i64"),
+                        SchemaChangeEvent::drop_schema(&database.info, tables),
+                    ));
+                }
+            }
         }
         DdlStatement::DropPrimaryKey { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -2628,7 +5549,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // `DROP INDEX` does: an index whose rows survive its `TableInfo`
             // is invisible garbage that a later index of the same id would
             // read as its own.
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
@@ -2638,16 +5559,129 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::CreateMaterializedView {
+            stmt,
+            schema,
+            table,
+            context,
+        } => {
+            return Err(DdlPlanError::Encode(
+                "materialized view DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
+        }
+        DdlStatement::CreateMaterializedViewLog { .. } => {
+            // Go submits this statement as a durable job
+            // (`DoDDLJobWrapper`); like the CHECK actions it must execute
+            // through `mysql.tidb_ddl_job`, via
+            // [`prepare_materialized_view_job_submission`].
+            return Err(DdlPlanError::Encode(
+                "materialized view log DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
+        }
+        DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
+            // Go master 94a9cbedab parses this but neither `buildDDL` nor
+            // `DDLExec.Next` handles it: the plan is the generic `DDL`, the
+            // executor leaves `err` nil, and the statement answers OK with
+            // no job and no catalog change. This plan is exactly that:
+            // success, nothing written.
+            let _ = (schema, view);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "ALTER MATERIALIZED VIEW changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
+            let _ = (schema, table);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "ALTER MATERIALIZED VIEW LOG changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::DropMaterializedViewNoOp { schema, view } => {
+            let _ = (schema, view);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "DROP MATERIALIZED VIEW changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
+            let _ = (schema, table);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "DROP MATERIALIZED VIEW LOG changes nothing".to_owned(),
+                warning: None,
+            });
+        }
         DdlStatement::CreateTableLike {
             schema,
             table,
             source_schema,
             source_table,
+            temporary,
+            on_commit_delete,
             if_not_exists,
         } => {
+            // Go's preprocessor resolves and validates the LIKE source
+            // before the DDL executor checks the target database. A missing
+            // source database is consequently reported as a missing table.
+            let (_, source) = match locate_table(&catalog, source_schema, source_table) {
+                Err(DdlPlanError::UnknownDatabase(_)) => {
+                    return Err(DdlPlanError::TableNotExists {
+                        schema: source_schema.clone(),
+                        table: source_table.clone(),
+                    });
+                }
+                result => result?,
+            };
+            if source.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8006,
+                    "`create table like` is unsupported on temporary tables.",
+                )));
+            }
+            if *temporary != tidb_ast::CreateTableTemporary::None {
+                // Go `checkReferInfoForTemporaryTable`, in observable order.
+                let temporary_option = |operation: &str| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        8006,
+                        format!("`{operation}` is unsupported on temporary tables."),
+                    ))
+                };
+                if source.auto_random_bits != 0 {
+                    return Err(temporary_option("auto_random"));
+                }
+                if source.pre_split_regions != 0 {
+                    return Err(temporary_option("pre split regions"));
+                }
+                if source.partition.is_some() {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        1562,
+                        "Cannot create temporary table with partitions",
+                    )));
+                }
+                if source.shard_row_id_bits != 0 {
+                    return Err(temporary_option("shard_row_id_bits"));
+                }
+                if source.placement_policy_ref.is_some() {
+                    return Err(temporary_option("placement"));
+                }
+            }
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
+            // Go `BuildTableInfoWithLike` runs after the executor has found
+            // the target database, but before target-name collision handling.
+            if source.view.is_some() || source.sequence.is_some() {
+                return Err(DdlPlanError::Unsupported(format!(
+                    "'{source_schema}.{source_table}' is not BASE TABLE"
+                )));
+            }
+            // Go reaches `setTemporaryType` only after the source checks.
+            if *temporary == tidb_ast::CreateTableTemporary::Global && !*on_commit_delete {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8200,
+                    "TiDB doesn't support ON COMMIT PRESERVE ROWS for now",
+                )));
+            }
             if let Some(existing) = find_table(database, table) {
                 if *if_not_exists {
                     return Ok(already(format!(
@@ -2660,17 +5694,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             }
-            let (_, source) = locate_table(&catalog, source_schema, source_table)?;
-            // Go `ErrWrongObject`: the source must be a real table. A view
-            // has no rows to describe, and copying its definition under a
-            // table's name would produce something neither statement means.
-            if source.view.is_some() || source.sequence.is_some() {
-                return Err(DdlPlanError::Unsupported(format!(
-                    "'{source_schema}.{source_table}' is not BASE TABLE"
-                )));
-            }
             let db_id = database.info.id;
-            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
             let mut info = source.clone_like_go();
             // Go keeps only the PUBLIC columns and indices: a column or index
@@ -2696,11 +5721,47 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // source's handles, and an inherited foreign key would name a
             // constraint that already exists.
             info.auto_inc_id = 0;
-            info.auto_rand_id = 0;
             info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
-            info.max_foreign_key_id = 0;
+            // Go `BuildTableInfoWithLike` (master `94a9cbedab`) clears the
+            // materialized-view metadata: a LIKE copy is never a view, log
+            // or base table of one.
+            info.materialized_view_base = None;
+            info.materialized_view = None;
+            info.materialized_view_log = None;
+            // Go `renameCheckConstraint` clears every copied name, points the
+            // metadata at the target table, then assigns target-local names
+            // from `<table>_chk_1` in declaration order. IDs and the allocator
+            // high-water remain copied from the source.
+            for (offset, constraint) in info.constraints.iter_deref().enumerate() {
+                let mut constraint = constraint.write();
+                constraint.name =
+                    CiString::new(format!("{}_chk_{}", table.go_to_lower(), offset + 1));
+                constraint.table = CiString::new(table.clone());
+            }
             info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
-            info.tiflash_replica = None;
+            match temporary {
+                tidb_ast::CreateTableTemporary::None => {
+                    info.temp_table_type = tidb_model::TempTableType::NONE;
+                    if let Some(replica) = &info.tiflash_replica {
+                        // Go copies the pointed-to replica struct before it
+                        // clears availability; mutating the shared pointer
+                        // would also mutate the source's catalog metadata.
+                        let mut replica = replica.read().clone();
+                        replica.available = false;
+                        replica.available_partition_ids = Default::default();
+                        info.tiflash_replica = Some(GoShared::new(replica));
+                    }
+                }
+                tidb_ast::CreateTableTemporary::Global => {
+                    info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+                    info.tiflash_replica = None;
+                    info.ttl_info = None;
+                    info.affinity = None;
+                }
+                tidb_ast::CreateTableTemporary::Local => {
+                    unreachable!("LOCAL temporary CREATE LIKE is rejected during lowering")
+                }
+            }
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -2711,6 +5772,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
+            }
         }
         DdlStatement::CreateTable {
             schema,
@@ -2752,7 +5816,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let partition_count = info.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
-            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let ids = global_ids.allocate(1 + partition_count)?;
             let table_id = ids[0];
             created_id = Some(table_id);
             info.id = table_id;
@@ -2776,14 +5840,15 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // lookup needs the same snapshot the rest of the statement plans
             // against; `CreateTableBuild` keeps the original statement, so
             // the written name is still in reach.
-            if let Some(policy_name) = build
-                .create
-                .table_options
-                .iter()
-                .find_map(|option| match option {
-                    tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
-                    _ => None,
-                })
+            if let Some(policy_name) =
+                build
+                    .create
+                    .table_options
+                    .iter()
+                    .find_map(|option| match option {
+                        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+                        _ => None,
+                    })
             {
                 let Some(policy) = find_policy(snapshot, &policy_name)? else {
                     return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
@@ -2791,12 +5856,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         format!("Unknown placement policy '{policy_name}'"),
                     )));
                 };
-                info.placement_policy_ref = Some(tidb_model::GoShared::new(
-                    tidb_model::PolicyRefInfo {
+                info.placement_policy_ref =
+                    Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
                         id: policy.id,
                         name: CiString::new(policy_name),
-                    },
-                ));
+                    }));
             }
             // Go builds the table's bundles once the ids are assigned and
             // sends them before the schema version is published
@@ -2816,9 +5880,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let policies = load_policies(snapshot)?;
                 placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
                     .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                            "building placement rules: {error}"
-                        )))
+                        DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!("building placement rules: {error}"),
+                        ))
                     })?;
             }
             // Go `createTable` stamps the job transaction's own start timestamp.
@@ -2851,6 +5916,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
+            }
         }
         DdlStatement::CreateView {
             schema,
@@ -2878,7 +5946,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     db_id, old_id,
                 ))?);
             }
-            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
             let mut info = (**info).clone();
             info.id = table_id;
@@ -3213,6 +6281,530 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let modified = tidb_model::column::find_column_info(&info.columns, column)
+                    .expect("the altered auto-random column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info, vec![modified], false),
+                ));
+            }
+        }
+        DdlStatement::AddPartitions { schema, table, sql }
+        | DdlStatement::DropPartitions { schema, table, sql } => {
+            let adding = matches!(statement, DdlStatement::AddPartitions { .. });
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let old_names = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| definition.name.lowercase().to_owned())
+                .collect::<Vec<_>>();
+            let new_names = transformed
+                .definitions
+                .iter()
+                .map(|definition| definition.name.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if old_names == new_names {
+                return Ok(already(format!(
+                    "partition change on `{schema}`.`{table}` is already satisfied"
+                )));
+            }
+            let added_count = transformed
+                .definitions
+                .len()
+                .saturating_sub(old_names.len());
+            let mut allocated = if added_count == 0 {
+                Vec::new().into_iter()
+            } else {
+                global_ids
+                    .allocate(i64::try_from(added_count).expect("partition count fits in i64"))?
+                    .into_iter()
+            };
+            let old_ids = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+                .collect::<BTreeMap<_, _>>();
+            let definitions = transformed
+                .definitions
+                .into_iter()
+                .map(|definition| {
+                    let id = old_ids
+                        .get(&definition.name.to_ascii_lowercase())
+                        .copied()
+                        .unwrap_or_else(|| {
+                            allocated
+                                .next()
+                                .expect("one global id was allocated for every added partition")
+                        });
+                    let mut converted = tidb_model::partition::PartitionDefinition {
+                        id,
+                        name: CiString::new(definition.name),
+                        comment: definition.comment,
+                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        ..tidb_model::partition::PartitionDefinition::default()
+                    };
+                    converted.less_than = definition.less_than.into();
+                    converted.in_values = definition
+                        .in_values
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<_>>()
+                        .into();
+                    converted
+                })
+                .collect::<Vec<_>>();
+            let mut info = stored.clone_like_go();
+            info.partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .write()
+                .definitions = definitions.into();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = if adding {
+                ActionType::ACTION_ADD_TABLE_PARTITION
+            } else {
+                ActionType::ACTION_DROP_TABLE_PARTITION
+            };
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                if adding {
+                    let added = info
+                        .partition
+                        .as_ref()
+                        .expect("the changed table remains partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .filter(|definition| !old_ids.values().any(|id| *id == definition.id))
+                        .collect();
+                    schema_change_events.push((
+                        -1,
+                        SchemaChangeEvent::add_partitions(
+                            info.clone_like_go(),
+                            event_partition_info(added),
+                        ),
+                    ));
+                } else {
+                    let remaining = info
+                        .partition
+                        .as_ref()
+                        .expect("the changed table remains partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id)
+                        .collect::<std::collections::HashSet<_>>();
+                    let dropped = stored
+                        .partition
+                        .as_ref()
+                        .expect("the old table is partitioned")
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .filter(|definition| !remaining.contains(&definition.id))
+                        .collect();
+                    schema_change_events.push((
+                        -1,
+                        SchemaChangeEvent::drop_partitions(
+                            info.clone_like_go(),
+                            event_partition_info(dropped),
+                        ),
+                    ));
+                }
+            }
+        }
+        DdlStatement::ExchangePartition {
+            schema,
+            table,
+            partition,
+            standalone_schema,
+            standalone_table,
+            with_validation,
+        } => {
+            let (partitioned_db_id, stored_partitioned) = locate_table(&catalog, schema, table)?;
+            let (standalone_db_id, stored_standalone) =
+                locate_table(&catalog, standalone_schema, standalone_table)?;
+            check_exchange_tables(stored_partitioned, stored_standalone)?;
+            if stored_partitioned.state != SchemaState::PUBLIC {
+                return Err(exchange_refusal(
+                    8200,
+                    format!("Table '{}' is not in public state", stored_partitioned.name),
+                ));
+            }
+            let original_definition = stored_partitioned
+                .partition
+                .as_ref()
+                .expect("exchange compatibility requires partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .find(|definition| definition.name.original().eq_ignore_ascii_case(partition))
+                .ok_or_else(|| {
+                    exchange_refusal(
+                        1735,
+                        format!("Unknown partition '{partition}' in table '{table}'"),
+                    )
+                })?;
+
+            // Pinned Go compares the standalone policy with the effective
+            // partition policy (partition override, otherwise table policy)
+            // after resolving both references through the same meta snapshot.
+            let partition_policy = original_definition
+                .placement_policy_ref
+                .as_ref()
+                .or(stored_partitioned.placement_policy_ref.as_ref());
+            let standalone_policy = stored_standalone.placement_policy_ref.as_ref();
+            let policies = load_policies(snapshot)?;
+            let resolve_policy = |reference: &GoShared<tidb_model::PolicyRefInfo>| {
+                let id = reference.read().id;
+                policies.policies.iter().find(|policy| policy.id == id)
+            };
+            match (partition_policy, standalone_policy) {
+                (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(exchange_refusal(1736, "Tables have different definitions"));
+                }
+                (Some(partition_policy), Some(standalone_policy)) => {
+                    match (
+                        resolve_policy(partition_policy),
+                        resolve_policy(standalone_policy),
+                    ) {
+                        (None, None) => {}
+                        (Some(left), Some(right))
+                            if left.name.lowercase() == right.name.lowercase() => {}
+                        _ => {
+                            return Err(exchange_refusal(
+                                1736,
+                                "Tables have different definitions",
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let original_partition_id = original_definition.id;
+            let original_standalone_id = stored_standalone.id;
+
+            // The forward exchange bundles below are Go's exact
+            // `bundlesForExchangeTablePartition` result after the ID swap.
+            // Preserve that same result for the pre-swap objects so an
+            // optimistic commit failure can restore PD without introducing a
+            // non-Go placement GET request.
+            let original_table_bundle =
+                tidb_placement::new_table_bundle(&policies, &stored_partitioned)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let original_partition_bundle =
+                tidb_placement::new_partition_bundle(&policies, &original_definition)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let original_standalone_bundle =
+                tidb_placement::new_table_bundle(&policies, &stored_standalone)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            placement_rollback_bundles.extend(original_table_bundle);
+            placement_rollback_bundles.extend(original_partition_bundle.clone());
+            placement_rollback_bundles.extend(original_standalone_bundle.clone());
+            if original_partition_bundle.is_none() && original_standalone_bundle.is_some() {
+                placement_rollback_bundles.push(tidb_placement::new_bundle(original_partition_id));
+            }
+            if original_partition_bundle.is_some() && original_standalone_bundle.is_none() {
+                placement_rollback_bundles.push(tidb_placement::new_bundle(original_standalone_id));
+            }
+            if *with_validation {
+                exchange_partition_validation = Some(ExchangePartitionValidation {
+                    partitioned: Box::new(stored_partitioned.clone_like_go()),
+                    standalone: Box::new(stored_standalone.clone_like_go()),
+                    partition_id: original_partition_id,
+                });
+            }
+            exchange_partition_label_swap = Some(ExchangePartitionLabelSwap {
+                partitioned_schema: schema.go_to_lower(),
+                partitioned_table: stored_partitioned.name.lowercase().to_owned(),
+                partition: original_definition.name.lowercase().to_owned(),
+                standalone_schema: standalone_schema.go_to_lower(),
+                standalone_table: stored_standalone.name.lowercase().to_owned(),
+                partition_id: original_standalone_id,
+                standalone_id: original_partition_id,
+            });
+
+            let mut partitioned_info = stored_partitioned.clone_like_go();
+            let mut definitions = partitioned_info
+                .partition
+                .as_ref()
+                .expect("the exchanged table remains partitioned")
+                .read()
+                .definitions
+                .snapshot();
+            let exchanged_definition = {
+                let definition = definitions
+                    .iter_mut()
+                    .find(|definition| definition.id == original_partition_id)
+                    .expect("the original definition is still present");
+                definition.id = original_standalone_id;
+                definition.clone_like_go()
+            };
+            partitioned_info
+                .partition
+                .as_ref()
+                .expect("the exchanged table remains partitioned")
+                .write()
+                .definitions = definitions.into();
+            if let Some(replica) = &partitioned_info.tiflash_replica {
+                for id in replica.write().available_partition_ids.iter_mut() {
+                    if *id == original_partition_id {
+                        *id = original_standalone_id;
+                        break;
+                    }
+                }
+            }
+            partitioned_info.update_ts = start_ts;
+
+            let mut standalone_info = stored_standalone.clone_like_go();
+            standalone_info.id = original_partition_id;
+            standalone_info.exchange_partition_info = None;
+            standalone_info.update_ts = start_ts;
+
+            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                standalone_db_id,
+                original_standalone_id,
+            ))?);
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(partitioned_db_id, partitioned_info.id),
+                value::serialize_table_info(&partitioned_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(standalone_db_id, standalone_info.id),
+                value::serialize_table_info(&standalone_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+
+            for key_for in [
+                key::auto_table_id_kv_key as fn(i64, i64) -> Vec<u8>,
+                key::auto_increment_id_kv_key,
+                key::auto_random_table_id_kv_key,
+            ] {
+                let partitioned_key = key_for(partitioned_db_id, stored_partitioned.id);
+                let standalone_key = key_for(standalone_db_id, original_standalone_id);
+                let maximum = std::cmp::max(
+                    read_auto_id(snapshot, &partitioned_key)?,
+                    read_auto_id(snapshot, &standalone_key)?,
+                );
+                writes.push(OptimisticMutation::meta_put(
+                    partitioned_key,
+                    value::encode_int_value(maximum),
+                )?);
+                writes.push(OptimisticMutation::meta_put(
+                    key_for(standalone_db_id, original_partition_id),
+                    value::encode_int_value(maximum),
+                )?);
+            }
+
+            // Pinned `bundlesForExchangeTablePartition`: rebuild the table,
+            // exchanged partition and standalone bundles under their new IDs;
+            // explicitly clear the side that lost a policy.
+            let table_bundle = tidb_placement::new_table_bundle(&policies, &partitioned_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let partition_bundle =
+                tidb_placement::new_partition_bundle(&policies, &exchanged_definition)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let standalone_bundle = tidb_placement::new_table_bundle(&policies, &standalone_info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            placement_bundles.extend(table_bundle);
+            placement_bundles.extend(partition_bundle.clone());
+            placement_bundles.extend(standalone_bundle.clone());
+            if partition_bundle.is_none() && standalone_bundle.is_some() {
+                placement_bundles.push(tidb_placement::new_bundle(exchanged_definition.id));
+            }
+            if partition_bundle.is_some() && standalone_bundle.is_none() {
+                placement_bundles.push(tidb_placement::new_bundle(standalone_info.id));
+            }
+
+            diff.action_type = ActionType::ACTION_EXCHANGE_TABLE_PARTITION;
+            diff.schema_id = standalone_db_id;
+            diff.table_id = original_partition_id;
+            diff.old_schema_id = standalone_db_id;
+            diff.old_table_id = original_standalone_id;
+            diff.affected_options = vec![AffectedOption {
+                schema_id: partitioned_db_id,
+                table_id: stored_partitioned.id,
+                ..AffectedOption::default()
+            }]
+            .into();
+            warning = Some(
+                "after the exchange, please analyze related table of the exchange to update statistics"
+                    .to_owned(),
+            );
+            if !tidb_metadef::is_mem_or_sys_db(&standalone_schema.go_to_lower()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::exchange_partition(
+                        partitioned_info,
+                        event_partition_info(vec![original_definition]),
+                        stored_standalone.clone_like_go(),
+                    ),
+                ));
+            }
+        }
+        DdlStatement::TruncatePartitions { schema, table, sql } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let old_ids = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+                .collect::<BTreeMap<_, _>>();
+            let replaced = transformed
+                .definitions
+                .iter()
+                .filter(|definition| {
+                    old_ids
+                        .get(&definition.name.to_ascii_lowercase())
+                        .is_some_and(|old_id| *old_id != definition.id)
+                })
+                .count();
+            if replaced == 0 {
+                return Ok(already(format!(
+                    "partition truncate on `{schema}`.`{table}` changes no partition"
+                )));
+            }
+            let mut allocated = global_ids
+                .allocate(i64::try_from(replaced).expect("partition count fits in i64"))?
+                .into_iter();
+            let definitions = transformed
+                .definitions
+                .into_iter()
+                .map(|definition| {
+                    let old_id = old_ids[&definition.name.to_ascii_lowercase()];
+                    let id = if definition.id == old_id {
+                        old_id
+                    } else {
+                        allocated
+                            .next()
+                            .expect("one global id was allocated for every truncated partition")
+                    };
+                    let mut converted = tidb_model::partition::PartitionDefinition {
+                        id,
+                        name: CiString::new(definition.name),
+                        comment: definition.comment,
+                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
+                        ..tidb_model::partition::PartitionDefinition::default()
+                    };
+                    converted.less_than = definition.less_than.into();
+                    converted.in_values = definition
+                        .in_values
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<_>>()
+                        .into();
+                    converted
+                })
+                .collect::<Vec<_>>();
+            debug_assert!(allocated.next().is_none());
+            let mut info = stored.clone_like_go();
+            info.partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .write()
+                .definitions = definitions.into();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let new_by_name = info
+                    .partition
+                    .as_ref()
+                    .expect("the changed table remains partitioned")
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .into_iter()
+                    .map(|definition| (definition.name.lowercase().to_owned(), definition))
+                    .collect::<BTreeMap<_, _>>();
+                let old_definitions = stored
+                    .partition
+                    .as_ref()
+                    .expect("the old table is partitioned")
+                    .read()
+                    .definitions
+                    .snapshot();
+                let dropped = old_definitions
+                    .iter()
+                    .filter(|definition| {
+                        new_by_name
+                            .get(definition.name.lowercase())
+                            .is_some_and(|new| new.id != definition.id)
+                    })
+                    .cloned()
+                    .collect();
+                let added = new_by_name
+                    .values()
+                    .filter(|definition| {
+                        old_ids
+                            .get(definition.name.lowercase())
+                            .is_some_and(|old| *old != definition.id)
+                    })
+                    .cloned()
+                    .collect();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::truncate_partitions(
+                        info.clone_like_go(),
+                        event_partition_info(added),
+                        event_partition_info(dropped),
+                    ),
+                ));
+            }
+        }
+        DdlStatement::AddCheckConstraint { .. }
+        | DdlStatement::DropCheckConstraint { .. }
+        | DdlStatement::AlterCheckConstraint { .. } => {
+            return Err(DdlPlanError::Encode(
+                "CHECK constraint DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
+        }
+        DdlStatement::IgnoredCheckConstraint { schema, table } => {
+            locate_table(&catalog, schema, table)?;
+            return Ok(already(format!(
+                "CHECK constraint on `{schema}`.`{table}` is discarded while tidb_enable_check_constraint is off"
+            )));
         }
         DdlStatement::AddColumn {
             schema,
@@ -3247,6 +6839,21 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_ADD_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let added = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| {
+                        candidate.read().name.lowercase() == column.name.go_to_lower()
+                    })
+                    .expect("the applied column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::add_columns(info.clone_like_go(), vec![added]),
+                ));
+            }
         }
         DdlStatement::DropColumn {
             schema,
@@ -3279,7 +6886,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = from.to_lowercase();
+            let wanted = from.go_to_lower();
             let Some(position) = stored
                 .columns
                 .iter_deref()
@@ -3290,7 +6897,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
-            let new_name = to.to_lowercase();
+            // Go asks `IsColumnRenameableWithCheckConstraint` before the
+            // same-name early return and before the duplicate-name check.
+            if let Some(constraint) = stored.constraints.iter_deref().find(|constraint| {
+                tidb_executor::ddl::check_constraint::uses_column(&constraint.read(), from)
+            }) {
+                let constraint = constraint.read();
+                let error = tidb_executor::ddl::check_constraint::column_dependency_error(
+                    constraint.name.original(),
+                    from,
+                );
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    error.code,
+                    error.message,
+                )));
+            }
+            let new_name = to.go_to_lower();
             if new_name != wanted
                 && stored
                     .columns
@@ -3327,6 +6949,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let modified = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| candidate.read().name.lowercase() == to.go_to_lower())
+                    .expect("the renamed column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info.clone_like_go(), vec![modified], false),
+                ));
+            }
         }
         DdlStatement::ModifyColumn {
             schema,
@@ -3342,7 +6977,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let wanted = rename_from
                 .as_deref()
                 .unwrap_or(column.name.as_str())
-                .to_lowercase();
+                .go_to_lower();
             let Some(position) = stored
                 .columns
                 .iter_deref()
@@ -3357,7 +6992,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
-            let new_name = column.name.to_lowercase();
+            let new_name = column.name.go_to_lower();
             if new_name != wanted
                 && stored
                     .columns
@@ -3378,6 +7013,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 &stored.charset,
                 &stored.collate,
                 &context.0,
+                None,
             )
             .map_err(DdlPlanError::Admission)?;
             // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
@@ -3432,7 +7068,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // the column as its own anchor, which Go answers as
             // ErrColumnNotExists on THAT column rather than as a no-op.
             if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
-                if anchor.to_lowercase() == wanted {
+                if anchor.go_to_lower() == wanted {
                     return Err(DdlPlanError::UnknownColumn {
                         column: rename_from
                             .as_deref()
@@ -3458,6 +7094,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let modified = info
+                    .columns
+                    .iter_deref()
+                    .find(|candidate| candidate.read().name.lowercase() == new_name)
+                    .expect("the modified column is present")
+                    .read()
+                    .clone_like_go();
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::modify_columns(info.clone_like_go(), vec![modified], false),
+                ));
+            }
         }
         DdlStatement::MultiSchemaChange {
             schema,
@@ -3468,39 +7117,69 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             let mut applied = 0usize;
             let mut satisfied = Vec::new();
-            for action in actions {
+            let mut enforced_check = None;
+            // Go `mergeAddIndex` gathers multiple ADD INDEX sub-jobs into one
+            // merged sub-job at the end, preserving every other sub-job's
+            // relative order. Execute the equivalent order here so later
+            // metadata, backfill snapshots, and notifier sequence IDs agree.
+            let add_index_count = actions
+                .iter()
+                .filter(|action| matches!(action, AlterColumnAction::AddIndex { .. }))
+                .count();
+            let mut action_order: Vec<_> = (0..actions.len()).collect();
+            if add_index_count > 1 {
+                action_order.sort_by_key(|offset| {
+                    usize::from(matches!(
+                        actions[*offset],
+                        AlterColumnAction::AddIndex { .. }
+                    ))
+                });
+            }
+            let mut merged_added_indexes = Vec::new();
+            for (sequence, action_offset) in action_order.into_iter().enumerate() {
+                let action = &actions[action_offset];
                 let outcome = match action {
                     AlterColumnAction::Add {
                         if_not_exists,
                         column,
                         position,
                         context,
-                    } => apply_add_column(
-                        &mut info,
-                        schema,
-                        table,
-                        column,
-                        position,
-                        *if_not_exists,
-                        &context.0,
-                    )?,
+                    } => {
+                        let outcome = apply_add_column(
+                            &mut info,
+                            schema,
+                            table,
+                            column,
+                            position,
+                            *if_not_exists,
+                            &context.0,
+                        )?;
+                        if matches!(outcome, AlterColumnOutcome::Applied)
+                            && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
+                        {
+                            let added = tidb_model::column::find_column_info(
+                                &info.columns,
+                                column.name.as_str(),
+                            )
+                            .expect("the bundle-added column is present")
+                            .read()
+                            .clone_like_go();
+                            schema_change_events.push((
+                                sequence as i64,
+                                SchemaChangeEvent::add_columns(info.clone_like_go(), vec![added]),
+                            ));
+                        }
+                        outcome
+                    }
                     AlterColumnAction::Drop { if_exists, column } => {
                         apply_drop_column(&mut info, schema, table, column, *if_exists)?
                     }
                     AlterColumnAction::AddIndex {
                         if_not_exists,
                         index,
+                        auto_pre_split: action_auto_pre_split,
                     } => {
-                        // One backfill per catalog transaction: the write set
-                        // carries a single entry walk, so a second index
-                        // action must arrive as its own statement.
-                        if backfill.is_some() {
-                            return Err(DdlPlanError::Unsupported(
-                                "one ALTER TABLE bundle carries at most one index change; \
-                                 run the second as its own statement"
-                                    .to_owned(),
-                            ));
-                        }
+                        auto_pre_split |= *action_auto_pre_split;
                         if let Some(existing) = find_index(&info, index.name.original()) {
                             let existing = existing.read();
                             if *if_not_exists {
@@ -3541,23 +7220,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         added.table = info.name.clone();
                         let added = GoShared::new(added);
                         info.indices.push_handle_go(Some(added.clone()));
-                        backfill = Some(IndexBackfill {
+                        backfill.push(IndexBackfill {
                             table: backfill_table,
-                            index: added,
+                            index: added.clone(),
                             use_new_collation,
                             add: true,
                         });
+                        if add_index_count > 1 {
+                            merged_added_indexes.push(added.read().clone_like_go());
+                        } else if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                            schema_change_events.push((
+                                sequence as i64,
+                                SchemaChangeEvent::add_indexes(
+                                    info.clone_like_go(),
+                                    vec![added.read().clone_like_go()],
+                                    false,
+                                ),
+                            ));
+                        }
                         applied += 1;
                         continue;
                     }
                     AlterColumnAction::DropIndex { if_exists, name } => {
-                        if backfill.is_some() {
-                            return Err(DdlPlanError::Unsupported(
-                                "one ALTER TABLE bundle carries at most one index change; \
-                                 run the second as its own statement"
-                                    .to_owned(),
-                            ));
-                        }
                         let Some(dropped) = find_index(&info, name) else {
                             if *if_exists {
                                 satisfied.push(format!(
@@ -3582,12 +7266,57 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         }) {
                             info.indices.delete_go(offset, offset + 1);
                         }
-                        backfill = Some(IndexBackfill {
+                        backfill.push(IndexBackfill {
                             table: backfill_table,
                             index: GoShared::new(dropped),
                             use_new_collation,
                             add: false,
                         });
+                        applied += 1;
+                        continue;
+                    }
+                    AlterColumnAction::AddCheck {
+                        definition,
+                        context,
+                    } => {
+                        let prior_len = info.constraints.len();
+                        crate::table_info_build::append_check_constraints(
+                            &mut info,
+                            &[tidb_executor::ddl::check_constraint::CheckConstraintInput {
+                                definition: (**definition).clone(),
+                                in_column: None,
+                            }],
+                            &context.0,
+                        )
+                        .map_err(DdlPlanError::Admission)?;
+                        let added = info
+                            .constraints
+                            .iter_deref()
+                            .nth(prior_len)
+                            .expect("one grouped ADD CHECK appends one constraint")
+                            .read()
+                            .clone();
+                        let duplicate_in_schema = catalog
+                            .databases
+                            .iter()
+                            .find(|database| database.info.id == db_id)
+                            .is_some_and(|database| {
+                                database.tables.iter().any(|candidate| {
+                                    candidate.constraints.iter_deref().any(|constraint| {
+                                        constraint.read().name.lowercase() == added.name.lowercase()
+                                    })
+                                })
+                            });
+                        if duplicate_in_schema {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                                tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                                format!("Duplicate check constraint name '{}'.", added.name),
+                            )));
+                        }
+                        if added.enforced && enforced_check.is_none() {
+                            enforced_check =
+                                Some((added.name.original().to_owned(), context.clone()));
+                        }
                         applied += 1;
                         continue;
                     }
@@ -3597,8 +7326,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     AlterColumnOutcome::AlreadySatisfied(detail) => satisfied.push(detail),
                 }
             }
+            if !merged_added_indexes.is_empty()
+                && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
+            {
+                let sequence = actions.len() - add_index_count;
+                schema_change_events.push((
+                    sequence as i64,
+                    SchemaChangeEvent::add_indexes(
+                        info.clone_like_go(),
+                        merged_added_indexes,
+                        false,
+                    ),
+                ));
+            }
             if applied == 0 {
                 return Ok(already(satisfied.join("; ")));
+            }
+            if let Some((constraint_name, context)) = enforced_check {
+                check_constraint_validation = Some(CheckConstraintValidation {
+                    table: Box::new(info.clone_like_go()),
+                    constraint_name,
+                    context,
+                });
             }
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -3630,7 +7379,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let partition_count = stored.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
-            let ids = allocate(snapshot, &mut writes, 1 + partition_count)?;
+            let ids = global_ids.allocate(1 + partition_count)?;
             let new_table_id = ids[0];
             let mut info = stored.clone_like_go();
             info.id = new_table_id;
@@ -3683,15 +7432,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let policies = load_policies(snapshot)?;
                 placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
                     .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                            "building placement rules: {error}"
-                        )))
+                        DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!("building placement rules: {error}"),
+                        ))
                     })?;
             }
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = new_table_id;
             diff.old_table_id = old_table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::truncate_table(info, stored.clone_like_go()),
+                ));
+            }
         }
         DdlStatement::DropTable {
             schema,
@@ -3737,6 +7493,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_DROP_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                schema_change_events
+                    .push((-1, SchemaChangeEvent::drop_table(stored.clone_like_go())));
+            }
         }
         DdlStatement::RenameTable {
             from_schema,
@@ -3766,7 +7526,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             if_not_exists,
             index,
+            auto_pre_split: requested_auto_pre_split,
         } => {
+            auto_pre_split = *requested_auto_pre_split;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             if let Some(existing) = find_index(stored, index.name.original()) {
                 let existing = existing.read();
@@ -3804,6 +7566,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             info.max_index_id += 1;
             added.id = info.max_index_id;
             added.table = info.name.clone();
+            set_global_index_version(&info, &mut added);
             let added = GoShared::new(added);
             info.indices.push_handle_go(Some(added.clone()));
             info.update_ts = start_ts;
@@ -3814,15 +7577,25 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
-                index: added,
+                index: added.clone(),
                 use_new_collation,
                 add: true,
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                schema_change_events.push((
+                    -1,
+                    SchemaChangeEvent::add_indexes(
+                        info.clone_like_go(),
+                        vec![added.read().clone_like_go()],
+                        false,
+                    ),
+                ));
+            }
         }
         DdlStatement::ModifyTableComment {
             schema,
@@ -3872,7 +7645,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     if *invisible { "invisible" } else { "visible" }
                 )));
             }
-            let wanted = index.to_lowercase();
+            let wanted = index.go_to_lower();
             let mut info = stored.clone_like_go();
             // Go `setIndexVisibility` walks EVERY index and sets each one
             // whose name matches, rather than stopping at the first.
@@ -3940,7 +7713,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // the same rows, and a stale entry under a REUSED id — which a
             // restored or rebuilt table can produce — reads as a row that is
             // not there.
-            backfill = Some(IndexBackfill {
+            backfill.push(IndexBackfill {
                 table: Box::new(stored.clone_like_go()),
                 index: GoShared::new(dropped),
                 use_new_collation,
@@ -4140,8 +7913,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     "index `{from}` on `{schema}`.`{table}` already has that name"
                 )));
             }
-            let from_lower = from.to_lowercase();
-            let to_lower = to.to_lowercase();
+            let from_lower = from.go_to_lower();
+            let to_lower = to.go_to_lower();
             if from_lower != to_lower {
                 if let Some(existing) = find_index(stored, to) {
                     return Err(DdlPlanError::DuplicateKeyName(
@@ -4186,7 +7959,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             // Go resolves the target column before it looks at the new
             // default at all, and a non-public one reads as absent.
-            let wanted = column.to_lowercase();
+            let wanted = column.go_to_lower();
             let Some(target) = info.columns.iter_deref().find(|candidate| {
                 let candidate = candidate.read();
                 candidate.name.lowercase() == wanted
@@ -4321,6 +8094,23 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         }
     }
 
+    // Go `assignGIDsForJobs` consumes every schema-object and partition ID
+    // first, then assigns `Job.ID` from the final ID in the one
+    // `GenGlobalIDs` batch. The notifier uses that job ID as its ordered
+    // primary-key prefix.
+    let ddl_job_id = global_ids.allocate(1)?[0];
+    let mdl_info_update = None;
+    if let Some(global_id_mutation) = global_ids.mutation()? {
+        writes.push(global_id_mutation);
+    }
+    append_schema_change_mutations(
+        snapshot,
+        &catalog,
+        ddl_job_id,
+        &schema_change_events,
+        &mut writes,
+    )?;
+
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
     // concurrent DDL collides with.
@@ -4336,13 +8126,20 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     )?);
 
     Ok(DdlPlan::Write(Box::new(DdlWrite {
+        ddl_job_id,
         mutations: writes,
         schema_version,
         diff,
         created_id,
         backfill,
+        auto_pre_split,
+        exchange_partition_validation,
+        check_constraint_validation,
+        mdl_info_update,
+        exchange_partition_label_swap,
         warning,
         placement_bundles,
+        placement_rollback_bundles,
     })))
 }
 
@@ -4533,7 +8330,7 @@ fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result
 /// Go `isColumnWithIndex`: whether any index names this column, which is what
 /// makes a collation change require rewriting the stored entries.
 fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
-    let wanted = name.to_lowercase();
+    let wanted = name.go_to_lower();
     table.indices.iter_deref().any(|index| {
         index
             .read()
@@ -4597,12 +8394,12 @@ fn plan_rename_tables(
     let mut changed = BTreeMap::new();
     let mut results = Vec::with_capacity(pairs.len());
     for pair in pairs {
-        let from_schema = pair.from_schema.to_lowercase();
-        let to_schema = pair.to_schema.to_lowercase();
+        let from_schema = pair.from_schema.go_to_lower();
+        let to_schema = pair.to_schema.go_to_lower();
         if !database_ids.contains_key(&from_schema) {
             return Err(DdlPlanError::UnknownDatabase(pair.from_schema.clone()));
         }
-        let from_key = table_name_key(&from_schema, &pair.from_table.to_lowercase());
+        let from_key = table_name_key(&from_schema, &pair.from_table.go_to_lower());
         let Some(state) = namespace.get(&from_key) else {
             return Err(DdlPlanError::TableNotExists {
                 schema: pair.from_schema.clone(),
@@ -4612,7 +8409,7 @@ fn plan_rename_tables(
         let Some(&new_schema_id) = database_ids.get(&to_schema) else {
             return Err(DdlPlanError::UnknownDatabase(pair.to_schema.clone()));
         };
-        let to_key = table_name_key(&to_schema, &pair.to_table.to_lowercase());
+        let to_key = table_name_key(&to_schema, &pair.to_table.go_to_lower());
         if namespace.contains_key(&to_key) {
             return Err(DdlPlanError::TableExists {
                 schema: pair.to_schema.clone(),
@@ -4723,42 +8520,94 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
         .find(|index| index.read().name.original().eq_ignore_ascii_case(name))
 }
 
-/// Go `GenGlobalIDs(n)`: `Inc(NextGlobalID, n)` answers the new maximum, and
-/// the allocated IDs are the `n` values ending there.
-///
-/// The key holds the max USED id, never a next-free one, so the increment IS
-/// the allocation. The new maximum is written from the value this snapshot
-/// read, which is what makes a competing allocation a write conflict rather
-/// than a duplicate ID.
-fn allocate<S: MetaSnapshot>(
+fn append_schema_change_mutations<S: MetaSnapshot>(
     snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    ddl_job_id: i64,
+    events: &[(i64, SchemaChangeEvent)],
     writes: &mut Vec<OptimisticMutation>,
-    count: i64,
-) -> Result<Vec<i64>, DdlPlanError> {
-    let current = match snapshot.get(&key::next_global_id_kv_key())? {
-        Some(stored) => value::parse_int_value(&stored)
-            .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
-        // Go's `Inc` treats a missing key as zero.
-        None => 0,
+) -> Result<(), DdlPlanError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let (_, table) = catalog
+        .find_table("mysql", NOTIFIER_TABLE_NAME)
+        .ok_or_else(|| {
+            DdlPlanError::Encode(format!("mysql.{} does not exist", NOTIFIER_TABLE_NAME))
+        })?;
+    let column_id = |name: &str| {
+        table
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .map(|column| column.read().id)
+            .ok_or_else(|| {
+                DdlPlanError::Encode(format!(
+                    "mysql.{} has no column `{name}`",
+                    NOTIFIER_TABLE_NAME
+                ))
+            })
     };
-    let new_max = current
-        .checked_add(count)
-        .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-    if new_max > MAX_USER_GLOBAL_ID {
-        return Err(DdlPlanError::GlobalIdExhausted { wanted: new_max });
+    let ddl_job_id_column = column_id("ddl_job_id")?;
+    let sub_job_id_column = column_id("sub_job_id")?;
+    let schema_change_column = column_id("schema_change")?;
+    let processed_by_column = column_id("processed_by_flag")?;
+    let row_id_key = key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, table.id);
+    let mut row_id = snapshot
+        .get(&row_id_key)?
+        .map(|stored| value::parse_int_value(&stored))
+        .transpose()
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .unwrap_or(0);
+    for (sub_job_id, event) in events {
+        row_id = row_id
+            .checked_add(1)
+            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        let mut values = crate::system_row_write::RowValues::new();
+        values.insert(ddl_job_id_column, Datum::Int(ddl_job_id));
+        values.insert(sub_job_id_column, Datum::Int(*sub_job_id));
+        values.insert(
+            schema_change_column,
+            Datum::Bytes(
+                serde_json::to_vec(event)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            ),
+        );
+        values.insert(processed_by_column, Datum::UInt(0));
+        writes.extend(
+            crate::system_row_write::insert_row(table, row_id, &values)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        );
     }
     writes.push(OptimisticMutation::meta_put(
-        key::next_global_id_kv_key(),
-        value::encode_int_value(new_max),
+        row_id_key,
+        value::encode_int_value(row_id),
     )?);
-    Ok(((current + 1)..=new_max).collect())
+    Ok(())
+}
+
+fn mdl_info_update(catalog: &ClusterCatalog, table_id: i64) -> Result<MdlInfoUpdate, DdlPlanError> {
+    let (_, table) = catalog
+        .find_table("mysql", "tidb_mdl_info")
+        .ok_or_else(|| DdlPlanError::Encode("mysql.tidb_mdl_info does not exist".to_owned()))?;
+    Ok(MdlInfoUpdate {
+        table: Box::new(table.clone_like_go()),
+        table_ids: vec![table_id],
+    })
+}
+
+fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo {
+    PartitionInfo {
+        definitions: definitions.into(),
+        ..PartitionInfo::default()
+    }
 }
 
 fn find_database<'catalog>(
     catalog: &'catalog ClusterCatalog,
     name: &str,
 ) -> Option<&'catalog crate::cluster_catalog::LoadedDatabase> {
-    let name = name.to_lowercase();
+    let name = name.go_to_lower();
     catalog
         .databases
         .iter()
@@ -4769,9 +8618,1961 @@ fn find_table<'database>(
     database: &'database crate::cluster_catalog::LoadedDatabase,
     name: &str,
 ) -> Option<&'database TableInfo> {
-    let name = name.to_lowercase();
+    let name = name.go_to_lower();
     database
         .tables
         .iter()
         .find(|table| table.name.lowercase() == name)
+}
+
+/// Go `checkMaterializedViewEnabled` + the catalog-free head of
+/// `CreateMaterializedView` (materialized_view.go master `94a9cbedab`):
+/// the enable flag, the no-database refusal and the name resolution. The
+/// catalog checks run at planning, where Go interleaves them after the
+/// database lookup.
+fn lower_create_materialized_view(
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    if !context.enable_mview() {
+        return Err(DdlAdmissionError::unsupported(
+            "Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it",
+        ));
+    }
+    let (schema, table) = split_name(&create.view_name, default_schema, "materialized view")?;
+    Ok(DdlStatement::CreateMaterializedView {
+        stmt: Box::new(create.clone()),
+        schema,
+        table,
+        context: DdlStatementContext(context.clone()),
+    })
+}
+
+/// Go `checkMaterializedViewEnabled` + the catalog-free head of
+/// `CreateMaterializedViewLog`.
+fn lower_create_materialized_view_log(
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    if !context.enable_mview() {
+        return Err(DdlAdmissionError::unsupported(
+            "Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it",
+        ));
+    }
+    let (schema, table) = split_name(&create.table, default_schema, "materialized view log")?;
+    Ok(DdlStatement::CreateMaterializedViewLog {
+        stmt: Box::new(create.clone()),
+        schema,
+        table,
+        context: DdlStatementContext(context.clone()),
+    })
+}
+
+/// Go `CreateMaterializedView`'s catalog checks, in source order
+/// (`materialized_view.go` master `94a9cbedab`), followed by the documented
+/// job-execution seam refusal: this tier has no DDL worker yet, and a valid
+/// materialized-view create must not be pretended into success.
+fn plan_create_materialized_view(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    schema: &str,
+    table: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<MviewCreateJobPrefix, DdlPlanError> {
+    use tidb_ast::QueryStmt;
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+
+    // Go `validateCommentLength(..., ErrTooLongTableComment)`: the byte
+    // length cap is 1024.
+    if let Some(comment) = &create.comment {
+        if comment.len() > 1024 {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                8020,
+                format!("Comment for table '{table}' is too long (max = 1024)"),
+            )));
+        }
+    }
+
+    // Go: `sel, ok := s.Select.(*ast.SelectStmt)`.
+    let sel = match &*create.query {
+        QueryStmt::Select(sel) => sel,
+        QueryStmt::SetOpr(_) => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports SELECT statement",
+            )));
+        }
+    };
+
+    // Go `extractSingleTableNameFromSelect`: exactly one table source.
+    let Some(join) = &sel.from else {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports a single base table",
+        )));
+    };
+    if join.right.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports a single base table",
+        )));
+    }
+    let base_ref = match &join.left {
+        tidb_ast::JoinNode::Table(table_ref) => table_ref,
+        _ => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports a single base table",
+            )));
+        }
+    };
+    // Go fills the base schema from the view schema, then refuses a base in
+    // another schema.
+    let (base_schema, base_name) = match base_ref.name.as_slice() {
+        [table] => (schema.to_owned(), table.clone()),
+        [schema_part, table] => (schema_part.clone(), table.clone()),
+        _ => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports a single base table",
+            )));
+        }
+    };
+    if base_schema != schema {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports base table in the same schema",
+        )));
+    }
+
+    let Some(base) = find_table(database, &base_name) else {
+        return Err(DdlPlanError::TableNotExists {
+            schema: base_schema.clone(),
+            table: base_name.clone(),
+        });
+    };
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongObject,
+            format!("'{schema}.{base_name}' is not BASE TABLE"),
+        )));
+    }
+    if base.partition.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW on partition table",
+        )));
+    }
+
+    // Go derives the `$mlog$` physical name and requires an existing log for
+    // the base table, whose metadata points back at the base.
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    let Some(mlog) = find_table(database, mlog_name.original()) else {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "materialized view log does not exist for base table {}.{}",
+                base_schema, base_name
+            ),
+        )));
+    };
+    let mlog_ok = mlog
+        .materialized_view_log
+        .as_ref()
+        .map(|log| log.read().base_table_id == base.id)
+        .unwrap_or(false);
+    if !mlog_ok {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "table {}.{} is not a materialized view log for base table {}.{}",
+                schema,
+                mlog_name.original(),
+                base_schema,
+                base_name
+            ),
+        )));
+    }
+
+    // Go `validateCreateMaterializedViewQuery`: the single-table contract,
+    // the SELECT-clause refusals, the GROUP BY requirements, the clause
+    // refusals and the per-column analysis, in source order.
+    let mlog_columns: Vec<tidb_ast::CiString> = mlog
+        .materialized_view_log
+        .as_ref()
+        .map(|log| log.read().columns.iter().cloned().collect())
+        .unwrap_or_default();
+    let from_alias = base_ref.alias.as_deref();
+    let analysis = plan_validate_materialized_view_query(
+        sel,
+        &create.query,
+        schema,
+        &base_name,
+        base,
+        from_alias,
+        &mlog_columns,
+    )?;
+
+    // Go `normalizeMVDefinitionHintDBNames(s.Select, schemaName)`: every
+    // optimizer-hint table reference without a schema qualifier is pinned to
+    // the view's schema, so a later refresh from another default database
+    // still resolves the hinted tables. Go mutates the statement in place;
+    // this plan borrows it, so the normalization is applied to the clone the
+    // canonical restore reads, which is its only consumer.
+    let mut normalized_select = (**sel).clone();
+    normalize_mv_definition_hint_db_names(&mut normalized_select, schema);
+
+    // Go `restoreNodeToCanonicalSQL(s.Select)` (DefaultRestoreFlags |
+    // RestoreStringWithoutCharset): the persisted `SQLContent`.
+    let normalized_query = tidb_ast::QueryStmt::Select(Box::new(normalized_select));
+    let select_sql = tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(normalized_query))
+        .restore_with_flags(
+            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::STRING_WITHOUT_CHARSET,
+        );
+
+    // Go `buildMViewRefreshMeta`: FAST is the only grammar-level method and
+    // the schedule expressions restore through the batch-9 validator.
+    let (refresh_method, refresh_start_with, refresh_next) =
+        build_mview_refresh_meta(create.refresh.as_ref())?;
+
+    // Go `parseMViewAttributes`: the ATTRIBUTES key/value alert settings.
+    let (alert_warning_sec, alert_overdue_sec, alert_refresh_failed) =
+        parse_mview_attributes(create.attributes.as_deref())?;
+
+    Ok(MviewCreateJobPrefix {
+        analysis,
+        select_sql,
+        refresh_method,
+        refresh_start_with,
+        refresh_next,
+        alert_warning_sec,
+        alert_overdue_sec,
+        alert_refresh_failed,
+        time_zone: get_time_zone(context),
+        base_table_id: base.id,
+        mlog_table_id: mlog.id,
+    })
+}
+
+/// Everything Go's `CreateMaterializedView` builds on the way to its DDL job
+/// that this planning tier can compute. Go's remaining submission body
+/// derives the view column types by executing the definition —
+/// `ExecRestrictedSQL("SELECT * FROM (<selectSQL>) AS tidb_mv_query LIMIT 0")`
+/// — and builds the view TableInfo, job envelope and
+/// `CreateMaterializedViewArgs` from the derived result fields, which needs
+/// the SQL-execution seam this tier does not have.
+#[derive(Debug)]
+pub(crate) struct MviewCreateJobPrefix {
+    /// Go `mviewQueryAnalysis`: the per-GROUP-BY select indices, NOT-NULL
+    /// flags and MIN/MAX marker the job build consumes.
+    #[allow(dead_code)]
+    pub(crate) analysis: MviewQueryAnalysis,
+    /// Go `SQLContent`: the hint-normalized canonical definition.
+    #[allow(dead_code)]
+    pub(crate) select_sql: String,
+    /// Go `RefreshMethod` ("FAST").
+    #[allow(dead_code)]
+    pub(crate) refresh_method: String,
+    /// Go `RefreshStartWith`.
+    #[allow(dead_code)]
+    pub(crate) refresh_start_with: String,
+    /// Go `RefreshNext`.
+    #[allow(dead_code)]
+    pub(crate) refresh_next: String,
+    /// Go `AlertWarningSec`.
+    #[allow(dead_code)]
+    pub(crate) alert_warning_sec: i64,
+    /// Go `AlertOverdueSec`.
+    #[allow(dead_code)]
+    pub(crate) alert_overdue_sec: i64,
+    /// Go `AlertRefreshFailed`.
+    #[allow(dead_code)]
+    pub(crate) alert_refresh_failed: bool,
+    /// Go `DefinitionTimeZone` / `RefreshScheduleTimeZone`.
+    #[allow(dead_code)]
+    pub(crate) time_zone: tidb_model::TimeZoneLocation,
+    /// The single base table's ID (`BaseTableIDs[0]`).
+    #[allow(dead_code)]
+    pub(crate) base_table_id: i64,
+    /// The derived `$mlog$` table's ID (`MLogTableIDs[0]`).
+    #[allow(dead_code)]
+    pub(crate) mlog_table_id: i64,
+}
+
+/// Go `mviewGroupByInfo` (`materialized_view.go` master `94a9cbedab`).
+#[derive(Clone, Debug)]
+pub(crate) struct MviewGroupByInfo {
+    /// The SELECT-list index this GROUP BY column appears at.
+    #[allow(dead_code)]
+    pub(crate) select_idx: usize,
+    /// Whether the base column is NOT NULL.
+    #[allow(dead_code)]
+    pub(crate) not_null: bool,
+}
+
+/// Go `mviewQueryAnalysis`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MviewQueryAnalysis {
+    /// One entry per GROUP BY column, in GROUP BY order.
+    #[allow(dead_code)]
+    pub(crate) group_by_infos: Vec<MviewGroupByInfo>,
+    /// The resolved GROUP BY column names (lowercase).
+    #[allow(dead_code)]
+    pub(crate) group_by_cols: Vec<String>,
+    /// Whether the SELECT list aggregates with MIN or MAX.
+    #[allow(dead_code)]
+    pub(crate) has_min_or_max: bool,
+}
+
+/// Go `normalizeMVDefinitionHintDBNames` over a cloned SELECT: every
+/// optimizer-hint table reference without a schema qualifier is filled with
+/// the view's default schema. Hints on every nested SELECT share the walk.
+fn normalize_mv_definition_hint_db_names(select: &mut tidb_ast::SelectStmt, default_schema: &str) {
+    if default_schema.is_empty() {
+        return;
+    }
+    struct Normalizer<'a> {
+        default_db: &'a str,
+    }
+    impl tidb_ast::Visitor for Normalizer<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                normalize_hints_in_select(select, self.default_db);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    fn normalize_hints_in_select(select: &mut tidb_ast::SelectStmt, default_db: &str) {
+        use tidb_ast::HintKind;
+        for hint in &mut select.hints {
+            match &mut hint.kind {
+                HintKind::Tables { tables, .. } => {
+                    for table in tables {
+                        if table.db_name.is_none() {
+                            table.db_name = Some(default_db.to_owned());
+                        }
+                    }
+                }
+                HintKind::Index { table, .. } => {
+                    if table.db_name.is_none() {
+                        table.db_name = Some(default_db.to_owned());
+                    }
+                }
+                HintKind::ReadFromStorage { groups, .. } => {
+                    for (_, tables) in groups {
+                        for table in tables {
+                            if table.db_name.is_none() {
+                                table.db_name = Some(default_db.to_owned());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    use tidb_ast::Visitable;
+    let mut normalizer = Normalizer {
+        default_db: default_schema,
+    };
+    select.accept(&mut normalizer);
+}
+
+/// Go `buildMViewRefreshMeta`: FAST with optional START WITH / NEXT schedule
+/// expressions validated through the batch-9 canonical builder (whose
+/// expression context is the standalone NoColumns scope, not the session).
+fn build_mview_refresh_meta(
+    refresh: Option<&tidb_ast::MViewRefreshClause>,
+) -> Result<(String, String, String), DdlPlanError> {
+    use tidb_executor::ddl::mview_schedule_expr::build_and_validate_m_view_schedule_expr;
+    let Some(refresh) = refresh else {
+        return Ok(("FAST".to_owned(), String::new(), String::new()));
+    };
+    // The grammar only accepts FAST (`MViewRefreshMethod::Fast`).
+    let method = "FAST".to_owned();
+    let mut start_with = String::new();
+    let mut next = String::new();
+    if let Some(expr) = &refresh.start_with {
+        start_with = build_and_validate_m_view_schedule_expr(expr, "REFRESH START WITH").map_err(
+            |error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    error.to_string(),
+                ))
+            },
+        )?;
+    }
+    if let Some(expr) = &refresh.next {
+        next = build_and_validate_m_view_schedule_expr(expr, "REFRESH NEXT").map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                error.to_string(),
+            ))
+        })?;
+    }
+    Ok((method, start_with, next))
+}
+
+/// Go `parseMViewAttributes`: the comma-separated `ATTRIBUTES` key/value
+/// alert settings, validated exactly as Go's parser does.
+fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPlanError> {
+    // Go `mviewAttrAlert*` key spellings.
+    const ATTR_ALERT_WARNING: &str = "mview_alert_warning";
+    const ATTR_ALERT_OVERDUE: &str = "mview_alert_overdue";
+    const ATTR_ALERT_REFRESH_FAILED: &str = "mview_alert_refresh_failed";
+    let Some(attrs) = attrs else {
+        return Ok((0, 0, false));
+    };
+    let attrs = attrs.trim();
+    if attrs.is_empty() {
+        return Ok((0, 0, false));
+    }
+    let mut alert_warning_sec = 0_i64;
+    let mut alert_overdue_sec = 0_i64;
+    let mut alert_refresh_failed = false;
+    let mut seen = std::collections::HashSet::new();
+    for raw_kv in attrs.split(',') {
+        let kv = raw_kv.trim();
+        if kv.is_empty() {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                "invalid ATTRIBUTES format: empty key-value pair",
+            )));
+        }
+        let Some(pos) = kv.find('=') else {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
+        };
+        if pos == 0 || pos >= kv.len() - 1 {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
+        }
+        let key = kv[..pos].trim().go_to_lower();
+        let value = kv[pos + 1..].trim();
+        if key.is_empty() || value.is_empty() {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
+        }
+        if !seen.insert(key.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("duplicate ATTRIBUTES key: {key}"),
+            )));
+        }
+        match key.as_str() {
+            ATTR_ALERT_WARNING | ATTR_ALERT_OVERDUE => {
+                let Ok(parsed) = value.parse::<i64>() else {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
+                        "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
+                    ))));
+                };
+                if parsed < 0 {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
+                        "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
+                    ))));
+                }
+                if key == ATTR_ALERT_WARNING {
+                    alert_warning_sec = parsed;
+                } else {
+                    alert_overdue_sec = parsed;
+                }
+            }
+            ATTR_ALERT_REFRESH_FAILED => match value.go_to_lower().as_str() {
+                "yes" => alert_refresh_failed = true,
+                "no" => alert_refresh_failed = false,
+                _ => {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!("invalid ATTRIBUTES value for {key}: {value} (must be yes or no)"),
+                    )))
+                }
+            },
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("unsupported ATTRIBUTES key: {key}"),
+                )))
+            }
+        }
+    }
+    if alert_warning_sec > 0 && alert_overdue_sec > 0 && alert_warning_sec > alert_overdue_sec {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
+            "invalid ATTRIBUTES: {ATTR_ALERT_WARNING} ({alert_warning_sec}) must be less than or equal to {ATTR_ALERT_OVERDUE} ({alert_overdue_sec})"
+        ))));
+    }
+    Ok((alert_warning_sec, alert_overdue_sec, alert_refresh_failed))
+}
+
+/// Go `ddlutil.GetTimeZone`: the session zone's IANA name when one resolves,
+/// otherwise the fixed offset in seconds east of UTC.
+fn get_time_zone(context: &tidb_executor::StmtContext) -> tidb_model::TimeZoneLocation {
+    use tidb_datatype::SessionTimeZone;
+    let zone = context.session_zone();
+    let (name, offset) = match &zone {
+        // Go: `time.LoadLocation(loc.String())` succeeds for a named zone, so
+        // the name is recorded with a zero offset.
+        SessionTimeZone::Named(_) => (zone.dag_zone().0, 0),
+        SessionTimeZone::Local => ("Local".to_owned(), 0),
+        SessionTimeZone::Fixed { name, offset_secs } => {
+            // Go's fixed zones are the anonymous `+HH:MM` ones (empty
+            // `String()`), which fall through to the offset branch; a named
+            // fixed zone such as UTC loads by name.
+            if name.is_empty() || name.starts_with(['+', '-']) {
+                (String::new(), i64::from(*offset_secs))
+            } else {
+                (name.clone(), 0)
+            }
+        }
+    };
+    tidb_model::TimeZoneLocation::new(name, offset)
+}
+
+/// Go's `resolveMViewColumnName` against the base column map: a schema
+/// qualifier must match the base schema, a table qualifier must match the
+/// base table name or the FROM alias, and the column must exist. Returns
+/// the resolved column.
+fn resolve_mview_column_name<'map>(
+    path: &[String],
+    base_table: &str,
+    from_alias: Option<&str>,
+    base_col_map: &'map std::collections::HashMap<String, GoShared<tidb_model::column::ColumnInfo>>,
+) -> Result<String, DdlPlanError> {
+    let unknown_column = || {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrBadField,
+            format!(
+                "Unknown column '{}' in '{}'",
+                path.last().map(String::as_str).unwrap_or(""),
+                base_table
+            ),
+        ))
+    };
+    let qualifier_matches = |qualifier: &str| {
+        qualifier == base_table.go_to_lower()
+            || from_alias
+                .map(|alias| qualifier == alias.go_to_lower())
+                .unwrap_or(false)
+    };
+    match path.len() {
+        1 => {}
+        2 => {
+            if !qualifier_matches(&path[0].go_to_lower()) {
+                return Err(unknown_column());
+            }
+        }
+        3 => {
+            if !qualifier_matches(&path[1].go_to_lower()) {
+                return Err(unknown_column());
+            }
+        }
+        _ => return Err(unknown_column()),
+    }
+    let name = path.last().expect("non-empty column path").go_to_lower();
+    if !base_col_map.contains_key(&name) {
+        return Err(unknown_column());
+    }
+    Ok(name)
+}
+
+/// Go's `isCountStarOrOne`: `count(1)` counts as the required count star.
+fn is_count_star_or_one(arg: &tidb_ast::Expr) -> bool {
+    matches!(arg, tidb_ast::Expr::Int(value) if value == "1")
+}
+
+/// Collects every `Expr::Column` path in the expression tree (Go's
+/// `collectColumnNamesInExpr`).
+fn collect_column_paths(expr: &tidb_ast::Expr, out: &mut Vec<Vec<String>>) {
+    match expr {
+        tidb_ast::Expr::Column(path) => out.push(path.clone()),
+        tidb_ast::Expr::Unary(_, inner) | tidb_ast::Expr::Paren(inner) => {
+            collect_column_paths(inner, out);
+        }
+        tidb_ast::Expr::Binary(_, left, right) => {
+            collect_column_paths(left, out);
+            collect_column_paths(right, out);
+        }
+        tidb_ast::Expr::Func { args, .. }
+        | tidb_ast::Expr::GenericFuncCall { args, .. }
+        | tidb_ast::Expr::Row(args)
+        | tidb_ast::Expr::Aggregate { args, .. }
+        | tidb_ast::Expr::GroupConcat { args, .. } => {
+            for arg in args {
+                collect_column_paths(arg, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Go's `expression.CheckNonDeterministic` over the built expression tree:
+/// constants and columns are deterministic; a scalar function is
+/// non-deterministic when its name is unfoldable (Go's `unFoldableFunctions`
+/// set: rand, sleep, uuid, sysdate, ...) or when any argument is.
+fn expr_is_deterministic(expr: &tidb_expr::expression::Expression) -> bool {
+    use tidb_expr::expression::Expression;
+    match expr {
+        Expression::Column(_) | Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+        Expression::ScalarFunction(function) => {
+            if tidb_expr::constant_fold::is_unfoldable(
+                function.func_name.lowercase().to_string().as_str(),
+            ) {
+                return false;
+            }
+            function.args.iter().all(expr_is_deterministic)
+        }
+        _ => true,
+    }
+}
+
+/// The base table's columns as a `ColumnResolver` for the WHERE build: the
+/// path resolves against the base table name (or the FROM alias) and the
+/// base column set, exactly as Go's `buildMViewSingleTableExpr` scope does.
+struct BaseTableResolver<'a> {
+    base_schema: &'a str,
+    base_table: &'a str,
+    from_alias: Option<&'a str>,
+    columns: std::collections::HashMap<String, (usize, tidb_datatype::FieldType, i64)>,
+}
+
+impl<'a> BaseTableResolver<'a> {
+    fn new(
+        base_schema: &'a str,
+        base_table: &'a str,
+        from_alias: Option<&'a str>,
+        base: &'a TableInfo,
+    ) -> Self {
+        let mut columns = std::collections::HashMap::with_capacity(base.columns.len());
+        for (index, shared) in base.columns.iter_handles().into_iter().enumerate() {
+            let column = shared.expect("nil column in base table");
+            let column = column.read();
+            columns.insert(
+                column.name.lowercase().to_owned(),
+                (index, column.field_type.clone(), column.id),
+            );
+        }
+        Self {
+            base_schema,
+            base_table,
+            from_alias,
+            columns,
+        }
+    }
+
+    /// Go's `resolveMViewColumnName` qualifier rules: the path's schema and
+    /// table qualifiers (if present) must match the base schema, base table
+    /// or FROM alias.
+    fn resolve_path(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        let (qualifier, column) = match path.len() {
+            1 => (None, path.last()?),
+            2 => (Some(&path[0]), path.last()?),
+            3 => {
+                if !path[0].eq_ignore_ascii_case(self.base_schema) {
+                    return None;
+                }
+                (Some(&path[1]), path.last()?)
+            }
+            _ => return None,
+        };
+        if let Some(qualifier) = qualifier {
+            let qualifier = qualifier.go_to_lower();
+            let matches_table = qualifier == self.base_table.go_to_lower();
+            let matches_alias = self
+                .from_alias
+                .map(|alias| qualifier == alias.go_to_lower())
+                .unwrap_or(false);
+            if !matches_table && !matches_alias {
+                return None;
+            }
+        }
+        self.columns.get(column).cloned()
+    }
+}
+
+impl tidb_expr::rewriter::ColumnResolver for BaseTableResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        self.resolve_path(path)
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+}
+
+/// Go `validateCreateMaterializedViewQuery`: the single-table contract, the
+/// SELECT-clause refusals, the GROUP BY requirements, the clause refusals
+/// and the per-column analysis, in source order. The returned analysis is
+/// what Go's job build consumes (`mviewQueryAnalysis`).
+#[allow(clippy::too_many_arguments)]
+fn plan_validate_materialized_view_query(
+    sel: &tidb_ast::SelectStmt,
+    query: &tidb_ast::QueryStmt,
+    base_schema: &str,
+    base_table: &str,
+    base: &TableInfo,
+    from_alias: Option<&str>,
+    mlog_columns: &[tidb_ast::CiString],
+) -> Result<MviewQueryAnalysis, DdlPlanError> {
+    use tidb_datatype::FieldTypeFlags;
+    use tidb_model::column::ColumnInfo;
+
+    // Go `mviewutil.CheckMaterializedViewSelect`.
+    tidb_util::mviewutil::check_materialized_view_select(query).map_err(|error| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(8200, error.message()))
+    })?;
+
+    // Go: GROUP BY is required, WITH ROLLUP refuses.
+    if sel.group_by.is_empty() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW requires GROUP BY clause",
+        )));
+    }
+    if sel.rollup {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support GROUP BY WITH ROLLUP",
+        )));
+    }
+    // Go: HAVING, ORDER BY, LIMIT and DISTINCT refusals, in source order.
+    if sel.having.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support HAVING clause",
+        )));
+    }
+    if !sel.order_by.is_empty() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support ORDER BY clause",
+        )));
+    }
+    if sel.limit.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support LIMIT clause",
+        )));
+    }
+    if sel.distinct {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support SELECT DISTINCT",
+        )));
+    }
+
+    // Go: the base column map, keyed by the lowercase column name.
+    let mut base_col_map: std::collections::HashMap<String, GoShared<ColumnInfo>> =
+        std::collections::HashMap::with_capacity(base.columns.len());
+    for column in base.columns.iter_deref() {
+        base_col_map.insert(column.read().name.lowercase().to_string(), column.clone());
+    }
+
+    // Go: the mlog column set, keyed by the lowercase column name.
+    let mlog_col_set: std::collections::HashSet<String> = mlog_columns
+        .iter()
+        .map(|column| column.lowercase().to_owned())
+        .collect();
+
+    // Go's GROUP BY item loop: every item is a plain column reference;
+    // duplicates refuse; every referenced column is `used`.
+    let mut group_by_set: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(sel.group_by.len());
+    let mut group_by_cols: Vec<String> = Vec::with_capacity(sel.group_by.len());
+    let mut group_by_written: Vec<String> = Vec::with_capacity(sel.group_by.len());
+    let mut group_by_not_null: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::with_capacity(sel.group_by.len());
+    let mut used_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &sel.group_by {
+        let path = match &item.expr {
+            tidb_ast::Expr::Column(path) => path,
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "GROUP BY expression is not supported in CREATE MATERIALIZED VIEW",
+                )));
+            }
+        };
+        let col_name =
+            resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?.to_owned();
+        if !group_by_set.insert(col_name.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "duplicate GROUP BY column is not supported in CREATE MATERIALIZED VIEW",
+            )));
+        }
+        let base_column = base_col_map.get(&col_name).expect("resolved column");
+        group_by_cols.push(col_name.clone());
+        // Go records the written name for the SELECT-coverage error.
+        group_by_written.push(path.last().cloned().unwrap_or_default());
+        group_by_not_null.insert(
+            col_name.clone(),
+            base_column.read().get_flag() & u64::from(FieldTypeFlags::NOT_NULL) != 0,
+        );
+        used_cols.insert(col_name.clone());
+    }
+
+    // Go's WHERE analysis: the clause must build over the base columns and
+    // be deterministic; every referenced column is `used`.
+    if let Some(where_expr) = &sel.where_clause {
+        let resolver = BaseTableResolver::new(base_schema, base_table, from_alias, base);
+        let built = tidb_expr::simple_expr::build_simple_expr(
+            &resolver,
+            where_expr,
+            &tidb_expr::simple_expr::BuildOptions::default(),
+        )
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if !expr_is_deterministic(&built) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW WHERE clause must be deterministic",
+            )));
+        }
+        let mut where_paths: Vec<Vec<String>> = Vec::new();
+        for path in &where_paths {
+            let _ = path;
+        }
+        let mut collector_paths: Vec<Vec<String>> = Vec::new();
+        collect_column_paths(where_expr, &mut collector_paths);
+        for path in &collector_paths {
+            let col_name =
+                resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?.to_owned();
+            used_cols.insert(col_name);
+        }
+    }
+
+    // Go's SELECT field loop: bare columns must appear in GROUP BY (no
+    // duplicates), aggregates are whitelisted to count/sum/min/max with
+    // column arguments, and count(*)/count(1) is required.
+    let mut select_col_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut has_count_star_or_one = false;
+    let mut has_min_or_max = false;
+    let mut count_expr_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut nullable_sum_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (index, field) in sel.fields.fields().iter().enumerate() {
+        let expr = match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "CREATE MATERIALIZED VIEW does not support wildcard select field",
+                )));
+            }
+            tidb_ast::SelectField::Expr { expr, .. } => expr,
+        };
+        match expr {
+            tidb_ast::Expr::Column(path) => {
+                let col_name =
+                    resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                        .to_owned();
+                if !group_by_set.contains(&col_name) {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "non-aggregated column must appear in GROUP BY clause",
+                    )));
+                }
+                if select_col_idx.contains_key(&col_name) {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "duplicate GROUP BY column in SELECT list is not supported in CREATE MATERIALIZED VIEW",
+                    )));
+                }
+                select_col_idx.insert(col_name.clone(), index);
+                used_cols.insert(col_name);
+            }
+            tidb_ast::Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } => {
+                if *distinct {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function",
+                    )));
+                }
+                let lower_name = name.go_to_lower();
+                if !matches!(lower_name.as_str(), "count" | "sum" | "min" | "max") {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        format!(
+                            "unsupported aggregate function in CREATE MATERIALIZED VIEW: agg {name}"
+                        ),
+                    )));
+                }
+                if lower_name == "count" {
+                    if args.len() != 1 {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW",
+                        )));
+                    }
+                    if let tidb_ast::Expr::Column(path) = &args[0] {
+                        let col_name =
+                            resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                                .to_owned();
+                        count_expr_cols.insert(col_name.clone());
+                        used_cols.insert(col_name);
+                        continue;
+                    }
+                    if !is_count_star_or_one(&args[0]) {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "CREATE MATERIALIZED VIEW only supports count(*)/count(1)",
+                        )));
+                    }
+                    has_count_star_or_one = true;
+                } else {
+                    // sum / min / max
+                    if args.len() != 1 {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "aggregate function must have exactly one argument in CREATE MATERIALIZED VIEW",
+                        )));
+                    }
+                    let path = match &args[0] {
+                        tidb_ast::Expr::Column(path) => path,
+                        _ => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                "aggregate function only supports column argument in CREATE MATERIALIZED VIEW",
+                            )));
+                        }
+                    };
+                    let col_name =
+                        resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                            .to_owned();
+                    if lower_name == "sum" {
+                        let base_column = base_col_map.get(&col_name).expect("resolved column");
+                        let code = base_column.read().field_type.code();
+                        if matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Date
+                                | tidb_datatype::FieldTypeCode::Datetime
+                                | tidb_datatype::FieldTypeCode::Timestamp
+                                | tidb_datatype::FieldTypeCode::Duration
+                        ) {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                "CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column",
+                            )));
+                        }
+                        let not_null = base_column.read().get_flag()
+                            & u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                            != 0;
+                        if !not_null {
+                            nullable_sum_cols.insert(col_name.clone());
+                        }
+                    }
+                    if lower_name == "min" || lower_name == "max" {
+                        has_min_or_max = true;
+                    }
+                    used_cols.insert(col_name);
+                }
+            }
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "unsupported SELECT expression in CREATE MATERIALIZED VIEW",
+                )));
+            }
+        }
+    }
+
+    // Go: count(*)/count(1) is required.
+    if !has_count_star_or_one {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW must contain count(*)/count(1)",
+        )));
+    }
+
+    // Go: SUM on a nullable column requires a matching COUNT of the same
+    // column in the SELECT list.
+    for col_name in &nullable_sum_cols {
+        if !count_expr_cols.contains(col_name) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                format!(
+                    "CREATE MATERIALIZED VIEW SUM on nullable column {col_name} requires matching COUNT({col_name}) in SELECT list"
+                ),
+            )));
+        }
+    }
+
+    // Go's groupByInfos: every GROUP BY column must appear in the SELECT
+    // list (a plain 1105, matching Go's errors.Errorf, which quotes the
+    // written name).
+    let mut group_by_infos = Vec::with_capacity(sel.group_by.len());
+    for (index, col_name) in group_by_cols.iter().enumerate() {
+        let Some(&select_idx) = select_col_idx.get(col_name) else {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!(
+                    "GROUP BY column {} must appear in SELECT list",
+                    group_by_written[index]
+                ),
+            )));
+        };
+        group_by_infos.push(MviewGroupByInfo {
+            select_idx,
+            not_null: group_by_not_null[col_name],
+        });
+    }
+
+    // Go: MIN/MAX requires a visible public index whose leading columns
+    // cover all GROUP BY columns (batch 4's mviewutil helper).
+    if has_min_or_max
+        && tidb_util::mviewutil::find_visible_index_with_prefix_covering_columns(
+            Some(base),
+            &group_by_cols,
+        )
+        .is_none()
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns",
+        )));
+    }
+
+    // Go: every used column must be covered by the materialized view log's
+    // column list.
+    for col_name in &used_cols {
+        if !mlog_col_set.contains(col_name) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                format!("materialized view log does not contain column {col_name}"),
+            )));
+        }
+    }
+
+    Ok(MviewQueryAnalysis {
+        group_by_infos,
+        group_by_cols,
+        has_min_or_max,
+    })
+}
+
+/// Go `CreateMaterializedViewLog`'s catalog checks, in source order, and the
+/// same documented job seam.
+/// Go `CreateMaterializedViewLog`'s submission body (`materialized_view.go`
+/// master `94a9cbedab`): the catalog checks in source order, then
+/// `BuildMaterializedViewLogTableInfo`, then the job envelope with its typed
+/// `CreateMaterializedViewLogArgs`, ready for the shared
+/// `prepare_submit_batch` preflight.
+fn build_create_materialized_view_log_job(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    schema: &str,
+    table: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<(Job, JobArgsValue), DdlPlanError> {
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+    let Some(base) = find_table(database, table) else {
+        return Err(DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    // Go `isValidMaterializedViewLogBaseTable`: not a mem/sys schema, not a
+    // view, sequence, temporary table, or already an MV/log of one. The
+    // catalog this tier serves has no mem/sys schemas.
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+        || base.materialized_view.is_some()
+        || base.materialized_view_log.is_some()
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongObject,
+            format!("'{schema}.{table}' is not BASE TABLE"),
+        )));
+    }
+    if base.partition.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW LOG on partition table",
+        )));
+    }
+
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    if find_table(database, mlog_name.original()).is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTableExists,
+            format!("Table '{}.{}' already exists", schema, mlog_name.original()),
+        )));
+    }
+
+    // Go `BuildMaterializedViewLogTableInfo`.
+    let mlog_table_info = build_materialized_view_log_table_info(
+        database.info.charset.as_str(),
+        database.info.collate.as_str(),
+        base,
+        create,
+        schema,
+        context,
+    )?;
+
+    // Go: the job envelope. The table ID is assigned at submission by
+    // `assignGIDsForJobs`'s materialized-view-log arm (the args' TableInfo is
+    // mutated in place and `Job.TableID` follows it).
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = database.info.id;
+    job.schema_name = schema.go_to_lower().into();
+    job.table_name = mlog_table_info.name.lowercase().to_owned().into();
+    job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.query = context.ddl_query().into();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    job.sql_mode = context.ddl_sql_mode();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.go_to_lower().into(),
+            table: mlog_table_info.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.go_to_lower().into(),
+            table: base.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+    ]);
+    // Go `SessionVars: make(map[string]string)` then
+    // `job.AddSystemVars(TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))`.
+    // The statement context carries no system-variable snapshot, so the
+    // default scope (`""`) is what this tier records.
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
+    job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
+
+    let args =
+        <tidb_model::CreateMaterializedViewLogArgs as tidb_model::JobArgs>::into_job_args_value(
+            Some(GoShared::new(tidb_model::CreateMaterializedViewLogArgs {
+                table_info: GoField::new(Some(GoShared::new(mlog_table_info))),
+            })),
+        );
+    Ok((job, args))
+}
+
+/// Go `FieldTypeForMaterializedViewLogColumn`: the log copy of one base
+/// column drops the key, auto-increment and on-update flags, and normalizes
+/// a max-length BLOB back to the unspecified length.
+fn field_type_for_materialized_view_log_column(
+    base_col: &tidb_model::column::ColumnInfo,
+) -> FieldType {
+    let mut ft = base_col.field_type.clone();
+    ft.del_flags(
+        FieldTypeFlags::PRI_KEY
+            | FieldTypeFlags::UNIQUE_KEY
+            | FieldTypeFlags::MULTIPLE_KEY
+            | FieldTypeFlags::AUTO_INCREMENT
+            | FieldTypeFlags::ON_UPDATE_NOW,
+    );
+    normalize_materialized_view_log_blob_flen(&mut ft);
+    ft
+}
+
+/// Go `normalizeMaterializedViewLogBlobFlen`: `TypeBlob` at the 65535
+/// maximum is the unspecified TEXT declaration.
+fn normalize_materialized_view_log_blob_flen(ft: &mut FieldType) {
+    if ft.code() == FieldTypeCode::Blob && ft.flen() == BLOB_MAX_LENGTH {
+        ft.set_flen(tidb_datatype::UNSPECIFIED_LENGTH);
+    }
+}
+
+/// Go `CheckMaterializedViewLogColumnSupported`: a log cannot copy JSON or
+/// binary BLOB columns.
+fn check_materialized_view_log_column_supported(
+    operation: &str,
+    col: &tidb_model::column::ColumnInfo,
+) -> Result<(), DdlPlanError> {
+    if col.field_type.code() == FieldTypeCode::Json {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{operation} does not support JSON column {}",
+                col.name.original()
+            ),
+        )));
+    }
+    if col.field_type.code().is_type_blob()
+        && col.field_type.charset_name().eq_ignore_ascii_case("binary")
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{operation} does not support BLOB column {}",
+                col.name.original()
+            ),
+        )));
+    }
+    Ok(())
+}
+
+/// Go `blobMaxLength` (`pkg/ddl/executor.go`).
+const BLOB_MAX_LENGTH: i64 = 65535;
+
+/// Go `BuildMaterializedViewLogTableInfo` (`materialized_view.go` master
+/// `94a9cbedab`): the log table's columns (copies of the declared base
+/// columns plus the two physical `_MLOG$_*` columns), its purge schedule,
+/// and the `MaterializedViewLogInfo` metadata.
+#[allow(clippy::too_many_arguments)]
+fn build_materialized_view_log_table_info(
+    schema_charset: &str,
+    schema_collate: &str,
+    base: &TableInfo,
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<TableInfo, DdlPlanError> {
+    use tidb_executor::ddl::mview_schedule_expr::build_and_validate_m_view_schedule_expr;
+
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    // Go `checkTooLongTable`: the derived name is still an identifier.
+    if mlog_name.original().chars().count() > MAX_TABLE_NAME_LENGTH {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTooLongIdent,
+            format!("Identifier name '{}' is too long", mlog_name.original()),
+        )));
+    }
+
+    let col_map: std::collections::HashMap<String, GoShared<tidb_model::column::ColumnInfo>> = base
+        .columns
+        .iter_deref()
+        .map(|col| (col.read().name.lowercase().to_owned(), col.clone()))
+        .collect();
+    let mut seen_cols = std::collections::HashSet::with_capacity(create.columns.len());
+    let mut col_defs = Vec::with_capacity(create.columns.len() + 2);
+    for col in &create.columns {
+        let lower = col.go_to_lower();
+        if !seen_cols.insert(lower.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrDupFieldName,
+                format!("Duplicate column name '{col}'"),
+            )));
+        }
+        if lower == tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.go_to_lower()
+            || lower == tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.go_to_lower()
+        {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrDupFieldName,
+                format!("Duplicate column name '{col}'"),
+            )));
+        }
+        let Some(base_col) = col_map.get(&lower) else {
+            // Go quotes the base table name as written on the statement.
+            let written_table = create.table.last().map(String::as_str).unwrap_or_default();
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrBadField,
+                format!("Unknown column '{col}' in '{written_table}'"),
+            )));
+        };
+        let base_column = base_col.read();
+        check_materialized_view_log_column_supported("CREATE MATERIALIZED VIEW LOG", &base_column)?;
+        let field_type = field_type_for_materialized_view_log_column(&base_column);
+        col_defs.push((col.clone(), field_type));
+    }
+
+    // Go appends the two physical log columns: `_MLOG$_DML_TYPE` VARCHAR(1)
+    // and `_MLOG$_OLD_NEW` TINYINT(4), both NOT NULL. Their charsets are left
+    // empty on the field type so the table build fills them from the table
+    // default, exactly as Go's `setCharsetCollationFlenDecimal` does.
+    let mut columns = Vec::with_capacity(col_defs.len() + 2);
+    for (name, field_type) in &col_defs {
+        columns.push(tidb_ast::ColumnDef {
+            qualifier: Vec::new(),
+            name: name.clone(),
+            ty: synthesized_column_type(field_type),
+            options: Vec::new(),
+        });
+    }
+    let mut dml_type = FieldType::new(FieldTypeCode::Varchar);
+    dml_type.set_flen(1);
+    dml_type.set_flags(FieldTypeFlags::NOT_NULL);
+    columns.push(tidb_ast::ColumnDef {
+        qualifier: Vec::new(),
+        name: tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.to_owned(),
+        ty: synthesized_column_type(&dml_type),
+        options: vec![tidb_ast::ColumnOption::NotNull],
+    });
+    let mut old_new = FieldType::new(FieldTypeCode::Tiny);
+    old_new.set_flen(4);
+    old_new.set_flags(FieldTypeFlags::NOT_NULL);
+    columns.push(tidb_ast::ColumnDef {
+        qualifier: Vec::new(),
+        name: tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.to_owned(),
+        ty: synthesized_column_type(&old_new),
+        options: vec![tidb_ast::ColumnOption::NotNull],
+    });
+
+    // Go builds the log through the ordinary create-table build path
+    // (`BuildTableInfoWithStmt`) with the schema's charset and collation.
+    let create_table_stmt = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![schema.to_owned(), mlog_name.original().to_owned()],
+        like_table: None,
+        columns,
+        table_constraints: Vec::new(),
+        table_options: create.options.clone(),
+        partitioning: None,
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let mut mlog_table_info = build_table_info_with_context(
+        &create_table_stmt,
+        schema_charset,
+        schema_collate,
+        ClusteredIndexDefMode::On,
+        context,
+    )
+    .map_err(DdlPlanError::Admission)?;
+
+    // Go's `ColumnDef.Tp` IS the final field type: the build copies it
+    // verbatim. Re-stamp the computed log field types over the build's
+    // conversion so each copied column carries Go's exact
+    // `FieldTypeForMaterializedViewLogColumn` result.
+    for (index, (_, field_type)) in col_defs.iter().enumerate() {
+        if let Some(column) = mlog_table_info.columns.get(index) {
+            column.write().field_type = field_type.clone();
+        }
+    }
+
+    // Go: the purge schedule, validated through the batch-9 canonical
+    // schedule-expression builder.
+    let mut purge_method = String::new();
+    let mut purge_start_with = String::new();
+    let mut purge_next = String::new();
+    if let Some(purge) = &create.purge {
+        if purge.immediate {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG",
+            )));
+        }
+        purge_method = "DEFERRED".to_owned();
+        if let Some(expr) = &purge.start_with {
+            purge_start_with = build_and_validate_m_view_schedule_expr(expr, "PURGE START WITH")
+                .map_err(|error| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        error.to_string(),
+                    ))
+                })?;
+        }
+        let Some(next) = &purge.next else {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG",
+            )));
+        };
+        purge_next =
+            build_and_validate_m_view_schedule_expr(next, "PURGE NEXT").map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    error.to_string(),
+                ))
+            })?;
+    }
+
+    // Go `BuildMLogAccumulationAlertRows`.
+    let log_accumulation_alert_rows =
+        build_mlog_accumulation_alert_rows(create.accumulation_alert.as_ref())?;
+
+    // Go `ddlutil.GetTimeZone(ctx)`.
+    let purge_schedule_time_zone = get_time_zone(context);
+
+    mlog_table_info.materialized_view_log =
+        Some(GoShared::new(tidb_model::MaterializedViewLogInfo {
+            base_table_id: base.id,
+            columns: GoValueSlice::from(
+                create
+                    .columns
+                    .iter()
+                    .map(|column| tidb_ast::CiString::new(column.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            purge_method,
+            purge_start_with,
+            purge_next,
+            log_accumulation_alert_rows,
+            definition_sql_mode: u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+            purge_schedule_time_zone,
+        }));
+    Ok(mlog_table_info)
+}
+
+/// Go `mysql.MaxTableNameLength` (`checkTooLongTable`).
+const MAX_TABLE_NAME_LENGTH: usize = 64;
+
+/// Go `BuildMLogAccumulationAlertRows`: `None` when the statement wrote no
+/// `ALERT ROWS`; a negative value refuses.
+fn build_mlog_accumulation_alert_rows(
+    alert: Option<&tidb_ast::MLogAccumulationAlertClause>,
+) -> Result<Option<u64>, DdlPlanError> {
+    let Some(alert) = alert else {
+        return Ok(None);
+    };
+    if alert.rows < 0 {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "invalid ALERT ROWS value: {} (must be non-negative)",
+                alert.rows
+            ),
+        )));
+    }
+    Ok(Some(u64::try_from(alert.rows).expect("non-negative")))
+}
+
+/// A parser-shaped type rendering of one computed log field type, feeding
+/// the ordinary create-table build path. The build's conversion output is
+/// re-stamped afterwards, so this only has to resolve charset/collate and
+/// pass admission exactly like the equivalent Go `ast.ColumnDef{Tp}` would.
+fn synthesized_column_type(field_type: &FieldType) -> tidb_ast::ColumnType {
+    use FieldTypeCode as Code;
+    let binary_charset = field_type.charset_name().eq_ignore_ascii_case("binary");
+    let name = match field_type.code() {
+        Code::Tiny => "TINYINT",
+        Code::Short => "SMALLINT",
+        Code::Int24 => "MEDIUMINT",
+        Code::Long => "INT",
+        Code::LongLong => "BIGINT",
+        Code::Float => "FLOAT",
+        Code::Double => "DOUBLE",
+        Code::NewDecimal => "DECIMAL",
+        Code::Varchar if binary_charset => "VARBINARY",
+        Code::Varchar => "VARCHAR",
+        Code::String if binary_charset => "BINARY",
+        Code::String => "CHAR",
+        Code::TinyBlob if binary_charset => "TINYBLOB",
+        Code::TinyBlob => "TINYTEXT",
+        Code::Blob if binary_charset => "BLOB",
+        Code::Blob => "TEXT",
+        Code::MediumBlob if binary_charset => "MEDIUMBLOB",
+        Code::MediumBlob => "MEDIUMTEXT",
+        Code::LongBlob if binary_charset => "LONGBLOB",
+        Code::LongBlob => "LONGTEXT",
+        Code::Enum => "ENUM",
+        Code::Set => "SET",
+        Code::Bit => "BIT",
+        Code::Json => "JSON",
+        Code::Date => "DATE",
+        Code::Datetime => "DATETIME",
+        Code::Timestamp => "TIMESTAMP",
+        Code::Duration => "TIME",
+        Code::Year => "YEAR",
+        // The catalog this tier serves never stores these column codes
+        // (`Geometry`, `VectorFloat32`, `Null`, ... are refused at create),
+        // so the placeholder never survives the stamp.
+        _ => "VARCHAR",
+    };
+    let mut args = Vec::new();
+    match field_type.code() {
+        Code::NewDecimal => {
+            args.push(tidb_ast::ColumnTypeArg::text(field_type.flen().to_string()));
+            args.push(tidb_ast::ColumnTypeArg::text(
+                field_type.decimal().to_string(),
+            ));
+        }
+        Code::Datetime | Code::Timestamp | Code::Duration => {
+            if field_type.decimal() != tidb_datatype::UNSPECIFIED_FSP {
+                args.push(tidb_ast::ColumnTypeArg::text(
+                    field_type.decimal().to_string(),
+                ));
+            }
+        }
+        Code::Enum | Code::Set => {
+            for member in field_type.elems_snapshot() {
+                args.push(tidb_ast::ColumnTypeArg::text(member.to_utf8_lossy_go()));
+            }
+        }
+        _ => {
+            if field_type.flen() >= 0 {
+                args.push(tidb_ast::ColumnTypeArg::text(field_type.flen().to_string()));
+            }
+        }
+    }
+    tidb_ast::ColumnType {
+        name: name.to_owned(),
+        args,
+        unsigned: field_type.flags() & FieldTypeFlags::UNSIGNED != 0,
+        zerofill: field_type.flags() & FieldTypeFlags::ZEROFILL != 0,
+        binary: false,
+        charset: None,
+    }
+}
+
+/// Go `CreateMaterializedView`'s remaining submission body (master
+/// `94a9cbedab`): derive the view column types by executing the canonical
+/// definition — Go's `ExecRestrictedSQL("SELECT * FROM (<selectSQL>) AS
+/// `tidb_mv_query` LIMIT 0")` — build the view `TableInfo` (flag-stripped
+/// derived columns, the one-row-per-group PRIMARY KEY/UNIQUE constraint),
+/// assemble the `MaterializedViewInfo` metadata, and pack the job envelope
+/// with its typed `CreateMaterializedViewArgs`.
+fn build_create_materialized_view_job(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    schema: &str,
+    table: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<(Job, JobArgsValue), DdlPlanError> {
+    // Go's admission order, already carried by the planning prefix.
+    let prefix = plan_create_materialized_view(catalog, create, schema, table, context)?;
+    let database = find_database(catalog, schema)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(schema.to_owned()))?;
+    let base = database
+        .tables
+        .iter()
+        .find(|table| table.id == prefix.base_table_id)
+        .ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        })?;
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    let mlog =
+        find_table(database, mlog_name.original()).ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: mlog_name.original().to_owned(),
+        })?;
+
+    // Go derives the output schema by executing the definition. The query is
+    // single-table by admission, so a catalog bridge registering just that
+    // base table under the view's schema is the whole world the query sees.
+    let result_fields =
+        derive_materialized_view_query_columns(base, &prefix.select_sql, schema, context)?;
+    // Go `len(resultFields) != len(s.Cols)`: the declared column list must
+    // name every output column.
+    if result_fields.len() != create.columns.len() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "materialized view column count {} does not match query output {}",
+                create.columns.len(),
+                result_fields.len()
+            ),
+        )));
+    }
+
+    // Go: one group-key index for the one-row-per-group contract — PRIMARY
+    // KEY when every group key is NOT NULL, UNIQUE otherwise — keyed by the
+    // declared column each GROUP BY column appears at.
+    let all_group_by_not_null = prefix
+        .analysis
+        .group_by_infos
+        .iter()
+        .all(|info| info.not_null);
+    let constraint_kind = if all_group_by_not_null {
+        tidb_ast::IndexConstraintKind::PrimaryKey
+    } else {
+        tidb_ast::IndexConstraintKind::Unique
+    };
+
+    // Go builds `ast.ColumnDef{Name: s.Cols[i], Tp: &ft}` where `ft` is the
+    // planner's result field type with the key/auto-increment/on-update flags
+    // deleted. The build's own conversion output is re-stamped with the exact
+    // derived field type, as Go copies `*rf.Column.FieldType` verbatim.
+    let mut columns = Vec::with_capacity(create.columns.len());
+    for name in &create.columns {
+        columns.push(tidb_ast::ColumnDef {
+            qualifier: Vec::new(),
+            name: name.clone(),
+            ty: tidb_ast::ColumnType {
+                name: "VARCHAR".to_owned(),
+                args: Vec::new(),
+                unsigned: false,
+                zerofill: false,
+                binary: false,
+                charset: None,
+            },
+            options: Vec::new(),
+        });
+    }
+    let keys = prefix
+        .analysis
+        .group_by_infos
+        .iter()
+        .map(|info| tidb_ast::IndexPart::Column {
+            name: create.columns[info.select_idx].clone(),
+            prefix_len: None,
+            desc: false,
+        })
+        .collect();
+    let create_table_stmt = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![schema.to_owned(), table.to_owned()],
+        like_table: None,
+        columns,
+        table_constraints: vec![tidb_ast::TableConstraint::Index(
+            tidb_ast::IndexConstraintDefinition {
+                kind: constraint_kind,
+                if_not_exists: false,
+                name: None,
+                is_empty_index: false,
+                parts: keys,
+                options: tidb_ast::IndexOptions::default(),
+            },
+        )],
+        table_options: create.options.clone(),
+        partitioning: None,
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let mut mview_table_info = build_table_info_with_context(
+        &create_table_stmt,
+        database.info.charset.as_str(),
+        database.info.collate.as_str(),
+        ClusteredIndexDefMode::On,
+        context,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    for (index, (_, field_type)) in result_fields.iter().enumerate() {
+        if let Some(column) = mview_table_info.columns.get(index) {
+            let mut stamped = field_type.clone();
+            stamped.del_flags(
+                FieldTypeFlags::PRI_KEY
+                    | FieldTypeFlags::UNIQUE_KEY
+                    | FieldTypeFlags::MULTIPLE_KEY
+                    | FieldTypeFlags::AUTO_INCREMENT
+                    | FieldTypeFlags::ON_UPDATE_NOW,
+            );
+            column.write().field_type = stamped;
+        }
+    }
+    // Go `mvTableInfo.Comment = s.Comment` (empty when unset).
+    mview_table_info.comment = create.comment.clone().unwrap_or_default();
+
+    // Go: the view metadata the initial build and every later refresh read.
+    mview_table_info.materialized_view = Some(GoShared::new(tidb_model::MaterializedViewInfo {
+        base_table_ids: GoValueSlice::from(vec![prefix.base_table_id]),
+        init_build_state: tidb_model::MViewInitBuildState::INIT_BUILD_BUILDING,
+        sql_content: prefix.select_sql.clone(),
+        refresh_method: prefix.refresh_method.clone(),
+        refresh_start_with: prefix.refresh_start_with.clone(),
+        refresh_next: prefix.refresh_next.clone(),
+        alert_warning_sec: prefix.alert_warning_sec,
+        alert_overdue_sec: prefix.alert_overdue_sec,
+        alert_refresh_failed: prefix.alert_refresh_failed,
+        definition_sql_mode: u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+        definition_div_precision_increment: i64::from(context.div_precision_increment()),
+        definition_time_zone: prefix.time_zone.clone(),
+        refresh_schedule_time_zone: prefix.time_zone.clone(),
+    }));
+
+    // Go: the job envelope. CREATE MATERIALIZED VIEW is submitted as reorg
+    // DDL — create table first, then the initial build in the reorg phase.
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = database.info.id;
+    job.schema_name = schema.go_to_lower().into();
+    job.table_name = mview_table_info.name.lowercase().to_owned().into();
+    job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.query = context.ddl_query().into();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    job.sql_mode = context.ddl_sql_mode();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.go_to_lower().into(),
+            table: mview_table_info.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.go_to_lower().into(),
+            table: base.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.go_to_lower().into(),
+            table: mlog.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+    ]);
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
+    job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
+    // Go `AddMViewExecutionSessionVarsToJob`: the twelve MV-execution
+    // session variables ride the job for the maintenance worker.
+    add_mview_execution_session_vars_to_job(&mut job, context);
+    // Go `initMaterializedViewReorgMetaFromVariables`: CREATE MATERIALIZED
+    // VIEW submits as reorg DDL, so the job carries the reorg metadata.
+    job.reorg_meta = Some(GoShared::new(init_materialized_view_reorg_meta(context)?));
+
+    let args = <tidb_model::CreateMaterializedViewArgs as tidb_model::JobArgs>::into_job_args_value(
+        Some(GoShared::new(tidb_model::CreateMaterializedViewArgs {
+            table_info: GoField::new(Some(GoShared::new(mview_table_info))),
+            mlog_table_ids: GoField::new(GoSharedSlice::from_vec(vec![prefix.mlog_table_id])),
+        })),
+    );
+    Ok((job, args))
+}
+
+/// Go `initMaterializedViewReorgMetaFromVariables` +
+/// `NewDDLReorgMeta`: the reorg metadata the initial build runs under.
+///
+/// Go reads the session's `tidb_ddl_reorg_worker_count` /
+/// `tidb_ddl_reorg_batch_size` and the global `tidb_ddl_reorg_max_write_speed`;
+/// this statement context carries no session-variable image, so the
+/// default-session values (`4` / `256` / `0`) are what this records — the
+/// same standing limitation as the scatter-region var.
+fn init_materialized_view_reorg_meta(
+    context: &tidb_executor::StmtContext,
+) -> Result<tidb_model::reorg::DDLReorgMeta, DdlPlanError> {
+    use tidb_vardef::defaults::{
+        DEF_TIDB_DDL_REORG_BATCH_SIZE, DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED,
+        DEF_TIDB_DDL_REORG_WORKER_COUNT,
+    };
+    let meta = tidb_model::reorg::DDLReorgMeta::new(
+        u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+        get_time_zone(context),
+        context.resource_group_name().to_owned(),
+    );
+    meta.set_concurrency(DEF_TIDB_DDL_REORG_WORKER_COUNT);
+    meta.set_batch_size(DEF_TIDB_DDL_REORG_BATCH_SIZE);
+    meta.set_max_write_speed(DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED);
+    Ok(meta)
+}
+
+/// Go `AddMViewExecutionSessionVarsToJob`: snapshots the twelve MV-execution
+/// session variables into the job so the maintenance worker runs under the
+/// creator's settings. The statement context carries no session-variable
+/// image, so the captured values are the default session's — the same
+/// documented reduction as the scatter-region var.
+fn add_mview_execution_session_vars_to_job(job: &mut Job, context: &tidb_executor::StmtContext) {
+    // The session tier may install a session-variable image on the context;
+    // when present, it provides live values for the MV-execution variables.
+    if let Some(image) = context.session_vars_image() {
+        for (name, value) in &image {
+            job.add_system_var(name.as_str(), value.as_str());
+        }
+        return;
+    }
+    use tidb_vardef::defaults::{
+        DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+        DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA, DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+        DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+        DEF_TIFLASH_QUERY_SPILL_RATIO,
+    };
+    use tidb_vardef::tidb_vars as vars;
+    let job_vars: &[(&str, String)] = &[
+        (
+            vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
+            DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA.to_string(),
+        ),
+        // Go `TiDBMViewMaintainIsolationReadEngines` default.
+        (
+            vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
+            "tikv,tiflash".to_owned(),
+        ),
+        // Go `DefTiDBMaxTiFlashThreads` and the external-spill trio default
+        // to `-1` (unset).
+        (vars::TIDB_MAX_TIFLASH_THREADS, "-1".to_owned()),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE.to_string(),
+        ),
+        (
+            vars::TIFLASH_QUERY_SPILL_RATIO,
+            format!("{DEF_TIFLASH_QUERY_SPILL_RATIO}"),
+        ),
+        (
+            vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+            DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT.to_string(),
+        ),
+        (
+            vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+            DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE.to_string(),
+        ),
+        (
+            vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+            DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS.to_string(),
+        ),
+        (
+            vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
+            DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA.to_owned(),
+        ),
+    ];
+    for (name, value) in job_vars {
+        job.add_system_var(*name, value.as_str());
+    }
+}
+
+/// Go's restricted-SQL derivation over one catalog bridge: the definition is
+/// single-table by admission, so registering just the base table under the
+/// view's schema is the whole world the query sees. `LIMIT 0` keeps the
+/// execution a schema-only read, exactly as Go's wrapper does.
+fn derive_materialized_view_query_columns(
+    base: &TableInfo,
+    select_sql: &str,
+    schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<Vec<(String, FieldType)>, DdlPlanError> {
+    use tidb_executor::{Catalog, KvColumn, KvTable};
+    let kv_columns: Vec<tidb_executor::KvColumn> = base
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            tidb_executor::KvColumn {
+                name: column.name.original().to_owned(),
+                id: column.id,
+                field_type: column.field_type.clone(),
+                column_info_version: column.version,
+                default_value: None,
+                origin_default: None,
+                comment: column.comment.clone(),
+                generated: None,
+            }
+        })
+        .collect();
+    let mut kv_table = tidb_executor::KvTable::new(base.id, kv_columns);
+    kv_table.name = base.name.original().to_owned();
+    let mut catalog = Catalog::default();
+    catalog.create_database(schema);
+    catalog
+        .register_kv_in(schema, base.name.original(), kv_table)
+        .map_err(|error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        })?;
+    let sql = format!("SELECT * FROM ({select_sql}) AS `tidb_mv_query` LIMIT 0");
+    tidb_executor::run_select_meta_in(&sql, &catalog, schema, context)
+        .map(|(columns, _)| columns)
+        .map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                error.to_string(),
+            ))
+        })
+}
+
+/// Plans pinned Go `CreateMaterializedViewLog` and `CreateMaterializedView`
+/// submission, mirroring [`prepare_check_constraint_job_submission`].
+///
+/// Both statements carry the job envelope plus typed arguments through
+/// [`crate::ddl_job_submit::prepare_submit_batch`]'s preflight (BDR role,
+/// upgrading pause, queueing state). The log create's job is fully
+/// executable by the persisted step planner; the view create's initial-build
+/// reorg phase is not wired yet, so a submitted view job stays queued until
+/// that batch lands. `Ok(None)` means the statement is not a
+/// materialized-view job action.
+pub fn prepare_materialized_view_job_submission<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let (job, args) = match statement {
+        DdlStatement::CreateMaterializedViewLog {
+            stmt,
+            schema,
+            table,
+            context,
+        } => build_create_materialized_view_log_job(&catalog, stmt, schema, table, &context.0)?,
+        DdlStatement::CreateMaterializedView {
+            stmt,
+            schema,
+            table,
+            context,
+        } => build_create_materialized_view_job(&catalog, stmt, schema, table, &context.0)?,
+        _ => return Ok(None),
+    };
+
+    let mut specs = [crate::ddl_job_submit::JobSpec {
+        job,
+        args,
+        id_allocated: false,
+    }];
+    crate::ddl_job_submit::prepare_submit_batch(
+        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+    )?;
+    let [spec] = specs;
+    Ok(Some(spec))
+}
+
+#[cfg(test)]
+mod global_index_version_tests {
+    use super::*;
+
+    #[test]
+    fn set_global_index_version_matches_go_shape_rules() {
+        let previous = tidb_model::index::get_global_index_v1_supported();
+        tidb_model::index::set_global_index_v1_supported(true);
+
+        let nullable_column = tidb_model::column::ColumnInfo {
+            id: 1,
+            offset: 0,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let mut not_null_type = FieldType::new(FieldTypeCode::LongLong);
+        not_null_type.add_flags(FieldTypeFlags::NOT_NULL);
+        let not_null_column = tidb_model::column::ColumnInfo {
+            id: 1,
+            offset: 0,
+            field_type: not_null_type,
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let table = |column| TableInfo {
+            columns: vec![column].into(),
+            ..TableInfo::default()
+        };
+        let index = |unique| IndexInfo {
+            global: true,
+            unique,
+            columns: vec![IndexColumn {
+                offset: 0,
+                ..IndexColumn::default()
+            }]
+            .into(),
+            ..IndexInfo::default()
+        };
+
+        // Go assigns V1 to non-unique global indexes even when their columns
+        // are NOT NULL, and to unique global indexes whenever a nullable key
+        // can contain multiple NULL values across partitions.
+        let mut non_unique = index(false);
+        set_global_index_version(&table(not_null_column.clone()), &mut non_unique);
+        assert_eq!(
+            non_unique.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_V1
+        );
+        let mut unique_nullable = index(true);
+        set_global_index_version(&table(nullable_column.clone()), &mut unique_nullable);
+        assert_eq!(
+            unique_nullable.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_V1
+        );
+
+        // A unique global index over only NOT NULL columns needs no partition
+        // component, and clustered tables use the legacy key format.
+        let mut unique_not_null = index(true);
+        set_global_index_version(&table(not_null_column.clone()), &mut unique_not_null);
+        assert_eq!(
+            unique_not_null.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+        let mut clustered = index(false);
+        let clustered_table = TableInfo {
+            columns: vec![not_null_column].into(),
+            pk_is_handle: true,
+            ..TableInfo::default()
+        };
+        set_global_index_version(&clustered_table, &mut clustered);
+        assert_eq!(
+            clustered.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+
+        tidb_model::index::set_global_index_v1_supported(false);
+        let mut unsupported = index(false);
+        set_global_index_version(&table(nullable_column), &mut unsupported);
+        assert_eq!(
+            unsupported.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+        tidb_model::index::set_global_index_v1_supported(previous);
+    }
 }

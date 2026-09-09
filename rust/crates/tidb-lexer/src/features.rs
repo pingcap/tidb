@@ -36,6 +36,8 @@ pub const FEATURE_ID_RESOURCE_GROUP: &str = "resource_group";
 pub const FEATURE_ID_GLOBAL_INDEX: &str = "global_index";
 /// Pre-split syntax.
 pub const FEATURE_ID_PRESPLIT: &str = "pre_split";
+/// Automatic index pre-split syntax.
+pub const FEATURE_ID_AUTO_PRE_SPLIT: &str = "auto_presplit";
 /// Affinity syntax.
 pub const FEATURE_ID_AFFINITY: &str = "affinity";
 /// Region-split syntax.
@@ -55,6 +57,7 @@ pub fn can_parse_feature(features: &[&str]) -> bool {
                 | FEATURE_ID_TTL
                 | FEATURE_ID_GLOBAL_INDEX
                 | FEATURE_ID_PRESPLIT
+                | FEATURE_ID_AUTO_PRE_SPLIT
                 | FEATURE_ID_AFFINITY
                 | FEATURE_ID_SPLIT_REGION
         )
@@ -77,6 +80,7 @@ mod tests {
             FEATURE_ID_TTL,
             FEATURE_ID_GLOBAL_INDEX,
             FEATURE_ID_PRESPLIT,
+            FEATURE_ID_AUTO_PRE_SPLIT,
             FEATURE_ID_AFFINITY,
             FEATURE_ID_SPLIT_REGION,
         ];

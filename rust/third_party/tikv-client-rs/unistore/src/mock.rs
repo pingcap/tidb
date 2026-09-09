@@ -31,6 +31,8 @@ pub enum Op {
     Insert = 4,
     PessimisticLock = 5,
     CheckNotExists = 6,
+    SharedLock = 7,
+    SharedPessimisticLock = 8,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -61,6 +63,13 @@ pub enum PessimisticAction {
     #[default]
     Skip,
     DoCheck,
+    ConstraintCheck,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ForUpdateTsConstraint {
+    pub index: u32,
+    pub expected_for_update_ts: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -119,8 +128,13 @@ pub struct PrewriteRequest {
     pub for_update_ts: u64,
     pub min_commit_ts: u64,
     pub pessimistic_actions: Vec<PessimisticAction>,
+    pub for_update_ts_constraints: Vec<ForUpdateTsConstraint>,
     pub assertion_level: AssertionLevel,
     pub resolved_locks: Vec<u64>,
+    pub use_async_commit: bool,
+    pub try_one_pc: bool,
+    pub secondaries: Vec<Vec<u8>>,
+    pub max_commit_ts: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -136,6 +150,7 @@ pub struct PessimisticLockRequest {
     pub check_existence: bool,
     pub lock_only_if_exists: bool,
     pub wake_up_mode: PessimisticWakeUpMode,
+    pub resource_group_tag: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -207,6 +222,10 @@ pub struct LockRecord {
     pub for_update_ts: u64,
     pub txn_size: u64,
     pub min_commit_ts: u64,
+    #[serde(default)]
+    pub use_async_commit: bool,
+    #[serde(default)]
+    pub secondaries: Vec<Vec<u8>>,
 }
 
 impl LockRecord {
@@ -220,6 +239,11 @@ impl LockRecord {
         output.extend_from_slice(&self.for_update_ts.to_le_bytes());
         output.extend_from_slice(&self.txn_size.to_le_bytes());
         output.extend_from_slice(&self.min_commit_ts.to_le_bytes());
+        output.push(u8::from(self.use_async_commit));
+        output.extend_from_slice(&(self.secondaries.len() as u64).to_le_bytes());
+        for secondary in &self.secondaries {
+            write_slice(&mut output, secondary);
+        }
         output
     }
 
@@ -235,17 +259,40 @@ impl LockRecord {
             4 => Op::Insert,
             5 => Op::PessimisticLock,
             6 => Op::CheckNotExists,
+            7 => Op::SharedLock,
+            8 => Op::SharedPessimisticLock,
             value => return Err(MockError::Decode(format!("invalid lock op {value}"))),
+        };
+        let ttl = read_u64(&mut input)?;
+        let for_update_ts = read_u64(&mut input)?;
+        let txn_size = read_u64(&mut input)?;
+        let min_commit_ts = read_u64(&mut input)?;
+        let use_async_commit = if input.is_empty() {
+            false
+        } else {
+            let value = input[0];
+            input = &input[1..];
+            value != 0
+        };
+        let secondaries = if input.is_empty() {
+            Vec::new()
+        } else {
+            let count = read_u64(&mut input)?;
+            (0..count)
+                .map(|_| read_slice(&mut input))
+                .collect::<Result<Vec<_>, _>>()?
         };
         Ok(Self {
             start_ts,
             primary,
             value,
             op,
-            ttl: read_u64(&mut input)?,
-            for_update_ts: read_u64(&mut input)?,
-            txn_size: read_u64(&mut input)?,
-            min_commit_ts: read_u64(&mut input)?,
+            ttl,
+            for_update_ts,
+            txn_size,
+            min_commit_ts,
+            use_async_commit,
+            secondaries,
         })
     }
 }
@@ -268,6 +315,8 @@ pub struct LockInfo {
     pub lock_type: Op,
     pub for_update_ts: u64,
     pub min_commit_ts: u64,
+    pub use_async_commit: bool,
+    pub secondaries: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -287,6 +336,7 @@ pub struct MvccValue {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MvccInfo {
     pub lock: Option<LockRecord>,
+    pub shared_locks: Vec<LockRecord>,
     pub writes: Vec<MvccWrite>,
     pub values: Vec<MvccValue>,
 }
@@ -303,7 +353,11 @@ pub enum MockError {
         txn_size: u64,
         lock_type: Op,
         min_commit_ts: u64,
+        use_async_commit: bool,
+        secondaries: Vec<Vec<u8>>,
     },
+    #[error("key is locked by shared lock holders, key: {key:?}")]
+    SharedLocked { key: Vec<u8>, locks: Vec<LockInfo> },
     #[error("key already exist, key: {key:?}")]
     KeyAlreadyExists { key: Vec<u8> },
     #[error("retryable: {0}")]
@@ -327,6 +381,7 @@ pub enum MockError {
         lock_ts: u64,
         lock_key: Vec<u8>,
         deadlock_key_hash: u64,
+        wait_chain: Vec<crate::WaitForEntry>,
     },
     #[error("commit ts expired")]
     CommitTsExpired {
@@ -355,6 +410,8 @@ pub enum MockError {
 struct Entry {
     writes: Vec<WriteRecord>,
     lock: Option<LockRecord>,
+    #[serde(default)]
+    shared_locks: BTreeMap<u64, LockRecord>,
 }
 
 impl Entry {
@@ -575,30 +632,46 @@ impl MockEngine {
             return vec![Some(error); request.mutations.len()];
         }
         let original = state.entries.clone();
-        let mut errors = Vec::with_capacity(request.mutations.len());
-        for (index, mutation) in request.mutations.iter().enumerate() {
-            if mutation.op == Op::CheckNotExists {
-                let error = check_insert_or_not_exists(&state, mutation, request);
-                errors.push(error);
-                continue;
-            }
-            if matches!(mutation.op, Op::Insert) && request.for_update_ts == 0 {
-                if let Some(error) = check_insert_or_not_exists(&state, mutation, request) {
-                    errors.push(Some(error));
-                    continue;
-                }
-            }
-            let action = request
-                .pessimistic_actions
-                .get(index)
-                .copied()
-                .unwrap_or_default();
-            let error = prewrite_mutation(&mut state, mutation, request, action);
-            errors.push(error);
-        }
+        let errors = prewrite_locked(&mut state, request);
         if errors.iter().any(Option::is_some) {
             state.entries = original;
         }
+        errors
+    }
+
+    /// Atomically prewrites and commits a single-region 1PC request.
+    ///
+    /// TiKV's 1PC response is successful only when every mutation is
+    /// validated and persisted at the same commit timestamp. Preserve that
+    /// all-or-nothing boundary under the engine write lock rather than
+    /// exposing intermediate MVCC locks between separate calls.
+    pub fn prewrite_one_pc(
+        &self,
+        request: &PrewriteRequest,
+        commit_ts: u64,
+    ) -> Vec<Option<MockError>> {
+        let mut state = self.state.write().expect("mock engine lock poisoned");
+        if let Err(error) = ensure_open(&state) {
+            return vec![Some(error); request.mutations.len()];
+        }
+        let original = state.entries.clone();
+        let mut errors = prewrite_locked(&mut state, request);
+        if errors.iter().any(Option::is_some) {
+            state.entries = original;
+            return errors;
+        }
+        for mutation in request
+            .mutations
+            .iter()
+            .filter(|mutation| mutation.op != Op::CheckNotExists)
+        {
+            if let Err(error) = commit_key(&mut state, &mutation.key, request.start_ts, commit_ts) {
+                state.entries = original;
+                errors = vec![Some(error)];
+                break;
+            }
+        }
+        state.deadlock_detector.clean_up(request.start_ts);
         errors
     }
 
@@ -638,6 +711,14 @@ impl MockEngine {
         (errors, results)
     }
 
+    pub fn transaction_was_deadlocked(&self, start_ts: u64) -> bool {
+        self.state
+            .read()
+            .expect("mock engine lock poisoned")
+            .deadlock_detector
+            .was_deadlocked(start_ts)
+    }
+
     pub fn pessimistic_rollback(
         &self,
         start: &[u8],
@@ -652,15 +733,15 @@ impl MockEngine {
                 .entries
                 .range::<[u8], _>(range_bounds(start, end))
                 .filter_map(|(key, entry)| {
-                    entry
-                        .lock
-                        .as_ref()
-                        .filter(|lock| {
-                            lock.op == Op::PessimisticLock
-                                && lock.start_ts == start_ts
-                                && lock.for_update_ts <= for_update_ts
-                        })
-                        .map(|_| key.clone())
+                    let exclusive = entry.lock.as_ref().filter(|lock| {
+                        lock.op == Op::PessimisticLock
+                            && lock.start_ts == start_ts
+                            && lock.for_update_ts <= for_update_ts
+                    });
+                    let shared = entry.shared_locks.get(&start_ts).filter(|lock| {
+                        lock.op == Op::SharedPessimisticLock && lock.for_update_ts <= for_update_ts
+                    });
+                    (exclusive.is_some() || shared.is_some()).then(|| key.clone())
                 })
                 .collect()
         } else {
@@ -674,6 +755,11 @@ impl MockEngine {
                         && lock.for_update_ts <= for_update_ts
                 }) {
                     entry.lock = None;
+                }
+                if entry.shared_locks.get(&start_ts).is_some_and(|lock| {
+                    lock.op == Op::SharedPessimisticLock && lock.for_update_ts <= for_update_ts
+                }) {
+                    entry.shared_locks.remove(&start_ts);
                 }
             }
         }
@@ -715,7 +801,13 @@ impl MockEngine {
     pub fn cleanup(&self, key: &[u8], start_ts: u64, current_ts: u64) -> Result<(), MockError> {
         let mut state = self.state.write().expect("mock engine lock poisoned");
         let result = (|| {
-            if let Some(lock) = state.entries.get(key).and_then(|entry| entry.lock.clone()) {
+            if let Some(lock) = state.entries.get(key).and_then(|entry| {
+                entry
+                    .lock
+                    .clone()
+                    .filter(|lock| lock.start_ts == start_ts)
+                    .or_else(|| entry.shared_locks.get(&start_ts).cloned())
+            }) {
                 if lock.start_ts == start_ts {
                     if current_ts == 0
                         || physical(lock.start_ts).saturating_add(lock.ttl) < physical(current_ts)
@@ -753,6 +845,28 @@ impl MockEngine {
         rollback_if_not_found: bool,
         resolving_pessimistic_lock: bool,
     ) -> Result<(u64, u64, Action), MockError> {
+        self.check_txn_status_with_force_sync(
+            primary,
+            lock_ts,
+            caller_start_ts,
+            current_ts,
+            rollback_if_not_found,
+            false,
+            resolving_pessimistic_lock,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn check_txn_status_with_force_sync(
+        &self,
+        primary: &[u8],
+        lock_ts: u64,
+        caller_start_ts: u64,
+        current_ts: u64,
+        rollback_if_not_found: bool,
+        force_sync_commit: bool,
+        resolving_pessimistic_lock: bool,
+    ) -> Result<(u64, u64, Action), MockError> {
         let mut state = self.state.write().expect("mock engine lock poisoned");
         if let Some(lock) = state
             .entries
@@ -760,6 +874,15 @@ impl MockEngine {
             .and_then(|entry| entry.lock.clone())
         {
             if lock.start_ts == lock_ts {
+                // TiKV never rolls back or pushes the minimum commit
+                // timestamp of an async-commit primary unless the caller
+                // explicitly forces the transaction back to 2PC. The lock
+                // identity is returned separately by the RPC adapter. It still
+                // reports the lock TTL so the client can distinguish a live
+                // transaction from one requiring async-commit recovery.
+                if lock.use_async_commit && !force_sync_commit {
+                    return Ok((lock.ttl, 0, Action::NoAction));
+                }
                 if physical(lock.start_ts).saturating_add(lock.ttl) < physical(current_ts) {
                     if resolving_pessimistic_lock && lock.op == Op::PessimisticLock {
                         if let Some(entry) = state.entries.get_mut(primary) {
@@ -835,6 +958,40 @@ impl MockEngine {
         Ok(lock.ttl)
     }
 
+    pub fn check_secondary_locks(
+        &self,
+        keys: &[Vec<u8>],
+        start_ts: u64,
+    ) -> Result<(Vec<LockInfo>, u64), MockError> {
+        let state = self.state.read().expect("mock engine lock poisoned");
+        let mut locks = Vec::new();
+        let mut commit_ts = None;
+        for key in keys {
+            let entry = state.entries.get(key.as_slice());
+            if let Some(lock) = entry
+                .and_then(|entry| entry.lock.as_ref())
+                .filter(|lock| lock.start_ts == start_ts)
+            {
+                locks.push(lock_info(key, lock));
+                continue;
+            }
+            let key_commit_ts = entry
+                .and_then(|entry| entry.txn_write(start_ts))
+                .filter(|write| write.write_type != WriteType::Rollback)
+                .map_or(0, |write| write.commit_ts);
+            if let Some(existing) = commit_ts {
+                if existing != key_commit_ts {
+                    return Err(MockError::Invalid(format!(
+                        "async commit secondary status mismatch: {existing} and {key_commit_ts}"
+                    )));
+                }
+            } else {
+                commit_ts = Some(key_commit_ts);
+            }
+        }
+        Ok((locks, commit_ts.unwrap_or(0)))
+    }
+
     pub fn scan_locks(
         &self,
         start: &[u8],
@@ -846,10 +1003,11 @@ impl MockEngine {
         Ok(state
             .entries
             .range::<[u8], _>(range_bounds(start, end))
-            .filter_map(|(key, entry)| {
+            .flat_map(|(key, entry)| {
                 entry
                     .lock
-                    .as_ref()
+                    .iter()
+                    .chain(entry.shared_locks.values())
                     .filter(|lock| lock.start_ts <= max_ts)
                     .map(|lock| lock_info(key, lock))
             })
@@ -868,11 +1026,11 @@ impl MockEngine {
             .entries
             .range::<[u8], _>(range_bounds(start, end))
             .filter_map(|(key, entry)| {
-                entry
+                let exclusive = entry
                     .lock
                     .as_ref()
-                    .filter(|lock| lock.start_ts == start_ts)
-                    .map(|_| key.clone())
+                    .is_some_and(|lock| lock.start_ts == start_ts);
+                (exclusive || entry.shared_locks.contains_key(&start_ts)).then(|| key.clone())
             })
             .collect();
         for key in keys {
@@ -895,11 +1053,16 @@ impl MockEngine {
         let locks: Vec<(Vec<u8>, u64, u64)> = state
             .entries
             .range::<[u8], _>(range_bounds(start, end))
-            .filter_map(|(key, entry)| {
-                let lock = entry.lock.as_ref()?;
-                txn_status
-                    .get(&lock.start_ts)
-                    .map(|commit_ts| (key.clone(), lock.start_ts, *commit_ts))
+            .flat_map(|(key, entry)| {
+                entry
+                    .lock
+                    .iter()
+                    .chain(entry.shared_locks.values())
+                    .filter_map(|lock| {
+                        txn_status
+                            .get(&lock.start_ts)
+                            .map(|commit_ts| (key.clone(), lock.start_ts, *commit_ts))
+                    })
             })
             .collect();
         for (key, start_ts, commit_ts) in locks {
@@ -921,14 +1084,15 @@ impl MockEngine {
             .collect();
         for key in keys {
             let entry = state.entries.get_mut(&key).expect("entry exists");
-            if entry
+            let blocking_lock = entry
                 .lock
-                .as_ref()
-                .is_some_and(|lock| lock.start_ts <= safe_point)
-            {
+                .iter()
+                .chain(entry.shared_locks.values())
+                .find(|lock| lock.start_ts <= safe_point);
+            if let Some(lock) = blocking_lock {
                 return Err(MockError::Invalid(format!(
                     "key {key:?} has lock with startTs {} which is under safePoint {safe_point}",
-                    entry.lock.as_ref().expect("checked").start_ts
+                    lock.start_ts
                 )));
             }
             entry.sort_writes();
@@ -950,9 +1114,9 @@ impl MockEngine {
                 }
             });
         }
-        state
-            .entries
-            .retain(|_, entry| entry.lock.is_some() || !entry.writes.is_empty());
+        state.entries.retain(|_, entry| {
+            entry.lock.is_some() || !entry.shared_locks.is_empty() || !entry.writes.is_empty()
+        });
         Ok(())
     }
 
@@ -1121,6 +1285,7 @@ impl MockEngine {
         writes.sort_by_key(|write| std::cmp::Reverse(write.commit_ts));
         MvccInfo {
             lock: entry.lock.clone(),
+            shared_locks: entry.shared_locks.values().cloned().collect(),
             writes: writes
                 .iter()
                 .map(|write| MvccWrite {
@@ -1143,6 +1308,18 @@ impl MockEngine {
                 })
                 .collect(),
         }
+    }
+
+    pub fn lock_info_by_key(&self, key: &[u8], start_ts: u64) -> Option<LockInfo> {
+        let state = self.state.read().expect("mock engine lock poisoned");
+        state.entries.get(key).and_then(|entry| {
+            entry
+                .lock
+                .iter()
+                .chain(entry.shared_locks.values())
+                .find(|lock| lock.start_ts == start_ts)
+                .map(|lock| lock_info(key, lock))
+        })
     }
 
     pub fn mvcc_get_by_start_ts(&self, start_ts: u64) -> (MvccInfo, Vec<u8>) {
@@ -1222,6 +1399,15 @@ fn lock_error(key: &[u8], lock: &LockRecord) -> MockError {
         txn_size: lock.txn_size,
         lock_type: lock.op,
         min_commit_ts: lock.min_commit_ts,
+        use_async_commit: lock.use_async_commit,
+        secondaries: lock.secondaries.clone(),
+    }
+}
+
+fn shared_lock_error(key: &[u8], locks: impl Iterator<Item = LockRecord>) -> MockError {
+    MockError::SharedLocked {
+        key: key.to_vec(),
+        locks: locks.map(|lock| lock_info(key, &lock)).collect(),
     }
 }
 
@@ -1235,6 +1421,8 @@ fn lock_info(key: &[u8], lock: &LockRecord) -> LockInfo {
         lock_type: lock.op,
         for_update_ts: lock.for_update_ts,
         min_commit_ts: lock.min_commit_ts,
+        use_async_commit: lock.use_async_commit,
+        secondaries: lock.secondaries.clone(),
     }
 }
 
@@ -1263,14 +1451,26 @@ fn prewrite_mutation(
     mutation: &TxnMutation,
     request: &PrewriteRequest,
     pessimistic_action: PessimisticAction,
+    expected_for_update_ts: Option<u64>,
 ) -> Option<MockError> {
-    let entry = state.entries.entry(mutation.key.clone()).or_default();
     let mut ttl = request.ttl;
     let mut min_commit_ts = request.min_commit_ts;
-    if let Some(lock) = entry.lock.as_ref() {
+    let existing_lock = state
+        .entries
+        .get(&mutation.key)
+        .and_then(|entry| entry.lock.clone());
+    let shared_locks = state
+        .entries
+        .get(&mutation.key)
+        .map(|entry| entry.shared_locks.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Some(lock) = existing_lock.as_ref() {
         if lock.start_ts != request.start_ts {
             let mut lock = lock.clone();
-            if pessimistic_action == PessimisticAction::DoCheck {
+            if matches!(
+                pessimistic_action,
+                PessimisticAction::DoCheck | PessimisticAction::ConstraintCheck
+            ) {
                 lock.ttl = 0;
             }
             return Some(lock_error(&mutation.key, &lock));
@@ -1280,28 +1480,61 @@ fn prewrite_mutation(
         }
         ttl = ttl.max(lock.ttl);
         min_commit_ts = min_commit_ts.max(lock.min_commit_ts);
-    } else if pessimistic_action == PessimisticAction::DoCheck {
+        if expected_for_update_ts.is_some() && expected_for_update_ts != Some(lock.for_update_ts) {
+            return Some(MockError::Abort("pessimistic lock not found".to_owned()));
+        }
+    }
+
+    let shared_mutation = mutation.op == Op::SharedLock;
+    let own_shared_lock = shared_locks
+        .iter()
+        .find(|lock| lock.start_ts == request.start_ts);
+    if shared_mutation {
+        if let Some(lock) = own_shared_lock {
+            ttl = ttl.max(lock.ttl);
+            min_commit_ts = min_commit_ts.max(lock.min_commit_ts);
+        } else if expected_for_update_ts.is_some()
+            || matches!(
+                pessimistic_action,
+                PessimisticAction::DoCheck | PessimisticAction::ConstraintCheck
+            )
+        {
+            return Some(MockError::Abort("pessimistic lock not found".to_owned()));
+        }
+    } else if !shared_locks.is_empty() {
+        return Some(shared_lock_error(&mutation.key, shared_locks.into_iter()));
+    } else if existing_lock.is_none()
+        && (expected_for_update_ts.is_some()
+            || matches!(
+                pessimistic_action,
+                PessimisticAction::DoCheck | PessimisticAction::ConstraintCheck
+            ))
+    {
         return Some(MockError::Abort("pessimistic lock not found".to_owned()));
     }
-    if let Some(error) = check_conflict_and_assertion(
-        entry,
-        mutation,
-        request.start_ts,
-        request.start_ts,
-        request.assertion_level,
-        false,
-        false,
-    )
-    .1
-    {
-        return Some(error);
+
+    let entry = state.entries.entry(mutation.key.clone()).or_default();
+    if !(shared_mutation && own_shared_lock.is_some()) {
+        if let Some(error) = check_conflict_and_assertion(
+            entry,
+            mutation,
+            request.start_ts,
+            request.start_ts,
+            request.assertion_level,
+            false,
+            false,
+        )
+        .1
+        {
+            return Some(error);
+        }
     }
     let op = if mutation.op == Op::Insert {
         Op::Put
     } else {
         mutation.op
     };
-    entry.lock = Some(LockRecord {
+    let lock = LockRecord {
         start_ts: request.start_ts,
         primary: request.primary.clone(),
         value: mutation.value.clone(),
@@ -1314,8 +1547,53 @@ fn prewrite_mutation(
         } else {
             0
         },
-    });
+        use_async_commit: request.use_async_commit,
+        secondaries: if request.primary == mutation.key {
+            request.secondaries.clone()
+        } else {
+            Vec::new()
+        },
+    };
+    if shared_mutation {
+        entry.shared_locks.insert(request.start_ts, lock);
+    } else {
+        entry.lock = Some(lock);
+    }
     None
+}
+
+fn prewrite_locked(state: &mut State, request: &PrewriteRequest) -> Vec<Option<MockError>> {
+    let mut errors = Vec::with_capacity(request.mutations.len());
+    for (index, mutation) in request.mutations.iter().enumerate() {
+        if mutation.op == Op::CheckNotExists {
+            errors.push(check_insert_or_not_exists(state, mutation, request));
+            continue;
+        }
+        if mutation.op == Op::Insert && request.for_update_ts == 0 {
+            if let Some(error) = check_insert_or_not_exists(state, mutation, request) {
+                errors.push(Some(error));
+                continue;
+            }
+        }
+        let action = request
+            .pessimistic_actions
+            .get(index)
+            .copied()
+            .unwrap_or_default();
+        let expected_for_update_ts = request
+            .for_update_ts_constraints
+            .iter()
+            .find(|constraint| constraint.index as usize == index)
+            .map(|constraint| constraint.expected_for_update_ts);
+        errors.push(prewrite_mutation(
+            state,
+            mutation,
+            request,
+            action,
+            expected_for_update_ts,
+        ));
+    }
+    errors
 }
 
 fn pessimistic_lock_mutation(
@@ -1328,6 +1606,7 @@ fn pessimistic_lock_mutation(
             "LockOnlyIfExists is set for LockKeys but ReturnValues is not set".to_owned(),
         ));
     }
+    let shared_request = mutation.op == Op::SharedPessimisticLock;
     if let Some(lock) = state
         .entries
         .get(&mutation.key)
@@ -1336,18 +1615,49 @@ fn pessimistic_lock_mutation(
     {
         if lock.start_ts != request.start_ts {
             let key_hash = farmhash::fingerprint64(&mutation.key);
-            if let Err(error) =
-                state
-                    .deadlock_detector
-                    .detect(request.start_ts, lock.start_ts, key_hash)
-            {
+            if let Err(error) = state.deadlock_detector.detect_with_context(
+                request.start_ts,
+                lock.start_ts,
+                key_hash,
+                mutation.key.clone(),
+                request.resource_group_tag.clone(),
+            ) {
                 return Err(MockError::Deadlock {
                     lock_ts: lock.start_ts,
                     lock_key: mutation.key.clone(),
                     deadlock_key_hash: error.key_hash,
+                    wait_chain: error.wait_chain,
                 });
             }
             return Err(lock_error(&mutation.key, &lock));
+        }
+    }
+    if !shared_request {
+        let shared_locks = state
+            .entries
+            .get(&mutation.key)
+            .map(|entry| entry.shared_locks.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if let Some(lock) = shared_locks
+            .iter()
+            .find(|lock| lock.start_ts != request.start_ts)
+        {
+            let key_hash = farmhash::fingerprint64(&mutation.key);
+            if let Err(error) = state.deadlock_detector.detect_with_context(
+                request.start_ts,
+                lock.start_ts,
+                key_hash,
+                mutation.key.clone(),
+                request.resource_group_tag.clone(),
+            ) {
+                return Err(MockError::Deadlock {
+                    lock_ts: lock.start_ts,
+                    lock_key: mutation.key.clone(),
+                    deadlock_key_hash: error.key_hash,
+                    wait_chain: error.wait_chain,
+                });
+            }
+            return Err(shared_lock_error(&mutation.key, shared_locks.into_iter()));
         }
     }
     let entry = state.entries.entry(mutation.key.clone()).or_default();
@@ -1371,18 +1681,39 @@ fn pessimistic_lock_mutation(
     };
     let exists = value.is_some();
     if !(request.lock_only_if_exists && !exists) {
-        let prior_for_update_ts = entry.lock.as_ref().map_or(0, |lock| lock.for_update_ts);
-        if entry.lock.is_none() || prior_for_update_ts < request.for_update_ts {
-            entry.lock = Some(LockRecord {
+        let prior_for_update_ts = if shared_request {
+            entry
+                .shared_locks
+                .get(&request.start_ts)
+                .map_or(0, |lock| lock.for_update_ts)
+        } else {
+            entry.lock.as_ref().map_or(0, |lock| lock.for_update_ts)
+        };
+        if prior_for_update_ts < request.for_update_ts
+            || (shared_request && !entry.shared_locks.contains_key(&request.start_ts))
+            || (!shared_request && entry.lock.is_none())
+        {
+            let lock = LockRecord {
                 start_ts: request.start_ts,
                 primary: request.primary.clone(),
                 value: Vec::new(),
-                op: Op::PessimisticLock,
+                op: if shared_request {
+                    Op::SharedPessimisticLock
+                } else {
+                    Op::PessimisticLock
+                },
                 ttl: request.ttl,
                 for_update_ts: request.for_update_ts.max(conflict_commit_ts),
                 txn_size: 0,
                 min_commit_ts: request.min_commit_ts,
-            });
+                use_async_commit: false,
+                secondaries: Vec::new(),
+            };
+            if shared_request {
+                entry.shared_locks.insert(request.start_ts, lock);
+            } else {
+                entry.lock = Some(lock);
+            }
         }
     }
     Ok(PessimisticLockKeyResult {
@@ -1406,6 +1737,25 @@ fn check_conflict_and_assertion(
     lock_only_if_exists: bool,
     allow_lock_with_conflict: bool,
 ) -> (Option<Vec<u8>>, Option<MockError>) {
+    fn disallow_force_lock(error: MockError) -> MockError {
+        match error {
+            MockError::Conflict {
+                start_ts,
+                conflict_start_ts,
+                conflict_commit_ts,
+                key,
+                ..
+            } => MockError::Conflict {
+                start_ts,
+                conflict_start_ts,
+                conflict_commit_ts,
+                key,
+                can_force_lock: false,
+            },
+            error => error,
+        }
+    }
+
     let mut writes = entry.writes.iter().collect::<Vec<_>>();
     writes.sort_by_key(|write| std::cmp::Reverse(write.commit_ts));
     let newest = writes.first().copied();
@@ -1443,10 +1793,14 @@ fn check_conflict_and_assertion(
     if mutation.op == Op::PessimisticLock && mutation.assertion == Assertion::NotExist && exists {
         return (
             None,
-            conflict.or_else(|| {
-                Some(MockError::KeyAlreadyExists {
+            Some(match conflict {
+                // Insert semantics cannot force-lock through a newer existing
+                // value. The caller must retry at a newer for-update
+                // timestamp and then observe KeyAlreadyExists.
+                Some(error) => disallow_force_lock(error),
+                None => MockError::KeyAlreadyExists {
                     key: mutation.key.clone(),
-                })
+                },
             }),
         );
     }
@@ -1470,7 +1824,7 @@ fn check_conflict_and_assertion(
         }
     }
     if lock_only_if_exists && !exists && conflict.is_some() {
-        return (None, conflict);
+        return (None, conflict.map(disallow_force_lock));
     }
     (latest_value, conflict)
 }
@@ -1482,6 +1836,25 @@ fn commit_key(
     commit_ts: u64,
 ) -> Result<(), MockError> {
     let entry = state.entries.entry(key.to_vec()).or_default();
+    if let Some(lock) = entry.shared_locks.get(&start_ts).cloned() {
+        if lock.min_commit_ts > commit_ts {
+            return Err(MockError::CommitTsExpired {
+                start_ts,
+                attempted_commit_ts: commit_ts,
+                key: key.to_vec(),
+                min_commit_ts: lock.min_commit_ts,
+            });
+        }
+        entry.writes.push(WriteRecord {
+            write_type: WriteType::Lock,
+            start_ts,
+            commit_ts,
+            value: lock.value,
+        });
+        entry.sort_writes();
+        entry.shared_locks.remove(&start_ts);
+        return Ok(());
+    }
     let Some(lock) = entry.lock.clone().filter(|lock| lock.start_ts == start_ts) else {
         return match entry.txn_write(start_ts) {
             Some(write) if write.write_type != WriteType::Rollback => Ok(()),
@@ -1514,6 +1887,10 @@ fn commit_key(
 
 fn rollback_key(state: &mut State, key: &[u8], start_ts: u64) -> Result<(), MockError> {
     let entry = state.entries.entry(key.to_vec()).or_default();
+    if entry.shared_locks.remove(&start_ts).is_some() {
+        write_rollback(state, key, start_ts);
+        return Ok(());
+    }
     if entry
         .lock
         .as_ref()
@@ -1651,6 +2028,115 @@ fn crc64_ecma(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
+    fn pessimistic_lock_request(
+        key: &[u8],
+        primary: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+        shared: bool,
+    ) -> PessimisticLockRequest {
+        PessimisticLockRequest {
+            mutations: vec![TxnMutation {
+                op: if shared {
+                    Op::SharedPessimisticLock
+                } else {
+                    Op::PessimisticLock
+                },
+                key: key.to_vec(),
+                value: Vec::new(),
+                assertion: Assertion::None,
+            }],
+            primary: primary.to_vec(),
+            start_ts,
+            for_update_ts,
+            ttl: 3_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn shared_pessimistic_locks_are_multi_holder_and_resolve_per_transaction() {
+        let engine = MockEngine::new();
+        let key = b"shared";
+        for (start_ts, primary) in [(10, b"p1".as_slice()), (20, b"p2".as_slice())] {
+            let (errors, _) = engine.pessimistic_lock(&pessimistic_lock_request(
+                key,
+                primary,
+                start_ts,
+                start_ts + 1,
+                true,
+            ));
+            assert_eq!(errors, [None]);
+        }
+
+        let locks = engine.scan_locks(key, b"shared\0", u64::MAX).unwrap();
+        assert_eq!(locks.len(), 2);
+        assert!(locks
+            .iter()
+            .all(|lock| lock.lock_type == Op::SharedPessimisticLock));
+
+        let (errors, _) =
+            engine.pessimistic_lock(&pessimistic_lock_request(key, b"p3", 30, 31, false));
+        assert!(matches!(
+            errors.as_slice(),
+            [Some(MockError::SharedLocked { locks, .. })] if locks.len() == 2
+        ));
+
+        assert_eq!(
+            engine.prewrite(&PrewriteRequest {
+                mutations: vec![TxnMutation {
+                    op: Op::SharedLock,
+                    key: key.to_vec(),
+                    value: Vec::new(),
+                    assertion: Assertion::None,
+                }],
+                primary: b"p1".to_vec(),
+                start_ts: 10,
+                pessimistic_actions: vec![PessimisticAction::DoCheck],
+                ..Default::default()
+            }),
+            [None]
+        );
+        engine.commit(&[key.to_vec()], 10, 40).unwrap();
+        let locks = engine.scan_locks(key, b"shared\0", u64::MAX).unwrap();
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].start_ts, 20);
+
+        assert_eq!(
+            engine.pessimistic_rollback(&[], &[], &[key.to_vec()], 20, 21),
+            [None]
+        );
+        assert!(engine
+            .scan_locks(key, b"shared\0", u64::MAX)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn exclusive_lock_blocks_shared_lock_without_replacing_it() {
+        let engine = MockEngine::new();
+        let key = b"exclusive";
+        let (errors, _) =
+            engine.pessimistic_lock(&pessimistic_lock_request(key, b"primary", 10, 11, false));
+        assert_eq!(errors, [None]);
+
+        let (errors, _) = engine.pessimistic_lock(&pessimistic_lock_request(
+            key,
+            b"shared-primary",
+            20,
+            21,
+            true,
+        ));
+        assert!(matches!(
+            errors.as_slice(),
+            [Some(MockError::Locked { start_ts: 10, .. })]
+        ));
+        let locks = engine.scan_locks(key, b"exclusive\0", u64::MAX).unwrap();
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].start_ts, 10);
+        assert_eq!(locks[0].lock_type, Op::PessimisticLock);
+    }
+
     fn put(engine: &MockEngine, key: &[u8], value: &[u8], start_ts: u64, commit_ts: u64) {
         let errors = engine.prewrite(&PrewriteRequest {
             mutations: vec![TxnMutation::put(key, value)],
@@ -1763,11 +2249,60 @@ mod tests {
             for_update_ts: 0,
             txn_size: 0,
             min_commit_ts: 666,
+            use_async_commit: true,
+            secondaries: vec![b"secondary".to_vec()],
         };
         assert_eq!(
             LockRecord::unmarshal_binary(&lock.marshal_binary()).unwrap(),
             lock
         );
+    }
+
+    #[test]
+    fn async_commit_primary_retains_recovery_metadata_and_is_not_implicitly_rolled_back() {
+        let engine = MockEngine::new();
+        let start_ts = 10_u64 << 18;
+        let primary = b"async-primary".to_vec();
+        let secondary = b"async-secondary".to_vec();
+        assert_eq!(
+            engine.prewrite(&PrewriteRequest {
+                mutations: vec![
+                    TxnMutation::put(primary.clone(), b"p".to_vec()),
+                    TxnMutation::put(secondary.clone(), b"s".to_vec()),
+                ],
+                primary: primary.clone(),
+                start_ts,
+                ttl: 100,
+                min_commit_ts: start_ts + 5,
+                use_async_commit: true,
+                secondaries: vec![secondary.clone()],
+                ..Default::default()
+            }),
+            [None, None]
+        );
+
+        let primary_lock = engine.mvcc_get_by_key(&primary).lock.unwrap();
+        assert!(primary_lock.use_async_commit);
+        assert_eq!(primary_lock.secondaries, std::slice::from_ref(&secondary));
+        let secondary_lock = engine.mvcc_get_by_key(&secondary).lock.unwrap();
+        assert!(secondary_lock.use_async_commit);
+        assert!(secondary_lock.secondaries.is_empty());
+
+        assert_eq!(
+            engine
+                .check_txn_status_with_force_sync(
+                    &primary,
+                    start_ts,
+                    start_ts + 1,
+                    1_000_u64 << 18,
+                    true,
+                    false,
+                    false,
+                )
+                .unwrap(),
+            (100, 0, Action::NoAction)
+        );
+        assert!(engine.mvcc_get_by_key(&primary).lock.is_some());
     }
 
     #[test]
@@ -3159,14 +3694,17 @@ mod tests {
             pessimistic_lock(&engine, b"b", 10, 31),
             Some(MockError::Locked { start_ts: 30, .. })
         ));
-        assert_eq!(
+        assert!(matches!(
             pessimistic_lock(&engine, b"c", 20, 22),
             Some(MockError::Deadlock {
                 lock_ts: 10,
-                lock_key: b"c".to_vec(),
-                deadlock_key_hash: farmhash::fingerprint64(b"a"),
-            })
-        );
+                ref lock_key,
+                deadlock_key_hash,
+                ref wait_chain,
+            }) if lock_key == b"c"
+                && deadlock_key_hash == farmhash::fingerprint64(b"a")
+                && wait_chain.len() == 2
+        ));
     }
 
     #[test]
@@ -3265,14 +3803,17 @@ mod tests {
             } else {
                 engine.resolve_lock(b"c", b"d", 10, 0).unwrap();
             }
-            assert_eq!(
+            assert!(matches!(
                 pessimistic_lock(&engine, b"d", 20, 22),
                 Some(MockError::Deadlock {
                     lock_ts: 10,
-                    lock_key: b"d".to_vec(),
-                    deadlock_key_hash: farmhash::fingerprint64(b"a"),
-                })
-            );
+                    ref lock_key,
+                    deadlock_key_hash,
+                    ref wait_chain,
+                }) if lock_key == b"d"
+                    && deadlock_key_hash == farmhash::fingerprint64(b"a")
+                    && wait_chain.len() == 2
+            ));
         }
     }
 

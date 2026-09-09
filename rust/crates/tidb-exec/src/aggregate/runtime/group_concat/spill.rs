@@ -15,10 +15,6 @@
 use super::GroupConcatState;
 use tidb_util::serialization::{serialize_bool, serialize_bytes_buffer, Cursor, INT_LEN};
 
-/// Malformed source-native GROUP_CONCAT spill row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GroupConcatSpillError;
-
 /// Encodes Go's base partial result: native bool then native int length and bytes.
 #[must_use]
 pub fn encode_base_partial(state: &GroupConcatState) -> Vec<u8> {
@@ -36,16 +32,14 @@ pub fn decode_base_partial(
     encoded: &[u8],
     separator: impl AsRef<[u8]>,
     max_len: u64,
-) -> Result<GroupConcatState, GroupConcatSpillError> {
+) -> GroupConcatState {
     let mut cursor = Cursor::new(encoded);
-    let has_buffer = cursor.read_bool().map_err(|_| GroupConcatSpillError)?;
+    let has_buffer = cursor.read_bool();
     let mut state = GroupConcatState::new(separator, max_len);
     if !has_buffer {
-        return Ok(state);
+        return state;
     }
-    let value = cursor
-        .read_bytes_buffer()
-        .map_err(|_| GroupConcatSpillError)?;
+    let value = cursor.read_bytes_buffer();
     state.restore_buffer(Some(value));
-    Ok(state)
+    state
 }

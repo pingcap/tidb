@@ -1865,5 +1865,6 @@ pub(super) const ALL_CODES_1: &[(&str, u16)] = &[
     ("ErrTiFlashServerTimeout", ErrTiFlashServerTimeout),
     ("ErrTiFlashServerBusy", ErrTiFlashServerBusy),
     ("ErrTiFlashBackfillIndex", ErrTiFlashBackfillIndex),
+    ("ErrSharedLockLost", ErrSharedLockLost),
     ("ErrUserPrefixMismatch", ErrUserPrefixMismatch),
 ];

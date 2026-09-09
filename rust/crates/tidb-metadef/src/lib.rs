@@ -19,10 +19,10 @@ pub mod bootstrap_tables;
 pub mod db;
 pub mod system;
 pub mod system_tables_def;
-#[cfg(test)]
-mod tests_metadef;
 
-pub use bootstrap_tables::{BootstrapTable, BOOTSTRAP_TABLES};
+pub use bootstrap_tables::{
+    BootstrapTable, VersionedDdlTables, BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES,
+};
 pub use db::{
     is_br_related_db, is_mem_db, is_mem_or_sys_db, is_system_db, is_system_related_db,
     CLUSTER_TABLE_INSTANCE_COLUMN_NAME, INFORMATION_SCHEMA_NAME, INFORMATION_SCHEMA_NAME_L,
@@ -30,5 +30,7 @@ pub use db::{
 };
 pub use system::{
     is_reserved_id, MAX_USER_GLOBAL_ID, RESERVED_GLOBAL_ID_LOWER_BOUND,
-    RESERVED_GLOBAL_ID_UPPER_BOUND,
+    RESERVED_GLOBAL_ID_UPPER_BOUND, TI_DBMASKING_POLICY_TABLE_ID, TI_DBMLOG_PURGE_HIST_TABLE_ID,
+    TI_DBMLOG_PURGE_INFO_TABLE_ID, TI_DBMVIEW_REFRESH_ALERT_TABLE_ID,
+    TI_DBMVIEW_REFRESH_HIST_TABLE_ID, TI_DBMVIEW_REFRESH_INFO_TABLE_ID,
 };

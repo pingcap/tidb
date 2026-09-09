@@ -13,6 +13,8 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+prometheus = { version = "0.14", default-features = false }
+tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
@@ -21,7 +23,12 @@ tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-hash = { path = "../tidb-hash" }
+tidb-hint = { path = "../tidb-hint" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
@@ -33,3 +40,7 @@ path = "tests/all.rs"
 [[test]]
 name = "configured_relation_tree_binding_source"
 path = "tests/configured_relation_tree_binding_source.rs"
+
+[[test]]
+name = "rule_partition_pruning_pruner_source"
+path = "tests/rule_partition_pruning_pruner_source.rs"

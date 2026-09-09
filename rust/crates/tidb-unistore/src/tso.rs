@@ -148,6 +148,10 @@ impl tidb_txnkv::pd_capability::PdCapability for InProcessPd {
         crate::region_loader::IN_PROCESS_CLUSTER_ID
     }
 
+    fn store_addresses(&self) -> Result<Vec<String>, String> {
+        Ok(vec![crate::client::IN_PROCESS_ADDRESS.to_owned()])
+    }
+
     fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
         Ok(tidb_txnkv::pd_capability::ReadyTimestamp(
             self.tso.get_composed_ts(),

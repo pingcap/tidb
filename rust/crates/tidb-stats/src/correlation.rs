@@ -25,7 +25,6 @@
 /// The single-item shortcut is source-visible; other values intentionally use
 /// the direct floating-point formula, including its `NaN` result for a zero
 /// sample count.
-#[must_use]
 pub fn calc_correlation(sample_num: i64, corr_xy_sum: f64) -> f64 {
     if sample_num == 1 {
         return 1.0;

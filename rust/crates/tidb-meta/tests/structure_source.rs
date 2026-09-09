@@ -22,6 +22,24 @@ use tidb_meta::structure::{HashPair, TxStructure};
 use tidb_meta::transaction::MemoryTransaction;
 use tidb_meta::MetaError;
 
+#[test]
+#[deny(unused_must_use)]
+fn source_return_values_may_be_ignored_like_go() {
+    let mut transaction = MemoryTransaction::default();
+    let mut tx = TxStructure::new(&mut transaction, &[0x00]);
+
+    tx.encode_string_data_key(b"key");
+    tx.encode_hash_meta_key(b"key");
+    tx.encode_hash_data_key(b"key", b"field");
+    tx.encode_hash_auto_id_key_value(b"key", b"field", 1);
+
+    tx.hset(b"key", b"field", b"value").unwrap();
+    let iterator = tx.hash_reverse_iter(b"key").unwrap();
+    iterator.valid();
+    iterator.key();
+    iterator.value();
+}
+
 // Go `TestString`.
 #[test]
 fn string_operations_cover_set_get_inc_iterate_clear_and_snapshot_refusal() {
@@ -239,6 +257,24 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
     let mut new_tx = TxStructure::new(&mut new_transaction, &[0x00]);
     new_tx.set(key, b"abc").unwrap();
     assert_eq!(new_tx.get(key).unwrap().as_deref(), Some(b"abc".as_slice()));
+}
+
+// Go `HClear` calls the nil readWriter directly instead of returning
+// `ErrWriteOnSnapshot`; a populated read-only hash therefore panics.
+#[test]
+fn hash_clear_on_a_read_only_snapshot_panics_like_go() {
+    let mut transaction = MemoryTransaction::default();
+    let key = b"a";
+    {
+        let mut tx = TxStructure::new(&mut transaction, &[0x00]);
+        tx.hset(key, b"field", b"value").unwrap();
+    }
+
+    let mut snapshot = TxStructure::read_only(&mut transaction, &[0x00]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = snapshot.hclear(key);
+    }))
+    .is_err());
 }
 
 // Go `TestError`: every structure error carries its own code, not ErrUnknown.

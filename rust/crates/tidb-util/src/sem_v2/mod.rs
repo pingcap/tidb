@@ -53,10 +53,10 @@
 //!   tests assign. [`tidb_mysql::TIDB_RELEASE_VERSION`] is a constant, so
 //!   [`set_tidb_release_version`] provides the same overridable value.
 //! - **`github.com/coreos/go-semver/semver`** is not a workspace dependency and
-//!   no `semver` crate is vendored, so [`config::SemVersion`] hand-rolls the
+//!   no `semver` crate is vendored, so a private package type hand-rolls the
 //!   parse and ordering `validateSEMConfig` needs.
 //! - **`pkg/objstore`** is used for `objstore.IsLocal(u)` at two call sites and
-//!   is inlined as [`sql_rule::is_local_url`], together with the scheme half of
+//!   is inlined together with the scheme half of
 //!   Go's `net/url.Parse` that feeds it.
 //! - Go's `Enable` and `EnableBy` assert (`intest.Assert`) that SEM is not
 //!   already enabled; that assertion is preserved through `crate::intest`.
@@ -67,14 +67,14 @@ mod sql_rule;
 mod testhelper;
 
 pub use config::{
-    validate_sem_config, ColumnRestriction, Config, SQLRestriction, SemVersion, TableRestriction,
+    validate_sem_config, ColumnRestriction, Config, SQLRestriction, TableRestriction,
     VariableRestriction,
 };
-pub use restricted_hint::{is_restricted_hint, HINT_GUARD_VARS};
+pub use restricted_hint::is_restricted_hint;
 pub use sql_rule::{
     alter_table_attributes_rule, import_from_local_rule, import_with_external_id_rule,
-    is_local_url, select_into_file_rule, sql_rule_by_name, time_to_live_sql_rule, url_scheme,
-    AlterTableSpec, AlterTableType, SQLRule, StmtKind, StmtView, TableOptionType, SQL_RULE_NAMES,
+    select_into_file_rule, time_to_live_sql_rule, AlterTableSpec, AlterTableType, SQLRule,
+    StmtKind, StmtView, TableOptionType,
 };
 pub use testhelper::{
     add_restricted_privileges_for_test, enable_from_path_for_test,
@@ -87,6 +87,8 @@ use std::sync::{Arc, RwLock};
 use tidb_log::Value;
 
 use crate::logutil;
+use crate::stringutil::go_to_lower;
+use sql_rule::sql_rule_by_name;
 
 // Go `vardef` constants, inlined (see the module boundaries).
 /// Go `vardef.TiDBEnableEnhancedSecurity`.
@@ -146,7 +148,6 @@ pub fn set_sys_var_registry(registry: Option<Arc<dyn SysVarRegistry>>) {
 
 /// Go `variable.GetSysVar`. Without a registry every variable is unknown,
 /// which is Go's `nil` `SysVar` branch.
-#[must_use]
 pub fn get_sys_var(name: &str) -> Option<SysVar> {
     let registry = SYS_VAR_REGISTRY
         .read()
@@ -178,7 +179,6 @@ pub fn set_tidb_release_version(version: Option<String>) {
 }
 
 /// Go `mysql.TiDBReleaseVersion`.
-#[must_use]
 pub fn tidb_release_version() -> String {
     TIDB_RELEASE_VERSION_OVERRIDE
         .read()
@@ -222,7 +222,7 @@ struct RestrictedTableAttr {
 type SqlValidator = Box<dyn Fn(&StmtView) -> bool + Send + Sync>;
 
 /// Go `semImpl`: the compiled SEM policy.
-pub struct SemImpl {
+struct SemImpl {
     restricted_databases: HashSet<String>,
     restricted_tables: HashMap<String, HashMap<String, RestrictedTableAttr>>,
     restricted_variables: HashMap<String, RestrictedVariableAttr>,
@@ -255,13 +255,11 @@ impl std::fmt::Debug for SemImpl {
 
 impl SemImpl {
     /// Go `semImpl.isInvisibleSchema`.
-    #[must_use]
     pub fn is_invisible_schema(&self, db_name: &str) -> bool {
-        self.restricted_databases.contains(&db_name.to_lowercase())
+        self.restricted_databases.contains(&go_to_lower(db_name))
     }
 
     /// Go `semImpl.isInvisibleTable`.
-    #[must_use]
     pub fn is_invisible_table(&self, db_lower_name: &str, tbl_lower_name: &str) -> bool {
         // to be compatible with SEM v1, we need to check the invisible schema.
         if self.is_invisible_schema(db_lower_name) {
@@ -274,7 +272,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isRestrictedPrivilege`.
-    #[must_use]
     pub fn is_restricted_privilege(&self, privilege: &str) -> bool {
         // All privileges starting with "RESTRICTED_" are considered restricted.
         if privilege.starts_with(RESTRICTED_PRIV_PREFIX) {
@@ -287,7 +284,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isInvisibleSysVar`.
-    #[must_use]
     pub fn is_invisible_sys_var(&self, var_name: &str) -> bool {
         self.restricted_variables
             .get(var_name)
@@ -296,13 +292,11 @@ impl SemImpl {
 
     /// Go `semImpl.isInvisibleStatusVar`. SEM v2 does not support restricted
     /// status variables; this is kept for compatibility with SEM v1.
-    #[must_use]
     pub fn is_invisible_status_var(&self, var_name: &str) -> bool {
         self.restricted_status_variables.contains(var_name)
     }
 
     /// Go `semImpl.isReadOnlyVariable`.
-    #[must_use]
     pub fn is_read_only_variable(&self, var_name: &str) -> bool {
         self.restricted_variables
             .get(var_name)
@@ -310,7 +304,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isRestrictedSQL`.
-    #[must_use]
     pub fn is_restricted_sql(&self, stmt: &StmtView) -> bool {
         match self.restricted_sql.as_ref() {
             None => false,
@@ -388,8 +381,7 @@ fn build_sem_sql_validate_function(sql_restriction: &SQLRestriction) -> SqlValid
 }
 
 /// Go `buildSEMFromConfig`.
-#[must_use]
-pub fn build_sem_from_config(cfg: &Config) -> SemImpl {
+fn build_sem_from_config(cfg: &Config) -> SemImpl {
     let mut restricted_tables: HashMap<String, HashMap<String, RestrictedTableAttr>> =
         HashMap::new();
     for tbl in &cfg.restricted_tables {
@@ -433,19 +425,16 @@ pub fn build_sem_from_config(cfg: &Config) -> SemImpl {
 }
 
 /// Go `IsInvisibleSchema`.
-#[must_use]
 pub fn is_invisible_schema(db_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_schema(db_name))
 }
 
 /// Go `IsInvisibleTable`.
-#[must_use]
 pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_table(db_lower_name, tbl_lower_name))
 }
 
 /// Go `IsRestrictedPrivilege`.
-#[must_use]
 pub fn is_restricted_privilege(privilege: &str) -> bool {
     crate::intest::assert_with_message(
         privilege.to_uppercase() == privilege,
@@ -455,25 +444,21 @@ pub fn is_restricted_privilege(privilege: &str) -> bool {
 }
 
 /// Go `IsInvisibleSysVar`.
-#[must_use]
 pub fn is_invisible_sys_var(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_sys_var(var_name))
 }
 
 /// Go `IsReadOnlyVariable`.
-#[must_use]
 pub fn is_read_only_variable(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_read_only_variable(var_name))
 }
 
 /// Go `IsInvisibleStatusVar`.
-#[must_use]
 pub fn is_invisible_status_var(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_status_var(var_name))
 }
 
 /// Go `IsRestrictedSQL`.
-#[must_use]
 pub fn is_restricted_sql(stmt: &StmtView) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_restricted_sql(stmt))
 }
@@ -515,7 +500,6 @@ pub fn enable_by(sem_config: &Config) -> Result<(), String> {
 }
 
 /// Go `IsEnabled`.
-#[must_use]
 pub fn is_enabled() -> bool {
     load_global_sem().is_some()
 }
@@ -524,12 +508,6 @@ pub fn is_enabled() -> bool {
 pub fn disable() {
     store_global_sem(None);
     set_sys_var(TIDB_ENABLE_ENHANCED_SECURITY, OFF);
-}
-
-/// The active policy, for the callers Go serves through `globalSem.Load()`.
-#[must_use]
-pub fn global_sem() -> Option<Arc<SemImpl>> {
-    load_global_sem()
 }
 
 #[cfg(test)]

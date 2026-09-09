@@ -86,6 +86,82 @@ fn a_local_temporary_table_prints_no_on_commit_clause() {
     );
 }
 
+/// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: ordinary access
+/// leaves both temporary-table kinds pseudo, while an explicit `ANALYZE`
+/// publishes real statistics. LOCAL rows survive statement transaction
+/// boundaries and are counted; GLOBAL rows are deleted at those boundaries
+/// but still receive an analyzed (zero-row) statistics entry.
+#[test]
+fn only_explicit_analyze_publishes_temporary_table_statistics() {
+    let mut session = temporary_session();
+    session
+        .run("create temporary table local_t(a int)")
+        .unwrap();
+    session
+        .run("insert into local_t values (1), (2), (3)")
+        .unwrap();
+    session.run("select * from local_t").unwrap();
+
+    let local_id = session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "local_t")
+            else {
+                panic!("local_t exists")
+            };
+            assert!(catalog.table_statistics(table.table_id).is_none());
+            Ok(table.table_id)
+        })
+        .unwrap();
+    session.run("analyze table local_t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .table_statistics(local_id)
+                    .expect("explicit ANALYZE publishes local statistics")
+                    .row_count,
+                3
+            );
+            Ok(())
+        })
+        .unwrap();
+
+    session
+        .run("create global temporary table global_t(a int) on commit delete rows")
+        .unwrap();
+    session
+        .run("insert into global_t values (1), (2), (3)")
+        .unwrap();
+    assert!(
+        row_text(session.run("select * from global_t")).is_empty(),
+        "an autocommit GLOBAL temporary-table write ends before the next statement"
+    );
+    let global_id = session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "global_t")
+            else {
+                panic!("global_t exists")
+            };
+            assert!(catalog.table_statistics(table.table_id).is_none());
+            Ok(table.table_id)
+        })
+        .unwrap();
+    assert_ne!(local_id, global_id);
+    session.run("analyze table global_t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            assert_eq!(
+                catalog
+                    .table_statistics(global_id)
+                    .expect("explicit ANALYZE publishes global statistics")
+                    .row_count,
+                0
+            );
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// Go `setTemporaryType` (`pkg/ddl/create_table.go:1029`): the statement
 /// parses with `OnCommitDelete = false` and is then refused, because a global
 /// temporary table has no way to keep rows past its transaction --

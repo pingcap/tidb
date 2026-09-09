@@ -70,7 +70,7 @@ fn configured_topn_uses_bounded_max_heap_multi_key_order_and_stable_ties() {
 
     let result = topn.finish();
     assert_eq!(
-        result.rows,
+        result,
         vec![
             vec![Datum::Int(700), Datum::Int(6), Datum::Int(0)],
             vec![Datum::Int(200), Datum::Int(9), Datum::Int(1)],
@@ -80,10 +80,6 @@ fn configured_topn_uses_bounded_max_heap_multi_key_order_and_stable_ties() {
         ],
         "offset skips the globally best row; equal complete keys retained source order"
     );
-    assert_eq!(result.evidence.capacity(), 6);
-    assert_eq!(result.evidence.high_water_candidates(), 6);
-    assert_eq!(result.evidence.rows_consumed(), 7);
-    assert_eq!(result.evidence.rows_emitted(), 5);
 }
 
 #[test]
@@ -148,11 +144,7 @@ fn configured_topn_limit_zero_bypasses_capacity_ordering_and_source_consumption(
         .expect("empty TopN does not validate or consume a row");
     assert_eq!(topn.retained_len(), 0);
     let result = topn.finish();
-    assert!(result.rows.is_empty());
-    assert_eq!(result.evidence.capacity(), 1);
-    assert_eq!(result.evidence.high_water_candidates(), 0);
-    assert_eq!(result.evidence.rows_consumed(), 0);
-    assert_eq!(result.evidence.rows_emitted(), 0);
+    assert!(result.is_empty());
 }
 
 #[derive(Default)]
@@ -197,14 +189,6 @@ fn configured_limit_stream_skips_lazily_and_closes_at_the_exact_window_end() {
     assert_eq!(limit.next(&mut source).unwrap(), None);
     assert_eq!(source.next_calls, 5, "offset plus count only");
     assert_eq!(source.close_calls, 1, "one early source close");
-    assert_eq!(
-        limit.evidence().rows_requested(),
-        5,
-        "required-row propagation never drains hidden input"
-    );
-    assert_eq!(limit.evidence().rows_skipped(), 2);
-    assert_eq!(limit.evidence().rows_emitted(), 3);
-    assert!(limit.evidence().source_closed());
 }
 
 #[test]
@@ -216,6 +200,4 @@ fn configured_limit_zero_never_requests_an_upstream_row() {
     assert_eq!(limit.next(&mut source).unwrap(), None);
     assert_eq!(source.next_calls, 0);
     assert_eq!(source.close_calls, 1);
-    assert_eq!(limit.evidence().rows_requested(), 0);
-    assert!(limit.evidence().source_closed());
 }

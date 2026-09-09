@@ -31,18 +31,21 @@
 //!   actually READ off them is kept as explicit fields: the table id, the
 //!   names, the partition definition, `pk_is_handle`, and the per-column
 //!   metadata in [`DataSourceColumn`].
-//! * `AstIndexHints` / `IndexHints` / `IndexMergeHints` are
-//!   `[]h.HintedIndex`; the hint catalogue is not transcreated, so only the
-//!   RESOLVED [`DataSource::prefer_store_type`] survives.
+//! * The pruning rule reads resolved FORCE facts and query-block-matched
+//!   `IndexMergeHints` from this leaf instead of re-reading syntax.
 //! * `HandleCols util.HandleCols` is an interface over an int handle or a
 //!   common handle. [`crate::handle_cols`] already models both identities;
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
 //!   need, plus [`DataSource::handle_is_int`].
 
 use tidb_expr::column::Column;
+use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
+use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::schema::Schema;
-use tidb_expr::simple_expr::{extract_columns_from_expressions, extract_cor_columns};
+use tidb_expr::simple_expr::{
+    extract_columns_from_expressions, extract_cor_columns, parse_simple_expr, BuildOptions,
+};
 
 use crate::access_path::DataSourceAccessPath;
 use crate::logical::schema_producer;
@@ -62,6 +65,43 @@ pub struct DataSourceColumn {
     pub name: String,
     /// Go `mysql.HasPriKeyFlag(col.GetFlag())`.
     pub is_primary_key: bool,
+    /// Go `mysql.HasNotNullFlag(col.GetFlag())`.
+    ///
+    /// `rule/util.CheckIndexCanBeKey` deliberately reads the table-column
+    /// metadata rather than the corresponding expression column's type.
+    pub is_not_null: bool,
+}
+
+/// Go `h.HintedIndex` fields consumed by partition processing and index-merge
+/// path pruning.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DataSourceIndexMergeHint {
+    /// Go `IndexHint.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    pub partitions: Vec<String>,
+    /// Go `Restore2IndexHint(HintIndexMerge, hint)`, used in warnings.
+    pub restored: String,
+}
+
+/// Go `h.HintedIndex` fields used by ordinary path resolution and static
+/// partition processing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DataSourceIndexHint {
+    /// Go `IndexHint.HintType`.
+    pub kind: tidb_ast::IndexHintKind,
+    /// Go `IndexHint.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    pub partitions: Vec<String>,
+    /// Go `HintedIndex.PushDownLookUp`.
+    pub push_down_lookup: bool,
+    /// Whether the hint is `ORDER_INDEX`.
+    pub force_keep_order: bool,
+    /// Whether the hint is `NO_ORDER_INDEX`.
+    pub force_no_keep_order: bool,
+    /// Go `Restore2IndexHint(HintedIndex.HintTypeString(), hint)`.
+    pub restored: String,
 }
 
 /// Go `logicalop.DataSource` (`logical_datasource.go:58`).
@@ -79,15 +119,27 @@ pub struct DataSource {
     pub db_name: String,
     /// Go `PhysicalTableID`: the partition's id, or the table's.
     pub physical_table_id: i64,
+    /// Go `SampleInfo`.
+    pub sample_info: Option<crate::table_sampler::TableSampleInfo>,
     /// Go `PartitionDefIdx`: which partition definition this reads.
     pub partition_def_idx: Option<usize>,
+    /// Go `PartitionNames`: an explicit `PARTITION (p, ...)` restriction.
+    pub partition_names: Vec<String>,
     /// The partition definition names, so [`Self::explain_info`] can name the
     /// one `partition_def_idx` selects. Go reads
     /// `TableInfo.GetPartitionInfo().Definitions`.
     pub partition_definition_names: Vec<String>,
+    /// Physical IDs index-parallel to [`Self::partition_definition_names`].
+    pub partition_definition_ids: Vec<i64>,
+    /// Go `PhysPlanPartInfo` after dynamic partition pruning, retained so
+    /// reader access objects report the partitions selected by the same
+    /// predicates used for execution.
+    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
-    /// Go TblCols: complete table-order columns, preserved across pruning.
+    /// Go `TblCols`: the original table columns before logical pruning.
+    /// Physical table-scan costing uses this complete row width even when
+    /// the scan only returns a narrow projected schema.
     pub table_columns: Vec<Column>,
     /// Go `PushedDownConds`: the conditions the storage layer will evaluate.
     pub pushed_down_conds: Vec<Expression>,
@@ -99,6 +151,13 @@ pub struct DataSource {
     /// port keeps the stages as two typed lists, and the grown lists below
     /// stay empty until the costing seam fills them.
     pub enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    /// The unfiltered public paths from which static partition children rerun
+    /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
+    pub public_enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    /// Go `AstIndexHints`: table-syntax hints, which apply to every child.
+    pub ast_index_hints: Vec<tidb_ast::IndexHint>,
+    /// Go `IndexHints`: comment-style hints matched to this DataSource.
+    pub index_hints: Vec<DataSourceIndexHint>,
     /// The catalog's index metadata, in the SAME order
     /// [`Self::enumerated_paths`]' `Index { index }` offsets address — what
     /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
@@ -110,6 +169,29 @@ pub struct DataSource {
     pub possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
+    /// Latest-schema public index IDs used by `ExtractFD` for a connected
+    /// `FOR UPDATE` read when the domain schema changed.
+    pub fd_latest_public_index_ids: Option<std::collections::BTreeSet<i64>>,
+    /// Go `DataSource.ExtractFD` returns the PK-only set when its latest-index
+    /// lookup fails.
+    pub fd_latest_index_lookup_failed: bool,
+    /// Go `TableInfo.IsCommonHandle`.
+    pub is_common_handle: bool,
+    /// Go `TableInfo.CommonHandleVersion`.
+    pub common_handle_version: u16,
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    pub is_temporary: bool,
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    pub is_cached: bool,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    pub has_affinity: bool,
+    /// Session/transaction inputs to Go's lookup-pushdown support check.
+    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
+    /// Whether TiKV is present in Go `SessionVars.IsolationReadEngines`.
+    pub tikv_in_isolation_read: bool,
+    /// Raw `tidb_isolation_read_engines`, retained for Go-compatible index
+    /// hint diagnostics during static partition re-resolution.
+    pub isolation_read_engines_value: String,
     /// Go `HandleCols`' columns; empty when the table has no usable handle.
     pub handle_cols: Vec<Column>,
     /// Whether Go's `HandleCols.IsInt()` holds.
@@ -120,6 +202,8 @@ pub struct DataSource {
     pub common_handle_lens: Vec<i64>,
     /// Go `PreferStoreType`: the resolved `READ_FROM_STORAGE` decision.
     pub prefer_store_type: i32,
+    /// Go `PreferPartitions`, keyed by `h.PreferTiKV` / `h.PreferTiFlash`.
+    pub prefer_partitions: std::collections::BTreeMap<i32, Vec<String>>,
     /// Go `IsForUpdateRead`.
     pub is_for_update_read: bool,
     /// Go `ContainExprPrefixUk`: a `tidb_shard()` prefix unique key exists, so
@@ -133,8 +217,39 @@ pub struct DataSource {
     pub asked_column_group: Vec<Vec<Column>>,
     /// Go `InterestingColumns`.
     pub interesting_columns: Vec<Column>,
+    /// Index IDs whose access paths have Go `AccessPath.Forced` set.
+    pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs carrying Go `ForceKeepOrder`.
+    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs carrying Go `ForceNoKeepOrder`.
+    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Whether the TiKV table path carries Go `ForceKeepOrder`.
+    pub force_keep_order_table_path: bool,
+    /// Whether the TiKV table path carries Go `ForceNoKeepOrder`.
+    pub force_no_keep_order_table_path: bool,
+    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
+    pub index_lookup_push_down_by:
+        std::collections::BTreeMap<i64, crate::access_path::IndexLookupPushDownBy>,
+    /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
+    /// `CheckPartialIndexes` rejects the general cached-plan proof.
+    pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
+    /// Go `forceNoIndexLookUpPushDown`, set by a matching
+    /// `NO_INDEX_LOOKUP_PUSHDOWN` hint before paths are enumerated.
+    pub force_no_index_lookup_push_down: bool,
+    /// Go `IndexMergeHints`. An empty `index_names` list is a general
+    /// `USE_INDEX_MERGE(table)` hint; `partitions` scopes it per static child.
+    pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
+    /// Go fix control 52869 after session-variable resolution.
+    pub prefer_index_merge_by_fix_control: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
+    /// Go table access path's already-derived `CountAfterAccess`.
+    pub table_path_count_after_access: Option<f64>,
+    /// Go index access paths' already-derived `CountAfterAccess`, by index id.
+    pub index_path_count_after_access: std::collections::BTreeMap<i64, f64>,
+    /// The table/session facts that Go retains on `PhysicalTableScan` for
+    /// `getTableScanPenalty`.
+    pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
     /// Whether the table has an available TiFlash replica; Go computes this
     /// through `TableInfo.TiFlashReplica` plus the hypothetical-replica
     /// session state, both of which are outside this crate.
@@ -142,8 +257,54 @@ pub struct DataSource {
 }
 
 impl DataSource {
+    /// Go `ruleutil.CheckIndexCanBeKey` plus the public-index walk in
+    /// `DataSource.BuildKeyInfo`. The source column list is pruned in lockstep
+    /// with `self_schema`, so matching by column name also rejects a key whose
+    /// column no longer appears in this plan.
+    #[must_use]
+    pub fn index_keys(&self, self_schema: &Schema) -> (Vec<Vec<Column>>, Vec<Vec<Column>>) {
+        let mut strong = Vec::new();
+        let mut nullable = Vec::new();
+        for index in &self.indexes {
+            if !index.unique || !index.is_public {
+                continue;
+            }
+            if self
+                .fd_latest_public_index_ids
+                .as_ref()
+                .is_some_and(|indexes| !indexes.contains(&index.id))
+            {
+                continue;
+            }
+            let (nullable_key, strong_key) =
+                super::rule_util::check_index_can_be_key(index, &self.columns, self_schema);
+            if let Some(key) = strong_key {
+                strong.push(key);
+            } else if let Some(key) = nullable_key {
+                nullable.push(key);
+            }
+        }
+        (strong, nullable)
+    }
+
     /// Go `plancodec.TypeTableScan`, as `DataSource.Init` sets it.
     pub const TYPE: &'static str = "DataSource";
+
+    /// Resolves an index column after logical column pruning. Catalog index
+    /// offsets address the original table column list, while `columns` and
+    /// the logical schema are pruned together; the column name is the stable
+    /// identity between those two layouts.
+    #[must_use]
+    pub fn schema_column_for_index_column(
+        &self,
+        index_column: &crate::plan_builder::catalog::SourceIndexColumn,
+    ) -> Option<&Column> {
+        let position = self
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))?;
+        self.base.base.schema()?.columns.get(position)
+    }
 
     /// Go `DataSource.Init(ctx, offset)` (`logical_datasource.go:155`).
     #[must_use]
@@ -215,29 +376,120 @@ impl DataSource {
 
     /// Go `DataSource.PredicatePushDown(predicates)`'s LOCAL half
     /// (`logical_datasource.go:185`): a data source ACCEPTS every predicate,
-    /// recording all of them in `AllConds` and keeping the pushable ones in
-    /// `PushedDownConds`.
+    /// recording all of them in `AllConds` in the order they arrived and
+    /// keeping the store-supported ones in `PushedDownConds`.
     ///
-    /// The split is the caller's: Go asks
+    /// The split asks
     /// `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`,
-    /// which consults the store's function whitelist. The whitelist lives in
-    /// `tidb_expr::pushdown_catalog`; this method takes the already-partitioned
-    /// result so the operator never guesses what a store supports.
+    /// which consults the store's function whitelist. That whitelist lives in
+    /// [`crate::pushdown`] and [`tidb_expr::pushdown_catalog`].
+    ///
+    /// The caller has already run `Conds2TableDual` over `AllConds`, which is
+    /// Go's order (`logical_datasource.go:366-369`): a constant-NULL predicate
+    /// becomes a `TableDual` before the split, so a pushable `col > NULL`
+    /// cannot hide the empty result.
     ///
     /// Returns the predicates the PARENT must still apply, which is Go's first
     /// return value.
-    pub fn predicate_push_down_local(
-        &mut self,
-        pushable: Vec<Expression>,
-        not_pushable: Vec<Expression>,
-    ) -> Vec<Expression> {
-        self.all_conds = pushable
-            .iter()
-            .cloned()
-            .chain(not_pushable.iter().cloned())
-            .collect();
+    pub fn predicate_push_down_local(&mut self, predicates: Vec<Expression>) -> Vec<Expression> {
+        self.all_conds = predicates;
+        let (pushable, not_pushable): (Vec<_>, Vec<_>) =
+            self.all_conds.iter().cloned().partition(|predicate| {
+                crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
+            });
         self.pushed_down_conds = pushable;
         not_pushable
+    }
+
+    /// Go `DataSource.CheckPartialIndexes`, at the same post-predicate-pushdown
+    /// and pre-statistics phase as `deriveStats4DataSource`.
+    pub fn check_partial_indexes(
+        &mut self,
+        resolver: &dyn ColumnResolver,
+        use_plan_cache: bool,
+        opt_prefix_index_single_scan: bool,
+    ) {
+        let Some(schema) = self.base.base.schema().cloned() else {
+            return;
+        };
+        let names = self
+            .columns
+            .iter()
+            .map(|column| {
+                tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
+                    table: tidb_datatype::IdentifierMetadata::new(&self.table_name),
+                    column: tidb_datatype::IdentifierMetadata::new(&column.name),
+                    ..tidb_datatype::FieldNameMetadata::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let options = BuildOptions::new().with_input_schema_and_names(schema, names);
+        let mut removed_ids = std::collections::BTreeSet::new();
+        let mut partial_index_used_hint = false;
+        let mut has_partial_index = false;
+
+        for path in &self.enumerated_paths {
+            let crate::access_path::PossiblePath::Index { index } = path else {
+                continue;
+            };
+            let Some(metadata) = self.indexes.get(*index) else {
+                continue;
+            };
+            if metadata.condition_expr_string.is_empty() {
+                continue;
+            }
+            has_partial_index = true;
+            let predicates = parse_simple_expr(resolver, &metadata.condition_expr_string, &options)
+                .map(|expression| split_cnf_items(&expression));
+            let Ok(predicates) = predicates else {
+                removed_ids.insert(metadata.id);
+                continue;
+            };
+            if !crate::partidx::check_constraints(
+                opt_prefix_index_single_scan,
+                &predicates,
+                &self.pushed_down_conds,
+            ) {
+                removed_ids.insert(metadata.id);
+                continue;
+            }
+            if self.forced_index_ids.contains(&metadata.id) {
+                partial_index_used_hint = true;
+            }
+            if use_plan_cache
+                && !crate::partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
+            {
+                self.partial_index_noncacheable_ids.insert(metadata.id);
+            }
+        }
+        if !has_partial_index || (removed_ids.is_empty() && !partial_index_used_hint) {
+            return;
+        }
+
+        let keep_index_id = |index_id: i64| {
+            !removed_ids.contains(&index_id)
+                && (!partial_index_used_hint || self.forced_index_ids.contains(&index_id))
+        };
+        self.enumerated_paths.retain(|path| match path {
+            crate::access_path::PossiblePath::Index { index } => self
+                .indexes
+                .get(*index)
+                .is_some_and(|metadata| keep_index_id(metadata.id)),
+            crate::access_path::PossiblePath::Table { .. }
+            | crate::access_path::PossiblePath::TiFlashTable => !partial_index_used_hint,
+        });
+        self.all_possible_access_paths.retain(|path| match path {
+            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
+            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
+                !partial_index_used_hint
+            }
+        });
+        self.possible_access_paths.retain(|path| match path {
+            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
+            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
+                !partial_index_used_hint
+            }
+        });
     }
 
     /// Go `DataSource.PruneColumns(parentUsedCols)`'s LOCAL half
@@ -249,9 +501,9 @@ impl DataSource {
     /// only, because a column kept solely for `AllConds` must not force a
     /// full-length index read.
     ///
-    /// Returns whether the schema became empty, which is the condition under
-    /// which Go forces one handle column back in — a decision that needs the
-    /// catalogue and so belongs to the caller.
+    /// Returns whether pruning initially emptied the schema. As in Go, one
+    /// handle column is forced back into the retained schema before return so
+    /// TiKV can report the row count for queries such as `SELECT 1 FROM t`.
     pub fn prune_columns_local(
         &mut self,
         parent_used_cols: &[Column],
@@ -284,6 +536,54 @@ impl DataSource {
             }
         }
 
+        let emptied = schema.columns.is_empty();
+        if emptied {
+            // Go `preferKeyColumnFromTable`: an ordinary table first reuses
+            // its live handle, then the immutable PK handle on a later prune
+            // pass, and finally the implicit row id. `table_columns` is this
+            // port's immutable copy of the original DataSource schema.
+            let forced = self
+                .handle_cols
+                .first()
+                .or_else(|| {
+                    self.pk_is_handle.then(|| {
+                        self.table_columns.iter().find(|column| {
+                            column.ret_type.as_ref().is_some_and(|field_type| {
+                                field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+                            })
+                        })
+                    })?
+                })
+                .or_else(|| {
+                    self.table_columns
+                        .iter()
+                        .find(|column| column.id == EXTRA_HANDLE_ID)
+                })
+                .or_else(|| self.table_columns.first())
+                .cloned();
+            if let Some(forced) = forced {
+                let name = forced
+                    .orig_name
+                    .rsplit('.')
+                    .next()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("_tidb_rowid")
+                    .to_owned();
+                let is_primary_key = forced.ret_type.as_ref().is_some_and(|field_type| {
+                    field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+                });
+                self.columns.push(DataSourceColumn {
+                    id: forced.id,
+                    name,
+                    is_primary_key,
+                    is_not_null: forced.ret_type.as_ref().is_some_and(|field_type| {
+                        field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                    }),
+                });
+                schema.columns.push(forced);
+            }
+        }
+
         // Go: once the int handle no longer appears in the schema, the handle
         // is unusable and must be forgotten, so that a later pass can pick a
         // fresh one instead of silently reading `_tidb_rowid`.
@@ -296,7 +596,7 @@ impl DataSource {
             self.handle_cols.clear();
             self.handle_is_int = false;
         }
-        schema.columns.is_empty()
+        emptied
     }
 
     /// Go `DataSource.PreparePossibleProperties(_, _)`
@@ -400,29 +700,60 @@ impl DataSource {
             table_as_name: self.table_as_name.clone(),
             db_name: self.db_name.clone(),
             physical_table_id: self.physical_table_id,
+            sample_info: self.sample_info.clone(),
             partition_def_idx: self.partition_def_idx,
+            partition_names: self.partition_names.clone(),
             partition_definition_names: self.partition_definition_names.clone(),
+            partition_definition_ids: self.partition_definition_ids.clone(),
+            dynamic_partition_access: self.dynamic_partition_access.clone(),
             columns: self.columns.clone(),
             table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             enumerated_paths: self.enumerated_paths.clone(),
+            public_enumerated_paths: self.public_enumerated_paths.clone(),
+            ast_index_hints: self.ast_index_hints.clone(),
+            index_hints: self.index_hints.clone(),
             indexes: self.indexes.clone(),
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,
+            fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
+            fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,
+            is_common_handle: self.is_common_handle,
+            common_handle_version: self.common_handle_version,
+            is_temporary: self.is_temporary,
+            is_cached: self.is_cached,
+            has_affinity: self.has_affinity,
+            index_lookup_push_down_session: self.index_lookup_push_down_session,
+            tikv_in_isolation_read: self.tikv_in_isolation_read,
+            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols: self.handle_cols.clone(),
             handle_is_int: self.handle_is_int,
             common_handle_cols: self.common_handle_cols.clone(),
             common_handle_lens: self.common_handle_lens.clone(),
             prefer_store_type: self.prefer_store_type,
+            prefer_partitions: self.prefer_partitions.clone(),
             is_for_update_read: self.is_for_update_read,
             contain_expr_prefix_uk: self.contain_expr_prefix_uk,
             cols_requiring_full_len: self.cols_requiring_full_len.clone(),
             access_path_min_selectivity: self.access_path_min_selectivity,
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
+            forced_index_ids: self.forced_index_ids.clone(),
+            force_keep_order_index_ids: self.force_keep_order_index_ids.clone(),
+            force_no_keep_order_index_ids: self.force_no_keep_order_index_ids.clone(),
+            force_keep_order_table_path: self.force_keep_order_table_path,
+            force_no_keep_order_table_path: self.force_no_keep_order_table_path,
+            index_lookup_push_down_by: self.index_lookup_push_down_by.clone(),
+            partial_index_noncacheable_ids: self.partial_index_noncacheable_ids.clone(),
+            force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
+            index_merge_hints: self.index_merge_hints.clone(),
+            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             table_stats: self.table_stats.clone(),
+            table_path_count_after_access: self.table_path_count_after_access,
+            index_path_count_after_access: self.index_path_count_after_access.clone(),
+            table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
         }
     }

@@ -17,7 +17,6 @@
 
 use tidb_chunk::{chunk::Chunk, row::Row};
 use tidb_datatype::Datum;
-use tidb_expr::schema::Schema;
 
 use super::JoinKind;
 use crate::ExecError;
@@ -47,7 +46,7 @@ impl JoinOutput {
     }
 
     pub(super) fn resolved(
-        schema: &Schema,
+        offsets: &[usize],
         kind: JoinKind,
         left_width: usize,
         right_width: usize,
@@ -56,13 +55,11 @@ impl JoinOutput {
         output.left.clear();
         output.right.clear();
         let columns = if kind == JoinKind::LeftOuterSemi {
-            &schema.columns[..schema.columns.len().saturating_sub(1)]
+            &offsets[..offsets.len().saturating_sub(1)]
         } else {
-            &schema.columns
+            offsets
         };
-        for column in columns {
-            let index = usize::try_from(column.index)
-                .map_err(|_| ExecError::internal("join output column is unresolved"))?;
+        for &index in columns {
             if index < left_width {
                 output.left.push(index);
             } else if index < left_width + right_width {

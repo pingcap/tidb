@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! Source-shaped field-name authority from `pkg/types/field_name.go`.
+use tidb_hack::GoToLower;
 
 /// The string returned by Go's `(*FieldName).String` for a hidden field.
 pub const EMPTY_NAME: &str = "EMPTY_NAME";
@@ -39,7 +40,7 @@ impl IdentifierMetadata {
     /// a small set of non-ASCII code points.
     pub fn new(original: impl Into<String>) -> Self {
         let original = original.into();
-        let lower = original.to_lowercase();
+        let lower = original.go_to_lower();
         Self { original, lower }
     }
 

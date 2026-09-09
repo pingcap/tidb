@@ -144,3 +144,18 @@ fn cloned_handle_reaches_the_same_typed_slot() {
     assert_eq!(alias.borrow().name, "x");
     assert_eq!(first.as_ptr(), alias.as_ptr());
 }
+
+// Go permits callers to discard allocator results. Keep these source-shaped
+// APIs free of a Rust-only diagnostic contract.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let arena = Arena::new();
+
+    Arena::new();
+    alloc::<Point>(&arena);
+    alloc_slice::<i64>(&arena, 1);
+    let mut slab = Slab::<Point>::default();
+    let handle = slab.alloc();
+    handle.as_ptr();
+}

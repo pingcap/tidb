@@ -45,7 +45,7 @@ fn removes_direct_and_projected_zero_row_duals_before_recursing() {
     );
 
     let (rewritten, changed) = EliminateUnionAllDualItem.optimize(input);
-    assert!(changed);
+    assert!(!changed);
 
     let union = &rewritten.children()[0];
     assert_eq!(union.kind(), &UnionAllNodeKind::UnionAll);
@@ -72,7 +72,7 @@ fn replaces_all_zero_row_union_branches_with_schema_preserving_dual() {
 }
 
 #[test]
-fn recursive_rewrite_preserves_nonzero_duals_and_safe_empty_projections() {
+fn recursive_rewrite_preserves_nonzero_duals_and_reports_gos_narrow_flag() {
     let input = UnionAllPlan::with_children(
         UnionAllNodeKind::Other,
         vec![
@@ -85,11 +85,22 @@ fn recursive_rewrite_preserves_nonzero_duals_and_safe_empty_projections() {
     );
 
     let (rewritten, changed) = EliminateUnionAllDualItem.optimize(input);
-    assert!(changed);
+    assert!(!changed);
     assert_eq!(rewritten.children()[0].children().len(), 1);
     let union = &rewritten.children()[1];
     assert_eq!(union.kind(), &UnionAllNodeKind::UnionAll);
     assert_eq!(union.children(), &[dual(1)]);
+}
+
+#[test]
+#[should_panic]
+fn childless_projection_panics_at_the_same_direct_child_access_as_go() {
+    let input = UnionAllPlan::with_children(
+        UnionAllNodeKind::UnionAll,
+        vec![UnionAllPlan::new(UnionAllNodeKind::Projection)],
+    );
+
+    let _ = EliminateUnionAllDualItem.optimize(input);
 }
 
 #[test]

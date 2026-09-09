@@ -25,11 +25,19 @@ use super::{
     reply_pair, BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchReply,
     BatchRequestProgress, OpaqueBatchCommand,
 };
-use crate::rpc::{AsyncRequestPublication, CompletionError, CompletionNotifier, PendingRequest};
+use crate::rpc::{
+    completion_pair, AsyncRequestPublication, CompletionError, CompletionNotifier, CompletionPull,
+    CompletionRunLoop, PendingRequest,
+};
+
+enum CoprocessorCompletion {
+    Response(BatchReply),
+    Callback(CompletionPull<OpaqueBatchCommand, BatchInflightError>),
+}
 
 /// Pull-side owner of one concrete Coprocessor BatchCommands attempt.
 pub struct BatchCoprocessorPending {
-    completion: BatchReply,
+    completion: CoprocessorCompletion,
     progress: Arc<BatchRequestProgress>,
     barrier: RefCell<Option<crate::rpc::transport_runtime::PublicationBarrier>>,
 }
@@ -40,7 +48,34 @@ impl BatchCoprocessorPending {
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
         let (completion, pull) = reply_pair();
-        super::wire::wire_diag::note_outbound(BatchCommandTag::Coprocessor);
+        Self::entry_with_completion(
+            encoded_request,
+            forwarded_host,
+            completion,
+            CoprocessorCompletion::Response(pull),
+        )
+    }
+
+    pub(in crate::rpc) fn entry_with_run_loop(
+        encoded_request: Vec<u8>,
+        forwarded_host: Option<&str>,
+        run_loop: CompletionRunLoop,
+    ) -> (BatchCommandEntry, Self) {
+        let (completion, pull) = completion_pair(run_loop, || {});
+        Self::entry_with_completion(
+            encoded_request,
+            forwarded_host,
+            completion.into(),
+            CoprocessorCompletion::Callback(pull),
+        )
+    }
+
+    fn entry_with_completion(
+        encoded_request: Vec<u8>,
+        forwarded_host: Option<&str>,
+        completion: super::BatchCommandCompletion,
+        pull: CoprocessorCompletion,
+    ) -> (BatchCommandEntry, Self) {
         let command = OpaqueBatchCommand::new(BatchCommandTag::Coprocessor, encoded_request);
         let mut entry = BatchCommandEntry::new(command, completion);
         if let Some(forwarded_host) = forwarded_host {
@@ -96,7 +131,10 @@ impl BatchCoprocessorPending {
 
 impl PendingRequest for BatchCoprocessorPending {
     fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
-        self.completion.set_notifier(notifier, token);
+        match &mut self.completion {
+            CoprocessorCompletion::Response(pull) => pull.set_notifier(notifier, token),
+            CoprocessorCompletion::Callback(pull) => pull.set_notifier(notifier, token),
+        }
     }
 
     fn publication(&self) -> Option<AsyncRequestPublication> {
@@ -125,20 +163,35 @@ impl PendingRequest for BatchCoprocessorPending {
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
-        let result = self.completion.try_complete()?;
+        let result = match &mut self.completion {
+            CoprocessorCompletion::Response(pull) => pull.try_complete()?,
+            CoprocessorCompletion::Callback(pull) => pull.try_complete()?,
+        };
         Ok(result.map(|result| self.map_result(result)))
     }
 
     fn cancel(&mut self) {
-        self.completion.cancel();
+        match &mut self.completion {
+            CoprocessorCompletion::Response(pull) => pull.cancel(),
+            CoprocessorCompletion::Callback(pull) => pull.cancel(),
+        }
     }
 
     fn complete(
         &mut self,
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
-        let result = self.completion.complete(call)?;
+        let result = match &mut self.completion {
+            CoprocessorCompletion::Response(pull) => pull.complete(call)?,
+            CoprocessorCompletion::Callback(pull) => pull.complete(call)?,
+        };
         Ok(self.map_result(result))
+    }
+}
+
+impl Drop for BatchCoprocessorPending {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -148,6 +201,27 @@ mod tests {
     use crate::rpc::batch::{
         BatchInflightTable, BatchRoute, BatchScheduler, BatchWireResponse, PendingBatchCommand,
     };
+
+    #[test]
+    fn explicit_callback_uses_its_supplied_run_loop() {
+        let run_loop = CompletionRunLoop::new();
+        let (entry, mut pending) =
+            BatchCoprocessorPending::entry_with_run_loop(vec![], None, run_loop.clone());
+        entry
+            .completion()
+            .schedule_error(BatchInflightError::Transport(
+                DirectUnaryClientError::AdmissionBusy {
+                    address: "physical:20160".to_owned(),
+                },
+            ));
+
+        assert_eq!(run_loop.num_runnable(), 1);
+        assert!(matches!(
+            pending.try_complete().unwrap(),
+            Some(Err(DirectUnaryClientError::AdmissionBusy { .. }))
+        ));
+        assert_eq!(run_loop.num_runnable(), 0);
+    }
 
     #[test]
     fn completed_response_keeps_route_without_collecting_submission_receipt() {

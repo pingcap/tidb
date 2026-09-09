@@ -1,0 +1,15 @@
+[package]
+name = "tidb-resolve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB AST semantic-resolution context and result fields."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-model = { path = "../tidb-model" }

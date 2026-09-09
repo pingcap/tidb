@@ -271,6 +271,8 @@ pub enum PrimaryKeyStorage {
     Clustered,
     /// Non-clustered primary key.
     NonClustered,
+    /// An unrecognized raw value from a persisted catalog or wire payload.
+    Unknown(i64),
 }
 
 impl PrimaryKeyStorage {
@@ -279,6 +281,7 @@ impl PrimaryKeyStorage {
         match self {
             Self::Clustered => "CLUSTERED",
             Self::NonClustered => "NONCLUSTERED",
+            Self::Unknown(_) => "",
         }
     }
 }
@@ -293,6 +296,8 @@ pub enum PrimaryKeyType {
     Clustered,
     /// Non-clustered primary key.
     NonClustered,
+    /// An unrecognized raw value from a persisted catalog or wire payload.
+    Unknown(i64),
 }
 
 impl PrimaryKeyType {
@@ -302,6 +307,7 @@ impl PrimaryKeyType {
             Self::Default => "",
             Self::Clustered => "CLUSTERED",
             Self::NonClustered => "NONCLUSTERED",
+            Self::Unknown(_) => "",
         }
     }
 }
@@ -368,6 +374,8 @@ pub enum ReferentialAction {
     NoAction,
     /// Set child columns to defaults.
     SetDefault,
+    /// An unrecognized raw value from a persisted catalog or wire payload.
+    Unknown(i64),
 }
 
 impl ReferentialAction {
@@ -380,6 +388,7 @@ impl ReferentialAction {
             Self::SetNull => "SET NULL",
             Self::NoAction => "NO ACTION",
             Self::SetDefault => "SET DEFAULT",
+            Self::Unknown(_) => "",
         }
     }
 }
@@ -398,6 +407,8 @@ pub enum RunawayActionType {
     Kill,
     /// Switch resource group.
     SwitchGroup,
+    /// An unrecognized raw value from a persisted catalog or wire payload.
+    Unknown(i64),
 }
 
 impl RunawayActionType {
@@ -408,6 +419,7 @@ impl RunawayActionType {
             Self::Cooldown => "COOLDOWN",
             Self::Kill => "KILL",
             Self::SwitchGroup => "SWITCH_GROUP",
+            Self::Unknown(_) => "DRYRUN",
         }
     }
 }
@@ -424,6 +436,8 @@ pub enum RunawayWatchType {
     Similar,
     /// Plan digest.
     Plan,
+    /// An unrecognized raw value from a persisted catalog or wire payload.
+    Unknown(i64),
 }
 
 impl RunawayWatchType {
@@ -434,6 +448,7 @@ impl RunawayWatchType {
             Self::Exact => "EXACT",
             Self::Similar => "SIMILAR",
             Self::Plan => "PLAN",
+            Self::Unknown(_) => "NONE",
         }
     }
 }
@@ -619,6 +634,7 @@ impl crate::Visitable for PrimaryKeyStorage {
         match self {
             Self::Clustered => {}
             Self::NonClustered => {}
+            Self::Unknown(_) => {}
         }
         visitor.leave(self)
     }
@@ -633,6 +649,7 @@ impl crate::Visitable for PrimaryKeyType {
             Self::Default => {}
             Self::Clustered => {}
             Self::NonClustered => {}
+            Self::Unknown(_) => {}
         }
         visitor.leave(self)
     }
@@ -661,6 +678,7 @@ impl crate::Visitable for ReferentialAction {
             Self::SetNull => {}
             Self::NoAction => {}
             Self::SetDefault => {}
+            Self::Unknown(_) => {}
         }
         visitor.leave(self)
     }
@@ -677,6 +695,7 @@ impl crate::Visitable for RunawayActionType {
             Self::Cooldown => {}
             Self::Kill => {}
             Self::SwitchGroup => {}
+            Self::Unknown(_) => {}
         }
         visitor.leave(self)
     }
@@ -692,6 +711,7 @@ impl crate::Visitable for RunawayWatchType {
             Self::Exact => {}
             Self::Similar => {}
             Self::Plan => {}
+            Self::Unknown(_) => {}
         }
         visitor.leave(self)
     }

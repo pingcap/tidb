@@ -338,7 +338,10 @@ fn scheduler_moves_the_original_completion_into_inflight() {
     let route = BatchRoute::direct("store-1:20160", 7);
     let command = OpaqueBatchCommand::new(BatchCommandTag::Get, vec![1, 2, 3]);
     let (completion, mut pull) = completion_pair(CompletionRunLoop::new(), || {});
-    let mut scheduler = BatchScheduler::new();
+    let mut scheduler: BatchScheduler<
+        OpaqueBatchCommand,
+        tidb_txnkv::rpc::batch::BatchCommandCompletion,
+    > = BatchScheduler::new();
     scheduler.push(BatchEntry::new(command.clone(), completion));
     let groups = scheduler.build_with_limit(1).into_parts();
     let direct = groups.direct;

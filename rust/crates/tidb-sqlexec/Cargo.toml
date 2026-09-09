@@ -1,0 +1,20 @@
+[package]
+name = "tidb-sqlexec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB shared SQL execution contracts."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-util = { path = "../tidb-util" }
+tracing = "0.1"

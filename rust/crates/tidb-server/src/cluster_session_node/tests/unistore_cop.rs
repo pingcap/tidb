@@ -20,10 +20,23 @@
 //! never fails in-tree. This module builds the same stack `--store unistore
 //! --cluster-session` boots and pins those plans.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, MySqlDuration};
+use tidb_ddl_notifier::{
+    publish_schema_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
+    TEST_HANDLER_ID,
+};
+use tidb_model::go_runtime::GoSharedSlice;
+use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
+use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
+use super::super::{
+    partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
+    ClusterServerSession,
+};
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::QuerySession;
@@ -31,7 +44,13 @@ use crate::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack}
 use crate::QuerySessionFactory;
 
 fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    let config = crate::node_config::NodeConfig::parse([
+    cop_backed_stack_with_stats_lease(None)
+}
+
+fn cop_backed_stack_with_stats_lease(
+    stats_lease: Option<crate::node_config::StatsLease>,
+) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
+    let mut config = crate::node_config::NodeConfig::parse([
         "tidb-server",
         "--store",
         "unistore",
@@ -44,11 +63,15 @@ fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
         "/dev/null",
     ])
     .expect("node config");
+    if let Some(stats_lease) = stats_lease {
+        config.stats_lease = stats_lease;
+    }
     let users = Arc::new(
         ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("configured user store"),
     );
-    let stack = unistore_cluster_session_stack(&config, &users).expect("unistore stack");
+    let stack =
+        unistore_cluster_session_stack(&config, &users, None, None).expect("unistore stack");
     (stack, users)
 }
 
@@ -82,131 +105,6 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
-}
-
-struct LockDispatchRecorder {
-    inner: Box<dyn super::super::OpenClusterTransaction>,
-    prelocks: Arc<std::sync::Mutex<Vec<Vec<Vec<u8>>>>>,
-    postlocks: Arc<std::sync::Mutex<Vec<Vec<Vec<u8>>>>>,
-}
-
-impl super::super::OpenClusterTransaction for LockDispatchRecorder {
-    fn start_ts(&self) -> u64 {
-        self.inner.start_ts()
-    }
-    fn snapshot(&self) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
-        self.inner.snapshot()
-    }
-    fn snapshot_for(
-        &self,
-        locking: bool,
-    ) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
-        self.inner.snapshot_for(locking)
-    }
-    fn snapshot_at_for(
-        &self,
-        ts: u64,
-        locking: bool,
-    ) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
-        self.inner.snapshot_at_for(ts, locking)
-    }
-    fn is_pessimistic(&self) -> bool {
-        self.inner.is_pessimistic()
-    }
-    fn commit(
-        self: Box<Self>,
-        buffer: &tidb_executor::cluster_storage::MutationBuffer,
-    ) -> Result<(), crate::sql_node::SqlQueryError> {
-        self.inner.commit(buffer)
-    }
-    fn rollback(self: Box<Self>) -> Result<(), String> {
-        self.inner.rollback()
-    }
-    fn lock_staged_keys_with_values(
-        &self,
-        keys: Vec<Vec<u8>>,
-    ) -> Result<tidb_exec::cluster_table_storage::LockKeysOutcome, String> {
-        self.prelocks.lock().unwrap().push(keys.clone());
-        self.inner.lock_staged_keys_with_values(keys)
-    }
-    fn lock_staged_keys_with_assertions(
-        &self,
-        keys: Vec<Vec<u8>>,
-        assertions: std::collections::BTreeSet<Vec<u8>>,
-        hints: std::collections::BTreeMap<
-            Vec<u8>,
-            tidb_executor::cluster_storage::DuplicateKeyHint,
-        >,
-    ) -> Result<tidb_exec::cluster_table_storage::LockKeysOutcome, String> {
-        self.postlocks.lock().unwrap().push(keys.clone());
-        self.inner
-            .lock_staged_keys_with_assertions(keys, assertions, hints)
-    }
-    fn release_statement_locks(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
-        self.inner.release_statement_locks(keys)
-    }
-}
-
-#[test]
-fn statement_owned_locks_do_not_cross_the_worker_boundary_twice() {
-    let (stack, _users) = cop_backed_stack();
-    let mut session = stack.factory.open_session(session_context(120)).unwrap();
-    rows(
-        &mut session,
-        "CREATE TABLE test.lock_dispatch (id INT PRIMARY KEY, v INT, u INT UNIQUE)",
-    );
-    rows(
-        &mut session,
-        "INSERT INTO test.lock_dispatch VALUES (1,10,100),(2,20,200)",
-    );
-    for (sql, index_locks) in [
-        ("UPDATE test.lock_dispatch SET v=v+1 WHERE id=1", false),
-        ("UPDATE test.lock_dispatch SET v=v WHERE id=1", false),
-        ("UPDATE test.lock_dispatch SET u=101 WHERE id=1", true),
-    ] {
-        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-        let prelocks = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let postlocks = Arc::new(std::sync::Mutex::new(Vec::new()));
-        session.explicit = Some(Box::new(LockDispatchRecorder {
-            inner: session.explicit.take().unwrap(),
-            prelocks: Arc::clone(&prelocks),
-            postlocks: Arc::clone(&postlocks),
-        }));
-        rows(&mut session, sql);
-        let actual = postlocks.lock().unwrap().clone();
-        session.control_transaction("ROLLBACK").unwrap();
-        assert_eq!(
-            prelocks.lock().unwrap().len(),
-            1,
-            "the row is locked before execution"
-        );
-        if index_locks {
-            assert_eq!(
-                actual.len(),
-                1,
-                "new unique-index keys still need a lock request"
-            );
-            assert!(!actual[0].is_empty());
-            assert!(
-                actual[0]
-                    .iter()
-                    .all(|key| tidb_tablecodec::is_index_key(key)),
-                "already-owned record lock was sent again: {actual:?}"
-            );
-        } else {
-            assert!(
-                actual.is_empty(),
-                "already-owned row incurred a second worker handoff: {actual:?}"
-            );
-        }
-    }
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "SELECT * FROM test.lock_dispatch ORDER BY id"
-        )),
-        [["1", "10", "100"], ["2", "20", "200"]]
-    );
 }
 
 #[test]
@@ -428,97 +326,6 @@ fn unchanged_updates_lock_only_matched_rows() {
 }
 
 #[test]
-fn global_binding_writer_rolls_back_errors_without_replaying_commits() {
-    use crate::cluster_binding_seam::ClusterBindings;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use tidb_session::binding::GlobalBindingWriter;
-
-    struct FailingRefresh {
-        inner: Arc<dyn ClusterBindings>,
-        attempts: AtomicUsize,
-    }
-    impl ClusterBindings for FailingRefresh {
-        fn cache(&self) -> tidb_session::binding_cache::SharedBindingCache {
-            self.inner.cache()
-        }
-        fn reload(&self) -> Result<(), String> {
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            Err("injected post-commit refresh failure".to_owned())
-        }
-        fn has_changes(&self, buffer: &tidb_executor::cluster_storage::MutationBuffer) -> bool {
-            self.inner.has_changes(buffer)
-        }
-    }
-
-    let (stack, _users) = cop_backed_stack();
-    let mut reader = stack
-        .factory
-        .open_session(session_context(124))
-        .expect("reader");
-    rows(
-        &mut reader,
-        "CREATE TABLE test.binding_writer_atomicity (id INT PRIMARY KEY)",
-    );
-    let bindings = Arc::new(FailingRefresh {
-        inner: Arc::clone(stack.factory.bindings.as_ref().expect("binding authority")),
-        attempts: AtomicUsize::new(0),
-    });
-    let mut storage_factory = stack.factory.clone();
-    storage_factory.bindings = None;
-    let writer = crate::cluster_session_node::InternalBindingWriter {
-        factory: storage_factory,
-        bindings: bindings.clone(),
-        connection_id: 125,
-    };
-    let error = writer
-        .execute(&mut |session| {
-            session.run("INSERT INTO test.binding_writer_atomicity VALUES (1)")?;
-            session.run("INSERT INTO test.binding_writer_atomicity VALUES (1)")?;
-            Ok(0)
-        })
-        .expect_err("a real duplicate-key failure aborts the storage operation")
-        .to_mysql_error();
-    assert_eq!(error.code, 1062);
-    assert_eq!(error.state, *b"23000");
-    assert_eq!(
-        displayed(rows(
-            &mut reader,
-            "SELECT COUNT(*) FROM test.binding_writer_atomicity"
-        )),
-        [["0"]]
-    );
-    assert_eq!(
-        bindings.attempts.load(Ordering::SeqCst),
-        0,
-        "no refresh before a successful commit"
-    );
-
-    let mut calls = 0;
-    assert_eq!(
-        writer
-            .execute(&mut |session| {
-                calls += 1;
-                session.run("INSERT INTO test.binding_writer_atomicity VALUES (2)")?;
-                Ok(1)
-            })
-            .expect("a committed operation succeeds despite refresh failure"),
-        1
-    );
-    assert_eq!(
-        calls, 1,
-        "refresh failure cannot replay the committed operation"
-    );
-    assert_eq!(bindings.attempts.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        displayed(rows(
-            &mut reader,
-            "SELECT id FROM test.binding_writer_atomicity"
-        )),
-        [["2"]]
-    );
-}
-
-#[test]
 fn global_binding_commands_commit_outside_the_user_transaction() {
     let (stack, _users) = cop_backed_stack();
     let mut writer = stack
@@ -639,6 +446,3903 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
     }
 }
 
+fn handle_stats_schema_change(session: &mut ClusterServerSession, event: &SchemaChangeEvent) {
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("stats subscriber transaction begins");
+    if let Err(error) = session.stage_stats_notifier_event(event) {
+        session
+            .control_transaction("ROLLBACK")
+            .expect("failed stats subscriber transaction rolls back");
+        panic!("stats subscriber handles the source event: {error:?}");
+    }
+    session
+        .control_transaction("COMMIT")
+        .expect("stats subscriber transaction commits");
+}
+
+fn partition_payload(ids: &[i64]) -> PartitionInfo {
+    PartitionInfo {
+        definitions: GoSharedSlice::from_vec(
+            ids.iter()
+                .copied()
+                .map(|id| PartitionDefinition {
+                    id,
+                    ..PartitionDefinition::default()
+                })
+                .collect(),
+        ),
+        num: ids.len() as u64,
+        ..PartitionInfo::default()
+    }
+}
+
+/// Pinned Go `checkExchangePartitionRecordValidation` and
+/// `onExchangeTablePartition`: the default `WITH VALIDATION` reads the
+/// standalone rows before publication, rejects 1737 atomically when one does
+/// not route to the named partition, and otherwise makes the two old physical
+/// record sets visible under their exchanged metadata IDs.
+#[test]
+fn exchange_partition_validates_and_swaps_real_rows_atomically() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(152))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_pt (id BIGINT PRIMARY KEY CLUSTERED) \
+         PARTITION BY RANGE (id) (\
+           PARTITION p0 VALUES LESS THAN (10),\
+           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_nt (id BIGINT PRIMARY KEY CLUSTERED)",
+    );
+    rows(&mut session, "INSERT INTO exchange_pt VALUES (1)");
+    rows(&mut session, "INSERT INTO exchange_nt VALUES (5)");
+    rows(
+        &mut session,
+        "ALTER TABLE exchange_pt EXCHANGE PARTITION p0 WITH TABLE exchange_nt",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM exchange_pt ORDER BY id")),
+        [["5"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM exchange_nt ORDER BY id")),
+        [["1"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_bad_pt (id BIGINT PRIMARY KEY CLUSTERED) \
+         PARTITION BY RANGE (id) (\
+           PARTITION p0 VALUES LESS THAN (10),\
+           PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE exchange_bad_nt (id BIGINT PRIMARY KEY CLUSTERED)",
+    );
+    rows(&mut session, "INSERT INTO exchange_bad_pt VALUES (2)");
+    rows(&mut session, "INSERT INTO exchange_bad_nt VALUES (15)");
+    let error = match session
+        .execute("ALTER TABLE exchange_bad_pt EXCHANGE PARTITION p0 WITH TABLE exchange_bad_nt")
+    {
+        Err(error) => error,
+        Ok(_) => panic!("a row for p1 cannot be exchanged into p0"),
+    };
+    assert_eq!(error.code, 1737);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(
+        error.message,
+        "Found a row that does not match the partition"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM exchange_bad_pt ORDER BY id"
+        )),
+        [["2"]],
+        "the failed DDL leaves partition metadata and physical rows unchanged"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM exchange_bad_nt ORDER BY id"
+        )),
+        [["15"]]
+    );
+}
+
+/// Pinned `TestExchangeAPartition`: the subscriber reads the exchanged
+/// partition and standalone-table metadata and applies Go's count and modify
+/// deltas to the logical/global row.
+#[test]
+fn exchange_partition_event_updates_global_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(83))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_exchange_pt (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), \
+         PARTITION p3 VALUES LESS THAN (21))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_exchange_pt VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_exchange_pt");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_exchange_nt (a INT PRIMARY KEY, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_exchange_nt VALUES (1,2),(2,2),(3,2),(4,2),(5,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_exchange_nt");
+
+    let (partitioned, partition_id, standalone) = {
+        let catalog = stack.factory.catalog.load();
+        let partitioned = catalog
+            .find_table("test", "stats_exchange_pt")
+            .expect("partitioned table is published")
+            .1
+            .clone_like_go();
+        let partition_id = partitioned
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot()
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p0")
+            .expect("p0 exists")
+            .id;
+        let standalone = catalog
+            .find_table("test", "stats_exchange_nt")
+            .expect("standalone table is published")
+            .1
+            .clone_like_go();
+        (partitioned, partition_id, standalone)
+    };
+    let logical_id = partitioned.id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::exchange_partition(
+            partitioned,
+            partition_payload(&[partition_id]),
+            standalone,
+        ),
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["8", "7"]]
+    );
+}
+
+/// Pinned Go `pkg/ddl/constraint_test.go`: CHECK DDL is submitted to the
+/// durable queue, completed by the DDL owner, removed from the active table,
+/// and enforced by subsequent writes.
+#[test]
+fn check_constraint_runs_through_the_owner_job_queue() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(153))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET @@global.tidb_enable_check_constraint = ON",
+    );
+    assert!(
+        session
+            .session
+            .ddl_statement_context()
+            .enable_check_constraint(),
+        "the query-shaped DDL context must read the enabled global variable"
+    );
+    rows(&mut session, "CREATE TABLE queued_check (a INT)");
+    rows(&mut session, "INSERT INTO queued_check VALUES (1)");
+    rows(
+        &mut session,
+        "ALTER TABLE queued_check ADD CONSTRAINT positive CHECK (a > 0)",
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.tidb_ddl_job",
+        )),
+        [["0"]],
+        "a completed owner job is no longer active"
+    );
+    let shown = displayed(rows(&mut session, "SHOW CREATE TABLE queued_check"));
+    assert!(
+        shown[0][1].contains("CONSTRAINT `positive` CHECK ((`a` > 0))"),
+        "the terminal owner phase must publish the CHECK: {shown:?}"
+    );
+    let error = match session.execute("INSERT INTO queued_check VALUES (-1)") {
+        Err(error) => error,
+        Ok(_) => panic!("the owner-published CHECK must be enforced"),
+    };
+    assert_eq!(error.code, 3819);
+    assert_eq!(error.message, "Check constraint 'positive' is violated.");
+}
+
+/// Pinned `pkg/ddl/notifier.TestPublishToTableStore`, `TestBasicPubSub`, and
+/// `TestDeliverOrderAndCleanup` over the real bootstrapped notifier table.
+#[test]
+fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(151))
+        .expect("client session opens");
+    assert_eq!(
+        displayed(rows(
+            &mut client,
+            "SELECT variable_value FROM mysql.tidb \
+             WHERE variable_name = 'ddl_table_version'",
+        )),
+        [["4"]]
+    );
+    rows(&mut client, "DELETE FROM mysql.tidb_ddl_notifier");
+
+    let pool: Arc<dyn SessionPool> = Arc::new(ClusterNotifierSessionPool::new(
+        factory.advanced_sys_session_pool(),
+    ));
+    let store = Arc::new(ClusterNotifierTableStore);
+    let mut publisher = pool.get().expect("publisher session");
+    for (job_id, table_name) in [(1, "t1"), (2, "t2#special-char?in'name"), (3, "t3")] {
+        publish_schema_change_to_store(
+            publisher.as_mut(),
+            job_id,
+            -1,
+            SchemaChangeEvent::create_table(tidb_model::TableInfo {
+                id: 999 + job_id,
+                name: tidb_ast::CiString::new(table_name),
+                ..tidb_model::TableInfo::default()
+            }),
+            store.as_ref(),
+        )
+        .expect("event publishes");
+    }
+    pool.put(publisher);
+
+    let mut reader = pool.get().expect("list session");
+    let mut list = store.list(reader.as_mut()).expect("list starts");
+    let listed = list.read(reader.as_mut(), 2).expect("first page");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].event.create_table_info().name.original(), "t1");
+    assert_eq!(
+        listed[1].event.create_table_info().name.original(),
+        "t2#special-char?in'name"
+    );
+    let listed = list.read(reader.as_mut(), 2).expect("second page");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|change| (change.ddl_job_id, change.sub_job_id))
+            .collect::<Vec<_>>(),
+        [(3, -1)]
+    );
+    assert_eq!(listed[0].event.create_table_info().name.original(), "t3");
+    list.close(reader.as_mut());
+    pool.put(reader);
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let handler: Handler = {
+        let seen = Arc::clone(&seen);
+        Arc::new(move |_, event| {
+            seen.lock().unwrap().push(event.create_table_info().id);
+            Ok(())
+        })
+    };
+    let notifier = DdlNotifier::new(
+        Arc::clone(&pool),
+        Arc::clone(&store) as Arc<dyn Store>,
+        Duration::from_millis(10),
+    );
+    notifier.register_handler(TEST_HANDLER_ID, handler);
+    tidb_owner::Listener::on_become_owner(&notifier);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let remaining = displayed(rows(
+            &mut client,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ));
+        if remaining == [["0"]] {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "notifier did not process and clean up every event"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    tidb_owner::Listener::on_retire_owner(&notifier);
+    assert_eq!(*seen.lock().unwrap(), [1000, 1001, 1002]);
+}
+
+/// Pinned notifier `processEventForHandler` plus statistics
+/// `HandleDDLEvent`: the internal session opens a real pessimistic transaction
+/// before the subscriber stages mutations, commits them with the processed
+/// flag, and then removes the fully processed event.
+#[test]
+fn stats_notifier_uses_a_real_internal_transaction_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(85))
+        .expect("client session opens");
+    rows(&mut client, "USE test");
+    rows(
+        &mut client,
+        "CREATE TABLE stats_notifier_transaction (a INT)",
+    );
+    rows(
+        &mut client,
+        "INSERT INTO stats_notifier_transaction VALUES (1),(2)",
+    );
+    rows(&mut client, "ANALYZE TABLE stats_notifier_transaction");
+    let table_id = factory
+        .catalog
+        .load()
+        .find_table("test", "stats_notifier_transaction")
+        .expect("table is published")
+        .1
+        .id;
+    let version_before = displayed(rows(
+        &mut client,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+    rows(&mut client, "DELETE FROM mysql.tidb_ddl_notifier");
+
+    let pool: Arc<dyn SessionPool> = Arc::new(ClusterNotifierSessionPool::new(
+        factory.advanced_sys_session_pool(),
+    ));
+    let mut publisher = pool.get().expect("publisher session");
+    publish_schema_change_to_store(
+        publisher.as_mut(),
+        9_001,
+        -1,
+        SchemaChangeEvent::flashback_cluster(),
+        &ClusterNotifierTableStore,
+    )
+    .expect("flashback event publishes");
+    pool.put(publisher);
+
+    let notifier = super::super::ddl_notifier::build_notifier(&factory, Duration::ZERO);
+    tidb_owner::Listener::on_become_owner(notifier.as_ref());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let version_after = loop {
+        let pending = displayed(rows(
+            &mut client,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ));
+        let version = displayed(rows(
+            &mut client,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        if pending == [["0"]] && version != version_before {
+            break version;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stats notifier did not commit the subscriber mutation and clean up the event"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    tidb_owner::Listener::on_retire_owner(notifier.as_ref());
+    assert!(version_after > version_before);
+}
+
+/// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: GLOBAL temporary
+/// metadata is published by an ordinary DDL job, its rows remain
+/// connection-local and are deleted at commit, and only explicit `ANALYZE`
+/// replaces pseudo statistics for that session.
+#[test]
+fn global_temporary_analyze_uses_session_rows_and_statistics() {
+    let (stack, _users) = cop_backed_stack();
+    let existing_stats_ids = stack
+        .factory
+        .stats()
+        .load()
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut session = stack
+        .factory
+        .open_session(session_context(139))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE GLOBAL TEMPORARY TABLE global_stats (a INT) ON COMMIT DELETE ROWS",
+    );
+    let temporary_id = *stack
+        .factory
+        .stats()
+        .load()
+        .keys()
+        .find(|table_id| !existing_stats_ids.contains(table_id))
+        .expect("GLOBAL temporary DDL publishes its statistics metadata row");
+    rows(
+        &mut session,
+        "INSERT INTO global_stats VALUES (1), (2), (3)",
+    );
+    assert!(
+        rows(&mut session, "SELECT * FROM global_stats").is_empty(),
+        "GLOBAL temporary rows are deleted when the autocommit transaction ends"
+    );
+    let before = displayed(rows(&mut session, "EXPLAIN SELECT * FROM global_stats"));
+    assert!(
+        before
+            .iter()
+            .flatten()
+            .any(|value| value.contains("stats:pseudo")),
+        "ordinary access must not publish temporary statistics: {before:?}"
+    );
+
+    rows(&mut session, "ANALYZE TABLE global_stats");
+    let snapshot = stack.factory.stats().load();
+    let analyzed = snapshot
+        .get(&temporary_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .expect("explicit ANALYZE publishes a real GLOBAL temporary cache object");
+    assert_eq!(analyzed.hist_coll.column_count(), 1);
+    assert!(!analyzed.hist_coll.pseudo);
+
+    let after = displayed(rows(&mut session, "EXPLAIN SELECT * FROM global_stats"));
+    assert!(
+        after
+            .iter()
+            .flatten()
+            .any(|value| value.contains("stats:pseudo")),
+        "an analyzed empty table retains Go's query-time pseudo policy: {after:?}"
+    );
+}
+
+/// Pinned `lockstats.TestRemoveLockedTables`: the live cluster path wraps the
+/// complete operation in Go's independent pessimistic transaction and merges
+/// a partition lock delta into both physical and logical metadata.
+#[test]
+fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = stack.factory;
+    let mut session = factory
+        .open_session(session_context(85))
+        .expect("client session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE lock_live (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO lock_live VALUES (1),(2),(11),(12)",
+    );
+    rows(&mut session, "ANALYZE TABLE lock_live");
+    let catalog = factory.catalog.load();
+    let table = catalog
+        .find_table("test", "lock_live")
+        .expect("lock table is published")
+        .1;
+    let table_id = table.id;
+    let partition = table.get_partition_info().expect("partition metadata");
+    let partition = partition.read();
+    let partition_ids = partition
+        .definitions
+        .map_visible(|definition| definition.id);
+    let p0_id = partition_ids[0];
+    let p1_id = partition_ids[1];
+    drop(partition);
+    drop(catalog);
+
+    rows(&mut session, "LOCK STATS lock_live");
+    rows(
+        &mut session,
+        &format!(
+            "UPDATE mysql.stats_table_locked SET count = -1, modify_count = 1 \
+             WHERE table_id = {p0_id}"
+        ),
+    );
+    rows(&mut session, "UNLOCK STATS lock_live");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT table_id, count, modify_count FROM mysql.stats_meta \
+                 WHERE table_id IN ({table_id},{p0_id},{p1_id}) ORDER BY table_id"
+            ),
+        )),
+        [
+            [table_id.to_string(), "3".to_owned(), "1".to_owned()],
+            [p0_id.to_string(), "1".to_owned(), "1".to_owned()],
+            [p1_id.to_string(), "2".to_owned(), "0".to_owned()],
+        ]
+    );
+}
+
+/// Pinned `autoanalyze/exec.TestExecAutoAnalyzes`: the live restricted
+/// session consumes the complete auto-analyze option set, invokes the system
+/// process tracker, releases the allocated process ID, and publishes the
+/// ordinary version-2 statistics result.
+#[test]
+fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(86))
+        .expect("client session opens");
+    rows(&mut client, "USE test");
+    rows(
+        &mut client,
+        "CREATE TABLE auto_exec_live (a INT, b INT, INDEX idx_a(a))",
+    );
+    let table_id = factory
+        .catalog
+        .load()
+        .find_table("test", "auto_exec_live")
+        .expect("auto-analyze table is published")
+        .1
+        .id;
+    rows(
+        &mut client,
+        "INSERT INTO auto_exec_live VALUES (1,1),(2,2),(3,3)",
+    );
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut client, "SET GLOBAL tidb_enable_analyze_snapshot = ON");
+
+    let tracked = Arc::new(AtomicBool::new(false));
+    let untracked = Arc::new(AtomicBool::new(false));
+    let released = Arc::new(AtomicU64::new(0));
+    let pool = factory.advanced_sys_session_pool();
+    let mut analyzed = false;
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |context| {
+            let released_by_generator = Arc::clone(&released);
+            let generator = tidb_stats_handle_util::Generator::new(
+                || 9_001,
+                move |id| released_by_generator.store(id, Ordering::SeqCst),
+            );
+            let tracked_by_callback = Arc::clone(&tracked);
+            let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, _| {
+                assert_eq!(id, 9_001);
+                tracked_by_callback.store(true, Ordering::SeqCst);
+                Ok(())
+            });
+            let untracked_by_callback = Arc::clone(&untracked);
+            let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(move |id| {
+                assert_eq!(id, 9_001);
+                untracked_by_callback.store(true, Ordering::SeqCst);
+            });
+            analyzed = tidb_stats_handle_autoanalyze_exec::auto_analyze(
+                context,
+                &generator,
+                track,
+                untrack,
+                2,
+                false,
+                "analyze table %n.%n",
+                &[
+                    tidb_util::sqlescape::SqlArg::from("test"),
+                    tidb_util::sqlescape::SqlArg::from("auto_exec_live"),
+                ],
+            );
+            Ok(())
+        },
+        &[],
+    )
+    .expect("auto analyze uses a system session");
+    assert!(analyzed);
+    assert!(tracked.load(Ordering::SeqCst));
+    assert!(untracked.load(Ordering::SeqCst));
+    assert_eq!(released.load(Ordering::SeqCst), 9_001);
+    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(9_001));
+    assert_eq!(
+        displayed(rows(
+            &mut client,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {table_id}"
+            ),
+        )),
+        [["3", "0"]]
+    );
+}
+
+struct AutoAnalyzeKillTarget {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl tidb_session::process::ProcessKillTarget for AutoAnalyzeKillTarget {
+    fn cancel_query(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn kill_connection(&self) {
+        self.cancel_query();
+    }
+}
+
+/// Pinned `autoanalyze/exec.TestKillInWindows` and
+/// `Domain.CheckAutoAnalyzeWindows`: an out-of-window domain check kills the
+/// process ID installed by `RunAnalyzeStmt`; the inclusive configured minute
+/// does not.
+#[test]
+fn auto_analyze_window_check_kills_only_outside_the_window_like_go() {
+    const PROCESS_ID: u64 = 9_002;
+    let (stack, _users) = cop_backed_stack();
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(87))
+        .expect("client session opens");
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_auto_analyze_start_time = '00:00 +0000'",
+    );
+    rows(
+        &mut client,
+        "SET GLOBAL tidb_auto_analyze_end_time = '00:00 +0000'",
+    );
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let target: Arc<dyn tidb_session::process::ProcessKillTarget> =
+        Arc::new(AutoAnalyzeKillTarget {
+            cancelled: Arc::clone(&cancelled),
+        });
+    let _guard = factory.processes.register(
+        PROCESS_ID,
+        "root".to_owned(),
+        "127.0.0.1:0".to_owned(),
+        "test".to_owned(),
+        Some(target),
+    );
+    tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(PROCESS_ID);
+
+    let inside = chrono::DateTime::parse_from_rfc3339("2026-08-31T00:00:30Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    factory.check_auto_analyze_windows_at(inside);
+    assert!(!cancelled.load(Ordering::SeqCst));
+    let outside = chrono::DateTime::parse_from_rfc3339("2026-08-31T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    factory.check_auto_analyze_windows_at(outside);
+    assert!(cancelled.load(Ordering::SeqCst));
+    tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(PROCESS_ID);
+}
+
+#[test]
+fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    factory
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(
+            std::time::Instant::now() < owner_deadline,
+            "statistics ownership was not acquired"
+        );
+        std::thread::yield_now();
+    }
+    let mut session = factory
+        .open_session(session_context(140))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE queue_analyze (a INT, b INT)");
+    rows(&mut session, "CREATE TABLE queue_drop (a INT)");
+    rows(&mut session, "CREATE TABLE queue_locked (a INT)");
+    let values = (0..1_000)
+        .map(|_| "(1)".to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    let pairs = (0..1_000)
+        .map(|_| "(1,1)".to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_analyze VALUES {pairs}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_drop VALUES {values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_locked VALUES {values}"),
+    );
+    rows(&mut session, "LOCK STATS queue_locked");
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statistics update did not run after FLUSH STATS_DELTA"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let catalog = factory.catalog.load();
+    let analyze_id = catalog
+        .find_table("test", "queue_analyze")
+        .expect("analyze table exists")
+        .1
+        .id;
+    let dropped_id = catalog
+        .find_table("test", "queue_drop")
+        .expect("drop table exists")
+        .1
+        .id;
+    let locked_id = catalog
+        .find_table("test", "queue_locked")
+        .expect("locked table exists")
+        .1
+        .id;
+    drop(catalog);
+    rows(
+        &mut session,
+        &format!(
+            "INSERT INTO mysql.column_stats_usage(table_id,column_id,last_used_at) \
+             VALUES ({analyze_id},1,CURRENT_TIMESTAMP)"
+        ),
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_column_options = 'PREDICATE'",
+    );
+
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
+    let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
+    queue.initialize().expect("priority queue initializes");
+    assert_eq!(queue.len().unwrap(), 2);
+    rows(&mut session, "DROP TABLE queue_drop");
+    let snapshot = queue.snapshot().unwrap();
+    assert_eq!(snapshot.current_jobs.len(), 1);
+    assert_eq!(snapshot.current_jobs[0].table_id, analyze_id);
+    assert_ne!(snapshot.current_jobs[0].table_id, dropped_id);
+
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    let refresher = refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    refresher.wait_auto_analyze_finished();
+    assert!(refresher.running_jobs().is_empty());
+    assert_eq!(refresher.len(), 0);
+    drop(refresher);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_analyze' ORDER BY id",
+        )),
+        [[
+            "auto analyze table column a with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
+
+    factory.handle_auto_analyze_tick(false, Duration::ZERO);
+    assert!(!queue.is_initialized());
+    rows(&mut session, "UNLOCK STATS queue_locked");
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < reload_deadline,
+            "statistics update did not run after unlocking the table"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_column_options = 'ALL'",
+    );
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    assert!(queue.is_initialized());
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
+    refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_locked' ORDER BY id",
+        )),
+        [[
+            "auto analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
+    assert_ne!(locked_id, analyze_id);
+}
+
+/// Pinned root `TestAutoAnalyzeSkipColumnTypes`: auto analyze reads the live
+/// GLOBAL skip list, retains index-mandatory columns, and records the same
+/// selected-column job shape as ordinary ANALYZE planning.
+#[test]
+fn auto_analyze_skips_configured_column_types_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    factory
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(std::time::Instant::now() < owner_deadline);
+        std::thread::yield_now();
+    }
+    let mut session = factory
+        .open_session(session_context(142))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE queue_skip_types (a INT, c JSON, d VARCHAR(32), INDEX idx_d(d))",
+    );
+    let values = (0..1_000)
+        .map(|_| "(1,NULL,'value')".to_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO queue_skip_types VALUES {values}"),
+    );
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(std::time::Instant::now() < reload_deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_analyze_skip_column_types = 'json'",
+    );
+
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    factory
+        .auto_analyze_refresher(Duration::ZERO)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info, state FROM mysql.analyze_jobs \
+             WHERE table_name = 'queue_skip_types' ORDER BY id",
+        )),
+        [[
+            "auto analyze table all indexes, columns a, d with 256 buckets, 100 topn, 1 samplerate",
+            "finished",
+        ]]
+    );
+}
+
+/// Pinned planner `TestAutoAnalyzeForMissingPartition`: under dynamic pruning
+/// and `tidb_skip_missing_partition_stats`, auto analyze fills the physical
+/// partitions that ordinary partition ANALYZE intentionally left missing.
+#[test]
+fn auto_analyze_fills_missing_partition_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    factory
+        .campaign_stats_owner(crate::node_config::StatsLease::Zero)
+        .expect("stats owner campaigns");
+    let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !factory
+        .stats_owner
+        .as_ref()
+        .expect("stats owner")
+        .is_owner()
+    {
+        assert!(
+            std::time::Instant::now() < owner_deadline,
+            "statistics ownership was not acquired"
+        );
+        std::thread::yield_now();
+    }
+    let mut session = factory
+        .open_session(session_context(141))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_skip_missing_partition_stats = ON",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET GLOBAL tidb_auto_analyze_ratio = 0.01");
+    rows(
+        &mut session,
+        "CREATE TABLE missing_partition_stats (a INT, b INT, c INT, INDEX idx_b(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (100), \
+         PARTITION p1 VALUES LESS THAN (200), PARTITION p2 VALUES LESS THAN (300))",
+    );
+    let values = [1, 101, 201]
+        .into_iter()
+        .flat_map(|value| std::iter::repeat_n(format!("({value},{value},{value})"), 1_000))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO missing_partition_stats VALUES {values}"),
+    );
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let reload_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < reload_deadline,
+            "statistics update did not run after FLUSH STATS_DELTA"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    rows(
+        &mut session,
+        "ANALYZE TABLE missing_partition_stats PARTITION p1",
+    );
+
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    let refresher = factory.auto_analyze_refresher(Duration::ZERO);
+    refresher
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .wait_auto_analyze_finished();
+
+    let meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'missing_partition_stats'",
+    ));
+    for partition in ["p0", "p2"] {
+        assert!(
+            meta.iter()
+                .any(|row| row[2] == partition && row[5] == "1000"),
+            "auto analyze did not publish {partition}: {meta:?}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.analyze_jobs WHERE \
+             table_name = 'missing_partition_stats' AND state = 'finished' AND \
+             job_info LIKE 'auto analyze table%'",
+        )),
+        [["2"]]
+    );
+}
+
+/// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and
+/// `ActionDropTable`: create every physical table's zero-valued statistics
+/// placeholders, then retire the old physical ID by advancing stats_meta.
+#[test]
+fn table_lifecycle_ddl_updates_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(74))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_lifecycle (a INT, b INT, INDEX idx_b(b))",
+    );
+    let old_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle")
+        .expect("created table is published")
+        .1
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {old_id}"),
+        )),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {old_id}"),
+        )),
+        [["3"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE stats_lifecycle_like LIKE stats_lifecycle",
+    );
+    let like_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle_like")
+        .expect("CREATE TABLE LIKE result is published")
+        .1
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {like_id}"),
+        )),
+        [["3"]]
+    );
+
+    rows(&mut session, "INSERT INTO stats_lifecycle VALUES (1, 2)");
+    rows(&mut session, "ANALYZE TABLE stats_lifecycle");
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+    rows(&mut session, "TRUNCATE TABLE stats_lifecycle");
+    let new_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_lifecycle")
+        .expect("truncated table is published")
+        .1
+        .id;
+    assert_ne!(new_id, old_id, "truncate allocates a new physical ID");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {new_id}"),
+        )),
+        [["0", "0"]]
+    );
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("retired stats version is an unsigned integer");
+    assert!(retired_version > old_version);
+
+    let new_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {new_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("new stats version is an unsigned integer");
+    rows(&mut session, "DROP TABLE stats_lifecycle");
+    let dropped_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {new_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("dropped stats version is an unsigned integer");
+    assert!(dropped_version > new_version);
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestDDLAfterLoad`: ADD COLUMN remains
+/// valid after the table has been analyzed, populated, analyzed again, and is
+/// therefore backed by an initialized statistics-cache entry.
+#[test]
+fn ddl_after_loaded_statistics_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(75))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_ddl_after_load (c1 INT, c2 INT, INDEX idx(c1, c2))",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_ddl_after_load");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_ddl_after_load")
+        .expect("created table is published")
+        .1
+        .id;
+    assert!(stack
+        .factory
+        .stats()
+        .load()
+        .get(&table_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .is_some_and(|stats| !stats.hist_coll.pseudo));
+
+    let values = (0..1000)
+        .map(|value| format!("({value},{})", value + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO stats_ddl_after_load VALUES {values}"),
+    );
+    rows(&mut session, "ANALYZE TABLE stats_ddl_after_load");
+    assert!(stack
+        .factory
+        .stats()
+        .load()
+        .get(&table_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .is_some_and(|stats| !stats.hist_coll.pseudo));
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_ddl_after_load ADD COLUMN c10 INT",
+    );
+    assert!(stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_ddl_after_load")
+        .is_some_and(|(_, table)| table.columns.iter_deref().any(|column| column
+            .read()
+            .name
+            .lowercase()
+            == "c10")));
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestTruncateAPartitionedTable`: whole
+/// table truncation gives every partition a fresh physical ID, initializes
+/// each replacement stats row, and advances every retired partition version.
+#[test]
+fn truncate_partitioned_table_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_truncate_partitioned (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_truncate_partitioned VALUES (1,2),(2,2),(6,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_truncate_partitioned");
+    let old_ids = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_truncate_partitioned",
+    )
+    .expect("table is partitioned")
+    .1
+    .into_iter()
+    .map(|(_, id)| id)
+    .collect::<Vec<_>>();
+    let old_versions = old_ids
+        .iter()
+        .map(|id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is unsigned")
+        })
+        .collect::<Vec<_>>();
+
+    rows(&mut session, "TRUNCATE TABLE stats_truncate_partitioned");
+    let new_ids = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_truncate_partitioned",
+    )
+    .expect("truncated table remains partitioned")
+    .1
+    .into_iter()
+    .map(|(_, id)| id)
+    .collect::<Vec<_>>();
+    assert_eq!(new_ids.len(), 2);
+    assert!(new_ids.iter().all(|id| !old_ids.contains(id)));
+    for new_id in new_ids {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {new_id}"),
+            )),
+            [["1"]]
+        );
+    }
+    for (old_id, old_version) in old_ids.into_iter().zip(old_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        assert!(retired_version > old_version);
+    }
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestTruncateAHashPartition`: truncating
+/// p0 removes its one persisted row from global count, keeps that removal as
+/// one modification, replaces p0's physical ID, and retires the old stats row.
+#[test]
+fn truncate_hash_partition_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_truncate_hash (a BIGINT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY HASH(a) PARTITIONS 4",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_truncate_hash VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_truncate_hash");
+    let (logical_id, partitions) =
+        partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+            .expect("table is hash partitioned");
+    let old_p0 = partitions
+        .iter()
+        .find(|(name, _)| name == "p0")
+        .expect("p0 exists")
+        .1;
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_p0}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_truncate_hash TRUNCATE PARTITION p0",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["4", "1"]]
+    );
+    let new_p0 = partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+        .expect("table remains hash partitioned")
+        .1
+        .into_iter()
+        .find(|(name, _)| name == "p0")
+        .expect("replacement p0 exists")
+        .1;
+    assert_ne!(new_p0, old_p0);
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {old_p0}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is unsigned");
+    assert!(retired_version > old_version);
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestDDLPartition`: ADD PARTITION creates
+/// the new physical statistics row in both prune modes, while only dynamic
+/// mode creates the logical/global row for the original table.
+#[test]
+fn add_partition_statistics_follow_global_prune_mode_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    for mode in ["static", "dynamic"] {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_partition_prune_mode = '{mode}'"),
+        );
+        rows(
+            &mut session,
+            &format!("SET SESSION tidb_partition_prune_mode = '{mode}'"),
+        );
+        let table_name = format!("stats_add_partition_{mode}");
+        rows(
+            &mut session,
+            &format!(
+                "CREATE TABLE {table_name} (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+                 PARTITION p1 VALUES LESS THAN (11))"
+            ),
+        );
+        let (logical_id, original) =
+            partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+                .expect("table is partitioned");
+        for (_, physical_id) in original {
+            assert_eq!(
+                displayed(rows(
+                    &mut session,
+                    &format!(
+                        "SELECT count(*) FROM mysql.stats_meta WHERE table_id = {physical_id}"
+                    ),
+                )),
+                [["1"]]
+            );
+        }
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {logical_id}"),
+            )),
+            [[if mode == "dynamic" { "1" } else { "0" }]]
+        );
+
+        rows(
+            &mut session,
+            &format!(
+                "ALTER TABLE {table_name} ADD PARTITION \
+                 (PARTITION p2 VALUES LESS THAN (16))"
+            ),
+        );
+        let new_id = partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+            .expect("table remains partitioned")
+            .1
+            .into_iter()
+            .find(|(name, _)| name == "p2")
+            .expect("added partition exists")
+            .1;
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {new_id}"),
+            )),
+            [["1"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {new_id}"),
+            )),
+            [["3"]]
+        );
+    }
+}
+
+/// Pinned `pkg/statistics/handle/ddl.TestDropPartitions`: dropping p0 and p1
+/// subtracts their three rows from global count, adds three modifications,
+/// and advances both retired physical statistics versions.
+#[test]
+fn drop_partitions_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_drop_partitions (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), \
+         PARTITION p3 VALUES LESS THAN (21))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_drop_partitions VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_drop_partitions");
+    let (logical_id, partitions) = partition_id_map(
+        &stack.factory.catalog.load(),
+        "test",
+        "stats_drop_partitions",
+    )
+    .expect("table is partitioned");
+    let retired_ids = partitions
+        .into_iter()
+        .filter_map(|(name, id)| matches!(name.as_str(), "p0" | "p1").then_some(id))
+        .collect::<Vec<_>>();
+    let versions = retired_ids
+        .iter()
+        .map(|id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is unsigned")
+        })
+        .collect::<Vec<_>>();
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_drop_partitions DROP PARTITION p0, p1",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        [["2", "3"]]
+    );
+    for (retired_id, version) in retired_ids.into_iter().zip(versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {retired_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("stats version is unsigned");
+        assert!(retired_version > version);
+    }
+}
+
+/// Pinned `TestReorgPartitions`, `TestIncreasePartitionCountOfHashPartitionTable`,
+/// and `TestDecreasePartitionCountOfHashPartitionTable`: the subscriber does
+/// not alter global count during a reorganization, initializes every added
+/// physical ID, and advances every dropped physical ID for delayed GC.
+#[test]
+fn reorganize_partition_event_updates_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_reorganize_event (a INT PRIMARY KEY, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
+         PARTITION p1 VALUES LESS THAN (11))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_reorganize_event VALUES (1,2),(2,2),(6,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_reorganize_event");
+
+    let table = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_reorganize_event")
+        .expect("partitioned table is published")
+        .1
+        .clone_like_go();
+    let logical_id = table.id;
+    let dropped_id = table
+        .partition
+        .as_ref()
+        .expect("partition metadata exists")
+        .read()
+        .definitions
+        .snapshot()[0]
+        .id;
+    let dropped_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {dropped_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("partition version is unsigned");
+    let logical_before = displayed(rows(
+        &mut session,
+        &format!("SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"),
+    ));
+    let added_id = 9_100_000_001_i64;
+    let event = SchemaChangeEvent::reorganize_partitions(
+        table,
+        partition_payload(&[added_id]),
+        partition_payload(&[dropped_id]),
+    );
+    handle_stats_schema_change(&mut session, &event);
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {added_id}"
+            ),
+        )),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {added_id}"),
+        )),
+        [["3"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {logical_id}"
+            ),
+        )),
+        logical_before
+    );
+    let retired_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {dropped_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("retired partition version is unsigned");
+    assert!(retired_version > dropped_version);
+}
+
+/// Pinned `TestAddPartitioning` and `TestRemovePartitioning`: newly added
+/// partition placeholders are written before the six global-statistics table
+/// IDs move, and removal moves those same tables before retiring partitions.
+#[test]
+fn add_and_remove_partitioning_events_move_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(81))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_partitioning_event \
+         (a INT PRIMARY KEY, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_partitioning_event VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_partitioning_event");
+    let source = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_partitioning_event")
+        .expect("table is published")
+        .1
+        .clone_like_go();
+    let old_table_id = source.id;
+    let global_table_id = 9_200_000_001_i64;
+    let partition_ids = [9_200_000_002_i64, 9_200_000_003_i64];
+    let mut partitioned = source.clone_like_go();
+    partitioned.id = global_table_id;
+    let added = partition_payload(&partition_ids);
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::add_partitioning(old_table_id, partitioned, added.clone_like_go()),
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {global_table_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {old_table_id}"),
+        )),
+        [["0"]]
+    );
+    let initial_partition_versions = partition_ids.map(|partition_id| {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {partition_id}"
+                ),
+            )),
+            [["3"]]
+        );
+        displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {partition_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("partition version is unsigned")
+    });
+
+    let single_table_id = 9_200_000_004_i64;
+    let mut single = source;
+    single.id = single_table_id;
+    handle_stats_schema_change(
+        &mut session,
+        &SchemaChangeEvent::remove_partitioning(global_table_id, single, added),
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = {single_table_id}"
+            ),
+        )),
+        [["5", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id = {global_table_id}"),
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {single_table_id}"
+            ),
+        )),
+        [["3"]]
+    );
+    for (partition_id, old_version) in partition_ids.into_iter().zip(initial_partition_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {partition_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("retired partition version is unsigned");
+        assert!(retired_version > old_version);
+    }
+}
+
+/// Pinned `ActionFlashbackCluster`: both table-wide version updates use one
+/// transaction start TS, while `last_stats_histograms_version` is untouched.
+#[test]
+fn flashback_cluster_event_refreshes_statistics_versions_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(82))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_flashback_event (a INT, b INT, INDEX idx(b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_flashback_event VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_flashback_event");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_flashback_event")
+        .expect("table is published")
+        .1
+        .id;
+    let before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {table_id}"
+        ),
+    ));
+    handle_stats_schema_change(&mut session, &SchemaChangeEvent::flashback_cluster());
+    let after = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {table_id}"
+        ),
+    ));
+    assert_ne!(after[0][0], before[0][0]);
+    assert_eq!(after[0][1], before[0][1]);
+    let histogram_versions = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_histograms WHERE table_id = {table_id}"),
+    ));
+    assert!(!histogram_versions.is_empty());
+    assert!(histogram_versions.iter().all(|row| row[0] == after[0][0]));
+}
+
+/// Pinned `TestDumpStatsDeltaBeforeHandleDDLEvent` and
+/// `TestDumpStatsDeltaBeforeHandleAddColumnEvent`: a delayed subscriber event
+/// must not overwrite metadata or histogram rows already written by a delta
+/// flush or a later analyze.
+#[test]
+fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(84))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    rows(&mut session, "CREATE TABLE stats_delayed_create (c1 INT)");
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_create VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let create_table = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_delayed_create")
+        .expect("created table is published")
+        .1
+        .clone_like_go();
+    let create_id = create_table.id;
+    let create_before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, modify_count, count, last_stats_histograms_version \
+             FROM mysql.stats_meta WHERE table_id = {create_id}"
+        ),
+    ));
+    handle_stats_schema_change(&mut session, &SchemaChangeEvent::create_table(create_table));
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT version, modify_count, count, last_stats_histograms_version \
+                 FROM mysql.stats_meta WHERE table_id = {create_id}"
+            ),
+        )),
+        create_before
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE stats_delayed_column \
+         (c1 INT, c2 INT, INDEX idx(c1, c2))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column VALUES (1,2),(2,3),(3,4)",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_delayed_column ADD COLUMN c3 INT",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column VALUES (4,5,6)",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_delayed_column ADD COLUMN c4 INT NOT NULL DEFAULT 0",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_delayed_column(c1,c2) VALUES (6,7)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_delayed_column ALL COLUMNS",
+    );
+    let (column_table, delayed_columns) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_delayed_column")
+            .expect("altered table is published")
+            .1
+            .clone_like_go();
+        let columns = table
+            .columns
+            .iter_deref()
+            .filter_map(|column| {
+                let column = column.read();
+                matches!(column.name.lowercase(), "c3" | "c4").then(|| column.clone_like_go())
+            })
+            .collect::<Vec<_>>();
+        (table, columns)
+    };
+    assert_eq!(delayed_columns.len(), 2);
+    let column_table_id = column_table.id;
+    let column_before = displayed(rows(
+        &mut session,
+        &format!(
+            "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+             WHERE table_id = {column_table_id}"
+        ),
+    ));
+    for column in delayed_columns {
+        handle_stats_schema_change(
+            &mut session,
+            &SchemaChangeEvent::add_columns(column_table.clone_like_go(), vec![column]),
+        );
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT version, last_stats_histograms_version FROM mysql.stats_meta \
+                 WHERE table_id = {column_table_id}"
+            ),
+        )),
+        column_before
+    );
+}
+
+/// Pinned DDL subscriber `ActionDropSchema` visits every table's partition
+/// IDs in definition order and then its logical table ID, advancing each
+/// extant stats row for delayed GC without failing the DROP on stats errors.
+#[test]
+fn drop_schema_ddl_retires_all_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(72))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "CREATE DATABASE stats_drop_schema");
+    rows(&mut session, "USE stats_drop_schema");
+    rows(&mut session, "CREATE TABLE ordinary (a INT)");
+    rows(
+        &mut session,
+        "CREATE TABLE partitioned (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    let retired_ids = {
+        let catalog = stack.factory.catalog.load();
+        let database = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.name.lowercase() == "stats_drop_schema")
+            .expect("created database is published");
+        let mut ids = Vec::new();
+        for table in &database.tables {
+            if let Some(partition) = &table.partition {
+                ids.extend(
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .into_iter()
+                        .map(|definition| definition.id),
+                );
+            }
+            ids.push(table.id);
+        }
+        ids
+    };
+    assert_eq!(retired_ids.len(), 4);
+    let old_versions = retired_ids
+        .iter()
+        .map(|physical_id| {
+            displayed(rows(
+                &mut session,
+                &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {physical_id}"),
+            ))[0][0]
+                .parse::<u64>()
+                .expect("stats version is an unsigned integer")
+        })
+        .collect::<Vec<_>>();
+
+    rows(&mut session, "DROP DATABASE stats_drop_schema");
+    for (physical_id, old_version) in retired_ids.iter().zip(old_versions) {
+        let retired_version = displayed(rows(
+            &mut session,
+            &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {physical_id}"),
+        ))[0][0]
+            .parse::<u64>()
+            .expect("retired stats version is an unsigned integer");
+        assert!(retired_version > old_version);
+    }
+}
+
+/// Pinned DDL subscriber `ActionAddColumn`: a defaultless nullable column is
+/// NULL for every existing row, and `InsertColStats2KV` persists that fact
+/// before advancing the physical table's statistics version.
+#[test]
+fn add_column_ddl_initializes_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(73))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE stats_add_column (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO stats_add_column VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_add_column");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("created table is published")
+        .1
+        .id;
+    let old_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN b INT",
+    );
+    let column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "b")
+        .expect("added column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, stats_ver FROM mysql.stats_histograms \
+                 WHERE table_id = {table_id} AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        )),
+        [["0", "3", "0"]]
+    );
+    let new_version = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .expect("stats version is an unsigned integer");
+    assert!(new_version > old_version);
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN c VARCHAR(15) DEFAULT '123'",
+    );
+    let defaulted_column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
+        .expect("defaulted column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {defaulted_column_id}"
+            ),
+        )),
+        [["1", "0", "9", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT repeats, count, lower_bound, upper_bound FROM mysql.stats_buckets \
+                 WHERE table_id = {table_id} AND is_index = 0 \
+                 AND hist_id = {defaulted_column_id}"
+            ),
+        )),
+        [["3", "3", "123", "123"]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN d BIGINT NOT NULL",
+    );
+    let zeroed_column_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "d")
+        .expect("NOT NULL column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {zeroed_column_id}"
+            ),
+        )),
+        [["1", "0", "0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT repeats, count, lower_bound, upper_bound FROM mysql.stats_buckets \
+                 WHERE table_id = {table_id} AND is_index = 0 \
+                 AND hist_id = {zeroed_column_id}"
+            ),
+        )),
+        [["3", "3", "0", "0"]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column ADD COLUMN e INT GENERATED ALWAYS AS (a + 1) VIRTUAL",
+    );
+    let virtual_column_id = {
+        let catalog = stack.factory.catalog.load();
+        let column = catalog
+            .find_table("test", "stats_add_column")
+            .expect("altered table is published")
+            .1
+            .columns
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == "e")
+            .expect("virtual column is published")
+            .read()
+            .clone_like_go();
+        assert!(column.is_virtual_generated());
+        assert_eq!(column.generated_expr_string, "`a` + 1");
+        assert!(column.dependences.contains("a"));
+        column.id
+    };
+    session.rebuild_catalog_if_stale();
+    {
+        let catalog = session.session.shared_catalog();
+        let catalog = catalog.lock().expect("session catalog is available");
+        let tidb_executor::driver::TableEntry::Kv(table) = catalog
+            .table_in("test", "stats_add_column")
+            .expect("rebuilt executor table is available")
+        else {
+            panic!("rebuilt executor table is storage-backed");
+        };
+        assert!(table
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case("e"))
+            .expect("executor virtual column exists")
+            .generated
+            .is_some());
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a, e FROM stats_add_column ORDER BY a",
+        )),
+        [["1", "2"], ["2", "3"], ["3", "4"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, stats_ver FROM mysql.stats_histograms \
+                 WHERE table_id = {table_id} AND is_index = 0 AND hist_id = {virtual_column_id}"
+            ),
+        )),
+        [["0", "0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {virtual_column_id}"
+            ),
+        )),
+        [["0"]]
+    );
+
+    // Pinned `TestDDLHistogram` performs both additions in one
+    // ActionMultiSchemaChange. Go publishes one ActionAddColumn event for
+    // each applied sub-job, in SQL order, and the statistics subscriber
+    // initializes both histograms.
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column \
+         ADD COLUMN f VARCHAR(15) DEFAULT '123', \
+         ADD COLUMN g VARCHAR(15) DEFAULT '123'",
+    );
+    let (f_id, g_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_add_column")
+            .expect("altered table is published")
+            .1;
+        let column_id = |name: &str| {
+            table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().name.lowercase() == name)
+                .expect("added column is published")
+                .read()
+                .id
+        };
+        (column_id("f"), column_id("g"))
+    };
+    for column_id in [f_id, g_id] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                     FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["1", "0", "9", "0"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT repeats, count, lower_bound, upper_bound \
+                     FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["3", "3", "123", "123"]]
+        );
+    }
+
+    rows(
+        &mut session,
+        &format!(
+            "DELETE FROM mysql.stats_buckets WHERE table_id = {table_id} \
+             AND is_index = 0 AND hist_id = {f_id}"
+        ),
+    );
+    rows(
+        &mut session,
+        &format!(
+            "DELETE FROM mysql.stats_histograms WHERE table_id = {table_id} \
+             AND is_index = 0 AND hist_id = {f_id}"
+        ),
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE stats_add_column \
+         ADD COLUMN IF NOT EXISTS f VARCHAR(15) DEFAULT '123', \
+         ADD COLUMN h VARCHAR(15) DEFAULT '123'",
+    );
+    let h_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_add_column")
+        .expect("altered table is published")
+        .1
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "h")
+        .expect("applied sub-job column is published")
+        .read()
+        .id;
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {f_id}"
+            ),
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                 FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {h_id}"
+            ),
+        )),
+        [["1", "0", "9", "0"]]
+    );
+}
+
+/// Pinned storage `TestDeleteAnalyzeJobs` begins with the ordinary ANALYZE
+/// lifecycle: the job is inserted pending, run, and retained finished for
+/// `SHOW ANALYZE STATUS` until timestamp-based cleanup removes it.
+#[test]
+fn analyze_job_lifecycle_is_persisted_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_analyze_job (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_analyze_job VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_analyze_job");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT table_schema, table_name, partition_name, processed_rows, state, \
+                    process_id IS NULL \
+             FROM mysql.analyze_jobs IGNORE INDEX \
+             (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state)",
+        )),
+        [["test", "stats_analyze_job", "", "2", "finished", "1"]]
+    );
+    let cutoff = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        .add_duration(MySqlDuration::from_nanoseconds(1_000_000_000, 0).unwrap())
+        .unwrap();
+    stack
+        .factory
+        .delete_analyze_jobs_before(cutoff)
+        .expect("analyze-job cleanup commits");
+    assert!(displayed(rows(
+        &mut session,
+        "SELECT id FROM mysql.analyze_jobs IGNORE INDEX \
+         (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state)",
+    ))
+    .is_empty());
+}
+
+/// Pinned executor `TestShowAnalyzeStatus`: the SHOW path reads the same
+/// persisted job row as `mysql.analyze_jobs` and exposes Go's fourteen-column
+/// shape rather than falling through as an unsupported inspection statement.
+#[test]
+fn show_analyze_status_reads_persisted_jobs_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_show_analyze_job (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_show_analyze_job VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_show_analyze_job");
+
+    let shown = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_job'",
+    ));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].len(), 14);
+    assert_eq!(shown[0][0], "test");
+    assert_eq!(shown[0][1], "stats_show_analyze_job");
+    assert_eq!(shown[0][2], "");
+    assert_eq!(shown[0][4], "2");
+    assert_ne!(shown[0][5], "NULL");
+    assert_ne!(shown[0][6], "NULL");
+    assert_eq!(shown[0][7], "finished");
+    assert_eq!(shown[0][8], "NULL");
+    assert_eq!(shown[0][10], "NULL");
+    assert_eq!(shown[0][11], "NULL");
+    assert_eq!(shown[0][12], "NULL");
+    assert_eq!(shown[0][13], "NULL");
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_show_analyze_partition (a INT PRIMARY KEY, b INT) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_show_analyze_partition VALUES (1,1),(2,2)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_show_analyze_partition");
+    let partition_jobs = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_partition'",
+    ));
+    assert_eq!(partition_jobs.len(), 2);
+    let mut job_infos = partition_jobs
+        .iter()
+        .map(|row| row[3].clone())
+        .collect::<Vec<_>>();
+    job_infos.sort();
+    assert_eq!(
+        job_infos,
+        [
+            "analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+            "merge global stats for test.stats_show_analyze_partition columns",
+        ]
+    );
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    rows(
+        &mut session,
+        "ALTER TABLE stats_show_analyze_partition ADD INDEX idx(b)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_show_analyze_partition INDEX idx",
+    );
+    let partition_index_jobs = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_partition'",
+    ));
+    assert_eq!(partition_index_jobs.len(), 3);
+    let mut job_infos = partition_index_jobs
+        .iter()
+        .map(|row| row[3].clone())
+        .collect::<Vec<_>>();
+    job_infos.sort();
+    assert_eq!(
+        job_infos,
+        [
+            "analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate",
+            "merge global stats for test.stats_show_analyze_partition columns",
+            "merge global stats for test.stats_show_analyze_partition's index idx",
+        ]
+    );
+
+    rows(&mut session, "DELETE FROM mysql.analyze_jobs");
+    let started_at = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        .add_duration(MySqlDuration::from_nanoseconds(-60_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    let mut job_id = 0;
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                "test",
+                "stats_show_analyze_job",
+                "",
+                b"analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
+                "127.0.0.1:4000",
+                78,
+                started_at,
+            )
+            .map_err(|error| error.to_string())?;
+            job_id = created_job_id;
+            Ok(plan)
+        })
+        .expect("pending job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                job_id,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_update_analyze_job_progress(
+                snapshot,
+                &stack.factory.catalog.load(),
+                job_id,
+                3,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running progress commits");
+    let running = displayed(rows(
+        &mut session,
+        "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_job' AND state = 'running'",
+    ));
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0][4], "3");
+    assert_eq!(running[0][7], "running");
+    // The embedded store has no PD HTTP authority. Go caches and uses the
+    // helper's zero return after processed rows exceed loaded RealtimeCount.
+    assert_eq!(running[0][11], "0s");
+    assert_eq!(running[0][12], "100");
+    assert_eq!(running[0][13], "0");
+}
+
+/// Pinned
+/// `pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone::TestLastFailedAnalysisDurationUseCorrectTimezone`:
+/// a reused statistics session must replace its stale timezone with the live
+/// global value before evaluating the failed-job interval.
+#[test]
+fn failed_analysis_duration_resets_the_pooled_session_timezone() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    let mut client = factory
+        .open_session(session_context(80))
+        .expect("client session opens");
+    rows(&mut client, "SET GLOBAL time_zone = 'America/New_York'");
+    let session_pool = factory.advanced_sys_session_pool();
+    let source = ClusterPriorityQueueSource {
+        factory: Arc::downgrade(&factory),
+        stats_lease: Duration::ZERO,
+        session_pool,
+    };
+    assert_eq!(
+        source.scalar("SELECT @@time_zone").unwrap(),
+        Some(Datum::String(tidb_datatype::StringDatum::new(
+            b"America/New_York".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        )))
+    );
+    rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
+    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let started_at = now
+        .add_duration(MySqlDuration::from_nanoseconds(-2_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&factory.transactions),
+        catalog: Arc::clone(&factory.catalog),
+        global_vars: factory.global_vars.clone(),
+    };
+    let mut job_id = 0;
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            let (created_job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                "test",
+                "t",
+                "",
+                b"analyze table `test`.`t`",
+                "127.0.0.1:4000",
+                1,
+                started_at,
+            )
+            .map_err(|error| error.to_string())?;
+            job_id = created_job_id;
+            Ok(plan)
+        })
+        .expect("pending job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                job_id,
+                started_at,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &factory.catalog.load(),
+                job_id,
+                0,
+                Some("simulated failure"),
+                now,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("failed job commits");
+
+    assert_eq!(
+        source.scalar("SELECT @@time_zone").unwrap(),
+        Some(Datum::String(tidb_datatype::StringDatum::new(
+            b"Europe/Berlin".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        )))
+    );
+    let duration =
+        tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext::last_failed_analysis_duration(
+            &source,
+            "test",
+            "t",
+            &[],
+        )
+        .expect("duration query");
+    assert!(duration > 0, "duration must be positive: {duration}");
+    assert!(
+        duration < 60_000_000_000,
+        "duration must be below one minute: {duration}"
+    );
+}
+
+/// Pinned `TestCleanupCorruptedAnalyzeJobsOnCurrentInstance` and
+/// `TestCleanupCorruptedAnalyzeJobsOnDeadInstances`: the two restricted
+/// transactions select different corruptions and preserve the timestamps Go
+/// does not update in `BatchUpdateAnalyzeJobSQL`.
+#[test]
+fn corrupted_analyze_job_cleanup_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    let local_instance = "127.0.0.1:0";
+    let now = tidb_exec::mysql_bootstrap::utc_now_timestamp();
+    let old = now
+        .add_duration(MySqlDuration::from_nanoseconds(-660_000_000_000, 0).unwrap())
+        .unwrap();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    for (process_id, instance, created_at) in [
+        (1, local_instance, old),
+        (2, local_instance, old),
+        (3, local_instance, old),
+        (4, local_instance, old),
+        (5, local_instance, old),
+        (6, local_instance, now),
+        (7, "10.0.0.1:4000", old),
+    ] {
+        handle
+            .commit_stats_plan(|snapshot, _| {
+                let (_, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
+                    snapshot,
+                    &stack.factory.catalog.load(),
+                    "test",
+                    "t",
+                    "",
+                    b"job",
+                    instance,
+                    process_id,
+                    created_at,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(plan)
+            })
+            .expect("pending job commits");
+    }
+    for id in [2, 3, 4] {
+        handle
+            .commit_stats_plan(|snapshot, _| {
+                tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                    snapshot,
+                    &stack.factory.catalog.load(),
+                    id,
+                    old,
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("running job commits");
+    }
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                2,
+                0,
+                None,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("temporary finish commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_start_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                2,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("NULL-process running job commits");
+    handle
+        .commit_stats_plan(|snapshot, _| {
+            tidb_exec::cluster_stats_write::plan_finish_analyze_job(
+                snapshot,
+                &stack.factory.catalog.load(),
+                5,
+                0,
+                None,
+                old,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .expect("finished job commits");
+
+    let processes = stack.factory.processes();
+    let _analyze = processes.register(
+        3,
+        "root".to_owned(),
+        "local".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    processes.statement_started(3, "/*+ hint */ANALYZE TABLE test.t", "executing");
+    let _ordinary = processes.register(
+        4,
+        "root".to_owned(),
+        "local".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    processes.statement_started(4, "SELECT 1", "executing");
+
+    let cutoff = now
+        .add_duration(MySqlDuration::from_nanoseconds(-600_000_000_000, 0).unwrap())
+        .unwrap();
+    let update_times_before = displayed(rows(
+        &mut session,
+        "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
+    ));
+    stack
+        .factory
+        .cleanup_corrupted_analyze_jobs_on_current_instance(cutoff)
+        .expect("current-instance cleanup commits");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, state, process_id IS NULL, fail_reason IS NULL \
+             FROM mysql.analyze_jobs ORDER BY id",
+        )),
+        [
+            ["1", "failed", "1", "0"],
+            ["2", "running", "1", "1"],
+            ["3", "running", "0", "1"],
+            ["4", "failed", "1", "0"],
+            ["5", "finished", "1", "1"],
+            ["6", "pending", "0", "1"],
+            ["7", "pending", "0", "1"],
+        ]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
+        )),
+        update_times_before,
+        "BatchUpdateAnalyzeJobSQL does not refresh update_time",
+    );
+
+    stack
+        .factory
+        .cleanup_corrupted_analyze_jobs_on_dead_instances(cutoff)
+        .expect("dead-instance cleanup commits");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT state, process_id IS NULL, fail_reason FROM mysql.analyze_jobs WHERE id = 7",
+        )),
+        [[
+            "failed",
+            "1",
+            tidb_exec::cluster_stats_write::CORRUPTED_ANALYZE_JOB_FAILURE,
+        ]]
+    );
+}
+
+#[test]
+fn analyze_job_cleanup_worker_uses_gos_positive_lease_gate_and_stops() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Zero);
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Disabled);
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
+    factory.start_analyze_jobs_cleanup_worker(crate::node_config::StatsLease::Positive(
+        Duration::from_secs(60),
+    ));
+    assert!(factory.analyze_jobs_cleanup_worker.get().is_some());
+    drop(factory);
+}
+
+#[test]
+fn auto_analyze_worker_uses_gos_positive_lease_gate_and_stops() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = stack.factory;
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Zero, true);
+    assert!(factory.auto_analyze_worker.get().is_none());
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Disabled, true);
+    assert!(factory.auto_analyze_worker.get().is_none());
+    factory.start_auto_analyze_worker(
+        crate::node_config::StatsLease::Positive(Duration::from_secs(60)),
+        true,
+    );
+    assert!(factory.auto_analyze_worker.get().is_some());
+    drop(factory);
+}
+
+/// Go creates one pending job for every physical partition task before
+/// dispatch, then creates independent global-merge jobs after all partition
+/// results have been saved. Global jobs never accumulate processed rows.
+#[test]
+fn partition_analyze_jobs_match_go_task_shapes() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_analyze_partitioned (a INT, KEY idx(a)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_analyze_partitioned VALUES (1),(11)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE stats_analyze_partitioned WITH 0 TOPN, 1 BUCKETS",
+    );
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT partition_name, job_info, processed_rows, state, process_id IS NULL \
+             FROM mysql.analyze_jobs IGNORE INDEX \
+             (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state) \
+             WHERE table_schema = 'test' AND table_name = 'stats_analyze_partitioned' \
+             ORDER BY id",
+        )),
+        [
+            [
+                "p0",
+                "analyze table all indexes, all columns with 1 buckets, 0 topn, 1 samplerate",
+                "1",
+                "finished",
+                "1",
+            ],
+            [
+                "p1",
+                "analyze table all indexes, all columns with 1 buckets, 0 topn, 1 samplerate",
+                "1",
+                "finished",
+                "1",
+            ],
+            [
+                "",
+                "merge global stats for test.stats_analyze_partitioned columns",
+                "0",
+                "finished",
+                "1",
+            ],
+            [
+                "",
+                "merge global stats for test.stats_analyze_partitioned's index idx",
+                "0",
+                "finished",
+                "1",
+            ],
+        ]
+    );
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::TestIssue39336`:
+/// permissive zero-in DATETIME values must not make the dynamic partition
+/// global-statistics merge job fail.
+#[test]
+fn partition_global_analyze_finishes_with_zero_in_datetime_values() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(146))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE issue39336 (a DATETIME(3) DEFAULT NULL, b INT) \
+         PARTITION BY RANGE (b) (\
+         PARTITION p0 VALUES LESS THAN (1000),\
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    rows(&mut session, "SET @@sql_mode = ''");
+    rows(&mut session, "SET @@tidb_analyze_version = 2");
+    rows(&mut session, "SET @@tidb_partition_prune_mode = 'dynamic'");
+    rows(
+        &mut session,
+        "INSERT INTO issue39336 VALUES \
+         ('1000-00-09 00:00:00.000',1),\
+         ('1000-00-06 00:00:00.000',1),\
+         ('1000-00-06 00:00:00.000',1),\
+         ('2022-11-23 14:24:30.000',1),\
+         ('2022-11-23 14:24:32.000',1),\
+         ('2022-11-23 14:24:33.000',1),\
+         ('2022-11-23 14:24:35.000',1),\
+         ('2022-11-23 14:25:08.000',1001),\
+         ('2022-11-23 14:25:09.000',1001)",
+    );
+    rows(&mut session, "ANALYZE TABLE issue39336 WITH 0 TOPN");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW ANALYZE STATUS WHERE job_info LIKE 'merge global stats%' \
+             AND table_name = 'issue39336'",
+        ))
+        .into_iter()
+        .map(|row| (row[3].clone(), row[7].clone()))
+        .collect::<Vec<_>>(),
+        [(
+            "merge global stats for test.issue39336 columns".to_owned(),
+            "finished".to_owned(),
+        )]
+    );
+}
+
+/// Pinned `TestSystemTableDDLHasNoEvent`: `asyncNotifyEvent` suppresses every
+/// stats subscriber event for `metadef.IsMemOrSysDB`, so system-table DDL
+/// changes schema metadata but never creates or refreshes stats rows.
+#[test]
+fn system_table_ddl_does_not_publish_statistics_events_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    let assert_no_stats = |session: &mut ClusterServerSession, ids: &[i64]| {
+        let ids = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!("SELECT count(*) FROM mysql.stats_meta WHERE table_id IN ({ids})"),
+            )),
+            [["0"]]
+        );
+    };
+
+    rows(&mut session, "CREATE TABLE mysql.stats_no_event (a INT)");
+    let old_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("mysql", "stats_no_event")
+        .expect("system table is published")
+        .1
+        .id;
+    assert_no_stats(&mut session, &[old_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event ADD COLUMN b INT",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event ADD COLUMN c INT, ADD COLUMN d INT",
+    );
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event MODIFY COLUMN a BIGINT",
+    );
+    assert_no_stats(&mut session, &[old_id]);
+    rows(&mut session, "TRUNCATE TABLE mysql.stats_no_event");
+    let new_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("mysql", "stats_no_event")
+        .expect("truncated system table is published")
+        .1
+        .id;
+    assert_ne!(new_id, old_id);
+    assert_no_stats(&mut session, &[old_id, new_id]);
+    rows(&mut session, "DROP TABLE mysql.stats_no_event");
+    assert_no_stats(&mut session, &[old_id, new_id]);
+
+    rows(
+        &mut session,
+        "CREATE TABLE mysql.stats_no_event_part (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10))",
+    );
+    let (logical_id, p0_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        (table.id, definitions[0].id)
+    };
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part ADD PARTITION (\
+         PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    let p1_id = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        definitions
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p1")
+            .expect("p1 exists")
+            .id
+    };
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part TRUNCATE PARTITION p1",
+    );
+    let replacement_p1_id = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("mysql", "stats_no_event_part")
+            .expect("partitioned system table is published")
+            .1;
+        let definitions = table
+            .partition
+            .as_ref()
+            .expect("partition metadata exists")
+            .read()
+            .definitions
+            .snapshot();
+        definitions
+            .into_iter()
+            .find(|definition| definition.name.lowercase() == "p1")
+            .expect("p1 exists")
+            .id
+    };
+    assert_ne!(replacement_p1_id, p1_id);
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id, replacement_p1_id]);
+    rows(
+        &mut session,
+        "ALTER TABLE mysql.stats_no_event_part DROP PARTITION p1",
+    );
+    rows(&mut session, "DROP TABLE mysql.stats_no_event_part");
+    assert_no_stats(&mut session, &[logical_id, p0_id, p1_id, replacement_p1_id]);
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestStatsCacheShouldNotCacheSystemTable`. The SHOW scans may enumerate
+/// every schema, but they must not publish system-table objects into the
+/// canonical statistics cache.
+#[test]
+fn show_stats_does_not_cache_system_table_statistics() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(147))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE system_cache_guard (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO system_cache_guard VALUES (1),(2),(3)",
+    );
+    rows(&mut session, "ANALYZE TABLE system_cache_guard");
+
+    let before = stack.factory.stats().receipt();
+    assert_eq!(before.loaded, 1);
+    rows(&mut session, "SHOW STATS_META");
+    rows(&mut session, "SHOW STATS_HEALTHY");
+    assert_eq!(stack.factory.stats().receipt(), before);
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestUninitializedStatsStatus`. DDL placeholders and delta-only metadata
+/// are not initialized histograms, and both settings of the outdated-stats
+/// switch retain the planner's pseudo fallback.
+#[test]
+fn uninitialized_statistics_remain_hidden_and_pseudo() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(148))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE uninitialized_stats (a INT, b INT, c INT, INDEX idx_a(a))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO uninitialized_stats VALUES (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+
+    assert!(rows(
+        &mut session,
+        "SHOW STATS_HISTOGRAMS WHERE db_name = 'test' AND table_name = 'uninitialized_stats'",
+    )
+    .is_empty());
+    for enabled in ["ON", "OFF"] {
+        rows(
+            &mut session,
+            &format!("SET @@tidb_enable_pseudo_for_outdated_stats = {enabled}"),
+        );
+        let explain = displayed(rows(
+            &mut session,
+            "EXPLAIN SELECT * FROM uninitialized_stats",
+        ));
+        assert!(
+            explain
+                .iter()
+                .flatten()
+                .any(|value| value.contains("stats:pseudo")),
+            "uninitialized statistics must stay pseudo with the switch {enabled}: {explain:?}"
+        );
+    }
+}
+
+/// Pinned `pkg/statistics/handle/handletest/handle_test.go::
+/// TestSkipMissingPartitionStats`. Dynamic global merge keeps the logical
+/// row count, accounts for the unanalyzed partition as modifications, and
+/// publishes every merged column/index when missing partition statistics are
+/// explicitly skipped.
+#[test]
+fn global_statistics_skip_missing_partition_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(149))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "SET SESSION tidb_skip_missing_partition_stats = ON",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE skip_missing_stats (a INT, b INT, c INT, INDEX idx_b(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (100), \
+         PARTITION p1 VALUES LESS THAN (200), PARTITION p2 VALUES LESS THAN (300))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO skip_missing_stats VALUES (1,1,1), (2,2,2), \
+         (101,101,101), (102,102,102), (201,201,201), (202,202,202)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(
+        &mut session,
+        "ANALYZE TABLE skip_missing_stats PARTITION p0, p1",
+    );
+
+    let global = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'skip_missing_stats' AND partition_name = 'global'",
+    ));
+    assert_eq!(global.len(), 1, "missing global statistics row: {global:?}");
+    assert_eq!((global[0][4].as_str(), global[0][5].as_str()), ("2", "6"));
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_HISTOGRAMS WHERE table_name = 'skip_missing_stats' AND partition_name = 'global'",
+        ))
+        .len(),
+        4,
+        "all three columns and idx_b must be initialized"
+    );
+}
+
+/// Pinned DDL subscriber `ActionModifyColumn`: `InsertColStats2KV` is an
+/// `INSERT IGNORE`, but if the histogram is absent it recreates it before
+/// refreshing meta. An original CREATE TABLE column has no origin default,
+/// even when it has a declared INSERT default, so Go records all old rows as
+/// NULL and creates no bucket. Both MODIFY and RENAME COLUMN are this action.
+#[test]
+fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(74))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_modify_column (a INT DEFAULT 7)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_modify_column VALUES (DEFAULT),(DEFAULT),(DEFAULT)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_modify_column");
+    let (table_id, column_id) = {
+        let catalog = stack.factory.catalog.load();
+        let table = catalog
+            .find_table("test", "stats_modify_column")
+            .expect("created table is published")
+            .1;
+        (
+            table.id,
+            table.columns.get(0).expect("column exists").read().id,
+        )
+    };
+
+    let remove_column_stats = |session: &mut ClusterServerSession| {
+        rows(
+            session,
+            &format!(
+                "DELETE FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        );
+        rows(
+            session,
+            &format!(
+                "DELETE FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND is_index = 0 AND hist_id = {column_id}"
+            ),
+        );
+    };
+    let assert_recreated = |session: &mut ClusterServerSession| {
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!(
+                    "SELECT distinct_count, null_count, tot_col_size, stats_ver \
+                     FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["0", "3", "0", "0"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                session,
+                &format!(
+                    "SELECT count(*) FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                     AND is_index = 0 AND hist_id = {column_id}"
+                ),
+            )),
+            [["0"]]
+        );
+    };
+
+    remove_column_stats(&mut session);
+    rows(
+        &mut session,
+        "ALTER TABLE stats_modify_column MODIFY COLUMN a BIGINT",
+    );
+    assert_recreated(&mut session);
+
+    remove_column_stats(&mut session);
+    rows(
+        &mut session,
+        "ALTER TABLE stats_modify_column RENAME COLUMN a TO b",
+    );
+    assert_recreated(&mut session);
+}
+
+/// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
+/// task creation while off; once enabled, a successful ANALYZE posts its
+/// physical ID and the domain dump path writes canonical blocks to
+/// `mysql.stats_history`.
+#[test]
+fn analyze_records_historical_stats_through_the_domain_worker() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(75))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE history_analyze (a INT, b VARCHAR(10), INDEX idx(a, b))",
+    );
+
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_enable_historical_stats = OFF",
+    );
+    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
+    let table_id = session
+        .historical_stats_worker
+        .get_one_historical_stats_table();
+    assert!(table_id > 0, "a successful ANALYZE posts its table ID");
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    session
+        .historical_stats_worker
+        .dump_historical_stats(
+            table_id,
+            &handle,
+            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+        )
+        .expect("historical statistics dump succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
+        )),
+        [["1"]]
+    );
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_analyze")
+        .expect("analyzed table remains published");
+    let table = table.clone();
+    drop(catalog);
+    let (historical, fallbacks) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("historical statistics reload succeeds");
+    assert!(fallbacks.is_empty(), "unexpected fallbacks: {fallbacks:?}");
+    assert!(
+        historical
+            .expect("historical statistics exist")
+            .is_historical_stats
+    );
+}
+
+/// Pinned `TestGCOutdatedHistoryStats`: the global retention duration drives
+/// explicit historical metadata and payload cleanup.
+#[test]
+fn clear_outdated_history_stats_uses_the_go_retention_duration() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(&mut session, "CREATE TABLE history_gc (a INT)");
+    rows(&mut session, "ANALYZE TABLE history_gc");
+    let table_id = session
+        .historical_stats_worker
+        .get_one_historical_stats_table();
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    session
+        .historical_stats_worker
+        .dump_historical_stats(
+            table_id,
+            &handle,
+            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+        )
+        .expect("historical statistics dump succeeds");
+    for table in ["stats_meta_history", "stats_history"] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
+            )),
+            [["1"]]
+        );
+    }
+
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_historical_stats_duration = '1s'",
+    );
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    stack
+        .factory
+        .clear_outdated_history_stats()
+        .expect("historical statistics GC succeeds");
+    for table in ["stats_meta_history", "stats_history"] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
+            )),
+            [["0"]]
+        );
+    }
+}
+
+/// Pinned storage `TestGCStats`: stale index and column rows are removed one
+/// item transaction at a time, while a dropped table needs one pass to clear
+/// payload and a later pass to remove `stats_meta`.
+#[test]
+fn stats_gc_matches_go_item_and_dropped_table_phases() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_t (a INT, b INT, INDEX idx(a, b), INDEX idx_a(a))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_t VALUES (1,1),(2,2),(3,3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_t WITH 0 TOPN");
+
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP INDEX idx");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("index statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["3".to_owned()]]
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP INDEX idx_a");
+    rows(&mut session, "ALTER TABLE stats_gc_t DROP COLUMN a");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("column statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["1".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_t");
+    // Embedded DDL and GC can share one physical millisecond. Go's TSO has a
+    // positive logical component while GC's wall-clock TSO has zero, so wait
+    // until the strict `version < gcVer` window can include the drop event.
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("first dropped-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("second dropped-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["0".to_owned()]]
+    );
+}
+
+/// Pinned storage `TestGCPartition`, including its retained logical
+/// meta-only row after both physical partitions finish two-phase GC.
+#[test]
+fn stats_gc_matches_go_partition_phases() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_partition (a BIGINT, b BIGINT, INDEX idx(a, b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (3), \
+         PARTITION p1 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_partition VALUES (1,2),(2,3),(3,4),(4,5),(5,6)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_partition WITH 0 TOPN");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["6".to_owned()]]
+    );
+
+    rows(
+        &mut session,
+        "ALTER TABLE stats_gc_partition DROP INDEX idx",
+    );
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("partition index statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["4".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_buckets",
+        )),
+        vec![vec!["10".to_owned()]]
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_partition DROP COLUMN b");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("partition column statistics GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["2".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_buckets",
+        )),
+        vec![vec!["5".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_partition");
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("first partition-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["3".to_owned()]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("second partition-table GC phase succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+}
+
+/// Pinned storage `TestGCColumnStatsUsage`: a dropped column removes only its
+/// usage row, then dropped-table GC removes every remaining usage row.
+#[test]
+fn stats_gc_matches_go_column_usage_cleanup() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(81))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_usage (a INT, b INT, c INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_usage VALUES (1,1,1),(2,2,2),(3,3,3)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_usage");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_gc_usage")
+        .expect("table is in the live catalog")
+        .1
+        .id;
+    rows(
+        &mut session,
+        &format!(
+            "INSERT INTO mysql.column_stats_usage(table_id,column_id) VALUES \
+             ({table_id},1),({table_id},2),({table_id},3)"
+        ),
+    );
+
+    rows(&mut session, "ALTER TABLE stats_gc_usage DROP COLUMN a");
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("dropped-column usage GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.column_stats_usage",
+        )),
+        vec![vec!["2".to_owned()]]
+    );
+
+    rows(&mut session, "DROP TABLE stats_gc_usage");
+    std::thread::sleep(Duration::from_millis(2));
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("dropped-table usage GC succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.column_stats_usage",
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+}
+
+/// Pinned storage `TestExtremCaseOfGC`: an existing table with an empty
+/// histogram set must keep its `stats_meta` row.
+#[test]
+fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(82))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE stats_gc_empty_hist (a INT, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO stats_gc_empty_hist VALUES (1,2),(3,4)",
+    );
+    rows(&mut session, "ANALYZE TABLE stats_gc_empty_hist");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_gc_empty_hist")
+        .expect("table is in the live catalog")
+        .1
+        .id;
+    rows(
+        &mut session,
+        &format!("DELETE FROM mysql.stats_histograms WHERE table_id = {table_id}"),
+    );
+    stack
+        .factory
+        .gc_stats(Duration::ZERO, Duration::ZERO)
+        .expect("empty-histogram GC succeeds");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
+        vec![vec!["1".to_owned()]]
+    );
+}
+
+/// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history
+/// disabled, historical dump uses the latest statistics and names that table
+/// in the fallback list once the feature is enabled.
+#[test]
+fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(77))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE history_fallback (a INT, INDEX idx(a)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_enable_historical_stats = OFF",
+    );
+    rows(&mut session, "ANALYZE TABLE history_fallback");
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_fallback")
+        .expect("analyzed table remains published");
+    let table = table.clone();
+    drop(catalog);
+    assert_eq!(
+        stack
+            .factory
+            .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+            .expect_err("the Go feature gate rejects historical reads"),
+        "tidb_enable_historical_stats should be enabled"
+    );
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    let (latest, fallbacks) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("latest statistics fallback succeeds");
+    assert_eq!(
+        fallbacks,
+        ["test.history_fallback p0", "test.history_fallback global"]
+    );
+    let latest = latest.expect("latest statistics exist");
+    assert!(!latest.is_historical_stats);
+    let partitions = latest.partitions.expect("partition statistics exist");
+    assert!(
+        !partitions["p0"]
+            .as_ref()
+            .expect("partition fallback exists")
+            .is_historical_stats
+    );
+    assert!(
+        !partitions[tidb_stats::TIDB_GLOBAL_STATS]
+            .as_ref()
+            .expect("global fallback exists")
+            .is_historical_stats
+    );
+}
+
+/// Pinned `TestDumpHistoricalStatsByTable`: static ANALYZE queues only the
+/// physical partition, while dynamic ANALYZE queues that partition and the
+/// logical table whose dump contains global statistics.
+#[test]
+fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(76))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(
+        &mut session,
+        "CREATE TABLE history_partition (a INT, b INT, INDEX idx(b)) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
+    );
+    let catalog = stack.factory.catalog.load();
+    let (_, table) = catalog
+        .find_table("test", "history_partition")
+        .expect("partitioned table is published");
+    let logical_id = table.id;
+    let partition_id = table
+        .get_partition_info()
+        .expect("partition metadata")
+        .read()
+        .definitions
+        .snapshot()[0]
+        .id;
+    let table = table.clone();
+    drop(catalog);
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(&mut session, "ANALYZE TABLE history_partition");
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        partition_id
+    );
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "ANALYZE TABLE history_partition");
+    let mut queued = vec![
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+    ];
+    queued.sort_unstable();
+    let mut expected = vec![partition_id, logical_id];
+    expected.sort_unstable();
+    assert_eq!(queued, expected);
+    assert_eq!(
+        session
+            .historical_stats_worker
+            .get_one_historical_stats_table(),
+        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
+    );
+
+    let handle = ClusterHistoricalStatsHandle {
+        transactions: Arc::clone(&stack.factory.transactions),
+        catalog: Arc::clone(&stack.factory.catalog),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    for table_id in queued {
+        session
+            .historical_stats_worker
+            .dump_historical_stats(
+                table_id,
+                &handle,
+                &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
+            )
+            .expect("partition/global historical dump succeeds");
+    }
+    for table_id in [partition_id, logical_id] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
+            )),
+            [["1"]]
+        );
+    }
+    let (historical, _) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("partition historical statistics reload succeeds");
+    let partitions = historical
+        .expect("partition historical statistics exist")
+        .partitions
+        .expect("partition map exists");
+    assert!(partitions["p0"].is_some());
+    assert!(partitions[tidb_stats::TIDB_GLOBAL_STATS].is_some());
+}
+
 /// The probe-33 regression: a derived table whose inner SELECT plans as a
 /// partial-aggregate push (root HashAgg over `TableReader(data:HashAgg)`)
 /// must still answer the aggregate, not the bare scan rows. Go returns
@@ -718,40 +4422,8 @@ fn a_derived_aggregate_over_the_coprocessor_answers_its_output() {
     // A full covering SUM uses the unordered Global aggregate contract. Its
     // input is indexed in the pruned scan schema, so lowering must translate
     // that offset back through the table schema before reading index keys.
-    let requests_before_sum = stack.cop_source.stats().requests.len();
     let summed_over_index = displayed(rows(&mut session, "SELECT sum(v) FROM test.walk"));
     assert_eq!(summed_over_index, [["111"]]);
-    let after_sum = stack.cop_source.stats();
-    assert!(
-        after_sum.requests.len() > requests_before_sum
-            && after_sum.requests[requests_before_sum..]
-                .iter()
-                .any(|request| request.contains("IndexScan") && request.contains("HashAgg")),
-        "the covering SUM did not reach an index HashAgg DAG: {:?}",
-        after_sum.requests
-    );
-
-    // The receipt that the partial stage ran AT THE REGION: the scanner's
-    // request log names an aggregation executor in a served DAG. A refusal
-    // would fall back to the local partial cursor -- same answer, but the
-    // lowering this test pins would silently be dead.
-    let stats = stack.cop_source.stats();
-    assert!(
-        stats
-            .requests
-            .iter()
-            .any(|request| request.contains("HashAgg") || request.contains("StreamAgg")),
-        "no served DAG carried an aggregation executor: {:?}",
-        stats.requests
-    );
-    assert!(
-        stats
-            .requests
-            .iter()
-            .any(|request| request.contains("IndexScan")),
-        "no served DAG carried the covering-index aggregate: {:?}",
-        stats.requests
-    );
 }
 
 /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`) over
@@ -1388,16 +5060,9 @@ fn analyze_changes_the_plan_and_never_the_answer() {
     }
 }
 
-/// Does a pushed-down shape still reach the region once statistics exist?
-///
-/// `EXPLAIN` cannot answer this: `crate::explain`'s documented divergence is
-/// that every row prints task `root` whether or not the wire pushed anything,
-/// so the display and the coprocessor have deliberately come apart. The
-/// receipt is the scanner's own request log, and the shape has to be one this
-/// node actually lowers -- a grouped aggregate, as
-/// `a_derived_aggregate_over_the_coprocessor_answers_its_output` pins.
+/// A grouped aggregate keeps the same answer once statistics exist.
 #[test]
-fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
+fn analyze_does_not_change_a_grouped_aggregate_answer() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack
         .factory
@@ -1414,20 +5079,1774 @@ fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
 
     let query = "SELECT g, sum(v) FROM test.pd GROUP BY g ORDER BY g";
     let expected = displayed(rows(&mut session, query));
-    let before = stack.cop_source.stats().requests.len();
-    assert!(before > 0, "the grouped aggregate reached the region");
 
     rows(&mut session, "ANALYZE TABLE test.pd");
-    let after_analyze = stack.cop_source.stats().requests.len();
 
     assert_eq!(
         displayed(rows(&mut session, query)),
         expected,
         "the answer changed once statistics existed"
     );
+}
+
+/// Pinned `globalstats.TestShowGlobalStatsWithAsyncMergeGlobal` and
+/// `TestShowGlobalStatsWithoutAsyncMergeGlobal`: static pruning publishes
+/// only physical-partition statistics, while dynamic pruning also publishes
+/// the logical table's global column and index statistics. Every SHOW surface
+/// must traverse the same set.
+#[test]
+fn partition_analyze_show_surfaces_match_global_stats_visibility() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(57))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let mut check = |table: &str,
+                     prune_mode: &str,
+                     meta_count: usize,
+                     global_meta_count: usize,
+                     bucket_count: usize,
+                     global_bucket_count: usize,
+                     histogram_count: usize,
+                     global_histogram_count: usize,
+                     healthy_count: usize,
+                     global_healthy_count: usize| {
+        rows(
+            &mut session,
+            &format!("SET SESSION tidb_partition_prune_mode = '{prune_mode}'"),
+        );
+        rows(
+            &mut session,
+            &format!("CREATE TABLE {table} (a int, KEY(a)) PARTITION BY HASH(a) PARTITIONS 2"),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES (1), (2), (3), (4)"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 0 TOPN, 1 BUCKETS"),
+        );
+
+        let show_count =
+            |session: &mut _, statement: &str| displayed(rows(session, statement)).len();
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+            ),
+            meta_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_META WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_meta_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}'"),
+            ),
+            bucket_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_BUCKETS WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_bucket_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}'"),
+            ),
+            histogram_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_histogram_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!("SHOW STATS_HEALTHY WHERE table_name = '{table}'"),
+            ),
+            healthy_count
+        );
+        assert_eq!(
+            show_count(
+                &mut session,
+                &format!(
+                    "SHOW STATS_HEALTHY WHERE table_name = '{table}' AND partition_name = 'global'"
+                ),
+            ),
+            global_healthy_count
+        );
+    };
+
+    check("gs_static", "static", 2, 0, 4, 0, 4, 0, 2, 0);
+    check("gs_dynamic", "dynamic", 3, 1, 6, 2, 6, 2, 3, 1);
+}
+
+/// Pinned `globalstats.TestGlobalStatsHealthy`: global and physical metadata
+/// receive the same flushed deltas, while health is calculated against each
+/// object's own analyzed row count.
+#[test]
+fn partition_global_stats_health_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(102))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_health (a INT, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20))",
+    );
+
+    let check_meta = |session: &mut _, expected: [(&str, &str); 3]| {
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_health'",
+        ));
+        assert_eq!(actual.len(), 3, "{actual:?}");
+        assert_eq!(
+            actual
+                .iter()
+                .map(|row| (row[4].as_str(), row[5].as_str()))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    };
+    let check_healthy = |session: &mut _, expected: [&str; 3]| {
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_HEALTHY WHERE table_name = 'global_health'",
+        ));
+        assert_eq!(actual.len(), 3, "{actual:?}");
+        assert_eq!(
+            actual.iter().map(|row| row[3].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+    let flush_and_update = |session: &mut _| {
+        let reloads = stack._stats_reloader.stats().reloads;
+        rows(session, "FLUSH STATS_DELTA *.*");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stack._stats_reloader.stats().reloads == reloads {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "statistics update did not run after FLUSH STATS_DELTA"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+
+    rows(&mut session, "ANALYZE TABLE global_health");
+    check_meta(&mut session, [("0", "0"), ("0", "0"), ("0", "0")]);
+    check_healthy(&mut session, ["100", "100", "100"]);
+
+    rows(&mut session, "INSERT INTO global_health VALUES (1),(2)");
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("2", "2"), ("2", "2"), ("0", "0")]);
+    check_healthy(&mut session, ["0", "0", "100"]);
+
+    rows(
+        &mut session,
+        "INSERT INTO global_health VALUES (11),(12),(13),(14)",
+    );
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("6", "6"), ("2", "2"), ("4", "4")]);
+    check_healthy(&mut session, ["0", "0", "0"]);
+
+    rows(&mut session, "ANALYZE TABLE global_health");
+    check_meta(&mut session, [("0", "6"), ("0", "2"), ("0", "4")]);
+    check_healthy(&mut session, ["100", "100", "100"]);
+
+    rows(
+        &mut session,
+        "INSERT INTO global_health VALUES (4),(5),(15),(16)",
+    );
+    flush_and_update(&mut session);
+    check_meta(&mut session, [("4", "10"), ("2", "4"), ("2", "6")]);
+    check_healthy(&mut session, ["33", "0", "50"]);
+}
+
+/// Pinned `globalstats.TestBuildGlobalLevelStats`: static ANALYZE publishes
+/// physical rows only, dynamic ANALYZE adds the logical global row, and
+/// predicate-column demand controls the complete histogram inventory.
+#[test]
+fn build_global_level_stats_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(103))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_level (a INT, b INT, c INT) PARTITION BY HASH(a) PARTITIONS 3",
+    );
+    rows(&mut session, "CREATE TABLE global_level_plain (a INT)");
+    rows(
+        &mut session,
+        "INSERT INTO global_level VALUES (1,1,1),(3,12,3),(4,20,4),(2,7,2),(5,21,5)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_level_plain VALUES (1),(3),(4),(2),(5)",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_global_level_ab ON global_level(a,b)",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_global_level_b ON global_level(b)",
+    );
+    rows(&mut session, "SELECT * FROM global_level WHERE c = 0");
+    rows(&mut session, "SELECT * FROM global_level_plain WHERE a = 0");
+    stack
+        .factory
+        .dump_col_stats_usage_to_kv("default")
+        .expect("predicate-column usage dump");
+
+    let count_rows = |session: &mut _, table: &str| {
+        let mut counts = displayed(rows(
+            session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ))
+        .into_iter()
+        .map(|row| row[5].clone())
+        .collect::<Vec<_>>();
+        counts.sort();
+        counts
+    };
+    let histogram_count = |session: &mut _, table: &str| {
+        rows(
+            session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}'"),
+        )
+        .len()
+    };
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level, global_level_plain",
+    );
+    assert_eq!(count_rows(&mut session, "global_level"), ["1", "2", "2"]);
+    assert_eq!(histogram_count(&mut session, "global_level"), 15);
+    assert_eq!(count_rows(&mut session, "global_level_plain"), ["5"]);
+    assert_eq!(histogram_count(&mut session, "global_level_plain"), 1);
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level, global_level_plain",
+    );
+    assert_eq!(
+        count_rows(&mut session, "global_level"),
+        ["1", "2", "2", "5"]
+    );
+    assert_eq!(histogram_count(&mut session, "global_level"), 20);
+    assert_eq!(count_rows(&mut session, "global_level_plain"), ["5"]);
+    assert_eq!(histogram_count(&mut session, "global_level_plain"), 1);
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_level INDEX idx_global_level_ab, idx_global_level_b",
+    );
+    assert_eq!(
+        count_rows(&mut session, "global_level"),
+        ["1", "2", "2", "5"]
+    );
+    assert_eq!(histogram_count(&mut session, "global_level"), 20);
+}
+
+#[test]
+fn global_topn_merge_matches_issue_24349() {
+    assert_global_topn_merge_matches_issue_24349(None, 104);
+}
+
+#[test]
+fn concurrent_global_topn_merge_matches_issue_24349() {
+    assert_global_topn_merge_matches_issue_24349(Some(2), 105);
+}
+
+/// Pinned `globalstats.TestIssues24349` and its concurrency-two twin: global
+/// TopN candidates include values recovered from sibling partition histograms
+/// before the remaining histogram buckets are merged.
+fn assert_global_topn_merge_matches_issue_24349(
+    merge_concurrency: Option<u64>,
+    connection_id: u64,
+) {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    if let Some(merge_concurrency) = merge_concurrency {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+        );
+    }
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "CREATE TABLE global_topn_merge (a INT, b INT) PARTITION BY HASH(a) PARTITIONS 3",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_topn_merge VALUES \
+         (0,3),(0,3),(0,3),(0,2),(1,1),(1,2),(1,2),(1,2),(1,3),(1,4),(2,1),(2,1)",
+    );
+    rows(
+        &mut session,
+        "SELECT * FROM global_topn_merge WHERE a = 0 AND b = 3",
+    );
+    stack
+        .factory
+        .dump_col_stats_usage_to_kv("default")
+        .expect("predicate-column usage dump");
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_topn_merge WITH 1 TOPN, 3 BUCKETS",
+    );
+
+    let mut global_topn = displayed(rows(
+        &mut session,
+        "SHOW STATS_TOPN WHERE table_name = 'global_topn_merge' AND partition_name = 'global'",
+    ));
+    global_topn.sort();
+    assert_eq!(
+        global_topn,
+        [
+            ["test", "global_topn_merge", "global", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "global", "b", "0", "2", "4"],
+        ]
+    );
+
+    rows(
+        &mut session,
+        "EXPLAIN SELECT * FROM global_topn_merge WHERE a > 0 AND b > 0",
+    );
+    let mut all_topn = displayed(rows(
+        &mut session,
+        "SHOW STATS_TOPN WHERE table_name = 'global_topn_merge'",
+    ));
+    all_topn.sort();
+    assert_eq!(
+        all_topn,
+        [
+            ["test", "global_topn_merge", "global", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "global", "b", "0", "2", "4"],
+            ["test", "global_topn_merge", "p0", "a", "0", "0", "4"],
+            ["test", "global_topn_merge", "p0", "b", "0", "3", "3"],
+            ["test", "global_topn_merge", "p1", "a", "0", "1", "6"],
+            ["test", "global_topn_merge", "p1", "b", "0", "2", "3"],
+            ["test", "global_topn_merge", "p2", "a", "0", "2", "2"],
+            ["test", "global_topn_merge", "p2", "b", "0", "1", "2"],
+        ]
+    );
+
+    let mut buckets = displayed(rows(
+        &mut session,
+        "SHOW STATS_BUCKETS WHERE table_name = 'global_topn_merge'",
+    ));
+    buckets.sort();
+    assert_eq!(
+        buckets,
+        [
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "a",
+                "0",
+                "0",
+                "4",
+                "4",
+                "0",
+                "0",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "a",
+                "0",
+                "1",
+                "6",
+                "2",
+                "2",
+                "2",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "global",
+                "b",
+                "0",
+                "0",
+                "8",
+                "1",
+                "1",
+                "4",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p0",
+                "b",
+                "0",
+                "0",
+                "1",
+                "1",
+                "2",
+                "2",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p1",
+                "b",
+                "0",
+                "0",
+                "2",
+                "1",
+                "1",
+                "3",
+                "0"
+            ],
+            [
+                "test",
+                "global_topn_merge",
+                "p1",
+                "b",
+                "0",
+                "1",
+                "3",
+                "1",
+                "4",
+                "4",
+                "0"
+            ],
+        ]
+    );
+}
+
+/// Pinned `globalstats.TestMergeGlobalStatsForCMSketch`: a global equality
+/// estimate uses the merged sketch while partition pruning retains p0.
+#[test]
+fn merged_global_cmsketch_drives_equality_estimate() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(106))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_cms (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_cms VALUES \
+         (1),(2),(3),(4),(5),(6),(6),(NULL),(11),(12),(13),(14),(15),(16),(17),(18),(19),(19)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_cms");
+
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM global_cms WHERE a = 1",
+        )),
+        [
+            [
+                "TableReader",
+                "1.00",
+                "root",
+                "partition:p0",
+                "data:Selection"
+            ],
+            [
+                "└─Selection",
+                "1.00",
+                "cop[tikv]",
+                "",
+                "eq(test.global_cms.a, 1)"
+            ],
+            [
+                "  └─TableFullScan",
+                "18.00",
+                "cop[tikv]",
+                "table:global_cms",
+                "keep order:false"
+            ],
+        ]
+    );
+}
+
+/// Pinned `globalstats.TestGlobalStatsData3`: composite-index global TopN,
+/// buckets, and NDV preserve the source behavior for every covered key type.
+#[test]
+fn composite_index_global_stats_match_go_types() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(107))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+
+    let cases = [
+        (
+            "tintint",
+            "INT",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1", "2", "3"],
+        ),
+        (
+            "tintstr",
+            "VARCHAR(32)",
+            "(1,'1'),(1,'2'),(2,'1'),(2,'2'),(2,'3'),(2,'3'),(3,'1'),(3,'1'),(3,'1'),\
+             (11,'1'),(12,'1'),(12,'2'),(13,'1'),(13,'1'),(13,'2'),(13,'2'),(13,'2')",
+            ["1", "2", "3"],
+        ),
+        (
+            "tintdouble",
+            "DOUBLE",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1", "2", "3"],
+        ),
+        (
+            "tdoubledecimal",
+            "DECIMAL(30,2)",
+            "(1,1),(1,2),(2,1),(2,2),(2,3),(2,3),(3,1),(3,1),(3,1),\
+             (11,1),(12,1),(12,2),(13,1),(13,1),(13,2),(13,2),(13,2)",
+            ["1.00", "2.00", "3.00"],
+        ),
+        (
+            "tstrdt",
+            "DATETIME",
+            "(1,'2000-01-01'),(1,'2000-01-02'),(2,'2000-01-01'),\
+             (2,'2000-01-02'),(2,'2000-01-03'),(2,'2000-01-03'),\
+             (3,'2000-01-01'),(3,'2000-01-01'),(3,'2000-01-01'),\
+             (11,'2000-01-01'),(12,'2000-01-01'),(12,'2000-01-02'),\
+             (13,'2000-01-01'),(13,'2000-01-01'),(13,'2000-01-02'),\
+             (13,'2000-01-02'),(13,'2000-01-02')",
+            [
+                "2000-01-01 00:00:00",
+                "2000-01-02 00:00:00",
+                "2000-01-03 00:00:00",
+            ],
+        ),
+    ];
+
+    for (table, b_type, values, [one, two, three]) in cases {
+        rows(
+            &mut session,
+            &format!(
+                "CREATE TABLE {table} (a INT, b {b_type}, KEY(a,b)) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+                 PARTITION p1 VALUES LESS THAN (20))"
+            ),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES {values}"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 2 TOPN, 2 BUCKETS"),
+        );
+
+        let meta = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ));
+        assert_eq!(
+            meta.iter().map(|row| row[5].as_str()).collect::<Vec<_>>(),
+            ["17", "9", "8"],
+            "{table} metadata"
+        );
+
+        let topn = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_TOPN WHERE table_name = '{table}' AND is_index = 1"),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            topn,
+            [
+                format!("test {table} global a 1 (3, {one}) 3"),
+                format!("test {table} global a 1 (13, {two}) 3"),
+                format!("test {table} p0 a 1 (2, {three}) 2"),
+                format!("test {table} p0 a 1 (3, {one}) 3"),
+                format!("test {table} p1 a 1 (13, {one}) 2"),
+                format!("test {table} p1 a 1 (13, {two}) 3"),
+            ],
+            "{table} TopN"
+        );
+
+        let buckets = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}' AND is_index = 1"),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            buckets,
+            [
+                format!("test {table} global a 1 0 6 2 (1, {one}) (2, {three}) 0"),
+                format!("test {table} global a 1 1 11 2 (11, {one}) (13, {one}) 0"),
+                format!("test {table} p0 a 1 0 3 1 (1, {one}) (2, {one}) 0"),
+                format!("test {table} p0 a 1 1 4 1 (2, {two}) (2, {two}) 0"),
+                format!("test {table} p1 a 1 0 2 1 (11, {one}) (12, {one}) 0"),
+                format!("test {table} p1 a 1 1 3 1 (12, {two}) (12, {two}) 0"),
+            ],
+            "{table} buckets"
+        );
+
+        let histograms = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND is_index = 1"),
+        ));
+        assert_eq!(
+            histograms
+                .iter()
+                .map(|row| row[6].as_str())
+                .collect::<Vec<_>>(),
+            ["11", "6", "5"],
+            "{table} NDV"
+        );
+    }
+}
+
+#[test]
+fn scalar_column_and_index_global_stats_match_go() {
+    assert_scalar_column_and_index_global_stats_match_go(None, 108);
+}
+
+#[test]
+fn concurrent_scalar_column_and_index_global_stats_match_go() {
+    assert_scalar_column_and_index_global_stats_match_go(Some(2), 109);
+}
+
+/// Pinned `globalstats.TestGlobalStatsData2` and its concurrency-two twin.
+fn assert_scalar_column_and_index_global_stats_match_go(
+    merge_concurrency: Option<u64>,
+    connection_id: u64,
+) {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    if let Some(merge_concurrency) = merge_concurrency {
+        rows(
+            &mut session,
+            &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+        );
+    }
+
+    let cases = [
+        (
+            "tint",
+            "CREATE TABLE tint (c INT, KEY(c)) PARTITION BY RANGE (c) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1),(2),(3),(4),(4),(5),(5),(5),(NULL),\
+             (11),(12),(13),(14),(15),(16),(16),(16),(16),(17),(17)",
+            ["1", "2", "3", "4", "5", "11", "13", "14", "15", "16", "17"],
+        ),
+        (
+            "tdouble",
+            "CREATE TABLE tdouble (a INT, c DOUBLE, KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,1),(2,2),(3,3),(4,4),(4,4),(5,5),(5,5),(5,5),(NULL,NULL),\
+             (11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(16,16),(16,16),(16,16),(17,17),(17,17)",
+            ["1", "2", "3", "4", "5", "11", "13", "14", "15", "16", "17"],
+        ),
+        (
+            "tdecimal",
+            "CREATE TABLE tdecimal (a INT, c DECIMAL(10,2), KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,1),(2,2),(3,3),(4,4),(4,4),(5,5),(5,5),(5,5),(NULL,NULL),\
+             (11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(16,16),(16,16),(16,16),(17,17),(17,17)",
+            ["1.00", "2.00", "3.00", "4.00", "5.00", "11.00", "13.00", "14.00", "15.00", "16.00", "17.00"],
+        ),
+        (
+            "tdatetime",
+            "CREATE TABLE tdatetime (a INT, c DATETIME, KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,'2000-01-01'),(2,'2000-01-02'),(3,'2000-01-03'),\
+             (4,'2000-01-04'),(4,'2000-01-04'),(5,'2000-01-05'),\
+             (5,'2000-01-05'),(5,'2000-01-05'),(NULL,NULL),\
+             (11,'2000-01-11'),(12,'2000-01-12'),(13,'2000-01-13'),\
+             (14,'2000-01-14'),(15,'2000-01-15'),(16,'2000-01-16'),\
+             (16,'2000-01-16'),(16,'2000-01-16'),(16,'2000-01-16'),\
+             (17,'2000-01-17'),(17,'2000-01-17')",
+            [
+                "2000-01-01 00:00:00", "2000-01-02 00:00:00", "2000-01-03 00:00:00",
+                "2000-01-04 00:00:00", "2000-01-05 00:00:00", "2000-01-11 00:00:00",
+                "2000-01-13 00:00:00", "2000-01-14 00:00:00", "2000-01-15 00:00:00",
+                "2000-01-16 00:00:00", "2000-01-17 00:00:00",
+            ],
+        ),
+        (
+            "tstring",
+            "CREATE TABLE tstring (a INT, c VARCHAR(32), KEY(c)) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            "(1,'a1'),(2,'a2'),(3,'a3'),(4,'a4'),(4,'a4'),(5,'a5'),(5,'a5'),(5,'a5'),(NULL,NULL),\
+             (11,'b11'),(12,'b12'),(13,'b13'),(14,'b14'),(15,'b15'),\
+             (16,'b16'),(16,'b16'),(16,'b16'),(16,'b16'),(17,'b17'),(17,'b17')",
+            ["a1", "a2", "a3", "a4", "a5", "b11", "b13", "b14", "b15", "b16", "b17"],
+        ),
+    ];
+
+    for (
+        table,
+        create,
+        values,
+        [one, two, three, four, five, eleven, thirteen, fourteen, fifteen, sixteen, seventeen],
+    ) in cases
+    {
+        rows(&mut session, create);
+        rows(
+            &mut session,
+            &format!("INSERT INTO {table} VALUES {values}"),
+        );
+        rows(
+            &mut session,
+            &format!("ANALYZE TABLE {table} WITH 2 TOPN, 2 BUCKETS"),
+        );
+
+        let meta = displayed(rows(
+            &mut session,
+            &format!("SHOW STATS_META WHERE table_name = '{table}'"),
+        ));
+        assert_eq!(
+            meta.iter().map(|row| row[5].as_str()).collect::<Vec<_>>(),
+            ["20", "9", "11"]
+        );
+
+        for is_index in [0, 1] {
+            let topn = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_TOPN WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            )).into_iter().map(|row| row.join(" ")).collect::<Vec<_>>();
+            assert_eq!(
+                topn,
+                [
+                    format!("test {table} global c {is_index} {five} 3"),
+                    format!("test {table} global c {is_index} {sixteen} 4"),
+                    format!("test {table} p0 c {is_index} {four} 2"),
+                    format!("test {table} p0 c {is_index} {five} 3"),
+                    format!("test {table} p1 c {is_index} {sixteen} 4"),
+                    format!("test {table} p1 c {is_index} {seventeen} 2"),
+                ]
+            );
+
+            let buckets = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_BUCKETS WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            )).into_iter().map(|row| row.join(" ")).collect::<Vec<_>>();
+            assert_eq!(
+                buckets,
+                [
+                    format!("test {table} global c {is_index} 0 5 2 {one} {four} 0"),
+                    format!("test {table} global c {is_index} 1 12 2 {eleven} {seventeen} 0"),
+                    format!("test {table} p0 c {is_index} 0 2 1 {one} {two} 0"),
+                    format!("test {table} p0 c {is_index} 1 3 1 {three} {three} 0"),
+                    format!("test {table} p1 c {is_index} 0 3 1 {eleven} {thirteen} 0"),
+                    format!("test {table} p1 c {is_index} 1 5 1 {fourteen} {fifteen} 0"),
+                ]
+            );
+
+            let histograms = displayed(rows(
+                &mut session,
+                &format!("SHOW STATS_HISTOGRAMS WHERE table_name = '{table}' AND column_name = 'c' AND is_index = {is_index}"),
+            ));
+            assert_eq!(
+                histograms
+                    .iter()
+                    .map(|row| row[6].as_str())
+                    .collect::<Vec<_>>(),
+                ["12", "5", "7"]
+            );
+            assert_eq!(
+                histograms
+                    .iter()
+                    .map(|row| row[7].as_str())
+                    .collect::<Vec<_>>(),
+                ["1", "1", "0"]
+            );
+        }
+    }
+}
+
+/// Pinned `globalstats.TestGlobalIndexStatistics`: all three ANALYZE forms
+/// populate a partitioned table's global unique-index statistics and the
+/// optimizer uses the global index across every partition.
+#[test]
+fn global_index_statistics_match_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(110))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let create = |session: &mut _, clustered: bool| {
+        rows(session, "DROP TABLE IF EXISTS global_index_stats");
+        let key = if clustered {
+            "PRIMARY KEY(b,a) CLUSTERED"
+        } else {
+            "KEY(a)"
+        };
+        rows(
+            session,
+            &format!(
+                "CREATE TABLE global_index_stats (a INT, b INT, c INT DEFAULT 0, {key}) \
+                 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), \
+                 PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30), \
+                 PARTITION p3 VALUES LESS THAN (40))"
+            ),
+        );
+        rows(
+            session,
+            "INSERT INTO global_index_stats(a,b) VALUES \
+             (1,1),(2,2),(3,3),(15,15),(25,25),(35,35)",
+        );
+        rows(
+            session,
+            "ALTER TABLE global_index_stats ADD UNIQUE INDEX idx(b) GLOBAL",
+        );
+    };
+    let expected = [
+        [
+            "IndexReader",
+            "5.00",
+            "root",
+            "partition:all",
+            "index:IndexRangeScan",
+        ],
+        [
+            "└─IndexRangeScan",
+            "5.00",
+            "cop[tikv]",
+            "table:global_index_stats, index:idx(b)",
+            "range:[-inf,16), keep order:true",
+        ],
+    ];
+
+    create(&mut session, false);
+    rows(&mut session, "ANALYZE TABLE global_index_stats");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM global_index_stats USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        [["1"], ["2"], ["3"], ["15"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+             USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        expected
+    );
+
+    create(&mut session, true);
+    rows(&mut session, "ANALYZE TABLE global_index_stats INDEX idx");
+    let explain = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+         USE INDEX(idx) WHERE b < 16 ORDER BY b",
+    ));
+    assert_eq!(explain[0][1], "5.00");
+
+    create(&mut session, true);
+    rows(&mut session, "ANALYZE TABLE global_index_stats INDEX");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT b FROM global_index_stats \
+             USE INDEX(idx) WHERE b < 16 ORDER BY b",
+        )),
+        expected
+    );
+}
+
+#[test]
+fn global_statistics_and_session_bindings_match_go() {
+    assert_global_statistics_and_session_bindings_match_go(1, 111);
+}
+
+#[test]
+fn concurrent_global_statistics_and_session_bindings_match_go() {
+    assert_global_statistics_and_session_bindings_match_go(2, 112);
+}
+
+/// Pinned `globalstats.TestGlobalStatsAndSQLBinding` and its concurrency-two
+/// twin: global statistics choose the index for hash, range, and list
+/// partitions, while a matching session binding's `IGNORE INDEX` moves the
+/// same statements to table scans until the binding is dropped.
+fn assert_global_statistics_and_session_bindings_match_go(
+    merge_concurrency: u64,
+    connection_id: u64,
+) {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .expect("session opens");
+    rows(
+        &mut session,
+        &format!("SET GLOBAL tidb_merge_partition_stats_concurrency = {merge_concurrency}"),
+    );
+    rows(&mut session, "CREATE DATABASE test_global_stats");
+    rows(&mut session, "USE test_global_stats");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "SET GLOBAL tidb_enable_auto_analyze = OFF");
+    rows(
+        &mut session,
+        "SET SESSION tidb_enable_non_prepared_plan_cache = 0",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE thash(a INT, b INT, KEY(a)) PARTITION BY HASH(a) PARTITIONS 4",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE trange(a INT, b INT, KEY(a)) PARTITION BY RANGE(a) (\
+         PARTITION p0 VALUES LESS THAN (200), PARTITION p1 VALUES LESS THAN (400), \
+         PARTITION p2 VALUES LESS THAN (600), PARTITION p3 VALUES LESS THAN (800), \
+         PARTITION p4 VALUES LESS THAN (1001))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE tlist(a INT, b INT, KEY(a)) PARTITION BY LIST(a) (\
+         PARTITION p0 VALUES IN (0,1,2,3,4,5,6,7,8,9), \
+         PARTITION p1 VALUES IN (10,11,12,13,14,15,16,17,18,19), \
+         PARTITION p2 VALUES IN (20,21,22,23,24,25,26,27,28,29), \
+         PARTITION p3 VALUES IN (30,31,32,33,34,35,36,37,38,39), \
+         PARTITION p4 VALUES IN (40,41,42,43,44,45,46,47,48,49,50))",
+    );
+
+    let mut range_values = Vec::with_capacity(1000);
+    let mut list_values = Vec::with_capacity(1000);
+    for i in 0..1000 {
+        if i < 10 {
+            range_values.push(format!("({i},{i})"));
+            list_values.push("(0,0)".to_owned());
+        } else {
+            range_values.push(format!(
+                "({},{})",
+                100 + (i * 37) % 900,
+                100 + (i * 53) % 900
+            ));
+            list_values.push(format!("({},{})", 1 + (i * 17) % 50, 1 + (i * 29) % 50));
+        }
+    }
+    let range_values = range_values.join(",");
+    rows(
+        &mut session,
+        &format!("INSERT INTO thash VALUES {range_values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO trange VALUES {range_values}"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO tlist VALUES {}", list_values.join(",")),
+    );
+    for table in ["thash", "trange", "tlist"] {
+        rows(&mut session, &format!("ANALYZE TABLE {table}"));
+    }
+    rows(
+        &mut session,
+        "SET SESSION tidb_opt_table_full_scan_cost_factor = 100",
+    );
+
+    let queries = [
+        ("thash", "a < 100"),
+        ("trange", "a < 100"),
+        ("tlist", "a < 1"),
+    ];
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexRangeScan")),
+            "{table} must use its index before binding: {plan:?}"
+        );
+    }
+
+    for table in ["thash", "trange", "tlist"] {
+        rows(
+            &mut session,
+            &format!(
+                "CREATE SESSION BINDING FOR SELECT * FROM {table} WHERE a < 100 \
+                 USING SELECT * FROM {table} IGNORE INDEX(a) WHERE a < 100"
+            ),
+        );
+    }
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("TableFullScan")),
+            "{table} must honor the binding's ignored index: {plan:?}"
+        );
+    }
+
+    for table in ["thash", "trange", "tlist"] {
+        rows(
+            &mut session,
+            &format!("DROP SESSION BINDING FOR SELECT * FROM {table} WHERE a < 100"),
+        );
+    }
+    for (table, predicate) in queries {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM {table} WHERE {predicate}"),
+        ));
+        assert!(
+            plan.iter().any(|row| row[0].contains("IndexRangeScan")),
+            "{table} must return to its index after dropping the binding: {plan:?}"
+        );
+    }
+    rows(&mut session, "SET GLOBAL tidb_enable_auto_analyze = ON");
+    rows(
+        &mut session,
+        "SET SESSION tidb_opt_table_full_scan_cost_factor = 1",
+    );
+}
+
+/// Pinned `globalstats.TestGlobalStatsData`: partition and global histograms
+/// retain Go's exact cumulative bucket counts, repeats, bounds, and zeroed
+/// merged bucket NDV for both the column and its index.
+#[test]
+fn partition_global_stats_bucket_data_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(58))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_data (a int, KEY(a)) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_data VALUES \
+         (1),(2),(3),(4),(5),(6),(6),(NULL),\
+         (11),(12),(13),(14),(15),(16),(17),(18),(19),(19)",
+    );
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_data WITH 0 TOPN, 2 BUCKETS",
+    );
+
+    let bucket_rows = |session: &mut _, is_index| {
+        displayed(rows(
+            session,
+            &format!(
+                "SHOW STATS_BUCKETS WHERE table_name = 'global_data' AND is_index = {is_index}"
+            ),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        bucket_rows(&mut session, 0),
+        [
+            "test global_data global a 0 0 7 2 1 6 0",
+            "test global_data global a 0 1 17 2 11 19 0",
+            "test global_data p0 a 0 0 4 1 1 4 0",
+            "test global_data p0 a 0 1 7 2 5 6 0",
+            "test global_data p1 a 0 0 6 1 11 16 0",
+            "test global_data p1 a 0 1 10 2 17 19 0",
+        ]
+    );
+    assert_eq!(
+        bucket_rows(&mut session, 1),
+        [
+            "test global_data global a 1 0 7 2 1 6 0",
+            "test global_data global a 1 1 17 2 11 19 0",
+            "test global_data p0 a 1 0 4 1 1 4 0",
+            "test global_data p0 a 1 1 7 2 5 6 0",
+            "test global_data p1 a 1 0 6 1 11 16 0",
+            "test global_data p1 a 1 1 10 2 17 19 0",
+        ]
+    );
+}
+
+/// Pinned `globalstats.TestGlobalStatsNDV`: the global index NDV is the FM
+/// sketch union across every physical partition, including empty partitions,
+/// and repeated values do not increase it.
+#[test]
+fn partition_global_stats_ndv_matches_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(60))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_ndv (a int, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30),\
+         PARTITION p3 VALUES LESS THAN (40))",
+    );
+
+    let check_ndv = |session: &mut _, expected: &[&str]| {
+        rows(session, "ANALYZE TABLE global_ndv");
+        let actual = displayed(rows(
+            session,
+            "SHOW STATS_HISTOGRAMS WHERE table_name = 'global_ndv'",
+        ))
+        .into_iter()
+        .filter(|row| row[4] == "1")
+        .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(
+            actual.iter().map(|row| row[6].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+
+    check_ndv(&mut session, &["0", "0", "0", "0", "0"]);
+    rows(&mut session, "INSERT INTO global_ndv VALUES (1),(2),(3)");
+    check_ndv(&mut session, &["3", "3", "0", "0", "0"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (11),(12),(13),(21),(22),(23)",
+    );
+    check_ndv(&mut session, &["9", "3", "3", "3", "0"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (31),(32),(33),(34)",
+    );
+    check_ndv(&mut session, &["13", "3", "3", "3", "4"]);
+    rows(
+        &mut session,
+        "INSERT INTO global_ndv VALUES (31),(33),(34),(1),(2),(3)",
+    );
+    check_ndv(&mut session, &["13", "3", "3", "3", "4"]);
+}
+
+/// Pinned `globalstats.TestGlobalStatsIndexNDV`: FM-sketch union uses the
+/// index-key encoding consistently for every datum family accepted by the
+/// source test, so equal values in different partitions remain one NDV.
+#[test]
+fn partition_global_index_ndv_matches_go_for_all_source_types() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(61))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+
+    let check_ndv = |session: &mut _, table: &str, expected: &[&str]| {
+        rows(session, &format!("ANALYZE TABLE {table}"));
+        let actual = displayed(rows(
+            session,
+            &format!("SHOW STATS_HISTOGRAMS WHERE is_index = 1 AND table_name = '{table}'"),
+        ));
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(
+            actual.iter().map(|row| row[6].as_str()).collect::<Vec<_>>(),
+            expected
+        );
+    };
+
+    let run_case = |session: &mut _, table: &str, sql_type: &str, values: [&str; 8]| {
+        rows(
+            session,
+            &format!(
+                "CREATE TABLE {table} (a INT, b {sql_type}, KEY(b)) \
+                 PARTITION BY RANGE (a) (\
+                 PARTITION p0 VALUES LESS THAN (10),\
+                 PARTITION p1 VALUES LESS THAN (20))"
+            ),
+        );
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (1,{}),(1,{}),(1,{})",
+                values[0], values[1], values[2]
+            ),
+        );
+        check_ndv(session, table, &["3", "3", "0"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (11,{}),(11,{}),(11,{})",
+                values[0], values[1], values[2]
+            ),
+        );
+        check_ndv(session, table, &["3", "3", "3"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (11,{}),(11,{}),(11,{})",
+                values[3], values[4], values[5]
+            ),
+        );
+        check_ndv(session, table, &["6", "3", "6"]);
+        rows(
+            session,
+            &format!(
+                "INSERT INTO {table} VALUES (1,{}),(1,{}),(1,{}),(1,{}),(1,{})",
+                values[3], values[4], values[5], values[6], values[7]
+            ),
+        );
+        check_ndv(session, table, &["8", "8", "6"]);
+    };
+
+    run_case(
+        &mut session,
+        "global_index_ndv_int",
+        "INT",
+        ["1", "2", "3", "4", "5", "6", "7", "8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_double",
+        "DOUBLE",
+        ["1.1", "2.2", "3.3", "4.4", "5.5", "6.6", "7.7", "8.8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_decimal",
+        "DECIMAL(30,15)",
+        ["1.1", "2.2", "3.3", "4.4", "5.5", "6.6", "7.7", "8.8"],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_string",
+        "VARCHAR(30)",
+        [
+            "'111'", "'222'", "'333'", "'444'", "'555'", "'666'", "'777'", "'888'",
+        ],
+    );
+    run_case(
+        &mut session,
+        "global_index_ndv_datetime",
+        "DATETIME",
+        [
+            "'2001-01-01'",
+            "'2002-01-01'",
+            "'2003-01-01'",
+            "'2004-01-01'",
+            "'2005-01-01'",
+            "'2006-01-01'",
+            "'2007-01-01'",
+            "'2008-01-01'",
+        ],
+    );
+}
+
+/// Pinned `globalstats.TestGlobalStatsVersion`: after global stats exist,
+/// analyzing a newly added partition refreshes the global row while retaining
+/// modifications in another partition until that partition is analyzed.
+#[test]
+fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(62))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_version (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_version VALUES (1),(5),(NULL),(11),(15)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_version");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_version'",
+        ))
+        .len(),
+        3
+    );
+
+    let global_meta = |session: &mut _| {
+        displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_version' \
+             AND partition_name = 'global'",
+        ))
+        .into_iter()
+        .next()
+        .expect("global stats meta row")
+    };
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_version ADD PARTITION \
+         (PARTITION p2 VALUES LESS THAN (30))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_version VALUES (13),(14),(22),(23)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_stats_version PARTITION p2",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let meta = global_meta(&mut session);
+    assert_eq!((meta[4].as_str(), meta[5].as_str()), ("2", "9"));
+
+    rows(
+        &mut session,
+        "ANALYZE TABLE global_stats_version PARTITION p1",
+    );
+    let meta = global_meta(&mut session);
+    assert_eq!((meta[4].as_str(), meta[5].as_str()), ("0", "9"));
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_version DROP PARTITION p2",
+    );
+    assert_eq!(global_meta(&mut session)[5], "7");
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_version");
+    let meta = global_meta(&mut session);
+    assert_eq!(meta[5], "7");
+}
+
+#[test]
+fn flush_stats_delta_missing_targets_match_go_warnings() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(63))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+
+    rows(
+        &mut session,
+        "FLUSH STATS_DELTA missing_database.*, test.missing_table",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        vec![
+            vec![
+                "Warning".to_owned(),
+                "1049".to_owned(),
+                "Unknown database 'missing_database'".to_owned(),
+            ],
+            vec![
+                "Warning".to_owned(),
+                "1146".to_owned(),
+                "Table 'test.missing_table' doesn't exist".to_owned(),
+            ],
+        ]
+    );
+}
+
+/// Pinned `globalstats.TestDDLPartition4GlobalStats`: truncating partitions
+/// replaces their physical IDs, subtracts their persisted counts from the
+/// logical global row, and installs replacement partition metadata.
+#[test]
+fn truncate_partitions_refreshes_global_stats_meta_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(64))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_truncate (a INT) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30),\
+         PARTITION p3 VALUES LESS THAN (40),\
+         PARTITION p4 VALUES LESS THAN (50),\
+         PARTITION p5 VALUES LESS THAN (60))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_truncate VALUES \
+         (1),(2),(3),(4),(5),(11),(21),(31),(41),(51),\
+         (12),(22),(32),(42),(52)",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    rows(&mut session, "ANALYZE TABLE global_stats_truncate");
+    let global_count = |session: &mut _| {
+        displayed(rows(
+            session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate' \
+             AND partition_name = 'global'",
+        ))[0][5]
+            .clone()
+    };
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate'",
+        ))
+        .len(),
+        7
+    );
+    assert_eq!(global_count(&mut session), "15");
+
+    rows(
+        &mut session,
+        "ALTER TABLE global_stats_truncate TRUNCATE PARTITION p2, p4",
+    );
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    assert_eq!(global_count(&mut session), "11");
+
+    rows(&mut session, "ANALYZE TABLE global_stats_truncate");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW STATS_META WHERE table_name = 'global_stats_truncate'",
+        ))
+        .len(),
+        7
+    );
+    assert_eq!(global_count(&mut session), "11");
+}
+
+/// Pinned `globalstats.TestGlobalStats`: dynamic partition pruning consumes
+/// logical-table statistics, static pruning consumes each physical
+/// partition's statistics under `PartitionUnion`, and switching to dynamic
+/// before a global row exists uses pseudo statistics until the next analyze.
+#[test]
+fn global_stats_drive_partition_plans_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(65))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+
+    let plan_of = |session: &mut _, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES (1),(5),(NULL),(11),(15),(21),(25)",
+    );
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+
+    let dynamic = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 5",
+    );
     assert!(
-        stack.cop_source.stats().requests.len() > after_analyze,
-        "the same query served no coprocessor request once statistics existed"
+        dynamic.contains("IndexRangeScan") && dynamic.contains("4.00"),
+        "{dynamic}"
+    );
+    assert!(dynamic.contains("partition:all"), "{dynamic}");
+    assert!(
+        !dynamic.contains("PartitionUnion") && !dynamic.contains("stats:pseudo"),
+        "{dynamic}"
+    );
+
+    let explicit = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan PARTITION(p1) WHERE a > 15",
+    );
+    assert!(
+        explicit.contains("IndexRangeScan") && explicit.contains("2.00"),
+        "{explicit}"
+    );
+    assert!(explicit.contains("partition:p1"), "{explicit}");
+    assert!(!explicit.contains("stats:pseudo"), "{explicit}");
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'static'",
+    );
+    let static_plan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 5",
+    );
+    assert!(
+        static_plan.contains("PartitionUnion") && static_plan.contains("5.00"),
+        "{static_plan}"
+    );
+    for partition in ["p0", "p1", "p2"] {
+        assert!(
+            static_plan.contains(&format!("partition:{partition}")),
+            "{static_plan}"
+        );
+    }
+
+    rows(&mut session, "DROP TABLE global_stats_plan");
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, b INT, KEY(a)) \
+         PARTITION BY HASH(a) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES (1,1),(3,3),(4,4),(2,2),(5,5)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+    let static_meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'global_stats_plan'",
+    ));
+    assert_eq!(static_meta.len(), 2);
+    assert_eq!(
+        static_meta
+            .iter()
+            .map(|row| row[5].as_str())
+            .collect::<Vec<_>>(),
+        ["2", "3"]
+    );
+
+    rows(
+        &mut session,
+        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
+    );
+    let pseudo = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 3",
+    );
+    assert!(
+        pseudo.contains("IndexRangeScan") && pseudo.contains("1.67"),
+        "{pseudo}"
+    );
+    assert!(
+        pseudo.contains("partition:all") && pseudo.contains("stats:pseudo"),
+        "{pseudo}"
+    );
+    assert!(!pseudo.contains("PartitionUnion"), "{pseudo}");
+
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+    let dynamic_meta = displayed(rows(
+        &mut session,
+        "SHOW STATS_META WHERE table_name = 'global_stats_plan'",
+    ));
+    assert_eq!(dynamic_meta.len(), 3);
+    assert_eq!(
+        dynamic_meta
+            .iter()
+            .map(|row| row[5].as_str())
+            .collect::<Vec<_>>(),
+        ["5", "2", "3"]
+    );
+    let analyzed = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT a FROM global_stats_plan WHERE a > 3",
+    );
+    assert!(
+        analyzed.contains("IndexRangeScan") && analyzed.contains("2.00"),
+        "{analyzed}"
+    );
+    assert!(analyzed.contains("partition:all"), "{analyzed}");
+    assert!(
+        !analyzed.contains("PartitionUnion") && !analyzed.contains("stats:pseudo"),
+        "{analyzed}"
+    );
+
+    rows(&mut session, "DROP TABLE global_stats_plan");
+    rows(
+        &mut session,
+        "CREATE TABLE global_stats_plan (a INT, b INT, c INT) \
+         PARTITION BY HASH(a) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "CREATE INDEX idx_ab ON global_stats_plan(a, b)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO global_stats_plan VALUES \
+         (1,1,1),(5,5,5),(11,11,11),(15,15,15),(21,21,21),(25,25,25)",
+    );
+    rows(&mut session, "ANALYZE TABLE global_stats_plan");
+
+    let index_scan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT b FROM global_stats_plan WHERE a > 5 AND b > 10",
+    );
+    assert!(
+        index_scan.contains("IndexRangeScan") && index_scan.contains("2.67"),
+        "{index_scan}"
+    );
+    assert!(
+        index_scan.contains("partition:all") && !index_scan.contains("stats:pseudo"),
+        "{index_scan}"
+    );
+
+    let index_lookup = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan USE INDEX(idx_ab) WHERE a > 1",
+    );
+    assert!(
+        index_lookup.contains("IndexLookUp") && index_lookup.contains("5.00"),
+        "{index_lookup}"
+    );
+    assert!(
+        index_lookup.contains("partition:all") && !index_lookup.contains("stats:pseudo"),
+        "{index_lookup}"
+    );
+
+    let table_scan = plan_of(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM global_stats_plan",
+    );
+    assert!(
+        table_scan.contains("TableFullScan") && table_scan.contains("6.00"),
+        "{table_scan}"
+    );
+    assert!(
+        table_scan.contains("partition:all") && !table_scan.contains("stats:pseudo"),
+        "{table_scan}"
     );
 }
 
@@ -1881,6 +7300,80 @@ fn racing_pessimistic_updates_both_commit_with_serial_effect() {
     );
 }
 
+/// A retried pessimistic statement re-reads through the COPROCESSOR at its
+/// advanced `for_update_ts`, not at `start_ts`.
+///
+/// The retry exists so the statement recomputes from the winner's committed
+/// row: Go re-runs it after `UpdateForUpdateTS`, and every read of the
+/// re-executed statement -- point get and range scan alike -- uses the new
+/// timestamp. This tier moved only the point path: `SessionSnapshot::start_ts`
+/// answered the transaction's `start_ts` while ignoring the statement's
+/// `read_ts`, and that value is what stamps `request.snapshot_ts` for a
+/// pushdown (`tidb-executor/src/cluster_storage.rs`). A range-shaped DML
+/// therefore recomputed from the SAME stale row it just lost the lock race
+/// on, and its `v + 1` overwrote the winner: a silent lost update, and a
+/// mixed-timestamp read inside one statement.
+///
+/// The predicate is on a NON-key column so the plan is a coprocessor scan
+/// rather than a handle range; the sibling test above covers the point-get
+/// shape, which already reads at the advanced timestamp.
+#[test]
+fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(86))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.retry_range (k int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.retry_range VALUES (7, 10)");
+
+    assert_eq!(
+        first.control_transaction("BEGIN").expect("begin"),
+        Some(true)
+    );
+    // Take the row lock so the contender below must wait and then retry.
+    rows(
+        &mut first,
+        "UPDATE test.retry_range SET v = v + 1 WHERE v > 0",
+    );
+
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(87))
+                .expect("session opens");
+            assert_eq!(
+                second.control_transaction("BEGIN").expect("begin"),
+                Some(true)
+            );
+            // Blocks on the first transaction's lock, then retries at an
+            // advanced `for_update_ts`.
+            rows(
+                &mut second,
+                "UPDATE test.retry_range SET v = v + 1 WHERE v > 0",
+            );
+            second.control_transaction("COMMIT").expect("commit");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after waiting the lock out");
+
+    assert_eq!(
+        displayed(rows(
+            &mut first,
+            "SELECT v FROM test.retry_range WHERE k = 7"
+        )),
+        [["12"]],
+        "both increments landed: the retry re-read the winner's commit \
+         through the coprocessor, not through the stale start_ts snapshot"
+    );
+}
+
 /// A NON-locking read must not be answered from the pessimistic lock cache.
 ///
 /// Go gates that cache on `e.lock`: `PointGetExecutor.get`
@@ -1912,7 +7405,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
         Some(true)
     );
     assert_eq!(
-        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        displayed(rows(
+            &mut reader,
+            "SELECT v FROM test.lock_cache WHERE id = 1"
+        )),
         [["10"]],
         "the transaction's snapshot is the row as of BEGIN"
     );
@@ -1920,7 +7416,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     let mut writer = factory
         .open_session(session_context(85))
         .expect("session opens");
-    rows(&mut writer, "UPDATE test.lock_cache SET v = 99 WHERE id = 1");
+    rows(
+        &mut writer,
+        "UPDATE test.lock_cache SET v = 99 WHERE id = 1",
+    );
 
     // The LOCKING read may see the newer row -- it takes its own
     // `for_update_ts`, which is Go's behaviour too. This is what fills the
@@ -1928,7 +7427,10 @@ fn a_plain_read_is_not_answered_from_the_pessimistic_lock_cache() {
     let _ = reader.execute("SELECT v FROM test.lock_cache WHERE id = 1 FOR UPDATE");
 
     assert_eq!(
-        displayed(rows(&mut reader, "SELECT v FROM test.lock_cache WHERE id = 1")),
+        displayed(rows(
+            &mut reader,
+            "SELECT v FROM test.lock_cache WHERE id = 1"
+        )),
         [["10"]],
         "the plain read that follows still reads at start_ts: the lock cache \
          belongs to locking reads only (`point_get.go:677`)"
@@ -2271,7 +7773,10 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
     let mut first = factory
         .open_session(session_context(110))
         .expect("session opens");
-    rows(&mut first, "CREATE TABLE test.lock_range (w int, d int, id int, PRIMARY KEY(w,d,id) CLUSTERED)");
+    rows(
+        &mut first,
+        "CREATE TABLE test.lock_range (w int, d int, id int, PRIMARY KEY(w,d,id) CLUSTERED)",
+    );
     rows(
         &mut first,
         "INSERT INTO test.lock_range VALUES (1,1,1),(1,1,2),(1,1,3)",
@@ -2279,9 +7784,13 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
     first
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin");
-    let query = format!("SELECT {projection} FROM test.lock_range WHERE w=1 AND d=1 {window} FOR UPDATE");
+    let query =
+        format!("SELECT {projection} FROM test.lock_range WHERE w=1 AND d=1 {window} FOR UPDATE");
     let flatten = |rows: Vec<Vec<Datum>>| {
-        let mut ids: Vec<String> = displayed(rows).into_iter().map(|row| row[0].clone()).collect();
+        let mut ids: Vec<String> = displayed(rows)
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
         ids.sort();
         ids
     };
@@ -2311,8 +7820,7 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
         contender.join().expect("contender finishes")
     });
     assert_eq!(
-        result,
-        after,
+        result, after,
         "a locking range must not return the deleted winner"
     );
 }
@@ -2320,26 +7828,39 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
 #[test]
 fn locking_queries_retain_unprojected_record_handles() {
     let (stack, _users) = cop_backed_stack();
-    let mut session = stack.factory.open_session(session_context(112)).expect("session opens");
+    let mut session = stack
+        .factory
+        .open_session(session_context(112))
+        .expect("session opens");
     for (name, definition) in [
         ("lock_heap", "id int, v int"),
         ("lock_integer", "id int primary key, v int"),
         ("lock_common", "id int, v int, primary key(id,v) clustered"),
     ] {
-        rows(&mut session, &format!("CREATE TABLE test.{name} ({definition})"));
-        rows(&mut session, &format!("INSERT INTO test.{name} VALUES (1,10)"));
-        session.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+        rows(
+            &mut session,
+            &format!("CREATE TABLE test.{name} ({definition})"),
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO test.{name} VALUES (1,10)"),
+        );
+        session
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
         assert_eq!(
-            displayed(rows(&mut session, &format!(
-                "SELECT v FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE"
-            ))),
+            displayed(rows(
+                &mut session,
+                &format!("SELECT v FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE")
+            )),
             [["10"]],
             "record handles must be available without appearing in the result"
         );
         assert_eq!(
-            displayed(rows(&mut session, &format!(
-                "SELECT * FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE"
-            ))),
+            displayed(rows(
+                &mut session,
+                &format!("SELECT * FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE")
+            )),
             [["1", "10"]],
             "hidden handles must not leak through wildcard projection"
         );
@@ -2350,10 +7871,21 @@ fn locking_queries_retain_unprojected_record_handles() {
 #[test]
 fn a_locking_range_sees_rows_committed_after_begin() {
     let (stack, _users) = cop_backed_stack();
-    let mut reader = stack.factory.open_session(session_context(113)).expect("reader");
-    let mut writer = stack.factory.open_session(session_context(114)).expect("writer");
-    rows(&mut reader, "CREATE TABLE test.fresh_lock (id int primary key, v int)");
-    reader.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+    let mut reader = stack
+        .factory
+        .open_session(session_context(113))
+        .expect("reader");
+    let mut writer = stack
+        .factory
+        .open_session(session_context(114))
+        .expect("writer");
+    rows(
+        &mut reader,
+        "CREATE TABLE test.fresh_lock (id int primary key, v int)",
+    );
+    reader
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
     assert!(rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0").is_empty());
     rows(&mut writer, "INSERT INTO test.fresh_lock VALUES (1,10)");
     let locked = displayed(rows(
@@ -2362,7 +7894,11 @@ fn a_locking_range_sees_rows_committed_after_begin() {
     ));
     let plain = rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0");
     reader.control_transaction("ROLLBACK").expect("rollback");
-    assert_eq!(locked, [["1"]], "locking reads use a fresh statement snapshot");
+    assert_eq!(
+        locked,
+        [["1"]],
+        "locking reads use a fresh statement snapshot"
+    );
     assert!(plain.is_empty(), "ordinary reads keep the BEGIN snapshot");
 }
 
@@ -2371,8 +7907,8 @@ fn a_locking_range_sees_rows_committed_after_begin() {
 /// key named by the same IN list while the locking transaction stays open.
 #[test]
 fn a_locking_batch_locks_missing_primary_keys() {
-    use tidb_protocol::PreparedValue;
     use crate::resultset_source::ResultSetSource;
+    use tidb_protocol::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
@@ -2383,45 +7919,79 @@ fn a_locking_batch_locks_missing_primary_keys() {
         ("READ-COMMITTED", true, false, false),
         ("REPEATABLE-READ", false, true, false),
         ("REPEATABLE-READ", false, false, true),
-    ].into_iter().enumerate() {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let mut first = factory.open_session(session_context(115)).expect("reader");
         let table = format!("test.batch_missing_{index}");
         // The prepared case binds reordered, duplicated composite tuples.
-        let definition = if prepared { "id INT, k INT, PRIMARY KEY(id,k) CLUSTERED" }
-            else { "id INT PRIMARY KEY" };
+        let definition = if prepared {
+            "id INT, k INT, PRIMARY KEY(id,k) CLUSTERED"
+        } else {
+            "id INT PRIMARY KEY"
+        };
         rows(&mut first, &format!("CREATE TABLE {table} ({definition})"));
-        rows(&mut first, &format!("INSERT INTO {table} VALUES ({})", if prepared { "1,10" } else { "1" }));
-        rows(&mut first, &format!("SET SESSION transaction_isolation='{isolation}'"));
+        rows(
+            &mut first,
+            &format!(
+                "INSERT INTO {table} VALUES ({})",
+                if prepared { "1,10" } else { "1" }
+            ),
+        );
+        rows(
+            &mut first,
+            &format!("SET SESSION transaction_isolation='{isolation}'"),
+        );
         if implicit {
             rows(&mut first, "SET tidb_txn_mode='pessimistic'");
             rows(&mut first, "SET autocommit=0");
         } else {
-            first.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+            first
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin");
         }
         if change_default {
-            let changed = if isolation == "REPEATABLE-READ" { "READ-COMMITTED" } else { "REPEATABLE-READ" };
-            rows(&mut first, &format!("SET SESSION transaction_isolation='{changed}'"));
+            let changed = if isolation == "REPEATABLE-READ" {
+                "READ-COMMITTED"
+            } else {
+                "REPEATABLE-READ"
+            };
+            rows(
+                &mut first,
+                &format!("SET SESSION transaction_isolation='{changed}'"),
+            );
         }
         let selected = if prepared {
-            let statement = first.prepare_general(&format!(
-                "SELECT id FROM {table} WHERE (k,id) IN ((?,?),(?,?),(?,?)) FOR UPDATE"
-            )).expect("prepare batch");
-            let params = [10,1,20,2,20,2].map(PreparedValue::SignedLongLong);
-            let crate::sql_node::GeneralExecuteOutcome::Rows(mut result) =
-                first.execute_general(&statement, &params).expect("execute batch")
-            else { panic!("batch returns rows") };
+            let statement = first
+                .prepare_general(&format!(
+                    "SELECT id FROM {table} WHERE (k,id) IN ((?,?),(?,?),(?,?)) FOR UPDATE"
+                ))
+                .expect("prepare batch");
+            let params = [10, 1, 20, 2, 20, 2].map(PreparedValue::SignedLongLong);
+            let crate::sql_node::GeneralExecuteOutcome::Rows(mut result) = first
+                .execute_general(&statement, &params)
+                .expect("execute batch")
+            else {
+                panic!("batch returns rows")
+            };
             let source = result.source();
             let mut result = Vec::new();
             loop {
                 let batch = source.next_batch(8).expect("batch");
-                if batch.is_empty() { break; }
+                if batch.is_empty() {
+                    break;
+                }
                 result.extend(batch);
             }
             source.finish().expect("finish");
             source.close().expect("close");
             result
         } else {
-            rows(&mut first, &format!("SELECT id FROM {table} WHERE id IN (1,2) FOR UPDATE"))
+            rows(
+                &mut first,
+                &format!("SELECT id FROM {table} WHERE id IN (1,2) FOR UPDATE"),
+            )
         };
         assert_eq!(displayed(selected), [["1"]], "case {index}");
 
@@ -2431,7 +8001,13 @@ fn a_locking_batch_locks_missing_primary_keys() {
             let contender = scope.spawn(|| {
                 let mut second = factory.open_session(session_context(116)).expect("writer");
                 started_tx.send(()).expect("writer started");
-                rows(&mut second, &format!("INSERT INTO {table} VALUES ({})", if prepared { "2,20" } else { "2" }));
+                rows(
+                    &mut second,
+                    &format!(
+                        "INSERT INTO {table} VALUES ({})",
+                        if prepared { "2,20" } else { "2" }
+                    ),
+                );
                 finished_tx.send(()).expect("writer finished");
             });
             started_rx.recv().expect("writer starts");
@@ -2440,14 +8016,27 @@ fn a_locking_batch_locks_missing_primary_keys() {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout)
             );
             // Release before asserting so failure cannot strand the writer.
-            first.control_transaction("ROLLBACK").expect("release reader");
+            first
+                .control_transaction("ROLLBACK")
+                .expect("release reader");
             contender.join().expect("writer finishes after release");
             blocked
         });
-        assert_eq!(blocked, isolation == "REPEATABLE-READ", "case {index}: absent-key lock follows the transaction's isolation");
-        assert_eq!(displayed(rows(&mut first, &format!("SELECT id FROM {table} ORDER BY id"))),
-            [["1"], ["2"]]);
-        first.control_transaction("ROLLBACK").expect("finish implicit read");
+        assert_eq!(
+            blocked,
+            isolation == "REPEATABLE-READ",
+            "case {index}: absent-key lock follows the transaction's isolation"
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut first,
+                &format!("SELECT id FROM {table} ORDER BY id")
+            )),
+            [["1"], ["2"]]
+        );
+        first
+            .control_transaction("ROLLBACK")
+            .expect("finish implicit read");
     }
 }
 

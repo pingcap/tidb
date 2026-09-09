@@ -18,23 +18,22 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use tidb_util::br_key_utils::compare_bytes_ext;
-
+use super::compare_bytes_ext;
 use super::utils::{collapse, overlaps, stringify_range};
 
 /// Go `spans.Value`: the value stored in the span tree.
 pub type Value = u64;
 
 /// Go `spans.Span = kv.KeyRange`.
-///
-/// boundary: `pkg/kv`'s `KeyRange` is a two-field byte-range struct. This crate
-/// is a BR leaf, so it uses the identical range already landed in
-/// `tidb-util`'s `br/pkg/utils/key.go` port rather than depending upward on
-/// `tidb-txnkv`.
-pub type Span = tidb_util::br_key_utils::KeyRange;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Span {
+    /// Inclusive lower bound.
+    pub start_key: Vec<u8>,
+    /// Exclusive upper bound; empty means positive infinity.
+    pub end_key: Vec<u8>,
+}
 
 /// Go `join`: the upper bound of two values.
-#[must_use]
 pub const fn join(a: Value, b: Value) -> Value {
     if a > b {
         a
@@ -60,13 +59,11 @@ impl Valued {
     }
 
     /// Go `Valued.Less`: ordering is by start key alone.
-    #[must_use]
     pub fn less(&self, other: &Self) -> bool {
         self.key.start_key < other.key.start_key
     }
 
     /// Go `(Valued).Equals` (declared in `utils.go`).
-    #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         self.value == other.value
             && self.key.start_key == other.key.start_key
@@ -96,7 +93,6 @@ pub struct ValuedFull {
 
 impl ValuedFull {
     /// Go `NewFullWith`: creates a set over a subset of spans.
-    #[must_use]
     pub fn new_full_with(init_spans: &[Span], init: Value) -> Self {
         let mut inner = BTreeMap::new();
         for r in collapse(init_spans) {
@@ -173,7 +169,10 @@ impl ValuedFull {
         if leftmost.key.start_key < val.key.start_key {
             collector.emit(
                 Valued {
-                    key: Span::new(leftmost.key.start_key, val.key.start_key.clone()),
+                    key: Span {
+                        start_key: leftmost.key.start_key,
+                        end_key: val.key.start_key.clone(),
+                    },
                     value: leftmost.value,
                 },
                 true,
@@ -188,7 +187,10 @@ impl ValuedFull {
             == Ordering::Greater
         {
             right_trail = Some(Valued {
-                key: Span::new(val.key.end_key.clone(), rightmost.key.end_key),
+                key: Span {
+                    start_key: val.key.end_key.clone(),
+                    end_key: rightmost.key.end_key,
+                },
                 value: rightmost.value,
             });
             overlapped[last].key.end_key = val.key.end_key.clone();
@@ -284,7 +286,10 @@ mod tests {
     use super::*;
 
     fn s(a: &str, b: &str) -> Span {
-        Span::new(a.as_bytes(), b.as_bytes())
+        Span {
+            start_key: a.as_bytes().to_vec(),
+            end_key: b.as_bytes().to_vec(),
+        }
     }
 
     fn kv(span: Span, value: Value) -> Valued {

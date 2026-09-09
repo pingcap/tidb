@@ -25,6 +25,7 @@ chrono.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
+tidb-dxf = { path = "../tidb-dxf" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

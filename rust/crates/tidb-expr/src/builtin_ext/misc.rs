@@ -464,7 +464,7 @@ fn parse_uuid(value: &[u8]) -> Option<[u8; 16]> {
 
     let mut bytes = [0_u8; 16];
     if canonical.len() == 32 {
-        for (byte, pair) in bytes.iter_mut().zip(canonical.chunks_exact(2)) {
+        for (byte, pair) in bytes.iter_mut().zip(canonical.as_chunks::<2>().0) {
             *byte = hex_pair(pair[0], pair[1])?;
         }
         return Some(bytes);

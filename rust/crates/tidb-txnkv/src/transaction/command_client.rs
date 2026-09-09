@@ -49,8 +49,7 @@ const DETACHED_SECONDARY_COMMIT_BUDGET: Duration = Duration::from_millis(41_500)
 /// Detached secondary Commits that ended in a transport, region, or key error.
 /// The transaction is committed regardless; the counter exists so a probe can
 /// notice systematic flush failures without touching the session path.
-static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static DETACHED_FLUSH_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Reads the detached secondary-flush failure counter.
 ///
@@ -68,13 +67,16 @@ pub fn detached_flush_failures() -> u64 {
 fn detached_flush_runtime() -> Option<&'static tokio::runtime::Runtime> {
     static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, std::io::Error>> =
         std::sync::OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .thread_name("txn-secondary-flush")
-            .enable_time()
-            .build()
-    }).as_ref().ok()
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .thread_name("txn-secondary-flush")
+                .enable_time()
+                .build()
+        })
+        .as_ref()
+        .ok()
 }
 
 async fn run_detached_flush(
@@ -88,7 +90,11 @@ async fn run_detached_flush(
     let mut pending = Vec::with_capacity(requests.len());
     for request in requests {
         match client.begin_transaction_commit(
-            &request.address, None, &request.request, &request.context, &call,
+            &request.address,
+            None,
+            &request.request,
+            &request.context,
+            &call,
         ) {
             Ok(request) => pending.push(request),
             Err(_) => {
@@ -102,10 +108,12 @@ async fn run_detached_flush(
         let result = tokio::time::timeout_at(
             tokio::time::Instant::from_std(call.deadline()),
             std::future::poll_fn(|cx| request.poll_complete(cx)),
-        ).await;
+        )
+        .await;
         let failed = match result {
-            Ok(Ok(Ok(response))) =>
-                response.response.region_error.is_some() || response.response.error.is_some(),
+            Ok(Ok(Ok(response))) => {
+                response.response.region_error.is_some() || response.response.error.is_some()
+            }
             _ => {
                 request.cancel();
                 true

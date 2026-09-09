@@ -59,6 +59,8 @@ mod tests {
             txn_size: 1,
             lock_type: Op::Put,
             min_commit_ts: 0,
+            use_async_commit: false,
+            secondaries: Vec::new(),
         };
         assert!(matches!(locked, ErrLocked::Locked { start_ts: 1, .. }));
         assert_eq!(bootstrap_with_single_store(&cluster), (1, 2, 3));

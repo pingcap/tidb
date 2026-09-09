@@ -781,10 +781,13 @@ fn compatible_safe_point_path(meta: Option<&keyspacepb::KeyspaceMeta>) -> String
     let Some(meta) = meta else {
         return UNIFIED_TXN_SAFE_POINT_PATH.to_owned();
     };
-    let keyspace_level = meta
-        .config
-        .get("gc_management_type")
-        .is_some_and(|value| value == "keyspace_level");
+    let keyspace_level = match meta.config.get("gc_management_type") {
+        Some(value) => value == "keyspace_level",
+        None => meta
+            .config
+            .get("safe_point_version")
+            .is_some_and(|value| value == "v2"),
+    };
     if !keyspace_level {
         return UNIFIED_TXN_SAFE_POINT_PATH.to_owned();
     }
@@ -844,22 +847,34 @@ async fn refresh_safe_ts_state(
     stores: &[Store],
     provider: Option<Arc<dyn ResolvedTsProvider>>,
 ) -> Result<()> {
-    if let Some(provider) = provider.as_ref() {
-        if let Ok((global, _)) = provider.min_resolved_ts(&[]).await {
-            if valid_safe_ts(global) {
-                let mut state = safe_ts.write().expect("safe-TS lock poisoned");
-                let previous = state
-                    .scopes
-                    .get(oracle::GLOBAL_TXN_SCOPE)
-                    .copied()
-                    .unwrap_or(0);
-                if previous > global {
-                    crate::stats::record_safe_ts_update("skip", "cluster", previous);
-                } else {
-                    state.set_scope_monotonic(oracle::GLOBAL_TXN_SCOPE, global);
-                    crate::stats::record_safe_ts_update("success", "cluster", global);
+    let transaction_scope = crate::config::get_txn_scope_from_config();
+    refresh_safe_ts_state_for_scope(safe_ts, stores, provider, &transaction_scope).await
+}
+
+async fn refresh_safe_ts_state_for_scope(
+    safe_ts: &RwLock<SafeTsState>,
+    stores: &[Store],
+    provider: Option<Arc<dyn ResolvedTsProvider>>,
+    transaction_scope: &str,
+) -> Result<()> {
+    if transaction_scope == oracle::GLOBAL_TXN_SCOPE {
+        if let Some(provider) = provider.as_ref() {
+            if let Ok((global, _)) = provider.min_resolved_ts(&[]).await {
+                if valid_safe_ts(global) {
+                    let mut state = safe_ts.write().expect("safe-TS lock poisoned");
+                    let previous = state
+                        .scopes
+                        .get(oracle::GLOBAL_TXN_SCOPE)
+                        .copied()
+                        .unwrap_or(0);
+                    if previous > global {
+                        crate::stats::record_safe_ts_update("skip", "cluster", previous);
+                    } else {
+                        state.set_scope_monotonic(oracle::GLOBAL_TXN_SCOPE, global);
+                        crate::stats::record_safe_ts_update("success", "cluster", global);
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
         }
     }
@@ -1617,25 +1632,20 @@ impl Storage for KvStore {
     }
 }
 
-/// Bounded Tokio-backed pool used by root-store options.
+/// Tokio-backed equivalent of client-go's idle-worker-recycling pool.
 pub struct Spool {
-    semaphore: Arc<tokio::sync::Semaphore>,
-    delay: Duration,
     closed: AtomicBool,
 }
 
 impl Spool {
-    pub fn new(concurrency: usize, delay: Duration) -> Self {
+    pub fn new(_max_idle_workers: usize, _idle_recycle: Duration) -> Self {
         Self {
-            semaphore: Arc::new(tokio::sync::Semaphore::new(concurrency.max(1))),
-            delay,
             closed: AtomicBool::new(false),
         }
     }
 
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
-        self.semaphore.close();
     }
 
     /// Submit a synchronous task. The source wrapper always reports success;
@@ -1651,24 +1661,18 @@ impl Pool for Spool {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        let semaphore = self.semaphore.clone();
-        let delay = self.delay;
-        tokio::spawn(async move {
-            let Ok(_permit) = semaphore.acquire_owned().await else {
-                return;
-            };
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            task();
-        });
+        // client-go's gp.Pool starts a new goroutine whenever no idle worker
+        // can accept the task. Its size and duration tune only idle-worker
+        // retention; neither limits active work nor delays execution. Tokio
+        // owns worker reuse, so a detached task is the equivalent boundary.
+        tokio::spawn(async move { task() });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::Mutex as StdMutex;
 
     use super::*;
@@ -1907,6 +1911,148 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_gc_test_TestLoadTxnSafePointFallback() {
+        async fn load(
+            index: usize,
+            compatible_modes: &[AtomicBool; 3],
+            pd_calls: &[AtomicUsize; 3],
+            unified_safe_point: &AtomicU64,
+            keyspace_safe_point: &AtomicU64,
+        ) -> Result<u64> {
+            load_txn_safe_point_compatibly(
+                &compatible_modes[index],
+                || {
+                    pd_calls[index].fetch_add(1, AtomicOrdering::SeqCst);
+                    async { Err(Error::GrpcAPI(tonic::Status::unimplemented("old PD"))) }
+                },
+                || {
+                    let value = if index < 2 {
+                        unified_safe_point.load(AtomicOrdering::SeqCst)
+                    } else {
+                        keyspace_safe_point.load(AtomicOrdering::SeqCst)
+                    };
+                    async move { Ok(value) }
+                },
+            )
+            .await
+        }
+
+        let compatible_modes = [
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+            AtomicBool::new(false),
+        ];
+        let pd_calls = [
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        ];
+        let unified_safe_point = AtomicU64::new(10);
+        let keyspace_safe_point = AtomicU64::new(0);
+
+        unified_safe_point.store(11, AtomicOrdering::SeqCst);
+        for _ in 0..2 {
+            assert_eq!(
+                load(
+                    0,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                11
+            );
+            assert_eq!(
+                load(
+                    1,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                11
+            );
+            assert!(
+                load(
+                    2,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap()
+                    < 11
+            );
+        }
+
+        keyspace_safe_point.store(12, AtomicOrdering::SeqCst);
+        for _ in 0..2 {
+            assert_eq!(
+                load(
+                    2,
+                    &compatible_modes,
+                    &pd_calls,
+                    &unified_safe_point,
+                    &keyspace_safe_point,
+                )
+                .await
+                .unwrap(),
+                12
+            );
+            for index in 0..2 {
+                assert!(
+                    load(
+                        index,
+                        &compatible_modes,
+                        &pd_calls,
+                        &unified_safe_point,
+                        &keyspace_safe_point,
+                    )
+                    .await
+                    .unwrap()
+                        < 12
+                );
+            }
+        }
+
+        assert_eq!(
+            pd_calls.map(|calls| calls.load(AtomicOrdering::SeqCst)),
+            [1, 1, 1]
+        );
+        assert!(compatible_modes
+            .iter()
+            .all(|mode| mode.load(AtomicOrdering::Acquire)));
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_gc_test_TestCompatibleTxnSafePointLoaderValueParsing() {
+        let kv = MockSafePointKv::new();
+        for (value, expected) in [
+            ("", Some(0)),
+            ("1", Some(1)),
+            ("abcde", None),
+            ("459579321342754819", Some(459_579_321_342_754_819)),
+            ("459579321342754819abcdefg", None),
+            ("18446744073709551615", Some(u64::MAX)),
+            ("18446744073709551616", None),
+        ] {
+            kv.put(GC_SAVED_SAFE_POINT, value).await.unwrap();
+            let result = load_safe_point(&kv).await;
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected, "value {value:?}"),
+                None => assert!(result.is_err(), "value {value:?} must be rejected"),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn gc_uses_actual_transaction_safe_point_and_source_call_order() {
         let controller = MockGcController {
             calls: StdMutex::new(Vec::new()),
@@ -1945,7 +2091,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_error_halfway_in_new_kv_store() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestErrorHalfwayInNewKVStore() {
         let closed = Arc::new(AtomicBool::new(false));
         let result = finish_store_construction(
             MockConstructionOwner(closed.clone()),
@@ -2002,8 +2149,50 @@ mod tests {
         assert_eq!(completed.load(AtomicOrdering::Acquire), 1);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn source_uncovered_spool_idle_recycle_does_not_delay_or_limit_active_work() {
+        let pool = Spool::new(1, Duration::from_secs(60));
+        let release = Arc::new((StdMutex::new(false), std::sync::Condvar::new()));
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let completed = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..2 {
+            let task_release = Arc::clone(&release);
+            let task_started = started_tx.clone();
+            let task_completed = Arc::clone(&completed);
+            pool.run(Box::new(move || {
+                task_started.send(()).unwrap();
+                let (lock, condition) = &*task_release;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = condition.wait(released).unwrap();
+                }
+                task_completed.fetch_add(1, AtomicOrdering::Release);
+            }))
+            .unwrap();
+        }
+
+        let both_started = tokio::time::timeout(Duration::from_secs(2), async {
+            started_rx.recv().await.unwrap();
+            started_rx.recv().await.unwrap();
+        })
+        .await;
+        let (lock, condition) = &*release;
+        *lock.lock().unwrap() = true;
+        condition.notify_all();
+        both_started.expect("both tasks must start immediately and concurrently");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while completed.load(AtomicOrdering::Acquire) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both tasks must complete without an idle-recycle delay");
+    }
+
     #[test]
-    fn source_test_split_regions_preserves_legacy_key_error_behavior() {
+    #[allow(non_snake_case)]
+    fn source_go_tikv_kv_test_TestSplitRegionsPreservesLegacyKeyErrorBehavior() {
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -2031,8 +2220,10 @@ mod tests {
         assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), [2_049, 1]);
     }
 
-    #[test]
-    fn source_test_split_txn_file_regions_resolves_lock_and_retries() {
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestSplitTxnFileRegionsResolvesLockAndRetries() {
+        let batch = vec![b"k".to_vec()];
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -2045,10 +2236,49 @@ mod tests {
             }],
             ..Default::default()
         };
+        let SplitResponseAction::ResolveLocks(locks) =
+            classify_split_response(response, SplitRegionMode::ResolveLocks).unwrap()
+        else {
+            panic!("transaction-file splitting must resolve the returned lock");
+        };
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].key, b"k");
+
+        let mut retry = Backoffer::new(Cancellation::default(), 1_000);
+        let outcome = retry_split_after_lock_resolution(
+            crate::transaction::ResolveLocksResult {
+                live_locks: Vec::new(),
+                ms_before_expired: 0,
+            },
+            locks.len(),
+            batch.clone(),
+            &mut retry,
+        )
+        .await;
+        assert!(outcome.error.is_none());
+        assert!(outcome.region_ids.is_empty());
+        assert_eq!(outcome.retry_keys, batch);
+
+        let completed = classify_split_response(
+            kvrpcpb::SplitRegionResponse {
+                regions: vec![
+                    metapb::Region {
+                        id: 1,
+                        ..Default::default()
+                    },
+                    metapb::Region {
+                        id: 2,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            SplitRegionMode::ResolveLocks,
+        )
+        .unwrap();
         assert!(matches!(
-            classify_split_response(response, SplitRegionMode::ResolveLocks).unwrap(),
-            SplitResponseAction::ResolveLocks(locks)
-                if locks.len() == 1 && locks[0].key == b"k"
+            completed,
+            SplitResponseAction::Complete(region_ids) if region_ids == [1]
         ));
     }
 
@@ -2077,13 +2307,36 @@ mod tests {
     }
 
     #[test]
-    fn source_test_split_txn_file_regions_splits_without_scattering() {
+    #[allow(non_snake_case)]
+    fn source_go_tikv_kv_test_TestSplitTxnFileRegionsSplitsWithoutScattering() {
         assert!(!std::hint::black_box(TXN_FILE_SPLIT_OPTIONS).scatter);
         assert_eq!(TXN_FILE_SPLIT_OPTIONS.mode, SplitRegionMode::ResolveLocks);
+        let action = classify_split_response(
+            kvrpcpb::SplitRegionResponse {
+                regions: vec![
+                    metapb::Region {
+                        id: 10,
+                        ..Default::default()
+                    },
+                    metapb::Region {
+                        id: 11,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            TXN_FILE_SPLIT_OPTIONS.mode,
+        )
+        .unwrap();
+        assert!(matches!(
+            action,
+            SplitResponseAction::Complete(region_ids) if region_ids == [10]
+        ));
     }
 
     #[test]
-    fn source_test_handle_split_region_key_errors_expands_shared_lock_holders() {
+    #[allow(non_snake_case)]
+    fn source_go_tikv_kv_test_TestHandleSplitRegionKeyErrorsExpandsSharedLockHolders() {
         let response = kvrpcpb::SplitRegionResponse {
             errors: vec![kvrpcpb::KeyError {
                 locked: Some(kvrpcpb::LockInfo {
@@ -2224,7 +2477,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_stores() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromStores() {
         let tikv = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100);
         let tiflash = safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80);
         let fixtures = [tikv, tiflash];
@@ -2256,7 +2510,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_stores_with_all_zeros() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromStoresWithAllZeros() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 0),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 0),
@@ -2274,7 +2529,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_stores_with_some_zeros() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromStoresWithSomeZeros() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 0),
@@ -2292,7 +2548,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_pd() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromPD() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2311,7 +2568,152 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_pd_by_stores() {
+    async fn source_uncovered_local_txn_scope_skips_pd_global_safe_ts_shortcut() {
+        let fixtures = [
+            safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
+            safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
+        ];
+        let stores = fixtures
+            .iter()
+            .map(|fixture| fixture.store.clone())
+            .collect::<Vec<_>>();
+        let state = RwLock::new(SafeTsState::default());
+        refresh_safe_ts_state_for_scope(
+            &state,
+            &stores,
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 90,
+                stores: HashMap::from([(1, 101), (2, 102)]),
+            }) as Arc<dyn ResolvedTsProvider>),
+            "z1",
+        )
+        .await
+        .unwrap();
+        let state = state.into_inner().unwrap();
+
+        assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 101);
+        assert_eq!(state.scopes["z1"], 101);
+        assert_eq!(state.scopes["z2"], 102);
+        assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(fixtures[1].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestGetStoresMinResolvedTS() {
+        let fixtures = [safe_ts_store(
+            1,
+            "testDC",
+            crate::store::EndpointType::TiKv,
+            150,
+        )];
+
+        let state = refresh_fixture(
+            &fixtures,
+            Some(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            }),
+        )
+        .await;
+
+        assert_eq!(state.scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestDCLabelClusterMinResolvedTS() {
+        let fixtures = [safe_ts_store(
+            1,
+            "testDC",
+            crate::store::EndpointType::TiKv,
+            150,
+        )];
+        let stores = [fixtures[0].store.clone()];
+        let state = RwLock::new(SafeTsState::default());
+
+        refresh_safe_ts_state(
+            &state,
+            &stores,
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+
+        refresh_safe_ts_state(
+            &state,
+            &stores,
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes["testDC"], 150);
+        assert!(fixtures[0].safe_ts_requests.load(AtomicOrdering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_integration_tests_pd_api_test_TestInitClusterMinResolvedTSZero() {
+        let state = RwLock::new(SafeTsState::default());
+        let zero_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 0);
+        refresh_safe_ts_state(
+            &state,
+            &[zero_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 0);
+
+        let pd_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 150);
+        refresh_safe_ts_state(
+            &state,
+            &[pd_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 100,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 100);
+        assert_eq!(pd_fixture.safe_ts_requests.load(AtomicOrdering::SeqCst), 0);
+
+        let fallback_fixture = safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 150);
+        refresh_safe_ts_state(
+            &state,
+            &[fallback_fixture.store],
+            Some(Arc::new(MockResolvedTsProvider {
+                global: 0,
+                stores: HashMap::new(),
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.read().unwrap().scopes[oracle::GLOBAL_TXN_SCOPE], 150);
+        assert!(
+            fallback_fixture
+                .safe_ts_requests
+                .load(AtomicOrdering::SeqCst)
+                >= 1
+        );
+    }
+
+    #[tokio::test]
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromPDByStores() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2330,7 +2732,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_mixed1() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromMixed1() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2351,7 +2754,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_test_min_safe_ts_from_mixed2() {
+    #[allow(non_snake_case)]
+    async fn source_go_tikv_kv_test_TestMinSafeTsFromMixed2() {
         let fixtures = [
             safe_ts_store(1, "z1", crate::store::EndpointType::TiKv, 100),
             safe_ts_store(2, "z2", crate::store::EndpointType::TiFlash, 80),
@@ -2395,6 +2799,31 @@ mod tests {
         assert_eq!(
             compatible_safe_point_path(Some(&keyspace_level)),
             "/keyspaces/tidb/7/tidb/store/gcworker/saved_safe_point"
+        );
+    }
+
+    #[test]
+    fn source_uncovered_compatible_safe_point_path_accepts_legacy_v2_metadata() {
+        let legacy = keyspacepb::KeyspaceMeta {
+            keyspace: Some(keyspacepb::keyspace_meta::Keyspace::Id(9)),
+            config: HashMap::from([("safe_point_version".to_owned(), "v2".to_owned())]),
+            ..Default::default()
+        };
+        assert_eq!(
+            compatible_safe_point_path(Some(&legacy)),
+            "/keyspaces/tidb/9/tidb/store/gcworker/saved_safe_point"
+        );
+
+        let explicit_unified = keyspacepb::KeyspaceMeta {
+            config: HashMap::from([
+                ("safe_point_version".to_owned(), "v2".to_owned()),
+                ("gc_management_type".to_owned(), "unified".to_owned()),
+            ]),
+            ..legacy
+        };
+        assert_eq!(
+            compatible_safe_point_path(Some(&explicit_unified)),
+            UNIFIED_TXN_SAFE_POINT_PATH
         );
     }
 

@@ -20,10 +20,11 @@
 //! bucket lookup) and reconstructs output rows from packed build-row bytes,
 //! plus one small per-join-type probe (`innerJoinProbe`,
 //! `outerJoinProbe`, `semiJoinProbe`, `antiSemiJoinProbe`,
-//! `leftOuterSemiJoinProbe`) that decides which matches become rows. Only the
-//! base lives here; the per-type probes live in their own Go files and are not
-//! part of this port. [`new_join_probe`] therefore validates and records the
-//! join type exactly as Go's `NewJoinProbe` does, and stops at the dispatch.
+//! `leftOuterSemiJoinProbe`) that decides which matches become rows. The base
+//! owns the shared state; the narrow no-residual probe wrappers live in
+//! [`crate::hash_join_v2`] and reuse it rather than duplicating the lookup
+//! machinery. [`new_join_probe`] still validates and constructs only the base,
+//! exactly as Go's factory does before dispatching to those wrappers.
 //!
 //! ## What is reused rather than restated
 //!
@@ -102,8 +103,10 @@
 //!   never grow) are dropped; they assert about Go slice capacity growth,
 //!   which has no Rust counterpart.
 //! * **Per-join-type dispatch.** [`new_join_probe`] returns the validated
-//!   base. Blocking symbols: `innerJoinProbe`, `newOuterJoinProbe`,
-//!   `newSemiJoinProbe`, `newAntiSemiJoinProbe`, `newLeftOuterSemiJoinProbe`.
+//!   base. [`crate::hash_join_v2`] supplies the inner, probe-preserved outer,
+//!   right-build semi-family, and left-build anti-semi no-residual wrappers;
+//!   other preserved-build, residual-condition, and spill variants remain
+//!   outside this port.
 //! * **`mockJoinProbe`.** Not ported: it is a test-only shell whose every
 //!   method is `panic("not supported")`, and it exists to feed
 //!   `hash_join_v2_test.go`, which is out of scope.
@@ -408,6 +411,12 @@ impl BaseJoinProbe {
         self.join_type
     }
 
+    /// Go `rightAsBuildSide`.
+    #[must_use]
+    pub const fn right_as_build_side(&self) -> bool {
+        self.right_as_build_side
+    }
+
     /// Go `workID`.
     #[must_use]
     pub const fn work_id(&self) -> usize {
@@ -704,6 +713,12 @@ impl BaseJoinProbe {
         self.matched_rows_for_current_probe_row
     }
 
+    /// Number of staged build rows waiting for reconstruction.
+    #[must_use]
+    pub const fn next_cached_build_row_index(&self) -> usize {
+        self.next_cached_build_row_index
+    }
+
     /// Go `finishCurrentLookupLoop`: flush cached build rows, close the
     /// current probe row's run, and copy the probe columns in.
     pub fn finish_current_lookup_loop(
@@ -722,6 +737,24 @@ impl BaseJoinProbe {
             .expect("finishCurrentLookupLoop runs with a probe chunk set");
         self.append_probe_row_to_chunk(ctx, joined_chk, &probe_chunk);
         self.current_chunk = Some(probe_chunk);
+    }
+
+    /// Completes the current probe row with no matched build row. This is the
+    /// null-extension arm used by the no-residual outer-join probe; the normal
+    /// `finish_current_lookup_loop` path gets its probe-row multiplicity from
+    /// matched build rows, whereas an unmatched row still has to be copied
+    /// once.
+    pub fn append_unmatched_probe_row(
+        &mut self,
+        ctx: &ProbeContext<'_>,
+        rows: &dyn BuildRowSource,
+        joined_chk: &mut Chunk,
+    ) {
+        self.offset_and_length_array.push(OffsetAndLength {
+            offset: self.used_rows[self.current_probe_row],
+            length: 1,
+        });
+        self.finish_current_lookup_loop(ctx, rows, joined_chk);
     }
 
     /// Go `ResetProbe`.
@@ -1284,12 +1317,12 @@ pub fn common_init_for_scan_row_table<'a>(
 
 /// Go `NewJoinProbe`.
 ///
-/// Builds the shared base and applies every validation Go's factory performs,
-/// then stops at the dispatch. The per-join-type wrappers Go returns
-/// (`innerJoinProbe`, `newOuterJoinProbe`, `newSemiJoinProbe`,
-/// `newAntiSemiJoinProbe`, `newLeftOuterSemiJoinProbe`) live in other files
-/// and are not part of this port; their match/miss semantics are already
-/// modeled by `tidb_executor::joiner`.
+/// Builds the shared base and applies every validation Go's factory performs.
+/// The per-join-type wrappers Go returns (`innerJoinProbe`,
+/// `newOuterJoinProbe`, `newSemiJoinProbe`, `newAntiSemiJoinProbe`,
+/// `newLeftOuterSemiJoinProbe`) live in [`crate::hash_join_v2`]. This helper
+/// keeps the factory's validation and base-state construction separate from
+/// those wrappers, matching the source's dispatch boundary.
 ///
 /// `probe_key_nullable` mirrors Go's `!mysql.HasNotNullFlag(flag)` test over
 /// `probeKeyTypes`, one entry per key.

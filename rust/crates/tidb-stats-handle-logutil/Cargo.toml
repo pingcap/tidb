@@ -1,0 +1,15 @@
+[package]
+name = "tidb-stats-handle-logutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics handle loggers."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-log = { path = "../tidb-log" }
+tidb-util = { path = "../tidb-util" }

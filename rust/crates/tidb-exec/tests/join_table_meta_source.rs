@@ -36,6 +36,13 @@ fn test_join_table_meta_key_mode_source() {
     let cases = [
         (
             vec![0],
+            vec![ColumnType::Null],
+            vec![ColumnType::Null],
+            vec![ColumnType::BinaryString],
+            KeyMode::VariableSerializedKey,
+        ),
+        (
+            vec![0],
             vec![ColumnType::Int],
             vec![ColumnType::Int],
             vec![ColumnType::Int],
@@ -168,6 +175,7 @@ fn test_join_table_meta_key_mode_source() {
 fn test_join_table_meta_key_inlined_and_fixed_source() {
     // Source: pkg/executor/join/join_table_meta_test.go:89-159 (TestJoinTableMetaKeyInlinedAndFixed).
     let cases = [
+        (ColumnType::Null, false, false, -1),
         (ColumnType::Int, true, true, 8),
         (ColumnType::UnsignedInt, true, true, 8),
         (ColumnType::Year, true, true, 8),

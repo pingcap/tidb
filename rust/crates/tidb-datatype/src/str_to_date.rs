@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use chrono::TimeZone;
+use unicode_general_category::{get_general_category, GeneralCategory};
 
 use crate::{CoreTime, Time, TimeError, TimeType};
 
@@ -53,6 +54,7 @@ impl Time {
     pub fn str_to_date<TZ: TimeZone>(
         date: &str,
         format: &str,
+        allow_zero_in_date: bool,
         allow_invalid_date: bool,
         timezone: &TZ,
     ) -> Result<(Self, bool), TimeError> {
@@ -72,7 +74,7 @@ impl Time {
             TimeType::DateTime,
             0,
         )?;
-        result.validate(true, allow_invalid_date, timezone)?;
+        result.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
         Ok((result, warning))
     }
 }
@@ -122,6 +124,17 @@ fn parse_format(
             return Ok(!date.is_empty());
         }
         if date.is_empty() {
+            // Go's `strToDate` records the current token with a zero value
+            // when the input is exhausted. `mysqlTimeFix` then uses token
+            // presence (not just a parsed value) to reject `%p` paired with
+            // `%H`, and to reject an empty `%p`/zero-hour combination.
+            let (token, _) = next_token(format)?;
+            match token {
+                "%p" => parsed.meridiem = Some(false),
+                "%H" => parsed.hour24 = true,
+                "%h" | "%I" | "%l" => parsed.hour12 = true,
+                _ => {}
+            }
             return Ok(false);
         }
 
@@ -232,9 +245,7 @@ fn parse_token<'a>(
             }
         }
         "%#" => Ok(skip_while(input, char::is_numeric)),
-        "%." => Ok(skip_while(input, |character| {
-            character.is_ascii_punctuation()
-        })),
+        "%." => Ok(skip_while(input, is_go_punctuation)),
         "%@" => Ok(skip_while(input, char::is_alphabetic)),
         _ if input.starts_with(token) => Ok(&input[token.len()..]),
         _ => Err(TimeError::InvalidDate),
@@ -394,12 +405,50 @@ fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
     &input[consumed..]
 }
 
+/// Returns whether a character belongs to Go's `unicode.IsPunct` set.
+///
+/// The expression-level `STR_TO_DATE` implementation shares this classifier
+/// so both Rust owners consume exactly the same source-version table.
+pub fn is_go_punctuation(character: char) -> bool {
+    // Go 1.25's unicode tables are Unicode 15.0. The dependency is generated
+    // from Unicode 16.0, so exclude the 13 punctuation code points introduced
+    // by that newer table until the Go source advances its Unicode edition.
+    if matches!(
+        character,
+        '\u{1b4e}'
+            | '\u{1b4f}'
+            | '\u{1b7f}'
+            | '\u{10d6e}'
+            | '\u{113d4}'
+            | '\u{113d5}'
+            | '\u{113d7}'
+            | '\u{113d8}'
+            | '\u{11be1}'
+            | '\u{16d6d}'
+            | '\u{16d6e}'
+            | '\u{16d6f}'
+            | '\u{1e5ff}'
+    ) {
+        return false;
+    }
+    matches!(
+        get_general_category(character),
+        GeneralCategory::ClosePunctuation
+            | GeneralCategory::ConnectorPunctuation
+            | GeneralCategory::DashPunctuation
+            | GeneralCategory::FinalPunctuation
+            | GeneralCategory::InitialPunctuation
+            | GeneralCategory::OpenPunctuation
+            | GeneralCategory::OtherPunctuation
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(input: &str, format: &str, allow_invalid: bool) -> Result<CoreTime, TimeError> {
-        Time::str_to_date(input, format, allow_invalid, &chrono_tz::UTC)
+        Time::str_to_date(input, format, true, allow_invalid, &chrono_tz::UTC)
             .map(|(time, _)| time.core_time())
     }
 
@@ -678,6 +727,42 @@ mod tests {
                 "{input} {format}"
             );
         }
+    }
+
+    #[test]
+    fn punctuation_token_matches_go_unicode_punctuation() {
+        assert_eq!(
+            parse("2013¿5", "%Y%.%c", true),
+            Ok(CoreTime::from_date(2013, 5, 0, 0, 0, 0, 0))
+        );
+        assert!(parse("2013+5", "%Y%.%c", true).is_err());
+        assert!(parse("2013\u{1b4e}5", "%Y%.%c", true).is_err());
+    }
+
+    #[test]
+    fn exhausted_format_tokens_preserve_go_meridiem_fix_state() {
+        // Go records ctx["%p"] = 0 after the clock is consumed. With `%H`,
+        // mysqlTimeFix rejects the combination; with `%h`, the absent AM/PM
+        // token is treated as AM and the parsed hour remains valid.
+        assert!(parse("11:30:45", "%H:%i:%s %p", true).is_err());
+        assert_eq!(
+            parse("11:30:45", "%h:%i:%s %p", true),
+            Ok(CoreTime::from_date(0, 0, 0, 11, 30, 45, 0))
+        );
+        assert!(parse("", "%p", true).is_err());
+    }
+
+    /// Go `Time.StrToDate` forwards `FlagIgnoreZeroInDate` to `Time.Check`.
+    /// A partial format therefore keeps its zero month/day only when the
+    /// caller explicitly allows zero-in-date values.
+    #[test]
+    fn str_to_date_zero_in_date_flag_is_not_hardcoded() {
+        let refused = Time::str_to_date("2013-05", "%Y-%m", false, false, &chrono_tz::UTC);
+        assert_eq!(refused, Err(TimeError::ZeroInDate));
+
+        let accepted = Time::str_to_date("2013-05", "%Y-%m", true, false, &chrono_tz::UTC)
+            .expect("IgnoreZeroInDate keeps the partial date");
+        assert_eq!(accepted.0.to_string(), "2013-05-00 00:00:00");
     }
 
     #[test]

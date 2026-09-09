@@ -25,7 +25,10 @@
 
 use std::{cmp::Ordering, fmt};
 
-use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_datatype::{
+    datums_to_string, Collation, Datum, DatumStringError, DatumValueError, FieldTypeCode,
+    SessionTimeZone,
+};
 
 pub use crate::scalar_geometry::{
     calc_fraction, calc_fraction_from_datums, convert_bytes_to_scalar, convert_datum_to_scalar,
@@ -137,9 +140,33 @@ impl From<DatumValueError> for HistogramMergeError {
 
 /// Two-bound compatibility view of `pkg/statistics/scalar.go`'s variadic
 /// `commonPrefixLength` helper.
-#[must_use]
 pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
     common_prefix_length_all(&[a, b])
+}
+
+/// Converts a possible encoded index value to Go's diagnostic string.
+///
+/// When decoding stops at malformed input, Go deliberately ignores that
+/// error, preserves the decoded prefix, and renders the undecoded suffix as
+/// one byte datum. `idx_cols == 0` is the ordinary `Datum.ToString` path.
+pub fn value_to_string(
+    value: &Datum,
+    idx_cols: usize,
+    idx_column_types: Option<&[FieldTypeCode]>,
+    timezone: Option<&SessionTimeZone>,
+) -> Result<String, DatumStringError> {
+    if idx_cols == 0 {
+        return value.sql_string();
+    }
+    let (mut decoded_values, remainder) =
+        match tidb_codec::decode_range(value.go_bytes(), idx_cols, idx_column_types, timezone) {
+            Ok(decoded) => decoded,
+            Err(error) => (error.values, error.remainder),
+        };
+    if !remainder.is_empty() {
+        decoded_values.push(Datum::new_bytes(remainder));
+    }
+    datums_to_string(&decoded_values, true, false)
 }
 
 fn datum_bytes(value: &Datum) -> &[u8] {
@@ -166,9 +193,46 @@ pub struct BucketLocation {
 }
 
 impl Histogram {
+    /// Go `(*Histogram).MemoryUsage`: zero for an empty histogram and the
+    /// resident histogram allocation otherwise.
+    ///
+    /// Go keeps bounds in a `chunk.Chunk`; this representation keeps each
+    /// bound beside its bucket, so the same ownership rule is expressed as
+    /// the histogram value, reserved bucket storage, and bound payloads.
+    pub fn memory_usage(&self) -> i64 {
+        if self.buckets.is_empty() {
+            return 0;
+        }
+        let datum_size = std::mem::size_of::<Datum>();
+        let bucket_storage = self
+            .buckets
+            .capacity()
+            .wrapping_mul(std::mem::size_of::<Bucket>());
+        let bound_payloads = self.buckets.iter().fold(0_usize, |total, bucket| {
+            total
+                .wrapping_add(
+                    bucket
+                        .lower_bound
+                        .estimated_mem_usage()
+                        .saturating_sub(datum_size),
+                )
+                .wrapping_add(
+                    bucket
+                        .upper_bound
+                        .estimated_mem_usage()
+                        .saturating_sub(datum_size),
+                )
+        });
+        i64::try_from(
+            std::mem::size_of::<Self>()
+                .wrapping_add(bucket_storage)
+                .wrapping_add(bound_payloads),
+        )
+        .unwrap_or(i64::MAX)
+    }
+
     /// Creates an empty histogram with the source metadata and allocation
     /// hint from Go `NewHistogram`.
-    #[must_use]
     pub fn new(
         id: i64,
         ndv: i64,
@@ -189,25 +253,21 @@ impl Histogram {
     }
 
     /// Returns the lower bound of `bucket_index`, Go `GetLower`.
-    #[must_use]
     pub fn get_lower(&self, bucket_index: usize) -> &Datum {
         &self.buckets[bucket_index].lower_bound
     }
 
     /// Copies the lower bound of `bucket_index`, Go `LowerToDatum`.
-    #[must_use]
     pub fn lower_to_datum(&self, bucket_index: usize) -> Datum {
         self.get_lower(bucket_index).clone()
     }
 
     /// Returns the upper bound of `bucket_index`, Go `GetUpper`.
-    #[must_use]
     pub fn get_upper(&self, bucket_index: usize) -> &Datum {
         &self.buckets[bucket_index].upper_bound
     }
 
     /// Copies the upper bound of `bucket_index`, Go `UpperToDatum`.
-    #[must_use]
     pub fn upper_to_datum(&self, bucket_index: usize) -> Datum {
         self.get_upper(bucket_index).clone()
     }
@@ -373,7 +433,6 @@ impl Histogram {
 
     /// Returns a deep copy truncated to `bucket_count` buckets, Go
     /// `TruncateHistogram`.
-    #[must_use]
     pub fn truncate(&self, bucket_count: usize) -> Self {
         let mut histogram = self.copy();
         histogram.buckets.truncate(bucket_count);
@@ -381,7 +440,6 @@ impl Histogram {
     }
 
     /// Deep-copies this histogram, Go `Copy`.
-    #[must_use]
     pub fn copy(&self) -> Self {
         self.clone()
     }
@@ -412,19 +470,16 @@ impl Histogram {
     }
 
     /// Number of buckets, Go `Histogram.Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.buckets.len()
     }
 
     /// True when there are no buckets.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buckets.is_empty()
     }
 
     /// Row count contributed by bucket `idx` alone, Go `BucketCount`.
-    #[must_use]
     pub fn bucket_count(&self, idx: usize) -> i64 {
         if idx == 0 {
             self.buckets[0].count
@@ -434,7 +489,6 @@ impl Histogram {
     }
 
     /// Count of non-NULL values, Go `NotNullCount`.
-    #[must_use]
     pub fn not_null_count(&self) -> f64 {
         match self.buckets.last() {
             Some(bucket) => bucket.count as f64,
@@ -443,7 +497,6 @@ impl Histogram {
     }
 
     /// Total row count including NULLs, Go `TotalRowCount`.
-    #[must_use]
     pub fn total_row_count(&self) -> f64 {
         self.not_null_count() + self.null_count as f64
     }
@@ -452,7 +505,6 @@ impl Histogram {
     ///
     /// Comparisons use `collation` for string/bytes bounds; pass
     /// [`Collation::Binary`] for non-string types or binary collations.
-    #[must_use]
     pub fn locate_bucket(&self, value: &Datum, collation: Collation) -> BucketLocation {
         if self.buckets.is_empty() {
             return BucketLocation {
@@ -534,7 +586,6 @@ impl Histogram {
 
     /// Fraction of bucket `index`'s interval covered by `[lower, value]`,
     /// Go `Histogram.calcFraction`.
-    #[must_use]
     pub fn calc_fraction(&self, index: usize, value: &Datum) -> f64 {
         let bucket = &self.buckets[index];
         calc_fraction_from_datums(&bucket.lower_bound, &bucket.upper_bound, value)
@@ -543,7 +594,6 @@ impl Histogram {
     /// Estimates the row count where the column equals `value`, Go
     /// `EqualRowCount`. `matched` is true when the estimate comes from a
     /// bucket's repeat count or bucket-level NDV (more accurate).
-    #[must_use]
     pub fn equal_row_count(
         &self,
         value: &Datum,
@@ -570,7 +620,6 @@ impl Histogram {
 
     /// Estimates the row count where the column is less than `value`,
     /// returning the bucket index too, Go `LessRowCountWithBktIdx`.
-    #[must_use]
     pub fn less_row_count_with_bkt_idx(&self, value: &Datum, collation: Collation) -> (f64, usize) {
         if self.buckets.is_empty() {
             return (0.0, 0);
@@ -602,14 +651,12 @@ impl Histogram {
 
     /// Estimates the row count where the column is less than `value`, Go
     /// `LessRowCount`.
-    #[must_use]
     pub fn less_row_count(&self, value: &Datum, collation: Collation) -> f64 {
         self.less_row_count_with_bkt_idx(value, collation).0
     }
 
     /// Estimates the row count where the column is greater than `value`, Go
     /// `GreaterRowCount`. Deprecated upstream; kept for test parity.
-    #[must_use]
     pub fn greater_row_count(&self, value: &Datum, collation: Collation) -> f64 {
         let (hist_row_count, _) = self.equal_row_count(value, false, collation);
         let gt_count =
@@ -622,7 +669,6 @@ impl Histogram {
     /// `skew` carries the session's `RiskRangeSkewRatio`; `None` stands for
     /// Go's nil `sctx` (stats version 1 callers), which skips the whole
     /// same-bucket skew branch including its `MaxEst` widening.
-    #[must_use]
     pub fn between_row_count(
         &self,
         a: &Datum,
@@ -664,7 +710,6 @@ impl Histogram {
     }
 
     /// Go `Histogram.OutOfRange`: whether `value` falls outside every bucket.
-    #[must_use]
     pub fn out_of_range(&self, value: &Datum, collation: Collation) -> bool {
         let (Some(first), Some(last)) = (self.buckets.first(), self.buckets.last()) else {
             return false;
@@ -681,13 +726,11 @@ impl Histogram {
     }
 
     /// Go `Histogram.AbsRowCountDifference`.
-    #[must_use]
     pub fn abs_row_count_difference(&self, realtime_row_count: i64) -> f64 {
         (realtime_row_count as f64 - self.total_row_count()).abs()
     }
 
     /// Go `Histogram.GetIncreaseFactor`.
-    #[must_use]
     pub fn get_increase_factor(&self, total_count: i64) -> f64 {
         let column_count = self.total_row_count();
         if column_count == 0.0 {
@@ -700,7 +743,6 @@ impl Histogram {
     /// histogram, Go `Histogram.OutOfRangeRowCount`.
     ///
     /// The table and session inputs come from [`OutOfRangeContext`].
-    #[must_use]
     pub fn out_of_range_row_count(
         &self,
         l_datum: &Datum,
@@ -830,7 +872,6 @@ impl Histogram {
 }
 
 /// Clones a slice's elements, Go `DeepSlice`.
-#[must_use]
 pub fn deep_slice<T: Clone>(slice: &[T]) -> Vec<T> {
     slice.to_vec()
 }

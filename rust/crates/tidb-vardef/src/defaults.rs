@@ -49,6 +49,8 @@ pub const DEF_INDEX_LOOKUP_SIZE: i64 = 20000;
 pub const DEF_DIST_SQL_SCAN_CONCURRENCY: i64 = 15;
 /// Go `DefAnalyzeDistSQLScanConcurrency` (= `4`).
 pub const DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY: i64 = 4;
+/// Go `DefTiDBAnalyzeStoreBatchSize` (= `4`).
+pub const DEF_TIDB_ANALYZE_STORE_BATCH_SIZE: i64 = 4;
 /// Go `DefBuildStatsConcurrency` (= `2`).
 pub const DEF_BUILD_STATS_CONCURRENCY: i64 = 2;
 /// Go `DefBuildSamplingStatsConcurrency` (= `2`).
@@ -185,6 +187,8 @@ pub const DEF_MIN_PAGING_SIZE: i64 = 128;
 /// Go `DefMaxPagingSize` (= `int(paging.MinAllowedMaxPagingSize)`).
 /// Resolved from paging.MinAllowedMaxPagingSize.
 pub const DEF_MAX_PAGING_SIZE: i64 = 50000;
+/// Go `DefTiDBEmbedOpenAIAPIBase` (= `"https://api.openai.com/v1"`).
+pub const DEF_TIDB_EMBED_OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 /// Go `DefPagingSizeBytes` (= `0`).
 pub const DEF_PAGING_SIZE_BYTES: i64 = 0;
 /// Go `DefMaxChunkSize` (= `1024`).
@@ -514,6 +518,13 @@ pub const DEF_TIDB_ENABLE_BATCH_DML: bool = false;
 /// Go `DefTiDBMemQuotaQuery` (= `memory.DefMemQuotaQuery`).
 /// Resolved from memory.DefMemQuotaQuery (1GB).
 pub const DEF_TIDB_MEM_QUOTA_QUERY: i64 = 1073741824;
+/// Go `DefTiDBMViewMaintainMemQuota` (= `int64(2 * size.GB)`).
+/// Resolved from 2 * size.GB.
+pub const DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA: i64 = 2147483648;
+/// Go `DefTiDBMViewMaintainImportThreads` (= `0`).
+pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS: i64 = 0;
+/// Go `DefTiDBMViewMaintainImportDiskQuota` (= `""`).
+pub const DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA: &str = "";
 /// Go `DefTiDBStatsCacheMemQuota` (= `0`).
 pub const DEF_TIDB_STATS_CACHE_MEM_QUOTA: i64 = 0;
 /// Go `DefTiDBQueryLogMaxLen` (= `4096`).
@@ -645,8 +656,6 @@ pub const DEF_TIDB_COST_MODEL_VER: i64 = 2;
 /// Go `DefTiDBServerMemoryLimitSessMinSize` (= `128 << 20`).
 /// Resolved from 128 << 20.
 pub const DEF_TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE: i64 = 134217728;
-/// Go `DefTiDBMergePartitionStatsConcurrency` (= `1`).
-pub const DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY: i64 = 1;
 /// Go `DefTiDBServerMemoryLimitGCTrigger` (= `0.7`).
 pub const DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER: f64 = 0.7;
 /// Go `DefTiDBEnableGOGCTuner` (= `true`).
@@ -671,6 +680,9 @@ pub const DEF_TIDB_ENABLE_REUSECHUNK: bool = true;
 pub const DEF_TIDB_USE_ALLOC: bool = false;
 /// Go `DefTiDBEnablePlanReplayerCapture` (= `true`).
 pub const DEF_TIDB_ENABLE_PLAN_REPLAYER_CAPTURE: bool = true;
+/// Go `DefTiDBPlanReplayerFileRetentionTime` (= `7 * 24 * time.Hour`).
+/// Resolved from 7 * 24 * time.Hour, nanoseconds.
+pub const DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME: i64 = 604800000000000;
 /// Go `DefTiDBIndexMergeIntersectionConcurrency` (= `ConcurrencyUnset`).
 /// Resolved from Go ConcurrencyUnset = -1.
 pub const DEF_TIDB_INDEX_MERGE_INTERSECTION_CONCURRENCY: i64 = -1;
@@ -783,6 +795,10 @@ pub const DEF_RUNTIME_FILTER_MODE: &str = "OFF";
 pub const DEF_TIDB_LOCK_UNCHANGED_KEYS: bool = true;
 /// Go `DefTiDBEnableCheckConstraint` (= `false`).
 pub const DEF_TIDB_ENABLE_CHECK_CONSTRAINT: bool = false;
+/// Go `DefTiDBEnableFullOuterJoin` (= `false`).
+pub const DEF_TIDB_ENABLE_FULL_OUTER_JOIN: bool = false;
+/// Go `DefTiDBMViewEnable` (= `false`).
+pub const DEF_TIDB_MVIEW_ENABLE: bool = false;
 /// Go `DefTiDBSkipMissingPartitionStats` (= `true`).
 pub const DEF_TIDB_SKIP_MISSING_PARTITION_STATS: bool = true;
 /// Go `DefTiDBOptEnableHashJoin` (= `true`).
@@ -822,6 +838,8 @@ pub const DEF_TIDB_ENABLE_LAZY_CURSOR_FETCH: bool = false;
 pub const DEF_OPT_ENABLE_PROJECTION_PUSH_DOWN: bool = true;
 /// Go `DefTiDBEnableSharedLockPromotion` (= `false`).
 pub const DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION: bool = false;
+/// Go `DefTiDBEnableSharedLockUpgrade` (= `false`).
+pub const DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE: bool = false;
 /// Go `DefTiDBTSOClientRPCMode` (= `TSOClientRPCModeDefault`).
 pub const DEF_TIDB_TSO_CLIENT_RPC_MODE: &str = "DEFAULT";
 /// Go `DefTiDBCircuitBreakerPDMetaErrorRateRatio` (= `0.0`).
@@ -851,6 +869,12 @@ pub const DEF_TIDB_MEM_ARBITRATOR_WAIT_AVERSE: &str = "0";
 pub const DEF_TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY: &str = "hint-only";
 /// Go `DefEnableCachePrepareStmt` (= `false`).
 pub const DEF_ENABLE_CACHE_PREPARE_STMT: bool = false;
+/// Go `DefTiDBEnableConnectionEventLog` (= `false`).
+pub const DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG: bool = false;
+/// Go `DefTiDBEnableTxnFile` (= `false`).
+pub const DEF_TIDB_ENABLE_TXN_FILE: bool = false;
+/// Go `DefTiDBTxnFileMinMutationSize` (= `0`).
+pub const DEF_TIDB_TXN_FILE_MIN_MUTATION_SIZE: i64 = 0;
 
 #[cfg(test)]
 mod tests {
@@ -877,3 +901,12 @@ mod tests {
         assert_eq!(DEF_TIDB_GC_MAX_WAIT_TIME, 24 * 60 * 60);
     }
 }
+/// Go `DefTiDBQueryCopStoreLimit` (= `15`).
+pub const DEF_TIDB_QUERY_COP_STORE_LIMIT: i64 = 15;
+/// Go `DefTiDBColumnarStorageEnabled` (= `true`).
+pub const DEF_TIDB_COLUMNAR_STORAGE_ENABLED: bool = true;
+/// Go `DefTiDBMergePartitionStatsConcurrency` (= `1`).
+pub const DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY: i64 = 1;
+/// Go `DefTiDBServerMemoryLimit` (= `serverMemoryLimitDefaultValue()`):
+/// `"80%"` when the machine's total memory is readable, `"0"` otherwise.
+pub const DEF_TIDB_SERVER_MEMORY_LIMIT: &str = "80%";

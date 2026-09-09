@@ -443,10 +443,38 @@ impl PdClient for MockPdClient {
 
     async fn split_regions(
         self: Arc<Self>,
-        _split_keys: Vec<Vec<u8>>,
+        split_keys: Vec<Vec<u8>>,
         _retry_limit: u64,
     ) -> Result<Vec<u64>> {
-        Ok(Vec::new())
+        let mut new_region_ids = Vec::with_capacity(split_keys.len());
+        for key in split_keys {
+            let mut encoded = Vec::new();
+            codec::encode_bytes(&mut encoded, &key);
+            let (region, leader, _, _) = self
+                .cluster
+                .region_by_key(&encoded)
+                .ok_or_else(|| Error::StringError("mock split region not found".to_owned()))?;
+            if region.start_key == encoded {
+                continue;
+            }
+            let peer_ids = self.cluster.alloc_ids(region.peers.len());
+            let leader_store_id = leader
+                .as_ref()
+                .map(|peer| peer.store_id)
+                .or_else(|| region.peers.first().map(|peer| peer.store_id))
+                .ok_or_else(|| Error::StringError("mock split region has no peers".to_owned()))?;
+            let leader_id = region
+                .peers
+                .iter()
+                .zip(&peer_ids)
+                .find_map(|(peer, new_id)| (peer.store_id == leader_store_id).then_some(*new_id))
+                .expect("leader store belongs to region");
+            let new_region_id = self.cluster.alloc_id();
+            self.cluster
+                .split_raw(region.id, new_region_id, &encoded, &peer_ids, leader_id);
+            new_region_ids.push(new_region_id);
+        }
+        Ok(new_region_ids)
     }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {

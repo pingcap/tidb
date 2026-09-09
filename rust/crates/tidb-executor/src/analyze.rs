@@ -73,6 +73,10 @@ pub const STATS_VERSION_2: i64 = 2;
 /// depend on the variable registry to spell it.
 pub const MEM_QUOTA_ANALYZE_VARIABLE: &str = "tidb_mem_quota_analyze";
 
+/// Pinned Go `CMSketchSizeLimit`: legacy CMS width/depth are still parsed and
+/// validated even though Analyze v2 does not build a CMSketch.
+const CMSKETCH_SIZE_LIMIT: u64 = tidb_txnkv::DEFAULT_TXN_ENTRY_SIZE_LIMIT / 5;
+
 /// Why one `ANALYZE TABLE` could not be computed.
 ///
 /// A caller's own read failure is NOT here -- it drives the scan and keeps
@@ -104,9 +108,7 @@ impl std::error::Error for AnalyzeError {}
 /// The knobs one `ANALYZE TABLE ... WITH ...` statement set.
 ///
 /// Every field is already the *effective* value: the statement's, or the
-/// session default when the statement named none. Which of the two it was
-/// still matters -- Go switches its TopN and bucket-count heuristics off for
-/// a value the user chose -- so the defaults travel alongside.
+/// session default when the statement named none.
 #[derive(Clone, Copy, Debug)]
 pub struct AnalyzeOptions {
     /// `WITH n BUCKETS`.
@@ -117,24 +119,61 @@ pub struct AnalyzeOptions {
     pub num_samples: usize,
     /// `WITH r SAMPLERATE`; `None` derives it from the table's row count.
     pub sample_rate: Option<f64>,
-    /// `tidb_analyze_default_num_buckets`.
-    pub default_num_buckets: u64,
-    /// `tidb_analyze_default_num_topn`.
-    pub default_num_topn: u64,
     /// `tidb_mem_quota_analyze`: the bound on what the kept sample may
     /// occupy. Go's default is `-1`, no bound.
     pub memory_quota: SampleMemoryQuota,
 }
 
+/// The ANALYZE options explicitly present in a statement or persisted row.
+/// `None` is significant: pinned Go persists and merges raw options before
+/// filling process defaults.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnalyzeOptionOverrides {
+    /// Explicit `WITH n BUCKETS`.
+    pub num_buckets: Option<isize>,
+    /// Explicit `WITH n TOPN`, including zero.
+    pub num_topn: Option<isize>,
+    /// Explicit `WITH n SAMPLES`.
+    pub num_samples: Option<usize>,
+    /// Explicit `WITH n SAMPLERATE`.
+    pub sample_rate: Option<f64>,
+}
+
+impl AnalyzeOptionOverrides {
+    /// Merges statement options over saved options, then fills live defaults.
+    #[must_use]
+    pub fn merge_over(self, saved: Self) -> Self {
+        Self {
+            num_buckets: self.num_buckets.or(saved.num_buckets),
+            num_topn: self.num_topn.or(saved.num_topn),
+            num_samples: self.num_samples.or(saved.num_samples),
+            sample_rate: self.sample_rate.or(saved.sample_rate),
+        }
+    }
+
+    /// Fills the current process defaults after raw-option merging.
+    #[must_use]
+    pub fn effective(self) -> AnalyzeOptions {
+        let defaults = AnalyzeOptions::default();
+        AnalyzeOptions {
+            num_buckets: self.num_buckets.unwrap_or(defaults.num_buckets),
+            num_topn: self.num_topn.unwrap_or(defaults.num_topn),
+            num_samples: self.num_samples.unwrap_or(defaults.num_samples),
+            sample_rate: self.sample_rate.or(defaults.sample_rate),
+            memory_quota: defaults.memory_quota,
+        }
+    }
+}
+
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
-            num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as isize,
-            num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as isize,
+            num_buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .load(std::sync::atomic::Ordering::SeqCst) as isize,
+            num_topn: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+                .load(std::sync::atomic::Ordering::SeqCst) as isize,
             num_samples: 0,
             sample_rate: None,
-            default_num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as u64,
-            default_num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as u64,
             memory_quota: SampleMemoryQuota::unlimited(),
         }
     }
@@ -147,8 +186,6 @@ impl AnalyzeOptions {
         BuildOptions {
             num_buckets: self.num_buckets,
             num_topn: self.num_topn,
-            default_num_buckets: self.default_num_buckets,
-            default_num_topn: self.default_num_topn,
         }
     }
 }
@@ -161,8 +198,175 @@ pub struct AnalyzeStatement {
     pub schema: String,
     /// The table's name.
     pub table: String,
+    /// Whether Go's restricted auto-analyze wrapper submitted this statement.
+    /// The ordinary executor path is shared; this marker only affects the
+    /// analyze-job identity exposed through `mysql.analyze_jobs`.
+    pub auto_analyze: bool,
+    /// Go `SessionVars.AnalyzeSkipColumnTypes`, refreshed from the GLOBAL
+    /// value for auto analyze before physical plan construction.
+    pub skip_column_types: std::collections::BTreeSet<String>,
+    /// Explicit partition names. Empty means every partition.
+    pub partitions: Vec<String>,
+    /// `Some` for `ANALYZE TABLE ... INDEX`, including an empty vector for
+    /// the form that names every index. In stats v2 Go uses this during
+    /// planning: any ordinary selected index takes the normal full-sampling
+    /// path, while an all-special-global selection takes index-only tasks.
+    pub index_names: Option<Vec<String>>,
+    /// Which columns the pinned planner selects before execution.
+    pub columns: AnalyzeColumnChoice,
+    /// Options explicitly named by this statement, before saved-option merge.
+    pub raw_options: AnalyzeOptionOverrides,
+    /// Live global gate for reading and saving `mysql.analyze_options`.
+    pub persist_options: bool,
+    /// Live process default used only while the persisted choice is DEFAULT.
+    pub default_columns: AnalyzeColumnChoice,
+    /// Whether this statement uses Go's dynamic partition-pruning mode.
+    pub dynamic_partition_prune: bool,
+    /// Pinned `tidb_skip_missing_partition_stats` value for global merging.
+    pub skip_missing_partition_stats: bool,
+    /// Pinned `tidb_enable_analyze_snapshot` count-reconciliation policy.
+    pub analyze_snapshot: bool,
+    /// Pinned `tidb_enable_async_merge_global_stats` worker selection.
+    pub enable_async_merge_global_stats: bool,
+    /// Pinned `tidb_merge_partition_stats_concurrency` TopN worker count.
+    pub partition_merge_concurrency: usize,
+    /// Statement timezone used to decode column TopN candidates.
+    pub time_zone: tidb_datatype::SessionTimeZone,
     /// The effective knobs.
     pub options: AnalyzeOptions,
+}
+
+/// Pinned Go analyze column choice before persisted/default resolution.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum AnalyzeColumnChoice {
+    /// Resolve through `tidb_analyze_column_options` at execution.
+    #[default]
+    Default,
+    /// Analyze every analyzable column.
+    All,
+    /// Load persisted predicate columns and union mandatory index/PK columns.
+    Predicate,
+    /// Analyze these source names plus mandatory index/PK columns.
+    Explicit(Vec<String>),
+}
+
+/// One raw option/column-choice row from pinned Go's
+/// `mysql.analyze_options`, after LIST IDs have been resolved through the
+/// current table schema.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SavedAnalyzeOptions {
+    /// Raw numeric options; absent values remain absent until all merging is
+    /// complete.
+    pub raw: AnalyzeOptionOverrides,
+    /// Persisted column-choice policy.
+    pub columns: AnalyzeColumnChoice,
+}
+
+/// Pinned Go `V2AnalyzeOptions` reduced to the fields both Rust execution
+/// tiers consume.
+#[derive(Clone, Debug)]
+pub struct PhysicalAnalyzeOptions {
+    /// Logical table ID or physical partition ID receiving the statistics.
+    pub physical_id: i64,
+    /// Raw merged values saved after successful ANALYZE.
+    pub raw: AnalyzeOptionOverrides,
+    /// Effective values used by the sampler and builders.
+    pub effective: AnalyzeOptions,
+    /// Final persisted/default column choice.
+    pub columns: AnalyzeColumnChoice,
+    /// Whether this entry describes a physical partition.
+    pub is_partition: bool,
+}
+
+/// Result of pinned Go `genV2AnalyzeOptions`'s option/choice merge.
+#[derive(Clone, Debug)]
+pub struct AnalyzeOptionResolution {
+    /// The table entry followed by requested physical partitions.
+    pub physical: Vec<PhysicalAnalyzeOptions>,
+    /// Whether dynamic mode ignored explicit options/columns on
+    /// `ANALYZE ... PARTITION` and therefore requires Go's statement warning.
+    pub ignored_partition_overrides: bool,
+}
+
+/// Merges statement, logical-table, and partition ANALYZE options exactly in
+/// pinned Go `genV2AnalyzeOptions` order.
+#[must_use]
+pub fn resolve_analyze_options(
+    table_id: i64,
+    partition_ids: &[i64],
+    statement_raw: AnalyzeOptionOverrides,
+    statement_columns: &AnalyzeColumnChoice,
+    saved: &std::collections::HashMap<i64, SavedAnalyzeOptions>,
+    whole_table: bool,
+    dynamic_partition_prune: bool,
+) -> AnalyzeOptionResolution {
+    let ignored_partition_overrides = !whole_table
+        && dynamic_partition_prune
+        && (statement_raw != AnalyzeOptionOverrides::default()
+            || *statement_columns != AnalyzeColumnChoice::Default);
+    let (statement_raw, statement_columns) = if ignored_partition_overrides {
+        (
+            AnalyzeOptionOverrides::default(),
+            AnalyzeColumnChoice::Default,
+        )
+    } else {
+        (statement_raw, statement_columns.clone())
+    };
+    let table_saved = saved.get(&table_id).cloned().unwrap_or_default();
+    let table_raw = if whole_table {
+        statement_raw.merge_over(table_saved.raw)
+    } else {
+        table_saved.raw
+    };
+    let table_columns =
+        choose_analyze_columns(&statement_columns, &table_saved.columns, whole_table);
+    let mut physical = vec![PhysicalAnalyzeOptions {
+        physical_id: table_id,
+        raw: table_raw,
+        effective: table_raw.effective(),
+        columns: table_columns.clone(),
+        is_partition: false,
+    }];
+    for partition_id in partition_ids.iter().copied() {
+        if partition_id == table_id {
+            continue;
+        }
+        let (raw, columns) = if dynamic_partition_prune {
+            (table_raw, table_columns.clone())
+        } else {
+            let partition_saved = saved.get(&partition_id).cloned().unwrap_or_default();
+            let inherited_raw = partition_saved.raw.merge_over(table_saved.raw);
+            let inherited_columns =
+                choose_analyze_columns(&partition_saved.columns, &table_saved.columns, true);
+            (
+                statement_raw.merge_over(inherited_raw),
+                choose_analyze_columns(&statement_columns, &inherited_columns, true),
+            )
+        };
+        physical.push(PhysicalAnalyzeOptions {
+            physical_id: partition_id,
+            raw,
+            effective: raw.effective(),
+            columns,
+            is_partition: true,
+        });
+    }
+    AnalyzeOptionResolution {
+        physical,
+        ignored_partition_overrides,
+    }
+}
+
+fn choose_analyze_columns(
+    preferred: &AnalyzeColumnChoice,
+    fallback: &AnalyzeColumnChoice,
+    allow_preferred: bool,
+) -> AnalyzeColumnChoice {
+    if allow_preferred && *preferred != AnalyzeColumnChoice::Default {
+        preferred.clone()
+    } else {
+        fallback.clone()
+    }
 }
 
 /// Whether this statement is an `ANALYZE TABLE` this engine runs, and against
@@ -199,40 +403,28 @@ pub fn lower_analyze_admin(
                 "this node does not run ANALYZE INCREMENTAL TABLE: it extends the previous \
                  histogram from its last bound rather than rebuilding one"
                     .to_owned(),
-            ))
+            ));
         }
         _ => return Ok(None),
     };
-    if !analyze.partitions.is_empty() {
-        return Err(AnalyzeError::Unsupported(
-            "this node does not analyze named partitions".to_owned(),
-        ));
-    }
-    match &analyze.target {
-        tidb_ast::AnalyzeTarget::Default | tidb_ast::AnalyzeTarget::AllColumns => {}
-        tidb_ast::AnalyzeTarget::Index(_) => {
-            return Err(AnalyzeError::Unsupported(
-                "this node does not run ANALYZE TABLE ... INDEX: it rewrites a table's whole \
-                 statistics, and storing only some of them would leave the rest describing an \
-                 older row count"
-                    .to_owned(),
-            ))
+    let (columns, index_names) = match &analyze.target {
+        tidb_ast::AnalyzeTarget::Default => (AnalyzeColumnChoice::Default, None),
+        tidb_ast::AnalyzeTarget::AllColumns => (AnalyzeColumnChoice::All, None),
+        tidb_ast::AnalyzeTarget::Index(names) => {
+            (AnalyzeColumnChoice::Default, Some(names.clone()))
         }
-        tidb_ast::AnalyzeTarget::PredicateColumns | tidb_ast::AnalyzeTarget::Columns(_) => {
-            return Err(AnalyzeError::Unsupported(
-                "this node analyzes every column of the table; a column list would leave the \
-                 unnamed columns' histograms stamped with a version their rows no longer match"
-                    .to_owned(),
-            ))
+        tidb_ast::AnalyzeTarget::PredicateColumns => (AnalyzeColumnChoice::Predicate, None),
+        tidb_ast::AnalyzeTarget::Columns(names) => {
+            (AnalyzeColumnChoice::Explicit(names.clone()), None)
         }
         tidb_ast::AnalyzeTarget::Histogram { .. } => {
             return Err(AnalyzeError::Unsupported(
                 "this node does not run UPDATE/DROP HISTOGRAM ON".to_owned(),
-            ))
+            ));
         }
-    }
+    };
 
-    let mut options = AnalyzeOptions::default();
+    let mut raw_options = AnalyzeOptionOverrides::default();
     for option in &analyze.options {
         let number = |value: &str| -> Result<u64, AnalyzeError> {
             value
@@ -241,58 +433,91 @@ pub fn lower_analyze_admin(
         };
         match option.kind {
             tidb_ast::AnalyzeOptionKind::Buckets => {
-                options.num_buckets = isize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value == 0 || value > 100_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option BUCKETS should be positive and not larger than 100000"
+                            .to_owned(),
+                    ));
+                }
+                raw_options.num_buckets = Some(isize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native ANALYZE integer domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::TopN => {
-                options.num_topn = isize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value > 100_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option TOPN should not be larger than 100000".to_owned(),
+                    ));
+                }
+                raw_options.num_topn = Some(isize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native ANALYZE integer domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::Samples => {
-                options.num_samples = usize::try_from(number(&option.value)?).map_err(|_| {
+                let value = number(&option.value)?;
+                if value == 0 || value > 5_000_000 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option SAMPLES should be positive and not larger than 5000000"
+                            .to_owned(),
+                    ));
+                }
+                raw_options.num_samples = Some(usize::try_from(value).map_err(|_| {
                     AnalyzeError::Unsupported(format!(
                         "`{}` exceeds the native sample-size domain",
                         option.value
                     ))
-                })?;
+                })?);
             }
             tidb_ast::AnalyzeOptionKind::SampleRate => {
                 let rate = option.value.parse::<f64>().map_err(|_| {
                     AnalyzeError::Unsupported(format!("`{}` is not a rate", option.value))
                 })?;
-                if !(0.0..=1.0).contains(&rate) {
-                    return Err(AnalyzeError::Unsupported(format!(
-                        "SAMPLERATE must be in [0, 1], not `{}`",
-                        option.value
-                    )));
+                if rate <= 0.0 || rate > 1.0 {
+                    return Err(AnalyzeError::Unsupported(
+                        "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0"
+                            .to_owned(),
+                    ));
                 }
-                options.sample_rate = Some(rate);
+                raw_options.sample_rate = Some(rate);
             }
             // Analyze v2 stores no CMSketch at all, so accepting a size for
             // one would be accepting a knob with no effect.
             tidb_ast::AnalyzeOptionKind::CmSketchDepth
             | tidb_ast::AnalyzeOptionKind::CmSketchWidth => {
-                return Err(AnalyzeError::Unsupported(
-                    "CMSKETCH DEPTH/WIDTH have no effect on this node: analyze v2 stores no \
-                     CMSketch"
-                        .to_owned(),
-                ))
+                let value = number(&option.value)?;
+                if value == 0 || value > CMSKETCH_SIZE_LIMIT {
+                    let name = match option.kind {
+                        tidb_ast::AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
+                        tidb_ast::AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
+                        _ => unreachable!(),
+                    };
+                    return Err(AnalyzeError::Unsupported(format!(
+                        "Value of analyze option {name} should be positive and not larger than {CMSKETCH_SIZE_LIMIT}"
+                    )));
+                }
             }
             tidb_ast::AnalyzeOptionKind::NdvRate => {
                 return Err(AnalyzeError::Unsupported(
                     "NDVRATE is not a knob this node reads".to_owned(),
-                ))
+                ));
             }
         }
     }
+    if raw_options.num_samples.is_some() && raw_options.sample_rate.is_some() {
+        return Err(AnalyzeError::Unsupported(
+            "You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them"
+                .to_owned(),
+        ));
+    }
+    let options = raw_options.effective();
 
     let mut tables = Vec::with_capacity(analyze.tables.len());
     for path in &analyze.tables {
@@ -303,7 +528,7 @@ pub fn lower_analyze_admin(
                 return Err(AnalyzeError::Unsupported(format!(
                     "`{}` does not name a table",
                     path.join(".")
-                )))
+                )));
             }
         };
         if schema.is_empty() {
@@ -312,6 +537,20 @@ pub fn lower_analyze_admin(
         tables.push(AnalyzeStatement {
             schema,
             table,
+            auto_analyze: false,
+            skip_column_types: std::collections::BTreeSet::new(),
+            partitions: analyze.partitions.clone(),
+            index_names: index_names.clone(),
+            columns: columns.clone(),
+            raw_options,
+            persist_options: true,
+            default_columns: AnalyzeColumnChoice::All,
+            dynamic_partition_prune: true,
+            skip_missing_partition_stats: true,
+            analyze_snapshot: false,
+            enable_async_merge_global_stats: true,
+            partition_merge_concurrency: 1,
+            time_zone: tidb_datatype::SessionTimeZone::utc(),
             options,
         });
     }
@@ -326,6 +565,8 @@ pub struct AnalyzedColumn {
     /// The column's lowercase name, for a row source that addresses columns
     /// by name.
     pub name: String,
+    /// The declared type, used by Go's prefix-index truncation rule.
+    pub field_type: FieldType,
     /// What a row with no entry for this column at all reads as.
     ///
     /// Not NULL: a row written before an `ALTER TABLE ... ADD COLUMN` carries
@@ -395,6 +636,8 @@ pub struct AnalyzedIndex {
     pub id: i64,
     /// Offsets into [`AnalyzePlan::columns`], in index-key order.
     pub column_positions: Vec<usize>,
+    /// Go `IndexColumn.Length`, in key-part order.
+    pub prefix_lengths: Vec<i64>,
     /// Go `IndexInfo.Unique` on a one-column index: what switches the TopN
     /// off for the index AND for the column it covers, because a value that
     /// occurs at most once has no "top" to list.
@@ -422,11 +665,6 @@ impl AnalyzePlan {
         indexes: Vec<AnalyzedIndex>,
         table_name: &str,
     ) -> Result<Self, AnalyzeError> {
-        if columns.is_empty() {
-            return Err(AnalyzeError::Unsupported(format!(
-                "`{table_name}` has no analyzable column"
-            )));
-        }
         let mut unique_covered = vec![false; columns.len()];
         for index in &indexes {
             for position in &index.column_positions {
@@ -464,34 +702,34 @@ impl AnalyzePlan {
         &self.indexes
     }
 
-    /// Go's collector counts one slot per column, then one per *multi*-column
-    /// group; a single-column index's facts are its column's own and are
-    /// copied rather than recounted (`row_sampler.go:215`).
+    /// Go's collector counts one slot per column and per column group. An
+    /// ordinary single-column index reuses its column's facts; a prefix index
+    /// is special and needs the separately cut key's facts.
     fn slot_count(&self) -> usize {
-        self.columns.len() + self.multi_column_indexes().count()
-    }
-
-    fn multi_column_indexes(&self) -> impl Iterator<Item = &AnalyzedIndex> {
-        self.indexes
-            .iter()
-            .filter(|index| index.column_positions.len() > 1)
+        self.columns.len()
+            + self
+                .indexes
+                .iter()
+                .filter(|index| index.needs_own_slot())
+                .count()
     }
 
     fn index_slot(&self, index_position: usize) -> usize {
         let index = &self.indexes[index_position];
-        if index.column_positions.len() == 1 {
+        if !index.needs_own_slot() {
             return index.column_positions[0];
         }
         self.columns.len()
             + self.indexes[..index_position]
                 .iter()
-                .filter(|earlier| earlier.column_positions.len() > 1)
+                .filter(|earlier| earlier.needs_own_slot())
                 .count()
     }
 
     /// One row's stored values and its contribution to every slot.
     fn row_of(&self, columns: &[Datum]) -> Result<ScannedRowValues, AnalyzeError> {
-        let mut stored = Vec::with_capacity(columns.len());
+        let mut sampled = Vec::with_capacity(columns.len());
+        let mut keyed_columns = Vec::with_capacity(columns.len());
         let mut slots = Vec::with_capacity(self.slot_count());
         let mut sizes = Vec::with_capacity(columns.len());
         for (position, value) in columns.iter().enumerate() {
@@ -512,14 +750,18 @@ impl AnalyzePlan {
                 size,
                 is_null: value.is_null(),
             });
-            stored.push(keyed);
+            keyed_columns.push(keyed);
+            sampled.push(value.clone());
         }
-        for index in self.multi_column_indexes() {
-            let group: Vec<Datum> = index
-                .column_positions
-                .iter()
-                .map(|position| stored[*position].clone())
-                .collect();
+        for index in self.indexes.iter().filter(|index| index.needs_own_slot()) {
+            // Ordinary column groups use the collector's collation-keyed
+            // values. A prefix index is a special index in Go: its NDV is
+            // collected from the cut index key instead of that column group.
+            let group = if index.has_prefix() {
+                self.index_values(index, &sampled)
+            } else {
+                self.index_values(index, &keyed_columns)
+            };
             let encoded_value =
                 encode_value(&group).map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             let size = index
@@ -531,12 +773,27 @@ impl AnalyzePlan {
             slots.push(SlotContribution {
                 encoded_value,
                 size,
-                // Go hashes a group's datums whatever they are and keeps no
-                // null count for one, so a group slot is never NULL.
-                is_null: false,
+                is_null: group.len() == 1 && group[0].is_null(),
             });
         }
-        Ok(ScannedRowValues { stored, slots })
+        Ok(ScannedRowValues { sampled, slots })
+    }
+
+    fn index_values(&self, index: &AnalyzedIndex, sampled: &[Datum]) -> Vec<Datum> {
+        index
+            .column_positions
+            .iter()
+            .enumerate()
+            .map(|(key_position, column_position)| {
+                let mut value = sampled[*column_position].clone();
+                crate::index_prefix_cut::cut_index_value(
+                    &mut value,
+                    index.prefix_length(key_position),
+                    &self.columns[*column_position].field_type,
+                );
+                value
+            })
+            .collect()
     }
 
     /// One index sample: the index key the histogram is built over.
@@ -546,20 +803,41 @@ impl AnalyzePlan {
     fn index_sample(
         &self,
         index: &AnalyzedIndex,
-        stored: &[Datum],
+        sampled: &[Datum],
     ) -> Result<Option<Vec<u8>>, AnalyzeError> {
-        if index.column_positions.len() == 1 && stored[index.column_positions[0]].is_null() {
+        if index.column_positions.len() == 1 && sampled[index.column_positions[0]].is_null() {
             return Ok(None);
         }
-        let mut key = Vec::new();
         for position in &index.column_positions {
-            let value = &stored[*position];
+            let value = &sampled[*position];
             if value_length(value) > MAX_SAMPLE_VALUE_LENGTH {
                 return Ok(None);
             }
-            key.extend_from_slice(&encode_key_of(value)?);
+        }
+        let mut key = Vec::new();
+        for value in self.index_values(index, sampled) {
+            key.extend_from_slice(&encode_key_of(&value)?);
         }
         Ok(Some(key))
+    }
+}
+
+impl AnalyzedIndex {
+    fn prefix_length(&self, position: usize) -> i64 {
+        self.prefix_lengths
+            .get(position)
+            .copied()
+            .unwrap_or(crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+    }
+
+    fn has_prefix(&self) -> bool {
+        self.prefix_lengths
+            .iter()
+            .any(|length| *length != crate::index_prefix_cut::UNSPECIFIED_LENGTH)
+    }
+
+    fn needs_own_slot(&self) -> bool {
+        self.column_positions.len() > 1 || self.has_prefix()
     }
 }
 
@@ -572,10 +850,10 @@ struct SlotContribution {
 
 /// One scanned row, in the two forms the collector needs.
 struct ScannedRowValues {
-    /// The values as the histogram stores them: a string column's collation
-    /// key, every other column's own value. This is what a bucket bound and a
-    /// TopN entry are built from, and what a loader reads back.
-    stored: Vec<Datum>,
+    /// Raw decoded row values. Go retains this form in `SampleRow.Columns`:
+    /// column workers derive collation keys from it, while index workers cut
+    /// prefix lengths before encoding the index key.
+    sampled: Vec<Datum>,
     slots: Vec<SlotContribution>,
 }
 
@@ -590,6 +868,8 @@ pub struct AnalyzedHistogram {
     pub histogram: Histogram,
     /// The TopN, when this histogram has one.
     pub topn: Option<TopN>,
+    /// The full-scan FM sketch used to merge partition NDVs.
+    pub fm_sketch: Option<tidb_stats::FmSketch>,
 }
 
 /// Everything one `ANALYZE TABLE` computed about one table.
@@ -666,7 +946,7 @@ impl<'a> AnalyzeRun<'a> {
         // scan rather than region collectors, so the scan position is an
         // exact monotone handle-order key even for an implicit `_tidb_rowid`.
         // It travels as an internal final Datum and is never a stats slot.
-        row.stored.push(Datum::Int(self.next_handle_order));
+        row.sampled.push(Datum::Int(self.next_handle_order));
         self.next_handle_order = self.next_handle_order.wrapping_add(1);
         let slots: Vec<SlotValue<'_>> = row
             .slots
@@ -679,7 +959,7 @@ impl<'a> AnalyzeRun<'a> {
             .collect();
         self.collector
             .collect(&ScannedRow {
-                columns: &row.stored,
+                columns: &row.sampled,
                 slots: &slots,
             })
             .map_err(AnalyzeError::MemoryQuota)
@@ -711,19 +991,20 @@ impl<'a> AnalyzeRun<'a> {
                 total_size: slot.total_size,
             };
             for row in &sampled {
-                let value = &row.columns[position];
-                if value.is_null() {
+                let sampled_value = &row.columns[position];
+                if sampled_value.is_null() {
                     continue;
                 }
                 // Go's length gate: a value this long is not one that occurs
                 // many times, and storing it would put half a `LONGTEXT` in
                 // `mysql.stats_buckets`.
-                if value_length(value) > MAX_SAMPLE_VALUE_LENGTH {
+                if value_length(sampled_value) > MAX_SAMPLE_VALUE_LENGTH {
                     continue;
                 }
+                let value = column.stored_value(sampled_value);
                 collected.samples.push(SampleItem {
-                    encoded: encode_key_of(value)?,
-                    value: value.clone(),
+                    encoded: encode_key_of(&value)?,
+                    value,
                     ordinal: row.ordinal,
                 });
             }
@@ -740,6 +1021,7 @@ impl<'a> AnalyzeRun<'a> {
                 stats_ver: STATS_VERSION_2,
                 histogram: built.histogram,
                 topn: built.topn,
+                fm_sketch: slot.fm_sketch.clone(),
             });
         }
 
@@ -776,6 +1058,7 @@ impl<'a> AnalyzeRun<'a> {
                 stats_ver: STATS_VERSION_2,
                 histogram: built.histogram,
                 topn: built.topn,
+                fm_sketch: slot.fm_sketch.clone(),
             });
         }
 
@@ -812,6 +1095,7 @@ mod tests {
             vec![AnalyzedColumn {
                 id: 1,
                 name: "a".to_owned(),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
                 absent_value: Datum::Null,
                 collation: None,
             }],
@@ -826,15 +1110,129 @@ mod tests {
         let options = AnalyzeOptions {
             num_buckets: -1,
             num_topn: -2,
-            default_num_buckets: u64::MAX,
-            default_num_topn: u64::MAX - 1,
             ..AnalyzeOptions::default()
         };
         let built = options.build_options();
         assert_eq!(built.num_buckets, -1);
         assert_eq!(built.num_topn, -2);
-        assert_eq!(built.default_num_buckets, u64::MAX);
-        assert_eq!(built.default_num_topn, u64::MAX - 1);
+    }
+
+    #[test]
+    fn raw_options_merge_before_live_defaults() {
+        let saved = AnalyzeOptionOverrides {
+            num_buckets: Some(7),
+            num_topn: Some(0),
+            num_samples: None,
+            sample_rate: Some(0.25),
+        };
+        let statement = AnalyzeOptionOverrides {
+            num_buckets: Some(11),
+            num_samples: Some(9),
+            ..AnalyzeOptionOverrides::default()
+        };
+        let merged = statement.merge_over(saved);
+        assert_eq!(merged.num_buckets, Some(11));
+        assert_eq!(merged.num_topn, Some(0));
+        assert_eq!(merged.num_samples, Some(9));
+        assert_eq!(merged.sample_rate, Some(0.25));
+    }
+
+    #[test]
+    fn legacy_cms_options_keep_pinned_go_size_limit() {
+        let limit = tidb_txnkv::DEFAULT_TXN_ENTRY_SIZE_LIMIT / 5;
+        for spelling in ["CMSKETCH WIDTH", "CMSKETCH DEPTH"] {
+            let accepted = tidb_parser::parse(&format!("ANALYZE TABLE t WITH {limit} {spelling}"))
+                .expect("the boundary statement parses");
+            lower_analyze(&accepted, "test").expect("the pinned boundary is accepted");
+
+            let rejected =
+                tidb_parser::parse(&format!("ANALYZE TABLE t WITH {} {spelling}", limit + 1))
+                    .expect("the over-limit statement parses");
+            let error = lower_analyze(&rejected, "test")
+                .expect_err("one value above the pinned boundary is rejected");
+            assert!(error.to_string().contains(&limit.to_string()));
+        }
+    }
+
+    #[test]
+    fn static_partitions_merge_partition_then_table_then_statement() {
+        let saved = std::collections::HashMap::from([
+            (
+                10,
+                SavedAnalyzeOptions {
+                    raw: AnalyzeOptionOverrides {
+                        num_buckets: Some(7),
+                        num_topn: Some(3),
+                        ..AnalyzeOptionOverrides::default()
+                    },
+                    columns: AnalyzeColumnChoice::All,
+                },
+            ),
+            (
+                11,
+                SavedAnalyzeOptions {
+                    raw: AnalyzeOptionOverrides {
+                        num_buckets: Some(9),
+                        sample_rate: Some(0.5),
+                        ..AnalyzeOptionOverrides::default()
+                    },
+                    columns: AnalyzeColumnChoice::Explicit(vec!["a".to_owned()]),
+                },
+            ),
+        ]);
+        let resolved = resolve_analyze_options(
+            10,
+            &[11, 12],
+            AnalyzeOptionOverrides {
+                num_topn: Some(0),
+                ..AnalyzeOptionOverrides::default()
+            },
+            &AnalyzeColumnChoice::Default,
+            &saved,
+            true,
+            false,
+        );
+        assert!(!resolved.ignored_partition_overrides);
+        assert_eq!(resolved.physical.len(), 3);
+        assert_eq!(resolved.physical[0].raw.num_buckets, Some(7));
+        assert_eq!(resolved.physical[0].raw.num_topn, Some(0));
+        assert_eq!(resolved.physical[1].raw.num_buckets, Some(9));
+        assert_eq!(resolved.physical[1].raw.num_topn, Some(0));
+        assert_eq!(resolved.physical[1].raw.sample_rate, Some(0.5));
+        assert_eq!(
+            resolved.physical[1].columns,
+            AnalyzeColumnChoice::Explicit(vec!["a".to_owned()])
+        );
+        assert_eq!(resolved.physical[2].raw.num_buckets, Some(7));
+        assert_eq!(resolved.physical[2].columns, AnalyzeColumnChoice::All);
+    }
+
+    #[test]
+    fn dynamic_named_partition_ignores_statement_overrides() {
+        let table_saved = SavedAnalyzeOptions {
+            raw: AnalyzeOptionOverrides {
+                num_buckets: Some(7),
+                ..AnalyzeOptionOverrides::default()
+            },
+            columns: AnalyzeColumnChoice::Predicate,
+        };
+        let resolved = resolve_analyze_options(
+            10,
+            &[11],
+            AnalyzeOptionOverrides {
+                num_buckets: Some(99),
+                ..AnalyzeOptionOverrides::default()
+            },
+            &AnalyzeColumnChoice::All,
+            &std::collections::HashMap::from([(10, table_saved)]),
+            false,
+            true,
+        );
+        assert!(resolved.ignored_partition_overrides);
+        for options in resolved.physical {
+            assert_eq!(options.raw.num_buckets, Some(7));
+            assert_eq!(options.columns, AnalyzeColumnChoice::Predicate);
+        }
     }
 
     #[test]

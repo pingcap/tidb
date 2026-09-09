@@ -260,7 +260,7 @@ mod tests {
         BatchSubmission {
             entries: vec![BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, vec![]),
-                completion.into(),
+                completion,
             )],
             call: None,
             reply: None,

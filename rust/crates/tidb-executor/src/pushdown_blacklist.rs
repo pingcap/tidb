@@ -37,7 +37,7 @@
 //! Go has eight `IsPushDownEnabled` call sites. Five are answered here:
 //!
 //!  * `canFuncBePushed` -- a scalar function's own name, asked at both of
-//!    Go's stores ([`blacklist_admits`]);
+//!    Go's stores;
 //!  * `columnToPBExpr`'s `enum` (under `kv.UnSpecified`) and `bit` (under
 //!    `kv.TiKV`) arms, whose asymmetry is Go's own;
 //!  * `DataSource.PredicatePushDown`, the one that decides the PLAN;
@@ -78,9 +78,8 @@
 //! short-circuits on an empty blacklist, so a session that never ran `ADMIN
 //! RELOAD` takes exactly the path it took before.
 
-use tidb_expr::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
-use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::expression::Expression;
+use tidb_expr::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
 
 /// Go `ast.TypeStr(mysql.TypeBit)`, the name `columnToPBExpr` looks a BIT
 /// column up under.
@@ -89,30 +88,6 @@ const BIT_TYPE_NAME: &str = "bit";
 /// Go `columnToPBExpr`'s `mysql.TypeEnum` arm, whose blacklist key is the
 /// bare word rather than a function name.
 const ENUM_TYPE_NAME: &str = "enum";
-
-/// Go `expression.PushDownExprs` for ONE condition, restricted to the
-/// blacklist's verdicts.
-///
-/// `store` is the one Go's caller passes: `kv.UnSpecified` at
-/// `DataSource.PredicatePushDown`, `kv.TiKV` at `find_best_task`'s index and
-/// table filter split.
-pub(crate) fn blacklist_admits(
-    condition: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-    ctx: &crate::StmtContext,
-    store: PushDownStore,
-) -> bool {
-    let blacklist = ctx.expr_pushdown_blacklist();
-    if blacklist.is_empty() {
-        return true;
-    }
-    let Ok(rewritten) = tidb_expr::rewriter::rewrite_expr_resolved(condition, resolver) else {
-        // A condition this tier cannot even resolve is not one the blacklist
-        // has an opinion about; whatever refuses it does so on its own.
-        return true;
-    };
-    compiled_blacklist_admits(&rewritten, ctx, store)
-}
 
 /// The blacklist verdict for a condition its planner already built. Go
 /// `PushDownExprs` walks this tree; it does not rewrite the SQL again.
@@ -146,25 +121,20 @@ pub(crate) fn aggregate_admits(
         PushdownAggregateKind::Sum => "sum",
         PushdownAggregateKind::Min => "min",
         PushdownAggregateKind::Max => "max",
+        PushdownAggregateKind::MinCount => "min_count",
+        PushdownAggregateKind::MaxCount => "max_count",
     };
-    let admits_name =
-        |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
+    let admits_name = |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
     let admits_arg = |input: Option<&Expression>| {
         input.is_none_or(|expr| admits(expr, blacklist, PushDownStore::TiKv))
     };
     match aggregate {
-        // `GroupBy` is a one-column `SELECT DISTINCT` with no aggregate
-        // function at all, so there is no name to ask about; its group key is
-        // a scan column, which the column arm below would answer for.
-        Agg::GroupBy { .. } => true,
-        Agg::Count { .. } => admits_name("count"),
-        Agg::Sum { .. } => admits_name("sum"),
-        Agg::Grouped { functions, .. } => functions
-            .iter()
-            .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
-        Agg::Global { functions, .. } => functions
-            .iter()
-            .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
+        Agg::Grouped { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
+        Agg::Global { functions, .. } => functions.iter().all(|function| {
+            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
+        }),
     }
 }
 

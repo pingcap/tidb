@@ -27,6 +27,7 @@ use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tidb_hack::MapValueLayout;
 
 /// A Go string header retaining arbitrary bytes and immutable backing identity.
 #[derive(Default)]
@@ -34,6 +35,11 @@ pub struct GoString {
     backing: Option<Arc<[u8]>>,
     start: usize,
     len: usize,
+}
+
+impl MapValueLayout for GoString {
+    const SOURCE_SIZE: usize = 16;
+    const SOURCE_ALIGN: usize = 8;
 }
 
 /// Byte view plus source-shaped interface-copy conversion used by APIs that

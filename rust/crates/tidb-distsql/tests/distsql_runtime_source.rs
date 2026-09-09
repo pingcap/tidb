@@ -22,7 +22,8 @@ use tidb_distsql::{
     analyze_request_source, analyze_result_metadata, can_use_chunk_rpc, checksum_result_metadata,
     mpp_result_metadata, select_result_metadata, select_with_runtime_stats, set_encode_type,
     system_endian, tiflash_conf_metadata, with_sql_kv_exec_counter_interceptor, EncodeType,
-    SelectInput, SelectResultMetadata, StoreType, SystemEndian, TiFlashSettings,
+    LimiterWaitStats, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, StoreType,
+    SystemEndian, TiFlashSettings,
     ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE,
     INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL,
 };
@@ -172,4 +173,21 @@ fn source_tiflash_spill_ratio_uses_go_special_float_spelling() {
 fn source_kv_counter_interceptor_binds_only_when_present() {
     assert!(with_sql_kv_exec_counter_interceptor(true));
     assert!(!with_sql_kv_exec_counter_interceptor(false));
+}
+
+#[test]
+fn source_limiter_wait_stats_merge_total_and_max() {
+    let mut stats = SelectResultRuntimeStats::default();
+    assert!(LimiterWaitStats::default().is_zero());
+    stats.record_limiter_wait(5);
+    stats.record_limiter_wait(3);
+    assert_eq!(stats.limiter_wait, LimiterWaitStats { total_ns: 8, max_ns: 5 });
+
+    let mut additional = LimiterWaitStats::default();
+    additional.record(10);
+    additional.record(2);
+    stats.limiter_wait.merge(additional);
+    assert_eq!(stats.limiter_wait.total_ns, 20);
+    assert_eq!(stats.limiter_wait.max_ns, 10);
+    assert!(!stats.limiter_wait.is_zero());
 }

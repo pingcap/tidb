@@ -102,10 +102,11 @@
 //! The unique single-integer slice uses Go's default five-way probe boundary:
 //! the session thread fetches a bounded window, workers share the immutable
 //! build table and own their chunks, and matched-bitmap writes return to the
-//! session thread. Pure equality and q17's proven DECIMAL residual shape use
-//! that boundary. General residual conditions, parallel build, semi/anti
-//! preserved-build variants, v2's partitioned spill, and outer-apply remain
-//! deferred. Hash-aggregate spill, TopN spill, parallel-sort spill and
+//! session thread. Inner joins evaluate arbitrary residual conditions on those
+//! workers through the normal expression evaluator, as Go does. Parallel
+//! build, duplicate/non-integer keys, residuals for the preserved join
+//! families, v2's partitioned spill, and outer-apply remain deferred.
+//! Hash-aggregate spill, TopN spill, parallel-sort spill and
 //! `SortedRowContainer` are other operators' surfaces and are untouched.
 //!
 //! # Memory accounting (`tidb_mem_quota_query`)
@@ -153,172 +154,27 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{
-    BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError, equi_keys_equal_chunk_rows,
-    equi_keys_equal_row, exact_int_key_chunk, fast_bytes_fingerprint, row_hash, row_hash_chunk,
-    row_key, row_key_by, IdentityU64Hasher,
+    equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, row_hash, row_hash_chunk,
+    row_key, row_key_by, BuildError, BuildTable, EquiKey, FastBytesMap, KeyClass, KeyError,
 };
 use crate::mem_quota::StatementMemory;
-mod builder;
 mod output;
 use output::JoinOutput;
 
 use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::List;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row::Row;
 use tidb_chunk::row_container::RowContainer;
-use tidb_datatype::{Collation, Datum, Decimal, EvalType, FieldType, FieldTypeCode, MyDecimal};
-use tidb_expr::Columns;
+use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
-
-const COMPACT_BINARY_KEY_BYTES: usize = 192;
-const COMPACT_BINARY_KEY_INLINE_BYTES: usize = 48;
-
-/// A bounded binary string key for the count-only residual join fast path.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CompactBinaryKey {
-    bytes: smallvec::SmallVec<[u8; COMPACT_BINARY_KEY_INLINE_BYTES]>,
-}
-
-impl Hash for CompactBinaryKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(fast_bytes_fingerprint(&self.bytes));
-    }
-}
-
-type CompactBinaryMap<V> =
-    HashMap<CompactBinaryKey, V, BuildHasherDefault<IdentityU64Hasher>>;
-
-#[derive(Clone, Copy)]
-enum CompactJoinDecimal {
-    Scaled(i128, u32),
-    Native(MyDecimal),
-}
-
-impl CompactBinaryKey {
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > COMPACT_BINARY_KEY_BYTES {
-            return None;
-        }
-        Some(Self {
-            bytes: smallvec::SmallVec::from_slice(bytes),
-        })
-    }
-}
-
-fn compact_join_decimal(value: MyDecimal) -> CompactJoinDecimal {
-    value
-        .to_i128_scaled()
-        .map_or(CompactJoinDecimal::Native(value), |(coefficient, scale)| {
-            CompactJoinDecimal::Scaled(coefficient, scale)
-        })
-}
-
-fn compare_compact_join_decimal(left: CompactJoinDecimal, right: CompactJoinDecimal) -> Ordering {
-    match (left, right) {
-        (
-            CompactJoinDecimal::Scaled(left, left_scale),
-            CompactJoinDecimal::Scaled(right, right_scale),
-        ) if left_scale == right_scale => left.cmp(&right),
-        (CompactJoinDecimal::Native(left), CompactJoinDecimal::Native(right)) => {
-            left.compare(&right)
-        }
-        (CompactJoinDecimal::Scaled(left, scale), CompactJoinDecimal::Native(right)) => {
-            Decimal::from_scaled_i128(left, scale).cmp(&Decimal::from_my_decimal(&right))
-        }
-        (CompactJoinDecimal::Native(left), CompactJoinDecimal::Scaled(right, scale)) => {
-            Decimal::from_my_decimal(&left).cmp(&Decimal::from_scaled_i128(right, scale))
-        }
-        (
-            CompactJoinDecimal::Scaled(left, left_scale),
-            CompactJoinDecimal::Scaled(right, right_scale),
-        ) => Decimal::from_scaled_i128(left, left_scale)
-            .cmp(&Decimal::from_scaled_i128(right, right_scale)),
-    }
-}
-
-fn compact_matches(op: u8, ordering: Ordering) -> bool {
-    match op {
-        0 => ordering == Ordering::Equal,
-        1 => ordering != Ordering::Equal,
-        2 => ordering == Ordering::Less,
-        3 => ordering != Ordering::Greater,
-        4 => ordering == Ordering::Greater,
-        5 => ordering != Ordering::Less,
-        _ => unreachable!(),
-    }
-}
-
-/// Counts a sorted DECIMAL residual bucket without visiting every matching
-/// pair.  The count-only aggregate path uses this for Web3Bench's
-/// `build.value < probe.value` predicate; keeping the six comparison forms
-/// here preserves the generic helper's SQL semantics for the other supported
-/// operators as well.
-#[inline]
-fn count_sorted_compact_matches(
-    values: &[i128],
-    probe: i128,
-    build_on_left: bool,
-    op: u8,
-) -> u64 {
-    if values.len() <= 8 {
-        return values
-            .iter()
-            .filter(|value| {
-                let ordering = if build_on_left {
-                    (*value).cmp(&probe)
-                } else {
-                    probe.cmp(*value)
-                };
-                compact_matches(op, ordering)
-            })
-            .count() as u64;
-    }
-    let lower = values.partition_point(|value| *value < probe);
-    let upper = values.partition_point(|value| *value <= probe);
-    let len = values.len();
-    let count = match op {
-        0 => upper - lower,
-        1 => len - (upper - lower),
-        2 => {
-            if build_on_left {
-                lower
-            } else {
-                len - upper
-            }
-        }
-        3 => {
-            if build_on_left {
-                upper
-            } else {
-                len - lower
-            }
-        }
-        4 => {
-            if build_on_left {
-                len - upper
-            } else {
-                lower
-            }
-        }
-        5 => {
-            if build_on_left {
-                len - lower
-            } else {
-                upper
-            }
-        }
-        _ => unreachable!(),
-    };
-    count as u64
-}
 
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,11 +219,6 @@ struct HashState {
     probe_candidate_idx: usize,
     probe_matched: bool,
     probe_done: bool,
-    /// Products of a constant DECIMAL factor and a build-side DECIMAL column,
-    /// keyed by the stable build-row address. `Some(None)` caches SQL NULL.
-    /// This avoids repeating q17's `0.2 * AVG(...)` for every probe candidate.
-    decimal_mul_products:
-        Arc<std::sync::RwLock<HashMap<RowPtr, Option<MyDecimal>>>>,
     /// Cursor for Go hash join's post-probe scan when the preserved side was
     /// built. `None` means the scan is complete (or was never needed).
     unmatched_build_scan: Option<RowPtr>,
@@ -398,28 +249,12 @@ struct ParallelProbeResult {
     condition_evals: u64,
 }
 
-/// Go resolves the default hash-join concurrency through
-/// `tidb_executor_concurrency`, whose default is five probe workers.
-const HASH_JOIN_CONCURRENCY: usize = 5;
-
 /// Number of source chunks one scoped worker consumes before the join pays
 /// the cost of creating the worker threads again. Go keeps its hash-join
 /// goroutines alive for the complete probe; a bounded multi-chunk lane gives
 /// the scoped Rust implementation the same amortization without allowing
 /// probe/output memory to grow with the complete input.
 const PARALLEL_PROBE_CHUNKS_PER_WORKER: usize = 16;
-
-/// A residual DECIMAL comparison whose operands can be read directly from
-/// the two input rows. TPC-H q17's `l_quantity < 0.2 * avg(l_quantity)` is the
-/// hot instance. Keeping this as a narrowly proven shape avoids copying the
-/// complete joined row into `condition_chunk` for every hash candidate while
-/// leaving every other expression on the general evaluator path.
-#[derive(Clone, Debug)]
-struct DecimalMulLtFastPath {
-    left_column: usize,
-    right_column: usize,
-    factor: Decimal,
-}
 
 /// One side of the merge strategy: the chunk it streams into, how far that
 /// chunk is consumed, and the current equal-key group metadata.
@@ -621,235 +456,10 @@ pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 /// `tidb_executor_concurrency`, whose default is five inner workers.
 const INDEX_LOOKUP_JOIN_CONCURRENCY: usize = 5;
 
-/// One output of an aggregation rebuilt below an index join's lookup side.
-///
-/// Go rebuilds the complete inner physical task for every outer batch.  Most
-/// inner tasks in this port are a bare table reader, but a grouped derived
-/// table can retain its aggregation above that reader.  These are the two
-/// output shapes needed by TPCC's grouped probes. Aggregate inputs retain
-/// their source offsets so access-path selection can prove index coverage.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum IndexLookupAggregateOutput {
-    Column(usize),
-    Count(Option<usize>),
-    Max { offset: usize, collation: Collation },
-    DecimalSum(usize),
-}
-
-/// The executable aggregation retained above an index join's re-seeded table
-/// reader.
-///
-/// Group keys are currently restricted by the planner to non-null integers.
-/// Aggregate semantics match the ordinary hash aggregation: COUNT skips NULL
-/// arguments, MAX compares under the input field's collation, and decimal SUM
-/// uses the exact `Decimal::add` fold.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct IndexLookupAggregation {
-    pub(crate) group_offsets: Vec<usize>,
-    pub(crate) input_offsets: Vec<usize>,
-    pub(crate) outputs: Vec<IndexLookupAggregateOutput>,
-    /// `LogicalAggregation.PruneColumns` removed the last explicit aggregate
-    /// and appended its synthetic COUNT(1) row-count carrier.
-    pub(crate) pruned_row_count: bool,
-}
-
-impl IndexLookupAggregation {
-    /// The field types of one aggregated output row, in output order: every
-    /// FIRST_ROW/MAX/SUM carrier keeps its source column's type and COUNT is
-    /// Go's `count(1)` INT64. These are the types of the rows [`Self::apply`]
-    /// returns -- the physical lookup layout only describes its INPUTS.
-    fn output_types(&self, source_types: &[FieldType]) -> Vec<FieldType> {
-        self.outputs
-            .iter()
-            .map(|output| match output {
-                IndexLookupAggregateOutput::Column(offset)
-                | IndexLookupAggregateOutput::Max { offset, .. }
-                | IndexLookupAggregateOutput::DecimalSum(offset) => source_types
-                    .get(*offset)
-                    .cloned()
-                    .expect("an aggregate output names one of the lookup's own columns"),
-                IndexLookupAggregateOutput::Count(_) => {
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                }
-            })
-            .collect()
-    }
-
-    fn apply(
-        &self,
-        rows: Vec<Vec<Datum>>,
-        stream_ordered: bool,
-    ) -> Result<Vec<Vec<Datum>>, ExecError> {
-        enum Partial {
-            Column,
-            Count(i64),
-            Max(Option<Datum>),
-            DecimalSum(Option<Decimal>),
-        }
-
-        struct Group {
-            first: Vec<Datum>,
-            partials: Vec<Partial>,
-        }
-
-        let new_partials = || {
-            self.outputs
-                .iter()
-                .map(|output| match output {
-                    IndexLookupAggregateOutput::Column(_) => Partial::Column,
-                    IndexLookupAggregateOutput::Count(_) => Partial::Count(0),
-                    IndexLookupAggregateOutput::Max { .. } => Partial::Max(None),
-                    IndexLookupAggregateOutput::DecimalSum(_) => Partial::DecimalSum(None),
-                })
-                .collect()
-        };
-        let key_of = |row: &[Datum]| {
-            let mut key = Vec::new();
-            for offset in &self.group_offsets {
-                let value = row.get(*offset).ok_or_else(|| {
-                    ExecError::unsupported("an index lookup aggregation group offset is absent")
-                })?;
-                key.extend_from_slice(&tidb_codec::hash_code(value));
-                key.push(0xff);
-            }
-            Ok::<_, ExecError>(key)
-        };
-        let update = |group: &mut Group, row: &[Datum]| -> Result<(), ExecError> {
-            for (output, partial) in self.outputs.iter().zip(&mut group.partials) {
-                match (output, partial) {
-                    (IndexLookupAggregateOutput::Column(_), Partial::Column) => {}
-                    (IndexLookupAggregateOutput::Count(offset), Partial::Count(count)) => {
-                        let present = match offset {
-                            None => true,
-                            Some(offset) => !matches!(
-                                row.get(*offset).ok_or_else(|| ExecError::unsupported(
-                                    "an index lookup COUNT input offset is absent"
-                                ))?,
-                                Datum::Null
-                            ),
-                        };
-                        if present {
-                            *count += 1;
-                        }
-                    }
-                    (
-                        IndexLookupAggregateOutput::Max { offset, collation },
-                        Partial::Max(current),
-                    ) => {
-                        let input = row.get(*offset).ok_or_else(|| {
-                            ExecError::unsupported("an index lookup MAX input offset is absent")
-                        })?;
-                        if !matches!(input, Datum::Null)
-                            && current.as_ref().is_none_or(|value| {
-                                tidb_expr::compare_datums_with_collation(input, value, *collation)
-                                    .is_ok_and(|order| order == Ordering::Greater)
-                            })
-                        {
-                            *current = Some(input.clone());
-                        } else if let Some(value) = current.as_ref() {
-                            tidb_expr::compare_datums_with_collation(input, value, *collation)?;
-                        }
-                    }
-                    (IndexLookupAggregateOutput::DecimalSum(offset), Partial::DecimalSum(sum)) => {
-                        match row.get(*offset) {
-                            Some(Datum::Null) => {}
-                            Some(Datum::Decimal(value)) => {
-                                *sum = Some(match sum.take() {
-                                    Some(sum) => sum.add(value),
-                                    None => value.clone(),
-                                });
-                            }
-                            Some(_) => {
-                                return Err(ExecError::unsupported(
-                                    "an index lookup decimal SUM received a non-decimal value",
-                                ));
-                            }
-                            None => {
-                                return Err(ExecError::unsupported(
-                                    "an index lookup SUM input offset is absent",
-                                ));
-                            }
-                        }
-                    }
-                    _ => unreachable!("aggregate output and partial state are built together"),
-                }
-            }
-            Ok(())
-        };
-        let finish = |group: Group| {
-            self.outputs
-                .iter()
-                .zip(group.partials)
-                .map(|(output, partial)| match (output, partial) {
-                    (IndexLookupAggregateOutput::Column(offset), Partial::Column) => {
-                        group.first.get(*offset).cloned().ok_or_else(|| {
-                            ExecError::unsupported(
-                                "an index lookup aggregation output offset is absent",
-                            )
-                        })
-                    }
-                    (IndexLookupAggregateOutput::Count(_), Partial::Count(count)) => {
-                        Ok(Datum::Int(count))
-                    }
-                    (IndexLookupAggregateOutput::Max { .. }, Partial::Max(value)) => {
-                        Ok(value.unwrap_or(Datum::Null))
-                    }
-                    (IndexLookupAggregateOutput::DecimalSum(_), Partial::DecimalSum(sum)) => {
-                        Ok(sum.map_or(Datum::Null, Datum::Decimal))
-                    }
-                    _ => unreachable!("aggregate output and partial state are built together"),
-                })
-                .collect::<Result<Vec<_>, ExecError>>()
-        };
-        if stream_ordered {
-            let mut output = Vec::new();
-            let mut current: Option<(Vec<u8>, Group)> = None;
-            for row in rows {
-                let key = key_of(&row)?;
-                if current.as_ref().is_some_and(|(group, _)| *group != key) {
-                    output.push(finish(current.take().expect("a different group exists").1)?);
-                }
-                let group = &mut current
-                    .get_or_insert_with(|| {
-                        (
-                            key,
-                            Group {
-                                first: row.clone(),
-                                partials: new_partials(),
-                            },
-                        )
-                    })
-                    .1;
-                update(group, &row)?;
-            }
-            if let Some((_, group)) = current {
-                output.push(finish(group)?);
-            }
-            return Ok(output);
-        }
-
-        let mut positions = std::collections::HashMap::<Vec<u8>, usize>::new();
-        let mut groups = Vec::<Group>::new();
-        for row in rows {
-            let key = key_of(&row)?;
-            let position = match positions.get(&key).copied() {
-                Some(position) => position,
-                None => {
-                    let position = groups.len();
-                    positions.insert(key, position);
-                    groups.push(Group {
-                        first: row.clone(),
-                        partials: new_partials(),
-                    });
-                    position
-                }
-            };
-            update(&mut groups[position], &row)?;
-        }
-        groups.into_iter().map(finish).collect()
-    }
-}
-
+/* Index-join inner aggregation is built by `build_index_inner_subtree` from
+ * the retained PhysicalHashAgg/PhysicalStreamAgg node, exactly like Go's
+ * dataReaderBuilder. There is intentionally no second aggregate descriptor
+ * or evaluator on the join executor. */
 /// The index-join strategy: which child is LOOKED UP once per distinct outer
 /// key, and over which object.
 ///
@@ -901,11 +511,8 @@ impl IndexLookupSource {
                 exec,
                 probes: shared,
             } => {
-                // A composite subtree never carries bounds (the decision layer
-                // refuses them there), so the shared channel publishes keys.
-                let keys = probes.keys;
                 exec.close()?;
-                shared.borrow_mut().publish(keys);
+                shared.borrow_mut().publish(probes);
                 exec.open()
             }
         }
@@ -947,43 +554,13 @@ impl IndexLookupSource {
     }
 }
 
-/// Go's `rule_join_key_type_cast.go` rewrite, carried as a COMPUTED probe
-/// key instead of an injected child projection: this driver addresses
-/// columns by offset, so materializing `cast(str AS SIGNED)` as a real
-/// column of one child would shift every offset after it. The value is
-/// computed per outer row instead, and Go's guard `Selection` -- which drops
-/// string values whose integer cast is not their numeric value ('1.5') --
-/// is folded into the computation: a rejected row has no key and matches
-/// nothing, which under the INNER join this rewrite is limited to is exactly
-/// the dropped row. See [`crate::driver::join_key_cast`] for the whole
-/// chain, including the plan-column numbering the recorded `Column#12`
-/// pins.
+/// One dynamic index-join key's inner-column domain. Go converts the outer
+/// datum and cuts prefix-index values before sorting and deduplicating lookup
+/// contents (`constructDatumLookupKey` / `sortAndDedupLookUpContents`).
 #[derive(Clone)]
-pub(crate) struct IndexProbeCast {
-    /// Child-local offset of the STRING column in the OUTER child's row.
-    pub(crate) outer_offset: usize,
-    /// Child-local offset of the probed INT column in the LOOKUP child's
-    /// output row.
-    pub(crate) inner_offset: usize,
-    /// `CAST(str AS SIGNED)` over a one-column row holding the string value.
-    pub(crate) cast: Expression,
-    /// Go's guard equality over the same one-column row.
-    pub(crate) guard: Expression,
-    /// The string column's type: the one-column row's layout.
-    pub(crate) str_type: FieldType,
-}
-
-impl IndexProbeCast {
-    /// The synthetic single-key encoding both sides of this probe share:
-    /// Go's rewritten equality is over the INT domain.
-    fn key_encoding() -> [EquiKey; 1] {
-        [EquiKey {
-            left: 0,
-            right: 0,
-            class: KeyClass::Int,
-            null_safe: false,
-        }]
-    }
+pub(crate) struct IndexProbeKeyDomain {
+    pub(crate) field_type: FieldType,
+    pub(crate) prefix_length: i64,
 }
 
 pub(crate) struct IndexLookupPlan {
@@ -1001,24 +578,17 @@ pub(crate) struct IndexLookupPlan {
     /// whose index covers only the first of two keys still probes on one
     /// column and matches on both.
     pub(crate) probe_keys: Vec<usize>,
+    /// Inner key domains aligned with `probe_keys`. The shared physical
+    /// builder fills these from `PhysicalIndexJoin.IdxColLens` and the
+    /// selected lookup object's columns.
+    pub(crate) probe_key_domains: Vec<IndexProbeKeyDomain>,
     /// The re-seedable inner source.
     pub(crate) source: IndexLookupSource,
-    /// An aggregation retained by a grouped derived lookup side.  A bare
-    /// table lookup has no transformation.
-    pub(crate) aggregation: Option<IndexLookupAggregation>,
-    /// Whether the lookup key order makes equal aggregate groups contiguous.
-    pub(crate) aggregation_stream_ordered: bool,
     /// Outer-child columns a null-rejecting join predicate proves non-NULL.
     pub(crate) outer_not_null: Vec<usize>,
     /// Lookup-result columns the same predicate proves non-NULL, evaluated
     /// after a retained derived aggregation.
     pub(crate) inner_not_null: Vec<usize>,
-    /// Go's join-key type-cast rewrite: the outer key is COMPUTED
-    /// (`cast(str AS SIGNED)` behind a guard) rather than read off a column,
-    /// and the equality it belongs to is NOT in [`JoinExec::keys`] --
-    /// `split_equi` keys only `col = col`. When set, the probe, the inner
-    /// match map and the outer drain all use this one key.
-    pub(crate) probe_cast: Option<IndexProbeCast>,
     /// Outer-derived comparisons on the object-key column just past the probe
     /// prefix -- Go's `CompareFilters`. Each is evaluated over one OUTER row
     /// per batch and extends that probe's range past its key prefix. The
@@ -1141,11 +711,15 @@ pub struct JoinExec<C: Columns> {
     /// conditions over chunk rows; retaining this chunk avoids rebuilding its
     /// columns for every hash-table candidate.
     condition_chunk: Chunk,
-    /// A structurally proven DECIMAL residual predicate that can bypass the
-    /// one-row condition chunk. `None` keeps the complete expression path.
-    residual_decimal_mul_lt: Option<DecimalMulLtFastPath>,
-    left: Box<dyn Executor>,
-    right: Box<dyn Executor>,
+    /// Ordinary joins own both children. Go index joins only build the outer
+    /// child through `executorBuilder.build`; their inner side is rebuilt by
+    /// `IndexJoinExecutorBuilder` for each lookup task, so the retained lookup
+    /// source below replaces that child instead of sitting beside an eagerly
+    /// built full scan.
+    left: Option<Box<dyn Executor>>,
+    right: Option<Box<dyn Executor>>,
+    left_types: Vec<FieldType>,
+    right_types: Vec<FieldType>,
     ctx: C,
     /// The indexable `col = col` conjuncts; empty means the nested loop.
     keys: Vec<EquiKey>,
@@ -1170,9 +744,6 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
-    /// True only when the committed join strategy installed every leaf-local
-    /// filter and every inter-leaf equality from the written `WHERE`.
-    consumes_where: bool,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -1195,7 +766,7 @@ pub struct JoinExec<C: Columns> {
     spilled_bytes: i64,
 }
 
-impl<C: Columns> JoinExec<C> {
+impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// Builds a join of `left` and `right` filtered by `conditions` (the `ON`
     /// clause, empty for a Cartesian product).
     ///
@@ -1213,7 +784,34 @@ impl<C: Columns> JoinExec<C> {
         ctx: C,
         memory: StatementMemory,
     ) -> Self {
-        let left_width = left.ret_field_types().len();
+        let left_types = left.ret_field_types().to_vec();
+        let right_types = right.ret_field_types().to_vec();
+        Self::new_with_children(
+            meta,
+            kind,
+            conditions,
+            Some(left),
+            Some(right),
+            left_types,
+            right_types,
+            ctx,
+            memory,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_children(
+        meta: ExecutorMeta,
+        kind: JoinKind,
+        conditions: Vec<Expression>,
+        left: Option<Box<dyn Executor>>,
+        right: Option<Box<dyn Executor>>,
+        left_types: Vec<FieldType>,
+        right_types: Vec<FieldType>,
+        ctx: C,
+        memory: StatementMemory,
+    ) -> Self {
+        let left_width = left_types.len();
         let split = crate::hash_join::split_equi(&conditions, left_width);
         let cross_side_equality =
             crate::hash_join::has_cross_side_equality(&conditions, left_width);
@@ -1227,23 +825,18 @@ impl<C: Columns> JoinExec<C> {
             .filter_map(|(condition, is_equal)| (!is_equal).then_some(condition.clone()))
             .collect();
         let keys = split.keys;
-        let condition_types: Vec<FieldType> = left
-            .ret_field_types()
-            .iter()
-            .chain(right.ret_field_types())
-            .cloned()
-            .collect();
+        let condition_types: Vec<FieldType> =
+            left_types.iter().chain(&right_types).cloned().collect();
         let condition_chunk = Chunk::new_with_capacity(&condition_types, 1);
-        let residual_decimal_mul_lt = residual_decimal_mul_lt(&residual_conditions);
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
-        let output = JoinOutput::all(kind, left_width, right.ret_field_types().len());
+        let output = JoinOutput::all(kind, left_width, right_types.len());
         JoinExec {
             meta,
             output,
             kind,
             native_hash: false,
-            concurrency: HASH_JOIN_CONCURRENCY,
+            concurrency: 1,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1251,9 +844,10 @@ impl<C: Columns> JoinExec<C> {
             cross_side_equality,
             condition_types,
             condition_chunk,
-            residual_decimal_mul_lt,
             left,
             right,
+            left_types,
+            right_types,
             ctx,
             keys,
             emitted: false,
@@ -1263,7 +857,6 @@ impl<C: Columns> JoinExec<C> {
             merge_state: None,
             index_lookup: None,
             index_state: None,
-            consumes_where: false,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -1272,6 +865,84 @@ impl<C: Columns> JoinExec<C> {
             build_spilled: false,
             spilled_bytes: 0,
         }
+    }
+
+    /// Go `buildIndexLookUpJoin`: only the outer child is built normally.
+    /// The inner physical subtree is represented by `plan.source` and is
+    /// reseeded for every outer lookup task.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_index_lookup(
+        meta: ExecutorMeta,
+        kind: JoinKind,
+        conditions: Vec<Expression>,
+        outer: Box<dyn Executor>,
+        left_types: Vec<FieldType>,
+        right_types: Vec<FieldType>,
+        ctx: C,
+        memory: StatementMemory,
+        plan: IndexLookupPlan,
+    ) -> Self {
+        let (left, right) = if plan.lookup_is_left {
+            (None, Some(outer))
+        } else {
+            (Some(outer), None)
+        };
+        let mut executor = Self::new_with_children(
+            meta,
+            kind,
+            conditions,
+            left,
+            right,
+            left_types,
+            right_types,
+            ctx,
+            memory,
+        );
+        executor.index_lookup = Some(plan);
+        executor
+    }
+
+    fn left_exec(&self) -> &dyn Executor {
+        self.left
+            .as_deref()
+            .expect("an ordinary join always has a left child")
+    }
+
+    fn right_exec(&self) -> &dyn Executor {
+        self.right
+            .as_deref()
+            .expect("an ordinary join always has a right child")
+    }
+
+    fn left_exec_mut(&mut self) -> &mut dyn Executor {
+        self.left
+            .as_deref_mut()
+            .expect("an ordinary join always has a left child")
+    }
+
+    fn right_exec_mut(&mut self) -> &mut dyn Executor {
+        self.right
+            .as_deref_mut()
+            .expect("an ordinary join always has a right child")
+    }
+
+    pub(crate) fn set_default_values(&mut self, values: Vec<Datum>) -> Result<(), ExecError> {
+        self.output
+            .set_default(self.kind == JoinKind::Right, &values)
+    }
+
+    pub(crate) fn set_output_offsets(&mut self, offsets: Vec<usize>) -> Result<(), ExecError> {
+        self.output = JoinOutput::resolved(
+            &offsets,
+            self.kind,
+            self.left_types.len(),
+            self.right_types.len(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn set_parallelism(&mut self, parallelism: usize) {
+        self.concurrency = parallelism.max(1);
     }
 
     /// Whether the build side has moved to a spill file (Go
@@ -1473,14 +1144,16 @@ impl<C: Columns> JoinExec<C> {
         scratch: &mut Chunk,
         left: Row<'_>,
         right: Row<'_>,
+        left_width: usize,
+        right_width: usize,
     ) -> Result<bool, ExecError> {
         if conditions.is_empty() {
             return Ok(true);
         }
         condition_evals.set(condition_evals.get() + 1);
         scratch.reset();
-        scratch.append_partial_row(0, left);
-        scratch.append_partial_row(left.len(), right);
+        scratch.append_partial_row_limited(0, left, left_width);
+        scratch.append_partial_row_limited(left_width, right, right_width);
         let row = scratch.get_row(0);
         for condition in conditions {
             if !truthy(&condition.eval(ctx, row)?)? {
@@ -1488,110 +1161,6 @@ impl<C: Columns> JoinExec<C> {
             }
         }
         Ok(true)
-    }
-
-    /// Evaluates the one residual shape admitted by
-    /// [`residual_decimal_mul_lt`]. The column access remains typed and the
-    /// decimal arithmetic uses the same exact value layer as the expression
-    /// evaluator, so this is an allocation reduction rather than a numeric
-    /// approximation.
-    fn matches_decimal_mul_lt(
-        condition_evals: &Cell<u64>,
-        fast: &DecimalMulLtFastPath,
-        left: Row<'_>,
-        left_types: &[FieldType],
-        right: Row<'_>,
-        right_types: &[FieldType],
-        cached_product: Option<Option<&MyDecimal>>,
-    ) -> Result<bool, ExecError> {
-        condition_evals.set(condition_evals.get().saturating_add(1));
-        if let Some(product) = cached_product {
-            let Some(product) = product else {
-                return Ok(false);
-            };
-            let (row, types, column) = if fast.left_column < left_types.len() {
-                (left, left_types, fast.left_column)
-            } else {
-                (right, right_types, fast.left_column - left_types.len())
-            };
-            let Some(field_type) = types.get(column) else {
-                return Err(ExecError::unsupported(
-                    "fast residual predicate left column is outside the join row",
-                ));
-            };
-            if row.is_null(column) {
-                return Ok(false);
-            }
-            if field_type.eval_type() != EvalType::Decimal {
-                return Err(ExecError::unsupported(
-                    "fast residual predicate left column is not DECIMAL",
-                ));
-            }
-            return Ok(row.get_my_decimal(column).compare(product) == Ordering::Less);
-        }
-        let datum_at = |index: usize| {
-            if index < left_types.len() {
-                left_types
-                    .get(index)
-                    .map(|field_type| left.get_datum(index, field_type))
-            } else {
-                let right_index = index - left_types.len();
-                right_types
-                    .get(right_index)
-                    .map(|field_type| right.get_datum(right_index, field_type))
-            }
-        };
-        let Some(left_value) = datum_at(fast.left_column) else {
-            return Err(ExecError::unsupported(
-                "fast residual predicate left column is outside the join row",
-            ));
-        };
-        let Some(right_value) = datum_at(fast.right_column) else {
-            return Err(ExecError::unsupported(
-                "fast residual predicate right column is outside the join row",
-            ));
-        };
-        let (Datum::Decimal(left_value), Datum::Decimal(right_value)) = (left_value, right_value)
-        else {
-            // DECIMAL comparisons involving NULL are not TRUE. Any other
-            // runtime type would contradict the statically proven shape and
-            // must fail closed instead of changing SQL comparison rules.
-            return Ok(false);
-        };
-        let comparison = decimal_mul_lt_mysql(&left_value, &fast.factor, &right_value);
-        if comparison == Err(tidb_datatype::DecimalCodecWarning::Overflow) {
-            return Err(ExecError::Eval(tidb_expr::EvalError::DecimalOverflow));
-        }
-        Ok(comparison.expect("decimal multiplication only reports overflow"))
-    }
-
-    fn decimal_mul_product(
-        fast: &DecimalMulLtFastPath,
-        build_row: Row<'_>,
-        build_types: &[FieldType],
-        column: usize,
-    ) -> Result<Option<MyDecimal>, ExecError> {
-        let Some(field_type) = build_types.get(column) else {
-            return Err(ExecError::unsupported(
-                "fast residual predicate right column is outside the build row",
-            ));
-        };
-        if build_row.is_null(column) {
-            return Ok(None);
-        }
-        if field_type.eval_type() != EvalType::Decimal {
-            return Err(ExecError::unsupported(
-                "fast residual predicate right column is not DECIMAL",
-            ));
-        }
-        let right = Decimal::from_my_decimal(&build_row.get_my_decimal(column));
-        let (product, warning) = fast.factor.mul_mysql(&right);
-        if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
-            return Err(ExecError::Eval(tidb_expr::EvalError::DecimalOverflow));
-        }
-        product.to_my_decimal().map(Some).map_err(|_| {
-            ExecError::unsupported("fast residual DECIMAL product does not fit a chunk cell")
-        })
     }
 
     /// Concatenates an outer and an inner row back into left-then-right
@@ -1615,11 +1184,13 @@ impl<C: Columns> JoinExec<C> {
     }
 
     fn append_joined_parts(&self, req: &mut Chunk, outer_row: &[Datum], inner_row: &[Datum]) {
-        self.output.datum_pair(req, self.outer_is_left(), outer_row, inner_row);
+        self.output
+            .datum_pair(req, self.outer_is_left(), outer_row, inner_row);
     }
 
     fn append_joined_chunk_row(&self, req: &mut Chunk, outer_row: &[Datum], inner_row: Row<'_>) {
-        self.output.datum_chunk(req, self.outer_is_left(), outer_row, inner_row);
+        self.output
+            .datum_chunk(req, self.outer_is_left(), outer_row, inner_row);
     }
 
     /// Chunk-backed counterpart of [`Self::emit_outer_row`]. Residual
@@ -1641,7 +1212,8 @@ impl<C: Columns> JoinExec<C> {
             if evaluate_residual {
                 let inner_values = inner_row.get_datum_row(inner_types);
                 let joined = self.join_rows(outer_row, &inner_values);
-                if !self.matches(&joined)? {
+                let matches = self.matches(&joined)?;
+                if !matches {
                     continue;
                 }
             }
@@ -1737,30 +1309,6 @@ impl<C: Columns> JoinExec<C> {
         Ok(())
     }
 
-    /// Declares that this join looks its inner side up per outer batch.
-    ///
-    /// As with [`Self::set_merge_plan`] the promise is the caller's: only
-    /// `driver::index_join_decision` makes it, and only after checking that
-    /// the probed object's key columns ARE the join's own equality columns.
-    pub(crate) fn set_index_lookup_plan(&mut self, plan: IndexLookupPlan) {
-        if matches!(
-            self.kind,
-            JoinKind::Inner
-                | JoinKind::Left
-                | JoinKind::Right
-                | JoinKind::Semi
-                | JoinKind::LeftOuterSemi
-                | JoinKind::AntiSemi
-        ) {
-            self.index_lookup = Some(plan);
-        }
-    }
-
-    /// Records that this committed join tree enforces the complete `WHERE`.
-    pub(crate) fn set_consumes_where(&mut self, consumes_where: bool) {
-        self.consumes_where = consumes_where;
-    }
-
     /// Whether this join looks its inner side up per outer batch.
     #[must_use]
     pub fn is_index_join(&self) -> bool {
@@ -1791,9 +1339,9 @@ impl<C: Columns> JoinExec<C> {
     fn fill_index_batch(&mut self) -> Result<bool, ExecError> {
         if self.index_state.is_none() {
             let outer_chunk = if self.outer_is_left() {
-                self.left.new_chunk()
+                self.left_exec().new_chunk()
             } else {
-                self.right.new_chunk()
+                self.right_exec().new_chunk()
             };
             let inner_types = self
                 .index_lookup
@@ -1859,9 +1407,12 @@ impl<C: Columns> JoinExec<C> {
             ..
         } = self;
         let outer_child = if outer_is_left {
-            left.as_mut()
+            left.as_deref_mut()
+                .expect("an index join keeps its left outer child")
         } else {
-            right.as_mut()
+            right
+                .as_deref_mut()
+                .expect("an index join keeps its right outer child")
         };
         let plan = index_lookup
             .as_mut()
@@ -1915,19 +1466,13 @@ impl<C: Columns> JoinExec<C> {
             INDEX_LOOKUP_JOIN_CONCURRENCY.saturating_sub(1),
         )?;
 
-        let aggregation = plan.aggregation.clone();
-        let aggregation_stream_ordered = plan.aggregation_stream_ordered;
         let inner_not_null = plan.inner_not_null.clone();
-        let probe_cast = plan.probe_cast.clone();
         match task.source {
             PendingIndexLookupSource::Prefetched(mut source) => Self::materialize_index_inner(
                 &mut source,
                 state,
                 keys,
-                probe_cast.as_ref(),
                 outer_is_left,
-                aggregation.as_ref(),
-                aggregation_stream_ordered,
                 &inner_not_null,
                 tracker,
                 memory,
@@ -1946,10 +1491,7 @@ impl<C: Columns> JoinExec<C> {
                     &mut plan.source,
                     state,
                     keys,
-                    probe_cast.as_ref(),
                     outer_is_left,
-                    aggregation.as_ref(),
-                    aggregation_stream_ordered,
                     &inner_not_null,
                     tracker,
                     memory,
@@ -2060,38 +1602,6 @@ impl<C: Columns> JoinExec<C> {
         outer_types: &[FieldType],
         outer_is_left: bool,
     ) -> Result<Vec<IndexTaskProbe>, ExecError> {
-        if let Some(cast) = &plan.probe_cast {
-            // The computed key: `cast(str AS SIGNED)` behind Go's guard.
-            // Distinct values only, keyed by their INT-domain encoding,
-            // exactly like the column path below.
-            let encoding = IndexProbeCast::key_encoding();
-            let mut probes_by_key: std::collections::BTreeMap<Vec<u8>, IndexTaskProbe> =
-                std::collections::BTreeMap::new();
-            for row in outer {
-                let Some(value) = crate::driver::join_key_cast::computed_probe_key(
-                    &cast.cast,
-                    &cast.guard,
-                    &cast.str_type,
-                    &row[cast.outer_offset],
-                    ctx,
-                )?
-                else {
-                    continue;
-                };
-                let probe = IndexTaskProbe {
-                    key: vec![value],
-                    bounds: Vec::new(),
-                };
-                let encoded =
-                    row_key(&encoding, &probe.key, |key| key.left).map_err(|_: KeyError| {
-                        ExecError::unsupported("a join key column has no comparable encoding")
-                    })?;
-                if let Some(encoded) = encoded {
-                    probes_by_key.entry(encoded).or_insert(probe);
-                }
-            }
-            return Ok(probes_by_key.into_values().collect());
-        }
         let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
         let probe_encoding: Vec<EquiKey> = plan
             .probe_keys
@@ -2101,7 +1611,7 @@ impl<C: Columns> JoinExec<C> {
                 left: at,
                 right: at,
                 class: keys[*key].class,
-                null_safe: false,
+                null_safe: keys[*key].null_safe,
             })
             .collect();
         // Go's `ColWithCmpFuncManager` dedup: lookup contents compare equal
@@ -2115,11 +1625,8 @@ impl<C: Columns> JoinExec<C> {
             .filter_map(|(at, bound)| {
                 let field_type = bound.arg.static_type()?.clone();
                 use crate::hash_join::KeyClass;
-                let class = KeyClass::of(
-                    &field_type,
-                    &field_type,
-                    tidb_datatype::Collation::Binary,
-                )?;
+                let class =
+                    KeyClass::of(&field_type, &field_type, tidb_datatype::Collation::Binary)?;
                 Some(EquiKey {
                     left: at,
                     right: at,
@@ -2140,13 +1647,50 @@ impl<C: Columns> JoinExec<C> {
                 .probe_keys
                 .iter()
                 .map(|at| {
-                    let value = row[outer_offset(&keys[*at])].clone();
-                    (!matches!(value, Datum::Null)).then_some(value)
+                    let key = &keys[*at];
+                    let value = row[outer_offset(key)].clone();
+                    (!matches!(value, Datum::Null) || key.null_safe).then_some(value)
                 })
                 .collect();
-            let Some(probe) = probe else {
+            let Some(mut probe) = probe else {
                 continue;
             };
+            if !plan.probe_key_domains.is_empty() {
+                if plan.probe_key_domains.len() != probe.len() {
+                    return Err(ExecError::unsupported(
+                        "an index-join lookup key has incomplete inner-column domains",
+                    ));
+                }
+                let mut valid = true;
+                for ((value, domain), key_offset) in probe
+                    .iter_mut()
+                    .zip(&plan.probe_key_domains)
+                    .zip(&plan.probe_keys)
+                {
+                    if value.is_null() {
+                        if !keys[*key_offset].null_safe {
+                            valid = false;
+                            break;
+                        }
+                        continue;
+                    }
+                    let Some(converted) =
+                        crate::driver::point_get_key::point_get_value(&domain.field_type, value)
+                    else {
+                        valid = false;
+                        break;
+                    };
+                    *value = converted;
+                    crate::index_prefix_cut::cut_datum_by_prefix_len(
+                        value,
+                        domain.prefix_length,
+                        &domain.field_type,
+                    );
+                }
+                if !valid {
+                    continue;
+                }
+            }
             // Evaluate this row's bounds. A NULL result is Go's empty range:
             // the content reads nothing and contributes no probe.
             let bounds = if plan.probe_bounds.is_empty() {
@@ -2200,10 +1744,7 @@ impl<C: Columns> JoinExec<C> {
         source: &mut IndexLookupSource,
         state: &mut IndexLookupState,
         keys: &[EquiKey],
-        probe_cast: Option<&IndexProbeCast>,
         outer_is_left: bool,
-        aggregation: Option<&IndexLookupAggregation>,
-        aggregation_stream_ordered: bool,
         inner_not_null: &[usize],
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
@@ -2224,34 +1765,17 @@ impl<C: Columns> JoinExec<C> {
             tracker.consume(bytes);
             memory.check()?;
         }
-        // Once the retained aggregation has run, the inner rows are its own
-        // OUTPUT layout -- one column per aggregate carrier -- and no longer
-        // the physical lookup width. Everything after this point (the
-        // non-NULL filter, the join-key extraction, and the emit path in
-        // `drain_index_batch`) must read them with those types.
-        let mut materialized_types = inner_types.clone();
-        if let Some(aggregation) = aggregation {
-            let rows = list_datum_rows(&state.inner, &inner_types);
-            let raw_bytes = state.inner_bytes;
-            let aggregated = aggregation.apply(rows, aggregation_stream_ordered)?;
-            materialized_types = aggregation.output_types(&inner_types);
-            let aggregated_bytes = aggregated.iter().map(|row| row_bytes(row)).sum::<i64>();
-            replace_list_with_rows(&mut state.inner, &materialized_types, aggregated);
-            state.inner_bytes = aggregated_bytes;
-            tracker.consume(aggregated_bytes - raw_bytes);
-            memory.check()?;
-        }
         if !inner_not_null.is_empty() {
             let before = state.inner_bytes;
             let mut retained = Vec::with_capacity(state.inner.len());
-            for row in list_datum_rows(&state.inner, &materialized_types) {
+            for row in list_datum_rows(&state.inner, &inner_types) {
                 if row_non_null_at(&row, inner_not_null)? {
                     retained.push(row);
                 }
             }
             let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
             tracker.consume(after - before);
-            replace_list_with_rows(&mut state.inner, &materialized_types, retained);
+            replace_list_with_rows(&mut state.inner, &inner_types, retained);
             state.inner_bytes = after;
             memory.check()?;
         }
@@ -2261,23 +1785,10 @@ impl<C: Columns> JoinExec<C> {
             for row_idx in 0..num_rows {
                 let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
                 let row = state.inner.get_row(ptr);
-                // The cast probe's inner side is the bare INT column, encoded
-                // in the same INT domain as the computed outer key.
-                let key = match probe_cast {
-                    Some(cast) => {
-                        let encoding = IndexProbeCast::key_encoding();
-                        row_key_by(&encoding, |_| {
-                            row.get_datum(
-                                cast.inner_offset,
-                                &materialized_types[cast.inner_offset],
-                            )
-                        })
-                    }
-                    None => row_key_by(keys, |key| {
-                        let offset = inner_offset(key);
-                        row.get_datum(offset, &materialized_types[offset])
-                    }),
-                }
+                let key = row_key_by(keys, |key| {
+                    let offset = inner_offset(key);
+                    row.get_datum(offset, &inner_types[offset])
+                })
                 .map_err(|_: KeyError| {
                     ExecError::unsupported("a join key column has no comparable encoding")
                 })?;
@@ -2295,10 +1806,6 @@ impl<C: Columns> JoinExec<C> {
         let keys = self.keys.clone();
         let outer_is_left = self.outer_is_left();
         let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
-        let probe_cast = self
-            .index_lookup
-            .as_ref()
-            .and_then(|plan| plan.probe_cast.clone());
         let cap = self.meta.max_chunk_size();
         loop {
             let state = self
@@ -2309,44 +1816,15 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             }
             let outer_row = &state.outer[state.cursor];
-            // The cast probe re-computes the same guarded key the probe used,
-            // so the outer row and the inner match map speak one encoding.
-            let key = match &probe_cast {
-                Some(cast) => {
-                    let value = crate::driver::join_key_cast::computed_probe_key(
-                        &cast.cast,
-                        &cast.guard,
-                        &cast.str_type,
-                        &outer_row[cast.outer_offset],
-                        &self.ctx,
-                    )?;
-                    match value {
-                        Some(value) => {
-                            let encoding = IndexProbeCast::key_encoding();
-                            let probe = [value];
-                            row_key(&encoding, &probe, |key| key.left)
-                        }
-                        None => Ok(None),
-                    }
-                }
-                None => row_key(&keys, outer_row, outer_offset),
-            }
-            .map_err(|_: KeyError| {
+            let key = row_key(&keys, outer_row, outer_offset).map_err(|_: KeyError| {
                 ExecError::unsupported("a join key column has no comparable encoding")
             })?;
             if let Some(positions) = key.and_then(|key| state.matched.get(&key)) {
-                // The stored rows are the retained aggregation's OUTPUT layout
-                // when one ran (see `materialize_index_inner`), so the emit
-                // path must convert them with those types, not the physical
-                // lookup width.
                 let plan = self
                     .index_lookup
                     .as_ref()
                     .expect("this path runs only with a plan");
-                let mut inner_types = plan.source.ret_field_types().to_vec();
-                if let Some(aggregation) = &plan.aggregation {
-                    inner_types = aggregation.output_types(&inner_types);
-                }
+                let inner_types = plan.source.ret_field_types().to_vec();
                 self.emit_outer_chunk_rows(
                     req,
                     outer_row,
@@ -2376,7 +1854,7 @@ impl<C: Columns> JoinExec<C> {
             // only equalities represented by the chosen merge keys disappear.
             // Native plans already carry precisely that residual list.
             if !self.conditions.is_empty() {
-                let width = self.left.ret_field_types().len();
+                let width = self.left_types.len();
                 self.residual_conditions =
                     self.conditions
                         .iter()
@@ -2576,9 +2054,9 @@ impl<C: Columns> JoinExec<C> {
                 matched_current_outer,
             } => {
                 let outer_types = if outer.side_left {
-                    self.left.ret_field_types().to_vec()
+                    self.left_types.clone()
                 } else {
-                    self.right.ret_field_types().to_vec()
+                    self.right_types.clone()
                 };
                 while *outer_index < outer.end && !req.is_full() {
                     let selected = {
@@ -2663,9 +2141,9 @@ impl<C: Columns> JoinExec<C> {
                             outer.side_left,
                             outer_row,
                             if outer.side_left {
-                                self.right.ret_field_types().len()
+                                self.right_types.len()
                             } else {
-                                self.left.ret_field_types().len()
+                                self.left_types.len()
                             },
                         );
                     }
@@ -2693,9 +2171,9 @@ impl<C: Columns> JoinExec<C> {
                         outer.side_left,
                         outer_row,
                         if outer.side_left {
-                            self.right.ret_field_types().len()
+                            self.right_types.len()
                         } else {
-                            self.left.ret_field_types().len()
+                            self.left_types.len()
                         },
                     );
                     *outer_index += 1;
@@ -2731,8 +2209,8 @@ impl<C: Columns> JoinExec<C> {
         let desc = plan.desc;
         let left_keys: Vec<usize> = plan.keys.iter().map(|key| key.left).collect();
         let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
-        let left_types: Vec<FieldType> = self.left.ret_field_types().to_vec();
-        let right_types: Vec<FieldType> = self.right.ret_field_types().to_vec();
+        let left_types = self.left_types.clone();
+        let right_types = self.right_types.clone();
         let outer_is_left = self.outer_is_left();
         if self.merge_state.is_none() {
             let inner_is_left = !outer_is_left;
@@ -2757,8 +2235,8 @@ impl<C: Columns> JoinExec<C> {
             }
             let inner_scratch_bytes =
                 inner_group.staging.memory_usage() + inner_group.read_back.memory_usage();
-            let mut left = MergeSide::new(self.left.new_chunk());
-            let mut right = MergeSide::new(self.right.new_chunk());
+            let mut left = MergeSide::new(self.left_exec().new_chunk());
+            let mut right = MergeSide::new(self.right_exec().new_chunk());
             // A single non-nullable-safe integer key pair reads typed i64s
             // directly in `fetch_inner_group`/`fetch_outer_group`, skipping
             // one `Vec<Datum>` per row on shapes like q12's 1.5M-row build.
@@ -2827,22 +2305,30 @@ impl<C: Columns> JoinExec<C> {
             ) = if state.inner_is_left {
                 (
                     &mut state.left,
-                    self.left.as_mut(),
+                    self.left
+                        .as_deref_mut()
+                        .ok_or_else(|| ExecError::internal("merge join has no left child"))?,
                     &left_keys,
                     &left_types,
                     &mut state.right,
-                    self.right.as_mut(),
+                    self.right
+                        .as_deref_mut()
+                        .ok_or_else(|| ExecError::internal("merge join has no right child"))?,
                     &right_keys,
                     &right_types,
                 )
             } else {
                 (
                     &mut state.right,
-                    self.right.as_mut(),
+                    self.right
+                        .as_deref_mut()
+                        .ok_or_else(|| ExecError::internal("merge join has no right child"))?,
                     &right_keys,
                     &right_types,
                     &mut state.left,
-                    self.left.as_mut(),
+                    self.left
+                        .as_deref_mut()
+                        .ok_or_else(|| ExecError::internal("merge join has no left child"))?,
                     &left_keys,
                     &left_types,
                 )
@@ -3008,8 +2494,8 @@ impl<C: Columns> JoinExec<C> {
         }
         let tracker = Arc::clone(&self.tracker);
         let memory = self.memory.clone();
-        let left_rows = Self::drain(self.left.as_mut(), &tracker, &memory)?;
-        let right_rows = Self::drain(self.right.as_mut(), &tracker, &memory)?;
+        let left_rows = Self::drain(self.left_exec_mut(), &tracker, &memory)?;
+        let right_rows = Self::drain(self.right_exec_mut(), &tracker, &memory)?;
         let (outer, inner) = if self.outer_is_left() {
             (&left_rows, &right_rows)
         } else {
@@ -3061,7 +2547,6 @@ impl<C: Columns> JoinExec<C> {
     fn next_hashed(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         self.build_table()?;
         if self.can_parallelize_exact_int_probe() {
-            self.prepare_parallel_decimal_products()?;
             return self.next_parallel_exact_int_hashed(req);
         }
         loop {
@@ -3082,10 +2567,12 @@ impl<C: Columns> JoinExec<C> {
     /// Whether this join can use the bounded worker path without moving the
     /// executor tree or expression context across threads.
     ///
-    /// The first slice is deliberately narrow: one ordinary integer equality
-    /// key, no residual predicate, and at most one build match per key. That
-    /// is enough for primary/unique-key dimension joins while proving each
-    /// worker can retain no more than one output chunk.
+    /// The current slice remains deliberately narrow: one ordinary integer
+    /// equality key and at most one build match per key. Inner joins may carry
+    /// any residual expression because Go evaluates `OtherConditions` on the
+    /// probe workers through its ordinary expression evaluator. Preserved join
+    /// families remain on the serial path when they have residuals until their
+    /// worker match-state protocol is ported too.
     fn can_parallelize_exact_int_probe(&self) -> bool {
         if !self.outer_filter.is_empty() && self.filter_is_left != self.hash_build_is_left() {
             return false;
@@ -3093,10 +2580,8 @@ impl<C: Columns> JoinExec<C> {
         let [key] = self.keys.as_slice() else {
             return false;
         };
-        let residual_supported = self.residual_conditions.is_empty()
-            || (self.kind == JoinKind::Inner
-                && self.residual_decimal_mul_lt.is_some()
-                && self.parallel_decimal_product_build_column().is_some());
+        let residual_supported =
+            self.residual_conditions.is_empty() || self.kind == JoinKind::Inner;
         matches!(
             self.kind,
             JoinKind::Inner
@@ -3105,80 +2590,13 @@ impl<C: Columns> JoinExec<C> {
                 | JoinKind::Semi
                 | JoinKind::AntiSemi
         ) && residual_supported
+            && self.concurrency > 1
             && key.class == KeyClass::Int
             && !key.null_safe
             && self
                 .hash
                 .as_ref()
-                .is_some_and(|hash| {
-                    let ok = hash.parallel_exact_int_enabled && hash.table.has_exact_int();
-                    if std::env::var("TIDB_DEBUG_PROBE").is_ok() {
-                        eprintln!(
-                            "[gate] kind={:?} residual_supported={residual_supported} int={} nullsafe={} enabled={} exact={}",
-                            self.kind, key.class == KeyClass::Int, !key.null_safe,
-                            hash.parallel_exact_int_enabled, hash.table.has_exact_int()
-                        );
-                    }
-                    ok
-                })
-    }
-
-    /// Build-side column holding the right operand of q17's cached decimal
-    /// product. Returning `None` keeps a residual whose product lives on the
-    /// probe side out of the bounded worker path.
-    fn parallel_decimal_product_build_column(&self) -> Option<usize> {
-        let fast = self.residual_decimal_mul_lt.as_ref()?;
-        let left_width = self.left.ret_field_types().len();
-        let product_is_left = fast.right_column < left_width;
-        if product_is_left != self.hash_build_is_left() {
-            return None;
-        }
-        Some(if product_is_left {
-            fast.right_column
-        } else {
-            fast.right_column - left_width
-        })
-    }
-
-    /// Computes q17's `0.2 * AVG(...)` once per unique build row before any
-    /// worker borrows the table. The resulting map is immutable throughout
-    /// all probe windows and therefore crosses no mutable session boundary.
-    fn prepare_parallel_decimal_products(&mut self) -> Result<(), ExecError> {
-        let Some(fast) = self.residual_decimal_mul_lt.clone() else {
-            return Ok(());
-        };
-        let column = self
-            .parallel_decimal_product_build_column()
-            .expect("parallel decimal residual requires a build-side product");
-        let hash = self.hash.as_mut().expect("hash table was built");
-        if !hash
-            .decimal_mul_products
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
-        {
-            return Ok(());
-        }
-        let mut ptr = hash.table.first_ptr();
-        while let Some(current) = ptr {
-            ptr = hash.table.next_ptr(current);
-            let product = {
-                let table = &hash.table;
-                let build_types = &hash.build_types;
-                let build_buf = &mut hash.build_buf;
-                table
-                    .with_row(current, build_buf, |build_row| {
-                        Self::decimal_mul_product(&fast, build_row, build_types, column)
-                    })
-                    .map_err(|error| ExecError::SpillFailed(error.to_string()))??
-            };
-            hash
-                .decimal_mul_products
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(current, product);
-        }
-        Ok(())
+                .is_some_and(|hash| hash.parallel_exact_int_enabled && hash.table.has_exact_int())
     }
 
     /// Parallel counterpart of [`Self::next_hashed`] for the proven exact
@@ -3232,24 +2650,25 @@ impl<C: Columns> JoinExec<C> {
     /// worker boundary.
     fn fill_parallel_exact_int_probe_window(&mut self) -> Result<(), ExecError> {
         debug_assert!(self.can_parallelize_exact_int_probe());
-        debug_assert!(
-            self.hash
-                .as_ref()
-                .is_some_and(|hash| hash.parallel_probe_pending.is_empty())
-        );
+        debug_assert!(self
+            .hash
+            .as_ref()
+            .is_some_and(|hash| hash.parallel_probe_pending.is_empty()));
 
         let probe_is_left = !self.hash_build_is_left();
         let probe_types = if probe_is_left {
-            self.left.ret_field_types().to_vec()
+            self.left_types.clone()
         } else {
-            self.right.ret_field_types().to_vec()
+            self.right_types.clone()
         };
         let output_types = self.meta.ret_field_types().to_vec();
         let key = self.keys[0];
         let key_offset = if probe_is_left { key.left } else { key.right };
         let kind = self.kind;
         let builds_preserved = self.hash_builds_preserved_side();
-        let decimal_mul_lt = self.residual_decimal_mul_lt.as_ref();
+        let residual_conditions = Arc::new(self.residual_conditions.clone());
+        let condition_types = Arc::new(self.condition_types.clone());
+        let ctx = Arc::new(self.ctx.clone());
 
         // Keep a bounded lane of reusable chunks per default Go worker. The
         // child is intentionally fetched only here on the session thread:
@@ -3267,15 +2686,15 @@ impl<C: Columns> JoinExec<C> {
                 .pop();
             let mut input = reused.unwrap_or_else(|| {
                 if probe_is_left {
-                    self.left.new_chunk()
+                    self.left_exec().new_chunk()
                 } else {
-                    self.right.new_chunk()
+                    self.right_exec().new_chunk()
                 }
             });
             let result = if probe_is_left {
-                self.left.next(&mut input)
+                self.left_exec_mut().next(&mut input)
             } else {
-                self.right.next(&mut input)
+                self.right_exec_mut().next(&mut input)
             };
             if let Err(error) = result {
                 input.reset();
@@ -3328,14 +2747,12 @@ impl<C: Columns> JoinExec<C> {
                 .hash
                 .as_ref()
                 .expect("parallel probe requires hash state");
-            // 'static snapshots for the persistent pool's tasks: the table is
-            // already behind an Arc, the type lists and the decimal fast-path
-            // are small owned values, and the product map is cloned as an Arc
-            // so workers read it without touching the executor.
+            // 'static snapshots for the persistent pool's tasks. Go lends its
+            // expression context and `OtherConditions` to each probe worker;
+            // these Arcs are the same shared ownership boundary.
             let table = Arc::clone(&hash.table);
             let build_types = hash.build_types.clone();
             let probe_types = probe_types.to_vec();
-            let decimal_products = Arc::clone(&hash.decimal_mul_products);
             if worker_count == 1 {
                 let (input, output) = work.pop().expect("one worker item");
                 vec![(
@@ -3351,8 +2768,9 @@ impl<C: Columns> JoinExec<C> {
                         probe_is_left,
                         kind,
                         builds_preserved,
-                        decimal_mul_lt,
-                        &decimal_products,
+                        ctx.as_ref(),
+                        residual_conditions.as_slice(),
+                        condition_types.as_slice(),
                     ),
                 )]
             } else {
@@ -3368,10 +2786,9 @@ impl<C: Columns> JoinExec<C> {
                         let table = Arc::clone(&table);
                         let build_types = build_types.clone();
                         let probe_types = probe_types.clone();
-                        let decimal_products = Arc::clone(&decimal_products);
-                        // The fast path is a tiny Copy-shaped struct; clone it
-                        // into the 'static task and lend it to the probe call.
-                        let decimal_mul_lt = decimal_mul_lt.cloned();
+                        let ctx = Arc::clone(&ctx);
+                        let residual_conditions = Arc::clone(&residual_conditions);
+                        let condition_types = Arc::clone(&condition_types);
                         move || {
                             lane.into_iter()
                                 .map(|(index, (input, output))| {
@@ -3379,7 +2796,7 @@ impl<C: Columns> JoinExec<C> {
                                         index,
                                         Self::probe_unique_exact_int_chunk(
                                             &output_layout,
-                        &table,
+                                            &table,
                                             &build_types,
                                             &probe_types,
                                             input,
@@ -3388,8 +2805,9 @@ impl<C: Columns> JoinExec<C> {
                                             probe_is_left,
                                             kind,
                                             builds_preserved,
-                                            decimal_mul_lt.as_ref(),
-                                            &decimal_products,
+                                            ctx.as_ref(),
+                                            residual_conditions.as_slice(),
+                                            condition_types.as_slice(),
                                         ),
                                     )
                                 })
@@ -3457,8 +2875,9 @@ impl<C: Columns> JoinExec<C> {
         probe_is_left: bool,
         kind: JoinKind,
         builds_preserved: bool,
-        decimal_mul_lt: Option<&DecimalMulLtFastPath>,
-        decimal_products: &std::sync::RwLock<HashMap<RowPtr, Option<MyDecimal>>>,
+        ctx: &C,
+        residual_conditions: &[Expression],
+        condition_types: &[FieldType],
     ) -> Result<ParallelProbeResult, ExecError> {
         output.reset();
         // A semi/anti join emits only the preserved LEFT columns; the other
@@ -3467,7 +2886,9 @@ impl<C: Columns> JoinExec<C> {
         // A semi/anti join emits only the preserved LEFT columns, whichever
         // side was built.
         if output.num_cols() != output_layout.width() {
-            return Err(ExecError::internal("parallel hash join output schema mismatch"));
+            return Err(ExecError::internal(
+                "parallel hash join output schema mismatch",
+            ));
         }
         if input.num_cols() < probe_types.len() {
             return Err(ExecError::internal(format!(
@@ -3477,6 +2898,7 @@ impl<C: Columns> JoinExec<C> {
             )));
         }
         let mut build_buf = Chunk::new_with_capacity(build_types, 1);
+        let mut condition_chunk = Chunk::new_with_capacity(condition_types, 1);
         let condition_evals = Cell::new(0u64);
         let mut matched_build_rows = if builds_preserved {
             Vec::with_capacity(input.num_rows())
@@ -3512,9 +2934,8 @@ impl<C: Columns> JoinExec<C> {
         // The common unique-key dimension join has one build candidate for
         // every probe row. Preflight that shape once, then retain the build
         // container's records read lock across the whole window instead of
-        // reacquiring it for every joined row. The decimal residual form is
-        // included here: q17 has one unique part row per probe key, and the
-        // residual still runs for every pair while the source lock is held.
+        // reacquiring it for every joined row. Residual expressions still run
+        // for every pair through the same general evaluator as the serial path.
         if !builds_preserved && input.num_rows() > 0 {
             let mut batch_ptrs = Vec::with_capacity(input.num_rows());
             let mut all_matched = true;
@@ -3549,36 +2970,27 @@ impl<C: Columns> JoinExec<C> {
                         condition_evals: condition_evals.get(),
                     });
                 }
-                if let Some(fast) = decimal_mul_lt {
+                if !residual_conditions.is_empty() {
                     let mut probe_index = 0;
                     table
                         .with_rows(&batch_ptrs, &mut build_buf, |build_row| {
                             let current_probe_index = probe_index;
                             probe_index += 1;
-                            // `get_row` maps through the selection vector, so
-                            // q17's residual can borrow the worker-owned input
-                            // directly. Deep-copying all probe columns here
-                            // doubled the 6M-row scan traffic before emitting
-                            // the small residual-selected result.
                             let probe_row = input.get_row(current_probe_index);
-                            let ptr = batch_ptrs[current_probe_index];
-                            let (left, left_types, right, right_types) = if probe_is_left {
-                                (probe_row, probe_types, build_row, build_types)
+                            let (left, right, left_width, right_width) = if probe_is_left {
+                                (probe_row, build_row, probe_types.len(), build_types.len())
                             } else {
-                                (build_row, build_types, probe_row, probe_types)
+                                (build_row, probe_row, build_types.len(), probe_types.len())
                             };
-                            if Self::matches_decimal_mul_lt(
+                            if Self::matches_chunk_rows(
+                                ctx,
+                                residual_conditions,
                                 &condition_evals,
-                                fast,
+                                &mut condition_chunk,
                                 left,
-                                left_types,
                                 right,
-                                right_types,
-                                decimal_products
-                                    .read()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .get(&ptr)
-                                    .map(Option::as_ref),
+                                left_width,
+                                right_width,
                             )? {
                                 output_layout.chunks(
                                     &mut output,
@@ -3657,34 +3069,26 @@ impl<C: Columns> JoinExec<C> {
             for &ptr in candidates {
                 let emitted = table
                     .with_row(ptr, &mut build_buf, |build_row| {
-                        if let Some(fast) = decimal_mul_lt {
-                            let (left, left_types, right, right_types) = if probe_is_left {
-                                (probe_row, probe_types, build_row, build_types)
+                        if !residual_conditions.is_empty() {
+                            let (left, right, left_width, right_width) = if probe_is_left {
+                                (probe_row, build_row, probe_types.len(), build_types.len())
                             } else {
-                                (build_row, build_types, probe_row, probe_types)
+                                (build_row, probe_row, build_types.len(), probe_types.len())
                             };
-                            if !Self::matches_decimal_mul_lt(
+                            if !Self::matches_chunk_rows(
+                                ctx,
+                                residual_conditions,
                                 &condition_evals,
-                                fast,
+                                &mut condition_chunk,
                                 left,
-                                left_types,
                                 right,
-                                right_types,
-                                decimal_products
-                                    .read()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .get(&ptr)
-                                    .map(Option::as_ref),
+                                left_width,
+                                right_width,
                             )? {
                                 return Ok::<bool, ExecError>(false);
                             }
                         }
-                        output_layout.chunks(
-                            &mut output,
-                            probe_is_left,
-                            probe_row,
-                            build_row,
-                        );
+                        output_layout.chunks(&mut output, probe_is_left, probe_row, build_row);
                         Ok::<bool, ExecError>(true)
                     })
                     .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
@@ -3694,12 +3098,7 @@ impl<C: Columns> JoinExec<C> {
                 }
             }
             if !matched && !builds_preserved && matches!(kind, JoinKind::Left | JoinKind::Right) {
-                output_layout.unmatched(
-                    &mut output,
-                    probe_is_left,
-                    probe_row,
-                    build_types.len(),
-                );
+                output_layout.unmatched(&mut output, probe_is_left, probe_row, build_types.len());
             }
         }
         drop(probe_key_values);
@@ -3717,462 +3116,6 @@ impl<C: Columns> JoinExec<C> {
     /// container's trackers off this operator's, register the spill action on
     /// the SESSION tracker when `tidb_enable_tmp_storage_on_oom` allows it,
     /// then feed the child's chunks in.
-    /// Builds the bounded binary key used by the compact residual-join path.
-    /// `None` means the column is not a supported string shape; `Some(None)`
-    /// preserves SQL NULL's non-matching key semantics.
-    #[cfg(test)]
-    fn compact_binary_key<F: Fn(&EquiKey) -> usize>(
-        chunk: &Chunk,
-        row_index: usize,
-        types: &[FieldType],
-        key: &EquiKey,
-        offset: F,
-    ) -> Option<Option<CompactBinaryKey>> {
-        let column = offset(key);
-        let field_type = types.get(column)?;
-        if !matches!(
-            field_type.code(),
-            FieldTypeCode::String
-                | FieldTypeCode::VarString
-                | FieldTypeCode::Varchar
-                | FieldTypeCode::TinyBlob
-                | FieldTypeCode::MediumBlob
-                | FieldTypeCode::LongBlob
-                | FieldTypeCode::Blob
-        ) {
-            return None;
-        }
-        let row = chunk.get_row(row_index);
-        if row.is_null(column) {
-            return Some(None);
-        }
-        let bytes = row.get_bytes(column);
-        let bytes = bytes.as_ref();
-        let bytes = match key.class {
-            KeyClass::Str(Collation::Utf8Mb4Bin) => {
-                let len = bytes
-                    .iter()
-                    .rposition(|byte| *byte != b' ')
-                    .map_or(0, |index| index + 1);
-                &bytes[..len]
-            }
-            _ => bytes,
-        };
-        CompactBinaryKey::from_bytes(bytes).map(Some)
-    }
-
-    /// Counts the Web3Bench one-key DECIMAL residual join without materializing
-    /// joined rows. Unsupported shapes return `None` and use the normal path.
-    fn compact_count_rows(&mut self) -> Result<Option<u64>, ExecError> {
-        if !self.outer_filter.is_empty() {
-            return Ok(None);
-        }
-        if self.kind != JoinKind::Inner
-            || self.keys.len() != 1
-            || self.index_lookup.is_some()
-            || self.merge.is_some()
-            || self.residual_conditions.len() != 1
-        {
-            return Ok(None);
-        }
-        let Expression::ScalarFunction(function) = &self.residual_conditions[0] else {
-            return Ok(None);
-        };
-        let [Expression::Column(left), Expression::Column(right)] = function.args.as_slice()
-        else {
-            return Ok(None);
-        };
-        let left_width = self.left.ret_field_types().len();
-        let build_is_left = !self.outer_is_left();
-        let side_offset = |index: i64| -> Option<(bool, usize)> {
-            let index = usize::try_from(index).ok()?;
-            Some(if index < left_width {
-                (build_is_left, index)
-            } else {
-                (!build_is_left, index - left_width)
-            })
-        };
-        let Some((left_is_build, left_offset)) = side_offset(left.index) else {
-            return Ok(None);
-        };
-        let Some((right_is_build, right_offset)) = side_offset(right.index) else {
-            return Ok(None);
-        };
-        if left_is_build == right_is_build {
-            return Ok(None);
-        }
-        let (build_offset, probe_offset, build_on_left) = if left_is_build {
-            (left_offset, right_offset, true)
-        } else {
-            (right_offset, left_offset, false)
-        };
-        let build_types = if build_is_left {
-            self.left.ret_field_types().to_vec()
-        } else {
-            self.right.ret_field_types().to_vec()
-        };
-        let probe_types = if build_is_left {
-            self.right.ret_field_types().to_vec()
-        } else {
-            self.left.ret_field_types().to_vec()
-        };
-        if build_types.get(build_offset).map(FieldType::code)
-            != Some(FieldTypeCode::NewDecimal)
-            || probe_types.get(probe_offset).map(FieldType::code) != Some(FieldTypeCode::NewDecimal)
-        {
-            return Ok(None);
-        }
-        let key = &self.keys[0];
-        if !matches!(
-            key.class,
-            KeyClass::Str(Collation::Binary | Collation::Utf8Mb4Bin | Collation::Utf8Mb40900Bin)
-        ) || key.null_safe
-        {
-            return Ok(None);
-        }
-        let bytes_per_char = match key.class {
-            KeyClass::Str(Collation::Binary) => 1,
-            KeyClass::Str(Collation::Utf8Mb4Bin | Collation::Utf8Mb40900Bin) => 4,
-            _ => return Ok(None),
-        };
-        for ty in [
-            build_types.get(if build_is_left { key.left } else { key.right }),
-            probe_types.get(if build_is_left { key.right } else { key.left }),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if ty.flen().checked_mul(bytes_per_char).is_none_or(|width| {
-                width < 0 || width > COMPACT_BINARY_KEY_BYTES as i64
-            }) {
-                return Ok(None);
-            }
-        }
-        let name = function.func_name.lowercase();
-        let op = if name == "eq" {
-            0
-        } else if name == "ne" {
-            1
-        } else if name == "lt" {
-            2
-        } else if name == "le" {
-            3
-        } else if name == "gt" {
-            4
-        } else if name == "ge" {
-            5
-        } else {
-            return Ok(None);
-        };
-
-        let compact_key = |chunk: &Chunk,
-                           row_index: usize,
-                           types: &[FieldType],
-                           offset: usize,
-                           collation: Collation|
-         -> Result<Option<CompactBinaryKey>, ExecError> {
-            let Some(ty) = types.get(offset) else {
-                return Err(ExecError::unsupported(
-                    "compact join key column is outside the child schema",
-                ));
-            };
-            if !matches!(
-                ty.code(),
-                FieldTypeCode::String
-                    | FieldTypeCode::VarString
-                    | FieldTypeCode::Varchar
-                    | FieldTypeCode::TinyBlob
-                    | FieldTypeCode::MediumBlob
-                    | FieldTypeCode::LongBlob
-                    | FieldTypeCode::Blob
-            ) {
-                return Err(ExecError::unsupported(
-                    "compact join key requires a binary string column",
-                ));
-            }
-            let physical_row = chunk
-                .sel()
-                .map_or(row_index, |selection| selection[row_index]);
-            let column = chunk.column(offset);
-            if column.is_null(physical_row) {
-                return Ok(None);
-            }
-            let bytes = column.get_bytes(physical_row);
-            let bytes = bytes.as_ref();
-            let bytes = if matches!(collation, Collation::Utf8Mb4Bin) {
-                let len = bytes
-                    .iter()
-                    .rposition(|byte| *byte != b' ')
-                    .map_or(0, |index| index + 1);
-                &bytes[..len]
-            } else {
-                bytes
-            };
-            CompactBinaryKey::from_bytes(bytes).map_or_else(
-                || {
-                    Err(ExecError::unsupported(
-                        "compact join key exceeds its declared width",
-                    ))
-                },
-                |key| Ok(Some(key)),
-            )
-        };
-        let collation = match key.class {
-            KeyClass::Str(collation) => collation,
-            _ => return Ok(None),
-        };
-
-        // Web3Bench's count-only residual join is DECIMAL(38,0) on both
-        // sides. Every value of that SQL type fits in i128, so the hot
-        // comparison can stay in the integer domain instead of constructing
-        // a MyDecimal/Decimal pair for every matching address. Keep the
-        // general CompactJoinDecimal path below for non-zero scale or a
-        // future schema whose DECIMAL values do not share this narrow proof.
-        if build_types
-            .get(build_offset)
-            .is_some_and(|field_type| {
-                field_type.decimal() == 0 && (0..=38).contains(&field_type.flen())
-            })
-            && probe_types
-                .get(probe_offset)
-                .is_some_and(|field_type| {
-                    field_type.decimal() == 0 && (0..=38).contains(&field_type.flen())
-                })
-        {
-            const DECIMAL_CELL_BYTES: usize = tidb_chunk::column::MY_DECIMAL_STRUCT_SIZE as usize;
-            // Web3Bench addresses are high-cardinality; most equality
-            // buckets contain only one or two rows. Keep those values inline
-            // to avoid a heap allocation per distinct address.
-            let mut build_values: CompactBinaryMap<smallvec::SmallVec<[i128; 4]>> =
-                CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
-            let build: &mut dyn Executor = if build_is_left {
-                self.left.as_mut()
-            } else {
-                self.right.as_mut()
-            };
-            let mut chunk = build.new_chunk();
-            loop {
-                build.next(&mut chunk)?;
-                if chunk.num_rows() == 0 {
-                    break;
-                }
-                let decimal_column = chunk.column(build_offset);
-                let supported = decimal_column.with_my_decimal_data(|data| -> Result<bool, ExecError> {
-                    for row_index in 0..chunk.num_rows() {
-                        let physical_row =
-                            chunk.sel().map_or(row_index, |selection| selection[row_index]);
-                        if decimal_column.is_null(physical_row) {
-                            continue;
-                        }
-                        let Some(key) = compact_key(
-                            &chunk,
-                            row_index,
-                            &build_types,
-                            if build_is_left {
-                                self.keys[0].left
-                            } else {
-                                self.keys[0].right
-                            },
-                            collation,
-                        )?
-                        else {
-                            continue;
-                        };
-                        let start = physical_row * DECIMAL_CELL_BYTES;
-                        let Some((coefficient, scale)) =
-                            data.get(start..start + DECIMAL_CELL_BYTES)
-                                .and_then(tidb_datatype::MyDecimal::i128_scaled_from_raw_bytes)
-                        else {
-                            return Ok(false);
-                        };
-                        if scale != 0 {
-                            return Ok(false);
-                        }
-                        build_values.entry(key).or_default().push(coefficient);
-                    }
-                    Ok(true)
-                })?;
-                if !supported {
-                    return Ok(None);
-                }
-                drop(decimal_column);
-                self.memory.check()?;
-                chunk.reset();
-            }
-            for values in build_values.values_mut() {
-                if values.len() > 8 {
-                    values.sort_unstable();
-                }
-            }
-            let probe: &mut dyn Executor = if build_is_left {
-                self.right.as_mut()
-            } else {
-                self.left.as_mut()
-            };
-            let mut probe_chunk = probe.new_chunk();
-            let mut total = 0_u64;
-            loop {
-                probe.next(&mut probe_chunk)?;
-                if probe_chunk.num_rows() == 0 {
-                    break;
-                }
-                let decimal_column = probe_chunk.column(probe_offset);
-                let supported = decimal_column.with_my_decimal_data(|data| -> Result<bool, ExecError> {
-                    for row_index in 0..probe_chunk.num_rows() {
-                        let physical_row = probe_chunk
-                            .sel()
-                            .map_or(row_index, |selection| selection[row_index]);
-                        if decimal_column.is_null(physical_row) {
-                            continue;
-                        }
-                        let Some(key) = compact_key(
-                            &probe_chunk,
-                            row_index,
-                            &probe_types,
-                            if build_is_left {
-                                self.keys[0].right
-                            } else {
-                                self.keys[0].left
-                            },
-                            collation,
-                        )?
-                        else {
-                            continue;
-                        };
-                        let Some(values) = build_values.get(&key) else {
-                            continue;
-                        };
-                        let start = physical_row * DECIMAL_CELL_BYTES;
-                        let Some((coefficient, scale)) =
-                            data.get(start..start + DECIMAL_CELL_BYTES)
-                                .and_then(tidb_datatype::MyDecimal::i128_scaled_from_raw_bytes)
-                        else {
-                            return Ok(false);
-                        };
-                        if scale != 0 {
-                            return Ok(false);
-                        }
-                        total = total.saturating_add(count_sorted_compact_matches(
-                            values,
-                            coefficient,
-                            build_on_left,
-                            op,
-                        ));
-                    }
-                    Ok(true)
-                })?;
-                if !supported {
-                    return Ok(None);
-                }
-                drop(decimal_column);
-                self.memory.check()?;
-                probe_chunk.reset();
-            }
-            return Ok(Some(total));
-        }
-
-        let mut build_values: CompactBinaryMap<Vec<CompactJoinDecimal>> =
-            CompactBinaryMap::with_capacity_and_hasher(100_000, BuildHasherDefault::default());
-        let build: &mut dyn Executor = if build_is_left {
-            self.left.as_mut()
-        } else {
-            self.right.as_mut()
-        };
-        let mut chunk = build.new_chunk();
-        loop {
-            build.next(&mut chunk)?;
-            if chunk.num_rows() == 0 {
-                break;
-            }
-            for row_index in 0..chunk.num_rows() {
-                let physical_row = chunk.sel().map_or(row_index, |selection| selection[row_index]);
-                let row = chunk.get_row(row_index);
-                if row.is_null(build_offset) {
-                    continue;
-                }
-                let Some(key) = compact_key(
-                    &chunk,
-                    row_index,
-                    &build_types,
-                    if build_is_left { self.keys[0].left } else { self.keys[0].right },
-                    collation,
-                )? else {
-                    continue;
-                };
-                build_values
-                    .entry(key)
-                    .or_default()
-                    .push(
-                        chunk
-                            .column(build_offset)
-                            .get_my_decimal_i128_scaled(physical_row)
-                            .map_or_else(
-                                || compact_join_decimal(row.get_my_decimal(build_offset)),
-                                |(coefficient, scale)| {
-                                    CompactJoinDecimal::Scaled(coefficient, scale)
-                                },
-                            ),
-                    );
-            }
-            self.memory.check()?;
-            chunk.reset();
-        }
-        let probe: &mut dyn Executor = if build_is_left {
-            self.right.as_mut()
-        } else {
-            self.left.as_mut()
-        };
-        let mut probe_chunk = probe.new_chunk();
-        let mut total = 0_u64;
-        loop {
-            probe.next(&mut probe_chunk)?;
-            if probe_chunk.num_rows() == 0 {
-                break;
-            }
-            for row_index in 0..probe_chunk.num_rows() {
-                let physical_row = probe_chunk
-                    .sel()
-                    .map_or(row_index, |selection| selection[row_index]);
-                let row = probe_chunk.get_row(row_index);
-                if row.is_null(probe_offset) {
-                    continue;
-                }
-                let Some(key) = compact_key(
-                    &probe_chunk,
-                    row_index,
-                    &probe_types,
-                    if build_is_left { self.keys[0].right } else { self.keys[0].left },
-                    collation,
-                )? else {
-                    continue;
-                };
-                let Some(values) = build_values.get(&key) else {
-                    continue;
-                };
-                let probe_value = probe_chunk
-                    .column(probe_offset)
-                    .get_my_decimal_i128_scaled(physical_row)
-                    .map_or_else(
-                        || compact_join_decimal(row.get_my_decimal(probe_offset)),
-                        |(coefficient, scale)| CompactJoinDecimal::Scaled(coefficient, scale),
-                    );
-                for build_value in values {
-                    let ordering = if build_on_left {
-                        compare_compact_join_decimal(*build_value, probe_value)
-                    } else {
-                        compare_compact_join_decimal(probe_value, *build_value)
-                    };
-                    if compact_matches(op, ordering) {
-                        total = total.saturating_add(1);
-                    }
-                }
-            }
-            self.memory.check()?;
-            probe_chunk.reset();
-        }
-        Ok(Some(total))
-    }
-
     fn build_table(&mut self) -> Result<(), ExecError> {
         if self.hash.is_some() {
             return Ok(());
@@ -4180,9 +3123,9 @@ impl<C: Columns> JoinExec<C> {
         let build_is_left = self.hash_build_is_left();
         let track_matches = self.hash_builds_preserved_side();
         let build_types: Vec<FieldType> = if build_is_left {
-            self.left.ret_field_types().to_vec()
+            self.left_types.clone()
         } else {
-            self.right.ret_field_types().to_vec()
+            self.right_types.clone()
         };
         let mut table = BuildTable::new(
             &build_types,
@@ -4214,10 +3157,11 @@ impl<C: Columns> JoinExec<C> {
             self.registered_action = Some(action);
         }
         let build: &mut dyn Executor = if build_is_left {
-            self.left.as_mut()
+            self.left.as_deref_mut()
         } else {
-            self.right.as_mut()
-        };
+            self.right.as_deref_mut()
+        }
+        .ok_or_else(|| ExecError::internal("hash join has no build child"))?;
         loop {
             let mut chunk = build.new_chunk();
             build.next(&mut chunk)?;
@@ -4231,20 +3175,29 @@ impl<C: Columns> JoinExec<C> {
             // cancellation -- into the statement's error.
             if !self.outer_filter.is_empty() && self.filter_is_left == build_is_left {
                 let selected = (0..chunk.num_rows())
-                    .map(|index| crate::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index)).map(|result| result.0))
+                    .map(|index| {
+                        crate::joiner::eval_bool(
+                            &self.ctx,
+                            &self.outer_filter,
+                            chunk.get_row(index),
+                        )
+                        .map(|result| result.0)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
-                table.index_chunk_selected(chunk, &self.keys, &build_types, build_is_left, &selected)
+                table
+                    .index_chunk_selected(chunk, &self.keys, &build_types, build_is_left, &selected)
                     .map_err(build_error)?;
             } else {
-                table.index_chunk(chunk, &self.keys, &build_types, build_is_left)
+                table
+                    .index_chunk(chunk, &self.keys, &build_types, build_is_left)
                     .map_err(build_error)?;
             }
             self.memory.check()?;
         }
         let probe: &dyn Executor = if build_is_left {
-            self.right.as_ref()
+            self.right_exec()
         } else {
-            self.left.as_ref()
+            self.left_exec()
         };
         let probe_chunk = probe.new_chunk();
         // The container's live state is only readable while it is open --
@@ -4267,7 +3220,6 @@ impl<C: Columns> JoinExec<C> {
             probe_candidate_idx: 0,
             probe_matched: false,
             probe_done: false,
-            decimal_mul_products: Arc::new(std::sync::RwLock::new(HashMap::new())),
             unmatched_build_scan,
             parallel_probe_pending: VecDeque::new(),
             parallel_probe_input_reuse: Vec::new(),
@@ -4290,14 +3242,19 @@ impl<C: Columns> JoinExec<C> {
         // alongside it; it goes straight back below.
         let mut chunk = std::mem::replace(&mut hash.probe_chunk, Chunk::new_with_capacity(&[], 0));
         let probe: &mut dyn Executor = if !self.hash_build_is_left() {
-            self.left.as_mut()
+            self.left_exec_mut()
         } else {
-            self.right.as_mut()
+            self.right_exec_mut()
         };
         let result = probe.next(&mut chunk);
-        let selected = if !self.outer_filter.is_empty() && self.filter_is_left != self.hash_build_is_left() {
+        let selected = if !self.outer_filter.is_empty()
+            && self.filter_is_left != self.hash_build_is_left()
+        {
             (0..chunk.num_rows())
-                .map(|index| crate::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index)).map(|result| result.0))
+                .map(|index| {
+                    crate::joiner::eval_bool(&self.ctx, &self.outer_filter, chunk.get_row(index))
+                        .map(|result| result.0)
+                })
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             Vec::new()
@@ -4314,9 +3271,9 @@ impl<C: Columns> JoinExec<C> {
     fn drain_probe_chunk(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let probe_is_left = !self.hash_build_is_left();
         let probe_types: Vec<FieldType> = if probe_is_left {
-            self.left.ret_field_types().to_vec()
+            self.left_types.clone()
         } else {
-            self.right.ret_field_types().to_vec()
+            self.right_types.clone()
         };
         // Keep pure-equality inputs chunk-backed from hash calculation through
         // output assembly. This is the common TPC-H path and avoids
@@ -4540,8 +3497,13 @@ impl<C: Columns> JoinExec<C> {
         let builds_preserved = self.hash_builds_preserved_side();
         let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
         let exact_int = keys.first().filter(|key| {
-            keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe
-                && self.hash.as_ref().is_some_and(|hash| hash.table.has_exact_int())
+            keys.len() == 1
+                && key.class == KeyClass::Int
+                && !key.null_safe
+                && self
+                    .hash
+                    .as_ref()
+                    .is_some_and(|hash| hash.table.has_exact_int())
         });
         while !req.is_full() {
             let Some(hash) = self.hash.as_mut() else {
@@ -4552,51 +3514,79 @@ impl<C: Columns> JoinExec<C> {
             }
             let probe_row = hash.probe_chunk.get_row(hash.probe_row);
             if hash.probe_candidate_idx == 0 && hash.probe_candidates.is_empty() {
-                let selected = hash.probe_selected.is_empty() || hash.probe_selected[hash.probe_row];
+                let selected =
+                    hash.probe_selected.is_empty() || hash.probe_selected[hash.probe_row];
                 let candidates = if !selected {
                     &[][..]
                 } else if let Some(key) = exact_int {
                     exact_int_key_chunk(probe_row, offset(key), &probe_types[offset(key)])
                         .map_or(&[][..], |key| hash.table.probe_exact_int(key))
                 } else {
-                    row_hash_chunk(keys, probe_row, probe_types, offset).map_err(key_error)?
+                    row_hash_chunk(keys, probe_row, probe_types, offset)
+                        .map_err(key_error)?
                         .map_or(&[][..], |key| hash.table.probe(key))
                 };
                 hash.probe_candidates.extend_from_slice(candidates);
                 hash.probe_matched = false;
             }
             if let Some(&ptr) = hash.probe_candidates.get(hash.probe_candidate_idx) {
-                let accepted = hash.table.with_row(ptr, &mut hash.build_buf, |build_row| {
-                    let (left, left_types, right, right_types) = if probe_is_left {
-                        (probe_row, probe_types, build_row, hash.build_types.as_slice())
-                    } else {
-                        (build_row, hash.build_types.as_slice(), probe_row, probe_types)
-                    };
-                    if exact_int.is_none()
-                        && !equi_keys_equal_chunk_rows(keys, left, left_types, right, right_types)?
-                    {
-                        return Ok(false);
-                    }
-                    match kind {
-                        JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
-                            self.output.chunks(req, probe_is_left, probe_row, build_row);
+                let accepted = hash
+                    .table
+                    .with_row(ptr, &mut hash.build_buf, |build_row| {
+                        let (left, left_types, right, right_types) = if probe_is_left {
+                            (
+                                probe_row,
+                                probe_types,
+                                build_row,
+                                hash.build_types.as_slice(),
+                            )
+                        } else {
+                            (
+                                build_row,
+                                hash.build_types.as_slice(),
+                                probe_row,
+                                probe_types,
+                            )
+                        };
+                        if exact_int.is_none()
+                            && !equi_keys_equal_chunk_rows(
+                                keys,
+                                left,
+                                left_types,
+                                right,
+                                right_types,
+                            )?
+                        {
+                            return Ok(false);
                         }
-                        JoinKind::Semi if !builds_preserved => self.output.preserved(req, probe_row),
-                        JoinKind::LeftOuterSemi if !builds_preserved => {
-                            self.output.preserved(req, probe_row);
-                            req.append_datum(self.output.width(), &Datum::Int(1));
+                        match kind {
+                            JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                                self.output.chunks(req, probe_is_left, probe_row, build_row);
+                            }
+                            JoinKind::Semi if !builds_preserved => {
+                                self.output.preserved(req, probe_row)
+                            }
+                            JoinKind::LeftOuterSemi if !builds_preserved => {
+                                self.output.preserved(req, probe_row);
+                                req.append_datum(self.output.width(), &Datum::Int(1));
+                            }
+                            JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
                         }
-                        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi => {}
-                    }
-                    Ok(true)
-                }).map_err(|error| ExecError::SpillFailed(error.to_string()))?.map_err(key_error)?;
+                        Ok(true)
+                    })
+                    .map_err(|error| ExecError::SpillFailed(error.to_string()))?
+                    .map_err(key_error)?;
                 if builds_preserved && accepted {
                     hash.table.mark_matched(ptr);
                 }
                 hash.probe_matched |= accepted;
                 hash.probe_candidate_idx += 1;
-                if accepted && !builds_preserved
-                    && matches!(kind, JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi)
+                if accepted
+                    && !builds_preserved
+                    && matches!(
+                        kind,
+                        JoinKind::Semi | JoinKind::LeftOuterSemi | JoinKind::AntiSemi
+                    )
                 {
                     hash.probe_candidate_idx = hash.probe_candidates.len();
                 }
@@ -4605,7 +3595,10 @@ impl<C: Columns> JoinExec<C> {
                 if !hash.probe_matched && !builds_preserved {
                     match kind {
                         JoinKind::Left | JoinKind::Right => self.output.unmatched(
-                            req, probe_is_left, probe_row, hash.build_types.len(),
+                            req,
+                            probe_is_left,
+                            probe_row,
+                            hash.build_types.len(),
                         ),
                         JoinKind::AntiSemi => self.output.preserved(req, probe_row),
                         JoinKind::LeftOuterSemi => {
@@ -4643,21 +3636,6 @@ impl<C: Columns> JoinExec<C> {
             use_exact_int && keys.len() == 1 && key.class == KeyClass::Int && !key.null_safe
         });
         let conditions = &self.residual_conditions;
-        let decimal_mul_lt = self.residual_decimal_mul_lt.as_ref();
-        let product_build_column = decimal_mul_lt.and_then(|fast| {
-            let left_width = if probe_is_left {
-                probe_types.len()
-            } else {
-                self.left.ret_field_types().len()
-            };
-            let product_is_left = fast.right_column < left_width;
-            let build_is_left = !probe_is_left;
-            (product_is_left == build_is_left).then_some(if product_is_left {
-                fast.right_column
-            } else {
-                fast.right_column - left_width
-            })
-        });
         let ctx = &self.ctx;
         let condition_evals = &self.condition_evals;
         let condition_chunk = &mut self.condition_chunk;
@@ -4685,8 +3663,7 @@ impl<C: Columns> JoinExec<C> {
                     let key = if exact_int.is_some() {
                         None
                     } else {
-                        row_hash_chunk(&keys, probe_row, probe_types, offset)
-                            .map_err(key_error)?
+                        row_hash_chunk(&keys, probe_row, probe_types, offset).map_err(key_error)?
                     };
                     hash.probe_candidates = if exact_int.is_some() {
                         exact_key
@@ -4709,29 +3686,6 @@ impl<C: Columns> JoinExec<C> {
                 return Ok(());
             };
             let probe_row = hash.probe_chunk.get_row(probe_index);
-            let cached_product = match (decimal_mul_lt, product_build_column) {
-                (Some(fast), Some(column)) => {
-                    let mut products = hash
-                        .decimal_mul_products
-                        .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if !products.contains_key(&ptr) {
-                        let product = {
-                            let table = &hash.table;
-                            let build_types = &hash.build_types;
-                            let build_buf = &mut hash.build_buf;
-                            table
-                                .with_row(ptr, build_buf, |build_row| {
-                                    Self::decimal_mul_product(fast, build_row, build_types, column)
-                                })
-                                .map_err(|error| ExecError::SpillFailed(error.to_string()))??
-                        };
-                        products.insert(ptr, product);
-                    }
-                    Some(products.get(&ptr).copied().flatten())
-                }
-                _ => None,
-            };
             let table = &hash.table;
             let build_types = &hash.build_types;
             let build_buf = &mut hash.build_buf;
@@ -4743,42 +3697,22 @@ impl<C: Columns> JoinExec<C> {
                         (build_row, build_types.as_slice(), probe_row, probe_types)
                     };
                     if exact_int.is_none()
-                        && !equi_keys_equal_chunk_rows(
-                            &keys,
+                        && !equi_keys_equal_chunk_rows(&keys, left, left_types, right, right_types)
+                            .map_err(key_error)?
+                        || !Self::matches_chunk_rows(
+                            ctx,
+                            conditions,
+                            condition_evals,
+                            condition_chunk,
                             left,
-                            left_types,
                             right,
-                            right_types,
-                        )
-                        .map_err(key_error)?
-                        || !(match decimal_mul_lt {
-                            Some(fast) => Self::matches_decimal_mul_lt(
-                                condition_evals,
-                                fast,
-                                left,
-                                left_types,
-                                right,
-                                right_types,
-                                cached_product.as_ref().map(Option::as_ref),
-                            )?,
-                            None => Self::matches_chunk_rows(
-                                ctx,
-                                conditions,
-                                condition_evals,
-                                condition_chunk,
-                                left,
-                                right,
-                            )?,
-                        })
+                            left_types.len(),
+                            right_types.len(),
+                        )?
                     {
                         return Ok::<(), ExecError>(());
                     }
-                    self.output.chunks(
-                        req,
-                        probe_is_left,
-                        probe_row,
-                        build_row,
-                    );
+                    self.output.chunks(req, probe_is_left, probe_row, build_row);
                     Ok::<(), ExecError>(())
                 })
                 .map_err(|error| ExecError::SpillFailed(error.to_string()))??;
@@ -4894,65 +3828,6 @@ fn replace_list_with_rows(list: &mut List, field_types: &[FieldType], rows: Vec<
 /// One chunk row as owned `Datum`s.
 fn datum_row(chunk: &Chunk, index: usize, types: &[FieldType]) -> Vec<Datum> {
     chunk.get_row(index).get_datum_row(types)
-}
-
-/// Recognizes the exact DECIMAL residual shape used by TPC-H q17. The
-/// expression must be one `LT`, its left operand a DECIMAL column, and its
-/// right operand a multiplication of a strict DECIMAL constant and another
-/// DECIMAL column. Any broader recognition would risk changing MySQL's type
-/// promotion or NULL behavior, so all other shapes use the normal evaluator.
-fn residual_decimal_mul_lt(conditions: &[Expression]) -> Option<DecimalMulLtFastPath> {
-    let [Expression::ScalarFunction(lt)] = conditions else {
-        return None;
-    };
-    if lt.func_name.lowercase() != "lt" || lt.args.len() != 2 {
-        return None;
-    }
-    let (Expression::Column(left), Expression::ScalarFunction(mul)) = (&lt.args[0], &lt.args[1])
-    else {
-        return None;
-    };
-    if mul.func_name.lowercase() != "mul" || mul.args.len() != 2 {
-        return None;
-    }
-    let (Expression::Constant(factor), Expression::Column(right)) = (&mul.args[0], &mul.args[1])
-    else {
-        return None;
-    };
-    if factor.param_marker.is_some() || factor.deferred_expr.is_some() {
-        return None;
-    }
-    let Datum::Decimal(factor) = &factor.value else {
-        return None;
-    };
-    let decimal_column = |column: &tidb_expr::expression::Column| {
-        column
-            .ret_type
-            .as_ref()
-            .is_some_and(|field_type| field_type.eval_type() == EvalType::Decimal)
-    };
-    if !decimal_column(left) || !decimal_column(right) {
-        return None;
-    }
-    let left_column = usize::try_from(left.index).ok()?;
-    let right_column = usize::try_from(right.index).ok()?;
-    Some(DecimalMulLtFastPath {
-        left_column,
-        right_column,
-        factor: factor.clone(),
-    })
-}
-
-fn decimal_mul_lt_mysql(
-    left: &Decimal,
-    factor: &Decimal,
-    right: &Decimal,
-) -> Result<bool, tidb_datatype::DecimalCodecWarning> {
-    let (product, warning) = factor.mul_mysql(right);
-    match warning {
-        Some(tidb_datatype::DecimalCodecWarning::Overflow) => Err(warning.unwrap()),
-        Some(tidb_datatype::DecimalCodecWarning::Truncated) | None => Ok(left < &product),
-    }
 }
 
 /// A key datum outside its column's statically determined class. The class
@@ -5178,22 +4053,19 @@ fn truthy(value: &Datum) -> Result<bool, ExecError> {
     Ok(tidb_expr::truthy_of(value)? == Some(true))
 }
 
-impl<C: Columns> Executor for JoinExec<C> {
+impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         if self.index_lookup.is_some() {
             if self.outer_is_left() {
-                self.left.open()?;
+                self.left_exec_mut().open()?;
             } else {
-                self.right.open()?;
+                self.right_exec_mut().open()?;
             }
         } else {
-            self.left.open()?;
-            self.right.open()?;
+            self.left_exec_mut().open()?;
+            self.right_exec_mut().open()?;
         }
         self.emitted = false;
-        if std::env::var("TIDB_DEBUG_PROBE").is_ok() {
-            eprintln!("[open] resetting hash");
-        }
         self.hash = None;
         self.build_spilled = false;
         self.spilled_bytes = 0;
@@ -5268,13 +4140,13 @@ impl<C: Columns> Executor for JoinExec<C> {
         }
         if self.index_lookup.is_some() {
             if self.outer_is_left() {
-                self.left.close()
+                self.left_exec_mut().close()
             } else {
-                self.right.close()
+                self.right_exec_mut().close()
             }
         } else {
-            self.left.close()?;
-            self.right.close()
+            self.left_exec_mut().close()?;
+            self.right_exec_mut().close()
         }
     }
 
@@ -5296,14 +4168,6 @@ impl<C: Columns> Executor for JoinExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
-    }
-
-    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
-        self.compact_count_rows()
-    }
-
-    fn consumes_where(&self) -> bool {
-        self.consumes_where
     }
 }
 

@@ -248,7 +248,7 @@ impl<'a> Normalizer<'a> {
         };
         NormalToken {
             kind,
-            literal: token.text.to_lowercase(),
+            literal: tidb_mysql::to_lowercase(&token.text),
         }
     }
 

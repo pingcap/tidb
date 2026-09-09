@@ -1,0 +1,21 @@
+[package]
+name = "tidb-owner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB etcd owner election and local mock owner manager"
+
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-pd-client = { path = "../tidb-pd-client" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

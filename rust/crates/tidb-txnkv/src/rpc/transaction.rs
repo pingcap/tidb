@@ -130,7 +130,6 @@ where
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
         let (completion, pull) = reply_pair();
-        crate::rpc::batch::wire::wire_diag::note_outbound(tag);
         let mut entry =
             BatchCommandEntry::new(OpaqueBatchCommand::new(tag, encoded_request), completion);
         if let Some(forwarded_host) = forwarded_host {

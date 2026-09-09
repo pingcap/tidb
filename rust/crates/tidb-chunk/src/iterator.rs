@@ -91,7 +91,6 @@ pub struct Iterator4Slice<'a> {
 
 impl<'a> Iterator4Slice<'a> {
     /// Go `NewIterator4Slice`.
-    #[must_use]
     pub fn new(rows: Vec<Row<'a>>) -> Self {
         Iterator4Slice { rows, cursor: 0 }
     }
@@ -152,7 +151,6 @@ pub struct Iterator4Chunk<'a> {
 
 impl<'a> Iterator4Chunk<'a> {
     /// Go `NewIterator4Chunk`.
-    #[must_use]
     pub fn new(chk: &'a Chunk) -> Self {
         Iterator4Chunk {
             chk,
@@ -162,7 +160,6 @@ impl<'a> Iterator4Chunk<'a> {
     }
 
     /// Go `GetChunk`.
-    #[must_use]
     pub fn get_chunk(&self) -> &'a Chunk {
         self.chk
     }
@@ -243,7 +240,6 @@ impl<'a> Iterator4List<'a> {
         }
     }
     /// Go `NewIterator4List`.
-    #[must_use]
     pub fn new(li: &'a List) -> Self {
         Iterator4List {
             li,
@@ -319,7 +315,6 @@ pub struct Iterator4RowPtr<'a> {
 
 impl<'a> Iterator4RowPtr<'a> {
     /// Go `NewIterator4RowPtr`.
-    #[must_use]
     pub fn new(li: &'a List, ptrs: Vec<RowPtr>) -> Self {
         Iterator4RowPtr {
             li,
@@ -379,7 +374,6 @@ pub struct MultiIterator<'a> {
 
 impl<'a> MultiIterator<'a> {
     /// Go `NewMultiIterator`.
-    #[must_use]
     pub fn new(iters: Vec<Box<dyn ChunkIterator<'a> + 'a>>) -> Self {
         let mut kept: Vec<Box<dyn ChunkIterator<'a> + 'a>> = Vec::new();
         let mut length = 0;

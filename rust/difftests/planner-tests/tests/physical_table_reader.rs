@@ -12,69 +12,91 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalTableReader metadata.
+//! Dependency-closed vectors for the wired PhysicalTableReader tree.
 //!
 //! Source anchors:
 //! - `TestRequestTypeSupportedOff` at `pkg/planner/core/physical_plan_test.go:151`
 //! - `TestTablePlansAndTablePlanInPhysicalTableReaderClone` at
 //!   `pkg/planner/core/planbuilder_test.go:312`
 
-use tidb_planner::physical_table_reader::{PhysicalTableReaderPlan, ReadReqType, StoreType};
+use tidb_planner::{
+    access_path::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix},
+    physical::{
+        BasePhysicalPlan, PhysicalHashJoin, PhysicalPlan, PhysicalTableReader, PhysicalTableScan,
+    },
+    physical_table_reader::{ReadReqType, StoreType},
+    tikv_scan_spec::TiKvTableScanSpec,
+};
+
+fn table_scan(id: i32) -> PhysicalTableScan {
+    let mut scan = PhysicalTableScan::init(id, 0, TiKvTableScanSpec::new(i64::from(id), vec![]));
+    scan.resolved_descriptor = Some(ResolvedTableDescriptor::new(
+        i64::from(id),
+        false,
+        ResolvedTableScanKind::Full,
+        TableScanExplainIdSuffix::Omit,
+    ));
+    scan
+}
 
 #[test]
-fn request_type_supported_off_keeps_table_reader_operator_shape() {
-    let plan = PhysicalTableReaderPlan::init(Some("Sel([in(test.t.a, 1, 10, 20)])"), 0);
+fn request_type_supported_off_keeps_wired_table_reader_shape() {
+    let plan = PhysicalTableReader::from_table_scan(table_scan(1)).expect("resolved table scan");
     assert_eq!(plan.plan_type(), "TableReader");
-    assert_eq!(plan.explain_info(), "data:Sel([in(test.t.a, 1, 10, 20)])");
-    assert_eq!(plan.operator_info(), "data:Sel([in(test.t.a, 1, 10, 20)])");
+    assert_eq!(plan.explain_info(), "data:TableFullScan");
+    assert_eq!(plan.operator_info(), "data:TableFullScan");
+    assert_eq!(plan.read_req_name(), "cop");
 }
 
 #[test]
-fn table_reader_clone_rebuilds_flattened_plan_metadata() {
-    let plan = PhysicalTableReaderPlan::init(Some("TableFullScan"), 0)
-        .with_read_req_type(ReadReqType::Cop, 0)
-        .with_store_type(StoreType::TiFlash)
-        .with_table_plan_identity(42)
-        .with_common_handle(true)
-        .with_table_scan_partition_info_count(3);
+fn table_reader_clone_rebuilds_the_owned_physical_tree() {
+    let mut reader =
+        PhysicalTableReader::from_table_scan(table_scan(42)).expect("resolved table scan");
+    reader.store_type = StoreType::TiFlash;
+    reader.read_req_type = ReadReqType::Cop;
+    reader.is_common_handle = true;
+    let plan = PhysicalPlan::TableReader(reader);
     let cloned = plan.clone_plan();
-    assert_eq!(cloned.table_plan_explain(), Some("TableFullScan"));
-    assert_eq!(cloned.table_plans_len(), 1);
-    assert_eq!(cloned.get_table_scans().len(), 1);
-    assert_eq!(cloned.table_scan_count(), 1);
-    assert!(cloned.table_plan_is_first_flattened());
+    assert_eq!(cloned.memory_usage(), plan.memory_usage());
+
+    let PhysicalPlan::TableReader(original) = &plan else {
+        unreachable!();
+    };
+    let PhysicalPlan::TableReader(cloned) = &cloned else {
+        unreachable!();
+    };
+    assert_eq!(cloned.table_scans().len(), 1);
+    assert_eq!(cloned.table_scan().unwrap().table_id, 42);
+    assert!(!std::ptr::eq(
+        original.table_plan.as_deref().unwrap(),
+        cloned.table_plan.as_deref().unwrap(),
+    ));
     assert!(cloned.is_common_handle());
-    assert_eq!(cloned.store_type(), StoreType::TiFlash);
-    assert_eq!(cloned.memory_usage(), plan.memory_usage() - 3);
+    assert_eq!(cloned.store_type, StoreType::TiFlash);
+    assert_eq!(cloned.read_req_type, ReadReqType::Cop);
 }
 
 #[test]
-fn multi_node_clone_preserves_derived_flattened_shape_and_scan_count() {
-    let plan = PhysicalTableReaderPlan::init(Some("Selection"), 0)
-        .with_table_shape(3, 2)
-        .with_table_plan_identity(7)
-        .with_table_scan_partition_info_count(1);
-    let cloned = plan.clone_plan();
-    assert_eq!(cloned.table_plans_len(), 3);
-    assert_eq!(cloned.table_scan_count(), 2);
-    assert!(!cloned.table_plan_is_first_flattened());
-    assert_eq!(cloned.memory_usage(), plan.memory_usage() - 1);
-}
+fn multi_scan_reader_reports_the_real_tree_cardinality() {
+    let mut join_base = BasePhysicalPlan::with_id(7, "HashJoin", 0);
+    join_base.set_children(vec![
+        PhysicalPlan::TableScan(table_scan(1)),
+        PhysicalPlan::TableScan(table_scan(2)),
+    ]);
+    let table_plan = PhysicalPlan::HashJoin(PhysicalHashJoin {
+        base: join_base,
+        ..PhysicalHashJoin::default()
+    });
+    let reader = PhysicalTableReader {
+        base: BasePhysicalPlan::with_id(8, "TableReader", 0),
+        table_plan: Some(Box::new(table_plan)),
+        read_req_type: ReadReqType::Mpp,
+        ..PhysicalTableReader::default()
+    };
 
-#[test]
-fn table_scan_error_and_normalized_explain_are_stable() {
-    let invalid = PhysicalTableReaderPlan::init(None::<String>, 0);
-    let error = invalid.get_table_scan().unwrap_err();
-    assert_eq!(error.actual(), 0);
+    assert_eq!(reader.table_scans().len(), 2);
+    let error = reader.table_scan().unwrap_err();
+    assert_eq!(error.actual(), 2);
     assert_eq!(error.to_string(), "the count of table scan != 1");
-    assert_eq!(invalid.explain_normalized_info(), "");
-}
-
-#[test]
-fn mpp_reader_explain_includes_source_mpp_version() {
-    let plan = PhysicalTableReaderPlan::init(Some("ExchangeSender"), 4)
-        .with_read_req_type(ReadReqType::Mpp, 3);
-    assert_eq!(plan.query_block_offset(), 4);
-    assert_eq!(plan.read_req_name(), "mpp");
-    assert_eq!(plan.explain_info(), "MppVersion: 3, data:ExchangeSender");
+    assert_eq!(reader.explain_normalized_info(), "");
 }

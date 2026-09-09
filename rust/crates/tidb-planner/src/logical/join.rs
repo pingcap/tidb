@@ -35,14 +35,17 @@
 //!   it and physical join reads it.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use tidb_datatype::{Datum, FieldName, FieldTypeFlags};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::extract::is_col_op_col;
+use tidb_expr::expr_util::normal_form::expr_from_schema;
 use tidb_expr::expr_util::normal_form::{
     derive_relaxed_filters_from_dnf, extract_filters_from_dnfs,
 };
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
+use tidb_expr::expr_util::push_not::push_down_not;
 use tidb_expr::expr_util::substitute::{build_not_null_expr, SubstituteOptions};
 use tidb_expr::expression::{is_null_rejected, CorrelatedColumn, Expression};
 use tidb_expr::scalar_function::ScalarFunction;
@@ -75,6 +78,10 @@ pub struct LogicalJoin {
     pub prefer_join_order: bool,
     /// Go `InternalPreferJoinOrder`.
     pub internal_prefer_join_order: bool,
+    /// Go `HintInfo`.
+    pub hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
+    /// Go `InternalHintInfo`.
+    pub internal_hint_info: Option<Rc<crate::plan_builder::from::JoinHints>>,
     /// Go `LeftPreferJoinType`.
     pub left_prefer_join_type: u32,
     /// Go `RightPreferJoinType`.
@@ -126,6 +133,8 @@ impl Default for LogicalJoin {
             prefer_join_type: 0,
             prefer_join_order: false,
             internal_prefer_join_order: false,
+            hint_info: None,
+            internal_hint_info: None,
             left_prefer_join_type: 0,
             right_prefer_join_type: 0,
             equal_conditions: Vec::new(),
@@ -547,6 +556,55 @@ impl LogicalJoin {
         }
     }
 
+    /// Go `simplifyOuterJoin(p, predicates)` (`logical_join.go:306`): a
+    /// WHERE predicate that is null-rejecting on the INNER side of a left or
+    /// right outer join makes the null-extended rows impossible, so the join
+    /// becomes an inner join. Go runs this at the top of
+    /// `LogicalJoin.PredicatePushDown`, before the per-join-type attribution,
+    /// which is what lets the converted inner join absorb the predicate
+    /// instead of leaving a Selection above it.
+    ///
+    /// The predicate that references ONLY the outer side is skipped: it cannot
+    /// reject the null-extended inner rows.
+    fn simplify_outer_join(
+        join: &mut Self,
+        predicates: &[Expression],
+        left_schema: &Schema,
+        right_schema: &Schema,
+        builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    ) {
+        if !matches!(
+            join.join_type,
+            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter | LogicalJoinType::Inner
+        ) {
+            return;
+        }
+        if join.join_type == LogicalJoinType::Inner {
+            return;
+        }
+        let (inner_schema, outer_schema) = match join.join_type {
+            LogicalJoinType::LeftOuter => (right_schema, left_schema),
+            LogicalJoinType::RightOuter => (left_schema, right_schema),
+            _ => return,
+        };
+        let inner_ids: Vec<i64> = inner_schema
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect();
+        for predicate in predicates {
+            if expr_from_schema(predicate, outer_schema) {
+                continue;
+            }
+            // Go `util.IsNullRejected` normalizes every NOT down first.
+            let normalized = push_down_not(predicate, builder);
+            if is_null_rejected(&inner_ids, &normalized) {
+                join.join_type = LogicalJoinType::Inner;
+                return;
+            }
+        }
+    }
+
     /// Go `LogicalJoin.PredicatePushDown(predicates)`'s LOCAL half
     /// (`logical_join.go:171`): the whole per-join-type attribution, without
     /// the recursion into the children.
@@ -571,22 +629,11 @@ impl LogicalJoin {
     ///
     /// # Narrowings, by exact blocking Go symbol
     ///
-    /// * `simplifyOuterJoin(p, predicates)` (`logical_join.go:300`), which
-    ///   turns a left/right outer join into an inner join when a predicate is
-    ///   null-rejecting on the inner side. Blocked on `util.IsNullRejected`'s
-    ///   session-dependent half; `tidb_expr::expression::is_null_rejected`
-    ///   exists but Go's caller needs `p.SCtx()` for the plan-cache guard.
-    /// * `p.outerJoinPropConst(predicates, filter)` (`logical_join.go:1024`)
-    ///   and therefore `expression.PropagateConstantForJoin`. This is the
-    ///   `propagateConstant` half of the simplification hook; see
-    ///   [`crate::logical::rule::apply_predicate_simplification`].
     /// * `DeriveOtherConditions(p, leftSchema, rightSchema, deriveLeft,
     ///   deriveRight)` (`logical_join.go:1247`), which manufactures the
     ///   `IS NOT NULL` filters an OUTER join may push to its inner side.
     /// * `p.updateEQCond()` (`logical_join.go:920`) and `p.SemiJoinRewrite()`,
     ///   which run after the children have been pushed into.
-    /// * `getAllJoinLeaf(p)` / `p.allJoinLeaf`, which only feeds the two
-    ///   `isVaildConstantPropagationExpression*` filters above.
     ///
     /// Every one of those only ever pushes MORE down or narrows a join type
     /// further, so omitting them leaves conditions higher in the tree than Go
@@ -597,9 +644,23 @@ impl LogicalJoin {
         predicates: Vec<Expression>,
         left_schema: &Schema,
         right_schema: &Schema,
+        all_join_leaf: &[Schema],
         opts: &SubstituteOptions<'_>,
-        simplify: impl Fn(Vec<Expression>) -> Vec<Expression>,
+        simplify: impl Fn(
+            Vec<Expression>,
+            bool,
+            Option<&dyn Fn(&Expression) -> bool>,
+        ) -> Vec<Expression>,
+        propagate_outer: impl Fn(
+            Vec<Expression>,
+            Vec<Expression>,
+            &Schema,
+            &Schema,
+            bool,
+            Option<&dyn Fn(&Expression) -> bool>,
+        ) -> (Vec<Expression>, Vec<Expression>),
     ) -> JoinPredicatePushDown {
+        let classifier = self.clone();
         // Go's leading `switch p.JoinType`: for everything but the semi/inner
         // and outer-semi families, `OtherConditions` is simplified in place so
         // an obvious logical constant cannot hide a join key.
@@ -611,16 +672,43 @@ impl LogicalJoin {
             | LogicalJoinType::Inner => {}
             LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
                 let other = std::mem::take(&mut self.other_conditions);
-                self.other_conditions = simplify(other);
+                self.other_conditions = simplify(other, false, None);
             }
         }
 
+        // Go runs `simplifyOuterJoin` before attributing any condition, so a
+        // WHERE predicate that null-rejects the inner side converts the join
+        // and is then attributed by the INNER arm below.
+        Self::simplify_outer_join(self, &predicates, left_schema, right_schema, opts.builder);
         let mut result = JoinPredicatePushDown::default();
         match self.join_type {
             LogicalJoinType::LeftOuter
             | LogicalJoinType::LeftOuterSemi
             | LogicalJoinType::AntiLeftOuterSemi => {
-                let predicates = simplify(predicates);
+                let null_sensitive = self.join_type != LogicalJoinType::LeftOuter;
+                let valid = |expr: &Expression| {
+                    classifier.is_valid_constant_propagation_expression(
+                        expr,
+                        left_schema,
+                        right_schema,
+                        all_join_leaf,
+                        false,
+                        false,
+                        false,
+                        true,
+                        opts,
+                    )
+                };
+                let (join_conditions, predicates) = propagate_outer(
+                    self.take_all_conditions(),
+                    predicates,
+                    left_schema,
+                    right_schema,
+                    null_sensitive,
+                    Some(&valid),
+                );
+                self.attach_on_conds(&join_conditions, left_schema, right_schema, opts);
+                let predicates = simplify(predicates, false, None);
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
@@ -643,7 +731,29 @@ impl LogicalJoin {
                 result.ret.extend(split.right);
             }
             LogicalJoinType::RightOuter => {
-                let predicates = simplify(predicates);
+                let valid = |expr: &Expression| {
+                    classifier.is_valid_constant_propagation_expression(
+                        expr,
+                        left_schema,
+                        right_schema,
+                        all_join_leaf,
+                        false,
+                        false,
+                        true,
+                        false,
+                        opts,
+                    )
+                };
+                let predicates = simplify(predicates, true, Some(&valid));
+                let (join_conditions, predicates) = propagate_outer(
+                    self.take_all_conditions(),
+                    predicates,
+                    right_schema,
+                    left_schema,
+                    false,
+                    Some(&valid),
+                );
+                self.attach_on_conds(&join_conditions, left_schema, right_schema, opts);
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
@@ -664,6 +774,19 @@ impl LogicalJoin {
                 result.ret.extend(split.left);
             }
             LogicalJoinType::Semi | LogicalJoinType::Inner => {
+                let valid = |expr: &Expression| {
+                    classifier.is_valid_constant_propagation_expression(
+                        expr,
+                        left_schema,
+                        right_schema,
+                        all_join_leaf,
+                        true,
+                        true,
+                        true,
+                        true,
+                        opts,
+                    )
+                };
                 let mut temp_cond = Vec::with_capacity(
                     self.left_conditions.len()
                         + self.right_conditions.len()
@@ -676,7 +799,7 @@ impl LogicalJoin {
                 temp_cond.extend(scalar_funcs_to_exprs(&self.equal_conditions));
                 temp_cond.extend(self.other_conditions.iter().cloned());
                 temp_cond.extend(predicates);
-                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond));
+                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond), true, Some(&valid));
                 if !temp_cond.is_empty() {
                     result.dual_conditions = Some(temp_cond.clone());
                 }
@@ -696,7 +819,29 @@ impl LogicalJoin {
                 result.right_cond = split.right;
             }
             LogicalJoinType::AntiSemi => {
-                let predicates = simplify(predicates);
+                let valid = |expr: &Expression| {
+                    classifier.is_valid_constant_propagation_expression(
+                        expr,
+                        left_schema,
+                        right_schema,
+                        all_join_leaf,
+                        false,
+                        false,
+                        false,
+                        true,
+                        opts,
+                    )
+                };
+                let (join_conditions, predicates) = propagate_outer(
+                    self.take_all_conditions(),
+                    predicates,
+                    left_schema,
+                    right_schema,
+                    true,
+                    Some(&valid),
+                );
+                self.attach_on_conds(&join_conditions, left_schema, right_schema, opts);
+                let predicates = simplify(predicates, true, Some(&valid));
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
@@ -718,7 +863,68 @@ impl LogicalJoin {
         }
         result.left_cond = remove_dup_exprs(result.left_cond);
         result.right_cond = remove_dup_exprs(result.right_cond);
+        result.left_cond =
+            crate::constraint::delete_true_exprs_by_schema(left_schema, result.left_cond);
+        result.right_cond =
+            crate::constraint::delete_true_exprs_by_schema(right_schema, result.right_cond);
         result
+    }
+
+    fn take_all_conditions(&mut self) -> Vec<Expression> {
+        let mut conditions = Vec::with_capacity(
+            self.equal_conditions.len()
+                + self.left_conditions.len()
+                + self.right_conditions.len()
+                + self.other_conditions.len(),
+        );
+        conditions.extend(scalar_funcs_to_exprs(&std::mem::take(
+            &mut self.equal_conditions,
+        )));
+        conditions.append(&mut self.left_conditions);
+        conditions.append(&mut self.right_conditions);
+        conditions.append(&mut self.other_conditions);
+        conditions
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn is_valid_constant_propagation_expression(
+        &self,
+        condition: &Expression,
+        left_schema: &Schema,
+        right_schema: &Schema,
+        all_join_leaf: &[Schema],
+        derive_left: bool,
+        derive_right: bool,
+        can_left_push_down: bool,
+        can_right_push_down: bool,
+        opts: &SubstituteOptions<'_>,
+    ) -> bool {
+        let mut classifier = self.clone();
+        let split = classifier.extract_on_condition(
+            std::slice::from_ref(condition),
+            left_schema,
+            right_schema,
+            derive_left,
+            derive_right,
+            opts,
+        );
+        if !split.other.is_empty() {
+            return false;
+        }
+        let same_leaf = || {
+            let columns = extract_columns(condition);
+            columns.len() == 1
+                || all_join_leaf
+                    .iter()
+                    .any(|schema| columns.iter().all(|column| schema.contains(column)))
+        };
+        if !split.left.is_empty() {
+            return can_left_push_down && same_leaf();
+        }
+        if !split.right.is_empty() {
+            return can_right_push_down && same_leaf();
+        }
+        true
     }
 
     /// Go `LogicalJoin.ExtractUsedCols(parentUsedCols)`
@@ -855,8 +1061,8 @@ impl LogicalJoin {
                 return Some((existing.clone(), false));
             }
         }
-        let left = child_stats.first()?;
-        let right = child_stats.get(1)?;
+        let left = &child_stats[0];
+        let right = &child_stats[1];
         self.equal_cond_out_cnt = equal_cond_out_cnt;
         let stats = match self.join_type {
             LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(
@@ -1083,6 +1289,8 @@ impl LogicalJoin {
             prefer_join_type: self.prefer_join_type,
             prefer_join_order: self.prefer_join_order,
             internal_prefer_join_order: self.internal_prefer_join_order,
+            hint_info: self.hint_info.clone(),
+            internal_hint_info: self.internal_hint_info.clone(),
             left_prefer_join_type: self.left_prefer_join_type,
             right_prefer_join_type: self.right_prefer_join_type,
             equal_conditions: self.equal_conditions.clone(),

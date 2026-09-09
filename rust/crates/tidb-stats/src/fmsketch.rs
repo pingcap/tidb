@@ -43,7 +43,6 @@ impl FmSketch {
     /// Go `NewFMSketch`, retaining its signed `int` allocation boundary.
     ///
     /// A negative map capacity panics in Go before a sketch is returned.
-    #[must_use]
     pub fn new_signed(max_size: isize) -> Self {
         assert!(max_size >= 0, "FM sketch capacity cannot be negative");
         Self::new(max_size as usize)
@@ -116,13 +115,11 @@ impl FmSketch {
     }
 
     /// Returns the source's estimated distinct-value count.
-    #[must_use]
     pub fn ndv(&self) -> i64 {
         (self.mask.wrapping_add(1) as i64).wrapping_mul(self.hashes.len() as i64)
     }
 
     /// Returns the source's portable sketch memory estimate.
-    #[must_use]
     pub fn memory_usage(&self) -> u64 {
         16_u64.wrapping_add(8_u64.wrapping_mul(self.hashes.len() as u64))
     }
@@ -177,7 +174,6 @@ pub fn copy_fm_sketch(sketch: Option<&FmSketch>) -> Option<FmSketch> {
 }
 
 /// Go `(*FMSketch).NDV`, including the nil receiver's zero estimate.
-#[must_use]
 pub fn fm_sketch_ndv(sketch: Option<&FmSketch>) -> i64 {
     sketch.map_or(0, FmSketch::ndv)
 }

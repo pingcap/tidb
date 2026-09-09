@@ -16,24 +16,26 @@
 //! this crate pins. Every other `func TestXxx` in that file is already ported;
 //! see `rust/testport/receipts/b039.md` for the full mapping table.
 //!
-//! The four functions below all depend on infrastructure that lives outside
-//! the `tidb-meta` crate (Go's `GetStarterBootstrapVersion` mutator API and
-//! the session-bootstrap + InfoSchemaV2 pipeline), so they are recorded as
-//! ignored go-parity gaps rather than approximated with hand-rolled stand-ins.
+//! The three ignored functions below depend on the session-bootstrap +
+//! InfoSchemaV2 pipeline, which lives outside the `tidb-meta` crate. They are
+//! recorded as go-parity gaps rather than approximated with hand-rolled
+//! stand-ins.
+
+use tidb_meta::transaction::{MemoryTransaction, Mutator};
 
 /// Go `TestMeta` (`pkg/meta/meta_test.go:241`), starter-bootstrap slice:
 /// after finishing bootstrap, `GetStarterBootstrapVersion` returns 0,
 /// `FinishStarterBootstrap(1)` then reads back 1, and
 /// `FinishStarterBootstrap(10)` reads back 10. Go stores the version as a raw
-/// decimal string under `mStarterBootstrapKey = []byte("StarterBootstrapKey")`
-/// (`pkg/meta/meta.go:2074-2076`). The Rust [`tidb_meta::transaction::Mutator`]
-/// has no starter-bootstrap accessor yet, so the behavior cannot be pinned
-/// without inventing an API.
+/// decimal string under `mStarterBootstrapKey = []byte("StarterBootstrapKey")`.
 #[test]
-#[ignore = "go-parity-gap: Mutator has no GetStarterBootstrapVersion/FinishStarterBootstrap equivalent"]
 fn meta_starter_bootstrap_round_trip() {
-    // Go source: pkg/meta/meta_test.go TestMeta, lines asserting
-    // GetStarterBootstrapVersion/FinishStarterBootstrap.
+    let meta = Mutator::new(MemoryTransaction::default());
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 0);
+    meta.finish_starter_bootstrap(1).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
+    meta.finish_starter_bootstrap(10).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
 }
 
 /// Go `TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap`

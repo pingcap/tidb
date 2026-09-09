@@ -622,7 +622,7 @@ pub fn encode_prepared_statement_prepare_response(
         result_count,
         parameter_count,
     ));
-    append_metadata_packets(&mut packets, parameter_columns, options);
+    append_metadata_packets(&mut packets, parameter_columns, options.clone());
     append_metadata_packets(&mut packets, result_columns, options);
     Ok(packets)
 }
@@ -1102,14 +1102,12 @@ impl BinaryResultSetStream {
                 if !is_binary_string_result_type(metadata.type_code) {
                     return None;
                 }
-                let collation = if matches!(
-                    metadata.type_code,
-                    TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
-                ) {
-                    DEFAULT_COLLATION_ID
-                } else {
-                    metadata.charset
-                };
+                let collation =
+                    if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
+                        DEFAULT_COLLATION_ID
+                    } else {
+                        metadata.charset
+                    };
                 let mut encoder = options.result_encoder;
                 if encoder.update_data_encoding(collation).is_ok() {
                     Some(encoder)
@@ -1236,11 +1234,13 @@ impl BinaryResultSetStream {
 
     fn eof(&self) -> EofPacket {
         EofPacket {
+            affected_rows: self.options.affected_rows,
+            last_insert_id: self.options.last_insert_id,
             warnings: self.options.warnings,
             status_flags: self.options.status_flags,
             deprecate_eof: self.options.deprecate_eof,
             protocol_41: self.options.protocol_41,
-            info: Vec::new(),
+            info: self.options.info.clone(),
         }
     }
 }
@@ -1346,11 +1346,13 @@ fn append_metadata_packets(
     }
     if !options.deprecate_eof {
         packets.push(encode_eof_packet(&EofPacket {
+            affected_rows: options.affected_rows,
+            last_insert_id: options.last_insert_id,
             warnings: options.warnings,
             status_flags: options.status_flags,
             deprecate_eof: options.deprecate_eof,
             protocol_41: options.protocol_41,
-            info: Vec::new(),
+            info: options.info.clone(),
         }));
     }
 }

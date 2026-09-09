@@ -39,6 +39,21 @@ impl StatusProvider for MockStatistics {
     }
 }
 
+struct OverrideStatistics;
+
+impl StatusProvider for OverrideStatistics {
+    fn scope(&self, _status: &str) -> StatusScope {
+        StatusScope::GLOBAL
+    }
+
+    fn stats(&self) -> Result<BTreeMap<String, StatusValue>, String> {
+        Ok(BTreeMap::from([(
+            "test_status".to_owned(),
+            StatusValue::Text("later_value".to_owned()),
+        )]))
+    }
+}
+
 #[test]
 fn status_registry_matches_source_provider_contract() {
     // Source: pkg/sessionctx/variable/statusvar.go:29-91 and
@@ -71,4 +86,30 @@ fn status_scope_bits_preserve_global_session_default() {
         (StatusScope::GLOBAL | StatusScope::SESSION).bits(),
         StatusScope::DEFAULT.bits()
     );
+}
+
+#[test]
+fn status_collection_matches_source_last_provider_and_error_rules() {
+    let mut registry = StatusRegistry::default();
+    registry.register(MockStatistics);
+    registry.register(OverrideStatistics);
+    let values = registry.collect().unwrap();
+    assert_eq!(
+        values["test_status"].value,
+        StatusValue::Text("later_value".to_owned())
+    );
+    assert_eq!(values["test_status"].scope, StatusScope::GLOBAL);
+
+    struct FailingStatistics;
+    impl StatusProvider for FailingStatistics {
+        fn scope(&self, _status: &str) -> StatusScope {
+            StatusScope::DEFAULT
+        }
+
+        fn stats(&self) -> Result<BTreeMap<String, StatusValue>, String> {
+            Err("statistics unavailable".to_owned())
+        }
+    }
+    registry.register(FailingStatistics);
+    assert_eq!(registry.collect(), Err("statistics unavailable".to_owned()));
 }

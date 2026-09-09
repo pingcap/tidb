@@ -37,7 +37,6 @@ pub enum KeyKind {
 /// The table ID bytes and any bytes after the kind prefix are intentionally
 /// opaque. This is the complete observable contract of Go's
 /// `rowindexcodec.GetKeyKind`; it does not validate a complete row or index key.
-#[must_use]
 pub fn get_key_kind(key: &[u8]) -> KeyKind {
     if key.len() < MIN_KEY_LEN || key[0] != TABLE_PREFIX {
         return KeyKind::Unknown;
@@ -55,7 +54,6 @@ pub fn get_key_kind(key: &[u8]) -> KeyKind {
 /// The table prefix is followed by TiDB's eight-byte ascending mem-comparable
 /// signed integer. API V2 keys carry the four-byte `x + keyspace ID` prefix,
 /// which is removed before applying the same decoder.
-#[must_use]
 pub fn decode_table_id(key: &[u8]) -> i64 {
     let key = if key.first() == Some(&b'x') && key.len() >= 4 {
         &key[4..]
@@ -73,7 +71,6 @@ pub fn decode_table_id(key: &[u8]) -> i64 {
 /// This is Go `tablecodec.GenTableRecordPrefix` and the shared prefix builder
 /// used by `EncodeRowKey`. Table IDs use the same ascending mem-comparable
 /// signed integer encoding as every other table key.
-#[must_use]
 pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
     let mut key = Vec::with_capacity(MIN_KEY_LEN);
     key.push(TABLE_PREFIX);
@@ -87,7 +84,6 @@ pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
 /// Handle encoding remains owned by `tidb-txnkv`; this codec layer only
 /// prefixes the exact opaque handle bytes, matching Go
 /// `tablecodec.EncodeRowKey` without introducing a reverse crate dependency.
-#[must_use]
 pub fn encode_row_key(table_id: i64, encoded_handle: &[u8]) -> Vec<u8> {
     let mut key = gen_table_record_prefix(table_id);
     key.reserve(encoded_handle.len());

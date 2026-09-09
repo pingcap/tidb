@@ -61,7 +61,6 @@ pub enum TableKeyError {
 
 impl TableKeyError {
     /// MySQL error number used by Go's `dbterror.ClassXEval` mapping.
-    #[must_use]
     pub const fn mysql_error_code(&self) -> u16 {
         match self {
             Self::InvalidKey => 8221,
@@ -148,7 +147,6 @@ impl fmt::Display for RecordHandle {
 
 impl RecordHandle {
     /// Constructs a partition-aware handle.
-    #[must_use]
     pub fn partition(partition_id: i64, handle: Self) -> Self {
         Self::Partition {
             partition_id,
@@ -157,7 +155,6 @@ impl RecordHandle {
     }
 
     /// Returns whether the underlying handle is an integer.
-    #[must_use]
     pub const fn is_int(&self) -> bool {
         match self {
             Self::Int(_) => true,
@@ -167,7 +164,6 @@ impl RecordHandle {
     }
 
     /// Returns the underlying integer value.
-    #[must_use]
     pub const fn int_value(&self) -> Option<i64> {
         match self {
             Self::Int(value) => Some(*value),
@@ -177,7 +173,6 @@ impl RecordHandle {
     }
 
     /// Returns the physical partition ID when present.
-    #[must_use]
     pub const fn partition_id(&self) -> Option<i64> {
         match self {
             Self::Partition { partition_id, .. } => Some(*partition_id),
@@ -186,7 +181,6 @@ impl RecordHandle {
     }
 
     /// Returns the underlying non-partition handle.
-    #[must_use]
     pub const fn inner(&self) -> &Self {
         match self {
             Self::Partition { handle, .. } => handle.inner(),
@@ -195,7 +189,6 @@ impl RecordHandle {
     }
 
     /// Returns the source handle's persisted encoding.
-    #[must_use]
     pub fn encoded(&self) -> Vec<u8> {
         encode_handle(self)
     }
@@ -231,7 +224,6 @@ impl RecordHandle {
 }
 
 /// Encodes the `t{table_id}` prefix shared by record and index keys.
-#[must_use]
 pub fn encode_table_prefix(table_id: i64) -> Vec<u8> {
     let mut key = Vec::with_capacity(1 + ID_LEN);
     key.extend_from_slice(TABLE_PREFIX);
@@ -240,13 +232,11 @@ pub fn encode_table_prefix(table_id: i64) -> Vec<u8> {
 }
 
 /// Generates the canonical table prefix for a physical table identifier.
-#[must_use]
 pub fn gen_table_prefix(table_id: i64) -> Vec<u8> {
     encode_table_prefix(table_id)
 }
 
 /// Generates the `t{table_id}_i` prefix shared by every index of a table.
-#[must_use]
 pub fn gen_table_index_prefix(table_id: i64) -> Vec<u8> {
     let mut key = encode_table_prefix(table_id);
     key.extend_from_slice(INDEX_PREFIX);
@@ -254,7 +244,6 @@ pub fn gen_table_index_prefix(table_id: i64) -> Vec<u8> {
 }
 
 /// Encodes a row key from a decoded source handle.
-#[must_use]
 pub fn encode_row_key_with_handle(table_id: i64, handle: &RecordHandle) -> Vec<u8> {
     encode_row_key(table_id, &encode_handle(handle))
 }
@@ -264,7 +253,6 @@ pub fn encode_row_key_with_handle(table_id: i64, handle: &RecordHandle) -> Vec<u
 /// This is the direct equivalent of Go's `GetTableHandleKeyRange`: the lower
 /// and upper keys are the table's record prefix followed by the
 /// memcomparable encodings of `math.MinInt64` and `math.MaxInt64`.
-#[must_use]
 pub fn get_table_handle_key_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
     (
         encode_row_key_with_handle(table_id, &RecordHandle::Int(i64::MIN)),
@@ -273,7 +261,6 @@ pub fn get_table_handle_key_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// Appends a source handle to an already encoded table-record prefix.
-#[must_use]
 pub fn encode_record_key(record_prefix: &[u8], handle: &RecordHandle) -> Vec<u8> {
     let record_prefix = match handle {
         RecordHandle::Partition { partition_id, .. } => {
@@ -289,7 +276,6 @@ pub fn encode_record_key(record_prefix: &[u8], handle: &RecordHandle) -> Vec<u8>
 }
 
 /// Encodes the complete prefix identifying one table index.
-#[must_use]
 pub fn encode_table_index_prefix(table_id: i64, index_id: i64) -> Vec<u8> {
     let mut key = gen_table_index_prefix(table_id);
     encode_int(&mut key, index_id);
@@ -297,7 +283,6 @@ pub fn encode_table_index_prefix(table_id: i64, index_id: i64) -> Vec<u8> {
 }
 
 /// Encodes an index seek key by appending canonical encoded index values.
-#[must_use]
 pub fn encode_index_seek_key(table_id: i64, index_id: i64, encoded_values: &[u8]) -> Vec<u8> {
     let mut key = encode_table_index_prefix(table_id, index_id);
     key.extend_from_slice(encoded_values);
@@ -344,7 +329,6 @@ pub fn encode_non_unique_index_key(
 /// would grow the value is skipped, so it falls to the legacy encoding and emits
 /// a single `'0'` byte — the handle lives in the key, not the value. Confirmed
 /// byte-exact against real `GenIndexValuePortal`.
-#[must_use]
 pub fn non_unique_index_value() -> Vec<u8> {
     vec![b'0']
 }
@@ -456,7 +440,6 @@ pub fn decode_meta_key(key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), TableKeyError> 
 }
 
 /// Encodes a structure hash-data metadata key and field.
-#[must_use]
 pub fn encode_meta_key(key: &[u8], field: &[u8]) -> Vec<u8> {
     let mut encoded = Vec::with_capacity(
         META_PREFIX.len()
@@ -472,7 +455,6 @@ pub fn encode_meta_key(key: &[u8], field: &[u8]) -> Vec<u8> {
 }
 
 /// Encodes the prefix shared by every field of one structure hash-data key.
-#[must_use]
 pub fn encode_meta_key_prefix(key: &[u8]) -> Vec<u8> {
     let mut encoded =
         Vec::with_capacity(META_PREFIX.len() + crate::encoded_bytes_len(key.len()) + ID_LEN);
@@ -483,19 +465,16 @@ pub fn encode_meta_key_prefix(key: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the encoded record-handle bytes after the table record prefix.
-#[must_use]
 pub fn cut_row_key_prefix(key: &[u8]) -> &[u8] {
     &key[PREFIX_LEN.min(key.len())..]
 }
 
 /// Returns the encoded index values after the complete table-index prefix.
-#[must_use]
 pub fn cut_index_prefix(key: &[u8]) -> &[u8] {
     &(key[(PREFIX_LEN + ID_LEN).min(key.len())..])
 }
 
 /// Truncates a byte slice to at most one integer-handle record-key length.
-#[must_use]
 pub fn truncate_to_row_key_len(key: &[u8]) -> &[u8] {
     &key[..RECORD_ROW_KEY_LEN.min(key.len())]
 }
@@ -533,7 +512,6 @@ fn encode_handle(handle: &RecordHandle) -> Vec<u8> {
 }
 
 /// Renders bytes as lowercase hexadecimal without separators.
-#[must_use]
 pub fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut value = String::with_capacity(bytes.len() * 2);

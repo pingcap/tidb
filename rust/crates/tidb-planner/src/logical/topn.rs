@@ -15,7 +15,7 @@
 //! Go `pkg/planner/core/operator/logicalop/logical_top_n.go`: `LogicalTopN`,
 //! the fused `ORDER BY ... LIMIT` operator.
 //!
-//! SEED of `pkg/planner/core`. `LogicalTopN` was a [`crate::logical::TodoLogicalOp`]
+//! SEED of `pkg/planner/core`. `LogicalTopN` was a `LogicalPlan` placeholder arm
 //! before this batch. It shares its `ByItems` handling with
 //! [`crate::logical::sort`] and its limit arithmetic with
 //! [`crate::logical::limit`]; neither is restated here.
@@ -152,7 +152,7 @@ impl LogicalTopN {
                 return Some((existing.clone(), false));
             }
         }
-        let stats = child_stats.first()?.derive_limit_stats(self.count as f64);
+        let stats = child_stats[0].derive_limit_stats(self.count as f64);
         self.base.base.set_stats(Some(stats.clone()));
         Some((stats, true))
     }
@@ -193,7 +193,11 @@ impl LogicalTopN {
     /// Go's comment for why this exists rather than `SetChild`: "AttachChild
     /// will tracer the children change while SetChild doesn't."
     #[must_use]
-    pub fn attach_child(self, child: LogicalPlan) -> LogicalPlan {
+    pub fn attach_child(
+        self,
+        child: LogicalPlan,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> LogicalPlan {
         if let LogicalPlan::TableDual(mut dual) = child {
             let num_dual_rows = dual.row_count as u64;
             dual.row_count = if num_dual_rows < self.offset {
@@ -204,8 +208,11 @@ impl LogicalTopN {
             return LogicalPlan::TableDual(dual);
         }
         if self.is_limit() {
-            let mut base = self.base.shell();
-            base.base.set_tp(LogicalLimit::TYPE);
+            let base = BaseLogicalPlan::new(
+                allocator,
+                LogicalLimit::TYPE,
+                self.base.base.query_block_offset(),
+            );
             let mut limit = LogicalLimit {
                 base,
                 partition_by: self.partition_by,

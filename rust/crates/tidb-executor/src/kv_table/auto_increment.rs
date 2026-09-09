@@ -208,6 +208,21 @@ impl KvTable {
         Ok(rows)
     }
 
+    /// CREATE-time `AUTO_ID_CACHE=n`: Go's "can't alter between 1 and
+    /// non-1" guard is ALTER-only -- at CREATE the option simply chooses the
+    /// allocator shape (a fresh table has no counters to preserve), so this
+    /// rebuilds with the requested step, single-point included.
+    pub fn init_auto_id_cache(&mut self, cache: u64) {
+        let step = if cache == 0 {
+            crate::kv_table::DEFAULT_AUTO_ID_STEP
+        } else {
+            cache
+        };
+        self.auto_id = self.auto_id.with_step(step);
+        self.auto_random_id = self.auto_random_id.with_step(step);
+        self.auto_id_cache = i64::try_from(cache).unwrap_or(i64::MAX);
+    }
+
     /// Rebuilds the allocator after `ALTER TABLE ... AUTO_ID_CACHE=n` while
     /// retaining the counter's global high-water mark.
     pub fn set_auto_id_cache(&mut self, cache: u64) -> Result<(), &'static str> {
@@ -308,8 +323,14 @@ impl KvTable {
         };
         if current != 0 {
             // Go rebases so the next allocation is past the explicit value,
-            // and a value the counter is already past changes nothing.
-            self.auto_id.rebase(current).map_err(AutoIdError::Store)?;
+            // and a value the counter is already past changes nothing. The
+            // insert arms pass allocIDs=true (`lazyAdjustAutoIncrementDatum`,
+            // `insert_common.go:897`; `adjustAutoIncrementDatum`, `:993`), so
+            // the store crossing reserves a fresh window: an ascending run of
+            // explicit ids pays the counter's home once per window, not per row.
+            self.auto_id
+                .rebase_allocating(current)
+                .map_err(AutoIdError::Store)?;
             return Ok(AutoIncrement::Given(current));
         }
         let (increment, step_offset) = auto_id::increment_and_offset(step.0, step.1);

@@ -21,3 +21,26 @@ mod sync_map;
 
 pub use bounded_min_heap::BoundedMinHeap;
 pub use sync_map::SyncMap;
+
+#[cfg(test)]
+mod tests {
+    use super::{BoundedMinHeap, SyncMap};
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        fn cmp(a: &i32, b: &i32) -> isize {
+            (*a > *b) as isize - (*a < *b) as isize
+        }
+
+        let heap = BoundedMinHeap::new(1, Some(cmp));
+        BoundedMinHeap::new(1, Some(cmp));
+        heap.len();
+        heap.to_sorted_slice();
+
+        let map = SyncMap::<i32, i32>::new(1);
+        SyncMap::<i32, i32>::new(1);
+        map.load(&0);
+        map.keys();
+    }
+}

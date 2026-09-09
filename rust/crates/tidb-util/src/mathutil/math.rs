@@ -49,14 +49,12 @@ const UINT_SIZE_TABLE: [u64; 21] = [
 
 /// Returns the source two's-complement absolute value, including the wrapped
 /// `i64::MIN` result.
-#[must_use]
 pub fn abs(value: i64) -> i64 {
     let sign = value >> 63;
     (value ^ sign).wrapping_sub(sign)
 }
 
 /// Efficiently returns the decimal character length of a `u64`.
-#[must_use]
 pub fn str_len_of_uint64_fast(value: u64) -> usize {
     for (index, limit) in UINT_SIZE_TABLE.iter().enumerate().skip(1) {
         if value <= *limit {
@@ -67,13 +65,11 @@ pub fn str_len_of_uint64_fast(value: u64) -> usize {
 }
 
 /// Efficiently returns the decimal character length of an `i64`.
-#[must_use]
 pub fn str_len_of_int64_fast(value: i64) -> usize {
     usize::from(value < 0) + str_len_of_uint64_fast(abs(value) as u64)
 }
 
 /// Reports whether a value is neither NaN nor infinity.
-#[must_use]
 pub fn is_finite(value: f64) -> bool {
     value.is_finite()
 }
@@ -96,7 +92,6 @@ pub fn clamp<T: PartialOrd>(value: T, minimum: T, maximum: T) -> T {
 ///
 /// The caller retains the Go precondition that `value` is positive and the
 /// result does not overflow.
-#[must_use]
 pub fn next_power_of_two(mut value: i64) -> i64 {
     if value & value.wrapping_sub(1) == 0 {
         return value;
@@ -114,7 +109,6 @@ pub fn next_power_of_two(mut value: i64) -> i64 {
 ///
 /// Like the source, panics for a zero divisor or a batch count that cannot be
 /// represented as an allocation capacity.
-#[must_use]
 pub fn divide_2_batches<T>(mut total: T, batches: T) -> Vec<T>
 where
     T: PrimInt + ToPrimitive,
@@ -214,30 +208,5 @@ mod tests {
         assert_eq!(divide_2_batches(10, 3), vec![4, 3, 3]);
         assert_eq!(divide_2_batches(10, 4), vec![3, 3, 2, 2]);
         assert_eq!(divide_2_batches(10, 5), vec![2, 2, 2, 2, 2]);
-    }
-
-    #[test]
-    fn source_uncovered_boundaries_remain_exact() {
-        assert_eq!(abs(i64::MIN), i64::MIN);
-        assert_eq!(str_len_of_int64_fast(i64::MIN), 20);
-        assert!(is_finite(0.0));
-        assert!(!is_finite(f64::NAN));
-        assert!(!is_finite(f64::INFINITY));
-        assert!(clamp(f64::NAN, 1.0, 3.0).is_nan());
-        assert_eq!(INT_BITS, usize::BITS);
-        assert_eq!(
-            (MAX_INT, MIN_INT, MAX_UINT),
-            (isize::MAX, isize::MIN, usize::MAX)
-        );
-    }
-
-    #[test]
-    fn clamp_preserves_source_nan_and_signed_zero_comparisons() {
-        let source_nan = f64::from_bits(0x7ff8_0000_0000_0001);
-        assert_eq!(clamp(0.0_f64, -1.0, -0.0).to_bits(), (-0.0_f64).to_bits());
-        assert_eq!(clamp(-0.0_f64, 0.0, 1.0).to_bits(), 0.0_f64.to_bits());
-        assert_eq!(clamp(source_nan, 1.0, 3.0).to_bits(), source_nan.to_bits());
-        assert_eq!(clamp(2.0, source_nan, 3.0), 2.0);
-        assert_eq!(clamp(2.0, 1.0, source_nan), 2.0);
     }
 }

@@ -65,7 +65,7 @@ fn entry<T>(payload: T) -> (BatchEntry<T, Arc<TestCompletion>>, Arc<TestCompleti
 
 #[test]
 fn test_batch_commands_builder() {
-    let mut scheduler = BatchScheduler::new();
+    let mut scheduler: BatchScheduler<usize, Arc<TestCompletion>> = BatchScheduler::new();
 
     for payload in 0..10 {
         scheduler.push(entry(payload).0);
@@ -165,7 +165,10 @@ fn scheduler_and_pull_share_one_completion_authority() {
     let run_loop = CompletionRunLoop::new();
     let (cancelled_request, mut cancelled_pull) =
         completion_pair::<usize, TestBatchError, _>(run_loop.clone(), || {});
-    let mut scheduler = BatchScheduler::new();
+    let mut scheduler: BatchScheduler<
+        usize,
+        tidb_txnkv::rpc::CompletionRequest<usize, TestBatchError>,
+    > = BatchScheduler::new();
     scheduler.push(BatchEntry::new(1, cancelled_request));
     cancelled_pull.cancel();
     scheduler.reset();

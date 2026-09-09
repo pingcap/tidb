@@ -29,6 +29,30 @@
 //! comments record as captured from TiDB.
 
 use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
+use tidb_hack::GoToLower;
+
+/// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): choose a free name
+/// for an index whose statement omitted one. The first key column supplies
+/// the base name; collisions are resolved by trying `_2`, `_3`, ... until the
+/// name is not present on the table. `PRIMARY` is reserved, so a column with
+/// that name starts at `primary_2`.
+pub(crate) fn anonymous_index_name(existing: &[KvIndex], first_column: &str) -> String {
+    let mut suffix = 2;
+    let mut name = if first_column.eq_ignore_ascii_case("primary") {
+        suffix = 3;
+        format!("{first_column}_2")
+    } else {
+        first_column.to_owned()
+    };
+    while existing
+        .iter()
+        .any(|index| index.name.eq_ignore_ascii_case(&name))
+    {
+        name = format!("{first_column}_{suffix}");
+        suffix += 1;
+    }
+    name
+}
 
 /// Runs a `CREATE INDEX`, backfilling the existing rows.
 ///
@@ -70,7 +94,17 @@ pub fn run_create_index_in(
     ) {
         return Err(DriverError::OperationOnCachedTable("Create Index"));
     }
-    reject_partial_index(&create.options)?;
+    if create.options.condition.is_some()
+        && matches!(
+            catalog.table_in(&database, &table_name),
+            Some(crate::TableEntry::Kv(table)) if table.partition().is_some()
+        )
+    {
+        return Err(unsupported_partial_index(
+            "partial index on partitioned table is not supported",
+        ));
+    }
+    let max_index_length = catalog.max_index_length();
     add_index_to_table(
         catalog,
         &database,
@@ -82,8 +116,11 @@ pub fn run_create_index_in(
             parts: &create.parts,
             visible: is_visible(&create.options),
             global: create.options.global,
+            if_not_exists: create.if_not_exists,
+            condition: create.options.condition.as_ref(),
         },
         ctx,
+        max_index_length,
     )
 }
 
@@ -98,25 +135,185 @@ pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
     options.visibility != Some(tidb_ast::IndexVisibility::Invisible)
 }
 
-/// Refuses a PARTIAL index -- `KEY idx(a) WHERE a > 0` -- which this tier
-/// parses but does not maintain.
-///
-/// Creating it anyway would build a FULL index under a partial index's name:
-/// every row would get an entry, including the rows the condition excludes.
-/// That is wrong in both directions at once. A plan that trusted the
-/// condition would read entries for rows that should not be there, and
-/// `ADMIN CHECK TABLE` -- which Go refuses outright on a partial index unless
-/// `tidb_enable_fast_table_check=ON` (8273) -- would call the table
-/// consistent, because the index really is consistent with the wrong
-/// definition. Refusing at CREATE keeps the condition from being silently
-/// dropped.
-pub(crate) fn reject_partial_index(options: &tidb_ast::IndexOptions) -> Result<(), DriverError> {
-    if options.condition.is_some() {
-        return Err(DriverError::unsupported(
-            "a partial index (KEY ... WHERE) is not supported yet",
-        ));
+/// Go `dbterror.ErrUnsupportedAddPartialIndex` (8200), including its
+/// user-visible message prefix. Partial-index validation has a dedicated
+/// errno in TiDB; using the generic unsupported (1105) would make otherwise
+/// correct accept/refuse decisions observably different.
+pub(crate) fn unsupported_partial_index(reason: impl Into<String>) -> DriverError {
+    DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        message: format!("Unsupported add partial index: {}", reason.into()),
     }
-    Ok(())
+}
+
+/// Go `dbterror.ErrModifyColumnReferencedByPartialCondition` (8272), emitted
+/// before DROP/MODIFY/CHANGE can leave an index predicate naming a column that
+/// no longer exists.
+pub(crate) fn partial_index_column_dependency(column: &str, index: &str) -> DriverError {
+    DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrModifyColumnReferencedByPartialCondition,
+        message: format!(
+            "Cannot drop, change or modify column '{column}': it is referenced in partial index '{index}'"
+        ),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PartialLiteralKind {
+    Integer,
+    Floating,
+    String,
+    Binary,
+    Null,
+    Unsupported,
+}
+
+fn partial_literal_kind(expression: &tidb_ast::Expr) -> PartialLiteralKind {
+    match expression {
+        tidb_ast::Expr::Int(_) | tidb_ast::Expr::Bool(_) => PartialLiteralKind::Integer,
+        tidb_ast::Expr::Decimal(_) | tidb_ast::Expr::Float(_) => PartialLiteralKind::Floating,
+        tidb_ast::Expr::String(_)
+        | tidb_ast::Expr::RawString(_)
+        | tidb_ast::Expr::CharsetString { .. } => PartialLiteralKind::String,
+        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
+        tidb_ast::Expr::CharsetBinary { value, .. } => match value.as_ref() {
+            tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
+            _ => PartialLiteralKind::Unsupported,
+        },
+        tidb_ast::Expr::Null => PartialLiteralKind::Null,
+        _ => PartialLiteralKind::Unsupported,
+    }
+}
+
+/// Mirrors Go `checkIndexCondition` (`pkg/ddl/index.go:4090-4240`). Only a
+/// visible, non-generated column may appear in an `IS [NOT] NULL` predicate or
+/// on one side of a supported comparison; the other side must be a literal
+/// whose type family is compatible with that column.
+pub(crate) fn validate_partial_index_condition(
+    columns: &[KvColumn],
+    expression: &tidb_ast::Expr,
+) -> Result<(), DriverError> {
+    let column_for = |expr: &tidb_ast::Expr| -> Result<&KvColumn, DriverError> {
+        let tidb_ast::Expr::Column(path) = expr else {
+            return Err(unsupported_partial_index(
+                "partial index condition must include a column name",
+            ));
+        };
+        let Some(name) = path.last() else {
+            return Err(unsupported_partial_index(
+                "partial index condition must include a column name",
+            ));
+        };
+        let Some(column) = columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+        else {
+            return Err(unsupported_partial_index(format!(
+                "column name `{name}` referenced in partial index condition is not found in table"
+            )));
+        };
+        if column.generated.is_some() {
+            return Err(unsupported_partial_index(format!(
+                "generated column {name} cannot be used in partial index condition"
+            )));
+        }
+        Ok(column)
+    };
+
+    match expression {
+        tidb_ast::Expr::Is {
+            expr,
+            target: tidb_ast::IsTarget::Null,
+            ..
+        } => {
+            column_for(expr)?;
+            Ok(())
+        }
+        tidb_ast::Expr::Is { .. } => Err(unsupported_partial_index(
+            "only IS NULL and IS NOT NULL are supported",
+        )),
+        tidb_ast::Expr::Binary(op, left, right)
+            if matches!(
+                op,
+                tidb_ast::BinaryOp::Eq
+                    | tidb_ast::BinaryOp::Ne
+                    | tidb_ast::BinaryOp::Gt
+                    | tidb_ast::BinaryOp::Lt
+                    | tidb_ast::BinaryOp::Ge
+                    | tidb_ast::BinaryOp::Le
+            ) =>
+        {
+            let (column, literal) = match (left.as_ref(), right.as_ref()) {
+                (tidb_ast::Expr::Column(_), other) => (column_for(left)?, other),
+                (other, tidb_ast::Expr::Column(_)) => (column_for(right)?, other),
+                _ => {
+                    return Err(unsupported_partial_index(
+                        "partial index condition must include a column name in the binary operation",
+                    ));
+                }
+            };
+            let literal_kind = partial_literal_kind(literal);
+            let code = column.field_type.code();
+            let compatible = match literal_kind {
+                PartialLiteralKind::Integer => {
+                    code.is_type_integer()
+                        || matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+                        )
+                }
+                PartialLiteralKind::Floating => matches!(
+                    code,
+                    tidb_datatype::FieldTypeCode::Float
+                        | tidb_datatype::FieldTypeCode::Double
+                        | tidb_datatype::FieldTypeCode::NewDecimal
+                ),
+                PartialLiteralKind::String => {
+                    (code.is_string()
+                        && !column
+                            .field_type
+                            .charset_name()
+                            .eq_ignore_ascii_case("binary"))
+                        || code.is_type_temporal()
+                        || matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+                        )
+                }
+                PartialLiteralKind::Binary => {
+                    code.is_type_blob()
+                        || ((code.is_type_char() || code.is_type_varchar())
+                            && column
+                                .field_type
+                                .charset_name()
+                                .eq_ignore_ascii_case("binary"))
+                }
+                PartialLiteralKind::Null | PartialLiteralKind::Unsupported => false,
+            };
+            if compatible {
+                Ok(())
+            } else {
+                let reason = if literal_kind == PartialLiteralKind::Null {
+                    "= NULL is not supported in partial index condition because it is always false"
+                        .to_owned()
+                } else if literal_kind == PartialLiteralKind::Unsupported {
+                    "partial index condition must include a literal value on the other side of the binary operation".to_owned()
+                } else {
+                    format!(
+                        "the type of column `{}` is not compatible with the literal value",
+                        column.name
+                    )
+                };
+                Err(unsupported_partial_index(reason))
+            }
+        }
+        tidb_ast::Expr::Binary(op, ..) => Err(unsupported_partial_index(format!(
+            "binary operation {op:?} is not supported"
+        ))),
+        _ => Err(unsupported_partial_index(
+            "the kind of partial index condition is not supported",
+        )),
+    }
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier
@@ -151,7 +348,7 @@ pub(crate) fn reject_duplicate_index_columns(
     let mut seen = std::collections::HashSet::with_capacity(parts.len());
     for part in parts {
         if let tidb_ast::IndexPart::Column { name, .. } = part {
-            if !seen.insert(name.to_lowercase()) {
+            if !seen.insert(name.go_to_lower()) {
                 return Err(DriverError::DuplicateColumnName(name.clone()));
             }
         }
@@ -175,6 +372,11 @@ pub(crate) struct IndexSpec<'a> {
     pub visible: bool,
     /// Go `IndexInfo.Global`, read off the statement's `GLOBAL` keyword.
     pub global: bool,
+    /// Optional `WHERE` predicate for a partial index. The table compiles it
+    /// into a sidecar keyed by the assigned index id before backfill.
+    pub condition: Option<&'a tidb_ast::Expr>,
+    /// Go's `CREATE INDEX`/`ADD INDEX IF NOT EXISTS` guard.
+    pub if_not_exists: bool,
 }
 
 /// Adds one index to a table, shared by `CREATE INDEX` and
@@ -191,6 +393,7 @@ pub(crate) fn add_index_to_table(
     table_name: &str,
     index: IndexSpec<'_>,
     ctx: &crate::StmtContext,
+    max_index_length: i64,
 ) -> Result<(), DriverError> {
     let IndexSpec {
         name: index_name,
@@ -199,6 +402,8 @@ pub(crate) fn add_index_to_table(
         parts,
         visible,
         global,
+        condition,
+        if_not_exists,
     } = index;
     reject_duplicate_index_columns(parts)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
@@ -206,6 +411,25 @@ pub(crate) fn add_index_to_table(
             format!("{database}.{table_name}"),
         )));
     };
+    if let Some(condition) = condition {
+        validate_partial_index_condition(table.columns(), condition)?;
+    }
+    if table
+        .indexes()
+        .iter()
+        .any(|existing| existing.name.eq_ignore_ascii_case(index_name))
+    {
+        // Go's `checkIndexNameAndColumns` turns a duplicate index name into
+        // ErrDupKeyName (1061) and, for IF NOT EXISTS, appends that error as a
+        // Note before returning without building hidden columns or touching
+        // the existing index.
+        let duplicate = DriverError::DuplicateKeyName(index_name.to_owned());
+        if if_not_exists {
+            ctx.append_suppressed(&duplicate);
+            return Ok(());
+        }
+        return Err(duplicate);
+    }
     // A hidden column is built against the VISIBLE columns, so an expression
     // can never name an earlier index's hidden column.
     let names: Vec<String> = table
@@ -262,11 +486,12 @@ pub(crate) fn add_index_to_table(
                 // is -- captured: under `sql_mode=''` a CREATE TABLE truncates
                 // the key with a warning but `ALTER TABLE ... ADD KEY` on the
                 // same column still fails 1071.
-                prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
+                prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
                     &table.columns[offset].field_type,
                     crate::ddl::index_prefix::IndexedColumn::Named(name),
                     *prefix_len,
                     true,
+                    max_index_length,
                 )?);
                 part_types.push(table.columns[offset].field_type.clone());
                 offsets.push(offset);
@@ -282,11 +507,12 @@ pub(crate) fn add_index_to_table(
     }
     // Go `buildIndexColumns` runs the same running sum for ADD INDEX as for
     // CREATE TABLE: each part may be legal and their total still refused.
-    crate::ddl::index_prefix::check_index_key_length(
+    crate::ddl::index_prefix::check_index_key_length_with_max(
         part_types.iter().zip(prefix_lengths.iter().copied()),
         parts.len(),
         unique,
         true,
+        max_index_length,
     )
     .map_err(crate::ddl::index_prefix::driver_error)?;
     // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index
@@ -311,9 +537,10 @@ pub(crate) fn add_index_to_table(
                      which the table does not define"
                 ))
             })?;
-            if !partition_offsets
-                .iter()
-                .all(|offset| offsets.contains(offset))
+            if !global
+                && !partition_offsets
+                    .iter()
+                    .all(|offset| offsets.contains(offset))
             {
                 return Err(DriverError::PartitionGlobalIndexNeeded(
                     index_name.to_owned(),
@@ -336,6 +563,22 @@ pub(crate) fn add_index_to_table(
         });
     }
     let id = table.next_index_id();
+    if let Some(condition) = condition {
+        if let Err(error) = table.add_partial_index_condition(
+            id,
+            index_name,
+            condition,
+            &ctx.session_zone(),
+            ctx.like_default_escape(),
+        ) {
+            for _ in 0..added {
+                table.drop_column(table.columns.len() - 1);
+            }
+            return Err(DriverError::Parse(format!(
+                "partial index condition failed: {error:?}"
+            )));
+        }
+    }
     let result = table
         .create_index_with_context(
             KvIndex {
@@ -347,6 +590,7 @@ pub(crate) fn add_index_to_table(
                 prefix_lengths,
                 visible,
                 global,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             ctx,
@@ -372,6 +616,7 @@ pub(crate) fn add_index_to_table(
     // the materialized row), so a failure takes them back off rather than
     // leaving a column no statement can name and no index uses.
     if result.is_err() {
+        table.remove_partial_index_condition(id);
         for _ in 0..added {
             table.drop_column(table.columns.len() - 1);
         }

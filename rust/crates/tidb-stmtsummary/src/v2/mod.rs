@@ -20,10 +20,15 @@
 //! - [`record`] — Go `record.go`: complete.
 //! - [`self::column`] — Go `column.go`: complete.
 //! - [`stmtsummary`] — Go `stmtsummary.go`: complete.
+//! - [`reader`] — Go `reader.go`: complete.
 //!
-//! The v2 package as a whole is therefore NOT complete: Go `v2/reader.go`,
-//! `v2/logger.go`, and `v2/tests/` are not ported, so this is not a package
-//! claim — only three of its five production files land here.
+//! The v2 package as a whole is therefore still not a full package claim:
+//! Go `v2/logger.go`'s zap-core plumbing (the no-op `stmtLogEncoder` and the
+//! `WrapCore` rewiring) is ecosystem machinery, and its lumberjack sink is
+//! mirrored by [`stmtsummary::RotatingFileLogWriter`]; the `marshal*` and
+//! `stmtLogStorage` surfaces land as the [`stmtsummary::StmtLogStorage`] and
+//! [`record`] carve-outs. Four of its five production files port whole, with
+//! the fifth reduced to those boundaries.
 //!
 //! Two carve-outs from `v2/logger.go` exist because the three ported files
 //! cannot stand without them, and both are SEED evidence for `logger.go` rather
@@ -39,5 +44,6 @@
 //!   wiring are absent.
 
 pub mod column;
+pub mod reader;
 pub mod record;
 pub mod stmtsummary;

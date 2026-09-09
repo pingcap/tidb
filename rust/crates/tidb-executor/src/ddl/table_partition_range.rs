@@ -122,15 +122,13 @@ pub(super) fn build_range_bounds_with_unsigned(
                 }
                 RangeBound::MaxValue
             }
-            PartitionValue::Expr(expr) => {
-                RangeBound::Value(fold_range_bound(
-                    expr,
-                    &definition.name,
-                    unsigned,
-                    ctx,
-                    mode,
-                )?)
-            }
+            PartitionValue::Expr(expr) => RangeBound::Value(fold_range_bound(
+                expr,
+                &definition.name,
+                unsigned,
+                ctx,
+                mode,
+            )?),
             PartitionValue::Default | PartitionValue::Tuple(_) => {
                 return Err(DriverError::PartitionValuesNotInt(definition.name.clone()))
             }
@@ -164,6 +162,21 @@ pub(super) fn build_range_columns_bounds(
 ) -> Result<RangeColumnsMetadata, DriverError> {
     if columns.is_empty() || definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
+    }
+    // Go checks the bound tuple arity before resolving the named partition
+    // columns.  That ordering is observable for a missing column paired with
+    // a malformed tuple: both shapes report ErrPartitionColumnList (1653),
+    // rather than the later 1488 missing-field error.
+    if mode.validates()
+        && definitions.iter().any(|definition| {
+            matches!(
+                &definition.clause,
+                PartitionDefinitionClause::LessThan(values)
+                    if values.len() != columns.len()
+            )
+        })
+    {
+        return Err(DriverError::PartitionColumnList);
     }
     let mut dependency_names = Vec::with_capacity(columns.len());
     let mut field_types = Vec::with_capacity(columns.len());
@@ -211,11 +224,6 @@ pub(super) fn build_range_columns_bounds(
                 _ => Err(DriverError::PartitionsMustBeDefined("RANGE")),
             };
         };
-        // Go `ErrPartitionColumnList` is CREATE-only (`ddl/partition.go:5326`);
-        // the loader does not re-check arity on metadata it did not write.
-        if mode.validates() && values.len() != field_types.len() {
-            return Err(DriverError::PartitionColumnValueWrongType);
-        }
         let bound = values
             .iter()
             .zip(&field_types)
@@ -227,16 +235,15 @@ pub(super) fn build_range_columns_bounds(
                     // (`tables/partition.go:423`), raising 1563 when it does
                     // not. A bound that reads a column, or anything else the
                     // fold cannot reduce, is not a bound.
-                    let value = super::table_partition_list::fold_column_value(
-                        expr, field_type, ctx,
-                    )
-                    .map_err(|error| {
-                        if mode.validates() {
-                            error
-                        } else {
-                            DriverError::PartitionConstDomain
-                        }
-                    })?;
+                    let value =
+                        super::table_partition_list::fold_range_column_value(expr, field_type, ctx)
+                            .map_err(|error| {
+                                if mode.validates() {
+                                    error
+                                } else {
+                                    DriverError::PartitionConstDomain
+                                }
+                            })?;
                     // Go `ErrNullInValuesLessThan` is CREATE-only
                     // (`ddl/partition.go:1691`).
                     if mode.validates() && value.is_null() {
@@ -399,14 +406,9 @@ pub(super) fn check_strictly_increasing(
 /// knows the answer, and asking it is both exact and unable to refuse --
 /// which matters most on the LOAD path, where the refusal made a table a Go
 /// cluster serves unreadable here.
-pub(super) fn partition_expression_is_unsigned(
-    built: &tidb_expr::expression::Expression,
-) -> bool {
+pub(super) fn partition_expression_is_unsigned(built: &tidb_expr::expression::Expression) -> bool {
     built.static_type().is_some_and(FieldType::is_unsigned)
 }
-
-
-
 
 #[cfg(test)]
 mod tests {

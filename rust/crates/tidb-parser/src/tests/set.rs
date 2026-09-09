@@ -436,3 +436,27 @@ fn test_set_transaction_source_of_truth() {
         ));
     }
 }
+
+/// Go's scanner does not treat `instance.` as an `@@` scope prefix
+/// (lexer.go:671), so the observable layering differs from `@@session.`:
+///
+/// - `SET @@instance."x" = 1` lexes as `@@instance.` plus a separate string
+///   token, which is a syntax error — NOT a variable named `x`.
+/// - `SELECT @@instance.` lexes as one valid variable token (the identifier
+///   run folds the dot) and parses with the instance scope and an empty
+///   name — exactly what Go's `SystemVariable` grammar action builds for
+///   the `@@instance.` literal.
+#[test]
+fn instance_scope_quoted_body_and_bare_dot_follow_the_go_scanner() {
+    // A quoted body is a separate token in Go, so the SET statement cannot
+    // parse. (The scanner-level split regression lives in tidb-lexer.)
+    assert!(parse(r#"set @@instance."x" = 1"#).is_err());
+
+    // The bare trailing dot parses as an instance-scoped variable with an
+    // empty name, exactly like Go's grammar action (`@@INSTANCE.`` `).
+    assert_eq!(
+        r("select @@instance."),
+        "SELECT @@INSTANCE.``",
+        "the bare @@instance. variable must keep the instance scope"
+    );
+}

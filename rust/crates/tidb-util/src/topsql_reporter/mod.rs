@@ -52,3 +52,83 @@
 pub mod datamodel;
 pub mod ru_datamodel;
 pub mod ru_window_aggregator;
+
+#[cfg(test)]
+mod contract_tests {
+    use super::datamodel::{
+        cpu_records_top_n, encode_key, records_to_proto, records_top_n, ts_items_sorted,
+        ts_items_to_proto, Collecting, NormalizedPlanMap, NormalizedSqlMap, Record, SqlMeta,
+        TopSqlRecordProto, TsItem,
+    };
+    use super::ru_datamodel::{
+        is_others_key, make_key, normalize_top_n_limits, others_key, ru_items_to_proto,
+        ru_records_top_n, RuCollecting, RuItem, RuRecord, SqlPlanKey, UserRuCollecting,
+    };
+    use super::ru_window_aggregator::{
+        align_to_interval, build_report_records, RuPointBucket, RuWindowAggregator,
+    };
+    use crate::topsql_stmtstats::BinaryDigest;
+    use std::collections::HashMap;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        TopSqlRecordProto::default().get_keyspace_name();
+        TsItem::default().to_proto();
+        ts_items_sorted(&[]);
+        ts_items_to_proto(&[]);
+        Record::new(Vec::new(), Vec::new());
+        Record::default().to_proto(&[]);
+        records_top_n(Vec::new(), 0);
+        let records: Vec<Record> = Vec::new();
+        records_to_proto(&records, &[]);
+        cpu_records_top_n(Vec::new(), 0);
+        encode_key(&[], &[]);
+        Collecting::new();
+        Collecting::default().has_evicted(0, &[], &[]);
+
+        let sql_map = NormalizedSqlMap::new();
+        sql_map.len();
+        sql_map.is_empty();
+        sql_map.get(&[]);
+        sql_map.take();
+        sql_map.to_proto(&[]);
+
+        let plan_map = NormalizedPlanMap::new();
+        plan_map.len();
+        plan_map.is_empty();
+        plan_map.get(&[]);
+        plan_map.take();
+        let decode = |_: &str| Ok::<String, String>(String::new());
+        let compress = |_: &[u8]| String::new();
+        plan_map.to_proto(&[], &decode, &compress);
+
+        RuItem::default().to_proto();
+        ru_items_to_proto(&[]);
+        others_key();
+        make_key(BinaryDigest::default(), BinaryDigest::default());
+        is_others_key(&SqlPlanKey::default());
+        RuRecord::new(BinaryDigest::default(), BinaryDigest::default());
+        RuRecord::new_others();
+        ru_records_top_n(Vec::new(), 0);
+        UserRuCollecting::new("");
+        UserRuCollecting::with_cap("", 1);
+        UserRuCollecting::new_others_user(1);
+        UserRuCollecting::new("").into_report_records_with_limit(1);
+        super::ru_datamodel::user_ru_collectings_top_n(Vec::new(), 0);
+        normalize_top_n_limits(0, 0);
+        RuCollecting::new();
+        RuCollecting::with_caps(1, 1);
+        RuCollecting::default().to_top_ru_records(&[]);
+        RuCollecting::default().compact_with_limits(1, 1);
+
+        align_to_interval(0, 0);
+        RuWindowAggregator::new();
+        RuWindowAggregator::new().take_report_records(0, 60, &[]);
+        build_report_records(&HashMap::<u64, RuPointBucket>::new(), 0, 60, 60, &[]);
+
+        // Keep the source-shaped metadata type in scope for rustc's test
+        // build, matching the Go map's empty-value construction.
+        let _ = SqlMeta::default();
+    }
+}

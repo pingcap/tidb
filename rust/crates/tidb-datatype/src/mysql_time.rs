@@ -82,6 +82,8 @@ pub enum TimeError {
     Conversion(TimeConversionError),
     /// A zero month or day is forbidden by the conversion flags.
     ZeroInDate,
+    /// An all-zero numeric date is forbidden by `FlagIgnoreZeroDateErr`.
+    ZeroDate,
     /// Month/day fields do not form an accepted MySQL date.
     InvalidDate,
     /// Hour/minute/second fields exceed MySQL's clock range.
@@ -99,6 +101,7 @@ impl fmt::Display for TimeError {
             Self::OutOfRange(field) => write!(formatter, "time {field} is out of range"),
             Self::Conversion(error) => error.fmt(formatter),
             Self::ZeroInDate => formatter.write_str("zero month or day in date"),
+            Self::ZeroDate => formatter.write_str("zero date"),
             Self::InvalidDate => formatter.write_str("invalid MySQL date"),
             Self::InvalidClock => formatter.write_str("invalid MySQL clock"),
             Self::TimestampOutOfRange => formatter.write_str("timestamp is out of range"),
@@ -311,6 +314,30 @@ impl Time {
         Self::new(core, kind, (metadata >> 1) as i64)
     }
 
+    /// Decodes Go's unchecked in-memory representation without validating
+    /// calendar fields or FSP metadata.
+    #[must_use]
+    pub const fn from_go_raw_like_go(raw: u64) -> Self {
+        let metadata = raw & 0b1111;
+        let core = CoreTime::from_raw(raw & !0b1111);
+        if metadata == 0b1110 {
+            return Self {
+                core,
+                kind: TimeType::Date,
+                fsp: 0,
+            };
+        }
+        Self {
+            core,
+            kind: if metadata & 1 == 1 {
+                TimeType::Timestamp
+            } else {
+                TimeType::DateTime
+            },
+            fsp: (metadata >> 1) as u8,
+        }
+    }
+
     /// Returns the current local wall-clock value with FSP zero.
     pub fn current(kind: TimeType) -> Self {
         Self {
@@ -357,6 +384,11 @@ impl Time {
             {
                 converted.core =
                     core_time_from_datetime(converted.core.adjusted_datetime(timezone)?);
+                // Go returns `Time{FromGoTime(tAdj)}` (time.go:467): the
+                // composite literal zeroes the type and fsp fields, so the
+                // adjusted value reverts to DATETIME with fsp 0.
+                converted.set_kind(TimeType::DateTime);
+                converted.set_fsp(0)?;
                 converted.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
                 Ok((converted, true))
             }
@@ -665,6 +697,23 @@ impl Time {
         if day > maximum_day {
             return Err(TimeError::InvalidDate);
         }
+        // Go's `checkDateRange` compares the complete CoreTime against
+        // `MaxDatetime` (`9999-12-31 23:59:59.999999`), not just the year and
+        // month fields.  The packed microsecond field can represent values
+        // through 1,048,575, so the exact upper-bound second needs the same
+        // final precision check.  Earlier dates remain valid even when their
+        // synthetic microsecond field is above one million, matching Go's
+        // lexicographic `compareTime` ordering.
+        if year == 9999
+            && month == 12
+            && day == 31
+            && self.core.hour() == 23
+            && self.core.minute() == 59
+            && self.core.second() == 59
+            && self.core.microsecond() > 999_999
+        {
+            return Err(TimeError::InvalidDate);
+        }
         self.validate_clock()
     }
 
@@ -678,17 +727,16 @@ impl Time {
 
     /// Encodes TiDB's packed temporal storage representation.
     pub fn to_packed_uint(self) -> Result<u64, TimeError> {
-        PackedTime::from_parts(
-            self.core.year() as u16,
-            self.core.month(),
-            self.core.day(),
-            self.core.hour(),
-            self.core.minute(),
-            self.core.second(),
-            self.core.microsecond(),
-        )
-        .map(PackedTime::raw)
-        .map_err(|_| TimeError::OutOfRange("packed value"))
+        // Go's `Time.ToPackedUint` is a raw bit-pack and deliberately does
+        // not revalidate calendar or clock fields; validation belongs to
+        // `Time.Check`/conversion callers. Keep this storage boundary
+        // infallible for synthetic CoreTime values as well.
+        let ymd = ((self.core.year() as u64 * 13 + self.core.month() as u64) << 5)
+            | self.core.day() as u64;
+        let hms = (self.core.hour() as u64) << 12
+            | (self.core.minute() as u64) << 6
+            | self.core.second() as u64;
+        Ok(((ymd << 17 | hms) << 24) | self.core.microsecond() as u64)
     }
 
     /// Decodes TiDB's packed temporal storage representation.
@@ -744,17 +792,14 @@ impl fmt::Display for Time {
     }
 }
 
-/// Returns the number of fractional digits in a temporal literal, capped at 6.
+/// Returns Go `GetFsp`'s byte count after the selected fraction dot, capped at
+/// six. The source deliberately includes trailing text and timezone bytes.
 pub fn get_fsp(value: &str) -> u8 {
     let index = get_frac_index(value);
     if index < 0 {
         return 0;
     }
-    value.as_bytes()[index as usize + 1..]
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count()
-        .min(6) as u8
+    (value.len() - index as usize - 1).min(6) as u8
 }
 
 /// Returns the byte index of the fraction dot, or `-1`.
@@ -1003,6 +1048,28 @@ mod tests {
         assert_eq!(timestamp.to_string(), "2018-03-11 03:00:00");
     }
 
+    /// Go `Convert`'s DST-transition branch returns
+    /// `Time{FromGoTime(tAdj)}` (time.go:467) whose composite literal zeroes
+    /// the type and fsp fields: the adjusted value reverts to DATETIME with
+    /// fsp 0, regardless of the source fsp.
+    #[test]
+    fn dst_adjusted_convert_reverts_to_datetime_with_zero_fsp() {
+        let los: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
+        let source = Time::new(
+            CoreTime::from_date(2018, 3, 11, 2, 0, 16, 567_000),
+            TimeType::DateTime,
+            3,
+        )
+        .unwrap();
+        let (converted, adjusted) = source
+            .convert_kind(TimeType::Timestamp, false, false, &los)
+            .unwrap();
+        assert!(adjusted);
+        assert_eq!(converted.kind(), TimeType::DateTime);
+        assert_eq!(converted.fsp(), 0);
+        assert_eq!(converted.to_string(), "2018-03-11 03:00:00");
+    }
+
     /// Complete translation of `pkg/types/time_test.go::TestConvert`.
     #[test]
     fn test_convert() {
@@ -1184,7 +1251,7 @@ mod tests {
             ("2012-01-01 00:00:00", -1, 0),
             ("2012-01-01 00:00:00.1", 19, 1),
             ("00:00:00.1234567", 8, 6),
-            ("1.2e3", 1, 1),
+            ("1.2e3", 1, 3),
             ("2019.01.01 00:00:00", -1, 0),
             ("2019.01.01 00:00:00.1", 19, 1),
             ("12345.6", 5, 1),
@@ -1194,6 +1261,19 @@ mod tests {
             assert_eq!(get_frac_index(value), index);
             assert_eq!(get_fsp(value), fsp);
         }
+    }
+
+    /// Go `GetFsp` counts every byte after the selected dot, including a time
+    /// zone suffix or trailing text, before capping the result at six.
+    #[test]
+    fn get_fsp_counts_source_suffix_bytes() {
+        assert_eq!(get_fsp("2020-01-01 12:00:00.1+05:00"), 6);
+        assert_eq!(get_fsp("2020-01-01 12:00:00.5xyz"), 4);
+
+        let parsed =
+            crate::parse_datetime("2020-01-01 12:00:00.1+05:00", &chrono_tz::UTC, true, false)
+                .unwrap();
+        assert_eq!(parsed.time.fsp(), 6);
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestGetFsp`.
@@ -1720,6 +1800,54 @@ mod tests {
             Err(TimeError::ZeroInDate)
         );
         assert!(zero_in_date.validate(true, false, &chrono_tz::UTC).is_ok());
+    }
+
+    /// Go `checkDateRange` rejects only a DATETIME beyond `MaxDatetime`.
+    /// Earlier dates still compare below the ceiling even with a synthetic
+    /// packed microsecond value above one million.
+    #[test]
+    fn test_validate_datetime_max_precision_boundary() {
+        let at_max = Time::new(
+            CoreTime::from_date(9999, 12, 31, 23, 59, 59, 999_999),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(at_max.validate(false, false, &chrono_tz::UTC).is_ok());
+
+        let beyond_max = Time::new(
+            CoreTime::from_date(9999, 12, 31, 23, 59, 59, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert_eq!(
+            beyond_max.validate(false, false, &chrono_tz::UTC),
+            Err(TimeError::InvalidDate)
+        );
+
+        let earlier_date = Time::new(
+            CoreTime::from_date(2020, 1, 1, 0, 0, 0, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(earlier_date.validate(false, false, &chrono_tz::UTC).is_ok());
+    }
+
+    /// Go `Time.ToPackedUint` is a raw bit-pack and does not call `Check`.
+    #[test]
+    fn test_to_packed_uint_preserves_raw_fields_without_validation() {
+        let time = Time::new(
+            CoreTime::from_date(2020, 1, 1, 24, 60, 60, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        let expected_ymd = ((2020_u64 * 13 + 1) << 5) | 1;
+        let expected_hms = (24_u64 << 12) | (60_u64 << 6) | 60;
+        let expected = ((expected_ymd << 17 | expected_hms) << 24) | 1_000_000;
+        assert_eq!(time.to_packed_uint(), Ok(expected));
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestCheckTimestamp`.

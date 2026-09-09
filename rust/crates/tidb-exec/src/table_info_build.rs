@@ -82,14 +82,14 @@ use tidb_executor::ddl::column_field_type::{
     build_field_type as build_shared_field_type, column_type_code as shared_column_type_code,
     process_column_flags, ColumnTypeError,
 };
+use tidb_executor::kv_table::KvIndex;
 use tidb_model::column::{
     ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
-use tidb_executor::kv_table::KvIndex;
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_state::SchemaState;
-use tidb_model::GoShared;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
+use tidb_model::GoShared;
 
 /// Go `types.UnspecifiedLength`.
 pub const UNSPECIFIED_LENGTH: i64 = -1;
@@ -117,21 +117,14 @@ pub enum ClusteredIndexDefMode {
 pub struct DdlAdmissionError {
     /// Exact, self-contained explanation naming the offending clause.
     pub reason: String,
-    /// The MySQL error number the client is told, which defaults to the
-    /// generic 1105 and is Go's own code where this node refuses exactly what
-    /// Go names.
+    /// The MySQL error number the client is told. Every raise site names it
+    /// explicitly: Go's own errno where this node refuses exactly what Go
+    /// names, or [`crate::table_info_build::GENERIC_ERROR_CODE`] (1105)
+    /// spelled out at the sites with no Go counterpart yet.
     pub code: u16,
 }
 
 impl DdlAdmissionError {
-    /// Builds a refusal from its explanation, reported as the generic 1105.
-    pub fn new(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-            code: GENERIC_ERROR_CODE,
-        }
-    }
-
     /// Go `dbterror.ErrUnsupportedDDLOperation` (8200, `Unsupported %s`): a
     /// table shape this node will not create because it could not then serve
     /// it. Refusing under Go's own errno is what lets a client tell "this
@@ -247,8 +240,8 @@ fn key_length_sum<'a>(
 }
 
 /// The MySQL error number for a refusal that has no Go code of its own.
-const GENERIC_ERROR_CODE: u16 = 1105;
-
+pub(crate) const GENERIC_ERROR_CODE: u16 = 1105;
+/// Go `mysql.MaxConstraintIdentifierLen`.
 impl fmt::Display for DdlAdmissionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.reason)
@@ -290,13 +283,13 @@ pub fn build_table_info_with_context(
     context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
     let refuse = |what: &str| {
-        Err(DdlAdmissionError::new(format!(
-            "CREATE TABLE {what} is not supported by this node"
-        )))
+        Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("CREATE TABLE {what} is not supported by this node"),
+        ))
     };
-    if create.temporary != tidb_ast::CreateTableTemporary::None {
-        return refuse("TEMPORARY");
-    }
+    let temporary = tidb_executor::ddl::validate_temporary_table_create(create)
+        .map_err(default_admission_error)?;
     if create.like_table.is_some() {
         return refuse("... LIKE");
     }
@@ -307,7 +300,10 @@ pub fn build_table_info_with_context(
         return refuse("SPLIT REGION");
     }
     if create.columns.is_empty() {
-        return Err(DdlAdmissionError::new("CREATE TABLE declares no columns"));
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "CREATE TABLE declares no columns",
+        ));
     }
 
     if let Err(error) = tidb_executor::ddl::validate_table_options(&create.table_options) {
@@ -331,11 +327,15 @@ pub fn build_table_info_with_context(
             // Go `handleTableOptions`: the parsed value is unsigned, and
             // anything past int64 is refused with its own message.
             TableOption::AutoIdCache(value) => {
-                let parsed = value
-                    .parse::<u64>()
-                    .map_err(|_| DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value"))?;
+                let parsed = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "AUTO_ID_CACHE needs an integer value",
+                    )
+                })?;
                 if parsed > i64::MAX as u64 {
-                    return Err(DdlAdmissionError::new(
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
                         "table option auto_id_cache overflows int64",
                     ));
                 }
@@ -343,14 +343,14 @@ pub fn build_table_info_with_context(
             }
             TableOption::AutoIncrement(value) => {
                 auto_inc_id = value.parse().map_err(|_| {
-                    DdlAdmissionError::new(format!(
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "CREATE TABLE AUTO_INCREMENT = {value} is not an integer this node can store"
                     ))
                 })?;
             }
             TableOption::AutoRandomBase(value) => {
                 auto_rand_id = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::new(format!(
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "CREATE TABLE AUTO_RANDOM_BASE = {value} is not an integer this node can store"
                     ))
                 })? as i64;
@@ -366,9 +366,10 @@ pub fn build_table_info_with_context(
             // in fact honour.
             TableOption::PlacementPolicy(_) => {}
             other => {
-                return Err(DdlAdmissionError::new(format!(
-                    "CREATE TABLE option {other:?} is not supported by this node"
-                )))
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("CREATE TABLE option {other:?} is not supported by this node"),
+                ))
             }
         }
     }
@@ -382,12 +383,19 @@ pub fn build_table_info_with_context(
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.
     let mut constraints = Vec::new();
+    let check_constraints = if context.enable_check_constraint() {
+        tidb_executor::ddl::check_constraint::create_inputs(create)
+    } else {
+        Vec::new()
+    };
     for constraint in &create.table_constraints {
         // Go `ast.ConstraintCheck` with the flag off — the DEFAULT — warns
         // and skips (`ddl/create_table.go:1470`), exactly like the
         // column-level spelling.
-        if matches!(constraint, TableConstraint::Check(_)) {
-            context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+        if let TableConstraint::Check(_) = constraint {
+            if !context.enable_check_constraint() {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+            }
             continue;
         }
         constraints.push(lower_table_constraint(constraint)?);
@@ -406,6 +414,7 @@ pub fn build_table_info_with_context(
             &table_charset,
             &table_collate,
             context,
+            None,
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
         // the position Go appends it: after every table-level one.
@@ -417,10 +426,13 @@ pub fn build_table_info_with_context(
     for column in &columns {
         let lowercase = column.name.lowercase().to_owned();
         if seen.contains(&lowercase) {
-            return Err(DdlAdmissionError::new(format!(
-                "CREATE TABLE declares column `{}` twice",
-                column.name.original()
-            )));
+            return Err(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!(
+                    "CREATE TABLE declares column `{}` twice",
+                    column.name.original()
+                ),
+            ));
         }
         seen.push(lowercase);
     }
@@ -439,6 +451,8 @@ pub fn build_table_info_with_context(
         table_collate,
         clustered_mode,
     )?;
+    append_check_constraints(&mut table, &check_constraints, context)?;
+    table.temp_table_type = temporary;
     let handle_offsets = if table.pk_is_handle {
         table
             .columns
@@ -479,6 +493,11 @@ pub fn build_table_info_with_context(
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
+    // Go `BuildIndexInfo` calls `setGlobalIndexVersion` after every index has
+    // been resolved against the completed table metadata.
+    for index in table.indices.iter_deref() {
+        super::cluster_ddl::set_global_index_version(&table, &mut index.write());
+    }
     // Go `buildTablePartitionInfo`, called LAST because its unique-key rule
     // (8264/1503) reads the table's finished index list.
     //
@@ -487,6 +506,11 @@ pub fn build_table_info_with_context(
     // (`ddl/jobsubmit/submit.go` `assignIDsForTable`) -- so a builder that
     // invented them would hand out ids the cluster's allocator never issued.
     if create.partitioning.is_some() {
+        if temporary != tidb_model::TempTableType::NONE {
+            return Err(default_admission_error(
+                tidb_executor::DriverError::PartitionNoTemporary,
+            ));
+        }
         let names = table
             .columns
             .iter_deref()
@@ -503,10 +527,9 @@ pub fn build_table_info_with_context(
                     let column = column.read();
                     // Every index here was built from this table's own
                     // columns a few lines above, so each name resolves.
-                    if let Some(offset) = names
-                        .iter()
-                        .position(|candidate| candidate.eq_ignore_ascii_case(column.name.original()))
-                    {
+                    if let Some(offset) = names.iter().position(|candidate| {
+                        candidate.eq_ignore_ascii_case(column.name.original())
+                    }) {
                         column_offsets.push(offset);
                         prefix_lengths.push(column.length);
                     }
@@ -520,6 +543,7 @@ pub fn build_table_info_with_context(
                     prefix_lengths,
                     visible: !index.invisible,
                     global: index.global,
+                    global_index_version: index.global_index_version,
                     clustered_primary: false,
                 }
             })
@@ -543,6 +567,60 @@ pub fn build_table_info_with_context(
         }
     }
     Ok(table)
+}
+
+pub(crate) fn append_check_constraints(
+    table: &mut TableInfo,
+    checks: &[tidb_executor::ddl::check_constraint::CheckConstraintInput],
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    let names = table
+        .indices
+        .iter_deref()
+        .map(|index| index.read().name.lowercase().to_owned())
+        .chain(
+            table
+                .constraints
+                .iter_deref()
+                .map(|constraint| constraint.read().name.lowercase().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    let columns = table
+        .columns
+        .iter_deref()
+        .map(|column| column.read().clone())
+        .collect::<Vec<_>>();
+    let foreign_keys = table
+        .foreign_keys
+        .iter_deref()
+        .map(|foreign_key| {
+            let foreign_key = foreign_key.read();
+            tidb_executor::ddl::check_constraint::CheckConstraintForeignKey {
+                columns: foreign_key
+                    .cols
+                    .snapshot()
+                    .into_iter()
+                    .map(|column| column.original().to_owned())
+                    .collect(),
+                has_referential_action: foreign_key.on_delete != 0 || foreign_key.on_update != 0,
+            }
+        })
+        .collect::<Vec<_>>();
+    let infos = tidb_executor::ddl::check_constraint::build_constraint_infos(
+        &table.name,
+        &columns,
+        names,
+        &foreign_keys,
+        checks,
+        &mut table.max_constraint_id,
+        SchemaState::PUBLIC,
+        context,
+    )
+    .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;
+    for info in infos {
+        table.constraints.push_go(info);
+    }
+    Ok(())
 }
 
 /// Renders a partition refusal in the words the driver tier raised it with,
@@ -637,7 +715,8 @@ struct KeyPart {
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "CREATE TABLE FOREIGN KEY constraints are not supported by this node",
         ));
     };
@@ -648,9 +727,10 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
         IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
         other => {
-            return Err(DdlAdmissionError::new(format!(
-                "CREATE TABLE {other:?} indexes are not supported by this node"
-            )))
+            return Err(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("CREATE TABLE {other:?} indexes are not supported by this node"),
+            ))
         }
     };
     let mut parts = Vec::with_capacity(index.parts.len());
@@ -662,7 +742,8 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
                 desc,
             } => {
                 if *desc {
-                    return Err(DdlAdmissionError::new(
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
                         "CREATE TABLE descending index parts are not supported by this node",
                     ));
                 }
@@ -672,7 +753,8 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
                 });
             }
             IndexPart::Expr { .. } => {
-                return Err(DdlAdmissionError::new(
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
                     "CREATE TABLE expression index parts are not supported by this node",
                 ))
             }
@@ -714,10 +796,9 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
 /// stored table's charset pair — Go `buildColumnAndConstraint` run by the
-/// add-column DDL job. The nullable-no-default shape is the one this tier
-/// serves: existing rows then read the implicit NULL default with no rewrite,
-/// which is also MySQL's answer. Every option that would need a row rewrite
-/// or a second allocator is refused BY NAME.
+/// add-column DDL job. `generated_preceding` is present only for the ADD path
+/// that can validate a virtual generated expression against the columns
+/// before it; CREATE/MODIFY keep their existing admission boundary.
 /// Names a column option the way the statement spelled it.
 ///
 /// A refusal reaches the client verbatim, so it must not carry a Rust `Debug`
@@ -754,6 +835,7 @@ pub fn build_added_column(
     table_charset: &str,
     table_collate: &str,
     context: &tidb_executor::StmtContext,
+    generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<ColumnInfo> {
     for option in &column.options {
         match option {
@@ -761,6 +843,17 @@ pub fn build_added_column(
             | ColumnOption::Comment(_)
             | ColumnOption::NotNull
             | ColumnOption::Default(_) => {}
+            // `build_column` below owns Go's single OFF warning and returns
+            // the inline constraint that `CreateNewColumn` discards.
+            ColumnOption::Check(_) => {}
+            ColumnOption::Generated { stored: false, .. } if generated_preceding.is_some() => {}
+            ColumnOption::Generated { stored: true, .. } if generated_preceding.is_some() => {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+                    "'Adding generated stored column through ALTER TABLE' is not supported \
+                         for generated columns.",
+                ));
+            }
             other => {
                 return Err(DdlAdmissionError::unsupported(format!(
                     "ADD COLUMN {} waits on its DDL course",
@@ -769,13 +862,18 @@ pub fn build_added_column(
             }
         }
     }
-    let (mut info, constraints) =
-        build_column(0, column, None, table_charset, table_collate, context)?;
-    if !constraints.is_empty() {
-        return Err(DdlAdmissionError::unsupported(
-            "ADD COLUMN must not introduce constraints on this node",
-        ));
-    }
+    let (mut info, _constraints) = build_column(
+        0,
+        column,
+        None,
+        table_charset,
+        table_collate,
+        context,
+        generated_preceding,
+    )?;
+    // Go ignores every constraint returned here. Unsupported key/FK options
+    // were refused above; the only possible result is the inline CHECK that
+    // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
     // Go `generateOriginDefaultValue`: the value a row written BEFORE this
     // column reports. The declared default when there is one; the type's
     // zero value for NOT NULL without one; nothing for a nullable
@@ -871,7 +969,7 @@ pub fn build_added_column(
     };
     if let Some(origin) = origin {
         info.set_origin_default_value(ColumnDefaultValue::str(&origin))
-            .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
     }
     Ok(info)
 }
@@ -884,12 +982,14 @@ fn build_column(
     table_charset: &str,
     table_collate: &str,
     context: &tidb_executor::StmtContext,
+    generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<(ColumnInfo, Vec<Constraint>)> {
     let name = &column.name;
     if !column.qualifier.is_empty() {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` carries a qualifier, which CREATE TABLE does not accept here"
-        )));
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("column `{name}` carries a qualifier, which CREATE TABLE does not accept here"),
+        ));
     }
 
     // Go `getCharsetAndCollateInColumnDef`: the declared CHARSET, plus the LAST
@@ -899,16 +999,20 @@ fn build_column(
     for option in &column.options {
         if let ColumnOption::Collate(collate) = option {
             let info = get_collation_by_name(collate).map_err(|error| {
-                DdlAdmissionError::new(format!(
-                    "column `{name}` declares COLLATE {collate}: {error}"
-                ))
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("column `{name}` declares COLLATE {collate}: {error}"),
+                )
             })?;
             if let Some(charset) = &declared_charset {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
-                    return Err(DdlAdmissionError::new(format!(
-                        "column `{name}` declares COLLATE {collate}, which is not valid for \
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!(
+                            "column `{name}` declares COLLATE {collate}, which is not valid for \
                          CHARACTER SET {charset}"
-                    )));
+                        ),
+                    ));
                 }
             }
             declared_collate = Some(info.name);
@@ -926,7 +1030,10 @@ fn build_column(
         let code = column_type_code(&column.ty)?;
         if code.is_string() && column.ty.binary {
             collate = get_default_collation(&charset).map_err(|error| {
-                DdlAdmissionError::new(format!("column `{name}` charset {charset}: {error}"))
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("column `{name}` charset {charset}: {error}"),
+                )
             })?;
         }
     }
@@ -937,11 +1044,13 @@ fn build_column(
     // Go `checkColumnAttributes` -- see the shared helper. This tier reports
     // it as an admission refusal rather than a coded client error, which is
     // the same reduction every other refusal here takes.
-    if let Err(error) = tidb_executor::ddl::column_field_type::check_column_attributes(&field_type)
+    if let Err(error) =
+        tidb_executor::ddl::column_field_type::check_column_attributes(&field_type, true)
     {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` is refused by checkColumnAttributes: {error:?}"
-        )));
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("column `{name}` is refused by checkColumnAttributes: {error:?}"),
+        ));
     }
 
     let mut info = ColumnInfo {
@@ -1032,15 +1141,21 @@ fn build_column(
                     field_type.code(),
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 ) {
-                    return Err(DdlAdmissionError::new(format!(
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!(
                         "column `{name}` declares ON UPDATE on a type that is not TIMESTAMP or \
                          DATETIME"
-                    )));
+                    ),
+                    ));
                 }
-                if !is_current_timestamp(expr) {
-                    return Err(DdlAdmissionError::new(format!(
-                        "column `{name}` declares an ON UPDATE that is not CURRENT_TIMESTAMP"
-                    )));
+                if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!(
+                            "column `{name}` declares an ON UPDATE that is not CURRENT_TIMESTAMP"
+                        ),
+                    ));
                 }
                 field_type.add_flags(FieldTypeFlags::ON_UPDATE_NOW);
                 set_on_update_now = true;
@@ -1072,9 +1187,10 @@ fn build_column(
                 ) {
                     // Go raises a plain `errors.Errorf` here, not a coded
                     // error, which is why TiDB answers 1105 and not 1063.
-                    return Err(DdlAdmissionError::new(format!(
-                        "Incorrect column specifier for column '{name}'"
-                    )));
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!("Incorrect column specifier for column '{name}'"),
+                    ));
                 }
                 field_type.add_flags(FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL);
             }
@@ -1083,29 +1199,61 @@ fn build_column(
             // part of the AUTO_RANDOM contract.
             ColumnOption::AutoRandom(_) => {}
             ColumnOption::Comment(comment) => info.comment = comment.clone(),
+            ColumnOption::Generated {
+                expression, stored, ..
+            } => {
+                let Some(preceding) = generated_preceding else {
+                    return Err(DdlAdmissionError::unsupported(
+                        "a generated expression waits on its DDL course",
+                    ));
+                };
+                let names = preceding
+                    .iter()
+                    .map(|column| column.name.original().to_owned())
+                    .collect::<Vec<_>>();
+                let types = preceding
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect::<Vec<_>>();
+                let generated = tidb_executor::generated_column::build_added_generated_column_with_like_default_escape(
+                    name,
+                    expression,
+                    *stored,
+                    &names,
+                    &types,
+                    &context.session_zone(),
+                    context.like_default_escape(),
+                )
+                .map_err(generated_column_admission_error)?;
+                info.generated_expr_string = generated.expr_text;
+                info.generated_stored = generated.stored;
+                for dependency in generated.dependencies {
+                    info.dependences.insert(dependency);
+                }
+            }
             // Already folded into the charset/collation resolution above.
             ColumnOption::Collate(collate) => {
                 if field_type.has_charset() {
                     field_type.set_collation_name(collate.clone());
                 }
             }
-            // Go `ast.ColumnOptionCheck` with the flag off — the DEFAULT —
-            // warns `tidb_enable_check_constraint is off`
-            // (`ddl/add_column.go:577`, `errCheckConstraintIsOff`) and
-            // IGNORES the option. The flag-on constraint machinery is
-            // unported; a node that refused here diverged from every
-            // default-configured Go server (probe 24). The cluster DDL
-            // route drains this context's warnings into the connection's
-            // buffer at admission (Session::drain_context_warnings), so
-            // SHOW WARNINGS carries them as Go's does.
+            // Go discards this declaration with one warning while the global
+            // switch is OFF. With it ON the outer table builder owns the
+            // declaration after every column exists, so it can resolve the
+            // expression against the complete table just as Go does.
             ColumnOption::Check(_) => {
-                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                if !context.enable_check_constraint() {
+                    context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                }
             }
             other => {
-                return Err(DdlAdmissionError::new(format!(
-                    "column `{name}` carries {}, which this node does not support",
-                    describe_column_option(other)
-                )))
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!(
+                        "column `{name}` carries {}, which this node does not support",
+                        describe_column_option(other)
+                    ),
+                ))
             }
         }
     }
@@ -1165,6 +1313,31 @@ fn build_column(
     Ok((info, constraints))
 }
 
+fn generated_column_admission_error(
+    error: tidb_executor::generated_column::GeneratedDdlError,
+) -> DdlAdmissionError {
+    use tidb_executor::generated_column::GeneratedDdlError;
+    match error {
+        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_code(
+            1054,
+            format!("Unknown column '{name}' in 'generated column function'"),
+        ),
+        GeneratedDdlError::NonPrior => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
+            "Generated column can refer only to generated columns defined prior to it.",
+        ),
+        GeneratedDdlError::DisallowedFunction(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrGeneratedColumnFunctionIsNotAllowed,
+            format!("Expression of generated column '{column}' contains a disallowed function."),
+        ),
+        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+            format!("'{reason}' is not supported for generated columns."),
+        ),
+        GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
+    }
+}
+
 /// Go `AlterColumn` followed by `updateColumnDefaultValue`: replaces one
 /// existing column's DEFAULT in place, or drops it.
 ///
@@ -1184,7 +1357,7 @@ pub(crate) fn set_column_default(
     info.default_is_expr = false;
     let Some(expr) = default_value else {
         info.set_default_value(GoAny::nil())
-            .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
         info.field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
         return Ok(());
     };
@@ -1308,11 +1481,9 @@ fn build_table(
     collate: String,
     clustered_mode: ClusteredIndexDefMode,
 ) -> Refusal<TableInfo> {
-    let table_name = create
-        .name
-        .last()
-        .cloned()
-        .ok_or_else(|| DdlAdmissionError::new("CREATE TABLE names no table"))?;
+    let table_name = create.name.last().cloned().ok_or_else(|| {
+        DdlAdmissionError::with_code(GENERIC_ERROR_CODE, "CREATE TABLE names no table")
+    })?;
     let mut table = TableInfo {
         name: CiString::new(table_name),
         charset,
@@ -1333,7 +1504,8 @@ fn build_table(
         .count()
         > 1
     {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "CREATE TABLE declares more than one PRIMARY KEY",
         ));
     }
@@ -1376,10 +1548,13 @@ fn build_table(
                     .lowercase()
                     .eq_ignore_ascii_case(&part.name)
             }) else {
-                return Err(DdlAdmissionError::new(format!(
-                    "index `{name}` names column `{}`, which the table does not declare",
-                    part.name
-                )));
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!(
+                        "index `{name}` names column `{}`, which the table does not declare",
+                        part.name
+                    ),
+                ));
             };
             // Go `checkIndexColumn` plus `buildIndexColumns`' normalization,
             // shared with the executor tier so the two builders cannot
@@ -1456,6 +1631,7 @@ fn should_build_clustered_index(
     match declared {
         Some(PrimaryKeyStorage::Clustered) => true,
         Some(PrimaryKeyStorage::NonClustered) => false,
+        Some(PrimaryKeyStorage::Unknown(_)) => false,
         None => match mode {
             ClusteredIndexDefMode::On => true,
             ClusteredIndexDefMode::IntOnly => single_int_primary_key,
@@ -1476,8 +1652,12 @@ pub(crate) fn resolve_charset_collation(
         (Some(fallback_charset), Some(fallback_collate)),
     ] {
         if let Some(collate) = collate.filter(|collate| !collate.is_empty()) {
-            let info = get_collation_by_name(collate)
-                .map_err(|error| DdlAdmissionError::new(format!("COLLATE {collate}: {error}")))?;
+            let info = get_collation_by_name(collate).map_err(|error| {
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("COLLATE {collate}: {error}"),
+                )
+            })?;
             if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
                     // Go `ErrCollationCharsetMismatch` (1253), not the
@@ -1493,7 +1673,10 @@ pub(crate) fn resolve_charset_collation(
         }
         if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
             let collate = get_default_collation(charset).map_err(|error| {
-                DdlAdmissionError::new(format!("CHARACTER SET {charset}: {error}"))
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("CHARACTER SET {charset}: {error}"),
+                )
             })?;
             return Ok((charset.to_ascii_lowercase(), collate));
         }
@@ -1504,7 +1687,7 @@ pub(crate) fn resolve_charset_collation(
 
 impl From<ColumnTypeError> for DdlAdmissionError {
     fn from(error: ColumnTypeError) -> Self {
-        Self::new(error.reason)
+        Self::with_code(GENERIC_ERROR_CODE, error.reason)
     }
 }
 
@@ -1521,21 +1704,6 @@ fn build_field_type(
     collate: &str,
 ) -> Refusal<FieldType> {
     Ok(build_shared_field_type(name, declared, charset, collate)?)
-}
-
-/// Whether one expression is `CURRENT_TIMESTAMP` in any of Go's spellings.
-fn is_current_timestamp(expr: &Expr) -> bool {
-    match expr {
-        Expr::Func { name, .. } => matches!(
-            name.to_ascii_uppercase().as_str(),
-            "CURRENT_TIMESTAMP" | "NOW" | "LOCALTIME" | "LOCALTIMESTAMP"
-        ),
-        Expr::Column(path) => matches!(
-            path.as_slice(),
-            [only] if only.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
-        ),
-        _ => false,
-    }
 }
 
 /// A DEFAULT retained between Go's option-order storage stages and its final
@@ -1607,9 +1775,12 @@ fn stage_column_default(
     match built {
         tidb_executor::column_default::ColumnDefault::Computed(computed) => {
             if computed.is_expr() {
-                return Err(DdlAdmissionError::new(format!(
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!(
                     "column `{name}` uses a computed DEFAULT this catalog writer cannot execute"
-                )));
+                ),
+                ));
             }
             Ok(StagedColumnDefault::TemporalMarker(computed.text))
         }
@@ -1636,7 +1807,9 @@ fn persist_column_default(
         StagedColumnDefault::TemporalMarker(text) => {
             info.default_is_expr = false;
             info.set_default_value(ColumnDefaultValue::str(&text))
-                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+                .map_err(|error| {
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+                })?;
         }
         StagedColumnDefault::Settled(settled) => {
             // Any inline-key NULL default returned at the earlier precheck,
@@ -1665,12 +1838,16 @@ fn persist_column_default(
                 GoAny::nil()
             } else {
                 ColumnDefaultValue::string_bytes(settled.stored.sql_bytes().map_err(|_| {
-                    DdlAdmissionError::new(format!("column `{name}` has an invalid default value"))
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!("column `{name}` has an invalid default value"),
+                    )
                 })?)
                 .into()
             };
-            info.set_default_value(stored)
-                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+            info.set_default_value(stored).map_err(|error| {
+                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+            })?;
         }
     }
     Ok(())

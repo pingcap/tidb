@@ -26,7 +26,6 @@
 /// absent or has no match. `histogram_count` is the caller's already-converted
 /// `uint64` result from `Histogram.EqualRowCount`; it is always the final
 /// fallback, matching Go's unconditional conversion after the lookup.
-#[must_use]
 pub const fn query_index_bytes(
     topn_count: Option<u64>,
     cms_count: Option<u64>,

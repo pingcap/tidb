@@ -14,7 +14,7 @@
 
 //! Source-shaped request and DistSQL context fields.
 
-use crate::{ExecutionState, TiFlashReplicaRead, Warning, WarningCollector};
+use crate::{ExecutionState, ReplicaRead, Warning, WarningCollector};
 use tidb_txnkv::ReplicaReadType;
 use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
@@ -103,7 +103,7 @@ pub struct RequestContext {
     /// Replica routing preference.
     pub replica_read: ReplicaReadType,
     /// TiFlash node-selection policy projected into client-send metadata.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
     /// Whether weak consistency is enabled.
     pub weak_consistency: bool,
     /// Whether RC timestamp checking is enabled.
@@ -124,6 +124,10 @@ pub struct RequestContext {
     pub explicit_request_source_type: String,
     /// Batch size for store requests.
     pub store_batch_size: u64,
+    /// Whether unhinted store batching may merge child data into the main response.
+    pub allow_batch_task_data_merge: bool,
+    /// Whether batched store tasks should execute serially.
+    pub execute_batch_tasks_serially: bool,
     /// Resource group name.
     pub resource_group_name: String,
     /// Load-based replica-read threshold in milliseconds.
@@ -134,6 +138,9 @@ pub struct RequestContext {
     pub max_execution_time_ms: u64,
     /// Statement-wide maximum keys-read budget.
     pub max_keys_read: u64,
+    /// Query-scoped per-store coprocessor limiter, when enabled by the
+    /// session's `tidb_query_cop_store_limit` value.
+    pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl Default for RequestContext {
@@ -145,7 +152,7 @@ impl Default for RequestContext {
             enable_chunk_rpc: false,
             session: SessionContext::default(),
             replica_read: ReplicaReadType::default(),
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
             weak_consistency: false,
             rc_check_ts: false,
             not_fill_cache: false,
@@ -156,11 +163,14 @@ impl Default for RequestContext {
             request_source_type: String::new(),
             explicit_request_source_type: String::new(),
             store_batch_size: 0,
+            allow_batch_task_data_merge: false,
+            execute_batch_tasks_serially: false,
             resource_group_name: "default".to_owned(),
             load_based_replica_read_threshold_ms: 0,
             tikv_client_read_timeout_ms: 0,
             max_execution_time_ms: 0,
             max_keys_read: 0,
+            query_cop_store_limiter: None,
         }
     }
 }
@@ -204,7 +214,6 @@ impl DistSqlContext {
     /// handle remain shared. Owned strings, CPU samples, and KV scalar fields
     /// are copied. A present max-keys accumulator is fresh and zeroed, exactly
     /// like Go's `new(atomic.Uint64)` in `DistSQLContext.Detach`.
-    #[must_use]
     pub fn detach(&self) -> Self {
         Self {
             request: self.request.clone(),

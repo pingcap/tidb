@@ -31,55 +31,56 @@ pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
-#[cfg(test)]
-mod tests_fastrand;
-mod tests_mathutil;
-#[cfg(test)]
-mod tests_dbterror;
-#[cfg(test)]
-mod tests_intest;
-
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
-pub mod br_key_utils;
 pub mod br_summary;
+pub mod breakpoint;
+pub mod cgmon;
 pub mod cgroup;
 pub mod channel;
 pub mod checksum;
 pub mod column_mapping;
 pub mod compress;
 pub mod context;
+pub mod cpu;
 pub mod dbterror;
 pub mod disjointset;
 pub mod disk;
-pub mod disttask;
 pub mod encrypt;
-pub mod errno_summary;
+pub mod extsort;
 pub mod fastrand;
-pub mod fast_hash;
 pub mod filter;
 pub mod format;
 pub mod generic;
 pub mod globalconn;
+mod go_regexp;
 pub mod intest;
 pub mod intset;
 pub mod israce;
 pub mod keyspace;
 pub mod kvcache;
 pub mod layered_io;
+pub mod lightning_duplicate;
+pub mod lightning_importdef;
+pub mod lightning_log;
+pub mod lightning_manual;
+pub mod lightning_metric;
 pub mod lightning_verification;
+pub mod lightning_worker;
 pub mod logutil;
 pub mod master_key;
 pub mod mathutil;
 pub mod membuf;
 pub mod memory;
 pub mod memoryusagealarm;
+pub mod mviewutil;
 pub mod mvmap;
 pub use tidb_naming as naming;
 pub mod nocopy;
 pub mod paging;
 pub mod partialjson;
+/// Password-policy validation.
 pub mod password_validation;
 pub mod plancodec;
 pub mod ppcpuusage;
@@ -89,16 +90,18 @@ pub mod promutil;
 pub mod queue;
 pub mod redact;
 pub mod regexpr_router;
+pub mod ruv2_metrics;
 pub mod selection;
 pub mod sem;
+pub mod sem_compat;
 pub mod sem_v2;
 pub mod serialization;
 pub mod servermemorylimit;
 pub mod set;
-pub mod sieve;
 pub mod size;
+pub mod sli;
 pub mod slice;
-pub mod split;
+pub mod spill_storage;
 pub mod sqlescape;
 pub mod sqlkiller;
 pub mod stringutil;
@@ -108,9 +111,9 @@ pub mod table_filter;
 pub mod table_router;
 pub mod table_rule_selector;
 pub mod texttree;
-pub mod tlsutil;
 pub use tidb_tikvutil as tikvutil;
 pub mod timeutil;
+/// TLS process state and MySQL-compatible names.
 pub mod tls;
 pub mod topsql_reporter;
 pub mod topsql_state;
@@ -118,15 +121,11 @@ pub mod topsql_stmtstats;
 pub mod traceevent;
 pub mod tracing;
 pub mod versioninfo;
-pub mod vitess;
-pub mod watcher;
-pub mod zeropool;
 
 #[cfg(test)]
-mod tests_naming;
-#[cfg(test)]
-mod tests_redact;
-#[cfg(test)]
-mod tests_slice;
-#[cfg(test)]
-mod tests_sqlescape;
+pub(crate) static SEM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Vitess shard-key hashing.
+pub mod vitess;
+/// Polling file watcher.
+pub mod watcher;
+pub mod zeropool;

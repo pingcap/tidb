@@ -81,6 +81,12 @@ pub type SnapshotPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// implementation maps region errors, stale epochs and unresolvable locks onto
 /// [`StorageError::Retryable`]; anything else is [`StorageError::Backend`].
 pub trait ClusterSnapshot: fmt::Debug + Send {
+    /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for point and batch-point
+    /// commands issued by this snapshot so far.
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (0, 0)
+    }
+
     /// Starts any asynchronous work needed by an ordinary statement snapshot.
     /// The first read still owns error delivery and timestamp publication.
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -188,7 +194,7 @@ enum UndoEntry {
     Presume { key: Key },
 }
 
-/// Raw keys actually consumed by the current statement.
+/// Raw snapshot keys actually consumed by the current statement.
 ///
 /// A pessimistic locking read must lock rows after the executor has applied
 /// its predicates and limits. Tracking at the storage seam records precisely
@@ -206,7 +212,7 @@ struct StatementReadKeyState {
 }
 
 impl StatementReadKeys {
-    /// Starts a new locking statement and discards any prior statement's keys.
+    /// Starts a new statement and discards any prior statement's keys.
     pub fn begin(&self) {
         let mut state = self.lock();
         state.keys.clear();
@@ -290,20 +296,20 @@ impl MutationBuffer {
     /// Stages a write, replacing any earlier staged value or tombstone.
     pub fn set(&self, key: Key, value: Vec<u8>) {
         let prior = self.lock().insert(key.clone(), Some(value));
-        self.undo()
-            .push(UndoEntry::Write { key, prior });
+        self.undo().push(UndoEntry::Write { key, prior });
     }
 
     /// Stages a delete as a tombstone, so the read path stops seeing the
     /// snapshot's value for the key.
     pub fn delete(&self, key: Key) {
         let prior = self.lock().insert(key.clone(), None);
-        self.undo()
-            .push(UndoEntry::Write { key, prior });
+        self.undo().push(UndoEntry::Write { key, prior });
     }
 
     fn undo(&self) -> std::sync::MutexGuard<'_, Vec<UndoEntry>> {
-        self.undo.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.undo
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// The staged entry for `key`: `None` if the key was never touched,
@@ -334,14 +340,13 @@ impl MutationBuffer {
         index: impl Into<String>,
     ) {
         self.mark_presume_key_not_exists(key);
-        self.duplicate_hints()
-            .insert(
-                key.clone(),
-                DuplicateKeyHint {
-                    value: value.into(),
-                    key: index.into(),
-                },
-            );
+        self.duplicate_hints().insert(
+            key.clone(),
+            DuplicateKeyHint {
+                value: value.into(),
+                key: index.into(),
+            },
+        );
     }
 
     /// Returns the client-visible duplicate text for an encoded key, if the
@@ -400,7 +405,10 @@ impl MutationBuffer {
     /// Test a key interval without copying its entries or bound keys.
     pub fn has_keys_in_range(&self, start: &Key, end: &Key) -> bool {
         self.lock()
-            .range((std::ops::Bound::Included(start), std::ops::Bound::Excluded(end)))
+            .range((
+                std::ops::Bound::Included(start),
+                std::ops::Bound::Excluded(end),
+            ))
             .next()
             .is_some()
     }
@@ -459,14 +467,7 @@ impl MutationBuffer {
         let staged = self.lock();
         let before: Vec<(Key, Option<Vec<u8>>)> = keys
             .iter()
-            .map(|(key, (prior, _))| {
-                (
-                    key.clone(),
-                    prior
-                        .clone()
-                        .unwrap_or(None),
-                )
-            })
+            .map(|(key, (prior, _))| (key.clone(), prior.clone().unwrap_or(None)))
             .collect();
         let after: Vec<(Key, Option<Vec<u8>>)> = keys
             .keys()
@@ -479,6 +480,23 @@ impl MutationBuffer {
     #[must_use]
     pub fn len(&self) -> usize {
         self.lock().len()
+    }
+
+    /// Bytes retained by the transaction's staged key/value map.
+    ///
+    /// Go publishes the backing MemDB's allocation footprint rather than the
+    /// logical value-byte total. This buffer is a `BTreeMap`, so its native
+    /// footprint is the owned key/value capacities plus one map entry for
+    /// every staged key (including tombstones).
+    #[must_use]
+    pub fn memory_footprint(&self) -> u64 {
+        let bytes = self.lock().iter().fold(0usize, |bytes, (key, value)| {
+            bytes
+                .saturating_add(std::mem::size_of::<(Key, Option<Vec<u8>>)>())
+                .saturating_add(key.as_bytes().len())
+                .saturating_add(value.as_ref().map_or(0, Vec::capacity))
+        });
+        u64::try_from(bytes).unwrap_or(u64::MAX)
     }
 
     /// Whether the transaction has staged nothing, so COMMIT has no work.
@@ -604,6 +622,11 @@ impl SwappableSnapshot {
 }
 
 impl ClusterSnapshot for SwappableSnapshot {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot()
+            .map_or((0, 0), |snapshot| snapshot.point_rpc_counts())
+    }
+
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.snapshot()?.prepare()
     }
@@ -719,6 +742,17 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn has_external_statement_rollback(&self) -> bool {
+        true
+    }
+
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .point_rpc_counts()
+    }
+
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.check_usable()?;
         // Counted at the SEAM, as the in-process backend counts it, so the
@@ -727,11 +761,16 @@ impl TableStorage for ClusterTableStorage {
         // buffer answers is still one `get` here, because the shape the count
         // describes is the plan's, not the transport's.
         crate::storage::note_storage_op(|ops| ops.gets += 1);
-        self.read_keys.record(key);
         match self.buffer.get(key) {
             Some(Some(value)) => Ok(value),
             Some(None) => Err(StorageError::NotFound),
-            None => self.snapshot_get(key)?.ok_or(StorageError::NotFound),
+            None => match self.snapshot_get(key)? {
+                Some(value) => {
+                    self.read_keys.record(key);
+                    Ok(value)
+                }
+                None => Err(StorageError::NotFound),
+            },
         }
     }
 
@@ -750,12 +789,7 @@ impl TableStorage for ClusterTableStorage {
         self.buffer.mark_presume_key_not_exists(key);
     }
 
-    fn mark_presume_key_not_exists_with_hint(
-        &mut self,
-        key: &Key,
-        value: &str,
-        index: &str,
-    ) {
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
         self.buffer
             .mark_presume_key_not_exists_with_hint(key, value, index);
     }
@@ -784,11 +818,10 @@ impl TableStorage for ClusterTableStorage {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .batch_get(&missing)?;
             for (key, value) in snapshot_values {
-                values.insert(Key::from_bytes(key), value);
+                let key = Key::from_bytes(key);
+                self.read_keys.record(&key);
+                values.insert(key, value);
             }
-        }
-        for key in keys {
-            self.read_keys.record(key);
         }
         Ok(values)
     }
@@ -1060,6 +1093,7 @@ impl MergedIterator {
             if order != std::cmp::Ordering::Greater {
                 let (key, value) = self.batch[self.batch_position].clone();
                 self.batch_position += 1;
+                self.read_keys.record(&Key::from_bytes(key.clone()));
                 if order == std::cmp::Ordering::Less {
                     self.current = Some((Key::from_bytes(key), value));
                     return Ok(());
@@ -1087,9 +1121,6 @@ impl StorageIterator for MergedIterator {
             .current
             .as_ref()
             .map_or(&self.empty_key, |(key, _)| key);
-        if self.current.is_some() {
-            self.read_keys.record(key);
-        }
         key
     }
 
@@ -1240,6 +1271,7 @@ mod tests {
                 prefix_lengths: vec![-1],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,

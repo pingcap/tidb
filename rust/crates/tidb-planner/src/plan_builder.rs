@@ -98,10 +98,9 @@
 //! [`PlanError`] is the crate's plan-side error and what
 //! [`crate::logical::rule`] already returns; [`RewriteError`] is the
 //! expression rewriter's. Rather than a third type, `PlanError: From<RewriteError>`
-//! (and `From<EvalError>`) lets every builder body use `?` over both. Nothing
-//! reads a `RewriteError` variant after it crosses into a builder, so
-//! flattening to `PlanError`'s message loses no decision — the variants stay
-//! available to callers of the rewriter itself.
+//! (and `From<EvalError>`) lets every builder body use `?` over both. Rewrite
+//! failures remain message-only, while evaluation failures retain their typed
+//! variant when the executor must preserve a MySQL error identity.
 //!
 //! # Boundaries, by exact Go symbol
 //!
@@ -132,14 +131,13 @@
 //!   materialised [`Datum`] rather than evaluating. A constant that is NOT
 //!   materialised (a parameter marker, a non-deterministic builtin) is
 //!   conservatively kept as a condition, which is Go's `useCache` arm.
-//! * `hint.QBHintHandler` / `hint.PlanHints` / `setPreferredStoreType`.
-//!   The hint catalogue is not transcreated; [`PlanBuilder::hints`] carries
-//!   the fields the ported bodies read, exactly as
-//!   [`crate::expression_rewriter::RewriterHints`] does.
-//! * `tablesampler.NewTableSampleInfo`, `tableHasDirtyContent`,
-//!   `addExtraPhysTblIDColumn4DS`, `BuildDataSourceFromView`. Table sampling,
-//!   the transaction membuffer and the view expander each need a handle this
-//!   crate does not hold; `buildDataSource`'s arms for them are marked.
+//! * The unconsumed `hint.PlanHints` families.
+//!   Query-block hint handling, view-hint inheritance, table-syntax index
+//!   hints, and the consumed query-block hint families have ordinary planner
+//!   owners; the remaining catalogue fields stay explicit dependencies rather
+//!   than empty stubs.
+//! * `tableHasDirtyContent` and `addExtraPhysTblIDColumn4DS`. The transaction
+//!   membuffer needs a handle this crate does not hold.
 //!
 //! # Narrowings, by name
 //!
@@ -150,17 +148,16 @@
 //! * `rewriterPool` / `rewriterCounter` (`:229`) — DROPPED. A free-list of
 //!   `*expressionRewriter` to dodge Go's allocator. Rust constructs a rewriter
 //!   by value; pooling would be a pessimisation with no semantic content.
-//! * `resolveCtx *resolve.Context` (`:337`) — DROPPED. It caches
-//!   name-resolution results keyed by AST node pointer, which is the same
-//!   unsound key the marker scheme replaces.
 //! * `isCreateView` / `capFlag`'s `canExpandAST` (`:267`), `inUpdateStmt` /
-//!   `inDeleteStmt` (`:234`), `isSampling` (`:274`) — DROPPED. All four gate
-//!   statement kinds this batch does not build. `isSampling`'s only reader is
-//!   `GetOptFlag`'s "return 0", which cannot fire when nothing sets it.
+//!   `inDeleteStmt` (`:234`) — DROPPED. These gate statement kinds this batch
+//!   does not build.
 //! * `partitionedTable []table.PartitionedTable`, `hintProcessor`,
 //!   `renamingViewName`, `nonViableFTSMatch`, `predicateMatchSeen`,
-//!   `allowBuildCastArray` — no reader on the SELECT spine; each belongs to a
-//!   boundary above.
+//!   — no reader on the SELECT spine; each belongs to a boundary above.
+//! * `allowBuildCastArray` has one SELECT-side reader while resolving virtual
+//!   generated expressions. ARRAY cast construction remains an expression
+//!   dependency; ordinary generated expressions use the same rewrite path as
+//!   Go, while an ARRAY target is still rejected by `tidb-expr`.
 //! * `outerCTEs []*cteInfo` becomes [`OuterCte`], which 6d completed: the
 //!   seed and recursive plans, the storage ID, the shared `CTEClass` and every
 //!   recursion flag are all there now. The two fields that stay narrowed
@@ -183,7 +180,9 @@ pub mod window;
 #[cfg(test)]
 mod window_tests;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tidb_ast::{Expr, JoinNode, Limit, SelectField, SelectStmt, TableRef};
 use tidb_datatype::{
@@ -201,10 +200,14 @@ use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError};
 
 use crate::expression_rewriter::{
-    ClauseCode, ColumnIdAllocator, ExprRewriterPlanCtx, ExpressionRewriter, RewriteError,
-    RewriterEnv, RewriterHints, RewriterSessionFlags, SubQueryCtx,
+    ClauseCode, ColumnIdAllocator, CompareOp, ExprRewriterPlanCtx, ExpressionRewriter,
+    RewriteError, RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome,
+    SubQueryCtx,
 };
-use crate::logical::data_source::{DataSource, DataSourceColumn, EXTRA_HANDLE_ID};
+use crate::logical::data_source::{
+    DataSource, DataSourceColumn, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
+    PREFER_TIFLASH, PREFER_TIKV,
+};
 use crate::logical::limit::LogicalLimit;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
@@ -217,6 +220,7 @@ use crate::plan_base::{PlanError, PlanIdAllocator};
 use catalog::TableSource;
 use handle_col_helper::{HandleColHelper, HandleColMap, PlanHandleCols};
 use marker::{MarkerKind, PlanMarker};
+use only_full_group_by::inner_from_parentheses_and_unary_plus;
 
 /// Go `model.ExtraPhysTblID` (`meta/model/table.go:43`).
 pub const EXTRA_PHYS_TBL_ID: i64 = -3;
@@ -235,9 +239,20 @@ impl From<RewriteError> for PlanError {
 
 /// The expression rewriter's own error, which reaches a builder through
 /// [`rewrite_expr_resolved`].
+///
+/// An unknown column is Go's typed `plannererrors.ErrUnknownColumn`, not a
+/// generic evaluation failure, so it keeps the clause the resolver named.
+/// Without this arm the clause survives only inside the debug-formatted
+/// message and the executor lifts the error as `Exec(Eval(..))`, losing the
+/// typed variant the plan-time resolution path produces.
 impl From<EvalError> for PlanError {
     fn from(error: EvalError) -> Self {
-        Self::internal(format!("{error:?}"))
+        match error {
+            EvalError::UnknownColumnInClause(column, clause) => {
+                Self::unknown_column_in_clause(column, clause)
+            }
+            other => Self::eval(other),
+        }
     }
 }
 
@@ -296,8 +311,8 @@ pub struct OuterCte {
     pub is_inline: bool,
     /// Go `cteInfo.forceInlineByHintOrVar`.
     pub force_inline_by_hint_or_var: bool,
-    /// Go `cteInfo.consumerCount`; see [`cte`]'s `ConsumerCount` narrowing for
-    /// why this is always `0` here.
+    /// Go `cteInfo.consumerCount`, filled by the port of preprocess
+    /// `UpdateCTEConsumerCount` before this CTE is built.
     pub consumer_count: i32,
     /// Go `cteInfo.containRecursiveForbiddenOperator`.
     pub contain_recursive_forbidden_operator: bool,
@@ -345,6 +360,13 @@ impl Default for OuterCte {
 pub struct ProjectionField {
     /// The projected expression, with any [`marker`] already substituted in.
     pub expr: Expr,
+    /// Whether Go's `getInnerFromParenthesesAndUnaryPlus(field.Expr)` is a
+    /// `*ast.ColumnNameExpr`, recorded BEFORE
+    /// `extract_agg_funcs_in_select_fields` overwrites `expr` with a `#agg#N`
+    /// marker. `buildProjectionField` takes the origin-name branch only for a
+    /// column reference; a rewritten aggregate is an `Expr::Column` too, but
+    /// Go names it from the field text.
+    pub column_reference: bool,
     /// Go `SelectField.AsName`.
     pub alias: Option<String>,
     /// Go `SelectField.Text()`: the exact source bytes, which name a computed
@@ -375,6 +397,128 @@ pub struct BlockExpand {
     pub distinct_group_by_exprs: Vec<Expression>,
 }
 
+/// One query-block-local Go `IndexMergeHint`, reduced to the fields used by
+/// `PruneIndexesByWhereAndOrder`.
+#[derive(Clone, Debug, Default)]
+struct IndexMergeHint {
+    /// Optional explicitly qualified database name.
+    db_name: Option<String>,
+    /// The table name or alias named by the hint.
+    table_name: String,
+    /// Optional index names; empty means general index-merge preference.
+    index_names: Vec<String>,
+    /// Go `HintedIndex.Partitions`.
+    partitions: Vec<String>,
+    /// Go `Restore2IndexHint(HintIndexMerge, hint)` warning text.
+    restored: String,
+    matched: bool,
+}
+
+#[derive(Clone, Debug)]
+struct IndexHint {
+    db_name: Option<String>,
+    table_name: String,
+    kind: tidb_ast::IndexHintKind,
+    index_names: Vec<String>,
+    partitions: Vec<String>,
+    push_down_lookup: bool,
+    force_keep_order: bool,
+    force_no_keep_order: bool,
+    restored: String,
+    matched: bool,
+}
+
+#[derive(Clone, Debug)]
+struct NoIndexLookupPushDownHint {
+    db_name: Option<String>,
+    table_name: String,
+    matched: bool,
+}
+
+struct QueryBlockHintFrame {
+    hints: RewriterHints,
+    join_hints: Rc<from::JoinHints>,
+    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    index_merge_hints: Vec<IndexMergeHint>,
+    index_hints: Vec<IndexHint>,
+    no_index_lookup_push_down_hints: Vec<NoIndexLookupPushDownHint>,
+    in_straight_join: bool,
+}
+
+fn index_hints_from_plan(
+    plan: &tidb_hint::PlanHints,
+) -> (Vec<IndexHint>, Vec<NoIndexLookupPushDownHint>) {
+    let hints = plan
+        .index_hint_list
+        .iter()
+        .map(|hint| {
+            let (kind, force_keep_order, force_no_keep_order, hint_name) = match hint.kind {
+                tidb_hint::HintedIndexKind::Use => (
+                    tidb_ast::IndexHintKind::Use,
+                    false,
+                    false,
+                    if hint.push_down_lookup {
+                        "INDEX_LOOKUP_PUSHDOWN"
+                    } else {
+                        "USE_INDEX"
+                    },
+                ),
+                tidb_hint::HintedIndexKind::Ignore => (
+                    tidb_ast::IndexHintKind::Ignore,
+                    false,
+                    false,
+                    "IGNORE_INDEX",
+                ),
+                tidb_hint::HintedIndexKind::Force => {
+                    (tidb_ast::IndexHintKind::Force, false, false, "FORCE_INDEX")
+                }
+                tidb_hint::HintedIndexKind::Order => {
+                    (tidb_ast::IndexHintKind::Use, true, false, "ORDER_INDEX")
+                }
+                tidb_hint::HintedIndexKind::NoOrder => {
+                    (tidb_ast::IndexHintKind::Use, false, true, "NO_ORDER_INDEX")
+                }
+            };
+            IndexHint {
+                db_name: Some(hint.database_name.clone()),
+                table_name: hint.table_name.clone(),
+                kind,
+                index_names: hint.index_names.clone(),
+                partitions: hint.partitions.clone(),
+                push_down_lookup: hint.push_down_lookup,
+                force_keep_order,
+                force_no_keep_order,
+                restored: tidb_hint::restore_index_hint(hint_name, hint),
+                matched: false,
+            }
+        })
+        .collect();
+    let no_lookup = plan
+        .no_index_lookup_pushdown
+        .iter()
+        .map(|hint| NoIndexLookupPushDownHint {
+            db_name: Some(hint.database_name.clone()),
+            table_name: hint.table_name.clone(),
+            matched: false,
+        })
+        .collect();
+    (hints, no_lookup)
+}
+
+fn index_merge_hints_from_plan(plan: &tidb_hint::PlanHints) -> Vec<IndexMergeHint> {
+    plan.index_merge_hint_list
+        .iter()
+        .map(|hint| IndexMergeHint {
+            db_name: Some(hint.database_name.clone()),
+            table_name: hint.table_name.clone(),
+            index_names: hint.index_names.clone(),
+            partitions: hint.partitions.clone(),
+            restored: tidb_hint::restore_index_hint("USE_INDEX_MERGE", hint),
+            matched: false,
+        })
+        .collect()
+}
+
 /// Go `schemaTableKey` (`planbuilder.go`), the recursion guard's key.
 pub type SchemaTableKey = (String, String);
 
@@ -382,6 +526,45 @@ pub type SchemaTableKey = (String, String);
 ///
 /// The dropped fields are listed in this module's narrowings, each with the
 /// reason it is absent rather than empty.
+/// Which separately evaluated subquery Go's `handleScalarSubquery` /
+/// `handleExistSubquery` tail is lowering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubqueryKind {
+    /// `(SELECT ...)`: the first row's columns are folded into constants
+    /// carrying `ScalarQueryCol` ids.
+    Scalar,
+    /// `[NOT] EXISTS (SELECT ...)`: Go folds a plain 1/0 constant and only
+    /// registers the child plan for EXPLAIN.
+    Exists,
+}
+
+/// The evaluated first row of one uncorrelated subquery.
+///
+/// `column_ids` is Go's `subqueryCtx.outputColIDs`: one freshly allocated
+/// plan-column id per output column, allocated BEFORE the child runs so the
+/// registered EXPLAIN root can name the placeholders. `row` is
+/// `EvalSubqueryFirstRow`'s datum row, and `has_row` distinguishes Go's nil
+/// row (no child row, which the scalar path never sees because
+/// `MaxOneRowExec` appends NULLs) from a zero-column row.
+#[derive(Clone, Debug, Default)]
+pub struct EvaluatedSubquery {
+    /// `AllocPlanColumnID()` per output column, in schema order.
+    pub column_ids: Vec<i64>,
+    /// The first row's datums, in schema order.
+    pub row: Vec<tidb_datatype::Datum>,
+    /// Whether the child produced a row at all.
+    pub has_row: bool,
+}
+
+/// Go's `planner/core.EvalSubqueryFirstRow` function variable plus the
+/// `DoOptimize` call around it: the executor installs the
+/// optimizer-and-execute hook, the planner calls it from
+/// `handleScalarSubquery` / `handleExistSubquery`. The `u64` is
+/// `planCtx.builder.optFlag` at the moment of the call, which is the flag set
+/// Go hands `DoOptimize`.
+pub type SubqueryEvaluator<'a> =
+    &'a dyn Fn(&LogicalPlan, SubqueryKind, u64) -> Result<EvaluatedSubquery, PlanError>;
+
 pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.is infoschema.InfoSchema`, through the seam.
     pub source: &'a S,
@@ -394,13 +577,25 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `ctx.GetSessionVars().Location()`, which every expression rewrite
     /// runs under.
     pub time_zone: SessionTimeZone,
+    /// Go `resolveCtx`, shared by preprocessing and every recursive build.
+    pub resolve_ctx: tidb_model::GoShared<tidb_resolve::Context>,
 
     /// Go `optFlag`; see this module's section 4.
     pub opt_flag: u64,
+    /// Whether Go's static `FlagPartitionProcessor` is active for this build.
+    partition_processor_enabled: bool,
+    /// Go `isSampling`: disables logical rewrites for TABLESAMPLE queries.
+    pub is_sampling: bool,
     /// Go `curClause`.
     pub cur_clause: ClauseCode,
     /// Go `qbOffset`; [`Self::select_offset`] reads its tail.
     pub qb_offset: Vec<i32>,
+    /// The next query-block offset assigned by the statement's preorder walk.
+    next_qb_offset: i32,
+    /// Go `QBHintHandler`, shared by every query block in one build.
+    qb_hint_handler: Option<tidb_hint::QBHintHandler>,
+    /// Go `QBHintBuildState`, scoped to one statement build.
+    qb_hint_state: Option<tidb_hint::QBHintBuildState>,
 
     /// Go `outerSchemas`, outermost first.
     pub outer_schemas: Vec<Schema>,
@@ -429,6 +624,14 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub in_straight_join: bool,
     /// Go `handleHelper`.
     pub handle_helper: HandleColHelper,
+    /// Go `EvalSubqueryFirstRow`, installed by the executor. `None` keeps the
+    /// documented planner-only boundary (the `EvaluateSeparately` outcome is
+    /// reported as an error instead of a wrong plan).
+    pub subquery_evaluator: Option<SubqueryEvaluator<'a>>,
+    /// The constants `MarkerKind::Constant` markers select, in insertion
+    /// order. Go pushes them straight onto `ctxStack`; this port stores them
+    /// here because the marker tail can only carry column paths.
+    pub subquery_constants: Vec<Expression>,
     /// Go `allNames [][]*types.FieldName`: the output names as they stood
     /// BEFORE each projection, which `evalDefaultExpr` searches.
     pub all_names: Vec<Vec<FieldName>>,
@@ -464,7 +667,15 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub hints: RewriterHints,
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
-    pub join_hints: from::JoinHints,
+    pub join_hints: Rc<from::JoinHints>,
+    /// Canonical Go `PlanHints` for the current query block.
+    plan_hints: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    /// Go `PlanHints.IndexMergeHintList` for the current query block.
+    index_merge_hints: Vec<IndexMergeHint>,
+    /// Go `PlanHints.IndexHintList` for the current query block.
+    index_hints: Vec<IndexHint>,
+    /// Go `PlanHints.NoIndexLookUpPushDown` for the current query block.
+    no_index_lookup_push_down_hints: Vec<NoIndexLookupPushDownHint>,
 
     /// Go `b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy()`, which gates
     /// [`only_full_group_by`]'s whole rule and `buildSortWithCheck`.
@@ -473,9 +684,29 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// rewriter's narrowing of `SessionVars` and nothing in it reads the SQL
     /// mode. Go likewise reads the mode off `SQLMode`, not off the rewriter.
     pub only_full_group_by: bool,
+    /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck` (default OFF).
+    /// It also gates statement-scoped projection expression-ID registration.
+    pub new_only_full_group_by_check: bool,
+    /// Go `SessionVars.RemoveOrderbyInSubquery` (`@@tidb_remove_orderby_in_subquery`,
+    /// default ON): a derived table's `ORDER BY` is dropped unless the query is
+    /// top level or carries a `LIMIT`.
+    pub remove_orderby_in_subquery: bool,
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiKV.
+    pub tikv_in_isolation_read: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiFlash.
+    pub tiflash_in_isolation_read: bool,
+    /// Whether `SessionVars.IsolationReadEngines` contains TiDB.
+    pub tidb_in_isolation_read: bool,
+    /// Canonical session-variable value used by isolation-read diagnostics.
+    pub isolation_read_engines_value: String,
+    /// Go fix control 52869, consumed by index pruning through the built
+    /// `DataSource`.
+    pub prefer_index_merge_by_fix_control: bool,
+    /// Session/transaction facts used by Go's index-lookup-pushdown gates.
+    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
@@ -499,6 +730,30 @@ pub fn snapshot_schema_and_names(plan: &LogicalPlan) -> (Schema, Vec<FieldName>)
         plan.schema().cloned().unwrap_or_default(),
         plan.output_names().to_vec(),
     )
+}
+
+/// Go `rewriteExprNode`'s deferred output-name reset
+/// (`expression_rewriter.go:283-299`).
+///
+/// Rewriting one expression can grow the plan's schema — a subquery becomes an
+/// `Apply` or a join with the inner side appended — and Go makes those new
+/// columns invisible to NAME resolution by renaming everything past the
+/// pre-rewrite length to `types.EmptyName`. The comment there spells out the
+/// motivating case: `select * from t where t.a in (select t1.a from t1)`
+/// leaves `t1.*` in the plan, and a second subquery that also uses `t1` would
+/// otherwise resolve against the stale names. Without the reset,
+/// `SELECT a FROM s WHERE a IN (SELECT a FROM u)` makes the join's inner
+/// `u.a` collide with the outer `s.a` and the outer projection's `a` becomes
+/// ambiguous.
+pub fn hide_rewrite_columns(plan: &mut LogicalPlan, original_len: usize) {
+    let schema_len = plan.schema().map_or(0, Schema::len);
+    if schema_len <= original_len {
+        return;
+    }
+    let mut names = plan.output_names().to_vec();
+    names.truncate(original_len);
+    names.resize(schema_len, FieldName::default());
+    plan.set_output_names(names);
 }
 
 /// Go's `expression.EvalBool(ctx, []{con}, chunk.Row{})` on an already-folded
@@ -534,27 +789,175 @@ pub fn constant_is_always_false(constant: &Constant) -> Option<bool> {
 pub struct PlanScopeResolver<'a> {
     schema: &'a Schema,
     names: &'a [FieldName],
+    /// The underlying join's full schema/name slice, when the visible schema
+    /// coalesces a `USING`/`NATURAL` column. Go keeps the redundant side in
+    /// `FullSchema` for qualified references even though it is absent from
+    /// the executable join schema.
+    full_schema: Option<&'a Schema>,
+    full_names: Option<&'a [FieldName]>,
     /// The columns a marker index refers to, per [`MarkerKind`]. A kind absent
     /// from this map has no producer yet in the current build.
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
+    /// The side vector `MarkerKind::Constant` markers index.
+    marker_constants: Option<&'a [Expression]>,
+    outer_schemas: &'a [Schema],
+    outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
+    /// The session-selected charset/collation for coercible string literals.
+    /// Go's expression rewriter reads this from `BuildContext.GetCharsetInfo`;
+    /// it must not fall back to the server default after `SET NAMES`.
+    connection_charset: String,
+    connection_collation: String,
+    /// The session-selected implicit escape byte for LIKE expressions.
+    ///
+    /// Go's expression rewriter reads this from the statement context while
+    /// lowering an AST `LIKE`. Keeping it on the plan scope ensures the
+    /// planner's third `like(expr, pattern, escape)` argument agrees with the
+    /// evaluator and ranger under `NO_BACKSLASH_ESCAPES`.
+    like_default_escape: u8,
+    /// Whether integer subtraction must keep a signed result domain for this
+    /// statement (`NO_UNSIGNED_SUBTRACTION`).
+    no_unsigned_subtraction: bool,
+    /// The statement's `div_precision_increment`, which shapes every `/`
+    /// result's decimal scale. Go reads it from the statement context while
+    /// building the operator.
+    div_precision_increment: u32,
+    /// The live statement context used by Go's comparison constant
+    /// refinement to retain build-time conversion warnings.
+    warning_context: Option<&'a dyn tidb_expr::Columns>,
+    /// Go `er.clause()`: the clause an unknown-column error names. The
+    /// default is Go's `expressionClause` spelling.
+    clause_message: &'static str,
 }
 
 impl<'a> PlanScopeResolver<'a> {
     /// A resolver over one plan's schema and names, with no markers bound.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         schema: &'a Schema,
         names: &'a [FieldName],
         marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
         time_zone: SessionTimeZone,
     ) -> Self {
+        let (connection_charset, connection_collation) =
+            tidb_expr::collation_derive::connection_charset_info();
         Self {
             schema,
             names,
+            full_schema: None,
+            full_names: None,
             marker_columns,
+            marker_constants: None,
+            outer_schemas: &[],
+            outer_names: &[],
             time_zone,
+            connection_charset: connection_charset.to_owned(),
+            connection_collation: connection_collation.to_owned(),
+            like_default_escape: b'\\',
+            no_unsigned_subtraction: false,
+            div_precision_increment: 4,
+            warning_context: None,
+            clause_message: "expression",
         }
+    }
+
+    /// A resolver at Go's plan-aware query-block seam, with enclosing scopes
+    /// searched from innermost to outermost after the local schema.
+    #[must_use]
+    pub fn with_outer_scopes(
+        schema: &'a Schema,
+        names: &'a [FieldName],
+        marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
+        outer_schemas: &'a [Schema],
+        outer_names: &'a [Vec<FieldName>],
+        time_zone: SessionTimeZone,
+    ) -> Self {
+        let (connection_charset, connection_collation) =
+            tidb_expr::collation_derive::connection_charset_info();
+        Self {
+            schema,
+            names,
+            full_schema: None,
+            full_names: None,
+            marker_columns,
+            marker_constants: None,
+            outer_schemas,
+            outer_names,
+            time_zone,
+            connection_charset: connection_charset.to_owned(),
+            connection_collation: connection_collation.to_owned(),
+            like_default_escape: b'\\',
+            no_unsigned_subtraction: false,
+            div_precision_increment: 4,
+            warning_context: None,
+            clause_message: "expression",
+        }
+    }
+
+    /// Attach the statement's implicit charset/collation pair to this
+    /// resolver, preserving `SET NAMES` through planning.
+    #[must_use]
+    pub fn with_connection_charset_info(mut self, info: (&str, &str)) -> Self {
+        self.connection_charset = info.0.to_owned();
+        self.connection_collation = info.1.to_owned();
+        self
+    }
+
+    /// Attach the side vector `MarkerKind::Constant` markers select from.
+    #[must_use]
+    pub const fn with_marker_constants(mut self, constants: &'a [Expression]) -> Self {
+        self.marker_constants = Some(constants);
+        self
+    }
+
+    /// Attach the statement's implicit LIKE escape to this resolver.
+    #[must_use]
+    pub const fn with_like_default_escape(mut self, escape: u8) -> Self {
+        self.like_default_escape = escape;
+        self
+    }
+
+    /// Attach the statement's `div_precision_increment`, which shapes every
+    /// `/` result's decimal scale.
+    #[must_use]
+    pub const fn with_div_precision_increment(mut self, increment: u32) -> Self {
+        self.div_precision_increment = increment;
+        self
+    }
+
+    /// Attach the clause an unknown-column error must name, Go's
+    /// `er.clause()` (`planbuilder.go:132`).
+    #[must_use]
+    pub const fn with_clause_message(mut self, clause: &'static str) -> Self {
+        self.clause_message = clause;
+        self
+    }
+
+    /// Attach the statement's `NO_UNSIGNED_SUBTRACTION` mode to this
+    /// resolver so arithmetic result metadata is selected during rewriting,
+    /// before execution evaluates any row.
+    #[must_use]
+    pub const fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
+        self.no_unsigned_subtraction = enabled;
+        self
+    }
+
+    /// Attach a join's `FullSchema`/`FullNames` for qualified resolution.
+    /// The ordinary visible schema remains authoritative for unqualified
+    /// names and wildcard expansion; the full pair is only a fallback for a
+    /// redundant side that `JOIN ... USING` coalesced away.
+    #[must_use]
+    pub const fn with_full_scope(mut self, schema: &'a Schema, names: &'a [FieldName]) -> Self {
+        self.full_schema = Some(schema);
+        self.full_names = Some(names);
+        self
+    }
+
+    /// Attach the live statement context used by Go's comparison builder.
+    #[must_use]
+    pub fn with_warning_context<C: tidb_expr::Columns>(mut self, ctx: &'a C) -> Self {
+        self.warning_context = Some(ctx);
+        self
     }
 }
 
@@ -593,6 +996,71 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, EvalError> {
+        self.warning_context
+            .ok_or(EvalError::Unsupported("unbound prepared parameter"))?
+            .param_value(order)
+    }
+
+    fn clause_message(&self) -> &'static str {
+        self.clause_message
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.like_default_escape
+    }
+
+    fn connection_charset_info(&self) -> (&str, &str) {
+        (&self.connection_charset, &self.connection_collation)
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.no_unsigned_subtraction
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.div_precision_increment
+    }
+
+    fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+        self.warning_context
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        // A live statement context owns warning emission. Defer value folding
+        // until `PlanBuilder::rewrite_scalar` can invoke the folder with that
+        // concrete context; the zone-only fallback below intentionally drops
+        // warnings and must not run first for session-backed plans.
+        if let Some(context) = self.warning_context {
+            if mode != tidb_expr::ConstantFoldMode::Disabled {
+                tidb_expr::derive_constant_null_flag(expression);
+                // Go's `NewFunction` folds each builtin as it is constructed,
+                // in the live statement context; the deferred top-level fold
+                // in `rewrite_scalar_with_scope` cannot reach a closed leaf
+                // under a non-constant parent.
+                tidb_expr::fold_constant_in_mode(expression, context, mode);
+            }
+            return;
+        }
+        // Go's expression rewriter folds strict literal subtrees as each
+        // builtin is constructed.  The planner resolver historically only
+        // refreshed NULL metadata, leaving shapes such as
+        // `CAST(-1 AS DECIMAL)` wrapped around a unary function.  That made
+        // ranger treat a provably out-of-domain unsigned predicate as an
+        // ordinary residual filter instead of an empty access range.  The
+        // shared folder descends through row-dependent parents and folds only
+        // their closed strict children, preserving the parent expression.
+        if mode != tidb_expr::ConstantFoldMode::Disabled {
+            tidb_expr::fold_constant_in_mode_preserving_warning_casts(
+                expression,
+                &tidb_expr::ZonedNoColumns(self.time_zone.clone()),
+                mode,
+            );
+        } else {
+            tidb_expr::derive_constant_null_flag(expression);
+        }
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let column = self.resolve_column(path)?;
         Some((
@@ -625,14 +1093,54 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                 // marker falls through to ordinary name resolution.
             }
         }
-        let index = find_field_name(self.names, path)?;
-        let mut column = self.schema.columns.get(index)?.clone();
+        let (schema, index) = if let Some(index) = find_field_name(self.names, path) {
+            (self.schema, index)
+        } else {
+            let full_names = self.full_names?;
+            let index = find_field_name(full_names, path)?;
+            (self.full_schema?, index)
+        };
+        let mut column = schema.columns.get(index)?.clone();
         column.index = index as i64;
         Some(column)
     }
 
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        if let [name] = path {
+            if let Some(marker) = PlanMarker::decode(name) {
+                if marker.kind == MarkerKind::Constant {
+                    return self
+                        .marker_constants
+                        .and_then(|constants| constants.get(marker.index))
+                        .cloned();
+                }
+            }
+        }
+        if let Some(column) = self.resolve_column(path) {
+            return Some(Expression::Column(column));
+        }
+        for (schema, names) in self.outer_schemas.iter().zip(self.outer_names).rev() {
+            let Some(index) = find_field_name(names, path) else {
+                continue;
+            };
+            let Some(mut column) = schema.columns.get(index).cloned() else {
+                continue;
+            };
+            column.index = index as i64;
+            return Some(Expression::CorrelatedColumn(
+                tidb_expr::column::CorrelatedColumn::new(column),
+            ));
+        }
+        None
+    }
+
     fn time_zone(&self) -> SessionTimeZone {
         self.time_zone.clone()
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.warning_context
+            .and_then(tidb_expr::Columns::current_database)
     }
 }
 
@@ -653,9 +1161,15 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             plan_ids,
             column_ids,
             time_zone,
+            resolve_ctx: tidb_model::GoShared::new(tidb_resolve::Context::new()),
             opt_flag: 0,
+            partition_processor_enabled: true,
+            is_sampling: false,
             cur_clause: ClauseCode::Unknow,
             qb_offset: Vec::new(),
+            next_qb_offset: 0,
+            qb_hint_handler: None,
+            qb_hint_state: None,
             outer_schemas: Vec::new(),
             outer_names: Vec::new(),
             lateral_outer_count: 0,
@@ -666,6 +1180,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             enable_pipelined_window_exec: true,
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
+            subquery_evaluator: None,
+            subquery_constants: Vec::new(),
             all_names: Vec::new(),
             correlated_agg_columns: Vec::new(),
             building_cte: false,
@@ -680,11 +1196,24 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             is_for_update_read: false,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
-            join_hints: from::JoinHints::default(),
+            join_hints: Rc::new(from::JoinHints::default()),
+            plan_hints: None,
+            index_merge_hints: Vec::new(),
+            index_hints: Vec::new(),
+            no_index_lookup_push_down_hints: Vec::new(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
+            new_only_full_group_by_check: false,
+            // Go `DefTiDBRemoveOrderbyInSubquery = true`.
+            remove_orderby_in_subquery: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
+            tikv_in_isolation_read: true,
+            tiflash_in_isolation_read: true,
+            tidb_in_isolation_read: true,
+            isolation_read_engines_value: "tikv,tiflash,tidb".to_owned(),
+            prefer_index_merge_by_fix_control: false,
+            index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
             enable_mpp_shared_cte_execution: false,
@@ -698,16 +1227,205 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         self.qb_offset.last().copied().unwrap_or(-1)
     }
 
-    /// Go `GetOptFlag()` (`planbuilder.go:455`). `isSampling`'s "return 0" arm
-    /// is a dropped narrowing; see this module's header.
+    /// Installs Go `SessionVars.IsolationReadEngines` for access-path and
+    /// `READ_FROM_STORAGE` resolution.
+    ///
+    /// Go's `tidb_isolation_read_engines` can never be EMPTY: the sysvar
+    /// validation rejects any value outside {tikv, tiflash, tidb}
+    /// (`sysvar.go:370-386`) and the config default is the joined triple
+    /// (`config.go:1304`). An empty string here therefore means the caller had
+    /// no session variable to read at all (a bare `StmtContext::default()`),
+    /// not a real setting — keep the builder's config default instead of
+    /// blanking every access path.
+    pub fn set_isolation_read_engines(&mut self, engines: &str) {
+        if engines.is_empty() {
+            return;
+        }
+        self.isolation_read_engines_value = engines.to_owned();
+        self.tikv_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tikv"));
+        self.tiflash_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"));
+        self.tidb_in_isolation_read = engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tidb"));
+    }
+
+    /// Installs Go's `EvalSubqueryFirstRow` function variable, which the
+    /// executor package assigns at init because the planner cannot import it.
+    ///
+    /// Without a hook the `EvaluateSeparately` arms of
+    /// [`Self::lower_scalar_subqueries`] are unsupported, exactly as Go is
+    /// unsupported without `pkg/executor`.
+    #[must_use]
+    pub const fn with_subquery_evaluator(mut self, evaluator: SubqueryEvaluator<'a>) -> Self {
+        self.subquery_evaluator = Some(evaluator);
+        self
+    }
+
+    /// Go `GetOptFlag()` (`planbuilder.go:455`).
     #[must_use]
     pub const fn get_opt_flag(&self) -> u64 {
-        self.opt_flag
+        if self.is_sampling {
+            0
+        } else {
+            self.opt_flag
+        }
     }
 
     /// Go's `b.optFlag |= rule.FlagXxx`, which every clause builder does.
     pub const fn add_opt_flag(&mut self, flag: u64) {
         self.opt_flag |= flag;
+    }
+
+    /// Applies the session's partition-pruning mode before access paths are
+    /// enumerated. Global indexes remain available in dynamic mode, as in Go.
+    pub const fn set_partition_processor_enabled(&mut self, enabled: bool) {
+        self.partition_processor_enabled = enabled;
+    }
+
+    fn begin_hint_build(&mut self, query: &tidb_ast::QueryStmt) -> bool {
+        if self.qb_hint_handler.is_some() {
+            return false;
+        }
+        let mut query = query.clone();
+        let mut handler = tidb_hint::QBHintHandler::build_query(&mut query);
+        for warning in handler.take_warnings() {
+            self.ctx.append_warning(warning.code, &warning.message);
+        }
+        self.qb_hint_state = Some(handler.new_build_state());
+        self.qb_hint_handler = Some(handler);
+        true
+    }
+
+    fn end_hint_build(&mut self) {
+        self.flush_hint_build_warnings();
+        self.qb_hint_handler = None;
+        self.qb_hint_state = None;
+    }
+
+    fn flush_hint_build_warnings(&mut self) {
+        if let (Some(handler), Some(state)) =
+            (self.qb_hint_handler.as_mut(), self.qb_hint_state.as_ref())
+        {
+            for warning in handler.unused_view_hint_warnings(state) {
+                self.ctx.append_warning(1815, &warning);
+            }
+            for warning in handler.take_warnings() {
+                self.ctx.append_warning(warning.code, &warning.message);
+            }
+        }
+    }
+
+    fn push_query_block_hints(&mut self, select: &SelectStmt) -> QueryBlockHintFrame {
+        let select_offset = self.select_offset();
+        let current_table_hints = {
+            let handler = self
+                .qb_hint_handler
+                .as_mut()
+                .expect("hint handler is initialized at the query root");
+            let state = self
+                .qb_hint_state
+                .as_mut()
+                .expect("hint state is initialized at the query root");
+            handler.current_stmt_hints(&select.hints, select_offset, state)
+        };
+        let straight_join_order = select.straight_join
+            || current_table_hints
+                .iter()
+                .any(|hint| hint.name.eq_ignore_ascii_case("straight_join"));
+        let (mut parsed_plan_hints, subquery_hint_flags, hint_warnings) =
+            tidb_hint::parse_plan_hints(
+                &current_table_hints,
+                select_offset,
+                self.source.current_database(),
+                self.qb_hint_handler
+                    .as_ref()
+                    .expect("hint handler is initialized at the query root"),
+                straight_join_order,
+                self.sub_query_ctx == SubQueryCtx::In,
+                self.sub_query_ctx == SubQueryCtx::Exists,
+                self.sub_query_ctx == SubQueryCtx::NotHandlingSubquery,
+            );
+        for warning in hint_warnings {
+            self.ctx.append_warning(warning.code, &warning.message);
+        }
+        self.sub_query_hint_flags |= subquery_hint_flags;
+        let mut current_hints = RewriterHints::from_plan_hints(&parsed_plan_hints);
+        if current_hints.aggregation_type_conflicted() {
+            self.ctx
+                .append_warning(1815, "Optimizer aggregation hints are conflicted");
+            current_hints.prefer_agg_type = 0;
+            parsed_plan_hints.prefer_agg_type = 0;
+        }
+        let current_plan_hints = Rc::new(RefCell::new(parsed_plan_hints));
+        let current_join_hints = Rc::new(from::JoinHints::from_plan_hints(
+            Rc::clone(&current_plan_hints),
+            select_offset,
+        ));
+        let current_index_merge_hints = index_merge_hints_from_plan(&current_plan_hints.borrow());
+        let (current_index_hints, current_no_lookup_hints) =
+            index_hints_from_plan(&current_plan_hints.borrow());
+
+        let frame = QueryBlockHintFrame {
+            hints: std::mem::replace(&mut self.hints, current_hints),
+            join_hints: std::mem::replace(&mut self.join_hints, current_join_hints),
+            plan_hints: self.plan_hints.replace(current_plan_hints),
+            index_merge_hints: std::mem::replace(
+                &mut self.index_merge_hints,
+                current_index_merge_hints,
+            ),
+            index_hints: std::mem::replace(&mut self.index_hints, current_index_hints),
+            no_index_lookup_push_down_hints: std::mem::replace(
+                &mut self.no_index_lookup_push_down_hints,
+                current_no_lookup_hints,
+            ),
+            in_straight_join: self.in_straight_join,
+        };
+        if self
+            .plan_hints
+            .as_ref()
+            .is_some_and(|hints| hints.borrow().straight_join_order)
+            || select.straight_join
+        {
+            self.in_straight_join = true;
+        }
+        frame
+    }
+
+    fn pop_query_block_hints(&mut self, frame: QueryBlockHintFrame) {
+        if let Some(plan) = &self.plan_hints {
+            let mut plan = plan.borrow_mut();
+            for (canonical, applied) in plan.index_hint_list.iter_mut().zip(&self.index_hints) {
+                canonical.matched = applied.matched;
+            }
+            for (canonical, applied) in plan
+                .index_merge_hint_list
+                .iter_mut()
+                .zip(&self.index_merge_hints)
+            {
+                canonical.matched = applied.matched;
+            }
+            for (canonical, applied) in plan
+                .no_index_lookup_pushdown
+                .iter_mut()
+                .zip(&self.no_index_lookup_push_down_hints)
+            {
+                canonical.matched = applied.matched;
+            }
+            for warning in tidb_hint::collect_unmatched_hint_warnings(&plan) {
+                self.ctx.append_warning(1815, &warning);
+            }
+        }
+        self.hints = frame.hints;
+        self.join_hints = frame.join_hints;
+        self.plan_hints = frame.plan_hints;
+        self.index_merge_hints = frame.index_merge_hints;
+        self.index_hints = frame.index_hints;
+        self.no_index_lookup_push_down_hints = frame.no_index_lookup_push_down_hints;
+        self.in_straight_join = frame.in_straight_join;
     }
 
     fn base(&self, tp: &str) -> BaseLogicalPlan {
@@ -759,12 +1477,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         expr.clone()
     }
 
-    /// Go `b.rewrite(ctx, expr, p, mapper, asScalar)`, for the SUBQUERY-FREE
-    /// case this batch's spine covers.
-    ///
-    /// The plan-carrying case — where the rewrite REPLACES `p` with an apply —
-    /// is [`Self::expression_rewriter`]'s; that is the seam batch 6b-6e widen,
-    /// and it needs no change here.
+    /// Go `b.rewrite(ctx, expr, p, mapper, asScalar)` for scalar expressions.
+    /// Plan-carrying subqueries are dispatched separately by
+    /// [`Self::lower_filter_subquery`] and [`Self::lower_scalar_subqueries`].
     ///
     /// # Errors
     ///
@@ -776,8 +1491,543 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         names: &[FieldName],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<Expression, PlanError> {
-        let resolver = PlanScopeResolver::new(schema, names, markers, self.time_zone.clone());
-        Ok(rewrite_expr_resolved(expr, &resolver)?)
+        self.rewrite_scalar_with_scope(expr, schema, names, None, None, markers)
+    }
+
+    /// `rewrite_scalar` with the current plan's optional `FullSchema` pair.
+    /// A coalesced `USING`/`NATURAL` join keeps its redundant columns only in
+    /// that pair, so qualified references such as `t2.a` must be resolved
+    /// against it while `*` and unqualified names continue to use `schema`.
+    pub fn rewrite_scalar_with_plan(
+        &self,
+        expr: &Expr,
+        plan: &LogicalPlan,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Expression, PlanError> {
+        let (schema, names) = snapshot_schema_and_names(plan);
+        let full = from::find_join_full_schema(plan);
+        let (full_schema, full_names) = full
+            .map(|(schema, names)| (Some(schema), Some(names)))
+            .unwrap_or((None, None));
+        self.rewrite_scalar_with_scope(expr, &schema, &names, full_schema, full_names, markers)
+    }
+
+    fn rewrite_scalar_with_scope(
+        &self,
+        expr: &Expr,
+        schema: &Schema,
+        names: &[FieldName],
+        full_schema: Option<&Schema>,
+        full_names: Option<&[FieldName]>,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Expression, PlanError> {
+        let resolver = PlanScopeResolver::with_outer_scopes(
+            schema,
+            names,
+            markers,
+            &self.outer_schemas,
+            &self.outer_names,
+            self.time_zone.clone(),
+        )
+        .with_connection_charset_info(self.ctx.connection_charset_info())
+        .with_marker_constants(&self.subquery_constants)
+        .with_like_default_escape(self.ctx.like_default_escape())
+        .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
+        .with_div_precision_increment(self.ctx.div_precision_increment())
+        .with_clause_message(self.cur_clause.message())
+        .with_warning_context(self.ctx);
+        let resolver = match (full_schema, full_names) {
+            (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
+            _ => resolver,
+        };
+        let mut rewritten = rewrite_expr_resolved(expr, &resolver)?;
+        // The resolver's structural pass intentionally preserves warning-
+        // producing casts while it has only a zone-only no-column context.
+        // Go's `NewFunction` still folds those closed casts with the live
+        // statement context, so warnings from constants such as `'abc' + 1`
+        // and `1 / 0` belong to this construction boundary, not execution.
+        tidb_expr::fold_constant_in_mode(
+            &mut rewritten,
+            self.ctx,
+            tidb_expr::ConstantFoldMode::Normal,
+        );
+        Ok(rewritten)
+    }
+
+    /// Go's `handleScalarSubquery` / `handleExistSubquery` tail
+    /// (`expression_rewriter.go:1601` / `:1226`): hand the uncorrelated child
+    /// to the executor's [`SubqueryEvaluator`], then fold the evaluated first
+    /// row into the expression Go pushes on `ctxStack`.
+    ///
+    /// A scalar subquery becomes one `Constant` per output column, each
+    /// carrying its `ScalarQueryCol` id; a multi-column one is wrapped in Go's
+    /// `ast.RowFunc`. `EXISTS` becomes the plain 1/0 Go computes from whether
+    /// the row exists, with no `SubqueryRefID`.
+    fn evaluate_subquery(
+        &self,
+        inner: &LogicalPlan,
+        kind: SubqueryKind,
+        negated: bool,
+    ) -> Result<Expression, PlanError> {
+        let Some(evaluator) = self.subquery_evaluator else {
+            return Err(PlanError::internal(
+                "uncorrelated subquery evaluation requires the executor hook",
+            ));
+        };
+        let schema = inner
+            .schema()
+            .ok_or_else(|| PlanError::internal("uncorrelated subquery has no schema"))?
+            .clone();
+        let evaluated = evaluator(inner, kind, self.get_opt_flag())?;
+        if evaluated.column_ids.len() != schema.len() {
+            return Err(PlanError::internal(
+                "uncorrelated subquery allocated the wrong number of output columns",
+            ));
+        }
+        match kind {
+            SubqueryKind::Exists => {
+                // Go `(row != nil && !v.Not) || (row == nil && v.Not)`.
+                let value = i64::from(evaluated.has_row != negated);
+                Ok(Expression::Constant(Constant::new(
+                    tidb_datatype::Datum::Int(value),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )))
+            }
+            SubqueryKind::Scalar => {
+                if evaluated.row.len() != evaluated.column_ids.len() {
+                    return Err(PlanError::internal(
+                        "uncorrelated scalar subquery returned the wrong column count",
+                    ));
+                }
+                let mut constants = Vec::with_capacity(evaluated.row.len());
+                for ((id, value), column) in evaluated
+                    .column_ids
+                    .into_iter()
+                    .zip(evaluated.row)
+                    .zip(schema.columns.iter())
+                {
+                    let mut constant = Constant::new(
+                        value,
+                        column.ret_type.clone().unwrap_or_else(|| {
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                        }),
+                    );
+                    constant.subquery_ref_id = id;
+                    constants.push(Expression::Constant(constant));
+                }
+                if constants.len() == 1 {
+                    return Ok(constants.pop().expect("one scalar constant"));
+                }
+                let ret_type = constants
+                    .first()
+                    .and_then(|constant| constant.static_type().cloned())
+                    .unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
+                    });
+                let rewriter = self.expression_rewriter();
+                rewriter
+                    .new_function("row", ret_type, constants)
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    /// Go `expressionRewriter.buildSubquery` plus
+    /// `handleScalarSubquery`, integrated into the SELECT builder. Each
+    /// scalar subquery is planned with the current plan as its enclosing
+    /// scope, replaced by the Apply output column, and the resulting logical
+    /// Apply becomes the next expression sibling's input.
+    fn lower_scalar_subqueries(
+        &mut self,
+        plan: LogicalPlan,
+        expr: &mut Expr,
+    ) -> Result<(LogicalPlan, bool), PlanError> {
+        struct Lowerer<'builder, 'plan, S: TableSource, C: Columns> {
+            builder: &'builder mut PlanBuilder<'plan, S, C>,
+            plan: Option<LogicalPlan>,
+            error: Option<PlanError>,
+            changed: bool,
+        }
+
+        impl<S: TableSource, C: Columns> tidb_ast::Visitor for Lowerer<'_, '_, S, C> {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if self.error.is_some() {
+                    return true;
+                }
+                let Some(expr) = node.downcast_mut::<Expr>() else {
+                    return false;
+                };
+                // Go's `expressionRewriter` lowers a direct subquery, a
+                // quantified comparison, an IN, and an EXISTS into an Apply or
+                // semi-join. A SELECT field reaches all four here; the filter
+                // clauses use [`PlanBuilder::lower_filter_subquery`].
+                enum Form {
+                    Scalar,
+                    Compare {
+                        op: tidb_ast::BinaryOp,
+                        left: Box<Expr>,
+                        all: bool,
+                    },
+                    In {
+                        left: Box<Expr>,
+                        not: bool,
+                    },
+                    Exists {
+                        not: bool,
+                    },
+                }
+                // Go's two outcomes for a handled subquery: the Apply-bearing
+                // plan with its result column on `ctxStack`, or the folded
+                // constant Go pushes instead when it evaluates the child
+                // itself. The outer plan is carried in both.
+                enum Lowered {
+                    Applied(LogicalPlan),
+                    Evaluated {
+                        outer: LogicalPlan,
+                        value: Expression,
+                    },
+                }
+                let (query, form) = match expr {
+                    Expr::Subquery(query) => ((**query).clone(), Form::Scalar),
+                    Expr::CompareSubquery {
+                        op,
+                        left,
+                        all,
+                        subquery,
+                    } => (
+                        (**subquery).clone(),
+                        Form::Compare {
+                            op: *op,
+                            left: left.clone(),
+                            all: *all,
+                        },
+                    ),
+                    Expr::InSubquery {
+                        expr,
+                        subquery,
+                        not,
+                    } => (
+                        (**subquery).clone(),
+                        Form::In {
+                            left: expr.clone(),
+                            not: *not,
+                        },
+                    ),
+                    Expr::Exists { subquery, not } => {
+                        ((**subquery).clone(), Form::Exists { not: *not })
+                    }
+                    _ => return false,
+                };
+                let Some(outer) = self.plan.take() else {
+                    self.error = Some(PlanError::internal("subquery lowering lost its outer plan"));
+                    return true;
+                };
+                let inner = match self.builder.build_expression_subquery(&outer, &query) {
+                    Ok(inner) => inner,
+                    Err(error) => {
+                        self.error = Some(error);
+                        return true;
+                    }
+                };
+                // The comparison/IN handlers take their left operand already
+                // rewritten, so build it before the rewriter borrows the
+                // builder.
+                let rewritten_left = match &form {
+                    Form::Compare { left, .. } | Form::In { left, .. } => {
+                        let (schema, names) = snapshot_schema_and_names(&outer);
+                        let mut markers = BTreeMap::new();
+                        markers.insert(MarkerKind::Column, schema.columns.clone());
+                        match self.builder.rewrite_scalar(left, &schema, &names, &markers) {
+                            Ok(left) => Some(left),
+                            Err(error) => {
+                                self.error = Some(error);
+                                return true;
+                            }
+                        }
+                    }
+                    Form::Scalar | Form::Exists { .. } => None,
+                };
+                let hint_flags = self.builder.sub_query_hint_flags;
+                let mut rewriter = self.builder.expression_rewriter();
+                rewriter.as_scalar = true;
+                let lowered = match form {
+                    Form::Scalar => {
+                        match rewriter.handle_scalar_subquery(outer, inner, hint_flags) {
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => Lowered::Applied(plan),
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner }) => {
+                                match self.builder.evaluate_subquery(
+                                    &inner,
+                                    SubqueryKind::Scalar,
+                                    false,
+                                ) {
+                                    Ok(value) => Lowered::Evaluated { outer, value },
+                                    Err(error) => {
+                                        self.error = Some(error);
+                                        return true;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                    Form::Compare { op, all, .. } => {
+                        let left = rewritten_left.expect("comparison left rewritten");
+                        let Some(op) = compare_op_from_binary(op) else {
+                            self.error = Some(PlanError::internal(
+                                "invalid quantified comparison operator",
+                            ));
+                            return true;
+                        };
+                        rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                        match rewriter
+                            .handle_compare_subquery(outer, &left, inner, op, all, hint_flags)
+                        {
+                            Ok(plan) => Lowered::Applied(plan),
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                    Form::In { not, .. } => {
+                        let left = rewritten_left.expect("IN left rewritten");
+                        rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                        match rewriter.handle_in_subquery(
+                            outer, &left, inner, not, true, hint_flags, true, false,
+                        ) {
+                            Ok(plan) => Lowered::Applied(plan),
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                    Form::Exists { not } => {
+                        match rewriter.handle_exist_subquery(outer, inner, not, hint_flags) {
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => Lowered::Applied(plan),
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner }) => {
+                                match self.builder.evaluate_subquery(
+                                    &inner,
+                                    SubqueryKind::Exists,
+                                    not,
+                                ) {
+                                    Ok(value) => Lowered::Evaluated { outer, value },
+                                    Err(error) => {
+                                        self.error = Some(error);
+                                        return true;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                };
+                let (applied, evaluated) = match lowered {
+                    Lowered::Applied(plan) => (plan, None),
+                    Lowered::Evaluated { outer, value } => (outer, Some(value)),
+                };
+                if let Some(value) = evaluated {
+                    // Go `er.ctxStackAppend(newCols[0], types.EmptyName)`: the
+                    // folded constant IS the expression. Publish it under a
+                    // `#const#N` marker so the enclosing predicate's rewrite
+                    // resolves it through [`PlanScopeResolver`] exactly like a
+                    // column marker resolves to the Apply output.
+                    let index = self.builder.subquery_constants.len();
+                    self.builder.subquery_constants.push(value);
+                    *expr = PlanMarker::new(MarkerKind::Constant, index).as_expr();
+                    self.plan = Some(applied);
+                    self.changed = true;
+                    return true;
+                }
+                let Some(Expression::Column(column)) = rewriter.ctx_stack.pop() else {
+                    self.error = Some(PlanError::internal(
+                        "subquery lowering did not publish its result column",
+                    ));
+                    return true;
+                };
+                let Some(index) = applied.schema().and_then(|schema| {
+                    schema
+                        .columns
+                        .iter()
+                        .position(|candidate| candidate.unique_id == column.unique_id)
+                }) else {
+                    self.error = Some(PlanError::internal(
+                        "subquery result is absent from its schema",
+                    ));
+                    return true;
+                };
+                *expr = PlanMarker::new(MarkerKind::Column, index).as_expr();
+                self.plan = Some(applied);
+                self.changed = true;
+                true
+            }
+
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+
+        let mut lowerer = Lowerer {
+            builder: self,
+            plan: Some(plan),
+            error: None,
+            changed: false,
+        };
+        use tidb_ast::Visitable as _;
+        expr.accept(&mut lowerer);
+        if let Some(error) = lowerer.error {
+            return Err(error);
+        }
+        Ok((
+            lowerer
+                .plan
+                .expect("scalar-subquery lowering retains an outer plan"),
+            lowerer.changed,
+        ))
+    }
+
+    fn build_expression_subquery(
+        &mut self,
+        outer: &LogicalPlan,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<LogicalPlan, PlanError> {
+        // Go `buildApply` (`logical_plan_builder.go:1000`) turns on these four
+        // rules whenever it builds a `LogicalApply`. The subquery handlers are
+        // the other Apply producer, and a query whose FROM has no join (so
+        // `build_join` never ran) still needs `decorrelate` reachable.
+        self.opt_flag |= flags::PREDICATE_PUSH_DOWN
+            | flags::BUILD_KEY_INFO
+            | flags::DECORRELATE
+            | flags::CONSTANT_PROPAGATION;
+        let (outer_schema, outer_names) = snapshot_schema_and_names(outer);
+        self.outer_schemas.push(outer_schema);
+        self.outer_names.push(outer_names);
+        let parent_clause = self.cur_clause;
+        let modified_ctes = self.prepare_cte_check_for_subquery();
+        let inner = self.build_query_stmt(query, false);
+        self.reset_cte_check_for_subquery(&modified_ctes);
+        self.outer_schemas.pop();
+        self.outer_names.pop();
+        self.cur_clause = parent_clause;
+        inner
+    }
+
+    /// Go's filter-context arms of `expressionRewriter.Enter`: a direct
+    /// quantified, IN, or EXISTS predicate replaces the outer plan with the
+    /// semi-apply/join produced by the corresponding handler.
+    fn lower_filter_subquery(
+        &mut self,
+        outer: LogicalPlan,
+        expression: &Expr,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<(LogicalPlan, bool), PlanError> {
+        let (schema, names) = snapshot_schema_and_names(&outer);
+        match expression {
+            Expr::CompareSubquery {
+                op,
+                left,
+                all,
+                subquery,
+            } => {
+                let left = self.rewrite_scalar(left, &schema, &names, markers)?;
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let op = match op {
+                    tidb_ast::BinaryOp::Eq => CompareOp::Eq,
+                    tidb_ast::BinaryOp::NullEq => CompareOp::NullEq,
+                    tidb_ast::BinaryOp::Ge => CompareOp::Ge,
+                    tidb_ast::BinaryOp::Gt => CompareOp::Gt,
+                    tidb_ast::BinaryOp::Le => CompareOp::Le,
+                    tidb_ast::BinaryOp::Lt => CompareOp::Lt,
+                    tidb_ast::BinaryOp::Ne => CompareOp::Ne,
+                    _ => {
+                        return Err(PlanError::internal(
+                            "invalid quantified comparison operator",
+                        ))
+                    }
+                };
+                let mut rewriter = self.expression_rewriter();
+                rewriter.as_scalar = false;
+                rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                let plan = rewriter.handle_compare_subquery(
+                    outer,
+                    &left,
+                    inner,
+                    op,
+                    *all,
+                    self.sub_query_hint_flags,
+                )?;
+                Ok((plan, true))
+            }
+            Expr::InSubquery {
+                expr,
+                subquery,
+                not,
+            } => {
+                let left = self.rewrite_scalar(expr, &schema, &names, markers)?;
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let mut rewriter = self.expression_rewriter();
+                rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                let plan = rewriter.handle_in_subquery(
+                    outer,
+                    &left,
+                    inner,
+                    *not,
+                    false,
+                    self.sub_query_hint_flags,
+                    true,
+                    true,
+                )?;
+                Ok((plan, true))
+            }
+            Expr::Exists { subquery, not } => {
+                let inner = self.build_expression_subquery(&outer, subquery)?;
+                let mut rewriter = self.expression_rewriter();
+                rewriter.as_scalar = false;
+                match rewriter.handle_exist_subquery(
+                    outer,
+                    inner,
+                    *not,
+                    self.sub_query_hint_flags,
+                )? {
+                    ScalarSubqueryOutcome::Applied(plan) => Ok((plan, true)),
+                    ScalarSubqueryOutcome::EvaluateSeparately { outer, inner } => {
+                        // Go `buildSelection`'s constant fold
+                        // (`logical_plan_builder.go:1386`): the evaluated
+                        // EXISTS is one conjunct whose value is already known,
+                        // so a true one disappears and a false one becomes the
+                        // zero-row dual.
+                        let value = self.evaluate_subquery(&inner, SubqueryKind::Exists, *not)?;
+                        let Expression::Constant(constant) = &value else {
+                            return Err(PlanError::internal(
+                                "evaluated EXISTS did not fold to a constant",
+                            ));
+                        };
+                        match constant_is_always_false(constant) {
+                            Some(true) => {
+                                let mut dual =
+                                    LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+                                dual.base.base.set_schema(outer.schema().cloned());
+                                dual.base
+                                    .base
+                                    .set_output_names(outer.output_names().to_vec());
+                                Ok((LogicalPlan::TableDual(dual), true))
+                            }
+                            Some(false) => Ok((outer, true)),
+                            None => Err(PlanError::internal(
+                                "evaluated EXISTS did not fold to a boolean constant",
+                            )),
+                        }
+                    }
+                }
+            }
+            _ => Ok((outer, false)),
+        }
     }
 }
 
@@ -807,6 +2057,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `ErrBadDB` for an unknown database, `ErrNoSuchTable` for an unknown
     /// table.
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
+        if table_ref
+            .sample
+            .as_ref()
+            .is_some_and(|sample| sample.method != Some(tidb_ast::SampleMethod::Region))
+        {
+            return Err(PlanError::internal(
+                "Invalid TABLESAMPLE: Only supports REGIONS sampling method",
+            ));
+        }
         // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
         // a CTE shadows a real table of the same name.
         if let [name] = table_ref.name.as_slice() {
@@ -825,20 +2084,64 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         };
         if !self.source.database_exists(&db_name) {
-            return Err(PlanError::internal(format!("Unknown database '{db_name}'")));
+            return Err(PlanError::unknown_database(db_name));
+        }
+        if let Some(view) = self.source.find_view(&db_name, &table_name).cloned() {
+            if table_ref.sample.is_some() {
+                return Err(PlanError::internal("Unsupported TABLESAMPLE in views"));
+            }
+            let visible_name = table_ref.alias.as_deref().unwrap_or(&view.view_name);
+            let current_offset = self.select_offset();
+            let inherited = match (self.qb_hint_handler.as_ref(), self.qb_hint_state.as_mut()) {
+                (Some(handler), Some(state)) => {
+                    handler.matching_view_hints(visible_name, current_offset, state)
+                }
+                _ => tidb_hint::ViewHintContext::default(),
+            };
+            return self.build_data_source_from_view_with_hints(
+                &view,
+                table_ref.alias.as_deref(),
+                inherited,
+            );
         }
         let table = self
             .source
             .find_table(&db_name, &table_name)
-            .ok_or_else(|| {
-                PlanError::internal(format!("Table '{db_name}.{table_name}' doesn't exist"))
-            })?;
+            .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
 
-        // `b.optFlag |= rule.FlagPartitionProcessor` — Go sets it from the
-        // partition pruning mode; a table that reports a partition definition
-        // needs the processor.
-        if !table.partition_definition_names.is_empty() {
+        if self.resolve_ctx.read().table_name(table_ref).is_none() {
+            self.resolve_ctx
+                .write()
+                .add_table_name(tidb_resolve::TableNameW {
+                    table_name: table_ref.clone(),
+                    db_info: table.db_info.clone(),
+                    table_info: table.table_info.clone(),
+                });
+        }
+
+        // Go `buildDataSource` routes every virtual table through the same
+        // `LogicalMemTable` path before ordinary access-path construction.
+        if table.is_memory_table {
+            return Ok(self.build_mem_table(&db_name, &table));
+        }
+
+        // `b.optFlag |= rule.FlagPartitionProcessor` is enabled only for
+        // static pruning. Dynamic pruning must retain global-index paths.
+        if table.is_partitioned && self.partition_processor_enabled {
             self.opt_flag |= flags::PARTITION_PROCESSOR;
+        }
+        if table.is_partitioned {
+            for partition in &table_ref.partitions {
+                if !table
+                    .partition_definition_names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(partition))
+                {
+                    return Err(PlanError::unknown_partition(partition, &table.table_name));
+                }
+            }
+        } else if !table_ref.partitions.is_empty() {
+            return Err(PlanError::partition_clause_on_nonpartitioned());
         }
         // `:5102` "Try to substitute generate column only if there is an index
         // on generate column."
@@ -855,6 +2158,59 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
+        let mut force_no_index_lookup_push_down = false;
+        for hint in &mut self.no_index_lookup_push_down_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if hint.table_name.eq_ignore_ascii_case(&visible_table)
+                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                hint.matched = true;
+                force_no_index_lookup_push_down = true;
+                break;
+            }
+        }
+        let mut index_hints = Vec::new();
+        for hint in &mut self.index_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if !hint.table_name.eq_ignore_ascii_case(&visible_table)
+                || !(hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                continue;
+            }
+            hint.matched = true;
+            index_hints.push(DataSourceIndexHint {
+                kind: hint.kind,
+                index_names: hint.index_names.clone(),
+                partitions: hint.partitions.clone(),
+                push_down_lookup: hint.push_down_lookup,
+                force_keep_order: hint.force_keep_order,
+                force_no_keep_order: hint.force_no_keep_order,
+                restored: hint.restored.clone(),
+            });
+        }
+        let mut index_merge_hints = Vec::new();
+        for hint in &mut self.index_merge_hints {
+            let hint_db = hint
+                .db_name
+                .as_deref()
+                .unwrap_or_else(|| self.source.current_database());
+            if hint.table_name.eq_ignore_ascii_case(&visible_table)
+                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            {
+                hint.matched = true;
+                index_merge_hints.push(DataSourceIndexMergeHint {
+                    index_names: hint.index_names.clone(),
+                    partitions: hint.partitions.clone(),
+                    restored: hint.restored.clone(),
+                });
+            }
+        }
 
         let mut columns = Vec::with_capacity(table.columns.len() + 2);
         let mut schema_columns = Vec::with_capacity(table.columns.len() + 2);
@@ -873,15 +2229,52 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             );
             let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
             column.id = source_column.id;
-            column.orig_name = name.display_name();
+            // Go `buildDataSource` sets `Column.OrigName` from the PRE-alias
+            // `FieldName` (`logical_plan_builder.go:5259`) and
+            // `buildResultSetNode` renames only the OUTPUT `FieldName` to the
+            // table alias (`:518-522`). A base-table column therefore keeps
+            // `db.table.column` with the ORIGINAL table name, which is what
+            // expression text and explain render.
+            let mut original_name = name.clone();
+            original_name.names.table = original_name.names.original_table.clone();
+            column.orig_name = original_name.display_name();
             column.is_hidden = source_column.is_hidden;
             columns.push(DataSourceColumn {
                 id: source_column.id,
                 name: source_column.name.clone(),
                 is_primary_key: source_column.is_primary_key,
+                is_not_null: source_column.ret_type.has_flag(FieldTypeFlags::NOT_NULL),
             });
             schema_columns.push(column);
             names.push(name);
+        }
+
+        // Go rewrites every virtual generated expression after the complete
+        // DataSource schema exists, in the reading statement's expression
+        // context. Keeping the AST in catalog metadata preserves that same
+        // per-statement binding instead of reusing the DDL-time expression.
+        let generated_expressions = table
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, column)| {
+                if !column.is_virtual_generated {
+                    return None;
+                }
+                column
+                    .generated_expr
+                    .as_ref()
+                    .map(|expression| (offset, expression.clone()))
+            })
+            .collect::<Vec<_>>();
+        if !generated_expressions.is_empty() {
+            let generated_schema = Schema::new(schema_columns.clone());
+            let no_markers = BTreeMap::new();
+            for (offset, expression) in generated_expressions {
+                let expression =
+                    self.rewrite_scalar(&expression, &generated_schema, &names, &no_markers)?;
+                schema_columns[offset].virtual_expr = Some(Box::new(expression));
+            }
         }
 
         // `:5221` "We append an extra handle column to the schema when the
@@ -907,6 +2300,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 id: EXTRA_HANDLE_ID,
                 name: EXTRA_HANDLE_NAME.to_owned(),
                 is_primary_key: false,
+                is_not_null: true,
             });
             schema_columns.push(extra);
             names.push(name);
@@ -939,9 +2333,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             id: EXTRA_COMMIT_TS_ID,
             name: EXTRA_COMMIT_TS_NAME.to_owned(),
             is_primary_key: false,
+            is_not_null: false,
         });
         schema_columns.push(commit_ts);
         names.push(commit_ts_name);
+
+        // Go keeps `DataSource.TblCols` unchanged when `PruneColumns`
+        // narrows `Schema`/`Columns`; physical table-scan cost is based on
+        // the complete stored row, not only the requested projection.
+        let table_columns = schema_columns.clone();
 
         let common_handle_cols: Vec<Column> = table
             .common_handle_col_offsets
@@ -957,6 +2357,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         );
         self.handle_helper.push_map(handle_map);
 
+        let sample_info = crate::table_sampler::new_table_sample_info(
+            table_ref.sample.as_ref(),
+            &Schema::new(schema_columns.clone()),
+            if table_ref.partitions.is_empty() {
+                table.partition_definition_ids.clone()
+            } else {
+                table_ref
+                    .partitions
+                    .iter()
+                    .filter_map(|name| {
+                        table
+                            .partition_definition_names
+                            .iter()
+                            .position(|partition| partition.eq_ignore_ascii_case(name))
+                            .and_then(|index| table.partition_definition_ids.get(index).copied())
+                    })
+                    .collect()
+            },
+        );
+        self.is_sampling |= sample_info.is_some();
+
         let mut data_source = DataSource {
             base: self.base(DataSource::TYPE),
             table_id: table.table_id,
@@ -964,16 +2385,33 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table_as_name: as_name,
             db_name,
             physical_table_id: table.physical_table_id,
+            sample_info,
             partition_def_idx: table.partition_def_idx,
+            partition_names: table_ref.partitions.clone(),
             partition_definition_names: table.partition_definition_names.clone(),
+            partition_definition_ids: table.partition_definition_ids.clone(),
             columns,
+            table_columns,
             pk_is_handle: table.pk_is_handle,
+            is_common_handle: table.is_common_handle,
+            common_handle_version: table.common_handle_version,
+            is_temporary: table.is_temporary,
+            is_cached: table.is_cached,
+            has_affinity: table.has_affinity,
+            index_lookup_push_down_session: self.index_lookup_push_down_session,
+            tikv_in_isolation_read: self.tikv_in_isolation_read,
+            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols,
             handle_is_int,
             common_handle_cols,
             common_handle_lens: table.common_handle_lens.clone(),
-            prefer_store_type: table.prefer_store_type,
+            has_tiflash_replica: table.has_tiflash_replica,
             is_for_update_read: self.is_for_update_read,
+            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
+            ast_index_hints: table_ref.hints.clone(),
+            index_hints,
+            index_merge_hints,
+            force_no_index_lookup_push_down,
             ..DataSource::default()
         };
         // Go `getPossibleAccessPaths` (`:5042`): the ENUMERATION runs here,
@@ -983,12 +2421,116 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
         // input, and that costing seam fills them later, as Go's
         // `deriveStatsByFilter` stage does.
-        data_source.enumerated_paths = crate::access_path::get_possible_access_paths(
+        let mut public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.optimizer_use_invisible_indexes,
-        );
+            self.source.latest_index_schema(),
+            self.ctx.connection_id(),
+            self.index_lookup_push_down_session.repeatable_read,
+            self.is_for_update_read,
+        )?;
+        let check_fd_latest_indexes = (!self.index_lookup_push_down_session.repeatable_read
+            || self.is_for_update_read)
+            && self.ctx.connection_id().is_some_and(|id| id > 0);
+        if check_fd_latest_indexes {
+            match crate::domain_misc::get_latest_index_info(
+                self.source.latest_index_schema(),
+                table.table_id,
+                0,
+            ) {
+                Ok((latest_indexes, true)) if self.is_for_update_read => {
+                    data_source.fd_latest_public_index_ids = Some(
+                        latest_indexes
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|(id, index)| index.is_public.then_some(id))
+                            .collect(),
+                    );
+                }
+                Ok(_) => {}
+                Err(_) => data_source.fd_latest_index_lookup_failed = true,
+            }
+        }
+        let mut resolution = crate::access_path::apply_table_index_hints(
+            table,
+            &public_paths,
+            &table_ref.hints,
+            &data_source.index_hints,
+            table.is_partitioned && self.partition_processor_enabled,
+            data_source.force_no_index_lookup_push_down,
+            data_source.index_lookup_push_down_session,
+            self.tikv_in_isolation_read,
+            &self.isolation_read_engines_value,
+        )?;
+        if !matches!(
+            data_source.db_name.to_ascii_lowercase().as_str(),
+            "mysql" | "sys" | "workload_schema"
+        ) {
+            let available_engines =
+                public_paths
+                    .iter()
+                    .rev()
+                    .fold(Vec::<&'static str>::new(), |mut engines, path| {
+                        let engine = match path {
+                            crate::access_path::PossiblePath::TiFlashTable => "tiflash",
+                            crate::access_path::PossiblePath::Table { .. }
+                            | crate::access_path::PossiblePath::Index { .. } => "tikv",
+                        };
+                        if !engines.contains(&engine) {
+                            engines.push(engine);
+                        }
+                        engines
+                    });
+            let permitted = |path: &crate::access_path::PossiblePath| match path {
+                crate::access_path::PossiblePath::TiFlashTable => self.tiflash_in_isolation_read,
+                crate::access_path::PossiblePath::Table { .. }
+                | crate::access_path::PossiblePath::Index { .. } => self.tikv_in_isolation_read,
+            };
+            public_paths.retain(&permitted);
+            resolution.paths.retain(permitted);
+            if resolution.paths.is_empty() {
+                let help = if self
+                    .isolation_read_engines_value
+                    .to_ascii_lowercase()
+                    .contains("tiflash")
+                {
+                    ". Please check tiflash replica"
+                } else {
+                    ""
+                };
+                return Err(PlanError::internal(format!(
+                    "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
+                    table.table_name,
+                    self.isolation_read_engines_value,
+                    available_engines.join(", ")
+                )));
+            }
+        }
+        for index in &resolution.unknown_comment_indexes {
+            self.ctx.append_warning(
+                1176,
+                &format!(
+                    "Key '{index}' doesn't exist in table '{}'",
+                    table.table_name
+                ),
+            );
+        }
+        for warning in &resolution.hint_warnings {
+            self.ctx.append_warning(1815, warning);
+        }
+        for warning in &resolution.isolation_read_warnings {
+            self.ctx.append_warning(1105, warning);
+        }
+        data_source.public_enumerated_paths = public_paths;
+        data_source.enumerated_paths = resolution.paths;
+        data_source.forced_index_ids = resolution.forced_index_ids;
+        data_source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
+        data_source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
+        data_source.force_keep_order_table_path = resolution.force_keep_order_table_path;
+        data_source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
+        data_source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
         data_source.indexes = table.indexes.clone();
-        data_source.table_columns = schema_columns.clone();
+        self.set_preferred_store_type(&mut data_source);
         debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source
@@ -998,10 +2540,99 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.base.base.set_output_names(names);
 
         // boundary: `tableInfo.IsView()` / `IsSequence()` (`:5047`, `:5081`),
-        // `tablesampler.NewTableSampleInfo` (`:5269`), `tableHasDirtyContent`
-        // and the `LogicalUnionScan` it wraps (`:5312`). Each needs a handle
-        // this crate does not hold; see the module boundaries.
+        // `tableHasDirtyContent` and the `LogicalUnionScan` it wraps (`:5312`).
+        // Each needs a handle this crate does not hold; see the module
+        // boundaries.
         Ok(LogicalPlan::DataSource(data_source))
+    }
+
+    /// Go `setPreferredStoreType(ds, b.TableHints())`.
+    fn set_preferred_store_type(&self, data_source: &mut DataSource) {
+        let Some(plan_hints) = &self.plan_hints else {
+            return;
+        };
+        let visible_table = data_source
+            .table_as_name
+            .as_deref()
+            .unwrap_or(&data_source.table_name);
+        let table = tidb_hint::HintedTable {
+            database_name: data_source.db_name.clone(),
+            table_name: visible_table.to_owned(),
+            select_offset: data_source.base.base.query_block_offset(),
+            ..tidb_hint::HintedTable::default()
+        };
+        let isolation_engines = self.isolation_read_engines_display();
+        let mut plan_hints = plan_hints.borrow_mut();
+
+        if let Some(hinted) = plan_hints.prefer_tikv(Some(&table)) {
+            if data_source.enumerated_paths.iter().any(|path| {
+                matches!(
+                    path,
+                    crate::access_path::PossiblePath::Table { .. }
+                        | crate::access_path::PossiblePath::Index { .. }
+                )
+            }) {
+                data_source.prefer_store_type |= PREFER_TIKV;
+                data_source
+                    .prefer_partitions
+                    .insert(PREFER_TIKV, hinted.partitions);
+            } else {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "No available path for table {}.{} with the store type tikv of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
+                        data_source.db_name, data_source.table_name
+                    ),
+                );
+            }
+        }
+
+        if let Some(hinted) = plan_hints.prefer_tiflash(Some(&table)) {
+            if data_source.prefer_store_type != 0 {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "Storage hints are conflict, you can only specify one storage type of table {}.{}",
+                        table.database_name.to_ascii_lowercase(),
+                        table.table_name.to_ascii_lowercase()
+                    ),
+                );
+                data_source.prefer_store_type = 0;
+                return;
+            }
+            if data_source
+                .enumerated_paths
+                .iter()
+                .any(|path| matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+            {
+                data_source.prefer_store_type |= PREFER_TIFLASH;
+                data_source
+                    .prefer_partitions
+                    .insert(PREFER_TIFLASH, hinted.partitions);
+            } else {
+                self.ctx.append_warning(
+                    1815,
+                    &format!(
+                        "No available path for table {}.{} with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
+                        data_source.db_name, data_source.table_name
+                    ),
+                );
+            }
+        }
+    }
+
+    fn isolation_read_engines_display(&self) -> String {
+        let mut engines = Vec::new();
+        if self.tikv_in_isolation_read {
+            engines.push("0:{}");
+        }
+        if self.tiflash_in_isolation_read {
+            engines.push("1:{}");
+        }
+        if self.tidb_in_isolation_read {
+            engines.push("2:{}");
+        }
+        format!("map[{}]", engines.join(" "))
     }
 
     fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> PlanHandleCols {
@@ -1089,35 +2720,87 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.cur_clause != ClauseCode::Having {
             self.cur_clause = ClauseCode::Where;
         }
-        // Rule 3: both snapshots are taken before `plan` moves anywhere.
-        let (schema, names) = snapshot_schema_and_names(&plan);
-
         let mut conditions = Vec::new();
-        // Go `splitWhere(where)` splits the AST's top-level `AND` first, then
-        // `SplitCNFItems` splits the built expression; the second subsumes the
-        // first once every conjunct is built, so one clause is rewritten here
-        // and split afterwards.
-        let scratch = Self::clause_scratch(where_clause);
-        let built = self.rewrite_scalar(&scratch, &schema, &names, markers)?;
-
-        for item in into_cnf_items(built) {
-            if let Expression::Constant(constant) = &item {
-                match constant_is_always_false(constant) {
-                    // "If there is condition which is always false, return
-                    // dual plan directly." (`:1381`)
-                    Some(true) => {
-                        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
-                        dual.base.base.set_schema(Some(schema));
-                        dual.base.base.set_output_names(names);
-                        return Ok(LogicalPlan::TableDual(dual));
+        // Go's `splitWhere` decomposes the top-level AND chain before
+        // expression rewriting. A filter subquery is itself lowered into a
+        // semi-apply, so it must be recognized as an individual conjunct;
+        // looking only at the complete AND expression sends
+        // `a IN (SELECT ...) AND b = 1` through the scalar rewriter, which
+        // deliberately refuses `Expr::InSubquery`.
+        let conjuncts = {
+            let mut out = Vec::new();
+            let mut stack = vec![where_clause];
+            while let Some(expr) = stack.pop() {
+                match expr {
+                    Expr::Paren(inner) => stack.push(inner),
+                    Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+                        stack.push(right);
+                        stack.push(left);
                     }
-                    // An always-true conjunct is dropped.
-                    Some(false) => continue,
-                    // Not decidable at plan time: keep it. Go's `useCache` arm.
-                    None => {}
+                    other => out.push(other),
                 }
             }
-            conditions.push(item);
+            out
+        };
+        let mut plan = plan;
+        // Go rewrites the conjuncts IN ORDER (`buildSelection`'s
+        // `for _, cond := range conditions`), and each rewrite may both
+        // evaluate a subquery and grow the plan with an apply. Interleaving
+        // the two lowering passes here keeps the statement-wide plan-column
+        // allocator in Go's order: splitting them (every filter subquery
+        // first) allocated a later `EXISTS` child's columns before an earlier
+        // scalar child's.
+        for conjunct in conjuncts {
+            let len_before = plan.schema().map_or(0, Schema::len);
+            let (next, lowered_filter) = self.lower_filter_subquery(plan, conjunct, markers)?;
+            plan = next;
+            if lowered_filter {
+                // The conjunct became an apply/semi-join; Go's rewrite
+                // returns nil for it and the remaining conditions stay in the
+                // one Selection built below.
+                hide_rewrite_columns(&mut plan, len_before);
+                continue;
+            }
+            // Go `splitWhere(where)` splits the AST's top-level `AND` first,
+            // then `SplitCNFItems` splits the built expression; the second
+            // subsumes the first once every conjunct is built.
+            let mut scratch = Self::clause_scratch(conjunct);
+            let (next, lowered_scalar) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+            plan = next;
+            hide_rewrite_columns(&mut plan, len_before);
+            // Rule 3: both snapshots are taken before `plan` moves anywhere.
+            let mut lowered_markers;
+            let (schema, _) = snapshot_schema_and_names(&plan);
+            let markers = if lowered_scalar {
+                lowered_markers = markers.clone();
+                lowered_markers.insert(MarkerKind::Column, schema.columns.clone());
+                &lowered_markers
+            } else {
+                markers
+            };
+            let built = self.rewrite_scalar_with_plan(&scratch, &plan, markers)?;
+            for item in into_cnf_items(built) {
+                if let Expression::Constant(constant) = &item {
+                    match constant_is_always_false(constant) {
+                        // "If there is condition which is always false, return
+                        // dual plan directly." (`:1381`)
+                        Some(true) => {
+                            let mut dual =
+                                LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+                            dual.base.base.set_schema(Some(schema));
+                            dual.base
+                                .base
+                                .set_output_names(plan.output_names().to_vec());
+                            return Ok(LogicalPlan::TableDual(dual));
+                        }
+                        // An always-true conjunct is dropped.
+                        Some(false) => continue,
+                        // Not decidable at plan time: keep it. Go's `useCache` arm.
+                        None => {}
+                    }
+                }
+                conditions.push(item);
+            }
         }
         if conditions.is_empty() {
             return Ok(plan);
@@ -1172,6 +2855,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             path.push(name.names.column.original.clone());
             fields.push(ProjectionField {
                 expr: Expr::Column(path),
+                column_reference: true,
                 alias: None,
                 text: Some(name.names.column.original.clone()),
                 hidden: false,
@@ -1189,8 +2873,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         resolved_index: Option<usize>,
     ) -> FieldName {
         // `:1537` "Field is a column reference": the origin names survive, and
-        // only `ColName` takes the alias.
-        if let (Expr::Column(_), Some(index)) = (&field.expr, resolved_index) {
+        // only `ColName` takes the alias. Go tests the field's AST node
+        // (`innerNode.(*ast.ColumnNameExpr)`), not the rewritten expression:
+        // an aggregate field's rewritten `expr` is an `Expr::Column` marker
+        // too, but Go names it from the field text.
+        if let (true, Some(index)) = (field.column_reference, resolved_index) {
             if let Some(origin) = names.get(index) {
                 let mut name = origin.clone();
                 if let Some(alias) = &field.alias {
@@ -1233,6 +2920,69 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
                     expr: expr.clone(),
+                    column_reference: matches!(
+                        inner_from_parentheses_and_unary_plus(expr),
+                        Expr::Column(_)
+                    ),
+                    alias: alias.clone(),
+                    text: fields
+                        .text(index)
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                        .map(str::to_owned)
+                        .filter(|text| !text.is_empty()),
+                    hidden: false,
+                }),
+            }
+        }
+        expanded
+    }
+
+    /// Wildcard expansion with the direct join node's `FullSchema` rule.
+    /// Go's `unfoldWildStar` reads redundant qualified columns only when the
+    /// current FROM plan is itself a `LogicalJoin`/`LogicalApply`; an inner
+    /// join with an `ON` clause is wrapped in a `LogicalSelection`, which is a
+    /// deliberate boundary and therefore exposes only the visible schema.
+    #[must_use]
+    pub fn expand_fields_for_plan(
+        fields: &tidb_ast::SelectFieldList,
+        plan: &LogicalPlan,
+    ) -> Vec<ProjectionField> {
+        let (schema, names) = snapshot_schema_and_names(plan);
+        let full = match plan {
+            LogicalPlan::Join(join) => join
+                .full_schema
+                .as_ref()
+                .map(|schema| (schema, join.full_names.as_slice())),
+            LogicalPlan::Apply(apply) => apply
+                .join
+                .full_schema
+                .as_ref()
+                .map(|schema| (schema, apply.join.full_names.as_slice())),
+            _ => None,
+        };
+        let mut expanded = Vec::with_capacity(fields.fields().len());
+        for (index, field) in fields.fields().iter().enumerate() {
+            match field {
+                SelectField::Wildcard(path) => {
+                    let (wildcard_schema, wildcard_names) = if !path.is_empty() {
+                        full.map_or((&schema, names.as_slice()), |(schema, names)| {
+                            (schema, names)
+                        })
+                    } else {
+                        (&schema, names.as_slice())
+                    };
+                    expanded.extend(Self::unfold_wild_star(
+                        path,
+                        wildcard_schema,
+                        wildcard_names,
+                    ));
+                }
+                SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                    expr: expr.clone(),
+                    column_reference: matches!(
+                        inner_from_parentheses_and_unary_plus(expr),
+                        Expr::Column(_)
+                    ),
                     alias: alias.clone(),
                     text: fields
                         .text(index)
@@ -1295,6 +3045,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 None => {
                     fields.push(ProjectionField {
                         expr: expr.clone(),
+                        column_reference: true,
                         alias: None,
                         text: None,
                         hidden: true,
@@ -1357,18 +3108,37 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         fields: &[ProjectionField],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
+        self.build_projection_with_order_by(plan, fields, markers, None)
+    }
+
+    /// [`Self::build_projection`] with the `[from, to)` slice of fields
+    /// [`Self::resolve_order_by`] appended. Go resolves those with its
+    /// dedicated `orderByResolver` (`curClause = orderByClause`), so an
+    /// unknown name there is reported `in 'order clause'` rather than
+    /// `in 'field list'`.
+    fn build_projection_with_order_by(
+        &mut self,
+        plan: LogicalPlan,
+        fields: &[ProjectionField],
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+        order_by_range: Option<(usize, usize)>,
+    ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
-        self.cur_clause = ClauseCode::FieldList;
-        let (schema, names) = snapshot_schema_and_names(&plan);
+        let mut plan = plan;
+        let (_, initial_names) = snapshot_schema_and_names(&plan);
         // Go `b.allNames = append(b.allNames, p.OutputNames())` (`:1782`),
         // which `evalDefaultExpr` later searches.
-        self.all_names.push(names.clone());
+        self.all_names.push(initial_names);
 
         let mut exprs = Vec::with_capacity(fields.len());
         let mut projection_columns = Vec::with_capacity(fields.len());
         let mut projection_names = Vec::with_capacity(fields.len());
-        for field in fields {
-            let scratch = Self::clause_scratch(&field.expr);
+        for (field_index, field) in fields.iter().enumerate() {
+            self.cur_clause = match order_by_range {
+                Some((from, to)) if (from..to).contains(&field_index) => ClauseCode::OrderBy,
+                _ => ClauseCode::FieldList,
+            };
+            let mut scratch = Self::clause_scratch(&field.expr);
             // `:1786` "when we build the projection for select fields, we need
             // to skip the window function ... we add fake placeholders for
             // window functions. These fake placeholders will be erased in
@@ -1378,19 +3148,46 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let built = if aggregation::has_window_flag(&scratch) {
                 Expression::Constant(Constant::new_zero())
             } else {
-                self.rewrite_scalar(&scratch, &schema, &names, markers)?
+                // Go `rewriteWithPreprocess` returns both the rewritten
+                // expression and `np`, because a scalar subquery inserts an
+                // Apply into the projection's child. Each later field is
+                // rewritten against that updated child.
+                let plan_len = plan.schema().map_or(0, Schema::len);
+                let (mut next_plan, _) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                hide_rewrite_columns(&mut next_plan, plan_len);
+                plan = next_plan;
+                let (schema, names) = snapshot_schema_and_names(&plan);
+                let mut current_markers = markers.clone();
+                current_markers.insert(MarkerKind::Column, schema.columns.clone());
+                self.rewrite_scalar_with_plan(&scratch, &plan, &current_markers)?
             };
+            let (_, names) = snapshot_schema_and_names(&plan);
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
             };
             let name = Self::projection_field_name(field, &names, resolved_index);
-            let ret_type = built
-                .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            let mut output = Column::new(self.column_ids.alloc(), ret_type);
-            output.orig_name = name.display_name();
+            // Go `buildProjectionField`: a rewritten Column is the projection
+            // output column itself. Only a computed expression allocates a
+            // fresh UniqueID. Preserving this identity is also what lets an
+            // IndexJoinRuntimeProp pass through a derived-table projection
+            // and still match the underlying data-source key.
+            let mut output = match &built {
+                Expression::Column(column) => column.clone(),
+                _ => {
+                    let ret_type = built
+                        .static_type()
+                        .cloned()
+                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                    Column::new(self.column_ids.alloc(), ret_type)
+                }
+            };
+            output.index = projection_columns.len() as i64;
+            // Go `buildProjectionField`: a column reference is returned
+            // UNCHANGED (keeping its own `OrigName`), and a computed
+            // expression's fresh `Column` is built with NO `OrigName`. The
+            // alias lives on the `FieldName`, never on the column, which is
+            // why EXPLAIN prints `expr->Column#N` rather than the alias.
             output.is_hidden = field.hidden;
             projection_columns.push(output);
             projection_names.push(name);
@@ -1399,6 +3196,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         let mut projection =
             LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs.clone());
+        projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
         projection.base.set_children(vec![plan]);
         projection
             .base
@@ -1453,7 +3251,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 projection_names.push(names.get(index).cloned().unwrap_or_default());
                 continue;
             }
-            let built = self.rewrite_scalar(&field.expr, &schema, &names, markers)?;
+            let built = self.rewrite_scalar_with_plan(&field.expr, &plan, markers)?;
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
@@ -1472,6 +3270,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
+        projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
         projection.base.set_children(vec![plan]);
         projection
             .base
@@ -1497,7 +3296,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Expression::Column(column)
             })
             .collect();
-        let kept_columns: Vec<Column> = schema.columns.into_iter().take(old_len).collect();
+        // Go `:4614`: "for _, col := range schema.Columns { col.UniqueID =
+        // AllocPlanColumnID() }". The trimmed output columns are FRESH plan
+        // columns carrying the kept names, which is what makes EXPLAIN print
+        // `Column#14->Column#27` for an aggregate output that this projection
+        // re-exports.
+        let mut kept_columns: Vec<Column> = schema.columns.into_iter().take(old_len).collect();
+        for column in &mut kept_columns {
+            column.unique_id = self.column_ids.alloc();
+        }
         let kept_names: Vec<FieldName> = names.into_iter().take(old_len).collect();
         let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
         projection.base.set_children(vec![plan]);
@@ -1542,7 +3349,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     column.index = position as i64 - 1;
                     Expression::Column(column)
                 }
-                None => self.rewrite_scalar(&scratch, &schema, &names, markers)?,
+                None => self.rewrite_scalar_with_plan(&scratch, &plan, markers)?,
             };
             by_items.push(ByItems::new(built, item.desc));
         }
@@ -1605,10 +3412,119 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Expr::Int(digits) => digits
                 .parse()
                 .map_err(|_| PlanError::internal("Incorrect arguments to LIMIT")),
-            _ => Err(PlanError::internal(
-                "Incorrect arguments to LIMIT: only an integer literal is ported",
-            )),
+            Expr::ParamMarker {
+                in_execute: true,
+                value: Some(Datum::Int(value)),
+                ..
+            } if *value >= 0 => Ok(*value as u64),
+            Expr::ParamMarker {
+                in_execute: true,
+                value: Some(Datum::UInt(value)),
+                ..
+            } => Ok(*value),
+            _ => Err(PlanError::internal("Incorrect arguments to LIMIT")),
         }
+    }
+
+    /// Builds the logical child consumed by a single-table `UPDATE` or
+    /// `DELETE`.
+    ///
+    /// Go does not turn this child into `SELECT *`. `buildUpdate` and
+    /// `buildDelete` start from the complete `DataSource` schema, apply the
+    /// write's WHERE / ORDER BY / LIMIT, then freeze the columns the DML
+    /// executor needs in a projection. In particular, that schema retains
+    /// hidden generated columns and the row handle while dropping the
+    /// synthetic commit-ts column.
+    ///
+    /// `select` is the clause-only statement synthesized by the executor from
+    /// the DML AST. Its field list is intentionally ignored.
+    pub fn build_dml_source(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
+        self.is_for_update_read = true;
+        let mut plan = self.build_table_refs(select.from.as_ref())?;
+        let markers = BTreeMap::new();
+        if let Some(where_clause) = &select.where_clause {
+            plan = self.build_selection(plan, where_clause, &markers)?;
+        }
+        if !select.order_by.is_empty() {
+            plan = self.build_sort(plan, &select.order_by, &markers)?;
+        }
+        if let Some(limit) = &select.limit {
+            plan = self.build_limit(plan, limit)?;
+        }
+
+        // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
+        // column-position projection reaches the same retained single-table
+        // layout. Keep the original column identities so handle metadata and
+        // physical access paths resolve against the same DataSource columns.
+        self.opt_flag |= flags::ELIMINATE_PROJECTION;
+        let (schema, names) = snapshot_schema_and_names(&plan);
+        let kept = schema
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.id != EXTRA_COMMIT_TS_ID)
+            .collect::<Vec<_>>();
+        let expressions = kept
+            .iter()
+            .map(|(_, column)| Expression::Column((*column).clone()))
+            .collect::<Vec<_>>();
+        let mut output_columns = kept
+            .iter()
+            .map(|(_, column)| (*column).clone())
+            .collect::<Vec<_>>();
+        for (index, column) in output_columns.iter_mut().enumerate() {
+            column.index = index as i64;
+        }
+        let output_names = kept
+            .iter()
+            .filter_map(|(index, _)| names.get(*index).cloned())
+            .collect::<Vec<_>>();
+        let mut projection =
+            LogicalProjection::new(self.base(LogicalProjection::TYPE), expressions);
+        projection.base.set_children(vec![plan]);
+        projection
+            .base
+            .base
+            .set_schema(Some(Schema::new(output_columns)));
+        projection.base.base.set_output_names(output_names);
+        Ok((LogicalPlan::Projection(projection), self.get_opt_flag()))
+    }
+
+    /// Go `buildUpdateLists`: rewrite correlated SET expressions against the
+    /// frozen UPDATE input, carrying every inserted Apply into the source
+    /// plan. Entries that contain no remaining subquery stay `None`; their
+    /// ordinary scalar/default lowering is owned by the Update executor.
+    pub fn build_update_dml_source(
+        &mut self,
+        select: &SelectStmt,
+        assignment_values: &[Option<Expr>],
+    ) -> Result<(LogicalPlan, Vec<Option<Expression>>, u64), PlanError> {
+        let (mut plan, _) = self.build_dml_source(select)?;
+        self.cur_clause = ClauseCode::FieldList;
+        let mut expressions = Vec::with_capacity(assignment_values.len());
+        for value in assignment_values {
+            let Some(value) = value else {
+                expressions.push(None);
+                continue;
+            };
+            let mut scratch = Self::clause_scratch(value);
+            let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+            plan = next_plan;
+            if !lowered {
+                expressions.push(None);
+                continue;
+            }
+            let (schema, names) = snapshot_schema_and_names(&plan);
+            let mut markers = BTreeMap::new();
+            markers.insert(MarkerKind::Column, schema.columns.clone());
+            expressions.push(Some(
+                self.rewrite_scalar(&scratch, &schema, &names, &markers)?,
+            ));
+        }
+        Ok((plan, expressions, self.get_opt_flag()))
     }
 
     /// Go `buildSelect(ctx, sel)` (`logical_plan_builder.go:4254`), on the
@@ -1627,6 +3543,32 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Any clause's error, or an unported clause (locking, `INTO OUTFILE`) or
     /// unported shape inside one, each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
+        let owns_hint_build =
+            self.begin_hint_build(&tidb_ast::QueryStmt::Select(Box::new(select.clone())));
+        self.next_qb_offset += 1;
+        self.qb_offset.push(self.next_qb_offset);
+        let result = self.build_select_in_query_block(select);
+        self.qb_offset.pop();
+        if owns_hint_build {
+            self.end_hint_build();
+        }
+        result
+    }
+
+    fn build_select_in_query_block(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
+        let hint_frame = self.push_query_block_hints(select);
+        let result = self.build_select_after_hints(select);
+        self.pop_query_block_hints(hint_frame);
+        result
+    }
+
+    fn build_select_after_hints(
+        &mut self,
+        select: &SelectStmt,
+    ) -> Result<(LogicalPlan, u64), PlanError> {
         // `:4264` the recursive-query-block guards. Each is a shape whose
         // fixpoint is not defined, and Go refuses all four before building
         // anything. `b.buildingLateralSubquery` is a 6b narrowing (see
@@ -1634,20 +3576,43 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // side unconditionally.
         if self.building_recursive_part_for_cte {
             if select.distinct {
-                return Err(PlanError::internal(
-                    "This version of TiDB doesn't yet support 'SELECT DISTINCT in recursive query block of Common Table Expression'",
+                return Err(PlanError::not_supported_yet(
+                    "SELECT DISTINCT in recursive query block of Common Table Expression",
                 ));
             }
             if !select.order_by.is_empty() || select.limit.is_some() {
-                return Err(PlanError::internal(
-                    "This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'",
+                return Err(PlanError::not_supported_yet(
+                    "ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)",
                 ));
             }
             if !select.group_by.is_empty() {
-                return Err(PlanError::internal(format!(
-                    "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
-                    self.gen_cte_table_name_for_error()
-                )));
+                return Err(PlanError::cte_recursive_forbids_aggregation(
+                    self.gen_cte_table_name_for_error(),
+                ));
+            }
+        }
+
+        if self
+            .plan_hints
+            .as_ref()
+            .is_some_and(|hints| hints.borrow().cte_merge)
+        {
+            if self.building_cte {
+                if self.is_cte {
+                    if let Some(cte) = self.outer_ctes.last_mut() {
+                        cte.force_inline_by_hint_or_var = true;
+                    }
+                } else if !self.building_recursive_part_for_cte {
+                    self.ctx.append_warning(
+                        1815,
+                        "Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE.",
+                    );
+                }
+            } else if !self.is_cte {
+                self.ctx.append_warning(
+                    1815,
+                    "Hint merge() is inapplicable. Please check whether the hint is used in the right place, you should use this hint inside the CTE.",
+                );
             }
         }
 
@@ -1655,7 +3620,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // — Go's `defer func() { b.outerCTEs = b.outerCTEs[:l] }()`.
         let outer_cte_depth = self.outer_ctes.len();
         let current_layer_ctes = match &select.with {
-            Some(with) => match self.build_with(with) {
+            Some(with) => match self.build_with(
+                with,
+                &cte::cte_consumer_counts(
+                    &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
+                    with,
+                ),
+            ) {
                 Ok(ctes) => ctes,
                 Err(error) => {
                     self.outer_ctes.truncate(outer_cte_depth);
@@ -1698,23 +3669,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY
         // is resolved against the SOURCE scope and the written select list,
         // both of which exist before any operator above the FROM.
-        let mut fields = Self::expand_fields(&select.fields, &source_schema, &source_names);
-        let gby_exprs = self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?;
+        let mut fields = Self::expand_fields_for_plan(&select.fields, &plan);
+        // Go `buildSelect` calls `resolveGbyExprs` only under
+        // `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`). The call
+        // sets `b.curClause = groupByClause`, so invoking it for a query with
+        // no GROUP BY leaves that clause stamped on the builder; a subquery
+        // built later in HAVING then names the GROUP BY clause (and its
+        // `buildSelection` downgrades it to `where clause`) instead of Go's
+        // enclosing `having clause`.
+        let gby_exprs = if select.group_by.is_empty() {
+            Vec::new()
+        } else {
+            self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?
+        };
 
         // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
         // gbyExprs, because the field type of the fields may change."
         self.check_only_full_group_by(select, &gby_exprs, &source_names)?;
 
         let mut markers: BTreeMap<MarkerKind, Vec<Column>> = BTreeMap::new();
-        let group_by_items =
-            self.rewrite_gby_exprs(&gby_exprs, &source_schema, &source_names, &markers)?;
+        let group_by_items = self.rewrite_gby_exprs_with_plan(&gby_exprs, &plan, &markers)?;
 
         // `:4405` resolveHavingAndOrderBy: HAVING first (it may append
         // auxiliary aggregate fields the ORDER BY half then sees), then
         // `:4414` resolveCorrelatedAggregates.
         let mut having = select.having.as_ref().map(Self::clause_scratch);
         let having_aggs = match having.as_mut() {
-            Some(having) => self.resolve_having_and_order_by(having, &mut fields, &source_names)?,
+            Some(having) => {
+                self.resolve_having_and_order_by(having, &mut fields, &source_names, &gby_exprs)?
+            }
             None => Vec::new(),
         };
         let mut order_items: Vec<tidb_ast::OrderItem> = select.order_by.clone();
@@ -1725,8 +3708,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &source_names,
         )?;
         // 6a's ORDER BY half, which appends its own hidden fields past the
-        // select list.
+        // select list. Go resolves them with `orderByResolver`, so record the
+        // slice they occupy and build it with the OrderBy clause.
+        let order_by_from = fields.len();
         let order_by = Self::resolve_order_by(&order_items, &mut fields);
+        let order_by_to = fields.len();
         // `:4397` `resolveWindowFunction`'s column half, which appends one
         // auxiliary field per column a window specification names; see
         // [`window::PlanBuilder::resolve_window_function`] for why it runs
@@ -1754,6 +3740,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut select_aggs = self.extract_agg_funcs_in_select_fields(&mut fields);
         let has_agg =
             !select_aggs.is_empty() || !having_aggs.is_empty() || !select.group_by.is_empty();
+        if has_agg && self.building_recursive_part_for_cte {
+            return Err(PlanError::cte_recursive_forbids_aggregation(
+                self.gen_cte_table_name_for_error(),
+            ));
+        }
         let mut having_field_base = fields.len();
         if has_agg {
             // `agg_funcs` is Go's `aggFuncList`, and the marker index of every
@@ -1775,6 +3766,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let position = fields.len();
                 fields.push(ProjectionField {
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
+                    column_reference: false,
                     alias: Some(format!("sel_agg_{position}")),
                     text: None,
                     hidden: true,
@@ -1805,7 +3797,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         // `:4523` the projection.
-        let (projected, _) = self.build_projection(plan, &fields, &markers)?;
+        let (projected, _) = self.build_projection_with_order_by(
+            plan,
+            &fields,
+            &markers,
+            Some((order_by_from, order_by_to)),
+        )?;
         plan = projected;
 
         // Every remaining marker kind indexes the PROJECTION's schema.
@@ -1872,28 +3869,58 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             plan = self.build_distinct(plan, old_len)?;
         }
         if !order_by.is_empty() {
-            let items: Vec<tidb_ast::OrderItem> = order_by
-                .into_iter()
-                .zip(&order_items)
-                .map(|(expr, original)| tidb_ast::OrderItem {
-                    expr,
-                    desc: original.desc,
-                })
-                .collect();
-            plan = if self.only_full_group_by {
-                self.build_sort_with_check(plan, &items, &markers, select, &source_names)?
-            } else {
-                self.build_sort(plan, &items, &markers)?
-            };
+            // Go `buildSelect` (`logical_plan_builder.go:4583`): a derived
+            // table's ORDER BY is kept only for the top-level query, when the
+            // query has a LIMIT, or when `tidb_remove_orderby_in_subquery` is
+            // off. Dropping it lets the aggregate above the join choose a
+            // HashAgg instead of exploiting a meaningless input order.
+            let keep_order_by = self.qb_offset.len() == 1
+                || select.limit.is_some()
+                || !self.remove_orderby_in_subquery;
+            if keep_order_by {
+                let items: Vec<tidb_ast::OrderItem> = order_by
+                    .into_iter()
+                    .zip(&order_items)
+                    .map(|(expr, original)| tidb_ast::OrderItem {
+                        expr,
+                        desc: original.desc,
+                    })
+                    .collect();
+                plan = if self.only_full_group_by {
+                    self.build_sort_with_check(plan, &items, &markers, select, &source_names)?
+                } else {
+                    self.build_sort(plan, &items, &markers)?
+                };
+            }
         }
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;
         }
-        // `:4620` trim the hidden ORDER BY / HAVING columns back off.
-        if fields.len() != old_len {
+        // `:4620` trim the hidden ORDER BY / HAVING columns back off. A HAVING
+        // scalar subquery is lowered into an Apply by `build_selection`, which
+        // widens the plan schema WITHOUT appending a select field, so the
+        // `fields` length alone is not enough: compare the plan width too.
+        let plan_width = plan.schema().map_or(0, |schema| schema.columns.len());
+        if fields.len() != old_len || plan_width > old_len {
             plan = self.build_trim_projection(plan, old_len);
         }
         self.all_names.pop();
         Ok((plan, self.get_opt_flag()))
+    }
+}
+
+/// The `CompareOp` a quantified comparison's `ast.BinaryOp` names, or `None`
+/// for an operator Go refuses. Shared by the filter and projection subquery
+/// lowering.
+fn compare_op_from_binary(op: tidb_ast::BinaryOp) -> Option<CompareOp> {
+    match op {
+        tidb_ast::BinaryOp::Eq => Some(CompareOp::Eq),
+        tidb_ast::BinaryOp::NullEq => Some(CompareOp::NullEq),
+        tidb_ast::BinaryOp::Ge => Some(CompareOp::Ge),
+        tidb_ast::BinaryOp::Gt => Some(CompareOp::Gt),
+        tidb_ast::BinaryOp::Le => Some(CompareOp::Le),
+        tidb_ast::BinaryOp::Lt => Some(CompareOp::Lt),
+        tidb_ast::BinaryOp::Ne => Some(CompareOp::Ne),
+        _ => None,
     }
 }

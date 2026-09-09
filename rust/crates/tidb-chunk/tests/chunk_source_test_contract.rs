@@ -14,8 +14,22 @@
 
 //! Public semantic boundary for accepted `pkg/util/chunk/chunk_test.go`.
 
+use std::sync::Arc;
+
+use tidb_chunk::alloc::{
+    new_allocator, new_empty_allocator, new_reuse_hook_allocator, new_sync_allocator,
+    ChunkAllocator, EmptyAllocator, ReuseHookAllocator, SyncAllocator,
+};
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::column::Column;
+use tidb_chunk::iterator::{
+    Iterator4Chunk, Iterator4List, Iterator4RowPtr, Iterator4Slice, MultiIterator,
+};
+use tidb_chunk::list::List;
+use tidb_chunk::mutrow::MutRow;
+use tidb_chunk::row_container::{Iterator4RowContainer, RowContainer};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, MyDecimal};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 fn source_fields() -> Vec<FieldType> {
     vec![
@@ -267,4 +281,121 @@ fn benchmark_semantic_workload_contract() {
     chunk.grow_and_reset(1_024);
     assert_eq!(chunk.num_rows(), 0);
     assert!(chunk.memory_usage() >= initial_memory);
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn source_return_values_may_be_ignored_like_go() {
+    let long = FieldType::new(FieldTypeCode::LongLong);
+    let var = FieldType::new(FieldTypeCode::VarString);
+    let fields = [long.clone(), var.clone()];
+
+    Chunk::new(&fields, 1, 1);
+    Chunk::new_with_capacity(&fields, 1);
+    Chunk::new_empty(&fields);
+
+    let mut chunk = Chunk::new_with_capacity(&fields, 2);
+    chunk.append_int64(0, 1);
+    chunk.append_string(1, "one");
+    chunk.num_cols();
+    chunk.memory_usage();
+    chunk.used_memory_usage();
+    chunk.required_rows();
+    chunk.is_full();
+    chunk.is_incomplete_chunk();
+    chunk.num_rows();
+    chunk.column(0);
+    chunk.prune(&[0]);
+    chunk.get_row(0);
+    chunk.lower_bound(0, &Datum::Int(1));
+    chunk.upper_bound(0, &Datum::Int(1));
+    chunk.renew_with_capacity(2, 2);
+    chunk.renew(2);
+    chunk.num_virtual_rows();
+    chunk.capacity();
+    chunk.copy_construct_sel();
+    chunk.clone_empty(2);
+    chunk.copy_construct();
+    chunk.to_string(&fields);
+
+    let mut fixed = Column::new_column(&long, 1);
+    fixed.append_int64(1);
+    fixed.is_fixed();
+    fixed.null_bitmap_capacity();
+    fixed.offset_capacity();
+    fixed.data_capacity();
+    fixed.rows();
+    fixed.is_null(0);
+    fixed.null_bitmap_len_delta_for_append_cell_n_times(1);
+    Column::fixed_len_delta_for_append_cell_n_times(&fixed, 1);
+    fixed.get_int64(0);
+    fixed.get_uint64(0);
+    fixed.get_float32(0);
+    fixed.get_float64(0);
+    fixed.copy_construct();
+    fixed.copy_reconstruct(None, None);
+    fixed.contains_very_large_element();
+    Column::new_empty_column(&var);
+    let mut variable = Column::new_column(&var, 1);
+    variable.append_string("one");
+    Column::var_len_delta_for_append_cell_n_times(&variable, 0, 1);
+
+    let row = chunk.get_row(0);
+    row.idx();
+    row.len();
+    row.is_empty();
+    row.get_int64(0);
+    row.get_bytes(1);
+    row.get_string(1);
+    row.get_raw_len(1);
+    row.get_raw(1);
+    row.get_datum_row(&fields);
+    row.get_datum(0, &long);
+    row.copy_construct();
+    row.to_string(&fields);
+
+    MutRow::from_datums(&[Datum::Int(1)]);
+    MutRow::from_types(std::slice::from_ref(&long));
+    let mutable = MutRow::from_datums(&[Datum::Int(1)]);
+    mutable.to_row();
+    mutable.len();
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn allocator_and_iterator_returns_may_be_ignored_like_go() {
+    let fields = [FieldType::new(FieldTypeCode::LongLong)];
+    let chunk = Chunk::new_empty(&fields);
+    let list = List::new(&fields, 1, 1);
+
+    ChunkAllocator::new();
+    new_allocator();
+    SyncAllocator::new(EmptyAllocator);
+    new_sync_allocator(EmptyAllocator);
+    ReuseHookAllocator::new(EmptyAllocator, || {});
+    new_reuse_hook_allocator(EmptyAllocator, || {});
+    new_empty_allocator();
+
+    Iterator4Slice::new(Vec::new());
+    Iterator4Chunk::new(&chunk);
+    let chunk_iterator = Iterator4Chunk::new(&chunk);
+    chunk_iterator.get_chunk();
+    Iterator4List::new(&list);
+    Iterator4RowPtr::new(&list, Vec::new());
+    MultiIterator::new(Vec::new());
+
+    let spill_dir =
+        std::env::temp_dir().join(format!("tidb_chunk_return_contract_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&spill_dir);
+    let storage = Arc::new(
+        SpillStorage::open(SpillStorageSpec {
+            path: spill_dir.clone(),
+            quota_bytes: -1,
+            encryption: SpillEncryptionMethod::Plaintext,
+        })
+        .expect("spill storage"),
+    );
+    let container = RowContainer::new(&fields, 1, storage);
+    Iterator4RowContainer::new(&container);
+    let _ = std::fs::remove_dir_all(spill_dir);
 }

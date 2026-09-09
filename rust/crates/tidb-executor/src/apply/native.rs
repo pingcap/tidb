@@ -130,7 +130,7 @@ impl NestedLoopApplyExec {
                 .as_ref()
                 .ok_or_else(|| ExecError::internal("Apply correlation has no type"))?;
             let value = row.get_datum(col.column.index as usize, ty);
-            col.data.set(value.clone());
+            col.bind(value.clone());
             key_values.push(value);
         }
         let key = if self.cache.is_some() {

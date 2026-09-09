@@ -47,7 +47,7 @@ pub struct CommonHandle {
 #[derive(Debug, Clone)]
 pub struct PartitionHandle {
     partition_id: i64,
-    handle: Box<Handle>,
+    handle: Option<Box<Handle>>,
 }
 
 /// A typed replacement for Go's cross-kind `Handle.Compare` panics.
@@ -289,10 +289,10 @@ impl fmt::Display for CommonHandle {
 
 impl PartitionHandle {
     /// Creates a partition handle without changing the underlying handle.
-    pub fn new(partition_id: i64, handle: impl Into<Handle>) -> Self {
+    pub fn new(partition_id: i64, handle: Option<Handle>) -> Self {
         Self {
             partition_id,
-            handle: Box::new(handle.into()),
+            handle: handle.map(Box::new),
         }
     }
 
@@ -303,58 +303,60 @@ impl PartitionHandle {
 
     /// Borrows the underlying logical handle.
     pub fn inner(&self) -> &Handle {
-        &self.handle
+        self.handle
+            .as_deref()
+            .expect("nil embedded PartitionHandle.Handle")
     }
 
     /// Returns whether the underlying logical handle is an integer.
     pub fn is_int(&self) -> bool {
-        self.handle.is_int()
+        self.inner().is_int()
     }
 
     /// Returns the delegated integer value.
     pub fn int_value(&self) -> Option<i64> {
-        self.handle.int_value()
+        self.inner().int_value()
     }
 
     /// Returns the delegated encoded bytes.
     pub fn encoded(&self) -> Vec<u8> {
-        self.handle.encoded()
+        self.inner().encoded()
     }
 
     /// Returns the delegated encoded length.
     pub fn len(&self) -> usize {
-        self.handle.len()
+        self.inner().len()
     }
 
     /// Returns whether the delegated encoding is empty.
     pub fn is_empty(&self) -> bool {
-        self.handle.is_empty()
+        self.inner().is_empty()
     }
 
     /// Returns the delegated common-handle column count.
     pub fn num_columns(&self) -> Option<usize> {
-        self.handle.num_columns()
+        self.inner().num_columns()
     }
 
     /// Returns a delegated encoded common-handle column.
     pub fn encoded_column(&self, index: usize) -> Option<&[u8]> {
-        self.handle.encoded_column(index)
+        self.inner().encoded_column(index)
     }
 
     /// Decodes the delegated logical handle data.
     pub fn data(&self) -> Result<Vec<Datum>, CodecError> {
-        self.handle.data()
+        self.inner().data()
     }
 
     /// Delegates source `Next`, which intentionally drops the partition wrapper.
     pub fn next(&self) -> Handle {
-        self.handle.next()
+        self.inner().next()
     }
 
     /// Compares partition id first, then the underlying handle.
     pub fn compare(&self, other: &Self) -> Result<Ordering, HandleCompareError> {
         match self.partition_id.cmp(&other.partition_id) {
-            Ordering::Equal => self.handle.compare(&other.handle),
+            Ordering::Equal => self.inner().compare(other.inner()),
             ordering => Ok(ordering),
         }
     }
@@ -364,28 +366,28 @@ impl PartitionHandle {
     pub fn equal(&self, other: &Handle) -> bool {
         match other {
             Handle::Partition(right) => {
-                self.partition_id == right.partition_id && self.handle.equal(&right.handle)
+                self.partition_id == right.partition_id && self.inner().equal(right.inner())
             }
-            handle => self.handle.equal(handle),
+            handle => self.inner().equal(handle),
         }
     }
 
     /// Returns Go's source-shaped total memory usage.
     #[must_use]
     pub fn mem_usage(&self) -> u64 {
-        self.handle.mem_usage().saturating_add(24)
+        self.inner().mem_usage().saturating_add(24)
     }
 
     /// Returns allocation bytes owned by the underlying handle.
     #[must_use]
     pub fn extra_mem_size(&self) -> u64 {
-        self.handle.extra_mem_size()
+        self.inner().extra_mem_size()
     }
 }
 
 impl fmt::Display for PartitionHandle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.handle.fmt(formatter)
+        self.inner().fmt(formatter)
     }
 }
 
@@ -395,7 +397,7 @@ impl Handle {
         match self {
             Self::Int(_) => true,
             Self::Common(_) => false,
-            Self::Partition(partition) => partition.handle.is_int(),
+            Self::Partition(partition) => partition.inner().is_int(),
         }
     }
 
@@ -404,7 +406,7 @@ impl Handle {
         match self {
             Self::Int(handle) => Some(handle.value()),
             Self::Common(_) => None,
-            Self::Partition(partition) => partition.handle.int_value(),
+            Self::Partition(partition) => partition.inner().int_value(),
         }
     }
 
@@ -413,7 +415,7 @@ impl Handle {
         match self {
             Self::Int(handle) => handle.encoded(),
             Self::Common(handle) => handle.encoded().to_vec(),
-            Self::Partition(partition) => partition.handle.encoded(),
+            Self::Partition(partition) => partition.inner().encoded(),
         }
     }
 
@@ -422,7 +424,7 @@ impl Handle {
         match self {
             Self::Int(_) => 8,
             Self::Common(handle) => handle.len(),
-            Self::Partition(partition) => partition.handle.len(),
+            Self::Partition(partition) => partition.inner().len(),
         }
     }
 
@@ -437,7 +439,7 @@ impl Handle {
         match self {
             Self::Int(handle) => Self::Int(handle.next()),
             Self::Common(handle) => Self::Common(handle.next()),
-            Self::Partition(partition) => partition.handle.next(),
+            Self::Partition(partition) => partition.inner().next(),
         }
     }
 
@@ -445,10 +447,10 @@ impl Handle {
     pub fn equal(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Partition(left), Self::Partition(right)) => {
-                left.partition_id == right.partition_id && left.handle.equal(&right.handle)
+                left.partition_id == right.partition_id && left.inner().equal(right.inner())
             }
-            (Self::Partition(left), right) => left.handle.equal(right),
-            (left, Self::Partition(right)) => left.equal(&right.handle),
+            (Self::Partition(left), right) => left.inner().equal(right),
+            (left, Self::Partition(right)) => left.equal(right.inner()),
             (Self::Int(left), Self::Int(right)) => left == right,
             (Self::Common(left), Self::Common(right)) => left.encoded() == right.encoded(),
             _ => false,
@@ -481,7 +483,7 @@ impl Handle {
         match self {
             Self::Int(handle) => Ok(handle.data()),
             Self::Common(handle) => handle.data(),
-            Self::Partition(partition) => partition.handle.data(),
+            Self::Partition(partition) => partition.inner().data(),
         }
     }
 
@@ -490,7 +492,7 @@ impl Handle {
         match self {
             Self::Int(_) => None,
             Self::Common(handle) => Some(handle.num_columns()),
-            Self::Partition(partition) => partition.handle.num_columns(),
+            Self::Partition(partition) => partition.inner().num_columns(),
         }
     }
 
@@ -499,7 +501,7 @@ impl Handle {
         match self {
             Self::Int(_) => None,
             Self::Common(handle) => handle.encoded_column(index),
-            Self::Partition(partition) => partition.handle.encoded_column(index),
+            Self::Partition(partition) => partition.inner().encoded_column(index),
         }
     }
 
@@ -529,7 +531,7 @@ impl fmt::Display for Handle {
         match self {
             Self::Int(handle) => handle.fmt(formatter),
             Self::Common(handle) => handle.fmt(formatter),
-            Self::Partition(partition) => partition.handle.fmt(formatter),
+            Self::Partition(partition) => partition.inner().fmt(formatter),
         }
     }
 }
@@ -563,15 +565,15 @@ enum MapKey {
 impl MapKey {
     fn from_handle(handle: &Handle) -> Self {
         match handle {
-            Handle::Partition(partition) if partition.handle.is_int() => Self::PartitionInt(
+            Handle::Partition(partition) if partition.inner().is_int() => Self::PartitionInt(
                 partition.partition_id,
                 partition
-                    .handle
+                    .inner()
                     .int_value()
                     .expect("integer kind guarantees an integer value"),
             ),
             Handle::Partition(partition) => {
-                Self::PartitionCommon(partition.partition_id, partition.handle.encoded())
+                Self::PartitionCommon(partition.partition_id, partition.inner().encoded())
             }
             Handle::Int(handle) => Self::Int(handle.value()),
             Handle::Common(handle) => Self::Common(handle.encoded().to_vec()),
@@ -762,11 +764,11 @@ mod tests {
         assert_eq!(common.to_string(), "{100, abc}");
         assert_eq!(common.compare(&common.next()), Ordering::Less);
 
-        let partition_int = Handle::from(PartitionHandle::new(2, int.clone()));
+        let partition_int = Handle::from(PartitionHandle::new(2, Some(int.clone())));
         assert!(partition_int.equal(&int));
         assert!(int.equal(&partition_int));
         let common_handle = Handle::from(common.clone());
-        let partition_common = Handle::from(PartitionHandle::new(1, common_handle.clone()));
+        let partition_common = Handle::from(PartitionHandle::new(1, Some(common_handle.clone())));
         assert!(partition_common.equal(&common_handle));
         assert!(common_handle.equal(&partition_common));
         assert_eq!(

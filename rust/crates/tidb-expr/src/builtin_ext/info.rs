@@ -372,7 +372,7 @@ mod tests {
             .unwrap()
             .sql_string()
             .unwrap(),
-            tidb_util::plancodec::PLAN_DISCARDED_DECODED
+            "(plan discarded because too long)"
         );
 
         let encoded = tidb_util::plancodec::compress(

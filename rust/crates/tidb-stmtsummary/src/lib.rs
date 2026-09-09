@@ -27,13 +27,14 @@
 //!
 //! **v2 — `pkg/util/stmtsummary/v2` — is IN PROGRESS and NOT complete.** The v1
 //! "lands complete" claim above covers v1 only, and must not be read as
-//! covering v2. Three of v2's five production files land complete —
-//! [`v2::record`] (`record.go`), [`v2::column`] (`column.go`) and
-//! [`v2::stmtsummary`] (`stmtsummary.go`), together with all twelve of their
-//! upstream tests — while `v2/reader.go`, `v2/logger.go` and `v2/tests/` are not
-//! ported. Two small `logger.go` carve-outs exist as SEED evidence because the
-//! three ported files call into them; see [`v2`]'s module header, and each v2
-//! module's own header for its narrowings.
+//! covering v2. Four of v2's five production files land complete —
+//! [`v2::record`] (`record.go`), [`v2::column`] (`column.go`),
+//! [`v2::reader`] (`reader.go`), and [`v2::stmtsummary`] (`stmtsummary.go`).
+//! `v2/logger.go` remains incomplete: only the explicit marshalling, storage,
+//! and rotating-writer boundaries used by the completed files are present.
+//! The separate Go package under `v2/tests/` is outside this package claim.
+//! See [`v2`]'s module header and each v2 module header for the exact inventory
+//! and narrowings.
 //!
 //! `AddStatement`'s eviction path reaches the rollup through the named
 //! [`statement_summary::EvictedSink`] boundary, which
@@ -55,12 +56,12 @@
 //! - `*stmtctx.StatementContext` narrows to
 //!   [`statement_summary::StmtSummaryStmtCtx`], carrying only the fields this
 //!   file reads.
-//! - `execdetails.CopTasksSummary` is not yet in `tidb-exec`, so it is declared
-//!   here as [`statement_summary::CopTasksSummary`].
-//! - client-go `*util.RUDetails` / `*util.ExecDetails` arrive as the
-//!   already-loaded snapshots `tidb_exec::slow_log_format::RuDetailsSnapshot`
-//!   and `TikvExecDetailsSnapshot`, so Go's `atomic.LoadInt64` calls become
-//!   plain field reads.
+//! - `execdetails.CopTasksSummary` uses the canonical
+//!   `tidb_exec::exec_details::CopTasksSummary` owner.
+//! - client-go `*util.RUDetails` / `*util.ExecDetails` use the canonical
+//!   `tikv-client` `RuDetails` and already-loaded `ExecDetailsSnapshot`, so
+//!   Go's atomic loads become canonical accessor calls or snapshot field
+//!   reads.
 //! - Go's `sql[:maxSQLLength]` byte slice becomes a UTF-8 boundary-safe
 //!   truncation in [`statement_summary::format_sql`].
 //!

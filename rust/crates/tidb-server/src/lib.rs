@@ -62,6 +62,7 @@ pub mod cluster_auto_id_seam;
 mod cluster_privileges;
 pub mod cluster_session;
 pub mod cluster_session_node;
+pub mod cluster_stats_lock_seam;
 pub mod cluster_sysvar_seam;
 pub mod cluster_binding_seam;
 mod configured_user_store;
@@ -156,10 +157,9 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
 pub use real_tikv_multi_node::{
@@ -207,13 +207,27 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    tidb_util::printer::print_tidb_info(&config.version_info, &config.startup_config_json());
+    tidb_util::traceevent::register_with_client_go();
+    config.install_process_globals();
+    tidb_util::cgmon::start_cgroup_monitor();
+    let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
+    initialize_temp_dir(&config)?;
+    let _temp_dir_cleanup = TempDirCleanup;
+    {
+        let global_config = tidb_config::config_tree::config::get_global_config();
+        tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(global_config.repair_mode);
+        tidb_domain::domainutil::REPAIR_INFO
+            .set_repair_table_list(global_config.repair_table_list.clone());
+    }
+    tidb_util::printer::print_tidb_info();
+    start_system_time_monitor();
+    let spill_storage = open_spill_storage(&config)?;
+    let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
+    tidb_resourcemanager::instance_resource_manager().start();
+    let _resource_manager_cleanup = ResourceManagerCleanup;
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.
-        let _system_time_monitor = start_system_time_monitor();
-        let spill_storage = open_spill_storage(&config)?;
-        let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
         if config.cluster_session {
             return unistore_node::run_unistore_cluster_session(
                 config,
@@ -227,9 +241,6 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             memory_arbitrator.arbitrator(),
         );
     }
-    let _system_time_monitor = start_system_time_monitor();
-    let spill_storage = open_spill_storage(&config)?;
-    let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
     if config.cluster_session {
         return run_cluster_session_node_with_spill(
             config,
@@ -290,31 +301,74 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     }
 }
 
+struct TempDirCleanup;
+
+struct CgroupMonitorCleanup;
+
+struct ResourceManagerCleanup;
+
+impl Drop for CgroupMonitorCleanup {
+    fn drop(&mut self) {
+        tidb_util::cgmon::stop_cgroup_monitor();
+    }
+}
+
+impl Drop for ResourceManagerCleanup {
+    fn drop(&mut self) {
+        tidb_resourcemanager::instance_resource_manager().stop();
+    }
+}
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        tidb_util::disk::clean_up();
+    }
+}
+
+fn initialize_temp_dir(config: &NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    tidb_util::disk::initialize_temp_dir().map_err(|source| {
+        RunConfiguredNodeError::Spill(tidb_util::spill_storage::SpillStorageOpenError::Io {
+            operation: "initialize temporary storage directory",
+            path: config.spill_storage.path.clone(),
+            source,
+        })
+    })
+}
+
 fn command_line_privilege_source_requires_cluster(config: &NodeConfig) -> bool {
     config.load_privileges && !config.skip_grant_table
 }
 
 static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
 
-fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
-    tidb_util::systimemon::SystemTimeMonitor::start(SystemTime::now, || {
-        SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
-    })
+fn start_system_time_monitor() {
+    let _ = std::thread::spawn(|| {
+        tidb_util::systimemon::start_monitor(SystemTime::now, || {
+            SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
+        });
+    });
 }
 
 fn open_spill_storage(
     config: &NodeConfig,
-) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
-    tidb_executor::deadlock_history::configure_global_deadlock_history(
+) -> Result<Arc<tidb_util::spill_storage::SpillStorage>, RunConfiguredNodeError> {
+    tidb_exec::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );
-    if config.sem_enabled {
+    tidb_session::sysvar::install_sem_v2_sysvar_registry();
+    if config.sem_enabled && !config.sem_config.is_empty() {
+        tidb_util::sem::disable();
+        tidb_util::sem_v2::enable(&config.sem_config)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    } else if config.sem_enabled {
+        tidb_util::sem_v2::disable();
         tidb_util::sem::enable();
     } else {
+        tidb_util::sem_v2::disable();
         tidb_util::sem::disable();
     }
-    tidb_util::disk::SpillStorage::open(config.spill_storage.clone())
+    tidb_util::spill_storage::SpillStorage::open(config.spill_storage.clone())
         .map(Arc::new)
         .map_err(RunConfiguredNodeError::Spill)
 }
@@ -354,78 +408,17 @@ fn open_memory_arbitrator(
 pub(crate) struct MemoryArbitratorAuthority {
     arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     registration: Option<tidb_util::memory::ProcessArbitratorRegistration>,
-    sampler_running: Arc<AtomicBool>,
-    sampler: Option<JoinHandle<()>>,
-}
-
-/// One runtime-stats sample for the arbitrator, in the shape Go's
-/// `memory.ReadMemStats` produces for `HandleRuntimeStats`
-/// (`pkg/util/memory/memory.go`): `heap_alloc` is the LIVE application
-/// allocation -- Go reads `runtime.MemStats.HeapAlloc`, so on the jemalloc
-/// build this is `stats.allocated`, NOT process RSS. `mem_off_heap` carries
-/// what those allocations do not cover (Go derives it from the process
-/// footprint minus its heap), and `total_free` is allocator-held-but-free
-/// memory (Go's `HeapIdle - HeapReleased`).
-///
-/// Feeding raw process RSS as `heap_alloc` made the arbitrator read freed
-/// pages the allocator retains plus non-heap pages as live heap, collapsing
-/// `heapAvailable()` and cancelling statements (`8180`) whose live working
-/// set fit the server limit; `hc_mem_inuse` (= off-heap + in-use) still tracks
-/// the real process footprint either way, which is what the OOM-risk kill
-/// must keep reacting to.
-fn sample_runtime_stats() -> Option<tidb_util::memory::MemStats> {
-    let rss = process_rss_bytes()?;
-    if let Some((allocated, active, resident)) = tidb_util::memory::allocator_live_heap_sample() {
-        return Some(tidb_util::memory::MemStats {
-            heap_alloc: allocated,
-            heap_inuse: active,
-            total_free: (resident - active).max(0),
-            mem_off_heap: (rss - resident).max(0),
-            last_gc: 0,
-        });
-    }
-    // No allocator-statistics seam (non-jemalloc build): process RSS stands
-    // in for both heap gauges because no finer-grained source exists.
-    Some(tidb_util::memory::MemStats {
-        heap_alloc: rss,
-        heap_inuse: rss,
-        ..Default::default()
-    })
-}
-
-fn process_rss_bytes() -> Option<i64> {
-    let bytes = tidb_util::cgroup::current_process_memory_usage().ok()?;
-    Some(i64::try_from(bytes).unwrap_or(i64::MAX))
 }
 
 impl MemoryArbitratorAuthority {
     pub(crate) fn open(config: &NodeConfig) -> Result<Self, RunConfiguredNodeError> {
         let arbitrator = open_memory_arbitrator(config)?;
-        let sampler_running = Arc::new(AtomicBool::new(true));
-        let sampler = arbitrator.as_ref().map(|arbitrator| {
-            let arbitrator = Arc::downgrade(arbitrator);
-            let running = Arc::clone(&sampler_running);
-            std::thread::spawn(move || {
-                while running.load(Ordering::Acquire) {
-                    if let Some(arbitrator) = arbitrator.upgrade() {
-                        if let Some(stats) = sample_runtime_stats() {
-                            arbitrator.handle_runtime_stats(stats);
-                        }
-                    } else {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            })
-        });
         let registration = arbitrator
             .as_ref()
             .map(tidb_util::memory::install_process_arbitrator);
         Ok(Self {
             arbitrator,
             registration,
-            sampler_running,
-            sampler,
         })
     }
 
@@ -436,10 +429,6 @@ impl MemoryArbitratorAuthority {
 
 impl Drop for MemoryArbitratorAuthority {
     fn drop(&mut self) {
-        self.sampler_running.store(false, Ordering::Release);
-        if let Some(sampler) = self.sampler.take() {
-            let _ = sampler.join();
-        }
         if let Some(arbitrator) = self.arbitrator.as_ref() {
             let _ = arbitrator.stop();
         }

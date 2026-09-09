@@ -29,17 +29,17 @@
 //! This module sits alongside `topsql_state`, the flat transcreation of Go
 //! `pkg/util/topsql/state`, which is left where it is.
 //!
-//! # Narrowings
+//! # Dependency mappings
 //!
-//! Every dependency that lives above `tidb-util` (the workspace's bottom
-//! crate) is recovered locally rather than dropped:
+//! Package dependencies map to their canonical workspace owners:
 //!
-//! - **client-go/v2 `util.RUDetails`** → [`RuDetails`], a local struct with the
-//!   same five accessors and the same additive merge. `tidb-exec` carries the
-//!   identical narrowing as `slow_log_format::RuDetailsSnapshot`.
-//! - **`pkg/util/execdetails` `RUV2Metrics`/`RUV2Weights`** → [`RuV2Metrics`]
-//!   and [`RuV2Weights`], local snapshots of exactly what `TotalRU` reads.
-//!   `execdetails` itself lands in `tidb-exec`, which depends on this crate.
+//! - **client-go/v2 `util.RUDetails`** → the canonical [`RuDetails`] from the
+//!   workspace `tikv-client`, preserving its shared live counters and merge
+//!   behavior.
+//! - **`pkg/util/execdetails` `RUV2Metrics`/`RUV2Weights`** → the shared live
+//!   [`RuV2Metrics`] and [`RuV2Weights`] implementation in
+//!   [`crate::ruv2_metrics`]. `tidb-exec` re-exports the same types, so Top-SQL
+//!   and executor accounting observe the same counters and label behavior.
 //! - **client-go/v2 `tikvrpc` + `tikvrpc/interceptor`** → [`RpcInterceptor`],
 //!   which keeps client-go's wrap-a-handler shape but is generic over the
 //!   request, response, and error types, so `kv_exec_count.go` ports in full
@@ -80,7 +80,6 @@
 
 mod aggregator;
 mod kv_exec_count;
-mod ru_details;
 mod rustats;
 mod ruv2_metrics;
 mod stmtstats;
@@ -93,7 +92,6 @@ pub use aggregator::{
     RuCollector, RuDropStats, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
 };
 pub use kv_exec_count::{KvExecCounter, RpcInterceptor, KV_EXEC_COUNTER_INTERCEPTOR_NAME};
-pub use ru_details::RuDetails;
 pub use rustats::{
     default_ru_version, normalize_ru_version, ExecutionContext, RuIncrement, RuIncrementMap, RuKey,
     RuVersion, RuVersionProvider,
@@ -104,3 +102,4 @@ pub use stmtstats::{
     KvStatementStatsItem, SqlPlanDigest, StatementObserver, StatementStats, StatementStatsInner,
     StatementStatsItem, StatementStatsMap,
 };
+pub use tikv_client::RuDetails;

@@ -28,8 +28,9 @@ use tidb_chunk::chunk_util::{
 };
 use tidb_chunk::column::Column;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::checksum::CHECKSUM_PAYLOAD_SIZE;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+
+const CHECKSUM_PAYLOAD_SIZE: usize = 1020;
 
 static STORAGE_CASE: AtomicUsize = AtomicUsize::new(0);
 
@@ -46,6 +47,7 @@ impl TestStorage {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create test spill directory");
         let authority = Arc::new(
             SpillStorage::open(SpillStorageSpec {
                 path: path.clone(),

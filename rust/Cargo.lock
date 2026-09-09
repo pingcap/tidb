@@ -134,6 +134,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a89cbf775b137e9b968e67227ef7f775587cde3fd31b0d8599dbd0f598a48340"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -312,6 +321,12 @@ name = "bytecount"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
+
+[[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
 name = "bytes"
@@ -607,6 +622,8 @@ name = "difftest-planner-tests"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
  "tidb-planner",
 ]
 
@@ -731,6 +748,18 @@ dependencies = [
  "tonic-prost-build",
  "tower",
  "tower-service",
+]
+
+[[package]]
+name = "event-listener"
+version = "5.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
+dependencies = [
+ "parking",
+ "pin-project-lite",
+ "portable-atomic",
+ "portable-atomic-util",
 ]
 
 [[package]]
@@ -1951,6 +1980,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
+name = "parking"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2049,6 +2084,21 @@ name = "pkg-config"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
+
+[[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a106d1259c23fac8e543272398ae0e3c0b8d33c88ed73d0cc71b0f1d902618"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "potential_utf"
@@ -2852,6 +2902,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "seahash"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2952,6 +3008,19 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -3075,6 +3144,25 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "stretto"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d042915dad0991b1dc54d0b5005029901a9705113389050d53503f2a182f28"
+dependencies = [
+ "atomic",
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "getrandom 0.4.3",
+ "parking_lot",
+ "rand 0.10.2",
+ "seahash",
+ "thiserror 2.0.19",
+ "tracing",
+ "wg",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -3265,6 +3353,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-allocator-stats"
+version = "0.0.0"
+dependencies = [
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "tidb-ast"
 version = "0.0.0"
 dependencies = [
@@ -3315,6 +3410,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "tidb-hack",
  "tidb-naming",
  "tidb-tikvutil",
  "toml",
@@ -3327,13 +3423,99 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "encoding_rs",
+ "ryu",
  "serde",
  "serde_json",
  "sha2",
  "smallvec",
  "tidb-error",
+ "tidb-hack",
  "tidb-kvcache",
+ "tidb-mysql",
+ "unicode-general-category",
 ]
+
+[[package]]
+name = "tidb-ddl-copr"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-model",
+ "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-ddl-logutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-log",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-ddl-mock"
+version = "0.0.0"
+dependencies = [
+ "tidb-exec",
+ "tidb-model",
+]
+
+[[package]]
+name = "tidb-ddl-notifier"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-model",
+ "tidb-owner",
+]
+
+[[package]]
+name = "tidb-ddl-resourcegroup"
+version = "0.0.0"
+dependencies = [
+ "tidb-model",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-ddl-serverstate"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "prometheus 0.14.0",
+ "serde",
+ "serde_json",
+ "tidb-ddl-logutil",
+ "tidb-log",
+ "tidb-model",
+ "tidb-pd-client",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-ddl-session"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "prometheus 0.14.0",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-ddl-testargsv1"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-distsql"
@@ -3342,6 +3524,7 @@ dependencies = [
  "prost 0.14.4",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-datatype",
  "tidb-proto",
  "tidb-txnkv",
@@ -3353,6 +3536,7 @@ dependencies = [
 name = "tidb-domain"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "getrandom 0.3.4",
@@ -3363,7 +3547,12 @@ dependencies = [
  "tidb-error",
  "tidb-model",
  "tidb-mysql",
+ "tidb-parser",
+ "tidb-stats-handle-metrics",
+ "tidb-util",
  "tidb-vardef",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3371,8 +3560,26 @@ name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "rand 0.8.7",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tidb-dxf-operator"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "regex",
+ "tidb-resourcemanager",
+]
+
+[[package]]
+name = "tidb-errmsg"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-error",
 ]
 
 [[package]]
@@ -3400,10 +3607,14 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-ddl-logutil",
+ "tidb-ddl-notifier",
  "tidb-distsql",
  "tidb-error",
  "tidb-executor",
  "tidb-expr",
+ "tidb-hack",
+ "tidb-log",
  "tidb-meta",
  "tidb-metadef",
  "tidb-model",
@@ -3413,7 +3624,11 @@ dependencies = [
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle-cache",
+ "tidb-stats-handle-usage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
@@ -3430,8 +3645,11 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "flate2",
+ "prost 0.14.4",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "smallvec",
  "stacker",
@@ -3440,20 +3658,28 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-session",
  "tidb-distsql",
  "tidb-error",
  "tidb-expr",
  "tidb-funcdep",
+ "tidb-hack",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-proto",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tikv-client",
  "tracing",
 ]
 
@@ -3479,9 +3705,13 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
+ "tidb-hack",
+ "tidb-model",
  "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-util",
  "tidb-vardef",
 ]
@@ -3497,17 +3727,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-gcutil"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
- "tikv-jemalloc-sys",
+ "tidb-mysql",
 ]
 
 [[package]]
 name = "tidb-hash"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-hint"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-parser",
+]
 
 [[package]]
 name = "tidb-kvcache"
@@ -3518,7 +3766,6 @@ name = "tidb-lexer"
 version = "0.0.0"
 dependencies = [
  "tidb-mysql",
- "tidb-util",
 ]
 
 [[package]]
@@ -3544,6 +3791,7 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-config",
+ "tidb-dxf",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
@@ -3590,6 +3838,13 @@ name = "tidb-naming"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-owner"
+version = "0.0.0"
+dependencies = [
+ "tidb-pd-client",
+]
+
+[[package]]
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [
@@ -3599,6 +3854,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tidb-ast",
+ "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",
 ]
@@ -3627,6 +3883,7 @@ dependencies = [
  "sha2",
  "tidb-ast",
  "tidb-codec",
+ "tidb-hack",
  "tidb-model",
  "tidb-tablecodec",
 ]
@@ -3635,6 +3892,7 @@ dependencies = [
 name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
+ "prometheus 0.14.0",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
@@ -3642,11 +3900,28 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-funcdep",
+ "tidb-hack",
  "tidb-hash",
+ "tidb-hint",
+ "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
+ "tidb-proto",
+ "tidb-resolve",
  "tidb-stats",
  "tidb-util",
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-planner-coretestsdk"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-parser",
+ "tidb-planner",
 ]
 
 [[package]]
@@ -3671,12 +3946,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-resolve"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-model",
+]
+
+[[package]]
+name = "tidb-resourcemanager"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "fail",
+ "getrandom 0.3.4",
+ "prometheus 0.14.0",
+ "rand 0.8.7",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
 name = "tidb-schemacmp"
 version = "0.0.0"
 dependencies = [
  "regex",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-error",
  "tidb-exec",
  "tidb-model",
  "tidb-mysql",
@@ -3687,6 +3984,7 @@ dependencies = [
 name = "tidb-schemaver"
 version = "0.0.0"
 dependencies = [
+ "tidb-config",
  "tidb-domain",
  "tidb-vardef",
 ]
@@ -3696,7 +3994,10 @@ name = "tidb-server"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
+ "crossbeam-channel",
  "ctrlc",
+ "fail",
  "prost 0.14.4",
  "rcgen",
  "rustix 1.1.4",
@@ -3711,23 +4012,47 @@ dependencies = [
  "tidb-chunk",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl-notifier",
+ "tidb-ddl-serverstate",
  "tidb-distsql",
  "tidb-domain",
+ "tidb-errmsg",
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-hack",
+ "tidb-log",
+ "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
+ "tidb-owner",
  "tidb-parser",
  "tidb-pd-client",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-resolve",
+ "tidb-resourcemanager",
+ "tidb-schemaver",
  "tidb-session",
+ "tidb-sqlexec",
+ "tidb-stats",
+ "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
+ "tidb-stats-handle-autoanalyze-refresher",
+ "tidb-stats-handle-cache",
+ "tidb-stats-handle-initstats",
+ "tidb-stats-handle-metrics",
+ "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
+ "tidb-stats-handle-util",
+ "tidb-syssession",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-util",
+ "tidb-vardef",
+ "tidb-workloadrepo",
  "tikv-client",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -3743,19 +4068,56 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-config",
  "tidb-datatype",
  "tidb-domain",
+ "tidb-error",
+ "tidb-exec",
  "tidb-executor",
+ "tidb-gcutil",
+ "tidb-hint",
+ "tidb-log",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",
  "tidb-planner",
+ "tidb-stats",
+ "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
+ "tidb-stmtsummary",
  "tidb-tablecodec",
  "tidb-tikvutil",
+ "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
+ "tidb-workloadrepo",
+ "toml",
+]
+
+[[package]]
+name = "tidb-sqlexec"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-parser",
+ "tidb-resolve",
+ "tidb-util",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-sqlexec-mock"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-util",
 ]
 
 [[package]]
@@ -3764,11 +4126,199 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "sha2",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-error",
+ "tidb-model",
+ "tidb-stats-handle-util",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze-exec"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "prometheus 0.14.0",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-log",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-sqlexec-mock",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-util",
+ "tidb-syssession",
+ "tidb-util",
+ "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze-priorityqueue"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-metadef",
+ "tidb-model",
+ "tidb-stats",
+ "tidb-stats-handle-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze-refresher"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-autoanalyze-priorityqueue",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-stats",
+ "tidb-stats-handle-cache-internal",
+ "tidb-stats-handle-cache-internal-lfu",
+ "tidb-stats-handle-cache-internal-mapcache",
+ "tidb-stats-handle-cache-internal-testutil",
+ "tidb-stats-handle-cache-metrics",
+ "tidb-stats-handle-metrics",
+ "tidb-stats-handle-util",
+ "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache-internal"
+version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache-internal-lfu"
+version = "0.0.0"
+dependencies = [
+ "stretto",
+ "tidb-stats",
+ "tidb-stats-handle-cache-internal",
+ "tidb-stats-handle-cache-internal-testutil",
+ "tidb-stats-handle-cache-metrics",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache-internal-mapcache"
+version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+ "tidb-stats-handle-cache-internal",
+ "tidb-stats-handle-cache-internal-testutil",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache-internal-testutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+]
+
+[[package]]
+name = "tidb-stats-handle-cache-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+]
+
+[[package]]
+name = "tidb-stats-handle-initstats"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-config",
+ "tidb-log",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-internal"
+version = "0.0.0"
+dependencies = [
+ "tidb-stats",
+]
+
+[[package]]
+name = "tidb-stats-handle-logutil"
+version = "0.0.0"
+dependencies = [
+ "tidb-log",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-stats-handle-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+]
+
+[[package]]
+name = "tidb-stats-handle-usage"
+version = "0.0.0"
+dependencies = [
+ "tidb-model",
+ "tidb-stats-handle-usage-indexusage",
+]
+
+[[package]]
+name = "tidb-stats-handle-usage-collector"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-stats-handle-usage-indexusage"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-model",
+ "tidb-stats-handle-usage-collector",
+]
+
+[[package]]
+name = "tidb-stats-handle-util"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-hack",
+ "tidb-model",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-sqlexec-mock",
+ "tidb-syssession",
+ "tidb-util",
+ "tidb-vardef",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-stats-handle-util-test"
+version = "0.0.0"
+dependencies = [
+ "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]
@@ -3779,6 +4329,7 @@ dependencies = [
  "chrono-tz",
  "serde",
  "serde_json",
+ "tempfile",
  "tidb-ast",
  "tidb-chunk",
  "tidb-config",
@@ -3787,6 +4338,19 @@ dependencies = [
  "tidb-kvcache",
  "tidb-model",
  "tidb-parser",
+ "tidb-util",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-syssession"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-parser",
+ "tidb-resolve",
+ "tidb-sqlexec",
  "tidb-util",
 ]
 
@@ -3812,8 +4376,15 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "getrandom 0.3.4",
+ "tidb-ast",
+ "tidb-datatype",
  "tidb-log",
+ "tidb-model",
  "tidb-parser",
+ "tidb-pd-client",
+ "tidb-resolve",
+ "tidb-sqlexec",
+ "tidb-syssession",
  "tidb-util",
 ]
 
@@ -3823,6 +4394,8 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "tidb-ast",
  "tidb-codec",
  "tidb-datatype",
@@ -3850,6 +4423,7 @@ dependencies = [
  "tidb-error",
  "tidb-pd-client",
  "tidb-proto",
+ "tidb-vardef",
  "tikv-client",
  "tokio",
  "tokio-stream",
@@ -3860,10 +4434,13 @@ dependencies = [
 name = "tidb-unistore"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "prost 0.14.4",
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
+ "tidb-hack",
  "tidb-proto",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -3880,6 +4457,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-channel",
  "des",
+ "fail",
  "fastrand",
  "flate2",
  "fs4",
@@ -3897,6 +4475,9 @@ dependencies = [
  "sha2",
  "snap",
  "tempfile",
+ "tidb-allocator-stats",
+ "tidb-ast",
+ "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-error",
@@ -3904,10 +4485,15 @@ dependencies = [
  "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
+ "tidb-model",
  "tidb-mysql",
  "tidb-naming",
+ "tidb-parser",
  "tidb-proto",
  "tidb-tikvutil",
+ "tidb-vardef",
+ "tikv-client",
+ "tonic",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -3915,6 +4501,20 @@ dependencies = [
 [[package]]
 name = "tidb-vardef"
 version = "0.0.0"
+dependencies = [
+ "tidb-hack",
+]
+
+[[package]]
+name = "tidb-workloadrepo"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "tidb-owner",
+ "tidb-pd-client",
+ "tidb-stmtsummary",
+]
 
 [[package]]
 name = "tikv-client"
@@ -4303,6 +4903,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "triomphe"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b40688ea6389c8171614b25491f71d4a27946e0c7ce2da1c6de27e25abf1a0ae"
+dependencies = [
+ "serde",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4341,6 +4951,12 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
@@ -4516,6 +5132,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "wg"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6845af35d0efb945bf9f1ad34c09e55489c82b40fbc67eabe16d26ddcceed7b5"
+dependencies = [
+ "event-listener",
+ "parking_lot",
+ "triomphe",
 ]
 
 [[package]]
@@ -4859,6 +5486,12 @@ dependencies = [
  "thiserror 2.0.19",
  "time",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
 
 [[package]]
 name = "yasna"

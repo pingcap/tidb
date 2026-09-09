@@ -291,3 +291,37 @@ impl Drop for BatchReply {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::reply_pair;
+    use crate::rpc::batch::{BatchCommandTag, OpaqueBatchCommand};
+    use crate::rpc::{CompletionError, UnaryCallContext, UnaryCancellation};
+
+    #[test]
+    fn synchronous_response_is_delivered_directly_to_its_waiter() {
+        let (completion, mut pull) = reply_pair();
+        completion.schedule(Ok(OpaqueBatchCommand::new(
+            BatchCommandTag::Coprocessor,
+            b"response",
+        )));
+
+        let response = pull.try_complete().unwrap().unwrap().unwrap();
+        assert_eq!(response.tag(), BatchCommandTag::Coprocessor);
+        assert_eq!(response.body(), b"response");
+    }
+
+    #[test]
+    fn caller_cancellation_wakes_a_synchronous_response_waiter() {
+        let (_completion, mut pull) = reply_pair();
+        let cancellation = UnaryCancellation::new();
+        let call = UnaryCallContext::new(Duration::from_secs(10), cancellation.clone());
+        let waiting = std::thread::spawn(move || pull.complete(&call));
+
+        cancellation.cancel();
+
+        assert_eq!(waiting.join().unwrap(), Err(CompletionError::Cancelled));
+    }
+}

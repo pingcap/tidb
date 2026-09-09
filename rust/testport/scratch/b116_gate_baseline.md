@@ -1,0 +1,70 @@
+# b116 baseline gate (clean tree, before any edit)
+
+Command (from `rust/`, `PROTOC=/root/.local-protoc/bin/protoc` exported; the
+system protoc 3.14 cannot compile `tidb-proto`'s proto3-optional inputs, and
+b007's receipt documents installing protoc 25.3 for exactly this):
+
+```
+cargo nextest run --locked -p tidb-executor -E 'not test(/bench/)' --no-fail-fast
+```
+
+Summary line: `Summary [ 137.340s] 1388 tests run: 1340 passed (1 slow), 48 failed, 479 skipped`
+(exit 100)
+
+Baseline failing test ids (48, one per line, target-relative; the full
+nextest id is `tidb-executor::<target> <id>`):
+
+access_path::tests::a_common_handle_row_in_reads_only_the_named_prefixes
+access_path::tests::explain_analyze_act_rows_reflect_the_truncation
+access_path::tests::the_double_read_issues_one_batch_get_per_index_batch
+all::db_integration_ddl_types_source::unique_key_null_value_cluster_index_unique_index_allows_nulls
+driver::tests::aggregates::aggregate_having_and_order_by
+driver::tests::aggregates::distinct_range_orders_gos_hash_agg_over_reader_tree
+driver::tests::aggregates::grouped_partial_count_carries_the_group_key
+driver::tests::aggregates::joined_integer_sum_uses_root_stream_agg
+driver::tests::aggregates::select_distinct
+driver::tests::aggregates::tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd
+driver::tests::aggregates::tpcc_condition_eleven_pushes_filters_through_nested_derived_joins
+driver::tests::aggregates::tpcc_condition_four_streams_across_a_grouped_derived_table
+driver::tests::aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup
+driver::tests::aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables
+driver::tests::aggregates::tpch_q14_matches_recorded_hash_join_plan
+driver::tests::aggregates::tpch_q1_splits_avg_and_sorts_the_restored_output
+driver::tests::aggregates::tpch_q3_keeps_go_projections_around_grouped_topn
+driver::tests::dml::limit_zero_dml_still_validates_the_statement
+driver::tests::join_reorder::the_advanced_greedy_defers_non_equality_edges_until_the_second_round
+driver::tests::joins::index_join_probe_rows_use_only_the_access_paths_join_keys
+driver::tests::joins::tpcc_check_five_keeps_only_the_cross_leaf_residual
+driver::tests::joins::tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves
+driver::tests::joins::tpcc_customer_warehouse_join_uses_two_point_gets
+driver::tests::joins::tpcc_stock_level_bounds_both_join_leaves
+driver::tests::mem_quota::selection_cached_chunk_is_part_of_the_query_quota
+driver::tests::point_get::a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go
+driver::tests::point_get::a_point_plan_keys_by_the_constant_in_the_columns_domain
+driver::tests::point_get::exact_handle_range_uses_the_go_cop_projection_tree
+driver::tests::point_get::ordered_handle_range_keeps_the_go_cop_projection_below_sort
+driver::tests::predicate_pushdown::a_single_table_read_ends_in_the_cop_task_go_prints
+driver::tests::predicate_pushdown::tpch_q6_selection_keeps_go_conditions_and_cardinality_after_pruning
+driver::tests::primary_keys::the_clustered_index_mode_decides_the_handle
+driver::tests::subqueries::correlated_avg_predicate_decorrelates_to_grouped_join
+driver::tests::subqueries::correlated_sum_predicate_pulls_above_unique_outer_join
+driver::tests::subqueries::explaining_a_correlated_scalar_type_reads_no_storage
+driver::tests::subqueries::subqueries
+driver::tests::subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums
+driver::tests::subqueries::tpch_q2_correlated_min_matches_recorded_hash_join_plan
+driver::tests::through_proj::an_equality_inside_one_relation_is_not_injected
+driver::tests::through_proj::an_expression_join_key_gets_an_injected_column
+driver::tests::through_proj::the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table
+driver::tests::through_proj::the_injected_wrapper_is_pruned_and_its_leaf_takes_the_covering_index
+hash_agg::tests::final_decimal_avg_uses_parallel_worker_window
+hash_agg::tests::grouped_binary_strings_use_go_parallel_hashagg_pipeline
+hash_agg::tests::integer_count_agg_uses_parallel_worker_window
+hash_agg_spill_tests::test_get_correct_result
+remote_scan::tests::a_pushed_predicate_does_not_move_an_aggregate_value
+remote_scan::tests::an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request
+
+NOTE: the first clean-tree gate attempt WITHOUT `PROTOC` exported never
+reached test execution: `tidb-proto`'s build script panicked
+(`--experimental_allow_proto3_optional was not set`, system protoc 3.14).
+That is an environment failure, not a test failure; the recorded baseline is
+the run with protoc 25.3.

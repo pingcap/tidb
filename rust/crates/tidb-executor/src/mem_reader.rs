@@ -951,6 +951,9 @@ impl MemIndexReader {
                 self.meta.index_columns,
             )
             .map_err(|error| MemReaderError::Decode(format!("{error:?}")))?;
+            let decoded = decoded.ok_or_else(|| {
+                MemReaderError::Decode("index key/value contains no handle".to_owned())
+            })?;
             let mut handle = convert_handle(&decoded)?;
             if self.meta.common_handle {
                 if let TableHandle::Int(value) = handle.handle {

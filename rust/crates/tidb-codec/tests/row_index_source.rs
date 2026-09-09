@@ -14,7 +14,7 @@
 
 //! Source-exact coverage for `pkg/tablecodec/rowindexcodec`.
 
-use tidb_codec::{decode_table_id, encode_int, get_key_kind, KeyKind};
+use tidb_codec::{get_key_kind, KeyKind};
 
 #[test]
 fn get_key_kind_executes_the_complete_original_source_table() {
@@ -71,23 +71,5 @@ fn get_key_kind_closes_every_observable_prefix_boundary() {
 
     for (name, key, expected) in cases {
         assert_eq!(get_key_kind(key), *expected, "boundary {name}");
-    }
-}
-
-#[test]
-fn decode_table_id_matches_tablecodec_prefix_and_zero_fallback() {
-    let mut key = vec![b't'];
-    encode_int(&mut key, 55);
-    key.extend_from_slice(b"_r");
-    assert_eq!(decode_table_id(&key), 55);
-
-    let mut negative = vec![b't'];
-    encode_int(&mut negative, -66);
-    assert_eq!(decode_table_id(&negative), -66);
-
-    // Go's DecodeTableID returns zero for nil, non-table, short, malformed,
-    // and API-V2-prefixed keys until an API-V2 codec owner is ported.
-    for key in [b"".as_slice(), b"x12345678_r", b"t", b"t\0\x01"] {
-        assert_eq!(decode_table_id(key), 0, "key {key:?}");
     }
 }

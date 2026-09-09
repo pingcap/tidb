@@ -18,7 +18,6 @@
 ///
 /// `\%` and `\_` retain the backslash because they remain pattern escapes;
 /// every other unrecognized escape discards the backslash.
-#[must_use]
 pub fn unescape_char(byte: u8) -> Vec<u8> {
     match byte {
         b'n' => vec![b'\n'],

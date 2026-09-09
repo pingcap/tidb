@@ -16,7 +16,7 @@ use super::IndexJoinPathRangeBuilder;
 use crate::{
     physical_property::IndexJoinRuntimeProp,
     plan_base::PlanError,
-    ranger::{points::ConstantEvaluator, types::Ranges},
+    ranger::{points::ExpressionEvaluator, types::Ranges},
 };
 use tidb_expr::{column::Column, expression::Expression, schema::Schema};
 
@@ -52,7 +52,7 @@ impl IndexJoinRangeTemplate {
     pub fn rebuild(
         &self,
         previous: &Ranges,
-        eval_constant: &ConstantEvaluator<'_>,
+        eval_expression: &ExpressionEvaluator<'_>,
     ) -> Result<Ranges, PlanError> {
         let (result, empty) = IndexJoinPathRangeBuilder {
             columns: &self.columns,
@@ -60,7 +60,7 @@ impl IndexJoinRangeTemplate {
             lookup: &self.lookup,
             inner_schema: &self.inner_schema,
             pushed_conditions: &self.pushed_conditions,
-            eval_constant,
+            eval_expression,
             range_max_size: 0,
             record_range_fallback: &|_| {},
             regard_null_as_point: self.regard_null_as_point,

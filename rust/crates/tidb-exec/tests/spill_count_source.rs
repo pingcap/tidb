@@ -32,7 +32,7 @@ fn partial_result4_count_spill_round_trip_source_values() {
 
     let mut decoder = CountDeserializer::new(&row_views);
     let mut actual = Vec::new();
-    while let Some(value) = decoder.read_next().expect("source-shaped count row") {
+    while let Some(value) = decoder.read_next() {
         actual.push(value);
     }
     assert_eq!(actual, expected);

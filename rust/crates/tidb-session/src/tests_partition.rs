@@ -1369,7 +1369,10 @@ fn a_partition_selection_reads_only_those_partitions() {
         .to_mysql_error();
     assert_eq!(rendered.code, 1735);
     assert_eq!(rendered.message, "Unknown partition 'nosuch' in table 'h'");
-    // An UNPARTITIONED table has no name to resolve, so the same 1735.
+    // An UNPARTITIONED table hits Go's dedicated branch: planbuilder's
+    // buildDataSource raises ErrPartitionClauseOnNonpartitioned (1747)
+    // ("logical_plan_builder.go:5046") when a PARTITION clause names a
+    // non-partitioned table.
     session.run("CREATE TABLE q (a int)").unwrap();
     assert_eq!(
         session
@@ -1377,7 +1380,7 @@ fn a_partition_selection_reads_only_those_partitions() {
             .expect_err("no partition of an unpartitioned table")
             .to_mysql_error()
             .code,
-        1735
+        1747
     );
 }
 
@@ -1987,6 +1990,21 @@ fn a_batch_point_get_names_the_partitions_its_handles_reach() {
 /// `commit_index_range_source` and this prints per-partition `IndexLookUp`s
 /// over `IndexRangeScan range:[1,1], [2,2]`; drop the clamp in
 /// `batch_point_branch_estimates` and both branches read 2.00.
+/// Strips the plan-allocator suffix from an EXPLAIN operator name. The
+/// allocator counter depends on every statement the session ran before the
+/// capture, so exact IDs are environment state, not Go parity evidence; the
+/// shape, estimates, and access objects are the pinned contract.
+fn without_plan_id(operator: &str) -> String {
+    match operator.rsplit_once('_') {
+        Some((prefix, suffix))
+            if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            prefix.to_owned()
+        }
+        _ => operator.to_owned(),
+    }
+}
+
 #[test]
 fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
     let mut session = Session::new();
@@ -2014,23 +2032,23 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         crate::tests_support::row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
     let shape: Vec<(String, String, String)> = plain
         .iter()
-        .map(|row| (row[0].clone(), row[1].clone(), row[3].clone()))
+        .map(|row| (without_plan_id(&row[0]), row[1].clone(), row[3].clone()))
         .collect();
     assert_eq!(
         shape,
         vec![
             (
-                "PartitionUnion_3".to_owned(),
+                "PartitionUnion".to_owned(),
                 "3.00".to_owned(),
                 String::new()
             ),
             (
-                "├─Batch_Point_Get_1".to_owned(),
+                "├─Batch_Point_Get".to_owned(),
                 "2.00".to_owned(),
                 "table:t, partition:p1, index:PRIMARY(b)".to_owned()
             ),
             (
-                "└─Batch_Point_Get_2".to_owned(),
+                "└─Batch_Point_Get".to_owned(),
                 "1.00".to_owned(),
                 "table:t, partition:p2, index:PRIMARY(b)".to_owned()
             ),
@@ -2049,9 +2067,7 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         .skip(1)
         .map(|row| {
             (
-                row[0]
-                    .trim_start_matches([' ', '│', '├', '└', '─'])
-                    .to_owned(),
+                without_plan_id(&row[0].trim_start_matches([' ', '│', '├', '└', '─'])),
                 row[1].clone(),
                 row[3].clone(),
                 row[4].clone(),
@@ -2062,25 +2078,25 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         shape,
         vec![
             (
-                "PartitionUnion_5".to_owned(),
+                "PartitionUnion".to_owned(),
                 "2.60".to_owned(),
                 String::new(),
                 String::new()
             ),
             (
-                "Selection_2".to_owned(),
+                "Selection".to_owned(),
                 "1.60".to_owned(),
                 String::new(),
                 "like(test.t.a, \"%a%\", 92)".to_owned()
             ),
             (
-                "Batch_Point_Get_1".to_owned(),
+                "Batch_Point_Get".to_owned(),
                 "2.00".to_owned(),
                 "table:t, partition:p1, index:PRIMARY(b)".to_owned(),
                 "keep order:false, desc:false".to_owned()
             ),
             (
-                "Selection_4".to_owned(),
+                "Selection".to_owned(),
                 "1.00".to_owned(),
                 String::new(),
                 "like(test.t.a, \"%a%\", 92)".to_owned()
@@ -2725,15 +2741,18 @@ fn an_unknown_partition_name_carries_gos_case_per_statement() {
         rendered.message
     );
 
-    // The SELECT partition list keeps the written case.
+    // The SELECT flow resolves through the same `FindPartitionByName` the
+    // TRUNCATE arm uses: it folds the name (`partition.go:2147`) BEFORE
+    // interpolating, so both errors spell the folded form. Go's `.O` applies
+    // only to the TABLE name in the message.
     let rendered = session
         .run("SELECT * FROM up PARTITION (NoSuch)")
         .expect_err("no such partition")
         .to_mysql_error();
     assert_eq!(rendered.code, 1735);
     assert!(
-        rendered.message.contains("'NoSuch'"),
-        "SELECT keeps the written case as Go's `.O` does, got: {}",
+        rendered.message.contains("'nosuch'"),
+        "SELECT resolves through FindPartitionByName's fold, got: {}",
         rendered.message
     );
 }
@@ -2839,35 +2858,41 @@ fn interval_partitioning_is_refused_on_every_spelling() {
     }
 }
 
-/// A GLOBAL unique index spans every partition, so its uniqueness is
-/// cluster-wide. A LOCAL unique index on a partitioned table enforces
-/// uniqueness only WITHIN each partition, so building a GLOBAL one as local
-/// would admit duplicates that live in different partitions -- no error, and
-/// a unique constraint that is not a constraint.
-///
-/// This tier maintains only per-partition index entries
-/// (`kv_table/index_entries.rs` fixes `global: false`), so it must REFUSE
-/// the clause. The assertion is on the refusal naming GLOBAL, not merely on
-/// a refusal happening: an incidental error from somewhere else would leave
-/// the door open for a later change to turn it into a silent acceptance.
+/// Go `globalstats.TestGlobalIndexStatistics`: a GLOBAL unique index is one
+/// logical-table keyspace, reads rows across every partition in index order,
+/// and rejects the same key even when the conflicting rows route to different
+/// physical partitions.
 #[test]
-fn a_global_unique_index_is_refused_rather_than_built_local() {
+fn a_global_unique_index_spans_partitions_like_go() {
     let mut session = Session::new();
-    // `b` is not a partitioning column, so uniqueness on it cannot be
-    // enforced per-partition: this index has to be GLOBAL to mean anything.
-    let rendered = session
+    session
         .run(
-            "CREATE TABLE g1 (a INT, b INT, UNIQUE KEY ub(b) GLOBAL) \
-             PARTITION BY HASH(a) PARTITIONS 2",
+            "CREATE TABLE g1 (a INT, b INT, c INT DEFAULT 0, KEY(a)) \
+             PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30), \
+             PARTITION p3 VALUES LESS THAN (40))",
         )
-        .expect_err("a GLOBAL index cannot be served by per-partition entries")
-        .to_mysql_error();
-    assert!(
-        rendered.message.contains("GLOBAL"),
-        "the refusal must name GLOBAL so it cannot decay into a silent \
-         downgrade, got: {}",
-        rendered.message
+        .unwrap();
+    session
+        .run("INSERT INTO g1(a,b) VALUES (1,1),(2,2),(3,3),(15,15),(25,25),(35,35)")
+        .unwrap();
+    session
+        .run("ALTER TABLE g1 ADD UNIQUE INDEX idx(b) GLOBAL")
+        .unwrap();
+    assert_eq!(
+        tests_support::row_text(
+            session.run("SELECT b FROM g1 USE INDEX(idx) WHERE b < 16 ORDER BY b")
+        ),
+        [vec!["1"], vec!["2"], vec!["3"], vec!["15"]]
     );
+    let shown = tests_support::row_text(session.run("SHOW INDEX FROM g1 WHERE Key_name = 'idx'"));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0][16], "YES");
+    let duplicate = session
+        .run("INSERT INTO g1(a,b) VALUES (5,25)")
+        .expect_err("GLOBAL uniqueness must cross partition boundaries")
+        .to_mysql_error();
+    assert_eq!(duplicate.code, 1062);
 }
 
 /// Go runs partition checks in TWO phases, and which error a doubly-wrong
@@ -3385,9 +3410,7 @@ fn unserved_partition_management_is_refused_not_ignored() {
     let unserved = [
         "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO \
          (PARTITION q0 VALUES LESS THAN (20))",
-        "ALTER TABLE pmh COALESCE PARTITION 2",
         "ALTER TABLE pm EXCHANGE PARTITION p0 WITH TABLE plain",
-        "ALTER TABLE pmh ADD PARTITION PARTITIONS 2",
         "ALTER TABLE plain PARTITION BY HASH (a) PARTITIONS 2",
     ];
     for sql in unserved {
@@ -3451,6 +3474,56 @@ fn information_schema_partitions_reports_gos_rows() {
         "the ordinal is ONE-based and the description is the stored bound"
     );
 
+    // Feed a statement-time TableSizeStats result into the catalog image
+    // directly here; the cluster provider path has its own storage-boundary
+    // regression.
+    {
+        let shared = session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let (table_id, partition_ids) = {
+            let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "ip").unwrap()
+            else {
+                panic!("ip is a base table")
+            };
+            (
+                table.table_id,
+                table
+                    .partition()
+                    .unwrap()
+                    .definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        catalog.set_table_storage_statistics(
+            table_id,
+            (12, 4, 48, 24),
+            &[
+                (partition_ids[0], (5, 4, 20, 10)),
+                (partition_ids[1], (7, 4, 28, 14)),
+            ],
+        );
+
+        let plain_id = match catalog.table_in("test", "plainp").unwrap() {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("plainp is a base table"),
+        };
+        catalog.set_table_storage_statistics(plain_id, (3, 8, 24, 0), &[]);
+    }
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT partition_name, table_rows, avg_row_length, data_length, index_length \
+             FROM information_schema.partitions WHERE table_name = 'ip' \
+             ORDER BY partition_ordinal_position",
+        )),
+        vec![
+            vec!["p0", "5", "4", "20", "10"],
+            vec!["p1", "7", "4", "28", "14"],
+        ],
+        "each partition reports its own physical statistics"
+    );
+
     // An unpartitioned table is present with NULL partition columns.
     let rows = tests_support::row_text(session.run(
         "SELECT partition_name, partition_method FROM information_schema.partitions \
@@ -3460,6 +3533,13 @@ fn information_schema_partitions_reports_gos_rows() {
         rows,
         vec![vec!["NULL".to_owned(), "NULL".to_owned()]],
         "an unpartitioned table is one NULL row, not zero rows"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT table_rows, avg_row_length, data_length, index_length \
+             FROM information_schema.partitions WHERE table_name = 'plainp'",
+        )),
+        vec![vec!["3", "8", "24", "0"]]
     );
 }
 
@@ -3698,7 +3778,12 @@ fn an_unsigned_row_handle_is_read_through_ranges_like_go() {
         tests_support::row_text(session.run(sql))
             .into_iter()
             .map(|row| row.join(" "))
-            .find(|line| line.contains("Scan") || line.contains("Point_Get"))
+            // The scan OPERATOR line carries the range/handle info; the
+            // parent reader line only references the scan via its
+            // `data:...` access object and never names the range itself.
+            .find(|line| {
+                (line.contains("Scan") || line.contains("Point_Get")) && !line.contains("data:")
+            })
             .unwrap_or_default()
     };
 

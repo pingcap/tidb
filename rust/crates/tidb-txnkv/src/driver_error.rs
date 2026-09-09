@@ -24,9 +24,9 @@ use tidb_error::{tidb, ErrMessage};
 use crate::driver::transaction_error::{Redaction, TransactionError, WriteConflict};
 
 use crate::{
-    gen_entry_too_large_err, gen_key_too_large_err, gen_txn_too_large_err,
-    gen_write_conflict_in_tidb_err, KvError, ERR_CANNOT_SET_NIL_VALUE, ERR_INVALID_TXN,
-    ERR_NOT_EXIST, ERR_WRITE_CONFLICT,
+    gen_entry_too_large_err, gen_key_too_large_err, gen_shared_lock_lost_err,
+    gen_txn_too_large_err, gen_write_conflict_in_tidb_err, KvError, ERR_CANNOT_SET_NIL_VALUE,
+    ERR_INVALID_TXN, ERR_NOT_EXIST, ERR_WRITE_CONFLICT,
 };
 
 /// Typed client-side errors entering transaction read adapters.
@@ -146,6 +146,14 @@ pub enum StorageDriverError {
         /// Process redaction mode captured at the conversion boundary.
         redaction: Redaction,
     },
+    /// TiKV confirmed that shared-lock ownership was lost during an upgrade.
+    /// The key is already rendered under the caller's redaction policy.
+    SharedLockLost {
+        /// Transaction start timestamp.
+        start_ts: u64,
+        /// Redacted key text used by the source message template.
+        key: String,
+    },
     /// client-go retryable transaction error text.
     Retryable {
         /// Raw retry detail, including a possible serialized lock key.
@@ -228,6 +236,10 @@ impl fmt::Display for StorageDriverError {
             }
             Self::ResourceGroupThrottled => formatter.write_str("resource group throttled"),
             Self::WriteConflict { .. } => formatter.write_str("write conflict"),
+            Self::SharedLockLost { start_ts, key } => write!(
+                formatter,
+                "shared lock lost during upgrade: txnStartTS={start_ts}, key={key}"
+            ),
             Self::Retryable { message } => formatter.write_str(message),
             Self::Other(message) => formatter.write_str(message),
             Self::Context { message, source } => write!(formatter, "{message}: {source}"),
@@ -308,6 +320,9 @@ pub fn to_tidb_driver_error(error: &StorageDriverError) -> ConvertedDriverError 
         }
         StorageDriverError::WriteConflictInLatch { start_ts } => {
             ConvertedDriverError::Kv(gen_write_conflict_in_tidb_err(*start_ts))
+        }
+        StorageDriverError::SharedLockLost { start_ts, key } => {
+            ConvertedDriverError::Kv(gen_shared_lock_lost_err(*start_ts, key))
         }
         StorageDriverError::TxnTooLarge { size } => {
             ConvertedDriverError::Kv(gen_txn_too_large_err(*size))

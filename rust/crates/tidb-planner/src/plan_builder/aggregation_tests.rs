@@ -24,12 +24,13 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::ZonedNoColumns;
+use tidb_funcdep::ColSet;
 
 use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
 use crate::expression_rewriter::ColumnIdAllocator;
-use crate::logical::LogicalPlan;
+use crate::logical::{prepare_possible_properties, LogicalPlan};
 use crate::plan_base::PlanIdAllocator;
 
 // ***** the catalogue *****
@@ -72,6 +73,7 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
         is_public: true,
         is_hidden: false,
         is_virtual_generated: false,
+        generated_expr: None,
     }
 }
 
@@ -166,12 +168,101 @@ fn build_err(sql: &str) -> String {
     }
 }
 
+#[test]
+fn extract_fd_source_projection_and_aggregation_cases() {
+    let build_with_fd_expression_ids = |sql: &str| {
+        let harness = Harness::new();
+        let mut builder = harness.builder();
+        builder.new_only_full_group_by_check = true;
+        builder
+            .build_select(&parse_select(sql))
+            .unwrap_or_else(|error| panic!("{sql} should build: {}", error.message()))
+            .0
+    };
+
+    let projection = build_with_fd_expression_ids("SELECT a, c, b + 1 FROM t");
+    let projection_schema = projection.schema().expect("projection schema");
+    let projection_fd = projection.extract_fd();
+    assert!(projection_fd.in_closure(
+        &ColSet::new([1]),
+        &ColSet::new(
+            projection_schema
+                .columns
+                .iter()
+                .map(|column| column.unique_id),
+        ),
+    ));
+    assert!(projection_fd.in_closure(
+        &ColSet::new([2]),
+        &ColSet::new([projection_schema.columns[2].unique_id]),
+    ));
+
+    let grouped = build_with_fd_expression_ids("SELECT b + 1, SUM(a) FROM t GROUP BY b");
+    let grouped_schema = grouped.schema().expect("grouped projection schema");
+    let grouped_fd = grouped.extract_fd();
+    assert!(grouped_fd.in_closure(
+        &ColSet::new([2]),
+        &ColSet::new(grouped_schema.columns.iter().map(|column| column.unique_id),),
+    ));
+    assert!(grouped_fd.group_by_cols().has(2));
+
+    let mut harness = Harness::new();
+    harness.catalog.tables[0].indexes[0].unique = true;
+    let mut builder = harness.builder();
+    let (filtered, _) = builder
+        .build_select(&parse_select("SELECT a, c FROM t WHERE b = 1"))
+        .expect("nullable unique key query builds");
+    let filtered_fd = filtered.extract_fd();
+    assert!(filtered_fd.in_closure(&ColSet::new([2]), &ColSet::new([1, 3])));
+}
+
 /// The first operator of the given kind on the way down from the root.
 fn find<'a>(plan: &'a LogicalPlan, tp: &str) -> Option<&'a LogicalPlan> {
     if plan.tp() == tp {
         return Some(plan);
     }
     plan.children().iter().find_map(|child| find(child, tp))
+}
+
+#[test]
+fn possible_properties_use_equalities_above_the_data_source() {
+    let mut harness = Harness::new();
+    harness.catalog.tables[0].indexes.push(SourceIndex {
+        id: 2,
+        name: "idx_bc".to_owned(),
+        columns: vec![
+            SourceIndexColumn {
+                name: "b".to_owned(),
+                offset: 1,
+                length: -1,
+            },
+            SourceIndexColumn {
+                name: "c".to_owned(),
+                offset: 2,
+                length: -1,
+            },
+        ],
+        is_public: true,
+        is_visible: true,
+        ..SourceIndex::default()
+    });
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select(
+            "SELECT c, COUNT(*) FROM t WHERE b = 1 GROUP BY c",
+        ))
+        .expect("the grouped select builds");
+    let (plan, _) = prepare_possible_properties(plan);
+    let LogicalPlan::Aggregation(aggregation) =
+        find(&plan, "Aggregation").expect("the plan contains an aggregation")
+    else {
+        panic!("the located operator is not an aggregation");
+    };
+    assert!(aggregation
+        .possible_properties
+        .orders
+        .iter()
+        .any(|order| { order.len() == 1 && order[0].id == 3 }));
 }
 
 // ***** GROUP BY + aggregate builds a LogicalAggregation *****
@@ -207,6 +298,19 @@ fn test_group_by_builds_an_aggregation_with_gos_schema() {
         panic!("expected a Projection at the root, got {}", plan.tp());
     };
     assert_eq!(projection.exprs.len(), 2);
+    let Expression::Column(group_expr) = &projection.exprs[0] else {
+        panic!("the grouped select field resolves to an aggregation column");
+    };
+    let group_output = projection
+        .base
+        .base
+        .schema()
+        .and_then(|schema| schema.columns.first())
+        .expect("the projection output column");
+    assert_eq!(
+        group_output.unique_id, group_expr.unique_id,
+        "Go buildProjectionField preserves an already-rewritten Column identity"
+    );
 }
 
 #[test]
@@ -401,8 +505,11 @@ fn test_a_having_column_reference_becomes_a_column_marker() {
         PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
 
     let mut having = select.having.clone().expect("a HAVING clause");
+    let gby_exprs = builder
+        .resolve_gby_exprs(&select.group_by, &fields, &names)
+        .expect("GROUP BY resolves");
     let aggregates = builder
-        .resolve_having_and_order_by(&mut having, &mut fields, &names)
+        .resolve_having_and_order_by(&mut having, &mut fields, &names, &gby_exprs)
         .expect("HAVING resolves");
     assert!(aggregates.is_empty());
     // `x` is the select list's field 0, so the marker is `#col#0`.
@@ -416,6 +523,51 @@ fn test_a_having_column_reference_becomes_a_column_marker() {
 }
 
 // ***** a correlated aggregate resolves to the right scope *****
+
+#[test]
+fn test_a_having_group_by_column_resolves_through_the_source_plan() {
+    // Go `havingWindowAndOrderbyExprResolver.Leave`: a HAVING name matching a
+    // GROUP BY item sets `resolveFieldsFirst = false`, so it resolves through
+    // the SOURCE plan and `resolveFromPlan` appends an auxiliary select field.
+    // Without that, `select count(*) from t group by a having a > 1` was 1054
+    // even though `a` is grouped, because `a` is not in the select list.
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT COUNT(*) FROM t GROUP BY a HAVING a > 1");
+    let plan = builder
+        .build_table_refs(select.from.as_ref())
+        .expect("FROM");
+    let (schema, names) = super::snapshot_schema_and_names(&plan);
+    let mut fields =
+        PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
+    let old_len = fields.len();
+
+    let mut having = select.having.clone().expect("a HAVING clause");
+    let gby_exprs = builder
+        .resolve_gby_exprs(&select.group_by, &fields, &names)
+        .expect("GROUP BY resolves");
+    let aggregates = builder
+        .resolve_having_and_order_by(&mut having, &mut fields, &names, &gby_exprs)
+        .expect("HAVING resolves a grouped column");
+    assert!(aggregates.is_empty(), "HAVING has no aggregate call");
+    assert_eq!(
+        fields.len(),
+        old_len + 1,
+        "the grouped column is appended as an auxiliary field"
+    );
+    let appended = &fields[old_len];
+    assert!(appended.hidden, "the auxiliary field is hidden");
+    assert!(
+        matches!(&appended.expr, Expr::Column(path) if path.last().is_some_and(|c| c.as_str() == "a"))
+    );
+    let Expr::Binary(_, left, _) = &having else {
+        panic!("expected a comparison, got {having:?}");
+    };
+    assert_eq!(
+        PlanMarker::from_expr(left),
+        Some(PlanMarker::new(MarkerKind::Column, old_len))
+    );
+}
 
 #[test]
 fn test_a_correlated_aggregate_is_lifted_into_the_outer_select_list() {
@@ -682,18 +834,21 @@ fn test_resolve_from_select_fields_precedence() {
     let fields = vec![
         ProjectionField {
             expr: Expr::Column(vec!["b".to_owned()]),
+            column_reference: true,
             alias: Some("x".to_owned()),
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Column(vec!["c".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Column(vec!["hidden".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: true,
@@ -772,12 +927,14 @@ fn test_add_alias_name_gives_every_field_an_explicit_alias() {
     let mut fields = vec![
         ProjectionField {
             expr: Expr::Column(vec!["t".to_owned(), "b".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Int("1".to_owned()),
+            column_reference: false,
             alias: None,
             text: Some("1".to_owned()),
             hidden: false,
@@ -806,4 +963,24 @@ fn test_build_distinct_reports_every_child_column() {
     };
     assert_eq!(agg.group_by_items.len(), 1, "grouped on the first column");
     assert_eq!(agg.agg_funcs.len(), child_width);
+}
+
+#[test]
+fn aggregation_hints_reach_the_logical_aggregation() {
+    const PREFER_HASH_AGG: u32 = 1 << 25;
+    const PREFER_STREAM_AGG: u32 = 1 << 26;
+
+    for (hint, expected) in [
+        ("HASH_AGG", PREFER_HASH_AGG),
+        ("STREAM_AGG", PREFER_STREAM_AGG),
+    ] {
+        let plan = build(&format!("SELECT /*+ {hint}() */ COUNT(*) FROM t"));
+        let mut found = None;
+        plan.walk_preorder(&mut |node| {
+            if let LogicalPlan::Aggregation(aggregation) = node {
+                found = Some(aggregation.prefer_agg_type);
+            }
+        });
+        assert_eq!(found, Some(expected), "{hint} must reach physical search");
+    }
 }

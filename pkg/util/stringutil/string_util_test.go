@@ -112,30 +112,34 @@ func TestCompileLike2Regexp(t *testing.T) {
 	tbl := []struct {
 		pattern string
 		regexp  string
+		escape  byte
 	}{
-		{``, `^$`},
-		{`a`, `^a$`},
-		{`aA`, `^aA$`},
-		{`$a$%`, `^\$a\$.*$`},
-		{`a.b%`, `^a\.b.*$`},
-		{`a+b`, `^a\+b$`},
-		{`_`, `^.$`},
-		{`__`, `^..$`},
-		{`%`, `^.*$`},
-		{`%b`, `^.*b$`},
-		{`%a%`, `^.*a.*$`},
-		{`a%`, `^a.*$`},
-		{`\%a`, `^%a$`},
-		{`\_a`, `^_a$`},
-		{`\\_a`, `^\\.a$`},
-		{`\a\b`, `^ab$`},
-		{`%%_`, `^..*$`},
-		{`%_%_aA`, "^...*aA$"},
+		{``, `^$`, '\\'},
+		{`a`, `^a$`, '\\'},
+		{`aA`, `^aA$`, '\\'},
+		{`$a$%`, `^\$a\$.*$`, '\\'},
+		{`a.b%`, `^a\.b.*$`, '\\'},
+		{`a+b`, `^a\+b$`, '\\'},
+		{`_`, `^.$`, '\\'},
+		{`__`, `^..$`, '\\'},
+		{`%`, `^.*$`, '\\'},
+		{`%b`, `^.*b$`, '\\'},
+		{`%a%`, `^.*a.*$`, '\\'},
+		{`a%`, `^a.*$`, '\\'},
+		{`\%a`, `^%a$`, '\\'},
+		{`\_a`, `^_a$`, '\\'},
+		{`\\_a`, `^\\.a$`, '\\'},
+		{`\a\b`, `^ab$`, '\\'},
+		{`%%_`, `^..*$`, '\\'},
+		{`%_%_aA`, "^...*aA$", '\\'},
+		{`+%a`, `^%a$`, '+'},
 	}
 	for _, v := range tbl {
-		result := CompileLike2Regexp(v.pattern)
+		result := CompileLike2Regexp(v.pattern, v.escape)
 		require.Equalf(t, v.regexp, result, "source %v", v)
 	}
+	// Keep the legacy one-argument form equivalent to the SQL-default escape.
+	require.Equal(t, `^%a$`, CompileLike2Regexp(`\%a`))
 }
 
 func TestIsExactMatch(t *testing.T) {

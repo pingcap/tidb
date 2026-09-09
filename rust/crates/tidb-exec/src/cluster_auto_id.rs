@@ -56,9 +56,9 @@
 //! not an error.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_executor::kv_table::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
@@ -200,6 +200,17 @@ pub enum AutoIdServiceError {
     },
     /// A non-retryable discovery, transport, or service failure.
     Rpc(AutoIdServiceRpcError),
+    /// Repeated RPC failures reached the Go client's count-and-duration limit.
+    RpcRetryLimit {
+        /// The operation that exhausted its retry budget.
+        operation: &'static str,
+        /// Number of RPC failures observed for this operation.
+        error_count: usize,
+        /// Time since the first RPC failure.
+        elapsed: Duration,
+        /// The final RPC failure that triggered the limit.
+        last_error: AutoIdServiceRpcError,
+    },
 }
 
 impl std::fmt::Display for AutoIdServiceError {
@@ -212,6 +223,15 @@ impl std::fmt::Display for AutoIdServiceError {
                 "invalid auto ID increment {increment} or offset {offset}"
             ),
             Self::Rpc(error) => write!(formatter, "auto ID service call failed: {error}"),
+            Self::RpcRetryLimit {
+                operation,
+                error_count,
+                elapsed,
+                last_error,
+            } => write!(
+                formatter,
+                "auto ID {operation} failed after {error_count} RPC errors over {elapsed:?}; last RPC error: {last_error}; check AutoID service availability and connectivity, then retry the statement"
+            ),
         }
     }
 }
@@ -222,12 +242,57 @@ impl std::error::Error for AutoIdServiceError {}
 /// reconnect and cancellation-aware retries.
 pub struct AutoIdServiceAllocator<C> {
     client: Arc<C>,
-    db_id: i64,
-    table_id: i64,
+    binding: RwLock<AutoIdServiceBinding>,
     unsigned: bool,
     keyspace_id: u32,
     generation: AtomicU64,
     last_allocated: AtomicI64,
+    rpc_retry_policy: AutoIdServiceRetryPolicy,
+}
+
+/// The database/table identity currently owned by one service allocator.
+///
+/// Go's `singlePointAlloc` mutates these fields only while holding its
+/// `stateMu`; the Rust lock carries the same ownership boundary so an
+/// allocation cannot race a cross-database table rename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AutoIdServiceBinding {
+    db_id: i64,
+    table_id: i64,
+}
+
+const DEFAULT_RPC_RETRY_MIN_ERRORS: usize = 10;
+const DEFAULT_RPC_RETRY_MIN_DURATION: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy, Debug)]
+struct AutoIdServiceRetryPolicy {
+    min_errors: usize,
+    min_duration: Duration,
+}
+
+impl Default for AutoIdServiceRetryPolicy {
+    fn default() -> Self {
+        Self {
+            min_errors: DEFAULT_RPC_RETRY_MIN_ERRORS,
+            min_duration: DEFAULT_RPC_RETRY_MIN_DURATION,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AutoIdServiceRetryState {
+    error_count: usize,
+    first_error: Option<Instant>,
+}
+
+impl AutoIdServiceRetryState {
+    fn observe(&mut self, now: Instant, policy: AutoIdServiceRetryPolicy) -> bool {
+        let first_error = *self.first_error.get_or_insert(now);
+        self.error_count += 1;
+        policy.min_errors > 0
+            && self.error_count >= policy.min_errors
+            && now.duration_since(first_error) >= policy.min_duration
+    }
 }
 
 impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
@@ -242,12 +307,12 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
     ) -> Self {
         Self {
             client,
-            db_id,
-            table_id,
+            binding: RwLock::new(AutoIdServiceBinding { db_id, table_id }),
             unsigned,
             keyspace_id,
             generation: AtomicU64::new(0),
             last_allocated: AtomicI64::new(0),
+            rpc_retry_policy: AutoIdServiceRetryPolicy::default(),
         }
     }
 
@@ -260,12 +325,25 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         increment: i64,
         offset: i64,
     ) -> Result<(i64, i64), AutoIdServiceError> {
+        let binding = self.binding.read().expect("auto ID binding lock poisoned");
+        self.alloc_inner(call, n, increment, offset, binding.db_id, binding.table_id)
+    }
+
+    fn alloc_inner(
+        &self,
+        call: &UnaryCallContext,
+        n: u64,
+        increment: i64,
+        offset: i64,
+        db_id: i64,
+        table_id: i64,
+    ) -> Result<(i64, i64), AutoIdServiceError> {
         if !(1..=65_535).contains(&increment) || !(1..=65_535).contains(&offset) {
             return Err(AutoIdServiceError::InvalidIncrementAndOffset { increment, offset });
         }
         let request = AutoIdServiceAllocRequest {
-            db_id: self.db_id,
-            table_id: self.table_id,
+            db_id,
+            table_id,
             n,
             increment,
             offset,
@@ -273,17 +351,32 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
             keyspace_id: self.keyspace_id,
         };
         let mut backoff = AutoIdServiceBackoff::default();
+        let mut retry_state = AutoIdServiceRetryState::default();
         loop {
             let generation = self.generation.load(Ordering::Acquire);
             match self.client.alloc_auto_id(call, request) {
                 Ok((min, max)) => {
                     backoff.reset();
-                    self.last_allocated.store(min, Ordering::Release);
+                    self.update_last_allocated(max);
                     return Ok((min, max));
                 }
                 Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
                     stopped(call)?;
+                    let now = Instant::now();
+                    let limit_reached = retry_state.observe(now, self.rpc_retry_policy);
                     self.reset_generation(generation, &error);
+                    if limit_reached {
+                        stopped(call)?;
+                        let elapsed = retry_state
+                            .first_error
+                            .map_or(Duration::ZERO, |first| now.duration_since(first));
+                        return Err(AutoIdServiceError::RpcRetryLimit {
+                            operation: "alloc",
+                            error_count: retry_state.error_count,
+                            elapsed,
+                            last_error: error,
+                        });
+                    }
                     backoff.backoff(Some(call))?;
                 }
                 Err(error) => return Err(AutoIdServiceError::Rpc(error)),
@@ -299,10 +392,23 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         new_base: i64,
         force: bool,
     ) -> Result<(), AutoIdServiceError> {
+        let binding = self.binding.read().expect("auto ID binding lock poisoned");
+        self.rebase_inner(call, new_base, force, binding.db_id, binding.table_id)
+    }
+
+    fn rebase_inner(
+        &self,
+        call: &UnaryCallContext,
+        new_base: i64,
+        force: bool,
+        db_id: i64,
+        table_id: i64,
+    ) -> Result<(), AutoIdServiceError> {
         let mut backoff = AutoIdServiceBackoff::default();
+        let mut retry_state = AutoIdServiceRetryState::default();
         let request = AutoIdServiceRebaseRequest {
-            db_id: self.db_id,
-            table_id: self.table_id,
+            db_id,
+            table_id,
             new_base,
             force,
             unsigned: self.unsigned,
@@ -313,12 +419,30 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
             match self.client.rebase(call, request) {
                 Ok(()) => {
                     backoff.reset();
-                    self.last_allocated.store(new_base, Ordering::Release);
+                    if force {
+                        self.last_allocated.store(new_base, Ordering::Release);
+                    } else {
+                        self.update_last_allocated(new_base);
+                    }
                     return Ok(());
                 }
                 Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
                     stopped(call)?;
+                    let now = Instant::now();
+                    let limit_reached = retry_state.observe(now, self.rpc_retry_policy);
                     self.reset_generation(generation, &error);
+                    if limit_reached {
+                        stopped(call)?;
+                        let elapsed = retry_state
+                            .first_error
+                            .map_or(Duration::ZERO, |first| now.duration_since(first));
+                        return Err(AutoIdServiceError::RpcRetryLimit {
+                            operation: "rebase",
+                            error_count: retry_state.error_count,
+                            elapsed,
+                            last_error: error,
+                        });
+                    }
                     backoff.backoff(Some(call))?;
                 }
                 Err(error) => return Err(AutoIdServiceError::Rpc(error)),
@@ -326,10 +450,66 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         }
     }
 
-    /// Last minimum/base returned by the service, for Go `Transfer` parity.
+    /// Transfers ownership to another database/table identity without
+    /// allowing the destination to reuse IDs already reserved by the source.
+    ///
+    /// Go's `singlePointAlloc.Transfer` first allocates with `n == 0` to
+    /// refresh the authoritative source base, then changes the binding and
+    /// rebases the destination to that base. The write lock makes the whole
+    /// sequence exclusive with `Alloc` and `Rebase`; a failed destination
+    /// rebase restores the source binding.
+    pub fn transfer(
+        &self,
+        call: &UnaryCallContext,
+        db_id: i64,
+        table_id: i64,
+    ) -> Result<(), AutoIdServiceError> {
+        let mut binding = self.binding.write().expect("auto ID binding lock poisoned");
+        if binding.db_id == db_id && binding.table_id == table_id {
+            return Ok(());
+        }
+
+        // Refresh the source service base before switching identities. Go's
+        // Transfer uses Alloc(0, 1, 1) for this because a cold allocator may
+        // not have observed IDs reserved by another TiDB node.
+        self.alloc_inner(call, 0, 1, 1, binding.db_id, binding.table_id)?;
+        let transfer_base = self.last_allocated();
+        let source = *binding;
+        binding.db_id = db_id;
+        binding.table_id = table_id;
+        if let Err(error) = self.rebase_inner(call, transfer_base, false, db_id, table_id) {
+            *binding = source;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Greatest allocated/base value observed from the service, for Go
+    /// `Transfer` parity. Concurrent responses may arrive out of order.
     #[must_use]
     pub fn last_allocated(&self) -> i64 {
         self.last_allocated.load(Ordering::Acquire)
+    }
+
+    fn update_last_allocated(&self, new_base: i64) {
+        loop {
+            let current = self.last_allocated.load(Ordering::Acquire);
+            let advances = if self.unsigned {
+                (new_base as u64) > (current as u64)
+            } else {
+                new_base > current
+            };
+            if !advances {
+                return;
+            }
+            if self
+                .last_allocated
+                .compare_exchange(current, new_base, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return;
+            }
+        }
     }
 
     fn reset_generation(&self, generation: u64, error: &AutoIdServiceRpcError) {
@@ -606,6 +786,20 @@ where
         })
     }
 
+    /// Go `rebase4Signed`'s `allocIDs == true` transaction: read the stored
+    /// end, take `max(currentEnd, requiredBase)` and RESERVE a full window of
+    /// `step` ids above it -- one atomic read-modify-write (`pkg/meta/autoid/
+    /// autoid.go:348`, `:408`). This is what lets a monotonic run of explicit
+    /// ids pay the meta key once per window instead of once per row.
+    fn rebase_alloc(
+        &self,
+        required: u64,
+        step: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        self.transact(|current| rebase_reservation(current, required, step, unsigned))
+    }
+
     fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
         self.transact(|current| {
             if current == required {
@@ -647,6 +841,29 @@ fn batch_reservation(
     }
 }
 
+/// The decision run inside the counter transaction for one allocating rebase:
+/// Go's `rebase4{Signed,Unsigned}` `allocIDs == true` arm. The counter moves to
+/// `max(currentEnd, requiredBase)` and a fresh window of `step` ids above it is
+/// reserved in the same transaction; an empty window means the domain is full.
+fn rebase_reservation(
+    current: u64,
+    required: u64,
+    step: u64,
+    unsigned: bool,
+) -> (Option<u64>, (u64, u64)) {
+    let base = if tidb_executor::kv_table::exceeds(required, current, unsigned) {
+        required
+    } else {
+        current
+    };
+    let end = advance(base, step.max(1), unsigned);
+    if end == current {
+        (None, (base, end))
+    } else {
+        (Some(end), (base, end))
+    }
+}
+
 /// One phrase for every way the counter's home can be out of reach, so the
 /// statement that surfaces it says which step failed.
 fn store_error(step: &str, error: &impl std::fmt::Display) -> AutoIdStoreError {
@@ -658,8 +875,9 @@ fn store_error(step: &str, error: &impl std::fmt::Display) -> AutoIdStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
-    use std::time::Instant;
+    use std::sync::Mutex;
 
     #[derive(Debug)]
     struct MockAutoIdServiceRpc {
@@ -694,6 +912,82 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ScriptedAutoIdServiceRpc {
+        alloc_responses: Mutex<VecDeque<Result<(i64, i64), AutoIdServiceRpcError>>>,
+        alloc_calls: AtomicUsize,
+        reset_calls: AtomicUsize,
+    }
+
+    impl AutoIdServiceRpc for ScriptedAutoIdServiceRpc {
+        fn alloc_auto_id(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceAllocRequest,
+        ) -> Result<(i64, i64), AutoIdServiceRpcError> {
+            self.alloc_calls.fetch_add(1, Ordering::Relaxed);
+            self.alloc_responses
+                .lock()
+                .expect("scripted responses lock")
+                .pop_front()
+                .expect("scripted allocation response")
+        }
+
+        fn rebase(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceRebaseRequest,
+        ) -> Result<(), AutoIdServiceRpcError> {
+            Ok(())
+        }
+
+        fn reset_connection(&self, _generation: u64, _reason: &AutoIdServiceRpcError) {
+            self.reset_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Debug)]
+    struct TransferRecordingRpc {
+        alloc_requests: Mutex<Vec<AutoIdServiceAllocRequest>>,
+        rebase_requests: Mutex<Vec<AutoIdServiceRebaseRequest>>,
+        alloc_responses: Mutex<VecDeque<Result<(i64, i64), AutoIdServiceRpcError>>>,
+        rebase_responses: Mutex<VecDeque<Result<(), AutoIdServiceRpcError>>>,
+    }
+
+    impl AutoIdServiceRpc for TransferRecordingRpc {
+        fn alloc_auto_id(
+            &self,
+            _call: &UnaryCallContext,
+            request: AutoIdServiceAllocRequest,
+        ) -> Result<(i64, i64), AutoIdServiceRpcError> {
+            self.alloc_requests
+                .lock()
+                .expect("allocation request lock")
+                .push(request);
+            self.alloc_responses
+                .lock()
+                .expect("allocation responses lock")
+                .pop_front()
+                .expect("scripted allocation response")
+        }
+
+        fn rebase(
+            &self,
+            _call: &UnaryCallContext,
+            request: AutoIdServiceRebaseRequest,
+        ) -> Result<(), AutoIdServiceRpcError> {
+            self.rebase_requests
+                .lock()
+                .expect("rebase request lock")
+                .push(request);
+            self.rebase_responses
+                .lock()
+                .expect("rebase responses lock")
+                .pop_front()
+                .expect("scripted rebase response")
+        }
+    }
+
     fn canceled_call() -> UnaryCallContext {
         let cancellation = tidb_txnkv::rpc::UnaryCancellation::new();
         cancellation.cancel();
@@ -717,6 +1011,32 @@ mod tests {
         assert_eq!(
             batch_reservation(10, 30, 2, 3, 1, false),
             (Some(40), (10, 40))
+        );
+    }
+
+    /// The `allocIDs == true` rebase arm (`pkg/meta/autoid/autoid.go:408`):
+    /// one transaction moves the counter past the required base AND reserves a
+    /// full window of `step` ids above it. This is what lets Go amortize an
+    /// ascending run of explicit ids to one counter transaction per window.
+    #[test]
+    fn test_rebase_reservation_reserves_a_window_past_the_required_base() {
+        // Fresh counter, first explicit id: write end = base + step.
+        assert_eq!(
+            rebase_reservation(0, 5, 30_000, false),
+            (Some(30_005), (5, 30_005))
+        );
+        // A peer moved the counter past our value meanwhile: the window sits
+        // above THAT mark, and the base says so -- ids up to it are already
+        // handed out.
+        assert_eq!(rebase_reservation(50, 5, 10, true), (Some(60), (50, 60)));
+        // The monotonic run continues INSIDE the caller's cached window; the
+        // next crossing pays for the following whole window in one write. The
+        // base follows the STORED end (`rebase4Signed`: `newBase = max(
+        // currentEnd, requiredBase)`): everything up to it is already handed
+        // out or reserved.
+        assert_eq!(
+            rebase_reservation(30_005, 6, 30_000, false),
+            (Some(60_005), (30_005, 60_005))
         );
     }
 
@@ -776,6 +1096,215 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
         assert_eq!(client.rebase_calls.load(Ordering::Relaxed), 1);
         assert_eq!(client.reset_calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go` transfer cases.
+    ///
+    /// A transfer must refresh the source service base with `Alloc(0, 1, 1)`
+    /// before rebasing the destination. The destination request must carry the
+    /// new database identity, and transferring to the same identity is a no-op.
+    #[test]
+    fn transfer_refreshes_source_base_and_rebases_destination() {
+        let client = Arc::new(TransferRecordingRpc {
+            alloc_requests: Mutex::new(Vec::new()),
+            rebase_requests: Mutex::new(Vec::new()),
+            alloc_responses: Mutex::new(VecDeque::from([Ok((40, 42))])),
+            rebase_responses: Mutex::new(VecDeque::from([Ok(()), Ok(())])),
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 9, false, 0);
+        let call = UnaryCallContext::new(
+            Duration::from_secs(1),
+            tidb_txnkv::rpc::UnaryCancellation::new(),
+        );
+
+        allocator
+            .transfer(&call, 2, 9)
+            .expect("destination transfer succeeds");
+        assert_eq!(allocator.last_allocated(), 42);
+
+        let alloc_requests = client
+            .alloc_requests
+            .lock()
+            .expect("allocation requests lock");
+        assert_eq!(
+            alloc_requests.as_slice(),
+            &[AutoIdServiceAllocRequest {
+                db_id: 1,
+                table_id: 9,
+                n: 0,
+                increment: 1,
+                offset: 1,
+                unsigned: false,
+                keyspace_id: 0,
+            }]
+        );
+        drop(alloc_requests);
+        let rebase_requests = client.rebase_requests.lock().expect("rebase requests lock");
+        assert_eq!(
+            rebase_requests.as_slice(),
+            &[AutoIdServiceRebaseRequest {
+                db_id: 2,
+                table_id: 9,
+                new_base: 42,
+                force: false,
+                unsigned: false,
+                keyspace_id: 0,
+            }]
+        );
+        drop(rebase_requests);
+
+        allocator
+            .transfer(&call, 2, 9)
+            .expect("same binding transfer is a no-op");
+        assert_eq!(
+            client
+                .alloc_requests
+                .lock()
+                .expect("allocation requests lock")
+                .len(),
+            1
+        );
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go` transfer rollback.
+    /// A failed destination rebase restores the source binding so a later
+    /// operation cannot accidentally address the new database.
+    #[test]
+    fn transfer_restores_source_binding_when_destination_rebase_fails() {
+        let client = Arc::new(TransferRecordingRpc {
+            alloc_requests: Mutex::new(Vec::new()),
+            rebase_requests: Mutex::new(Vec::new()),
+            alloc_responses: Mutex::new(VecDeque::from([Ok((0, 17))])),
+            rebase_responses: Mutex::new(VecDeque::from([
+                Err(AutoIdServiceRpcError::Other(
+                    "destination unavailable".to_owned(),
+                )),
+                Err(AutoIdServiceRpcError::Other(
+                    "source unavailable".to_owned(),
+                )),
+            ])),
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 9, false, 0);
+        let call = UnaryCallContext::new(
+            Duration::from_secs(1),
+            tidb_txnkv::rpc::UnaryCancellation::new(),
+        );
+
+        assert_eq!(
+            allocator.transfer(&call, 2, 9),
+            Err(AutoIdServiceError::Rpc(AutoIdServiceRpcError::Other(
+                "destination unavailable".to_owned()
+            )))
+        );
+        assert_eq!(
+            allocator.rebase(&call, 18, false),
+            Err(AutoIdServiceError::Rpc(AutoIdServiceRpcError::Other(
+                "source unavailable".to_owned()
+            )))
+        );
+
+        let rebase_requests = client.rebase_requests.lock().expect("rebase requests lock");
+        assert_eq!(rebase_requests[0].db_id, 2);
+        assert_eq!(rebase_requests[0].new_base, 17);
+        assert_eq!(rebase_requests[1].db_id, 1);
+        assert_eq!(rebase_requests[1].new_base, 18);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go`'s
+    /// `keeps the greatest out-of-order allocation response` and
+    /// `TestAutoIDRPCRetry/reaches the common limit` cases.
+    #[test]
+    fn allocation_tracks_maximum_and_rpc_retry_limit_is_bounded() {
+        let successful = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([Ok((0, 7)), Ok((1, 3))])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&successful), 1, 1, false, 0);
+        let call = UnaryCallContext::new(
+            Duration::from_secs(5),
+            tidb_txnkv::rpc::UnaryCancellation::new(),
+        );
+
+        assert_eq!(allocator.alloc(&call, 1, 1, 1), Ok((0, 7)));
+        assert_eq!(allocator.alloc(&call, 1, 1, 1), Ok((1, 3)));
+        assert_eq!(allocator.last_allocated(), 7);
+        assert_eq!(allocator.rebase(&call, 2, false), Ok(()));
+        assert_eq!(allocator.last_allocated(), 7);
+        assert_eq!(allocator.rebase(&call, 2, true), Ok(()));
+        assert_eq!(allocator.last_allocated(), 2);
+
+        let unsigned = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([Ok((0, 2)), Ok((1, -2))])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let unsigned_allocator = AutoIdServiceAllocator::new(Arc::clone(&unsigned), 1, 1, true, 0);
+        assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((0, 2)));
+        assert_eq!(unsigned_allocator.alloc(&call, 1, 1, 1), Ok((1, -2)));
+        assert_eq!(unsigned_allocator.last_allocated(), -2);
+        assert_eq!(unsigned_allocator.rebase(&call, 3, false), Ok(()));
+        assert_eq!(unsigned_allocator.last_allocated(), -2);
+        assert_eq!(unsigned_allocator.rebase(&call, 3, true), Ok(()));
+        assert_eq!(unsigned_allocator.last_allocated(), 3);
+
+        let failing = Arc::new(ScriptedAutoIdServiceRpc {
+            alloc_responses: Mutex::new(VecDeque::from([
+                Err(AutoIdServiceRpcError::Rpc("first RPC failure".to_owned())),
+                Err(AutoIdServiceRpcError::Rpc("final RPC failure".to_owned())),
+                Err(AutoIdServiceRpcError::Rpc(
+                    "unexpected third call".to_owned(),
+                )),
+            ])),
+            alloc_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+        });
+        let mut allocator = AutoIdServiceAllocator::new(Arc::clone(&failing), 1, 1, false, 0);
+        allocator.rpc_retry_policy = AutoIdServiceRetryPolicy {
+            min_errors: 2,
+            min_duration: Duration::ZERO,
+        };
+        let err = allocator
+            .alloc(&call, 1, 1, 1)
+            .expect_err("two RPC errors reach the configured retry limit");
+        assert!(matches!(
+            err,
+            AutoIdServiceError::RpcRetryLimit {
+                operation: "alloc",
+                error_count: 2,
+                last_error: AutoIdServiceRpcError::Rpc(ref message),
+                ..
+            } if message == "final RPC failure"
+        ));
+        assert_eq!(failing.alloc_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(failing.reset_calls.load(Ordering::Relaxed), 2);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go::TestAutoIDRPCRetryPolicy`.
+    #[test]
+    fn retry_policy_uses_go_defaults_and_and_semantics() {
+        let default = AutoIdServiceRetryPolicy::default();
+        assert_eq!(default.min_errors, 10);
+        assert_eq!(default.min_duration, Duration::from_secs(15));
+
+        let policy = AutoIdServiceRetryPolicy {
+            min_errors: 3,
+            min_duration: Duration::from_secs(2),
+        };
+        let start = Instant::now();
+        let mut state = AutoIdServiceRetryState::default();
+        assert!(!state.observe(start, policy));
+        assert!(!state.observe(start + Duration::from_secs(1), policy));
+        assert!(state.observe(start + Duration::from_secs(2), policy));
+
+        let mut count_only = AutoIdServiceRetryState::default();
+        assert!(!count_only.observe(start, policy));
+        assert!(!count_only.observe(start, policy));
+        assert!(!count_only.observe(start, policy));
+
+        let mut duration_only = AutoIdServiceRetryState::default();
+        assert!(!duration_only.observe(start, policy));
+        assert!(!duration_only.observe(start + Duration::from_secs(3), policy));
     }
 
     /// Source: `pkg/meta/autoid/autoid_service_test.go::TestBackoffCtxAware`.

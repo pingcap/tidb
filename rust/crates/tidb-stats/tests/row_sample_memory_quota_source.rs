@@ -491,3 +491,11 @@ fn source_max_fm_sketch_size_is_applied_to_every_slot() {
     );
     assert_eq!(collector.fm_sketch_max_sizes(), [Some(2), Some(2), Some(2)]);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_row_sample_returns_can_be_ignored() {
+    tidb_stats::adjusted_sample_rate(Some(1), None);
+    let collector = RowSampleCollector::new(0, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    collector.to_proto();
+}

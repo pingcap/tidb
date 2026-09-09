@@ -12,33 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/funcdep`, plus the `pkg/planner/util.IsNullRejected` proof
-//! that feeds it: which columns of a query block determine which others, and
-//! which predicates prove a column NOT NULL.
+//! Go `pkg/planner/funcdep`: functional dependencies used by logical planning.
 //!
-//! # Why this is its own crate
+//! For a rigorous treatment of functional dependencies and SQL operators, see
+//! Norman Paulley and Glenn's *Exploiting Functional Dependence in Query
+//! Optimization* (2000).
 //!
-//! Go keeps `funcdep` under `pkg/planner`, below every rule that reads it.
-//! This workspace had it in `tidb-executor`'s SQL driver, which is ABOVE
-//! `tidb-planner` in the dependency order -- so the logical-optimization rules
-//! that need functional dependencies (outer-join elimination, aggregate
-//! elimination, `ONLY_FULL_GROUP_BY`) could not reach it without inverting the
-//! edge. This crate is a leaf over `tidb-util` (the column set) and
-//! `tidb-expr` (the expression tree), so BOTH `tidb-planner` and
-//! `tidb-executor` may depend on it, matching Go's own layering.
-//!
-//! The graph owns dependency projection, conditional outer-join dependencies,
-//! and scalar-expression identities. Native logical operators in
-//! `tidb-planner` derive these sets from resolved expressions; the legacy SQL
-//! driver still has its AST-facing adapter until native SQL planning lands.
-//! Null rejection delegates to `tidb_expr::expression::is_null_rejected`.
-//!
-//! Graph tests originate in Go. Full SQL-to-FD tests remain explicit ignored
-//! gaps: native derivation alone does not establish whole-package parity.
+//! This package uses TiDB's definition of a lax dependency: a lax dependency
+//! becomes strict when every determinant column is known NOT NULL; dependent
+//! columns do not also need to be NOT NULL. Outer joins retain predicate facts
+//! that depend on rejecting NULL-extended rows as conditional dependencies.
+//! [`null_reject`] provides the `pkg/planner/util.IsNullRejected` proof that
+//! supplies those NOT NULL facts.
 
 pub mod fd_graph;
 pub mod null_reject;
-pub mod tests_extract_fd;
 
 pub use fd_graph::{find_common_equiv_classes, FdSet, OuterJoinOptions};
 

@@ -105,6 +105,36 @@ impl ClusterDdl for MockDdl {
         };
         let mut created_id = None;
         match statement {
+            // Go master 94a9cbedab plans these parser-only statements as the
+            // generic DDL and its executor no-ops them: OK, nothing written.
+            DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!("ALTER MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
+                });
+            }
+            DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!(
+                        "ALTER MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
+                    ),
+                });
+            }
+            DdlStatement::DropMaterializedViewNoOp { schema, view } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!("DROP MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
+                });
+            }
+            DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!(
+                        "DROP MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
+                    ),
+                });
+            }
             DdlStatement::CreateDatabase {
                 name,
                 if_not_exists,
@@ -418,6 +448,16 @@ impl ClusterDdl for MockDdl {
                         .to_owned(),
                 ))
             }
+            // The materialized-view submissions are cluster jobs this mock
+            // cannot model (their worker batches own the real submission
+            // path); refuse like the other unmodeled schema changes.
+            DdlStatement::CreateMaterializedView { .. }
+            | DdlStatement::CreateMaterializedViewLog { .. } => {
+                return Err(SqlQueryError::unknown(
+                    "the mock catalog writer cannot model a materialized view submission"
+                        .to_owned(),
+                ))
+            }
             // A PLACEMENT POLICY is a schema object of its own, not a change
             // to a database or table this mock models. `cluster_ddl_source`
             // owns those plans, as it does the column and truncate changes
@@ -436,11 +476,19 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::CreateTableLike { .. }
             | DdlStatement::DropPrimaryKey { .. }
             | DdlStatement::AlterIndexVisibility { .. }
+            | DdlStatement::AddCheckConstraint { .. }
+            | DdlStatement::DropCheckConstraint { .. }
+            | DdlStatement::AlterCheckConstraint { .. }
+            | DdlStatement::IgnoredCheckConstraint { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
             | DdlStatement::RenameColumn { .. }
             | DdlStatement::DropColumn { .. }
             | DdlStatement::MultiSchemaChange { .. }
+            | DdlStatement::AddPartitions { .. }
+            | DdlStatement::DropPartitions { .. }
+            | DdlStatement::TruncatePartitions { .. }
+            | DdlStatement::ExchangePartition { .. }
             | DdlStatement::TruncateTable { .. } => {
                 return Err(SqlQueryError::unknown(
                     "the mock catalog writer does not model column or truncate changes; \
@@ -612,10 +660,29 @@ impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &dyn Fn() -> bool,
+        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",
             statement.schema, statement.table
         )))
+    }
+}
+
+/// The mock node's successful persisted lockstats route. Policy and row
+/// encoding are covered in `tidb-stats` and `tidb-exec`; server tests use
+/// this seam to prove routing and statement-state behavior.
+pub(super) struct MockStatsLock;
+
+impl crate::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
+    fn execute(
+        &self,
+        _: &tidb_exec::cluster_stats_lock::ClusterStatsLockStatement,
+    ) -> Result<tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport, SqlQueryError> {
+        Ok(tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport::default())
     }
 }

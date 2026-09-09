@@ -40,7 +40,6 @@ pub(crate) const META_PREFIX: &[u8] = b"m";
 
 /// Go `GroupID`: accepts a table ID or whatever integer, and encodes it into a
 /// valid group ID for PD.
-#[must_use]
 pub fn group_id(id: i64) -> String {
     format!("{BUNDLE_ID_PREFIX}{id}")
 }
@@ -88,5 +87,11 @@ mod tests {
         assert_eq!("TiDB_DDL_1", group_id(1));
         assert_eq!("TiDB_DDL_90", group_id(90));
         assert_eq!("TiDB_DDL_-1", group_id(-1));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_group_id_return_may_be_ignored_like_go() {
+        group_id(1);
     }
 }

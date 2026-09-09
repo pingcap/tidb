@@ -1,0 +1,101 @@
+# `pkg/planner/core/rule_inject_extra_projection.go` — walk receipt
+
+Comparison source: Go `origin/master` (`f2c346fe4f3` at walk start). 348
+lines; a PHYSICAL post-optimization (`postOptimize`, `optimizer.go:462`),
+not one of the 35 logical rules. Go's `postOptimize` order is
+`eliminatePhysicalProjection` → `InjectExtraProjection` → the rest; the
+narrow tier replicated only the first half. This batch ports the second.
+
+## Function inventory mapping
+
+| Go function | Rust location | Status |
+| --- | --- | --- |
+| `InjectExtraProjection` | `inject_extra_projection` (`physical/inject_extra_projection.rs`) | ported |
+| `projInjector.inject` | `inject` (children-first recursion, per-operator switch) | ported |
+| `injectProjBelowUnion` | `inject_proj_below_union` — the `mpp: false` early return is the only reachable arm on this tier | ported (guarded) |
+| `InjectProjBelowAgg` | `inject_proj_below_agg` (hash) + `inject_proj_below_stream_agg` (stream rewrap; Go shares one body) | ported |
+| `InjectProjBelowSort` | `inject_proj_below_sort` (bottom proj evaluates scalar order-by items, top proj prunes back to the sort's schema) | ported |
+| `TurnNominalSortIntoProj` | `turn_nominal_sort_into_proj` — `only_column=true` drops the node; the non-column shape builds the two pass-through projections. The Rust NominalSort narrows by-items to column `SortItem`s, so Go's scalar-expression loop adds nothing here | ported |
+| `coreusage.WrapCastForAggFuncs` | `core_usage::wrap_cast_for_agg_funcs` (pre-existing) | reused |
+| `refine4NeighbourProj` (`resolve_indices.go:56`) | `refine_4_neighbour_proj_exprs` + a local `DisjointSet` (Go `disjointset.IntSet`) | ported |
+
+## Gating / wiring parity
+
+* Call site: `planner_bridge.rs::physical_plan_for_logical`, immediately
+  after `eliminate_physical_projection`, mirroring Go's `postOptimize`
+  order.
+* `DisableProjectionPostOptimization` failpoint: test-only seam, not
+  reproduced (failpoint harness is not ported on this tier).
+* TiFlash `PhysicalTableReader` recursion arm: no counterpart — the tier is
+  TiKV-only and its readers carry no TiFlash store type.
+* Stats: injected projections take
+  `child.StatsInfo().ScaleByExpectCnt(childReqProps[0].ExpectedCnt)`; the
+  Rust `scale_by_expect_cnt` also threads the session skew ratio (1.0, the
+  same constant the wired search context uses).
+
+## Deliberate Go quirks preserved
+
+1. Constants are skipped as projection inputs but still consumed by the
+   aggregate; order-by/group-by dedup runs by expression `Equal` against the
+   accumulated projection exprs (`slices.IndexFunc` order).
+2. `turn_nominal_sort_into_proj` for `only_column=true` returns the CHILD —
+   the nominal sort vanishes from the final plan (Go's EXPLAIN never shows
+   it).
+3. `inject_proj_below_union` answers unchanged for `mpp: false`.
+
+## Regression coverage
+
+10 tests in the module: scalar agg argument injection + argument rewrite,
+column-only agg no-op, group-by expression dedup against accumulated
+projection exprs, sort wrapped in two projections for a scalar order-by
+item, column order-by no-op, column-only nominal sort disappearance,
+expression nominal sort → two pass-through projections, non-MPP union
+untouched, stream-agg identity preserved (`tp()` stays "StreamAgg"), and
+the neighbour-refinement union-find over duplicated output positions.
+
+## Validation
+
+* `cargo test -p tidb-planner --lib` — 935 passed, 4 failed (the
+  `physical::tests::cached_plan_rebuilds_*` set that fails identically on
+  the bare tip; stash-verified).
+* Clean-worktree comparison against the parent commit
+  (`0f413fc16e0`, run from a detached worktree sharing the target dir):
+  `tidb-executor` 1075/137 → 1076/136; `tidb-session` 1402/258 → 1406/255.
+  No new failures; net flips positive.
+* `cargo clippy -p tidb-planner` — no warnings in the new file.
+
+## Conclusion
+
+The `postOptimize` second half is closed for the served tier. The remaining
+`postOptimize` steps were audited one by one:
+`mergeContinuousSelections` (TiFlash selection merging),
+`countStarRewrite` (requires `StoreType == kv.TiFlash`; returns
+immediately on this TiKV-only tier), `enableParallelApply`,
+`handleFineGrainedShuffle`, `propagateProbeParents`,
+`disableReuseChunkIfNeeded`, `generateRuntimeFilter`,
+`avoidColumnEvaluatorForProjBelowUnion` — all store/concurrency-tier
+surfaces outside the narrow tier's model (MPP flags, runtime filters,
+parallel-apply registries, chunk-reuse hints). `eliminateUnionScanAndLock`
+is a pure performance elision whose condition guarantees results identical
+to executing the nodes; this tier executes `PhysicalUnionScan`/`Lock`
+faithfully, so observable behavior matches either way.
+
+## Follow-up: the HashAgg `firstrow` identity is structural (2026-09-09)
+
+`driver::tests::aggregates::grouped_order_by_projects_visible_fields_below_sort`
+pinned the TPC-H q12 HashAgg carrier as `funcs:firstrow(Column#2)`. That is
+not Go's contract. Go `InjectProjBelowAgg`
+(`pkg/planner/core/rule_inject_extra_projection.go:185-207`) rewrites every
+non-constant group item to a FRESH projection column (`groupByItems[i] =
+newArg` with a newly allocated `UniqueID`), and the `firstrow` carrier for a
+group column renders that same column, so the group-by item and its carrier
+always share one id whose number only reflects allocation order. Go's own
+recorded plans show the shape:
+`pkg/planner/core/casetest/tpch/testdata/tpch_suite_out.json` renders q1 as
+`group by:Column#100, Column#101, ... funcs:firstrow(Column#100)->test.lineitem.l_returnflag`.
+
+The Rust plan already satisfies that contract (`group by:Column#15, ...
+funcs:firstrow(Column#15)->test.lineitem.l_shipmode`); only the hard-coded id
+was wrong. The test now extracts the group-by column from the same operator
+row and asserts the `firstrow` carrier names it, which is the Go rule rather
+than one allocation. No production behavior changed.

@@ -32,6 +32,7 @@ use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 use crate::stats_info::StatsInfo;
 
+use super::apply::LogicalApply;
 use super::data_source::DataSource;
 use super::join::LogicalJoin;
 use super::projection::LogicalProjection;
@@ -211,6 +212,28 @@ fn a_cartesian_join_multiplies_the_children() {
 }
 
 #[test]
+fn a_lateral_apply_estimates_explicit_keys_like_a_full_join() {
+    // Go `LogicalApply.DeriveStats` uses `EstimateFullJoinRowCount` for a
+    // lateral apply with explicit ON keys. This used to stop at the Rust
+    // `unported_stats` arm, so the same keyed shape must now derive through
+    // the recursive driver: 100 * 200 / max(10, 20) = 1000.
+    let allocator = PlanIdAllocator::new();
+    let left = stated_source(&allocator, &[1], 100.0, &[(1, 10.0)]);
+    let right = stated_source(&allocator, &[11], 200.0, &[(11, 20.0)]);
+    let mut apply = LogicalApply::new(
+        base(&allocator, "Apply", Some(schema_of(&[1, 11]))),
+        LogicalJoinType::Inner,
+    );
+    apply.is_lateral = true;
+    apply.join.equal_conditions = vec![eq_condition(1, 11)];
+    let mut plan = LogicalPlan::Apply(apply);
+    plan.set_children(vec![left, right]);
+
+    let (stats, _) = derive(&mut plan).expect("a keyed lateral apply derives");
+    assert!((stats.row_count() - 1000.0).abs() < f64::EPSILON);
+}
+
+#[test]
 fn a_semi_join_takes_the_left_count_under_the_selection_factor() {
     // `logical_join.go`: SemiJoin's count is `leftRows * SelectionFactor`,
     // with every LEFT NDV scaled the same way — the right side contributes
@@ -273,10 +296,13 @@ fn depth_costs_no_host_stack() {
     let mut cursor = plan;
     loop {
         let dummy = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::default());
-        match cursor.set_child(0, dummy) {
-            Some(child) => cursor = child,
-            None => break,
+        if cursor.children().is_empty() {
+            break;
         }
+        let child = cursor
+            .set_child(0, dummy)
+            .expect("child 0 exists while dismantling the chain");
+        cursor = child;
     }
 }
 
@@ -307,10 +333,12 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
+    op.table_scan_penalty.pseudo_stats = true;
     op.columns = vec![super::data_source::DataSourceColumn {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
+        is_not_null: false,
     }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
 
@@ -318,6 +346,36 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
     assert!(
         (stats.row_count() - 10.0).abs() < f64::EPSILON,
         "10000 / pseudoEqualRate, got {}",
+        stats.row_count()
+    );
+}
+
+#[test]
+fn two_pseudo_bounds_form_one_column_range() {
+    // Go's pseudo table still owns one pseudo histogram per column, so
+    // `Selectivity` merges these two predicates before estimating them.
+    // A finite non-point range is `1/pseudoBetweenRate = 1/40`.
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.table_scan_penalty.pseudo_stats = true;
+    op.columns = vec![super::data_source::DataSourceColumn {
+        id: 1,
+        name: "a".to_owned(),
+        is_primary_key: false,
+        is_not_null: false,
+    }];
+    op.pushed_down_conds = vec![
+        Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
+        Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
+    ];
+
+    let (stats, _) = derive(&mut source).expect("an unanalyzed bounded range derives");
+    assert!(
+        (stats.row_count() - 250.0).abs() < f64::EPSILON,
+        "10000 / pseudoBetweenRate, got {}",
         stats.row_count()
     );
 }
@@ -333,8 +391,12 @@ fn no_conditions_still_answer_the_full_table() {
 
 /// `col = const`, the shape `getConstantColumnID` resolves.
 fn eq_condition_to_constant(col: i64, value: i64) -> ScalarFunction {
+    comparison_condition_to_constant("eq", col, value)
+}
+
+fn comparison_condition_to_constant(name: &str, col: i64, value: i64) -> ScalarFunction {
     ScalarFunction::new(
-        CiString::new("eq"),
+        CiString::new(name),
         FieldType::new(FieldTypeCode::Long),
         vec![
             Expression::Column(column(col)),
@@ -344,4 +406,94 @@ fn eq_condition_to_constant(col: i64, value: i64) -> ScalarFunction {
             )),
         ],
     )
+}
+
+#[test]
+fn pseudo_column_range_quota_changes_statistics_cover() {
+    // Go getMaskAndRanges drops the access mask after column-range fallback.
+    // The uncovered bounds receive SelectionFactor once instead of 1/40.
+    let allocator = PlanIdAllocator::new();
+    for (quota, expected) in [(1, 8000.0), (0, 250.0)] {
+        let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+        let LogicalPlan::DataSource(op) = &mut source else {
+            unreachable!()
+        };
+        op.table_scan_penalty.pseudo_stats = true;
+        op.columns = vec![super::data_source::DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        }];
+        op.pushed_down_conds = vec![
+            Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
+            Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
+        ];
+        let mut context = super::rule_tests::test_context(&allocator);
+        context.range_max_size = quota;
+        let (stats, _) = source
+            .recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        assert_eq!(stats.row_count(), expected, "quota={quota}");
+    }
+}
+
+#[test]
+fn partial_dnf_index_range_preserves_logical_statistics_cover() {
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1, 2], 10_000.0, &[(1, 8000.0), (2, 8000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.table_scan_penalty.pseudo_stats = true;
+    op.columns = ["a", "b"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| super::data_source::DataSourceColumn {
+            id: i as i64 + 1,
+            name: (*name).to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        })
+        .collect();
+    op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        id: 8,
+        name: "ia".to_owned(),
+        is_public: true,
+        is_visible: true,
+        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+            name: "a".to_owned(),
+            offset: 0,
+            length: -1,
+        }],
+        ..Default::default()
+    }];
+    let branch = |value| {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("and"),
+            FieldType::new(FieldTypeCode::Long),
+            vec![
+                Expression::ScalarFunction(eq_condition_to_constant(1, value)),
+                Expression::ScalarFunction(eq_condition(2, 1)),
+            ],
+        ))
+    };
+    op.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("or"),
+        FieldType::new(FieldTypeCode::Long),
+        vec![branch(1), branch(3)],
+    ))];
+    for (factor, expected) in [(0.8, 16.0), (0.25, 5.0)] {
+        let mut plan = source.clone();
+        let mut context = super::rule_tests::test_context(&allocator);
+        context.selectivity_factor = factor;
+        let (stats, _) = plan
+            .recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        assert!(
+            (stats.row_count() - expected).abs() < 1e-12,
+            "factor={factor}, rows={}",
+            stats.row_count()
+        );
+    }
 }

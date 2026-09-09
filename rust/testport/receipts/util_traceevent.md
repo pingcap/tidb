@@ -1,0 +1,99 @@
+# `pkg/util/traceevent` — complete package transcreation
+
+Pinned Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
+
+## Complete inventory
+
+The root package has exactly seven tracked artifacts and 2,359 lines. Every
+production, test, and BUILD line was read in full before the ownership
+decision. It has 84 function declarations, 13 top-level test/benchmark
+functions, six ordered suite subtests, and two benchmarks. There is no package
+doc, fixture, generated source, platform/build-tag variant, fuzz target,
+example, or ownership file.
+
+| Go-master artifact | Lines | Blob | Role |
+| --- | ---: | --- | --- |
+| `BUILD.bazel` | 41 | `43020ca97f2913fb5b85814444d6da7aec74c8ce` | library and flaky test targets |
+| `adapter.go` | 111 | `1236f7bd6119916f6d58780243e591a996e6dea6` | client-go trace adapter |
+| `adapter_test.go` | 229 | `4dcbee29c30c1b13660ca78bec7c0a191c60b835` | adapter tests |
+| `flightrecorder.go` | 583 | `15263b571f73d4d7eb909462c5e240dff5f510e7` | flight recorder implementation |
+| `flightrecorder_test.go` | 420 | `c3dc804fd1d84501a0a5b48070c7409e30fd388f` | recorder tests and benchmarks |
+| `traceevent.go` | 588 | `bb06395600b014fb9b64574f0493f70a8b33b283` | event emission and triggers |
+| `traceevent_test.go` | 387 | `34e578db1c9faf849539fef129f4612991b62bb7` | event tests and benchmarks |
+
+The nested `pkg/util/traceevent/test` integration-test package is a separate
+two-artifact package and is inventoried in `receipts/util_traceevent_test.md`.
+The root checkout is byte-identical to the pinned Go master.
+
+## Rust ownership and audit result
+
+`rust/crates/tidb-util/src/traceevent` owns the package. The audit removed the
+disconnected Rust-only `ClientGoTraceRegistry`, category enum, control flags,
+public private-helper surface, five supplemental tests, and stale narrowing
+documentation. `register_with_client_go` now installs the three handlers in
+the real vendored `tikv-client`; ordinary server startup invokes it once.
+
+The client trace field boundary now carries typed zap-compatible scalar,
+duration, binary, array, object, and error values. Region-cache fields use the
+same count/ranges/regions/locations object shapes and redaction branches as
+client-go rather than a debug-string fallback. The shared `Sink` contract now
+carries its context through `Record`, so `LogSink`, `MultiSink`, and region end
+events preserve Go's context logger behavior. `GenerateTraceID` and dump
+trigger checks recover `Trace` through a concrete sink assertion, matching Go,
+and HTTP/log recorder construction uses one logged publication path.
+
+The eleven source tests remain, with one additional regression that invokes
+the installed live client hooks and verifies trace ID plus structured fields.
+Both source benchmarks are executable in `benches/traceevent.rs`.
+
+## Rust follow-up: Go-discardable traceevent returns
+
+The Rust owner carried 26 explicit `#[must_use]` diagnostics on helpers whose
+Go counterparts permit callers to discard the return value. The annotations
+were removed from the complete owner surface in `mod.rs` and
+`flightrecorder.rs`. A focused `return_values_may_be_ignored_like_go` test
+discards all 26 values under `#[deny(unused_must_use)]`: the pre-fix detached
+owner failed with exactly 26 diagnostics, and the corrected owner passes.
+
+Ready validation for this follow-up passed:
+
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib traceevent::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — PASS.
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 13 tests.
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — PASS.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-util -- --check` and `git diff --check` — PASS.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — PASS.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` was not required.
+
+## Validation
+
+Profile: Ready for this receipt refresh; this remains one package boundary in
+the continuing repository audit, not a repository-wide readiness claim.
+
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/traceevent` — PASS; root source is unchanged at current Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/traceevent` — PASS in the active worktree (0.337s).
+- The same pinned Go command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605` (0.329s).
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 13 tests after the discard-contract regression.
+- Existing owner validation also passed the traceevent benchmark check and `tidb-server` compilation; warnings outside this package remain.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — PASS.
+- `git diff --check -- rust/testport/receipts/util_traceevent.md rust/docs/operations/util-traceevent-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — PASS.
+
+The live-hook regression could not compile against the prior fake registry API;
+after the fix it emits through `tikv_client::trace` into the real recorder.
+Targeted Clippy was attempted but is blocked before reaching this package by
+pre-existing `tidb-mysql` `map_or_identity` and generated `tidb-proto`
+`double_must_use` errors. No Go or Bazel file changed, so `make bazel_prepare`
+is not required.
+
+## Risk
+
+- Correctness: improved; client events now reach the real recorder with their
+  typed fields and context.
+- Compatibility: intentional strict-parity change. The fake registry and
+  private Go internals are no longer public Rust API, and `Sink::record` now
+  receives the source context.
+- Performance: the disabled path still exits before allocating an event. The
+  enabled path owns fields exactly once and both source benchmark workloads
+  compile; no comparative benchmark was run in this Ready refresh.

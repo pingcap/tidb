@@ -60,6 +60,10 @@ pub struct CoprocessorRequestEnvelope {
     pub max_keys_read: u64,
     /// Request byte-page budget (field 17).
     pub paging_size_bytes: u64,
+    /// Whether the caller accepts merged child-task data (field 18).
+    pub allow_batch_task_data_merge: bool,
+    /// Whether the store should execute batched tasks serially (field 19).
+    pub execute_batch_tasks_serially: bool,
 }
 
 impl CoprocessorRequestEnvelope {
@@ -81,6 +85,8 @@ impl CoprocessorRequestEnvelope {
             connection_alias: metadata.connection_alias.clone(),
             max_keys_read: metadata.max_keys_read,
             paging_size_bytes: metadata.paging.size_bytes,
+            allow_batch_task_data_merge: metadata.allow_batch_task_data_merge,
+            execute_batch_tasks_serially: metadata.execute_batch_tasks_serially,
             ..Self::default()
         }
     }
@@ -139,6 +145,8 @@ impl CoprocessorRequestEnvelope {
             connection_alias: self.connection_alias.clone(),
             max_keys_read: self.max_keys_read,
             paging_size_bytes: self.paging_size_bytes,
+            allow_batch_task_data_merge: self.allow_batch_task_data_merge,
+            execute_batch_tasks_serially: self.execute_batch_tasks_serially,
         }
         .encode_to_vec()
     }

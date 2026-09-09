@@ -94,6 +94,12 @@ fn write_datum<W: RestoreWriter>(
                 return Ok(());
             }
             let escaped = escape_string(datum.go_bytes());
+            // Go writes the escaped bytes raw (`d.GetString()` is an
+            // arbitrary byte string), so a non-binary string key column with
+            // non-UTF-8 data (e.g. latin1) yields non-UTF-8 SQL there. This
+            // crate's SQL surface is `&str` end to end, and a lossy
+            // conversion would build a DELETE that targets the wrong rows,
+            // so the build fails loudly instead.
             let escaped = String::from_utf8(escaped).map_err(|_| {
                 error("the datum is not valid UTF-8 after escaping and cannot be written as text")
             })?;
@@ -123,8 +129,13 @@ fn write_value_expr<W: RestoreWriter>(
         Datum::Null => ctx.write_keyword("NULL"),
         Datum::Int(value) => ctx.write_plain(&value.to_string()),
         Datum::UInt(value) => ctx.write_plain(&value.to_string()),
-        Datum::Float32(value) | Datum::Real(value) => {
-            ctx.write_plain(&tidb_util::sqlescape::format_go_float64(*value));
+        Datum::Float32(_) | Datum::Real(_) => {
+            let restored = datum
+                .restore_value_expr()
+                .map_err(|restore_error| error(restore_error.to_string()))?;
+            let restored = std::str::from_utf8(&restored)
+                .map_err(|_| error("value expression restore produced invalid UTF-8"))?;
+            ctx.write_plain(restored);
         }
         Datum::String(_) => {
             // Go writes the `_charset` introducer unless the restore flags
@@ -144,6 +155,10 @@ fn write_value_expr<W: RestoreWriter>(
         Datum::Decimal(value) => ctx.write_plain(&value.to_string()),
         Datum::Time(value) => ctx.write_plain(&format!("'{value}'")),
         Datum::Duration(value) => ctx.write_plain(&format!("'{value}'")),
+        // BinaryLiteral/Bit/Enum/Set never reach Go's ValueExpr.Restore
+        // either: `writeDatum` routes bit/blob/binary-string columns to the
+        // hex branch above before an AST value expression is built, so this
+        // arm is unreachable through the same routing.
         Datum::BinaryLiteral(_)
         | Datum::Bit(_)
         | Datum::Enum(_, _)
@@ -522,14 +537,10 @@ impl ScanQueryGenerator {
         self.exhausted
     }
 
-    /// Go `setStack`. Go's nil `key` selects the range start; an empty slice
-    /// carries the same meaning here, since nothing constructs a non-nil empty
-    /// key.
+    /// Go `setStack`. Go's nil `key` selects the range start, while a non-nil
+    /// empty key clears the stack without resetting it.
     fn set_stack(&mut self, key: Option<&[Datum]>) -> Result<()> {
-        let key = match key.filter(|key| !key.is_empty()) {
-            Some(key) => key.to_vec(),
-            None => self.key_range_start.clone(),
-        };
+        let key = key.map_or_else(|| self.key_range_start.clone(), <[Datum]>::to_vec);
 
         if key.is_empty() {
             self.stack.clear();

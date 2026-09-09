@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use crate::{
     AssertionOp, BatchGetOptions, BatchGetter, CacheDb, EventCallback, FlagsOp, GetOptions, Getter,
-    Key, KeyFlags, KvIterator, MppClient, OptionKey, Request, StagingHandle, TiFlashReplicaRead,
+    Key, KeyFlags, KvIterator, MppClient, OptionKey, ReplicaRead, Request, StagingHandle,
     ValueEntry, Version,
 };
 
@@ -148,7 +148,7 @@ pub struct ClientSendOption<W> {
     /// Whether execution information is collected.
     pub collect_execution_info: bool,
     /// TiFlash replica-read policy.
-    pub tiflash_replica_read: TiFlashReplicaRead,
+    pub tiflash_replica_read: ReplicaRead,
     /// Warning publisher.
     pub append_warning: Option<Box<dyn FnMut(W) + Send>>,
     /// Shared lite-worker selection state.
@@ -162,7 +162,7 @@ impl<W> Default for ClientSendOption<W> {
             rate_limit_action_enabled: false,
             event_callback: None,
             collect_execution_info: false,
-            tiflash_replica_read: TiFlashReplicaRead::default(),
+            tiflash_replica_read: ReplicaRead::default(),
             append_warning: None,
             try_coprocessor_lite_worker: None,
         }

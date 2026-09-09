@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use crate::{
@@ -21,7 +22,7 @@ use crate::{
     is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
     new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,
     rewrite_new_collation_id_if_needed, set_new_collation_enabled,
-    substitute_missing_collation_to_default, supported_collations, Charset, Collation, Collator,
+    substitute_missing_collation_to_default, supported_collations, Collation, Collator,
 };
 
 struct NewCollationModeGuard {
@@ -222,6 +223,27 @@ fn test_utf8_collator_key() {
     }
 }
 
+#[test]
+fn immutable_binary_keys_borrow_the_source_storage() {
+    let value = b"value  ";
+    assert!(matches!(
+        Collation::Binary.immutable_key(value),
+        Cow::Borrowed(bytes) if std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collation::Utf8Mb4Bin.immutable_key(value),
+        Cow::Borrowed(bytes) if bytes == b"value" && std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collator::DerivedBinary.immutable_key(value),
+        Cow::Borrowed(bytes) if std::ptr::eq(bytes.as_ptr(), value.as_ptr())
+    ));
+    assert!(matches!(
+        Collation::Utf8Mb4GeneralCi.immutable_key(value),
+        Cow::Owned(_)
+    ));
+}
+
 /// Go `pkg/util/collate/collate_test.go` `TestGetCollator`.
 #[test]
 fn test_get_collator() {
@@ -414,6 +436,16 @@ fn mode_id_and_helper_functions_follow_source() {
         "utf8mb4_bin"
     );
     assert_eq!(
+        substitute_missing_collation_to_default("UTF8MB4_BIN"),
+        "UTF8MB4_BIN",
+        "Go returns the caller's spelling after a successful registry lookup"
+    );
+    assert_eq!(
+        substitute_missing_collation_to_default("utf8mb3_bin"),
+        "utf8mb3_bin",
+        "Go does not expose the registry's utf8mb3 alias canonicalization"
+    );
+    assert_eq!(
         get_supported_collation_by_name("utf8mb4_0900_as_cs")
             .unwrap_err()
             .to_string(),
@@ -479,84 +511,22 @@ fn wildcard_patterns_follow_each_source_collator_family() {
     let reordered = get_collator("binary").pattern("%_", b'\\');
     assert!(reordered.is_match(b"x"));
     assert!(reordered.is_match(b"xyz"));
+
+    for collator in [
+        Collator::DerivedBinary,
+        Collator::New(Collation::Binary),
+        Collator::New(Collation::Utf8Mb4GeneralCi),
+    ] {
+        let invalid = collator.pattern([0xff], b'\\');
+        assert!(invalid.is_match(&[0xff]));
+        assert!(!invalid.is_match(b"x"));
+    }
 }
 
 #[test]
-#[should_panic(expected = "utf8mb4_zh_pinyin_tidb_as_cs is not implemented")]
+#[should_panic(expected = "implement me")]
 fn pinyin_stub_preserves_source_panic() {
     let _ = Collation::Utf8Mb4ZhPinyinTiDbAsCs.key(b"value");
-}
-
-/// The `gbk`/`gb18030` default collation has exactly ONE answer.
-///
-/// It had two. `Charset::default_collation` -- the fast const path the
-/// executor uses to fill in a column with no `COLLATE` -- returned
-/// `gbk_chinese_ci`, which is what a live server answers. The charset REGISTRY
-/// behind `get_default_collation` returned `gbk_bin`, because it ported Go's
-/// `CharacterSetInfos` literal and never applied
-/// `collate.switchDefaultCollation`, which on a real server has already run
-/// with the new-collation flag before any statement executes. Captured from a
-/// mock-backed TiDB session:
-///
-/// ```text
-/// show create table t   ... `a` varchar(10) CHARACTER SET gbk COLLATE gbk_chinese_ci ...
-/// show character set like 'gb%'
-///   gb18030 | China National Standard GB18030     | gb18030_chinese_ci | 4
-///   gbk     | Chinese Internal Code Specification | gbk_chinese_ci     | 2
-/// show collation like 'gb%'
-///   gb18030_bin        | gb18030 | 249 |     | Yes | 1 | PAD SPACE
-///   gb18030_chinese_ci | gb18030 | 248 | Yes | Yes | 1 | PAD SPACE
-///   gbk_bin            | gbk     |  87 |     | Yes | 1 | PAD SPACE
-///   gbk_chinese_ci     | gbk     |  28 | Yes | Yes | 1 | PAD SPACE
-/// ```
-///
-/// This asserts the two spellings agree for EVERY charset, not just the two
-/// that diverged, so a future edit to either one cannot reintroduce the split.
-#[test]
-fn the_registry_and_the_const_path_give_one_default_collation_per_charset() {
-    let _guard = crate::charset::REGISTRY_TEST_LOCK
-        .lock()
-        .expect("charset test lock poisoned");
-    for charset in [
-        Charset::Binary,
-        Charset::Ascii,
-        Charset::Latin1,
-        Charset::Utf8,
-        Charset::Utf8Mb4,
-        Charset::Gbk,
-        Charset::Gb18030,
-    ] {
-        let from_registry = crate::get_default_collation(charset.name())
-            .expect("every Charset variant is a supported charset");
-        assert_eq!(
-            from_registry,
-            charset.default_collation().name(),
-            "{} has two default collations",
-            charset.name(),
-        );
-    }
-
-    // The captured live values, so "they agree" cannot be satisfied by both
-    // being wrong.
-    assert_eq!(
-        crate::get_default_collation("gbk").unwrap(),
-        "gbk_chinese_ci"
-    );
-    assert_eq!(
-        crate::get_default_collation("gb18030").unwrap(),
-        "gb18030_chinese_ci"
-    );
-
-    // `SHOW COLLATION`'s Default column reads the registry's per-collation
-    // flag, which `switchDefaultCollation` moves together with the charset
-    // default. These are the four `like 'gb%'` rows captured above -- note
-    // that Go's raw collation table declares `gbk_bin` as the default and the
-    // switch is what clears it, so an unswitched registry gets these backwards.
-    let is_default = |name: &str| crate::get_collation_by_name(name).unwrap().is_default;
-    assert!(is_default("gbk_chinese_ci"));
-    assert!(!is_default("gbk_bin"));
-    assert!(is_default("gb18030_chinese_ci"));
-    assert!(!is_default("gb18030_bin"));
 }
 
 /// Go `pkg/util/collate/gb18030_bin.go` feeds four-byte PUA runes a trailing

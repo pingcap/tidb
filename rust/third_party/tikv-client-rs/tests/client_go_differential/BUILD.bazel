@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "client_go_differential_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/rust/third_party/tikv-client-rs/tests/client_go_differential",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//rawkv",
+        "@com_github_tikv_client_go_v2//txnkv",
+    ],
+)
+
+go_binary(
+    name = "client_go_differential",
+    embed = [":client_go_differential_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -83,10 +83,12 @@ fn a_sequence_name_resolves_like_a_table_name() {
     assert_eq!(scalar(&mut session, "select nextval(test.seq)"), "3");
 }
 
-/// A name that is not a sequence is 1146. Captured:
-/// `select nextval(nosuch)` reports `Table 'test.nosuch' doesn't exist`.
+/// A missing name is 1146, while an existing table is the distinct 1347
+/// wrong-object error. Captured from Go's `TestSequenceFunction`:
+/// `select nextval(nosuch)` reports `Table 'test.nosuch' doesn't exist`, and
+/// `select nextval(t)` reports `'test.t' is not SEQUENCE`.
 #[test]
-fn nextval_on_an_unknown_name_is_1146() {
+fn nextval_missing_or_wrong_object_errors_match_go() {
     let mut session = Session::new();
     assert_eq!(
         error_of(&mut session, "select nextval(nosuch)"),
@@ -96,7 +98,7 @@ fn nextval_on_an_unknown_name_is_1146() {
     session.run("create table t (a int)").unwrap();
     assert_eq!(
         error_of(&mut session, "select nextval(t)"),
-        (1146, "Table 'test.t' doesn't exist".to_owned())
+        (1347, "'test.t' is not SEQUENCE".to_owned())
     );
 }
 

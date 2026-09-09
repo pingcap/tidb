@@ -14,13 +14,16 @@
 
 #![cfg(test)]
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tidb_datatype::{Collation, CoreTime, Datum, FieldTypeCode, StringDatum, Time, TimeType};
-use tidb_executor::deadlock_history::{
-    configure_global_deadlock_history, global_deadlock_history, DeadlockRecord, WaitChainItem,
-};
+use tidb_executor::deadlock_history::{DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY};
 use tidb_executor::TableEntry;
+use tidb_stmtsummary::statement_summary::{
+    EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
+    STMT_SUMMARY_BY_DIGEST_MAP,
+};
 use tidb_tablecodec::is_index_key;
 use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 
@@ -32,18 +35,89 @@ struct ResetHistory;
 
 impl Drop for ResetHistory {
     fn drop(&mut self) {
-        let history = global_deadlock_history();
-        history.clear();
-        configure_global_deadlock_history(0, false);
+        GLOBAL_DEADLOCK_HISTORY.clear();
+        STMT_SUMMARY_BY_DIGEST_MAP.clear();
+        tidb_exec::configure_deadlock_history(0, false);
     }
+}
+
+#[derive(Debug)]
+struct LazyInfo;
+
+impl StmtExecLazyInfo for LazyInfo {
+    fn original_sql(&self) -> String {
+        "select * from t where id = 1".to_owned()
+    }
+
+    fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
+        Ok((String::new(), String::new()))
+    }
+
+    fn binary_plan(&self) -> String {
+        String::new()
+    }
+
+    fn plan_digest(&self) -> String {
+        String::new()
+    }
+
+    fn binding_sql_and_digest(&self) -> (String, String) {
+        (String::new(), String::new())
+    }
+}
+
+fn add_statement_summary(digest: &str, normalized_sql: &str) {
+    let mut stmt_ctx = StmtSummaryStmtCtx::new();
+    stmt_ctx.stmt_type = "Select".to_owned();
+    STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&StmtExecInfo {
+        schema_name: "test".to_owned(),
+        charset: "utf8mb4".to_owned(),
+        collation: "utf8mb4_bin".to_owned(),
+        normalized_sql: normalized_sql.to_owned(),
+        digest: digest.to_owned(),
+        prev_sql: String::new(),
+        prev_sql_digest: String::new(),
+        plan_digest: String::new(),
+        user: "root".to_owned(),
+        total_latency: Duration::ZERO,
+        parse_latency: Duration::ZERO,
+        compile_latency: Duration::ZERO,
+        stmt_ctx: Arc::new(stmt_ctx),
+        cop_tasks: None,
+        exec_detail: tidb_exec::exec_details::ExecDetails::default(),
+        mem_max: 0,
+        mem_arbitration: 0.0,
+        disk_max: 0,
+        start_time: chrono::Utc::now(),
+        is_internal: false,
+        succeed: true,
+        plan_in_cache: false,
+        plan_in_binding: false,
+        exec_retry_count: 0,
+        exec_retry_time: Duration::ZERO,
+        write_sql_resp_duration: Duration::ZERO,
+        result_rows: 0,
+        tikv_exec_details: None,
+        prepared: false,
+        keyspace_name: String::new(),
+        keyspace_id: 0,
+        resource_group_name: "default".to_owned(),
+        ru_detail: None,
+        total_ru_v2: 0.0,
+        cpu_usages: tidb_util::ppcpuusage::CpuUsages::default(),
+        plan_cache_unqualified: String::new(),
+        lazy_info: Arc::new(LazyInfo),
+    });
 }
 
 #[test]
 fn deadlocks_table_exposes_package_rows_and_requires_process() {
     let _serial = GLOBAL_HISTORY_TEST.lock().unwrap();
     let _reset = ResetHistory;
-    configure_global_deadlock_history(10, false);
-    let history = global_deadlock_history();
+    tidb_exec::configure_deadlock_history(10, false);
+    STMT_SUMMARY_BY_DIGEST_MAP.clear();
+    add_statement_summary("aabbccdd", "select * from t where id = ?");
+    let history = &*GLOBAL_DEADLOCK_HISTORY;
     history.clear();
     let mut session = Session::new();
     session
@@ -173,7 +247,10 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
                 b"aabbccdd".to_vec(),
                 Collation::Utf8Mb4Bin,
             )),
-            Datum::Null,
+            Datum::String(StringDatum::new(
+                b"select * from t where id = ?".to_vec(),
+                Collation::Utf8Mb4Bin,
+            )),
             Datum::String(StringDatum::new(
                 row_key_hex.into_bytes(),
                 Collation::Utf8Mb4Bin,

@@ -14,9 +14,9 @@
 
 #![allow(missing_docs)]
 
-use tidb_planner::{
-    physical_selection::{BigIntComparison, ComparisonOp, ComparisonOperand},
-    signed_bigint_ranger::{detach_clustered_signed_bigint_ranges, SignedBigIntRange},
+use tidb_planner::signed_bigint_ranger::{
+    detach_clustered_signed_bigint_ranges, BigIntComparison, ComparisonOp, ComparisonOperand,
+    SignedBigIntRange,
 };
 
 fn column_comparison(op: ComparisonOp, input_offset: u32, value: i64) -> BigIntComparison {

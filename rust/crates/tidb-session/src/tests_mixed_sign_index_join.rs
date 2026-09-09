@@ -44,7 +44,9 @@ fn fixture() -> Session {
     session
         .run("insert into u values (1,10),(2,20),(18446744073709551615,30)")
         .unwrap();
-    session.run("insert into s values (1,1),(2,2),(-1,3)").unwrap();
+    session
+        .run("insert into s values (1,1),(2,2),(-1,3)")
+        .unwrap();
     session
 }
 
@@ -52,10 +54,11 @@ fn fixture() -> Session {
 #[test]
 fn a_signed_key_joins_an_unsigned_indexed_key_on_the_values_that_convert() {
     let mut session = fixture();
-    let rows = row_text(session.run("select s.b, u.b, s.k, u.k from s join u on s.b = u.b order by s.k"))
-        .into_iter()
-        .map(|row| row.join("|"))
-        .collect::<Vec<_>>();
+    let rows =
+        row_text(session.run("select s.b, u.b, s.k, u.k from s join u on s.b = u.b order by s.k"))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect::<Vec<_>>();
     assert_eq!(
         rows,
         vec!["1|1|1|10".to_owned(), "2|2|2|20".to_owned()],

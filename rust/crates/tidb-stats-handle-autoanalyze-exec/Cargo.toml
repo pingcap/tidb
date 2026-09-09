@@ -1,0 +1,28 @@
+[package]
+name = "tidb-stats-handle-autoanalyze-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB auto-analyze execution package."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+prometheus = { version = "0.14", default-features = false }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-log = { path = "../tidb-log" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }

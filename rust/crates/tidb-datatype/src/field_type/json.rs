@@ -507,4 +507,17 @@ mod tests {
             crate::Collator::New(crate::Collation::Utf8Mb4Bin)
         );
     }
+
+    /// Go's `IsBinaryStr` reads the stored collation spelling, not the
+    /// fallback enum used by runtime lookup. An empty legacy `Collate` must
+    /// therefore remain a character string and retain restored data.
+    #[test]
+    fn empty_collation_name_does_not_inherit_binary_cache() {
+        let decoded =
+            FieldType::from_json(br#"{"Tp":253,"Charset":"utf8mb4","Collate":""}"#).unwrap();
+        assert_eq!(decoded.collation_name(), "");
+        assert!(!decoded.is_binary_string());
+        assert!(decoded.is_character_string());
+        assert!(decoded.need_restored_data());
+    }
 }

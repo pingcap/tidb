@@ -19,6 +19,7 @@
 //! the established rewrite pattern.
 
 use crate::tidb_vars::{OFF, ON};
+use tidb_hack::go_to_upper;
 
 /// Go `ClusteredIndexDefMode` (an `int`): the default clustering behavior for a
 /// primary key.
@@ -38,7 +39,6 @@ impl ClusteredIndexDefMode {
 /// Go `TiDBOptEnableClustered`: converts a `tidb_enable_clustered_index` option
 /// string to a [`ClusteredIndexDefMode`]. Any value other than `"ON"`/`"OFF"`
 /// (the Go `On`/`Off` constants) falls back to int-only.
-#[must_use]
 pub fn tidb_opt_enable_clustered(opt: &str) -> ClusteredIndexDefMode {
     match opt {
         _ if opt == ON => ClusteredIndexDefMode::ON,
@@ -82,7 +82,6 @@ impl ExchangeCompressionMode {
     /// which maps any non-NONE/FAST/HC value to `NONE`; the proto names are
     /// inlined here (verified against `tipb.CompressionMode_name`) so this crate
     /// needs no dependency on the not-yet-ported proto stack.
-    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::UNSPECIFIED => Self::UNSPECIFIED_NAME,
@@ -94,7 +93,6 @@ impl ExchangeCompressionMode {
 
     /// Go `(ExchangeCompressionMode).ToTipbCompressionMode`, returning the
     /// `tipb.CompressionMode` integer value (NONE for anything but FAST/HC).
-    #[must_use]
     pub fn to_tipb_compression_value(self) -> i32 {
         match self {
             Self::FAST => 1,
@@ -112,7 +110,7 @@ impl ExchangeCompressionMode {
 /// value (which equals the corresponding `ExchangeCompressionMode` value).
 #[must_use]
 pub fn to_exchange_compression_mode(name: &str) -> Option<ExchangeCompressionMode> {
-    let upper = name.to_uppercase();
+    let upper = go_to_upper(name);
     match upper.as_str() {
         "UNSPECIFIED" => Some(ExchangeCompressionMode::UNSPECIFIED),
         "NONE" => Some(ExchangeCompressionMode::NONE),
@@ -156,7 +154,10 @@ mod tests {
         );
         // Go: `RecommendedExchangeCompressionMode.ToTipbCompressionMode() ==
         // tipb.CompressionMode_FAST` (version_test.go:97).
-        assert_eq!(ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_value(), 1);
+        assert_eq!(
+            ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_value(),
+            1
+        );
     }
 
     #[test]
@@ -182,5 +183,51 @@ mod tests {
             Some(ExchangeCompressionMode::UNSPECIFIED)
         );
         assert_eq!(to_exchange_compression_mode("bogus"), None);
+    }
+}
+
+/// Go `MppVersionUnspecifiedName`.
+pub const MPP_VERSION_UNSPECIFIED_NAME: &str = "UNSPECIFIED";
+
+/// Go `newestMppVersion` (`pkg/kv/mpp.go`): V0..V3 are registered, V3
+/// being the newest (`MppVersionV3 supports TiFlash version [v7.3, ~]`
+/// lineage ends at V3 on this master).
+pub const NEWEST_MPP_VERSION: i64 = 3;
+
+/// Go `MppVersionUnspecified`: the illegal-or-unspecified sentinel, only
+/// used inside TiDB.
+pub const MPP_VERSION_UNSPECIFIED: i64 = -1;
+
+/// Go `ToMppVersion` (`pkg/kv/mpp.go`): `UNSPECIFIED` in any case maps to
+/// the `-1` sentinel; otherwise the value must be an integer in
+/// `[-1, 3]`. `None` is Go's `false`, the illegal value.
+#[must_use]
+pub fn to_mpp_version(name: &str) -> Option<i64> {
+    let upper = go_to_upper(name);
+    if upper == MPP_VERSION_UNSPECIFIED_NAME {
+        return Some(MPP_VERSION_UNSPECIFIED);
+    }
+    let version: i64 = upper.parse().ok()?;
+    if (MPP_VERSION_UNSPECIFIED..=NEWEST_MPP_VERSION).contains(&version) {
+        Some(version)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod mpp_version_tests {
+    use super::*;
+
+    #[test]
+    fn to_mpp_version_matches_go() {
+        assert_eq!(to_mpp_version("UNSPECIFIED"), Some(-1));
+        assert_eq!(to_mpp_version("unspecified"), Some(-1));
+        assert_eq!(to_mpp_version("0"), Some(0));
+        assert_eq!(to_mpp_version("3"), Some(3));
+        assert_eq!(to_mpp_version("-1"), Some(-1));
+        assert_eq!(to_mpp_version("4"), None);
+        assert_eq!(to_mpp_version("-2"), None);
+        assert_eq!(to_mpp_version("bogus"), None);
     }
 }

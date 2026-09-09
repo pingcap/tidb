@@ -14,20 +14,20 @@
 
 //! The parsed statement retained by PREPARE and its execute-time bound clone.
 //!
-//! Go stores this as `PlanCacheStmt.PreparedAst`. The retained point-get plan
-//! is immutable; execute-time handles and mutable executor state are rebuilt
-//! for every cache hit.
+//! Go stores this as `PlanCacheStmt.PreparedAst`. The retained point-get and
+//! general SELECT descriptors are immutable; the protocol layer owns their
+//! cache state and rebuilds mutable execution state for every EXECUTE.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
-use tidb_executor::{DriverError, PreparedPointGetExecution, PreparedPointGetPlan};
+use tidb_executor::{
+    DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedPointGetExecution,
+    PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
+};
 
-use tidb_executor::access_path::StatementReadShape;
-
-use crate::{Session, StmtKind, StoredStateChange};
+use crate::Session;
 
 /// One statement parsed under the SQL mode in force at PREPARE time.
 #[derive(Clone, Debug)]
@@ -36,7 +36,16 @@ pub struct PreparedAst {
     statement: Arc<Stmt>,
     parameter_count: usize,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
-    point_get_cache_ready: Arc<AtomicBool>,
+    dml_plan: Option<Arc<PreparedDmlPlan>>,
+    select_plan: Option<Arc<PreparedSelectPlan>>,
+}
+
+pub(crate) struct PreparedPlanCacheEnvironmentCache {
+    vars_generation: u64,
+    blacklist_generation: u64,
+    in_transaction: bool,
+    autocommit: bool,
+    environment: Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>>,
 }
 
 impl PreparedAst {
@@ -45,13 +54,16 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         point_get_plan: Option<PreparedPointGetPlan>,
+        dml_plan: Option<PreparedDmlPlan>,
+        select_plan: Option<PreparedSelectPlan>,
     ) -> Self {
         Self {
             sql,
             statement: Arc::new(statement),
             parameter_count,
             point_get_plan: point_get_plan.map(Arc::new),
-            point_get_cache_ready: Arc::new(AtomicBool::new(false)),
+            dml_plan: dml_plan.map(Arc::new),
+            select_plan: select_plan.map(Arc::new),
         }
     }
 
@@ -61,22 +73,16 @@ impl PreparedAst {
         &self.sql
     }
 
-    /// The immutable parse retained under PREPARE's SQL mode.
-    #[must_use]
-    pub fn statement(&self) -> &Stmt {
-        &self.statement
-    }
-
     /// The number of execute-time values this statement requires.
     #[must_use]
     pub const fn parameter_count(&self) -> usize {
         self.parameter_count
     }
 
-    /// The protocol answer shape determined by this statement's parsed form.
+    /// The statement parsed under PREPARE-time SQL semantics.
     #[must_use]
-    pub fn statement_kind(&self, session: &Session) -> StmtKind {
-        session.statement_kind_parsed(&self.statement)
+    pub fn statement(&self) -> &Stmt {
+        &self.statement
     }
 
     /// The immutable fast point-read plan compiled while the statement was
@@ -86,183 +92,175 @@ impl PreparedAst {
         self.point_get_plan.clone()
     }
 
-    /// The persistent cluster state this statement changes, if any.
+    /// The immutable DML plan compiled while the statement was prepared.
     #[must_use]
-    pub fn stored_state_change(&self) -> StoredStateChange {
-        Session::stored_state_change_parsed(&self.statement)
+    pub fn dml_plan(&self) -> Option<Arc<PreparedDmlPlan>> {
+        self.dml_plan.clone()
+    }
+
+    /// The prepared SELECT descriptor whose full physical tree is generated
+    /// on the first EXECUTE and rebuilt on later cache hits.
+    #[must_use]
+    pub fn select_plan(&self) -> Option<Arc<PreparedSelectPlan>> {
+        self.select_plan.clone()
     }
 
     /// Clones the retained tree and installs this execution's values on its
     /// parameter markers, matching Go's immutable prepared definition plus
     /// per-execution marker state.
-    pub fn bind(
-        &self,
-        values: &[Datum],
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Result<BoundPreparedAst, DriverError> {
-        let statement = tidb_executor::bind_prepared_statement(&self.statement, values)?;
-        let point_get = self
-            .point_get_plan
-            .as_ref()
-            .and_then(|plan| plan.bind(values, zone));
-        let point_get_cache_hit = self.point_get_cache_ready.load(Ordering::Acquire);
-        let execution_sql = if matches!(statement, Stmt::Query(_)) {
-            self.sql.clone()
-        } else {
-            statement.restore()
-        };
-        Ok(BoundPreparedAst {
-            execution_sql,
-            input: PreparedStatementInput::Bound(statement),
-            point_get,
-            point_get_cache_hit,
-            point_get_cache_ready: Arc::clone(&self.point_get_cache_ready),
-            use_cached_point_get: false,
-        })
-    }
-
-    /// Binds one EXECUTE, taking Go's cached PointGet door before cloning the
-    /// complete prepared AST. Every state that can change the plan declines to
-    /// [`Self::bind`], so the ordinary path remains the correctness fallback.
-    pub fn bind_for_execution(
-        &self,
-        session: &Session,
-        values: &[Datum],
-    ) -> Result<BoundPreparedAst, DriverError> {
-        if values.len() != self.parameter_count {
-            return Err(DriverError::WrongParamCount);
-        }
-        let zone = session.session_time_zone();
-        if self.point_get_cache_ready.load(Ordering::Acquire) {
-            if let Some(execution) = self
-                .point_get_plan
-                .as_ref()
-                .filter(|plan| session.can_reuse_prepared_point_get(plan))
-                .and_then(|plan| plan.bind(values, &zone))
-            {
-                return Ok(BoundPreparedAst {
-                    execution_sql: self.sql.clone(),
-                    input: PreparedStatementInput::Unbound {
-                        statement: Arc::clone(&self.statement),
-                        values: values.to_vec(),
-                    },
-                    point_get: Some(execution),
-                    point_get_cache_hit: true,
-                    point_get_cache_ready: Arc::clone(&self.point_get_cache_ready),
-                    use_cached_point_get: true,
-                });
-            }
-        }
-        self.bind(values, &zone)
-    }
-}
-
-/// One execution's parameter values installed on a private AST clone.
-#[derive(Debug)]
-pub struct BoundPreparedAst {
-    pub(crate) execution_sql: String,
-    input: PreparedStatementInput,
-    point_get: Option<PreparedPointGetExecution>,
-    point_get_cache_hit: bool,
-    point_get_cache_ready: Arc<AtomicBool>,
-    use_cached_point_get: bool,
-}
-
-/// Retain the original parse on a hit, but clone and bind it only if the
-/// current catalog or session policy requires ordinary planning.
-#[derive(Debug)]
-pub(crate) enum PreparedStatementInput {
-    Bound(Stmt),
-    Unbound {
-        statement: Arc<Stmt>,
-        values: Vec<Datum>,
-    },
-}
-
-impl PreparedStatementInput {
-    pub(crate) fn into_statement(self) -> Result<Stmt, DriverError> {
-        match self {
-            Self::Bound(statement) => Ok(statement),
-            Self::Unbound { statement, values } => {
-                tidb_executor::bind_prepared_statement(&statement, &values)
-            }
-        }
-    }
-
-    fn statement(&mut self) -> Result<&Stmt, DriverError> {
-        if let Self::Unbound { statement, values } = self {
-            *self = Self::Bound(tidb_executor::bind_prepared_statement(statement, values)?);
-        }
-        let Self::Bound(statement) = self else {
-            unreachable!()
-        };
-        Ok(statement)
-    }
-}
-
-impl BoundPreparedAst {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        String,
-        PreparedStatementInput,
-        Option<PreparedPointGetExecution>,
-        Option<PreparedPointGetExecution>,
-        Arc<AtomicBool>,
-    ) {
-        let cache_candidate = (!self.use_cached_point_get)
-            .then(|| self.point_get.clone())
-            .flatten();
-        let cached = self
-            .use_cached_point_get
-            .then_some(self.point_get)
-            .flatten();
-        (
-            self.execution_sql,
-            self.input,
-            cached,
-            cache_candidate,
-            self.point_get_cache_ready,
-        )
-    }
-
-    /// The read policy chosen from the same bound tree execution will plan.
-    #[must_use]
-    pub fn statement_read_shape(&mut self, session: &Session) -> StatementReadShape {
-        self.use_cached_point_get = self.point_get_cache_hit
-            && self
-                .point_get
-                .as_ref()
-                .is_some_and(|execution| session.can_reuse_prepared_point_get(execution.plan()));
-        if self.use_cached_point_get {
-            return self
-                .point_get
-                .as_ref()
-                .expect("a cache hit retains its physical read")
-                .plan()
-                .statement_read_shape();
-        }
-        self.input
-            .statement()
-            .map_or(StatementReadShape::Unknown, |statement| {
-                session.statement_read_shape_bound(statement)
-            })
+    pub fn bind(&self, values: &[Datum]) -> Result<Stmt, DriverError> {
+        tidb_executor::bind_prepared_statement(&self.statement, values)
     }
 }
 
 impl Session {
+    pub(crate) fn prepared_plan_cache_environment(
+        &self,
+    ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
+        let vars_generation = self.vars.generation();
+        let blacklist_generation = self.pushdown_blacklists.generation();
+        let in_transaction = self.in_transaction();
+        let autocommit = self.is_autocommit();
+        if let Some(cached) = self.prepared_plan_cache_environment_cache.borrow().as_ref() {
+            if cached.vars_generation == vars_generation
+                && cached.blacklist_generation == blacklist_generation
+                && cached.in_transaction == in_transaction
+                && cached.autocommit == autocommit
+            {
+                return cached.environment.clone();
+            }
+        }
+        let sql_select_limit = self.vars.get_system("sql_select_limit");
+        let snapshot = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT);
+        let read_staleness = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
+        let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
+            && !snapshot.is_ok_and(|value| !value.is_empty())
+            && !read_staleness
+                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
+        .then(|| {
+            Arc::new(
+                tidb_executor::PreparedPlanCacheEnvironment::new(
+                    self.vars.sql_mode(),
+                    self.vars.get_system("time_zone").unwrap_or_default(),
+                    blacklist_generation,
+                )
+                .with_session_state(
+                    self.vars
+                        .get_system("character_set_connection")
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system("collation_connection")
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+                        .unwrap_or_default(),
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
+                        .unwrap_or_default(),
+                    sql_select_limit.unwrap_or_default(),
+                    in_transaction,
+                    autocommit,
+                    self.vars
+                        .get_system(
+                            tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS,
+                        )
+                        .as_deref()
+                        != Ok("OFF"),
+                )
+                .with_no_backslash_escapes_in_like(
+                    self.vars
+                        .get_system(
+                            tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE,
+                        )
+                        .as_deref()
+                        != Ok("OFF"),
+                )
+                .with_cache_admission(
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
+                    self.vars
+                        .optimizer_fix_control()
+                        .get_bool_with_default(tidb_planner::fix_control::FIX_45798, true),
+                ),
+            )
+        });
+        *self.prepared_plan_cache_environment_cache.borrow_mut() =
+            Some(PreparedPlanCacheEnvironmentCache {
+                vars_generation,
+                blacklist_generation,
+                in_transaction,
+                autocommit,
+                environment: environment.clone(),
+            });
+        environment
+    }
+
+    pub(crate) fn prepared_plan_cache_environment_for_binding(
+        &self,
+        binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedPlanCacheEnvironment> {
+        let environment = self.prepared_plan_cache_environment()?;
+        Some(
+            environment.as_ref().clone().with_binding_sql(
+                binding_sql,
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING)
+                    .as_deref()
+                    != Ok("OFF"),
+            ),
+        )
+    }
+
     /// Parses and retains the statement under this session's current SQL mode.
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
-        let point_get_plan = {
+        let planner_context = self.statement_context(false);
+        let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
-            tidb_executor::build_prepared_point_get_plan(
-                &statement,
-                parameter_count,
-                &catalog,
-                self.current_database(),
-                &self.session_time_zone(),
+            let cacheable = {
+                let mut candidate = statement.clone();
+                self.prepared_statement_cacheable(&mut candidate, &catalog)
+                    .is_ok()
+            };
+            (
+                cacheable
+                    .then(|| {
+                        tidb_executor::build_prepared_point_get_plan(
+                            &statement,
+                            parameter_count,
+                            &catalog,
+                            self.current_database(),
+                            &self.session_time_zone(),
+                        )
+                    })
+                    .flatten(),
+                if cacheable {
+                    tidb_executor::build_prepared_dml_plan(
+                        &statement,
+                        parameter_count,
+                        &catalog,
+                        self.current_database(),
+                    )?
+                } else {
+                    None
+                },
+                cacheable
+                    .then(|| {
+                        tidb_executor::build_prepared_select_plan(
+                            &statement,
+                            parameter_count,
+                            &catalog,
+                            self.current_database(),
+                            &planner_context,
+                        )
+                    })
+                    .flatten(),
             )
         };
         Ok(PreparedAst::from_parsed(
@@ -270,7 +268,35 @@ impl Session {
             statement,
             parameter_count,
             point_get_plan,
+            dml_plan,
+            select_plan,
         ))
+    }
+
+    /// Execute-time prepared-cache policy from Go `GetPlanFromPlanCache`.
+    /// The explicit statement hint and `hint_only` strategy are evaluated for
+    /// every EXECUTE because the strategy may change after PREPARE.
+    #[must_use]
+    pub fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
+        if !self.vars.prepared_plan_cache_enabled() {
+            return false;
+        }
+        let hints = crate::variables::parse_statement_hints_without_catalog(
+            statement,
+            self.current_database(),
+        );
+        if hints.ignore_plan_cache {
+            return false;
+        }
+        let hint_only = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        !hint_only || hints.use_plan_cache
     }
 
     /// Go `IsSafeToReusePointGetExecutor` plus the plan-cache reuse gates of
@@ -283,200 +309,185 @@ impl Session {
     /// visibility the ordinary planner would build for it (Go serves these
     /// from its prepared plan cache inside transactions as well).
     pub(crate) fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.session_bindings.is_empty() {
-            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-                eprintln!("[pg-reuse-no] session_bindings");
-            }
+        if !self.vars.prepared_plan_cache_enabled() {
             return false;
         }
         if self
             .vars
             .optimizer_fix_control()
             .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-            || self.vars.get_system("sql_select_limit").as_deref() != Ok("18446744073709551615")
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
-                .is_ok_and(|value| !value.is_empty())
-            || self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
-                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0))
+            || self.prepared_plan_cache_environment().is_none()
         {
-            if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-                eprintln!("[pg-reuse-no] vars gate");
-            }
             return false;
         }
-        let matched = self
-            .lock_catalog()
-            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()));
-        if !matched && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-            eprintln!("[pg-reuse-no] catalog identity moved");
-        }
-        matched
+        self.lock_catalog()
+            .is_ok_and(|catalog| plan.matches_catalog(&catalog, self.current_database()))
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// Binds a retained point-get plan for a binary EXECUTE after applying
+    /// the same autocommit, snapshot, session-binding, and schema gates used
+    /// by the Go point-get cache.
+    pub fn bind_cached_prepared_point_get(
+        &self,
+        plan: &Arc<PreparedPointGetPlan>,
+        values: &[Datum],
+    ) -> Option<PreparedPointGetExecution> {
+        self.bind_cached_prepared_point_get_for_binding(plan, values, None)
+    }
 
-    #[test]
-    fn a_bound_cache_hit_replans_after_catalog_identity_changes() {
-        let mut session = Session::new();
-        session
-            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
-            .unwrap();
-        session.run("INSERT INTO t VALUES (1, 10)").unwrap();
-        let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
-        let first = prepared
-            .bind_for_execution(&session, &[Datum::Int(1)])
-            .unwrap();
-        session.run_bound_prepared(first).unwrap();
-        let bounds = [false, true].map(|classify| {
-            (
-                classify,
-                prepared
-                    .bind_for_execution(&session, &[Datum::Int(2)])
-                    .unwrap(),
-            )
-        });
-        session.run("DROP TABLE t").unwrap();
-        session.run("CREATE TABLE t (id BIGINT, v BIGINT)").unwrap();
-        session.run("INSERT INTO t VALUES (2, 20)").unwrap();
-        for (classify, mut bound) in bounds {
-            // The cached execution was bound before a schema refresh at the
-            // cluster statement boundary. Both callers must replan safely.
-            assert!(bound.use_cached_point_get);
-            if classify {
-                assert_eq!(
-                    bound.statement_read_shape(&session),
-                    StatementReadShape::Unknown
-                );
+    /// Rebuilds the point plan under the same binding-aware environment key
+    /// used by ordinary cached physical plans.
+    #[must_use]
+    pub fn bind_cached_prepared_point_get_for_binding(
+        &self,
+        plan: &Arc<PreparedPointGetPlan>,
+        values: &[Datum],
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedPointGetExecution> {
+        if !self.can_reuse_prepared_point_get(plan) {
+            return None;
+        }
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        plan.bind_with_environment(values, &self.session_time_zone(), &environment)
+    }
+
+    /// Binds fresh values into a retained DML plan after applying the prepared
+    /// cache, session-state, binding, fix-control, database, and schema gates.
+    pub fn bind_cached_prepared_dml(
+        &self,
+        plan: &Arc<PreparedDmlPlan>,
+        values: &[Datum],
+    ) -> Option<PreparedDmlExecution> {
+        self.bind_cached_prepared_dml_for_statement(plan, values, plan.statement(), None)
+    }
+
+    /// Binds the effective DML statement and keys it by the matching binding.
+    #[must_use]
+    pub fn bind_cached_prepared_dml_for_statement(
+        &self,
+        plan: &Arc<PreparedDmlPlan>,
+        values: &[Datum],
+        statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedDmlExecution> {
+        if !self.vars.prepared_plan_cache_enabled()
+            || self
+                .vars
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+        {
+            return None;
+        }
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(cached) = plan.bind_cached_for_statement(
+                values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
+                // `lookupPlanCache`'s defer observes the lookup duration on
+                // hits only, for the prepared and non-prepared paths alike.
+                tidb_planner::metrics::plan_cache_hit_counter(false).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
+                return Some(cached);
             }
-            let crate::StmtOutput::Rows { rows, .. } = session.run_bound_prepared(bound).unwrap()
-            else {
-                panic!("expected rows");
-            };
-            assert_eq!(rows, vec![vec![Datum::Int(20)]]);
         }
-    }
-
-    #[test]
-    fn prepared_execution_warms_cache_without_cursor_materialization() {
-        let mut session = Session::new();
-        session
-            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
-            .unwrap();
-        session
-            .run("INSERT INTO t VALUES (1, 10), (2, 20)")
-            .unwrap();
-        let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
-        session.probe_prepared(&prepared).unwrap();
-        assert!(!prepared.point_get_cache_ready.load(Ordering::Acquire));
-        let first = prepared
-            .bind_for_execution(&session, &[Datum::Int(1)])
-            .unwrap();
-        assert!(
-            matches!(first.input, PreparedStatementInput::Bound(_)),
-            "PREPARE is not a cache hit"
-        );
-        session.run_bound_prepared(first).unwrap();
-        let second = prepared
-            .bind_for_execution(&session, &[Datum::Int(2)])
-            .unwrap();
-        assert!(
-            matches!(second.input, PreparedStatementInput::Unbound { .. }),
-            "real execution must publish independently of cursor capture"
-        );
-        let crate::StmtOutput::Rows { rows, .. } = session.run_bound_prepared(second).unwrap()
-        else {
-            panic!("expected rows");
+        // The statement context snapshots sequence/key-decode metadata from
+        // this same catalog. Build it after releasing the cache-probe guard,
+        // exactly as the PREPARE path does, then reacquire the catalog for
+        // physical enumeration.
+        let planner_context = match statement {
+            Stmt::Dml(dml)
+                if matches!(
+                    dml.as_ref(),
+                    tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+                ) =>
+            {
+                self.statement_context_for_update_read(false)
+            }
+            _ => self.statement_context(true),
         };
-        assert_eq!(rows, vec![vec![Datum::Int(20)]]);
+        let catalog = self.lock_catalog().ok()?;
+        // Go's miss arm: the replan is recorded on the miss counter
+        // (plan_cache.go:366).
+        tidb_planner::metrics::plan_cache_miss_counter(false).inc();
+        plan.bind_for_statement(
+            values,
+            &catalog,
+            self.current_database(),
+            &planner_context,
+            &environment,
+            statement,
+        )
     }
 
-    #[test]
-    fn cached_index_lookup_keeps_timestamped_read_shape() {
-        let mut session = Session::new();
-        session
-            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
-            .unwrap();
-        session
-            .run("INSERT INTO t VALUES (1, 7, 10), (2, 7, 20)")
-            .unwrap();
-        let prepared = session
-            .prepare_ast("SELECT id, v FROM t WHERE a = ?")
-            .unwrap();
-        assert!(
-            prepared.point_get_plan().is_some(),
-            "exercise a reusable index lookup"
-        );
-        let values = [Datum::Int(7)];
-        let bound = prepared.bind_for_execution(&session, &values).unwrap();
-        let (expected, _) = session
-            .run_bound_prepared_with_result_authority(bound)
-            .unwrap();
-        for direct_bind in [false, true] {
-            let mut bound = if direct_bind {
-                prepared.bind_for_execution(&session, &values).unwrap()
-            } else {
-                prepared
-                    .bind(&values, &session.session_time_zone())
-                    .unwrap()
-            };
-            assert_eq!(
-                bound.statement_read_shape(&session),
-                StatementReadShape::Unknown
-            );
-            assert!(
-                bound.use_cached_point_get,
-                "timestamp policy must not disable reuse"
-            );
-            assert_eq!(session.run_bound_prepared(bound).unwrap(), expected);
+    /// Binds the current values into a retained SELECT after applying the
+    /// same session, schema, and stale-read invalidation gates as Go's plan
+    /// cache. A refusal returns the statement to ordinary planning.
+    pub fn bind_cached_prepared_select(
+        &self,
+        plan: &Arc<PreparedSelectPlan>,
+        values: &[Datum],
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_cached_prepared_select_for_statement(plan, values, plan.statement(), None)
+    }
+
+    /// Binds the effective SELECT statement and keys its physical tree by the
+    /// exact matched binding SQL, as Go's `newPlanCacheKeyWithMatchedBinding`
+    /// does.
+    #[must_use]
+    pub fn bind_cached_prepared_select_for_statement(
+        &self,
+        plan: &Arc<PreparedSelectPlan>,
+        values: &[Datum],
+        statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<PreparedSelectExecution> {
+        if !self.vars.prepared_plan_cache_enabled()
+            || self
+                .vars
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+        {
+            return None;
         }
-    }
-
-    #[test]
-    fn cached_read_shape_revalidates_catalog_identity() {
-        let mut session = Session::new();
-        session
-            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
-            .unwrap();
-        let prepared = session
-            .prepare_ast("SELECT id, v FROM t WHERE a = ?")
-            .unwrap();
-        let plan = prepared.point_get_plan().expect("retained index lookup");
-        let warm = prepared
-            .bind_for_execution(&session, &[Datum::Int(7)])
-            .unwrap();
-        session.run_bound_prepared(warm).unwrap();
-        for (ddl, expected) in [
-            (None, StatementReadShape::Unknown),
-            (
-                Some("CREATE TABLE t (id BIGINT, a BIGINT PRIMARY KEY, v BIGINT)"),
-                StatementReadShape::AutocommitPointGet,
-            ),
-            (
-                Some("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT)"),
-                StatementReadShape::Unknown,
-            ),
-        ] {
-            if let Some(ddl) = ddl {
-                session.run("DROP TABLE t").unwrap();
-                session.run(ddl).unwrap();
-                assert!(!session.can_reuse_prepared_point_get(&plan));
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(execution) = plan.bind_cached_for_statement(
+                values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm
+                // (plan_cache.go:351, prepared label); the lookup-duration
+                // observation is hits-only per `lookupPlanCache`'s defer.
+                tidb_planner::metrics::plan_cache_hit_counter(false).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
+                return Some(execution);
             }
-            let mut bound = prepared
-                .bind_for_execution(&session, &[Datum::Int(7)])
-                .unwrap();
-            assert_eq!(
-                bound.statement_read_shape(&session),
-                expected,
-                "a stale plan must not choose the current table's read policy"
-            );
-            assert_eq!(bound.use_cached_point_get, ddl.is_none());
         }
+        // Go's miss arm (plan_cache.go:366).
+        tidb_planner::metrics::plan_cache_miss_counter(false).inc();
+        let ctx = self.statement_context(false);
+        let catalog = self.lock_catalog().ok()?;
+        plan.bind_for_statement(
+            values,
+            &catalog,
+            self.current_database(),
+            &ctx,
+            &environment,
+            statement,
+        )
     }
 }

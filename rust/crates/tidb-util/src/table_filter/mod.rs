@@ -28,7 +28,9 @@ mod compat;
 mod matchers;
 mod parser;
 
-pub use column_filter::{parse_column_filter, ColumnFilter};
+pub use column_filter::{
+    parse_column_filter, parse_column_filter_rules, ColumnFilter, ColumnFilterRules,
+};
 pub use compat::{
     new_schemas_filter, new_tables_filter, parse_mysql_replication_rules, MySQLReplicationRules,
     Table,
@@ -40,7 +42,7 @@ use std::fmt;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 /// Error returned by filter parsing.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FilterError(String);
 
 impl FilterError {

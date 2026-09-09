@@ -48,9 +48,63 @@ pub struct LogicalProjection {
     /// `Expand`, so its column references are NOT real references and it must
     /// not be eliminated.
     pub proj4_expand: bool,
+    /// Whether Go's statement-scoped
+    /// `MapHashCode2UniqueID4ExtendedCol` recorded this projection's computed
+    /// outputs. The map is populated only while
+    /// `tidb_enable_new_only_full_group_by_check` is enabled.
+    pub fd_expression_ids_registered: bool,
 }
 
 impl LogicalProjection {
+    /// Go `LogicalProjection.PreparePossibleProperties` maps every child
+    /// order through the projection's bare-column expressions. A computed
+    /// expression stops an order at that position; an order with no mapped
+    /// prefix is discarded.
+    pub fn prepare_possible_properties(
+        &mut self,
+        child: Option<&crate::plan_base::PossiblePropertiesInfo>,
+    ) -> crate::plan_base::PossiblePropertiesInfo {
+        let Some(child) = child else {
+            self.base.set_has_tiflash(false);
+            return crate::plan_base::PossiblePropertiesInfo::default();
+        };
+        let output_schema = self.base.base.schema();
+        let mut old_columns = Vec::new();
+        let mut new_columns = Vec::new();
+        if let Some(output_schema) = output_schema {
+            for (index, expression) in self.exprs.iter().enumerate() {
+                if let (Expression::Column(input), Some(output)) =
+                    (expression, output_schema.columns.get(index))
+                {
+                    old_columns.push(input.clone());
+                    new_columns.push(output.clone());
+                }
+            }
+        }
+        let input_schema = Schema::new(old_columns);
+        let orders = child
+            .orders
+            .iter()
+            .filter_map(|order| {
+                let mapped: Vec<Column> = order
+                    .iter()
+                    .map_while(|column| {
+                        let position = input_schema.column_index(column);
+                        usize::try_from(position)
+                            .ok()
+                            .and_then(|position| new_columns.get(position).cloned())
+                    })
+                    .collect();
+                (!mapped.is_empty()).then_some(mapped)
+            })
+            .collect();
+        self.base.set_has_tiflash(child.has_tiflash);
+        crate::plan_base::PossiblePropertiesInfo {
+            orders,
+            has_tiflash: child.has_tiflash,
+        }
+    }
+
     /// Go `tryTransformSortItems` (`logical_projection.go:553`): map each
     /// required-order column through this projection's exprs — a bare
     /// `Column` maps to the child column it projects, a `ScalarFunction`
@@ -73,7 +127,7 @@ impl LogicalProjection {
             let idx = schema
                 .columns
                 .iter()
-                .position(|c| c.unique_id == item.col)?;
+                .position(|c| c.unique_id == item.col.unique_id)?;
             match self.exprs.get(idx)? {
                 Expression::Column(col) => {
                     new_items.push(crate::physical_property::SortItem::new(
@@ -117,6 +171,7 @@ impl LogicalProjection {
             exprs,
             calculate_no_delay: false,
             proj4_expand: false,
+            fd_expression_ids_registered: false,
         }
     }
 
@@ -204,27 +259,41 @@ impl LogicalProjection {
         schema: &mut Schema,
     ) -> (Vec<Column>, bool) {
         let mut used = schema_producer::get_used_list(parent_used_cols, schema);
-        let mut all_pruned = true;
         for (i, keep) in used.iter_mut().enumerate() {
             if *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
             {
                 *keep = true;
-                all_pruned = false;
                 break;
             }
         }
-        if !all_pruned {
-            for i in (0..used.len()).rev() {
-                if !used[i]
-                    && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
-                {
-                    schema.columns.remove(i);
-                    self.exprs.remove(i);
-                }
+        // Go runs this deletion loop even when every output is pruned: the
+        // projection then empties and its caller replaces it with the child
+        // (`logical_projection.go:139`). Skipping it kept the columns alive, so
+        // a restore projection over a reordered join survived column pruning
+        // while Go drops it (the child supplies the row count).
+        for i in (0..used.len()).rev() {
+            if !used[i]
+                && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+            {
+                schema.columns.remove(i);
+                self.exprs.remove(i);
             }
         }
         let child_used = extract_columns_from_expressions(&self.exprs, None);
         (child_used, schema.columns.is_empty())
+    }
+
+    /// Go `LogicalProjection.PruneColumns`'s `allPruned` test
+    /// (`logical_projection.go:109`): no output column is used by the parent
+    /// and no expression carries a `SET_VAR`/`SLEEP` side effect. The
+    /// enum-level driver pairs this with "the child is a `LogicalTableDual`"
+    /// to keep the projection instead of emptying it.
+    #[must_use]
+    pub fn all_outputs_pruned(&self, parent_used_cols: &[Column], schema: &Schema) -> bool {
+        let used = schema_producer::get_used_list(parent_used_cols, schema);
+        !used.iter().enumerate().any(|(i, keep)| {
+            *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+        })
     }
 
     /// Go `LogicalProjection.buildSchemaByExprs(selfSchema)`
@@ -309,12 +378,14 @@ impl LogicalProjection {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = child_stats
+            .first()
+            .expect("projection derive_stats requires a child");
         let mut col_ndvs = Vec::new();
         for (i, expr) in self.exprs.iter().enumerate() {
-            let Some(output) = self_schema.columns.get(i) else {
-                break;
-            };
+            // Go indexes `selfSchema.Columns[i]` directly
+            // (`logical_projection.go:296`).
+            let output = &self_schema.columns[i];
             let read = extract_columns(expr);
             if read.len() == 1 {
                 if let Some(ndv) = child.col_ndvs().get(&read[0].unique_id) {
@@ -373,6 +444,7 @@ impl LogicalProjection {
             exprs: self.exprs.clone(),
             calculate_no_delay: self.calculate_no_delay,
             proj4_expand: self.proj4_expand,
+            fd_expression_ids_registered: self.fd_expression_ids_registered,
         }
     }
 }

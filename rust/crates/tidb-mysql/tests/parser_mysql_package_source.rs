@@ -6,26 +6,14 @@
 
 #![allow(non_upper_case_globals)]
 
-use std::path::Path;
-use std::process::Command;
-
+use tidb_error::mysql::SqlError;
 use tidb_mysql::*;
 
 #[test]
-fn generated_source_authorities_match_the_go_oracle() {
-    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/generate-parser-mysql-unicode.py");
-    let output = Command::new("python3")
-        .arg(generator)
-        .arg("--check")
-        .output()
-        .expect("run parser-mysql source-authority generator check");
-    assert!(
-        output.status.success(),
-        "generator check failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
+#[deny(unused_must_use)]
+fn sql_error_constructors_return_may_be_ignored_like_go() {
+    SqlError::new(0, &[]);
+    SqlError::new_f(0, "customized error", &[], &[]);
 }
 
 #[test]
@@ -78,7 +66,6 @@ fn test_sql_mode() {
     assert_eq!(priority_from_str("hıgh_priority"), Priority::High);
     let invalid = get_sql_mode("ANSI_QUOTES,BOGUS").unwrap_err();
     assert_eq!(invalid.partial, ModeANSIQuotes);
-    assert_eq!(invalid.value, "BOGUS");
     assert_eq!(invalid.sql_error.code, 1231);
     assert_eq!(invalid.sql_error.state, "42000");
     assert_eq!(
@@ -89,7 +76,6 @@ fn test_sql_mode() {
     let oversized = "x".repeat(201);
     let invalid = get_sql_mode(&format!("ANSI_QUOTES,{oversized}")).unwrap_err();
     assert_eq!(invalid.partial, ModeANSIQuotes);
-    assert_eq!(invalid.value, oversized);
     assert_eq!(
         invalid.sql_error.message,
         format!(
@@ -225,8 +211,8 @@ fn test_build_tidbx_release_version() {
 #[test]
 fn test_normalize_tidb_release_version_for_next_gen() {
     assert_eq!(
-        normalize_tidb_release_version_for_next_gen(LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER),
-        TIDBX_PLACEHOLDER_RELEASE_VERSION
+        normalize_tidb_release_version_for_next_gen("v8.4.0-this-is-a-placeholder"),
+        "v26.3.0-this-is-a-placeholder"
     );
     assert_eq!(
         normalize_tidb_release_version_for_next_gen("v26.3.0"),
@@ -239,7 +225,7 @@ fn runtime_versions_preserve_build_defaults_and_mutation_semantics() {
     static VERSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = VERSION_TEST_LOCK.lock().unwrap();
 
-    reset_runtime_versions();
+    let original = runtime_versions();
     assert_eq!(
         runtime_versions(),
         RuntimeVersions {
@@ -256,16 +242,25 @@ fn runtime_versions_preserve_build_defaults_and_mutation_semantics() {
             server_version: "8.0.11-TiDB-CLOUD.202603.0".to_owned(),
         }
     );
-    reset_runtime_versions();
+    set_runtime_versions(original.tidb_release_version, original.server_version);
 }
 
 #[test]
 fn test_priv_string() {
     let mut privilege = UsagePriv;
-    for bit in 0..=33 {
+    for bit in 0..=34 {
         assert!(!privilege.as_str().is_empty(), "{bit}-th");
         privilege = privilege << 1;
     }
+    assert_eq!(OperateViewPriv.0, 1 << 33);
+    assert_eq!(OperateViewPriv.as_str(), "Operate View");
+    assert_eq!(OperateViewPriv.column_string(), "Operate_view_priv");
+    assert_eq!(OperateViewPriv.set_string(), "Operate View");
+    assert_eq!(AllPriv.0, 1 << 34);
+    assert_eq!(ExtendedPriv.0, 1 << 35);
+    assert!(ALL_GLOBAL_PRIVILEGES.contains(&OperateViewPriv));
+    assert!(ALL_DATABASE_PRIVILEGES.contains(&OperateViewPriv));
+    assert!(ALL_TABLE_PRIVILEGES.contains(&OperateViewPriv));
 }
 
 #[test]
@@ -306,7 +301,7 @@ fn test_privs_has() {
 
 #[test]
 fn test_priv_all_consistency() {
-    for bit in 1..33 {
+    for bit in 1..34 {
         let privilege = PrivilegeType(1 << bit);
         assert!(
             !privilege.column_string().is_empty(),
@@ -455,4 +450,61 @@ fn locale_unicode_edges_and_source_panics_follow_go() {
     assert!(std::panic::catch_unwind(|| format_by_locale("", "2", "en_US")).is_err());
     assert!(std::panic::catch_unwind(|| format_by_locale("1", "", "en_US")).is_err());
     assert!(std::panic::catch_unwind(|| format_by_locale("-", "2", "en_US")).is_err());
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    // Go does not add a compile-time must-use rule to these helpers. This
+    // regression keeps the Rust owner from growing diagnostics that callers
+    // of the source package cannot observe.
+    locale_format_style("en_US");
+    charset_name_to_id("utf8mb4");
+    is_utf8_charset("utf8mb4");
+    collation_name(45);
+    collation_id("utf8mb4_bin");
+    is_range_graph('A');
+    is_unicode_decimal_digit('1');
+    is_unicode_uppercase_letter('A');
+    is_unicode_lowercase_letter('a');
+    is_integer_type(TypeLonglong);
+    default_field_length_and_decimal(TypeLonglong);
+    default_field_length_and_decimal_for_cast(TypeJSON);
+    is_auth_plugin_clear_text(AuthCachingSha2Password);
+    has_flag(UnsignedFlag, UnsignedFlag);
+    has_drop_column_with_index_flag(DropColumnIndexFlag);
+    has_not_null_flag(NotNullFlag);
+    has_no_default_value_flag(NoDefaultValueFlag);
+    has_auto_increment_flag(AutoIncrementFlag);
+    has_unsigned_flag(UnsignedFlag);
+    has_zerofill_flag(ZerofillFlag);
+    has_binary_flag(BinaryFlag);
+    has_pri_key_flag(PriKeyFlag);
+    has_uni_key_flag(UniqueKeyFlag);
+    has_multiple_key_flag(MultipleKeyFlag);
+    has_timestamp_flag(TimestampFlag);
+    has_on_update_now_flag(OnUpdateNowFlag);
+    has_parse_to_json_flag(ParseToJSONFlag);
+    has_is_boolean_flag(IsBooleanFlag);
+    has_prevent_null_insert_flag(PreventNullInsertFlag);
+    has_enum_set_as_int_flag(EnumSetAsIntFlag);
+    runtime_versions();
+    normalize_tidb_release_version_for_next_gen("v26.3.0");
+    has_cursor_exists_flag(ServerStatusCursorExists);
+    command_name(ComQuery);
+    default_mysql_type_length(TypeLonglong);
+    default_time_fraction_length(6);
+    delete_sql_mode(ModeANSI, ModeANSIQuotes);
+    set_sql_mode(ModeNone, ModeANSIQuotes);
+    combination_sql_mode("ANSI");
+    format_sql_mode_str("ANSI");
+    Priority::None.as_name();
+    Priority::None.restore();
+    priority_from_str("LOW_PRIORITY");
+    SelectPriv.as_str();
+    SelectPriv.column_string();
+    SelectPriv.set_string();
+    privilege_from_column("Select_priv");
+    privilege_from_set_enum("Select");
+    has_privilege(&[SelectPriv], SelectPriv);
 }

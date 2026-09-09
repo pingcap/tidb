@@ -22,7 +22,9 @@ tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-util = { path = "../tidb-util" }
+tikv-client = { path = "../../third_party/tikv-client-rs" }
 
 [dev-dependencies]
+tempfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }

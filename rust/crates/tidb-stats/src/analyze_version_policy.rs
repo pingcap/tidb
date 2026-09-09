@@ -23,7 +23,6 @@
 ///
 /// `None` models the source nil table. Nil or pseudo stats are considered a
 /// match; otherwise only an analyzed, different version is a mismatch.
-#[must_use]
 pub fn analyze_version_matches(
     stats_version: Option<i64>,
     pseudo: bool,

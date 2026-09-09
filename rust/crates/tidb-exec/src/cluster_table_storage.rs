@@ -34,7 +34,7 @@
 //! DECLARED its whole read is one point get on the clustered handle uses
 //! [`MaxTsSnapshot`] instead, at `u64::MAX`, which is Go's
 //! `AdviseOptimizeWithPlan` shortcut. That reader runs directly on the
-//! connection worker without activating a writable transaction; the
+//! connection worker and constructs no reusable transaction state; the
 //! declaration is a statement-level fact and never inferred from a read,
 //! because at this seam an `UPDATE`'s read-before-write is the same `get` on
 //! the same key.
@@ -61,17 +61,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
-
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
+use tidb_hack::GoToLower;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{
     CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
     OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
@@ -86,391 +86,6 @@ use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_key_sql_error, is_retryable_statement_failure,
     lock_failure_to_sql_error, transaction_cause_to_sql_error, LockSqlError,
 };
-
-/// The type-erased operations of the one transaction owned by a session.
-/// Type erasure keeps the public snapshot independent of the injected store;
-/// calls execute directly, without an in-process request/reply transport.
-trait TransactionAccess: Send {
-    fn get(
-        &mut self,
-        key: &[u8],
-        read_ts: Option<u64>,
-        locking: bool,
-    ) -> Result<Option<Vec<u8>>, StorageError>;
-    fn batch_get(
-        &mut self,
-        keys: &[Vec<u8>],
-        read_ts: Option<u64>,
-        locking: bool,
-    ) -> Result<SnapshotPairs, StorageError>;
-    fn scan(
-        &mut self,
-        start: &[u8],
-        end: &[u8],
-        limit: Option<usize>,
-        read_ts: Option<u64>,
-    ) -> Result<SnapshotPairs, StorageError>;
-    fn advance_for_update_ts(&mut self) -> Result<u64, StorageError>;
-    fn lock_keys(
-        &mut self,
-        keys: &[Vec<u8>],
-        presume_not_exists: &BTreeSet<Vec<u8>>,
-        duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
-        return_values: bool,
-    ) -> LockKeysOutcome;
-    fn release_keys(&mut self, keys: &[Vec<u8>]) -> Result<(), StorageError>;
-    fn commit(
-        self: Box<Self>,
-        mutations: Vec<OptimisticMutation>,
-    ) -> Result<OptimisticCommitOutcome, String>;
-    fn finish(self: Box<Self>) -> Result<(), StorageError>;
-}
-
-type TransactionHandle = Arc<Mutex<Option<Box<dyn TransactionAccess>>>>;
-
-fn ended_transaction() -> StorageError {
-    StorageError::Backend("the transaction is already finished".to_owned())
-}
-
-fn with_transaction<T>(
-    handle: &TransactionHandle,
-    operation: impl FnOnce(&mut dyn TransactionAccess) -> Result<T, StorageError>,
-) -> Result<T, StorageError> {
-    let mut state = handle
-        .lock()
-        .map_err(|_| StorageError::Backend("the transaction operation panicked".to_owned()))?;
-    operation(state.as_deref_mut().ok_or_else(ended_transaction)?)
-}
-
-/// The sole terminal authority. Snapshot handles share state, not authority to
-/// commit it. Taking the state marks every outstanding handle finished before
-/// commit/rollback starts, after any preceding read has released the mutex.
-struct TransactionOwner {
-    handle: TransactionHandle,
-    start_ts: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TransactionOpen {
-    Writable,
-    WritablePessimistic,
-    ReadOnly,
-    ReadOnlyAt(u64),
-}
-
-enum TransactionKind<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> {
-    Optimistic(RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>),
-    Pessimistic {
-        transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
-        keep_alive: Option<LockKeepAlive>,
-        lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    },
-}
-
-struct OwnedTransaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> {
-    kind: TransactionKind<C, L, P>,
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    timeout: Duration,
-}
-
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> OwnedTransaction<C, L, P> {
-    fn snapshot(&mut self) -> &mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
-        match &mut self.kind {
-            TransactionKind::Optimistic(transaction) => transaction,
-            TransactionKind::Pessimistic { transaction, .. } => transaction.snapshot(),
-        }
-    }
-}
-
-impl TransactionOwner {
-    fn open_with<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
-        timeout: Duration,
-        open: TransactionOpen,
-        commit_protocol: CommitProtocol,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        let (kind, start_ts) = match open {
-            TransactionOpen::WritablePessimistic => {
-                let mut transaction = opener.begin_pessimistic(
-                    MAX_OPTIMISTIC_MUTATIONS,
-                    MAX_OPTIMISTIC_TRANSACTION_BYTES,
-                )?;
-                transaction.set_commit_protocol(commit_protocol);
-                let start_ts = transaction.start_ts();
-                (
-                    TransactionKind::Pessimistic {
-                        transaction,
-                        keep_alive: None,
-                        lock_values: BTreeMap::new(),
-                    },
-                    start_ts,
-                )
-            }
-            _ => {
-                let mut transaction = match open {
-                    TransactionOpen::Writable => {
-                        opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-                    }
-                    TransactionOpen::ReadOnly => opener.begin_read_only(),
-                    TransactionOpen::ReadOnlyAt(start_ts) => opener.begin_read_only_at(start_ts),
-                    TransactionOpen::WritablePessimistic => unreachable!(),
-                }?;
-                if open == TransactionOpen::Writable {
-                    transaction.set_commit_protocol(commit_protocol);
-                }
-                let start_ts = transaction.start_ts();
-                (TransactionKind::Optimistic(transaction), start_ts)
-            }
-        };
-        Ok(Self {
-            handle: Arc::new(Mutex::new(Some(Box::new(OwnedTransaction {
-                kind,
-                opener: Arc::clone(opener),
-                timeout,
-            })))),
-            start_ts,
-        })
-    }
-
-    fn handle(&self) -> Result<TransactionHandle, StorageError> {
-        with_transaction(&self.handle, |_| Ok(()))?;
-        Ok(Arc::clone(&self.handle))
-    }
-
-    fn is_open(&self) -> bool {
-        self.handle.lock().is_ok_and(|state| state.is_some())
-    }
-
-    fn take(&mut self) -> Option<Box<dyn TransactionAccess>> {
-        self.handle
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take()
-    }
-
-    fn finish(&mut self) -> Result<(), StorageError> {
-        self.take()
-            .map_or(Ok(()), |transaction| transaction.finish())
-    }
-
-    fn commit(
-        &mut self,
-        mutations: Vec<OptimisticMutation>,
-    ) -> Result<OptimisticCommitOutcome, String> {
-        self.take()
-            .ok_or_else(|| ended_transaction().to_string())?
-            .commit(mutations)
-    }
-}
-
-impl Drop for TransactionOwner {
-    fn drop(&mut self) {
-        let _ = self.finish();
-    }
-}
-
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> TransactionAccess
-    for OwnedTransaction<C, L, P>
-{
-    fn get(
-        &mut self,
-        key: &[u8],
-        read_ts: Option<u64>,
-        locking: bool,
-    ) -> Result<Option<Vec<u8>>, StorageError> {
-        // Go PointGetExecutor.get: MemBuffer (above this seam), locking-read
-        // cache, then snapshot. Plain SELECT never reads the lock-value cache.
-        if let TransactionKind::Pessimistic { lock_values, .. } = &self.kind {
-            if let Some(value) = lock_values.get(key).filter(|_| locking) {
-                return Ok(value.clone());
-            }
-        }
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let transaction = self.snapshot();
-        transaction
-            .snapshot_get_at(key, read_ts.unwrap_or(transaction.start_ts()), &call)
-            .map(|result| result.value)
-            .map_err(classify)
-    }
-
-    fn batch_get(
-        &mut self,
-        keys: &[Vec<u8>],
-        read_ts: Option<u64>,
-        locking: bool,
-    ) -> Result<SnapshotPairs, StorageError> {
-        let mut answered = Vec::new();
-        let mut uncached = Vec::new();
-        let keys = if let TransactionKind::Pessimistic { lock_values, .. } = &self.kind {
-            if locking && !lock_values.is_empty() {
-                for key in keys {
-                    match lock_values.get(key) {
-                        Some(Some(value)) => answered.push((key.clone(), value.clone())),
-                        Some(None) => {}
-                        None => uncached.push(key.clone()),
-                    }
-                }
-                if uncached.is_empty() {
-                    return Ok(answered);
-                }
-                &uncached
-            } else {
-                keys
-            }
-        } else {
-            keys
-        };
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let transaction = self.snapshot();
-        transaction
-            .snapshot_batch_get_at(keys, read_ts.unwrap_or(transaction.start_ts()), &call)
-            .map(|mut pairs| {
-                pairs.extend(answered);
-                pairs
-            })
-            .map_err(classify)
-    }
-
-    fn scan(
-        &mut self,
-        start: &[u8],
-        end: &[u8],
-        limit: Option<usize>,
-        read_ts: Option<u64>,
-    ) -> Result<SnapshotPairs, StorageError> {
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let transaction = self.snapshot();
-        transaction
-            .snapshot_scan_at(
-                start,
-                end,
-                limit,
-                read_ts.unwrap_or(transaction.start_ts()),
-                &call,
-            )
-            .map_err(classify)
-    }
-
-    fn advance_for_update_ts(&mut self) -> Result<u64, StorageError> {
-        match &mut self.kind {
-            TransactionKind::Pessimistic { transaction, .. } => transaction
-                .advance_for_update_ts()
-                .map_err(|error| StorageError::Backend(format!("{error:?}"))),
-            TransactionKind::Optimistic(_) => Err(StorageError::Backend(
-                "only a pessimistic transaction advances its locking snapshot".to_owned(),
-            )),
-        }
-    }
-
-    fn lock_keys(
-        &mut self,
-        keys: &[Vec<u8>],
-        presume_not_exists: &BTreeSet<Vec<u8>>,
-        duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
-        return_values: bool,
-    ) -> LockKeysOutcome {
-        match &mut self.kind {
-            TransactionKind::Pessimistic {
-                transaction,
-                keep_alive,
-                lock_values,
-            } => {
-                let call = UnaryCallContext::with_timeout(self.timeout);
-                acquire_statement_locks(
-                    transaction,
-                    &self.opener,
-                    keep_alive,
-                    lock_values,
-                    keys,
-                    presume_not_exists,
-                    duplicate_hints,
-                    return_values,
-                    &call,
-                )
-            }
-            TransactionKind::Optimistic(_) => LockKeysOutcome::TransactionError(LockSqlError {
-                code: 1105,
-                state: *b"HY000",
-                message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
-            }),
-        }
-    }
-
-    fn release_keys(&mut self, keys: &[Vec<u8>]) -> Result<(), StorageError> {
-        let TransactionKind::Pessimistic {
-            transaction,
-            lock_values,
-            ..
-        } = &mut self.kind
-        else {
-            return Ok(());
-        };
-        // Cleanup has the store's deadline, not the failed statement's.
-        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-        transaction
-            .pessimistic_rollback(keys, &call)
-            .map_err(|cause| StorageError::Backend(cause.to_string()))?;
-        for key in keys {
-            lock_values.remove(key);
-        }
-        Ok(())
-    }
-
-    fn commit(
-        self: Box<Self>,
-        mutations: Vec<OptimisticMutation>,
-    ) -> Result<OptimisticCommitOutcome, String> {
-        let Self {
-            kind,
-            opener: _opener,
-            ..
-        } = *self;
-        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-        match kind {
-            TransactionKind::Optimistic(transaction) => transaction.commit(mutations, &call),
-            TransactionKind::Pessimistic {
-                transaction,
-                keep_alive: _keep_alive,
-                ..
-            } => {
-                // Retain the primary heartbeat and opener until commit finishes.
-                transaction.commit(mutations, &call)
-            }
-        }
-        .map_err(|error| error.to_string())
-    }
-
-    fn finish(self: Box<Self>) -> Result<(), StorageError> {
-        let Self {
-            kind,
-            opener: _opener,
-            ..
-        } = *self;
-        match kind {
-            TransactionKind::Optimistic(transaction) => transaction
-                .finish_without_writes()
-                .map(|_| ())
-                .map_err(|error| StorageError::Backend(error.to_string())),
-            TransactionKind::Pessimistic {
-                mut transaction,
-                keep_alive: _keep_alive,
-                ..
-            } => {
-                let held = transaction.locked_keys();
-                let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let rolled_back = transaction
-                    .pessimistic_rollback(&held, &call)
-                    .map_err(|cause| StorageError::Backend(cause.to_string()));
-                let finished = transaction
-                    .into_two_pc()
-                    .finish_without_writes()
-                    .map(|_| ())
-                    .map_err(|error| StorageError::Backend(error.to_string()));
-                rolled_back.and(finished)
-            }
-        }
-    }
-}
 
 /// What one statement's lock acquisition came to -- the session layer's
 /// half of Go's `handlePessimisticDML` protocol.
@@ -505,6 +120,27 @@ pub enum LockKeysOutcome {
     TransactionError(LockSqlError),
 }
 
+/// Failure while executing one restricted SQL statement in a pessimistic
+/// transaction.
+#[derive(Debug)]
+pub enum PessimisticStatementTransactionError {
+    /// Snapshot creation or statement planning failed before locking.
+    Build(String),
+    /// Locking or the final transaction commit produced a SQL error.
+    Transaction(LockSqlError),
+}
+
+impl fmt::Display for PessimisticStatementTransactionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Build(detail) => formatter.write_str(detail),
+            Self::Transaction(error) => formatter.write_str(&error.message),
+        }
+    }
+}
+
+impl std::error::Error for PessimisticStatementTransactionError {}
+
 /// The keys one statement's staged writes owe pessimistic locks -- Go
 /// `LazyTxn.KeysNeedToLock` over the statement's staging delta, filtered by
 /// `KeyNeedToLock` (`pkg/session/txn.go`).
@@ -537,6 +173,45 @@ pub fn pessimistic_lock_delta(
         .filter(|(key, value)| statement_key_needs_lock(key.as_bytes(), value.as_deref()))
         .map(|(key, _)| key.as_bytes().to_vec())
         .collect()
+}
+
+/// Converts a direct system-table mutation plan into the session transaction
+/// buffer used by the ordinary pessimistic statement path.
+///
+/// Statistics restricted SQL and user SQL produce the same TiKV mutation
+/// kinds. Keeping this conversion here makes both paths apply the same lazy
+/// INSERT assertions and lock-key classifier.
+#[must_use]
+pub fn mutation_buffer_from_mutations(mutations: Vec<OptimisticMutation>) -> MutationBuffer {
+    let buffer = MutationBuffer::new();
+    stage_mutations(&buffer, mutations);
+    buffer
+}
+
+/// Stages direct mutation-plan output into an existing transaction buffer.
+pub fn stage_mutations(buffer: &MutationBuffer, mutations: Vec<OptimisticMutation>) {
+    use tidb_txnkv::transaction::OptimisticMutationKind;
+
+    for mutation in mutations {
+        let key = Key::from_bytes(mutation.key().to_vec());
+        match mutation.kind() {
+            OptimisticMutationKind::Delete
+            | OptimisticMutationKind::IndexDelete
+            | OptimisticMutationKind::MetaDelete
+            | OptimisticMutationKind::SystemRowDelete => buffer.delete(key),
+            OptimisticMutationKind::Insert | OptimisticMutationKind::UniqueIndexInsert => {
+                buffer.set(key.clone(), mutation.value().to_vec());
+                buffer.mark_presume_key_not_exists(&key);
+            }
+            OptimisticMutationKind::PutExisting
+            | OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::MetaPut
+            | OptimisticMutationKind::SystemRowPut => {
+                buffer.set(key, mutation.value().to_vec());
+            }
+            OptimisticMutationKind::LockOnly => {}
+        }
+    }
 }
 
 /// Go `KeyNeedToLock` (`pkg/session/txn.go`), reduced as
@@ -692,7 +367,7 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             }
             Err(failure) => {
                 if let PessimisticLockFailure::Deadlock(detail) = &failure {
-                    tidb_executor::deadlock_history::record_deadlock(detail);
+                    crate::deadlock_recording::record_deadlock(detail);
                 }
                 // Release only what this statement added; earlier statements'
                 // locks survive their successor's failure. The release runs on
@@ -765,19 +440,41 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
 }
 
 /// One statement's read snapshot: a real read-only transaction at one PD
-/// timestamp, owned directly by the statement.
+/// timestamp, owned by the CONNECTION worker that opened it.
 ///
 /// This is the autocommit shape. Inside an explicit transaction the session
 /// reads through [`SessionTransaction::snapshot`] instead, so every statement
 /// shares the one timestamp `BEGIN` took.
-pub struct StatementSnapshot {
-    transaction: TransactionOwner,
+///
+/// The transaction is held inline rather than behind a borrowed worker
+/// thread. Go's autocommit read builds its `KVSnapshot` on the connection
+/// goroutine and hands nothing to another thread, and there is nothing here
+/// that needs one either: `SharedReadRuntime` is `Arc<Mutex<C>>` plus
+/// `BackgroundRegionCache<L>`, so the transport is shared, not worker-local,
+/// and `tests/transaction_send_source.rs` asserts as much. Sampling a 200-row
+/// range put 192 of 4195 samples in the handshake this removes -- the whole
+/// cost of shipping a purely local `begin_read_only_at` to another thread and
+/// waiting for it to come back.
+pub struct StatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    /// `None` once the statement has finished; every read after that is
+    /// refused because its transaction has already ended.
+    transaction: Option<RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>>,
+    start_ts: u64,
+    timeout: Duration,
+    /// Reused by all reads in this statement; see `SessionSnapshot`.
+    cancellation: UnaryCancellation,
 }
 
 /// One statement snapshot whose ordinary PD timestamp request is in flight.
 ///
-/// Go's warmup stores only an oracle future; the transaction is opened
-/// when [`Self::wait`] activates the snapshot for the first storage read.
+/// Unlike [`StatementSnapshot`], this owns only the in-flight timestamp. Go's
+/// warmup stores only an oracle future; the connection-worker transaction is
+/// opened when [`Self::wait`] activates the snapshot for the first storage read.
 pub struct PreparedStatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
 where
     P: StorePdCapability,
@@ -790,36 +487,40 @@ where
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
     PreparedStatementSnapshot<C, L, P>
 {
-    /// Waits for the transaction prepared after planning.
-    pub fn wait(self) -> Result<StatementSnapshot, OptimisticCoordinatorError> {
+    /// Waits for the timestamp prepared after planning, then opens the
+    /// read-only transaction HERE. `begin_read_only_at` spends no timestamp
+    /// and sends no request -- it is local state over an already-shared
+    /// transport -- so handing it to another thread only bought a round trip.
+    pub fn wait(self) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
         let start_ts = self
             .start_ts
             .wait()
             .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
+        let transaction = self.opener.begin_read_only_at(start_ts)?;
         Ok(StatementSnapshot {
-            transaction: TransactionOwner::open_with(
-                &self.opener,
-                self.timeout,
-                TransactionOpen::ReadOnlyAt(start_ts),
-                CommitProtocol::two_phase_only(),
-            )?,
+            transaction: Some(transaction),
+            start_ts,
+            timeout: self.timeout,
+            cancellation: UnaryCancellation::new(),
         })
     }
 }
 
-impl fmt::Debug for StatementSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
+    for StatementSnapshot<C, L, P>
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StatementSnapshot")
-            .field("start_ts", &self.transaction.start_ts)
-            .field("open", &self.transaction.is_open())
+            .field("start_ts", &self.start_ts)
+            .field("open", &self.transaction.is_some())
             .finish()
     }
 }
 
 impl StatementSnapshot {
     /// Starts fetching one ordinary read-only transaction's PD timestamp
-    /// without activating its transaction.
+    /// without opening the transaction itself.
     pub fn prepare<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
@@ -832,52 +533,98 @@ impl StatementSnapshot {
         })
     }
 
-    /// Opens one read-only transaction directly, spending exactly one
-    /// PD timestamp.
+    /// Opens one read-only transaction on the CALLING thread, spending
+    /// exactly one PD timestamp.
     pub fn open<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Ok(Self {
-            transaction: TransactionOwner::open_with(
-                &opener,
-                timeout,
-                TransactionOpen::ReadOnly,
-                // Read-only: no commit ever runs, so the protocol is moot.
-                CommitProtocol::two_phase_only(),
-            )?,
-        })
+    ) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+        StatementSnapshot::prepare(opener, timeout)?.wait()
     }
+}
 
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
     /// The timestamp every read of this statement is served at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
-        self.transaction.start_ts
+        self.start_ts
     }
+}
 
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
     /// Ends the statement's read transaction, leaving no locks behind.
     ///
     /// Calling it twice is a no-op: the statement is already finished.
     pub fn finish(&mut self) -> Result<(), StorageError> {
-        self.transaction.finish()
+        let Some(transaction) = self.transaction.take() else {
+            return Ok(());
+        };
+        transaction
+            .finish_without_writes()
+            .map(|_| ())
+            .map_err(|error| StorageError::Backend(error.to_string()))
+    }
+
+    /// One call context per read, never one for the snapshot.
+    /// [`UnaryCallContext`] carries an ABSOLUTE deadline, so a context minted
+    /// when the snapshot opened would charge a later read for the wall-clock
+    /// time the statement spent between them.
+    fn call(&self) -> UnaryCallContext {
+        UnaryCallContext::with_deadline(Instant::now() + self.timeout, self.cancellation.clone())
+    }
+
+    fn reader(
+        &mut self,
+    ) -> Result<&mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>, StorageError>
+    {
+        self.transaction
+            .as_mut()
+            .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
     }
 }
 
-impl ClusterSnapshot for StatementSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
+    for StatementSnapshot<C, L, P>
+{
+    fn drop(&mut self) {
+        // Go abandons an autocommit read snapshot after the statement: there
+        // are no writes or locks whose cleanup the foreground must observe.
+        // Ending it here costs nothing to wait for -- `finish_without_writes`
+        // on a read-only transaction is a local state transition and sends no
+        // request -- which is why this no longer has to be detached to keep
+        // the next statement off its critical path.
+        if let Some(transaction) = self.transaction.take() {
+            let _ = transaction.finish_without_writes();
+        }
+    }
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
+    for StatementSnapshot<C, L, P>
+{
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.transaction
+            .as_ref()
+            .map_or((0, 0), RealOptimisticTransaction::snapshot_point_rpc_counts)
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        with_transaction(&self.transaction.handle, |transaction| {
-            transaction.get(key.as_bytes(), None, false)
-        })
+        let call = self.call();
+        let read_ts = self.start_ts;
+        let bytes = key.as_bytes();
+        self.reader()?
+            .snapshot_get_at(bytes, read_ts, &call)
+            .map(|result| result.value)
+            .map_err(classify)
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        let keys = keys
-            .iter()
-            .map(|key| key.as_bytes().to_vec())
-            .collect::<Vec<_>>();
-        with_transaction(&self.transaction.handle, |transaction| {
-            transaction.batch_get(&keys, None, false)
-        })
+        let call = self.call();
+        let read_ts = self.start_ts;
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        self.reader()?
+            .snapshot_batch_get_at(&keys, read_ts, &call)
+            .map_err(classify)
     }
 
     fn scan(
@@ -886,13 +633,17 @@ impl ClusterSnapshot for StatementSnapshot {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        with_transaction(&self.transaction.handle, |transaction| {
-            transaction.scan(start.as_bytes(), end.as_bytes(), limit, None)
-        })
+        let call = self.call();
+        let read_ts = self.start_ts;
+        let start = start.as_bytes();
+        let end = end.as_bytes();
+        self.reader()?
+            .snapshot_scan_at(start, end, limit, read_ts, &call)
+            .map_err(classify)
     }
 
     fn start_ts(&self) -> u64 {
-        self.transaction.start_ts
+        self.start_ts
     }
 }
 
@@ -907,7 +658,11 @@ impl ClusterSnapshot for StatementSnapshot {
 pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient> {
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
+    /// Reused for the one direct read (and retained for the defensive scan
+    /// path) so MaxTS does not allocate a cancellation channel per operation.
+    cancellation: UnaryCancellation,
     consumed: bool,
+    get_rpc_count: u64,
 }
 
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapshot<C, L, P> {
@@ -917,7 +672,9 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
         Self {
             opener,
             timeout,
+            cancellation: UnaryCancellation::new(),
             consumed: false,
+            get_rpc_count: 0,
         }
     }
 
@@ -943,12 +700,22 @@ impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for MaxTsSnapshot<C, L, P>
 {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        (self.get_rpc_count, 0)
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.consume()?;
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        self.opener
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let (value, rpc_count) = self
+            .opener
             .snapshot_get_at_max_ts(key.as_bytes(), &call)
-            .map_err(classify)
+            .map_err(classify)?;
+        self.get_rpc_count = self.get_rpc_count.wrapping_add(rpc_count);
+        Ok(value)
     }
 
     fn scan(
@@ -960,8 +727,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
         self.consume()?;
         // A bounded single-row statement still has a range-shaped plan. Keep
         // its MaxTS declaration, but use the direct range reader rather than
-        // activating a new transaction for each scan operation.
-        let call = UnaryCallContext::with_timeout(self.timeout);
+        // activating an ordinary timestamped transaction for each scan.
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
         self.opener
             .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
             .map_err(classify)
@@ -980,32 +750,137 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// transaction touched was committed by someone else after that timestamp, and
 /// every statement in between reads at that timestamp, which is repeatable
 /// read.
-pub struct SessionTransaction {
-    transaction: TransactionOwner,
+pub struct SessionTransaction<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
+    start_ts: u64,
+    timeout: Duration,
     /// Whether this is a pessimistic transaction -- decided by the
     /// session's `tidb_txn_mode` at `BEGIN`, Go's `DefTiDBTxnMode`
     /// (pessimistic) being the default.
     pessimistic: bool,
 }
 
-impl fmt::Debug for SessionTransaction {
+enum SessionTransactionState<C, L, P: StorePdCapability> {
+    Optimistic(RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>),
+    /// A pessimistic transaction before its first locking statement.
+    ///
+    /// Go keeps this state as an ordinary `KVTxn` and creates pessimistic
+    /// committer state only when a statement asks for locks. Most read-only
+    /// transactions never cross that boundary, so eagerly constructing and
+    /// tearing down the pessimistic wrapper on every `BEGIN` is both needless
+    /// work and a different lifecycle.
+    PessimisticPending {
+        transaction: RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opened_at: Instant,
+    },
+    Pessimistic {
+        transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        keep_alive: Option<LockKeepAlive>,
+        lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    },
+    Finished,
+}
+
+/// Crosses Go's lazy pessimistic boundary exactly once, immediately before
+/// the first statement that actually needs row locks.
+fn promote_pessimistic_state<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    state: &mut SessionTransactionState<C, L, P>,
+) -> Result<(), StorageError> {
+    if !matches!(state, SessionTransactionState::PessimisticPending { .. }) {
+        return Ok(());
+    }
+    let pending = std::mem::replace(state, SessionTransactionState::Finished);
+    let SessionTransactionState::PessimisticPending {
+        transaction,
+        opener,
+        opened_at,
+    } = pending
+    else {
+        unreachable!("the lazy pessimistic state was checked before promotion")
+    };
+    let transaction = RealPessimisticTransaction::from_transaction(transaction, opened_at)
+        .map_err(|error| StorageError::Backend(error.to_string()))?;
+    *state = SessionTransactionState::Pessimistic {
+        transaction,
+        opener,
+        keep_alive: None,
+        lock_values: BTreeMap::new(),
+    };
+    Ok(())
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
+    for SessionTransaction<C, L, P>
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let open = !matches!(&*state, SessionTransactionState::Finished);
         formatter
             .debug_struct("SessionTransaction")
-            .field("start_ts", &self.transaction.start_ts)
-            .field("open", &self.transaction.is_open())
+            .field("start_ts", &self.start_ts)
+            .field("open", &open)
             .finish()
     }
 }
 
-impl SessionTransaction {
-    /// Opens a locking statement at a fresh `for_update_ts`, as Go's
-    /// pessimistic repeatable-read provider does for a non-point locking read.
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTransaction<C, L, P> {
+    /// Opens a locking statement at a fresh for-update timestamp, as Go's
+    /// pessimistic repeatable-read provider does for non-point locking reads.
     pub fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
-        let read_ts = with_transaction(&self.transaction.handle, |transaction| {
-            transaction.advance_for_update_ts()
-        })?;
+        let read_ts = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            promote_pessimistic_state(&mut state)?;
+            match &mut *state {
+                SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                    .advance_for_update_ts()
+                    .map_err(|error| StorageError::Backend(error.to_string()))?,
+                _ => {
+                    return Err(StorageError::Backend(
+                        "only a pessimistic transaction advances its locking snapshot".to_owned(),
+                    ))
+                }
+            }
+        };
         self.snapshot_at_for(read_ts, true)
+    }
+
+    /// Changes the resource group stamped on subsequent reads, locks, prewrite,
+    /// commit, cleanup, and lock-resolution requests of this transaction.
+    /// Go refreshes the transaction option from each statement context; the
+    /// transaction remains open while this per-statement property changes.
+    pub fn set_resource_group_name(&self, name: &str) -> Result<(), StorageError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::PessimisticPending { transaction, .. } => {
+                tidb_txnkv::set_txn_resource_group(transaction, name);
+            }
+            SessionTransactionState::Pessimistic { transaction, .. } => {
+                tidb_txnkv::set_txn_resource_group(transaction, name);
+            }
+            SessionTransactionState::Finished => {
+                return Err(StorageError::Backend(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Opens the transaction `BEGIN` holds, spending exactly one PD timestamp.
@@ -1013,18 +888,19 @@ impl SessionTransaction {
     /// The publication budget is the transaction-size limit itself, because a
     /// multi-statement transaction cannot know its mutation set at `BEGIN`; the
     /// commit still enforces the same limits against the buffer it publishes.
-    pub fn begin<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    pub fn begin(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        let mut transaction =
+            opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?;
+        transaction.set_commit_protocol(commit_protocol);
+        let start_ts = transaction.start_ts();
         Ok(Self {
-            transaction: TransactionOwner::open_with(
-                &opener,
-                timeout,
-                TransactionOpen::Writable,
-                commit_protocol,
-            )?,
+            state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
+            start_ts,
+            timeout,
             pessimistic: false,
         })
     }
@@ -1033,18 +909,41 @@ impl SessionTransaction {
     /// `tidb_txn_mode = 'pessimistic'`: the same one-timestamp transaction,
     /// which additionally serves the statement-lock protocol
     /// ([`Self::lock_keys`]) and commits with pessimistic constraints.
-    pub fn begin_pessimistic<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    pub fn begin_pessimistic(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::begin_pessimistic_with_budget(
+            opener,
+            timeout,
+            commit_protocol,
+            MAX_OPTIMISTIC_MUTATIONS,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )
+    }
+
+    /// [`Self::begin_pessimistic`] with the publication budget supplied by the
+    /// Go caller whose restricted transaction is being represented.
+    pub fn begin_pessimistic_with_budget(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        timeout: Duration,
+        commit_protocol: CommitProtocol,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        let opened_at = Instant::now();
+        let mut transaction = opener.begin(planned_mutation_count, planned_aggregate_bytes)?;
+        transaction.set_commit_protocol(commit_protocol);
+        let start_ts = transaction.start_ts();
         Ok(Self {
-            transaction: TransactionOwner::open_with(
-                &opener,
-                timeout,
-                TransactionOpen::WritablePessimistic,
-                commit_protocol,
-            )?,
+            state: Arc::new(Mutex::new(SessionTransactionState::PessimisticPending {
+                transaction,
+                opener,
+                opened_at,
+            })),
+            start_ts,
+            timeout,
             pessimistic: true,
         })
     }
@@ -1085,20 +984,47 @@ impl SessionTransaction {
         duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
         return_values: bool,
     ) -> Result<LockKeysOutcome, StorageError> {
-        let mut state =
-            self.transaction.handle.lock().map_err(|_| {
-                StorageError::Backend("the transaction operation panicked".to_owned())
-            })?;
-        let outcome = state
-            .as_deref_mut()
-            .ok_or_else(ended_transaction)?
-            .lock_keys(&keys, &presume_not_exists, &duplicate_hints, return_values);
-        if self.pessimistic && matches!(outcome, LockKeysOutcome::TransactionError(_)) {
-            let failed = state.take();
-            drop(state);
-            if let Some(transaction) = failed {
-                let _ = transaction.finish();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        promote_pessimistic_state(&mut state)?;
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let outcome = match &mut *state {
+            SessionTransactionState::Pessimistic {
+                transaction,
+                opener,
+                keep_alive,
+                lock_values,
+            } => acquire_statement_locks(
+                transaction,
+                opener,
+                keep_alive,
+                lock_values,
+                &keys,
+                &presume_not_exists,
+                &duplicate_hints,
+                return_values,
+                &call,
+            ),
+            SessionTransactionState::Optimistic(_) => {
+                LockKeysOutcome::TransactionError(LockSqlError {
+                    code: 1105,
+                    state: *b"HY000",
+                    message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
+                })
             }
+            SessionTransactionState::PessimisticPending { .. } => {
+                unreachable!("pessimistic state was promoted before locking")
+            }
+            SessionTransactionState::Finished => {
+                return Err(StorageError::Backend(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        };
+        if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+            let _ = finish_session_transaction(&mut state);
         }
         Ok(outcome)
     }
@@ -1112,40 +1038,37 @@ impl SessionTransaction {
         if keys.is_empty() {
             return Ok(());
         }
-        with_transaction(&self.transaction.handle, |transaction| {
-            transaction.release_keys(&keys)
-        })
-    }
-
-    /// Opens a reusable read-only transaction at `u64::MAX`, the latest
-    /// committed marker used by Go for autocommit clustered-common-handle
-    /// point gets.  The transaction has no write budget and is therefore only
-    /// suitable for the connection-local point-read cache; it is deliberately
-    /// separate from [`Self::begin`] so a caller cannot accidentally publish
-    /// through it.
-    pub fn begin_read_only_at_max_ts<
-        C: StoreWriteClient,
-        L: StoreWriteLoader,
-        P: StorePdCapability,
-    >(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-        timeout: Duration,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Ok(Self {
-            transaction: TransactionOwner::open_with(
-                &opener,
-                timeout,
-                TransactionOpen::ReadOnlyAt(u64::MAX),
-                CommitProtocol::two_phase_only(),
-            )?,
-            pessimistic: false,
-        })
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Pessimistic {
+                transaction,
+                lock_values,
+                ..
+            } => {
+                let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                transaction
+                    .pessimistic_rollback(&keys, &call)
+                    .map_err(|cause| StorageError::Backend(cause.to_string()))?;
+                for key in &keys {
+                    lock_values.remove(key);
+                }
+                Ok(())
+            }
+            SessionTransactionState::Optimistic(_) => Ok(()),
+            SessionTransactionState::PessimisticPending { .. } => Ok(()),
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
     }
 
     /// The one timestamp every statement of this transaction reads at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
-        self.transaction.start_ts
+        self.start_ts
     }
 
     /// A read handle onto this transaction, for one statement to bind.
@@ -1161,8 +1084,10 @@ impl SessionTransaction {
     /// (`pkg/executor/point_get.go:677`).
     pub fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
-            transaction: self.transaction.handle()?,
-            start_ts: self.transaction.start_ts,
+            state: Arc::clone(&self.state),
+            cancellation: UnaryCancellation::new(),
+            start_ts: self.start_ts,
+            timeout: self.timeout,
             read_ts: None,
             locking,
         }))
@@ -1191,8 +1116,10 @@ impl SessionTransaction {
             ));
         }
         Ok(Box::new(SessionSnapshot {
-            transaction: self.transaction.handle()?,
-            start_ts: self.transaction.start_ts,
+            state: Arc::clone(&self.state),
+            cancellation: UnaryCancellation::new(),
+            start_ts: self.start_ts,
+            timeout: self.timeout,
             read_ts: Some(read_ts),
             locking,
         }))
@@ -1230,20 +1157,51 @@ impl SessionTransaction {
     ///
     /// Returns the client-visible error of any 2PC that did not commit.
     pub fn commit_with(
-        mut self,
+        self,
         buffer: &MutationBuffer,
         extra: Vec<OptimisticMutation>,
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
         let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
         mutations.extend(extra);
         if mutations.is_empty() {
-            self.transaction.finish().map_err(storage_sql_error)?;
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            finish_session_transaction(&mut state).map_err(storage_sql_error)?;
             return Ok(None);
         }
-        let outcome = self
-            .transaction
-            .commit(mutations)
-            .map_err(engine_sql_error)?;
+        let state = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::replace(&mut *state, SessionTransactionState::Finished)
+        };
+        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+        let outcome = match state {
+            SessionTransactionState::Optimistic(transaction) => {
+                transaction.commit(mutations, &call)
+            }
+            SessionTransactionState::PessimisticPending {
+                transaction,
+                opened_at,
+                ..
+            } => RealPessimisticTransaction::from_transaction(transaction, opened_at)
+                .and_then(|transaction| transaction.commit(mutations, &call)),
+            SessionTransactionState::Pessimistic {
+                transaction,
+                opener: _opener,
+                keep_alive: _keep_alive,
+                ..
+            } => transaction.commit(mutations, &call),
+            SessionTransactionState::Finished => {
+                return Err(engine_sql_error(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        }
+        .map_err(|error| engine_sql_error(error.to_string()))?;
         let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
         commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
         buffer.reset();
@@ -1255,52 +1213,92 @@ impl SessionTransaction {
     /// # Errors
     ///
     /// Returns the failure of ending the transaction's own read side.
-    pub fn rollback(mut self) -> Result<(), String> {
-        self.transaction.finish().map_err(|error| error.to_string())
+    pub fn rollback(self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        finish_session_transaction(&mut state).map_err(|error| error.to_string())
     }
 }
 
-/// One statement's view of an open session transaction.
+/// Executes and commits one restricted SQL statement inside the ordinary
+/// pessimistic transaction path.
 ///
-/// It carries no ownership of the transaction: dropping it is the end of the
-/// statement, and the transaction stays open for the next one.
-struct SessionSnapshot {
-    transaction: TransactionHandle,
-    /// The timestamp the transaction opened at. Ordinary reads use this;
-    /// retried pessimistic statements use `read_ts` on every read path.
-    start_ts: u64,
-    /// `Some` overrides the read timestamp for this statement -- the
-    /// pessimistic retry's advanced `for_update_ts`. `None` reads at
-    /// `start_ts`.
-    read_ts: Option<u64>,
-    /// Whether this statement takes locks and may consult the lock-value cache.
-    locking: bool,
+/// The statement is rebuilt after Go-equivalent pessimistic lock conflicts at
+/// the advanced `for_update_ts`; its transaction `start_ts` remains stable and
+/// is supplied separately for version columns. Callers with multiple Go SQL
+/// statements must call [`lock_pessimistic_statement`] once per statement and
+/// commit their combined mutations only after every statement succeeds.
+pub fn commit_pessimistic_statement<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    T,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<T, PessimisticStatementTransactionError> {
+    let transaction = SessionTransaction::begin_pessimistic_with_budget(
+        Arc::new(opener.clone()),
+        timeout,
+        opener.commit_protocol(),
+        usize::MAX,
+        MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    )
+    .map_err(|error| PessimisticStatementTransactionError::Build(error.to_string()))?;
+    let staged = MutationBuffer::new();
+    let value = lock_pessimistic_statement(&transaction, &staged, build)?;
+    transaction
+        .commit(&staged)
+        .map_err(PessimisticStatementTransactionError::Transaction)?;
+    Ok(value)
 }
 
-impl fmt::Debug for SessionSnapshot {
+struct MutationOverlaySnapshot {
+    snapshot: Box<dyn ClusterSnapshot>,
+    staged: MutationBuffer,
+}
+
+/// Gives one later statement in a transaction read-your-own-writes over the
+/// mutations staged by earlier statements.
+pub fn overlay_staged_mutations(
+    snapshot: Box<dyn ClusterSnapshot>,
+    staged: &MutationBuffer,
+) -> Box<dyn ClusterSnapshot> {
+    Box::new(MutationOverlaySnapshot::new(snapshot, staged.clone()))
+}
+
+impl MutationOverlaySnapshot {
+    fn new(snapshot: Box<dyn ClusterSnapshot>, staged: MutationBuffer) -> Self {
+        Self { snapshot, staged }
+    }
+}
+
+impl fmt::Debug for MutationOverlaySnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("SessionSnapshot")
-            .field("start_ts", &self.start_ts)
+            .debug_struct("MutationOverlaySnapshot")
+            .field("start_ts", &self.snapshot.start_ts())
             .finish()
     }
 }
 
-impl ClusterSnapshot for SessionSnapshot {
-    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        with_transaction(&self.transaction, |transaction| {
-            transaction.get(key.as_bytes(), self.read_ts, self.locking)
-        })
+impl ClusterSnapshot for MutationOverlaySnapshot {
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot.point_rpc_counts()
     }
 
-    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        let keys = keys
-            .iter()
-            .map(|key| key.as_bytes().to_vec())
-            .collect::<Vec<_>>();
-        with_transaction(&self.transaction, |transaction| {
-            transaction.batch_get(&keys, self.read_ts, self.locking)
-        })
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.snapshot.prepare()
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        match self.staged.get(key) {
+            Some(value) => Ok(value),
+            None => self.snapshot.get(key),
+        }
     }
 
     fn scan(
@@ -1309,12 +1307,368 @@ impl ClusterSnapshot for SessionSnapshot {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        with_transaction(&self.transaction, |transaction| {
-            transaction.scan(start.as_bytes(), end.as_bytes(), limit, self.read_ts)
-        })
+        let mut rows = self
+            .snapshot
+            .scan(start, end, None)?
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        for (key, value) in self.staged.range(start, end) {
+            match value {
+                Some(value) => {
+                    rows.insert(key.as_bytes().to_vec(), value);
+                }
+                None => {
+                    rows.remove(key.as_bytes());
+                }
+            }
+        }
+        Ok(rows.into_iter().take(limit.unwrap_or(usize::MAX)).collect())
     }
 
     fn start_ts(&self) -> u64 {
+        self.snapshot.start_ts()
+    }
+
+    fn declare_autocommit_point_get(&mut self) -> bool {
+        self.snapshot.declare_autocommit_point_get()
+    }
+}
+
+/// Locks one Go SQL statement and returns its mutations for the enclosing
+/// transaction's eventual commit.
+pub fn lock_pessimistic_statement<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+    T,
+>(
+    transaction: &SessionTransaction<C, L, P>,
+    staged: &MutationBuffer,
+    build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<T, PessimisticStatementTransactionError> {
+    let (value, mutations) = lock_pessimistic_statement_with(
+        transaction.start_ts(),
+        |read_ts| {
+            match read_ts {
+                Some(for_update_ts) => transaction.snapshot_at_for(for_update_ts, true),
+                None => transaction.snapshot_for(true),
+            }
+            .map(|snapshot| overlay_staged_mutations(snapshot, staged))
+            .map_err(|error| error.to_string())
+        },
+        |keys, presume_not_exists, duplicate_hints| {
+            transaction
+                .lock_keys_with_assertions(keys, presume_not_exists, duplicate_hints, false)
+                .map_err(|error| error.to_string())
+        },
+        build,
+    )?;
+    stage_mutations(staged, mutations);
+    Ok(value)
+}
+
+/// Shared Go pessimistic statement rebuild loop used by both the concrete
+/// TiKV transaction and the server's testable transaction authority.
+pub fn lock_pessimistic_statement_with<T>(
+    start_ts: u64,
+    mut snapshot: impl FnMut(Option<u64>) -> Result<Box<dyn ClusterSnapshot>, String>,
+    mut lock: impl FnMut(
+        Vec<Vec<u8>>,
+        BTreeSet<Vec<u8>>,
+        BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<LockKeysOutcome, String>,
+    mut build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<OptimisticMutation>), String>,
+) -> Result<(T, Vec<OptimisticMutation>), PessimisticStatementTransactionError> {
+    const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
+
+    let mut retry_read_ts = None;
+    let mut retries = 0;
+    loop {
+        let snapshot =
+            snapshot(retry_read_ts).map_err(PessimisticStatementTransactionError::Build)?;
+        let (value, mutations) =
+            build(snapshot, start_ts).map_err(PessimisticStatementTransactionError::Build)?;
+        let buffer = mutation_buffer_from_mutations(mutations.clone());
+        let mut keys = mutations
+            .iter()
+            .filter(|mutation| {
+                mutation.kind() == tidb_txnkv::transaction::OptimisticMutationKind::LockOnly
+            })
+            .map(|mutation| mutation.key().to_vec())
+            .chain(pessimistic_lock_delta(&[], &buffer.snapshot()))
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys.dedup();
+        if keys.is_empty() {
+            return Ok((value, mutations));
+        }
+        let presume_not_exists = buffer
+            .presume_not_exists_keys()
+            .into_iter()
+            .filter(|key| keys.contains(key))
+            .collect::<BTreeSet<_>>();
+        let duplicate_hints = presume_not_exists
+            .iter()
+            .filter_map(|key| {
+                buffer
+                    .duplicate_key_hint_for(key)
+                    .map(|hint| (key.clone(), hint))
+            })
+            .collect::<BTreeMap<_, _>>();
+        match lock(keys, presume_not_exists, duplicate_hints)
+            .map_err(PessimisticStatementTransactionError::Build)?
+        {
+            LockKeysOutcome::Locked { .. } => return Ok((value, mutations)),
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                if retries >= MAX_PESSIMISTIC_STATEMENT_RETRIES {
+                    return Err(PessimisticStatementTransactionError::Build(
+                        "pessimistic lock retry limit reached".to_owned(),
+                    ));
+                }
+                retries += 1;
+                retry_read_ts = Some(for_update_ts);
+            }
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                return Err(PessimisticStatementTransactionError::Transaction(error));
+            }
+        }
+    }
+}
+
+fn finish_session_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    state: &mut SessionTransactionState<C, L, P>,
+) -> Result<(), StorageError> {
+    match std::mem::replace(state, SessionTransactionState::Finished) {
+        SessionTransactionState::Optimistic(transaction) => transaction
+            .finish_without_writes()
+            .map(|_| ())
+            .map_err(|error| StorageError::Backend(error.to_string())),
+        SessionTransactionState::PessimisticPending { transaction, .. } => transaction
+            .finish_without_writes()
+            .map(|_| ())
+            .map_err(|error| StorageError::Backend(error.to_string())),
+        SessionTransactionState::Pessimistic {
+            mut transaction,
+            opener: _opener,
+            keep_alive: _keep_alive,
+            ..
+        } => {
+            let held = transaction.locked_keys();
+            let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+            let rolled_back = transaction
+                .pessimistic_rollback(&held, &call)
+                .map_err(|error| StorageError::Backend(error.to_string()));
+            let finished = transaction
+                .into_two_pc()
+                .finish_without_writes()
+                .map(|_| ())
+                .map_err(|error| StorageError::Backend(error.to_string()));
+            rolled_back.and(finished)
+        }
+        SessionTransactionState::Finished => Ok(()),
+    }
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
+    for SessionTransaction<C, L, P>
+{
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = finish_session_transaction(&mut state);
+    }
+}
+
+/// One statement's view of an open session transaction.
+///
+/// It carries no ownership of the transaction: dropping it is the end of the
+/// statement, and the transaction stays open for the next one.
+struct SessionSnapshot<C, L, P: StorePdCapability> {
+    state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
+    /// Reused by all reads in this statement.  The transport does not cancel
+    /// this carrier on an ordinary deadline, so sharing it avoids allocating
+    /// one watch channel/condvar pair per point Get.
+    cancellation: UnaryCancellation,
+    /// The timestamp the transaction opened at, which every statement of it
+    /// reads at; a remote scan has to name it.
+    start_ts: u64,
+    timeout: Duration,
+    /// `Some` overrides the read timestamp for this statement -- the
+    /// pessimistic retry's advanced `for_update_ts`. `None` reads at
+    /// `start_ts`.
+    read_ts: Option<u64>,
+    /// Whether this statement may use rows returned with pessimistic locks.
+    locking: bool,
+}
+
+impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionSnapshot")
+            .field("start_ts", &self.start_ts)
+            .finish()
+    }
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
+    for SessionSnapshot<C, L, P>
+{
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::PessimisticPending { transaction, .. } => {
+                transaction.snapshot_point_rpc_counts()
+            }
+            SessionTransactionState::Pessimistic { transaction, .. } => {
+                transaction.snapshot().snapshot_point_rpc_counts()
+            }
+            SessionTransactionState::Finished => (0, 0),
+        }
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        // `snapshot_get_at` owns the request bytes before it crosses the
+        // BatchCommands boundary. Keep the borrowed key through dispatch so
+        // a point read does not allocate a copy merely for lock-cache lookup.
+        let bytes = key.as_bytes();
+        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction) => transaction
+                .snapshot_get_at(&bytes, read_ts, &call)
+                .map(|result| result.value)
+                .map_err(classify),
+            SessionTransactionState::PessimisticPending { transaction, .. } => transaction
+                .snapshot_get_at(&bytes, read_ts, &call)
+                .map(|result| result.value)
+                .map_err(classify),
+            SessionTransactionState::Pessimistic {
+                transaction,
+                lock_values,
+                ..
+            } => {
+                if self.locking {
+                    if let Some(cached) = lock_values.get(bytes) {
+                        return Ok(cached.clone());
+                    }
+                }
+                transaction
+                    .snapshot()
+                    .snapshot_get_at(&bytes, read_ts, &call)
+                    .map(|result| result.value)
+                    .map_err(classify)
+            }
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction) => transaction
+                .snapshot_batch_get_at(&keys, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::PessimisticPending { transaction, .. } => transaction
+                .snapshot_batch_get_at(&keys, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Pessimistic {
+                transaction,
+                lock_values,
+                ..
+            } => {
+                let mut answered = Vec::new();
+                let mut uncached = Vec::with_capacity(keys.len());
+                for key in keys {
+                    match lock_values.get(&key).filter(|_| self.locking) {
+                        Some(Some(value)) => answered.push((key, value.clone())),
+                        Some(None) => {}
+                        None => uncached.push(key),
+                    }
+                }
+                if uncached.is_empty() {
+                    return Ok(answered);
+                }
+                transaction
+                    .snapshot()
+                    .snapshot_batch_get_at(&uncached, read_ts, &call)
+                    .map(|mut pairs| {
+                        pairs.extend(answered);
+                        pairs
+                    })
+                    .map_err(classify)
+            }
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction) => transaction
+                .snapshot_scan_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::PessimisticPending { transaction, .. } => transaction
+                .snapshot_scan_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                .snapshot()
+                .snapshot_scan_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
+    fn start_ts(&self) -> u64 {
+        // The timestamp this snapshot READS at, which is the statement's when
+        // it has one. Both callers stamp it into a request that names an MVCC
+        // version -- `PushdownScanRequest::snapshot_ts`
+        // (`tidb-executor/src/cluster_storage.rs`) -- so answering the
+        // transaction's `start_ts` while the statement's point reads use its
+        // advanced `for_update_ts` would read one statement at two
+        // timestamps. Go re-executes a retried pessimistic statement wholly
+        // at `forUpdateTS` (`handlePessimisticDML` -> `UpdateForUpdateTS`),
+        // pushdown included.
         self.read_ts.unwrap_or(self.start_ts)
     }
 }
@@ -1328,7 +1682,7 @@ impl ClusterSnapshot for SessionSnapshot {
 /// for the statement.
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
     let message = error.to_string();
-    let lowered = message.to_lowercase();
+    let lowered = message.go_to_lower();
     let retryable = [
         "region", "epoch", "lock", "leader", "stale", "budget", "deadline",
     ]
@@ -1351,7 +1705,8 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     buffer: MutationBuffer,
     timeout: Duration,
-) -> Result<(ClusterTableStorage, Arc<Mutex<StatementSnapshot>>), OptimisticCoordinatorError> {
+) -> Result<(ClusterTableStorage, Arc<Mutex<StatementSnapshot<C, L, P>>>), OptimisticCoordinatorError>
+{
     let snapshot = Arc::new(Mutex::new(StatementSnapshot::open(opener, timeout)?));
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
@@ -1501,9 +1856,11 @@ mod tests {
 
     #[test]
     fn coprocessor_snapshot_timestamp_follows_the_statement_retry() {
-        let mut snapshot = SessionSnapshot {
-            transaction: Arc::new(Mutex::new(None)),
+        let mut snapshot = SessionSnapshot::<TonicCoprocessorClient, PdRegionLoader, PdClient> {
+            state: Arc::new(Mutex::new(SessionTransactionState::Finished)),
+            cancellation: UnaryCancellation::new(),
             start_ts: 10,
+            timeout: Duration::from_secs(1),
             read_ts: None,
             locking: false,
         };
@@ -1513,6 +1870,90 @@ mod tests {
         assert_eq!(
             snapshot.start_ts, 10,
             "transaction identity remains unchanged"
+        );
+    }
+
+    #[derive(Debug)]
+    struct MapSnapshot(BTreeMap<Vec<u8>, Vec<u8>>);
+
+    impl ClusterSnapshot for MapSnapshot {
+        fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+            Ok(self.0.get(key.as_bytes()).cloned())
+        }
+
+        fn scan(
+            &mut self,
+            start: &Key,
+            end: &Key,
+            limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
+            Ok(self
+                .0
+                .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+                .take(limit.unwrap_or(usize::MAX))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect())
+        }
+    }
+
+    #[test]
+    fn later_restricted_statements_read_the_transactions_staged_writes() {
+        let staged = MutationBuffer::new();
+        staged.set(Key::from_bytes(b"b".to_vec()), b"new".to_vec());
+        staged.delete(Key::from_bytes(b"c".to_vec()));
+        let mut snapshot = MutationOverlaySnapshot::new(
+            Box::new(MapSnapshot(BTreeMap::from([
+                (b"a".to_vec(), b"one".to_vec()),
+                (b"b".to_vec(), b"old".to_vec()),
+                (b"c".to_vec(), b"gone".to_vec()),
+            ]))),
+            staged,
+        );
+
+        assert_eq!(
+            snapshot
+                .get(&Key::from_bytes(b"b".to_vec()))
+                .expect("overlay get"),
+            Some(b"new".to_vec())
+        );
+        assert_eq!(
+            snapshot
+                .scan(
+                    &Key::from_bytes(b"a".to_vec()),
+                    &Key::from_bytes(b"d".to_vec()),
+                    None,
+                )
+                .expect("overlay scan"),
+            vec![
+                (b"a".to_vec(), b"one".to_vec()),
+                (b"b".to_vec(), b"new".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    /// A finished statement snapshot refuses further reads, and finishing it
+    /// twice is a no-op.
+    ///
+    /// Owning the transaction inline means the lifecycle is enforced by the
+    /// snapshot itself.
+    fn a_finished_statement_snapshot_refuses_reads_and_finishes_once() {
+        let mut snapshot: StatementSnapshot = StatementSnapshot {
+            transaction: None,
+            start_ts: 42,
+            timeout: Duration::from_secs(1),
+            cancellation: UnaryCancellation::new(),
+        };
+        assert_eq!(snapshot.start_ts(), 42);
+        assert!(
+            snapshot.finish().is_ok(),
+            "finishing an already-finished snapshot is a no-op, not an error"
+        );
+        let refused = snapshot.get(&Key::from_bytes(b"k".to_vec()));
+        assert!(
+            matches!(refused, Err(StorageError::Backend(ref message))
+                if message.contains("already finished")),
+            "a read after finish must be refused: {refused:?}"
         );
     }
 
@@ -1540,5 +1981,51 @@ mod tests {
             )),
             StorageError::Backend(_)
         ));
+    }
+
+    /// A snapshot serving a RETRIED pessimistic statement reports the
+    /// statement's timestamp, not the transaction's.
+    ///
+    /// `ClusterSnapshot::start_ts` is stamped into
+    /// `PushdownScanRequest::snapshot_ts`, which names the MVCC version the
+    /// coprocessor reads. A retried statement's point reads already use the
+    /// advanced `for_update_ts` (`SessionTransaction::snapshot_at`), so
+    /// answering `start_ts` here would read ONE statement at TWO timestamps
+    /// and recompute from the row the statement just lost the lock race on.
+    /// Go re-executes the whole retried statement at `forUpdateTS`
+    /// (`handlePessimisticDML` -> `UpdateForUpdateTS`).
+    #[test]
+    fn a_statement_snapshot_reports_the_timestamp_it_reads_at() {
+        let state = Arc::new(Mutex::new(
+            SessionTransactionState::<TonicCoprocessorClient, PdRegionLoader, PdClient>::Finished,
+        ));
+        let at_transaction = SessionSnapshot {
+            state: Arc::clone(&state),
+            cancellation: UnaryCancellation::new(),
+            start_ts: 100,
+            timeout: Duration::from_secs(1),
+            read_ts: None,
+            locking: false,
+        };
+        assert_eq!(
+            at_transaction.start_ts(),
+            100,
+            "an ordinary statement reads at the transaction's own timestamp"
+        );
+
+        let retried = SessionSnapshot {
+            state,
+            cancellation: UnaryCancellation::new(),
+            start_ts: 100,
+            timeout: Duration::from_secs(1),
+            read_ts: Some(200),
+            locking: false,
+        };
+        assert_eq!(
+            retried.start_ts(),
+            200,
+            "a retried statement reads at its advanced for_update_ts, and \
+             every read of it must agree -- pushdown included"
+        );
     }
 }

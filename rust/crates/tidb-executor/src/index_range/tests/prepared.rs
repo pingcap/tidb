@@ -133,7 +133,7 @@ fn prepared_range_shapes_preserve_current_values_and_residuals() {
             &native_columns,
             &lengths,
             0,
-            &|constant| resolver.eval_constant(&Expression::Constant(constant.clone())),
+            &|expression| resolver.eval_constant(expression),
         )
         .unwrap();
         let native_ranges: Vec<_> = native

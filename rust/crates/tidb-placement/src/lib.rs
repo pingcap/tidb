@@ -87,3 +87,27 @@ pub use constraints::{
 };
 pub use errors::{PlacementError, PlacementErrorKind};
 pub use rule::{new_rule, RuleBuilder};
+
+#[cfg(test)]
+mod return_contract_tests {
+    use super::*;
+    use crate::pd::{LabelConstraintOp, Rule};
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn direct_source_returns_may_be_ignored_like_go() {
+        Rule::default().clone_rule();
+        new_constraint_direct("zone", LabelConstraintOp::IN, &["z1"]);
+
+        let left = new_constraint_direct("zone", LabelConstraintOp::IN, &["z1"]);
+        let right = new_constraint_direct("zone", LabelConstraintOp::IN, &["z2"]);
+        constraint_compatible_with(&left, &right);
+
+        new_bundle(1);
+        get_range_start_and_end_key_hex(TIDB_BUNDLE_RANGE_PREFIX_FOR_META);
+
+        let bundle = Bundle::default();
+        bundle.clone_bundle();
+        bundle.is_empty();
+    }
+}

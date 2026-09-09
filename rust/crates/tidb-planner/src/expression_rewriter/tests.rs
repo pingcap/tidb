@@ -19,11 +19,15 @@
 //! subquery form produces, which is the property those SQL tests are really
 //! asserting.
 
-use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, FieldTypeCode, QualifiedColumnName};
+use tidb_datatype::{
+    Datum, FieldName, FieldNameMetadata, FieldType, FieldTypeCode, QualifiedColumnName,
+};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::NoColumns;
+
+use crate::logical::limit::LogicalLimit;
 
 use super::*;
 use crate::logical::data_source::DataSource;
@@ -366,7 +370,10 @@ fn exists_keeps_a_grouped_aggregations_child_only() {
 #[test]
 fn in_subquery_builds_a_semi_apply_when_the_join_rewrite_is_off() {
     let f = Fixture::new();
-    let mut er = f.rewriter(RewriterSessionFlags::default());
+    let mut er = f.rewriter(RewriterSessionFlags {
+        allow_in_subq_to_join_and_agg: false,
+        ..RewriterSessionFlags::default()
+    });
     let lexpr = Expression::Column(col(1));
     let plan = er
         .handle_in_subquery(f.outer(), &lexpr, f.inner(), false, false, 0, true, true)
@@ -846,31 +853,41 @@ fn correlated_columns_are_collected_from_the_whole_subtree() {
 #[test]
 fn only_the_columns_the_outer_schema_supplies_are_resolved() {
     let f = Fixture::new();
-    let inner = correlated_inner(&f);
+    let mut inner = correlated_inner(&f);
+    let mut outer = col(1);
+    outer.index = 7;
     // The outer plan produces column 1, so the reference is correlated HERE.
-    let resolved = extract_cor_columns_by_schema_4_logical_plan(&inner, &Schema::new(vec![col(1)]));
+    let resolved =
+        extract_cor_columns_by_schema_4_logical_plan(&mut inner, &Schema::new(vec![outer]));
     assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].column.index, 0);
+    assert_eq!(resolved[0].column.index, 7);
     // A schema that does not produce it means the reference reaches further out.
     let unresolved =
-        extract_cor_columns_by_schema_4_logical_plan(&inner, &Schema::new(vec![col(7)]));
+        extract_cor_columns_by_schema_4_logical_plan(&mut inner, &Schema::new(vec![col(7)]));
     assert!(unresolved.is_empty());
 }
 
 #[test]
 fn duplicate_references_to_one_outer_column_resolve_once() {
-    let cor = vec![
-        CorrelatedColumn {
-            column: col(1),
-            data: Default::default(),
-        },
-        CorrelatedColumn {
-            column: col(1),
-            data: Default::default(),
-        },
-    ];
-    let resolved = extract_cor_columns_by_schema(&cor, &Schema::new(vec![col(1)]));
+    use std::sync::Arc;
+
+    let f = Fixture::new();
+    let mut inner = correlated_inner(&f);
+    let LogicalPlan::Selection(selection) = &mut inner else {
+        unreachable!()
+    };
+    selection.conditions = vec![correlated(1), correlated(1)];
+    let resolved =
+        extract_cor_columns_by_schema_4_logical_plan(&mut inner, &Schema::new(vec![col(1)]));
     assert_eq!(resolved.len(), 1);
+    resolved[0].bind(Datum::Int(19));
+    let extracted = extract_correlated_cols_4_logical_plan(&inner);
+    assert_eq!(extracted.len(), 2);
+    let binding = resolved[0].data.as_ref().expect("outer binding");
+    assert!(extracted.iter().all(|column| {
+        column.eval() == Datum::Int(19)
+            && Arc::ptr_eq(binding, column.data.as_ref().expect("inner binding"))
+    }));
 }
 
 // ***** decorrelation of the ON clause *****
@@ -971,4 +988,37 @@ fn the_ctx_stack_pops_names_with_expressions() {
     er.ctx_stack_pop(1);
     assert_eq!(er.ctx_stack_len(), 1);
     assert_eq!(er.ctx_name_stk.len(), 1);
+}
+
+#[test]
+fn a_childless_unary_chain_panics_when_resolving_a_natural_join_name_like_go() {
+    let _fixture = Fixture::new();
+    let plan = LogicalPlan::Selection(LogicalSelection::new(
+        crate::logical::BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        Vec::new(),
+    ));
+
+    // Go indexes `p.Children()[0]` for the unary wrappers
+    // (`expression_rewriter.go:3171`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        find_field_name_from_natural_using_join(&plan, &qualified("t", "a"))
+    }))
+    .is_err());
+}
+
+#[test]
+fn push_last_schema_column_panics_on_an_empty_schema_like_go() {
+    let fixture = Fixture::new();
+    let mut rewriter = fixture.rewriter(RewriterSessionFlags::default());
+    let mut plan = LogicalPlan::Limit(LogicalLimit::new(
+        crate::logical::BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0),
+        0,
+        1,
+    ));
+
+    // Go computes `Schema().Len()-1` and panics indexing `Columns[-1]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rewriter.push_last_schema_column(&mut plan)
+    }))
+    .is_err());
 }

@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/traceevent` lands as a complete package: the trace-event entry
-//! point and its sinks (`traceevent.go`), the configurable flight recorder with
-//! its AND/OR dump-trigger compiler (`flightrecorder.go`), and the client-go
-//! trace bridge (`adapter.go`), with all eleven of the package's test
-//! functions.
+//! Go `pkg/util/traceevent`: trace-event sinks, the configurable flight
+//! recorder and dump-trigger compiler, and the live TiKV-client bridge.
 //!
 //! A trace event is emitted through [`trace_event`], gated by the categories
 //! the active [`HttpFlightRecorder`] enables. Recording fans out to the
@@ -26,61 +23,22 @@
 //! dropped at [`Trace::discard_or_flush`] time by evaluating the compiled
 //! dump-trigger truth table against the trigger bits the statement accumulated.
 //!
-//! # Narrowings and boundaries
-//!
-//! - **`context.Context`** → [`tracing::TraceContext`], as in `crate::tracing`.
-//!   Go's `Sink.Record(ctx, event)` carries a context that only [`LogSink`]
-//!   ever reads (to pick up the context logger); `crate::tracing::Sink::record`
-//!   takes just the event, so [`log_event`] takes the context explicitly and
-//!   [`LogSink`] logs through the background logger.
-//! - **`sink.(*Trace)` type assertions.** Go recovers the statement's `*Trace`
-//!   from the context by asserting on the `Sink` interface value, in
-//!   `GenerateTraceID`, `CheckFlightRecorderDumpTrigger`, and
-//!   `handleTraceControlExtractor`. `crate::tracing::Sink` is not downcastable
-//!   (making it so would change a trait every crate above this one
-//!   implements), so those three functions take the `&Trace` explicitly. The
-//!   assertion-failure branches become the `Option::None` arms.
-//! - **client-go `github.com/tikv/client-go/v2/trace`.** Not part of this
-//!   workspace; `adapter.go` ports against the [`adapter`] boundary types
-//!   [`ClientGoCategory`], [`TraceControlFlags`], and
-//!   [`ClientGoTraceRegistry`], which reproduce exactly the surface TiDB uses.
-//!   The concrete numeric flag values live in client-go and are not observable
-//!   here, so [`TraceControlFlags`] assigns its own bits; only the named flags
-//!   are meaningful.
-//! - **Package `init()`.** Go's init installs the default sink, puts the
-//!   process in `base` mode, and calls `RegisterWithClientGo`. Rust has no
-//!   package initializer: the mode defaults are the initial values of the
-//!   statics below, and [`register_with_client_go`] is called explicitly.
-//! - **`copyFields` / `copyFieldsWithCapacity`** guard Go against a caller
-//!   reusing a `[]zap.Field` buffer. Rust's ownership gives that invariant for
-//!   free, so the events own their `Vec<Field>` directly.
-//! - **`getCategoryName`** is dead code in Go (shadowed by
-//!   `tracing.TraceCategory.String`, which its own test exercises) and is not
-//!   duplicated here; `crate::tracing::TraceCategory::name` is the live
-//!   spelling and covers strictly more categories.
-//! - **`zapcore.NewJSONEncoder`** in `ConvertEventsForRendering` becomes
-//!   [`fields_to_json`], which renders the same field set through `serde_json`.
-//!   Go's production encoder config is used only for this Perfetto rendering
-//!   path and has no test.
-//! - The two Go benchmarks (`BenchmarkTraceEventDisabled`,
-//!   `BenchmarkTraceEventEnabled`) measure Go allocation behavior on the
-//!   disabled/enabled fast paths and are not translated.
-
 mod adapter;
 mod flightrecorder;
 
-pub use adapter::{
-    handle_client_go_is_category_enabled, handle_client_go_trace_event,
-    handle_trace_control_extractor, map_category, register_with_client_go, ClientGoCategory,
-    ClientGoTraceRegistry, IsCategoryEnabledFn, TraceControlExtractorFn, TraceControlFlags,
-    TraceEventFn,
-};
+pub use adapter::register_with_client_go;
+#[cfg(test)]
+use adapter::test_support::handle_trace_control_extractor;
 pub use flightrecorder::{
-    check_flight_recorder_dump_trigger, check_truth_table, get_flight_recorder, parse_categories,
-    start_http_flight_recorder, start_log_flight_recorder, truth_table_for_and, truth_table_for_or,
-    CompiledDumpTriggerConfig, DevDebugConfig, DumpTriggerConfig, FlightRecorderConfig,
+    check_flight_recorder_dump_trigger, get_flight_recorder, start_http_flight_recorder,
+    start_log_flight_recorder, DevDebugConfig, DumpTriggerConfig, FlightRecorderConfig,
     HttpFlightRecorder, SuspiciousEventConfig, Trace, UserCommandConfig,
     DEV_DEBUG_TYPE_EXECUTE_INTERNAL_TRACE_MISSING, DEV_DEBUG_TYPE_SEND_REQUEST_TRACE_ID_MISSING,
+};
+#[cfg(test)]
+use flightrecorder::{
+    check_truth_table, parse_categories, truth_table_for_and, truth_table_for_or,
+    CompiledDumpTriggerConfig,
 };
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -90,6 +48,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tidb_log::{Field, Value};
 
 use crate::logutil;
+use crate::stringutil::go_to_lower;
 use crate::tracing::{self, TraceContext};
 
 pub use crate::tracing::{Event, Sink, TraceCategory};
@@ -147,7 +106,6 @@ pub fn enable(categories: TraceCategory) {
 }
 
 /// Go `IsEnabled`: whether the category is enabled on the active recorder.
-#[must_use]
 pub fn is_enabled(category: TraceCategory) -> bool {
     if tidb_config::kerneltype::is_classic() && !crate::intest::IN_TEST {
         return false;
@@ -159,7 +117,6 @@ pub fn is_enabled(category: TraceCategory) -> bool {
 }
 
 /// Go `GetEnabledCategories`: the categories the active recorder enables.
-#[must_use]
 pub fn get_enabled_categories() -> TraceCategory {
     get_flight_recorder().map_or(TraceCategory(0), |fr| fr.enabled_categories())
 }
@@ -170,7 +127,7 @@ pub fn get_enabled_categories() -> TraceCategory {
 ///
 /// Returns Go's `unsupported trace event mode` message for anything else.
 pub fn normalize_mode(mode: &str) -> Result<&'static str, String> {
-    match mode.trim().to_lowercase().as_str() {
+    match go_to_lower(mode.trim()).as_str() {
         MODE_OFF | "0" | "false" => Ok(MODE_OFF),
         MODE_BASE => Ok(MODE_BASE),
         MODE_FULL => Ok(MODE_FULL),
@@ -205,7 +162,6 @@ pub fn set_mode(mode: &str) -> Result<&'static str, String> {
 }
 
 /// Go `CurrentMode`: the canonical tracing mode string.
-#[must_use]
 pub fn current_mode() -> &'static str {
     let recorder = RECORDER_ENABLED.load(Ordering::SeqCst);
     let logging = LOGGING_ENABLED.load(Ordering::SeqCst);
@@ -232,7 +188,6 @@ pub fn set_sink(sink: Option<Arc<dyn Sink>>) {
 }
 
 /// Go `CurrentSink`: the sink currently used for trace events.
-#[must_use]
 pub fn current_sink() -> Arc<dyn Sink> {
     Arc::clone(
         &EVENT_SINK
@@ -242,7 +197,6 @@ pub fn current_sink() -> Arc<dyn Sink> {
 }
 
 /// Go `FlightRecorder()`: the always-on in-memory ring buffer.
-#[must_use]
 pub fn flight_recorder() -> &'static RingBufferSink {
     &FLIGHT_RECORDER
 }
@@ -266,43 +220,40 @@ pub fn trace_event(ctx: &TraceContext, category: TraceCategory, name: &str, fiel
 
     // Record to flight recorder if enabled (base or full mode).
     if RECORDER_ENABLED.load(Ordering::SeqCst) {
-        flight_recorder().record(&event);
+        flight_recorder().record(ctx, &event);
         if let Some(sink) = ctx.sink() {
-            sink.record(&event);
+            sink.record(ctx, &event);
         }
     }
 
     // Record to log sink if logging is enabled (full mode).
-    current_sink().record(&event);
+    current_sink().record(ctx, &event);
 }
 
 /// Go `TraceIDFromContext`: the trace identifier carried by the context.
-#[must_use]
 pub fn trace_id_from_context(ctx: &TraceContext) -> &[u8] {
-    ctx.extract_trace_id()
+    tracing::extract_trace_id(ctx)
 }
 
 /// Go `ContextWithTraceID`: a context carrying the given trace identifier.
-#[must_use]
 pub fn context_with_trace_id(ctx: &TraceContext, trace_id: &[u8]) -> TraceContext {
-    let mut next = ctx.clone();
-    next.trace_id = trace_id.to_vec();
-    next
+    ctx.with_trace_id(trace_id)
 }
 
 /// Go `GenerateTraceID`: a 20-byte identifier
 /// `[start_ts (8)][stmt_count (8)][random (4)]` in big-endian order.
 ///
 /// The random suffix distinguishes statement executions, and is taken from the
-/// statement's [`Trace`] when it has one (Go asserts the context sink to
-/// `*Trace`; see the module boundaries). Call once per statement execution,
-/// not per retry.
-#[must_use]
-pub fn generate_trace_id(trace: Option<&Trace>, start_ts: u64, stmt_count: u64) -> Vec<u8> {
+/// statement's [`Trace`] when the context sink is one. Call once per statement
+/// execution, not per retry.
+pub fn generate_trace_id(ctx: &TraceContext, start_ts: u64, stmt_count: u64) -> Vec<u8> {
     let mut trace_id = vec![0_u8; 20];
     trace_id[0..8].copy_from_slice(&start_ts.to_be_bytes());
     trace_id[8..16].copy_from_slice(&stmt_count.to_be_bytes());
-    let mut rand32 = trace.map_or(0, Trace::rand32);
+    let mut rand32 = ctx
+        .sink()
+        .and_then(|sink| sink.as_any().downcast_ref::<Trace>())
+        .map_or(0, Trace::rand32);
     if rand32 == 0 {
         rand32 = crate::fastrand::uint32();
     }
@@ -315,11 +266,15 @@ pub fn generate_trace_id(trace: Option<&Trace>, start_ts: u64, stmt_count: u64) 
 pub struct LogSink;
 
 impl Sink for LogSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, context: &TraceContext, event: &Event) {
         if !LOGGING_ENABLED.load(Ordering::SeqCst) {
             return;
         }
-        log_event(None, event);
+        log_event(Some(context), event);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -353,17 +308,20 @@ pub struct MultiSink {
 
 impl MultiSink {
     /// Go `NewMultiSink`.
-    #[must_use]
     pub fn new(sinks: Vec<Arc<dyn Sink>>) -> Self {
         Self { sinks }
     }
 }
 
 impl Sink for MultiSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, context: &TraceContext, event: &Event) {
         for sink in &self.sinks {
-            sink.record(event);
+            sink.record(context, event);
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -382,7 +340,6 @@ struct RingBufferState {
 
 impl RingBufferSink {
     /// Go `NewRingBufferSink`. A non-positive capacity becomes 1.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let capacity = capacity.max(1);
         Self {
@@ -405,7 +362,6 @@ impl RingBufferSink {
     }
 
     /// Go `RingBufferSink.Snapshot`: buffered events, oldest to newest.
-    #[must_use]
     pub fn snapshot(&self) -> Vec<Event> {
         let state = self
             .state
@@ -425,7 +381,7 @@ impl RingBufferSink {
 }
 
 impl Sink for RingBufferSink {
-    fn record(&self, event: &Event) {
+    fn record(&self, _context: &TraceContext, event: &Event) {
         let mut state = self
             .state
             .lock()
@@ -440,6 +396,10 @@ impl Sink for RingBufferSink {
         let next = state.next;
         state.buf[next] = event.clone();
         state.next = (next + 1) % self.capacity;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -543,7 +503,6 @@ fn serialize_phase<S: serde::Serializer>(
 /// Go reads the four bytes at offset 16 through a `*uint32`, i.e. in the host's
 /// native byte order, even though [`generate_trace_id`] writes them big-endian.
 /// This mirrors that native-endian read exactly rather than "fixing" it.
-#[must_use]
 fn extract_rand_from_trace_id(trace_id: &[u8]) -> u32 {
     if trace_id.len() != 20 {
         return 0;
@@ -552,14 +511,13 @@ fn extract_rand_from_trace_id(trace_id: &[u8]) -> u32 {
 }
 
 /// Go `ConvertEventsForRendering`.
-#[must_use]
 pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
     let mut tid = 0_u32;
     let mut res = Vec::with_capacity(events.len());
     for event in events {
         let mut rendered = RenderEvent {
             name: event.name.clone(),
-            phase: event.phase,
+            phase: event.phase.clone(),
             ts: unix_micro(event.timestamp),
             pid: 0,
             tid: 0,
@@ -614,7 +572,6 @@ pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
 
 /// Renders log fields as the JSON object Go's zap JSON encoder produces for
 /// `RenderEvent.Args`.
-#[must_use]
 pub fn fields_to_json(fields: &[Field]) -> serde_json::Value {
     let mut map = serde_json::Map::with_capacity(fields.len());
     for field in fields {

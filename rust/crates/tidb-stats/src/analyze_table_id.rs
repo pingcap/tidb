@@ -32,7 +32,6 @@ pub struct AnalyzeTableId {
 
 impl AnalyzeTableId {
     /// Creates a table/partition identity.
-    #[must_use]
     pub const fn new(table_id: i64, partition_id: i64) -> Self {
         Self {
             table_id,
@@ -41,7 +40,6 @@ impl AnalyzeTableId {
     }
 
     /// Chooses the physical ID used to build statistics.
-    #[must_use]
     pub const fn statistics_id(self) -> i64 {
         if self.partition_id == NON_PARTITION_TABLE_ID {
             self.table_id
@@ -51,19 +49,16 @@ impl AnalyzeTableId {
     }
 
     /// Returns whether this identity names a partition table.
-    #[must_use]
     pub const fn is_partition_table(self) -> bool {
         self.partition_id != NON_PARTITION_TABLE_ID
     }
 
     /// Formats the source diagnostic representation: `partition => table`.
-    #[must_use]
     pub fn display_string(self) -> String {
         format!("{} => {}", self.partition_id, self.table_id)
     }
 
     /// Compares two concrete identities by both IDs.
-    #[must_use]
     pub const fn equals(self, other: Self) -> bool {
         self.table_id == other.table_id && self.partition_id == other.partition_id
     }
@@ -73,7 +68,6 @@ impl AnalyzeTableId {
     /// Go's pointer receiver returns true for two nil pointers, false for one
     /// nil pointer, and otherwise compares both fields. Rust callers express
     /// that boundary explicitly with `Option<&AnalyzeTableId>`.
-    #[must_use]
     pub fn equals_optional(left: Option<&Self>, right: Option<&Self>) -> bool {
         left == right
     }

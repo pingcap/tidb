@@ -15,11 +15,10 @@
 //! `pkg/expression/constant.go`: the `Constant` expression node and its
 //! `ParamMarker`.
 //!
-//! Includes structural methods and contextual datum evaluation with current
-//! parameters, deferred expressions, statement conversion flags and warnings.
-//! Unported conversion diagnostics remain explicit errors. The typed `Eval*`
-//! entrypoints, `GetType(ctx)`'s parameter inference, contextual comparison and
-//! display, `CanonicalHashCode`, and `MemoryUsage` remain incomplete.
+//! Includes structural methods, canonical hash bytes and contextual datum
+//! evaluation with current parameters, deferred expressions, statement
+//! conversion flags and warnings. Typed evaluation, contextual type inference,
+//! comparison, display and memory accounting remain incomplete.
 
 use std::hash::{Hash, Hasher};
 
@@ -73,6 +72,19 @@ impl Constant {
             ret_type: Some(ret_type),
             ..Default::default()
         }
+    }
+
+    /// Replaces the execute-time value of a cached parameter/deferred
+    /// constant and invalidates the value-derived hash.
+    ///
+    /// Go evaluates `ParamMarker`/`DeferredExpr` again when
+    /// `RebuildPlan4CachedPlan` reuses a physical plan.  A Rust cached plan
+    /// performs the same mutation on its private clone; retaining the old
+    /// `HashCode` would make expression equality disagree with the rebound
+    /// datum.
+    pub fn replace_cached_value(&mut self, value: Datum) {
+        self.value = value;
+        self.hashcode.clear();
     }
 
     /// Go `NewOne`: the unsigned `TINYINT(1)` constant used by boolean
@@ -134,7 +146,7 @@ impl Constant {
 
     /// Go `Constant.getLazyDatum/Eval`: lazy values come from this execution,
     /// while the planning value and expression remain immutable.
-    pub fn eval_in(&self, ctx: &impl crate::Columns) -> Result<Datum, EvalError> {
+    pub fn eval_in(&self, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
         self.eval_lazy_in(ctx, |expression| {
             crate::eval_expression_once(expression, ctx)
         })
@@ -144,7 +156,7 @@ impl Constant {
     /// It must not construct a new empty chunk at every deferred node.
     pub(crate) fn eval_on_row(
         &self,
-        ctx: &impl crate::Columns,
+        ctx: &dyn crate::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<Datum, EvalError> {
         self.eval_lazy_in(ctx, |expression| expression.eval(ctx, row))
@@ -152,7 +164,7 @@ impl Constant {
 
     fn eval_lazy_in(
         &self,
-        ctx: &impl crate::Columns,
+        ctx: &dyn crate::Columns,
         evaluate_deferred: impl FnOnce(&Expression) -> Result<Datum, EvalError>,
     ) -> Result<Datum, EvalError> {
         let value = if let Some(marker) = self.param_marker {
@@ -219,6 +231,26 @@ impl Constant {
         &self.hashcode
     }
 
+    /// Go `Constant.CanonicalHashCode`: use canonical child bytes for a
+    /// deferred expression and the ordinary value hash for literals and
+    /// parameters. Constants have no commutative rewrite of their own.
+    #[must_use]
+    pub fn canonical_hash_code(&self) -> Vec<u8> {
+        if let Some(deferred) = &self.deferred_expr {
+            return deferred.canonical_hash_code();
+        }
+        if let Some(param) = self.param_marker {
+            let mut bytes = Vec::with_capacity(9);
+            bytes.push(PARAMETER_FLAG);
+            encode_int(&mut bytes, param.order);
+            return bytes;
+        }
+        let mut bytes = Vec::with_capacity(1 + 9);
+        bytes.push(CONSTANT_FLAG);
+        bytes.extend_from_slice(&hash_code(&self.value));
+        bytes
+    }
+
     /// Go `Constant.Hash64`: hashes every field that participates in
     /// [`Self::equals`] while deliberately ignoring the byte-cache and
     /// `SubqueryRefID`, as the source does.
@@ -243,9 +275,11 @@ impl Constant {
 }
 
 /// Borrow the active evaluator's warning sink; no per-conversion warning store.
-struct ConversionWarnings<'a, C>(&'a C);
+struct ConversionWarnings<'a, C: ?Sized>(&'a C);
 
-impl<C: crate::Columns> tidb_datatype::ConversionWarningAppender for ConversionWarnings<'_, C> {
+impl<C: crate::Columns + ?Sized> tidb_datatype::ConversionWarningAppender
+    for ConversionWarnings<'_, C>
+{
     fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
         let warning = warning.to_sql_error();
         self.0.append_warning(warning.code, &warning.message);
@@ -588,7 +622,7 @@ mod tests {
                 [Some(0), Some(0), Some(1), Some(0)],
             ),
             (
-                scalar("case_when", vec![parameter(0), int(7), int(11)]),
+                scalar("case", vec![parameter(0), int(7), int(11)]),
                 [Some(11), Some(7), Some(11), Some(7)],
             ),
             (
@@ -713,6 +747,16 @@ mod tests {
         let mut expected = vec![PARAMETER_FLAG];
         encode_int(&mut expected, 5);
         assert_eq!(c.hash_code(), expected.as_slice());
+    }
+
+    #[test]
+    fn parameter_evaluates_the_current_context_value() {
+        let mut parameter = Constant::new(Datum::Int(7), ft());
+        parameter.param_marker = Some(ParamMarker { order: 2 });
+        for value in [Datum::Int(7), Datum::Int(11), Datum::Null] {
+            let context = Parameters(vec![Datum::Null, Datum::Null, value.clone()]);
+            assert_eq!(parameter.eval_in(&context).unwrap(), value);
+        }
     }
 
     #[test]

@@ -288,10 +288,16 @@ fn concrete_dispatch_attaches_context_forwards_and_maps_coprocessor_response() {
         .unwrap();
 
     let raw = pending.complete(&call).unwrap().unwrap();
-    let publication = pending.try_publication().expect("completion retains its route without a receipt barrier");
+    let publication = pending
+        .try_publication()
+        .expect("completion retains its route without a receipt barrier");
     assert_eq!(raw.physical_address(), publication.physical_address());
-    assert_eq!(raw.physical_channel_version(), publication.physical_channel_version());
+    assert_eq!(
+        raw.physical_channel_version(),
+        publication.physical_channel_version()
+    );
     assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
+    assert_eq!(publication.physical_address(), server.address);
     let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
     assert_eq!(response.data, b"dag");
     let received = received.lock().unwrap();
@@ -401,6 +407,35 @@ fn elapsed_deadline_rejects_before_stream_or_wire_admission() {
     let error = pending
         .try_complete()
         .unwrap()
+        .expect("worker deadline result")
+        .unwrap_err();
+
+    assert!(matches!(error, DirectUnaryClientError::Timeout { .. }));
+    assert!(received.lock().unwrap().is_empty());
+    assert!(matches!(
+        seen.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(client.connection_version(&server.address), None);
+    client.close().unwrap();
+}
+
+#[test]
+fn blocking_pull_preserves_pre_admission_transport_error_without_route() {
+    let (server, received, seen, _release) = fixture(ResponseMode::Echo);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let expired_call = UnaryCallContext::with_timeout(Duration::ZERO);
+    let mut pending = client
+        .begin(
+            &server.address,
+            None,
+            &request(b"must-not-publish-blocking"),
+            &expired_call,
+        )
+        .expect("worker publishes elapsed deadline through the original completion");
+    let wait_call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+    let error = pending
+        .complete(&wait_call)
         .expect("worker deadline result")
         .unwrap_err();
 

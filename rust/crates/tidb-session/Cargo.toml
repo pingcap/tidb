@@ -11,9 +11,14 @@ autotests = false
 build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
+tidb-config = { path = "../tidb-config" }
 # `information_schema.TIDB_SERVERS_INFO` reads the server-info syncer, the
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
+tidb-error = { path = "../tidb-error" }
+tidb-exec = { path = "../tidb-exec" }
+tidb-gcutil = { path = "../tidb-gcutil" }
+tidb-hint = { path = "../tidb-hint" }
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
@@ -25,16 +30,24 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
+tidb-log = { path = "../tidb-log" }
+toml.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 serde = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

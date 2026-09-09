@@ -32,7 +32,6 @@ fn is_tiflash_write_label(key: &str, value: &str) -> bool {
 
 /// Returns whether protobuf store metadata describes either a TiFlash write
 /// node or a NextGen TiFlash compute node.
-#[must_use]
 pub fn is_tiflash(store: &metapb::Store) -> bool {
     store
         .labels
@@ -42,7 +41,6 @@ pub fn is_tiflash(store: &metapb::Store) -> bool {
 
 /// Returns whether normalized PD store metadata describes either a TiFlash
 /// write node or a NextGen TiFlash compute node.
-#[must_use]
 pub fn is_tiflash_http_response(store: &PdStore) -> bool {
     store
         .labels
@@ -52,7 +50,6 @@ pub fn is_tiflash_http_response(store: &PdStore) -> bool {
 
 /// Returns whether normalized PD store metadata describes a TiFlash write
 /// node. NextGen compute-only nodes are deliberately excluded.
-#[must_use]
 pub fn is_tiflash_write_http_response(store: &PdStore) -> bool {
     store
         .labels

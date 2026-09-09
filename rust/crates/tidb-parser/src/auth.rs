@@ -200,7 +200,7 @@ pub fn decode_password(password: &str) -> Result<Vec<u8>, AuthError> {
         ));
     }
     let mut decoded = Vec::with_capacity(encoded.len() / 2);
-    for pair in encoded.chunks_exact(2) {
+    for pair in encoded.as_chunks::<2>().0 {
         let high = hex_nibble(pair[0]);
         let low = hex_nibble(pair[1]);
         match (high, low) {
@@ -523,8 +523,8 @@ fn compress_sm3_blocks(digest: &mut [u32; 8], mut input: &[u8]) {
     while input.len() >= 64 {
         let mut w = [0_u32; 68];
         let mut w1 = [0_u32; 64];
-        for (index, chunk) in input[..64].chunks_exact(4).enumerate() {
-            w[index] = u32::from_be_bytes(chunk.try_into().expect("four-byte word"));
+        for (index, chunk) in input[..64].as_chunks::<4>().0.iter().enumerate() {
+            w[index] = u32::from_be_bytes(*chunk);
         }
         for index in 16..68 {
             w[index] = p1(w[index - 16] ^ w[index - 9] ^ w[index - 3].rotate_left(15))

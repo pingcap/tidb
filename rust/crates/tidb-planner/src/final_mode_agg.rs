@@ -363,6 +363,17 @@ pub fn build_final_mode_aggregation(
                 // phase only.
                 return None;
             }
+            // The variance/stddev family keeps a (count, sum, variance)
+            // partial state that neither `NeedCount` nor `NeedValue` exposes,
+            // so a two-phase split would leave the final descriptor without
+            // an argument. Run it in one phase, as the executor's
+            // `AggState::update` requires.
+            if matches!(
+                agg_func.name(),
+                names::VAR_POP | names::VAR_SAMP | names::STDDEV_POP | names::STDDEV_SAMP
+            ) {
+                return None;
+            }
             if need_count(&final_name) {
                 if is_mpp_task && final_name == names::COUNT {
                     // For MPP the final count() merges by sum().
@@ -388,13 +399,34 @@ pub fn build_final_mode_aggregation(
                 partial_cursor += 1;
             }
             if need_value(&final_name) {
-                partial.schema.append([Column::new(
-                    alloc.alloc(),
-                    original.schema.columns[i]
-                        .ret_type
-                        .clone()
-                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
-                )]);
+                // Go's max_count/min_count partial state is [count,
+                // extrema value].  The extrema column must retain the
+                // original argument type (including charset/collation), not
+                // the aggregate's count-shaped return type; the final
+                // descriptor compares this column as the same value type.
+                let value_ret_type =
+                    if matches!(final_name.as_str(), names::MAX_COUNT | names::MIN_COUNT) {
+                        agg_func
+                            .base
+                            .args
+                            .first()
+                            .and_then(Expression::static_type)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                original.schema.columns[i]
+                                    .ret_type
+                                    .clone()
+                                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+                            })
+                    } else {
+                        original.schema.columns[i]
+                            .ret_type
+                            .clone()
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+                    };
+                partial
+                    .schema
+                    .append([Column::new(alloc.alloc(), value_ret_type)]);
                 args.push(Expression::Column(
                     partial.schema.columns[partial_cursor].clone(),
                 ));
@@ -559,7 +591,7 @@ pub fn check_agg_can_push_cop_tikv(
 /// a TiKV cop task: `(None, plan)` is Go's `(nil, p.Self)` — the aggregate
 /// stays whole — and `(Some(partial), final)` is the split, the partial
 /// keeping the original plan's id and stats (Go mutates `p` into it) and the
-/// final sharing those stats above it.
+/// final sharing those stats above it and receiving a fresh physical-plan ID.
 ///
 /// The `copTaskType == kv.TiDB` firstrow-appending arm is not reachable: the
 /// only caller hands TiKV cop tasks. Go's expression context is consulted
@@ -569,6 +601,7 @@ pub fn new_partial_aggregate(
     ctx: &impl Columns,
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<
     (
         Option<crate::physical::PhysicalPlan>,
@@ -614,10 +647,27 @@ pub fn new_partial_aggregate(
     );
     // Go mutates `p` into the partial half (same plan id, same stats) and
     // Init's a NEW final of the same kind above it, with
-    // `ExpectedCnt: math.MaxFloat64` and `p`'s stats. Plan ids on this port
-    // follow the TopN-push precedent: both halves carry the original id.
+    // `ExpectedCnt: math.MaxFloat64` and `p`'s stats.
     let mut partial = plan.clone();
-    let mut final_plan = plan;
+    let mut final_base =
+        crate::physical::BasePhysicalPlan::new(plan_ids, plan.tp(), plan.query_block_offset());
+    final_base.base.set_stats(plan.stats_info().cloned());
+    final_base.set_children_req_props(vec![Some(
+        crate::physical_property::PhysicalProperty::default(),
+    )]);
+    let mut final_plan = match &plan {
+        PhysicalPlan::HashAgg(_) => PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
+            base: final_base,
+            agg_funcs: Vec::new(),
+            group_by_items: Vec::new(),
+        }),
+        PhysicalPlan::StreamAgg(_) => PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+            base: final_base,
+            agg_funcs: Vec::new(),
+            group_by_items: Vec::new(),
+        }),
+        _ => unreachable!("the aggregate variant was checked above"),
+    };
     match (&mut partial, &mut final_plan) {
         (PhysicalPlan::HashAgg(part), PhysicalPlan::HashAgg(fin)) => {
             part.agg_funcs = split.partial.agg_funcs;

@@ -38,27 +38,28 @@
 //!   convergence node enforces. This tier applies no table privileges to
 //!   ordinary reads either, so a check on this one statement would be the
 //!   only one and would refuse scripts nothing else refuses.
-//! * **Transaction interaction.** The analysis runs against the catalog THIS
-//!   statement sees, so inside an explicit transaction it reads the
-//!   transaction's rows and a `ROLLBACK` discards the statistics with them.
-//!   Captured: TiDB's survive the rollback, because its `ANALYZE` writes
-//!   through an INTERNAL session and the statistics were never the rolling-back
-//!   transaction's to discard. Named rather than papered over -- making the
-//!   write escape the transaction would also make the READ escape it, and
-//!   sampling rows the statement cannot see is the worse of the two errors.
-//!   Pinned by `tests_analyze::analyze_inside_a_transaction_rolls_back_with_it`.
+//! * **Transaction interaction.** The analysis reads the catalog THIS
+//!   statement sees, including its transaction's rows, while statistics are
+//!   published through the process-wide catalog cache. This is Go's split:
+//!   analyze workers read the statement snapshot and `SaveAnalyzeResultToStorage`
+//!   uses a stats-handle internal session, so a user `ROLLBACK` cannot discard
+//!   the published statistics.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use tidb_executor::analyze::kv::analyze_kv_table;
+use tidb_executor::analyze::kv::{
+    analyze_kv_table_columns, analyze_kv_table_independent_index, is_special_global_index,
+};
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
-    lower_analyze_admin, AnalyzeOptions, AnalyzeStatement, SampleMemoryQuota,
-    MEM_QUOTA_ANALYZE_VARIABLE,
+    lower_analyze_admin, resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement,
+    PhysicalAnalyzeOptions, SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
 use crate::{Session, StmtOutput};
+use tidb_util::stringutil::go_to_lower;
 
 /// The source goroutine boundary at which a test injects its one-shot panic.
 #[cfg(test)]
@@ -68,6 +69,327 @@ pub(crate) enum AnalyzePanicPhase {
     Worker,
     /// Go's result handler, after statistics are computed but before publish.
     Result,
+}
+
+fn merge_partial_statistics(
+    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
+    mut fresh: tidb_executor::access_cost::TableStatistics,
+    partial: bool,
+) -> tidb_executor::access_cost::TableStatistics {
+    if !partial {
+        return fresh;
+    }
+    let Some(old) = old else {
+        return fresh;
+    };
+    let mut merged = (*old).clone();
+    merged.row_count = fresh.row_count;
+    merged.modify_count = fresh.modify_count;
+    merged.version = fresh.version;
+    merged.last_analyze_version = fresh.last_analyze_version;
+    merged.columns.append(&mut fresh.columns);
+    merged.indexes.append(&mut fresh.indexes);
+    merged
+        .column_load_status
+        .append(&mut fresh.column_load_status);
+    merged
+        .index_load_status
+        .append(&mut fresh.index_load_status);
+    merged
+        .column_stats_existence
+        .append(&mut fresh.column_stats_existence);
+    merged
+        .index_stats_existence
+        .append(&mut fresh.index_stats_existence);
+    merged.pseudo = merged.row_count == 0
+        || (merged.column_stats_existence.values().all(|exists| !exists)
+            && merged.index_stats_existence.values().all(|exists| !exists));
+    merged
+}
+
+fn merge_independent_index_statistics(
+    old: Option<Arc<tidb_executor::access_cost::TableStatistics>>,
+    fresh: tidb_executor::access_cost::TableStatistics,
+) -> tidb_executor::access_cost::TableStatistics {
+    let Some(old) = old else {
+        return fresh;
+    };
+    let mut merged = (*old).clone();
+    merged.version = fresh.version;
+    merged.last_analyze_version = fresh.last_analyze_version;
+    merged.indexes.extend(fresh.indexes);
+    merged.index_load_status.extend(fresh.index_load_status);
+    merged
+        .index_stats_existence
+        .extend(fresh.index_stats_existence);
+    merged.pseudo = merged.row_count == 0
+        || (merged.column_stats_existence.values().all(|exists| !exists)
+            && merged.index_stats_existence.values().all(|exists| !exists));
+    merged
+}
+
+struct AnalyzeIndexTasks {
+    run_full_sampling: bool,
+    independent_index_ids: Vec<i64>,
+}
+
+fn select_index_tasks(
+    table: &tidb_executor::kv_table::KvTable,
+    statement: &AnalyzeStatement,
+) -> Result<AnalyzeIndexTasks, DriverError> {
+    let Some(names) = &statement.index_names else {
+        return Ok(AnalyzeIndexTasks {
+            run_full_sampling: true,
+            independent_index_ids: if statement.partitions.is_empty() {
+                table
+                    .indexes()
+                    .iter()
+                    .filter(|index| is_special_global_index(table, index))
+                    .map(|index| index.id)
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        });
+    };
+    let selected = if names.is_empty() {
+        table.indexes().iter().collect::<Vec<_>>()
+    } else {
+        names
+            .iter()
+            .map(|name| {
+                table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "Index '{name}' in field list does not exist in table '{}'",
+                            table.name
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if selected
+        .iter()
+        .all(|index| is_special_global_index(table, index))
+    {
+        if let Some(index) = selected.iter().find(|_| !statement.partitions.is_empty()) {
+            return Err(DriverError::unsupported(format!(
+                "Analyze global index '{}' can't work with analyze specified partitions",
+                index.name
+            )));
+        }
+        // Pinned Go deliberately iterates the explicitly named list here.
+        // Therefore `ANALYZE TABLE t INDEX` with no names and only special
+        // global indexes creates no task.
+        return Ok(AnalyzeIndexTasks {
+            run_full_sampling: false,
+            independent_index_ids: names
+                .iter()
+                .filter_map(|name| {
+                    selected
+                        .iter()
+                        .find(|index| index.name.eq_ignore_ascii_case(name))
+                        .map(|index| index.id)
+                })
+                .collect(),
+        });
+    }
+    Ok(AnalyzeIndexTasks {
+        run_full_sampling: true,
+        independent_index_ids: if statement.partitions.is_empty() {
+            table
+                .indexes()
+                .iter()
+                .filter(|index| is_special_global_index(table, index))
+                .map(|index| index.id)
+                .collect()
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn analyze_partition_ids(
+    table: &tidb_executor::kv_table::KvTable,
+    requested: &[String],
+) -> Result<Vec<i64>, DriverError> {
+    let Some(partition) = table.partition() else {
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(DriverError::unsupported(
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ));
+    };
+    if requested.is_empty() {
+        return Ok(partition
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect());
+    }
+    let mut ids = Vec::with_capacity(requested.len());
+    for requested_name in requested {
+        let definition = partition
+            .definitions
+            .iter()
+            .find(|definition| definition.name.eq_ignore_ascii_case(requested_name))
+            .ok_or_else(|| {
+                DriverError::unsupported(format!(
+                    "can not found the specified partition name {requested_name} in the table definition"
+                ))
+            })?;
+        ids.push(definition.id);
+    }
+    Ok(ids)
+}
+
+fn effective_column_choice(
+    choice: &AnalyzeColumnChoice,
+    default: &AnalyzeColumnChoice,
+) -> AnalyzeColumnChoice {
+    if *choice == AnalyzeColumnChoice::Default {
+        default.clone()
+    } else {
+        choice.clone()
+    }
+}
+
+fn selected_column_ids(
+    table: &tidb_executor::kv_table::KvTable,
+    choice: &AnalyzeColumnChoice,
+    default_choice: &AnalyzeColumnChoice,
+    predicate_ids: &HashSet<(i64, i64)>,
+    table_id: i64,
+    schema: &str,
+    table_name: &str,
+    context: &tidb_executor::StmtContext,
+    predicate_warning_emitted: &mut bool,
+    explicit_warning_emitted: &mut bool,
+) -> Result<Option<HashSet<i64>>, DriverError> {
+    let choice = effective_column_choice(choice, default_choice);
+    let mut selected = match &choice {
+        AnalyzeColumnChoice::All | AnalyzeColumnChoice::Default => return Ok(None),
+        AnalyzeColumnChoice::Predicate => Some(
+            predicate_ids
+                .iter()
+                .filter_map(|(usage_table, column)| (*usage_table == table_id).then_some(*column))
+                .collect::<HashSet<_>>(),
+        ),
+        AnalyzeColumnChoice::Explicit(names) => {
+            let mut ids = HashSet::new();
+            for name in names {
+                let column = table
+                    .columns()
+                    .iter()
+                    .find(|column| column.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "column `{name}` does not exist in `{schema}`.`{table_name}`"
+                        ))
+                    })?;
+                ids.insert(column.id);
+            }
+            Some(ids)
+        }
+    };
+    let selected_ids = selected.as_mut().expect("the all-columns case returned");
+    let explicitly_selected = selected_ids.clone();
+    if choice == AnalyzeColumnChoice::Predicate
+        && selected_ids.is_empty()
+        && !*predicate_warning_emitted
+    {
+        context.append_warning_parts(
+            1105,
+            &format!(
+                "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
+                go_to_lower(schema),
+                go_to_lower(table_name)
+            ),
+        );
+        *predicate_warning_emitted = true;
+    }
+    for index in table.indexes() {
+        for offset in &index.column_offsets {
+            if let Some(column) = table.columns().get(*offset) {
+                selected_ids.insert(column.id);
+            }
+        }
+    }
+    if let Some(offset) = table.pk_handle_offset() {
+        if let Some(column) = table.columns().get(offset) {
+            selected_ids.insert(column.id);
+        }
+    }
+    loop {
+        let before = selected_ids.len();
+        for column in table.columns() {
+            if !selected_ids.contains(&column.id) {
+                continue;
+            }
+            if let Some(generated) = &column.generated {
+                for dependency in &generated.dependencies {
+                    if let Some(base) = table
+                        .columns()
+                        .iter()
+                        .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                    {
+                        selected_ids.insert(base.id);
+                    }
+                }
+            }
+        }
+        if selected_ids.len() == before {
+            break;
+        }
+    }
+    if matches!(choice, AnalyzeColumnChoice::Explicit(_))
+        && !*explicit_warning_emitted
+        && selected_ids != &explicitly_selected
+    {
+        let missing = table
+            .columns()
+            .iter()
+            .filter(|column| {
+                selected_ids.contains(&column.id) && !explicitly_selected.contains(&column.id)
+            })
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>();
+        context.append_warning_parts(
+            1105,
+            &format!(
+                "Columns {} are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+                missing.join(",")
+            ),
+        );
+        *explicit_warning_emitted = true;
+    }
+    Ok(selected)
+}
+
+fn saved_options(
+    table: &tidb_executor::kv_table::KvTable,
+    options: &PhysicalAnalyzeOptions,
+    selected: Option<&HashSet<i64>>,
+) -> SavedAnalyzeOptions {
+    let columns = match &options.columns {
+        AnalyzeColumnChoice::Explicit(_) => AnalyzeColumnChoice::Explicit(
+            table
+                .columns()
+                .iter()
+                .filter(|column| selected.is_some_and(|selected| selected.contains(&column.id)))
+                .map(|column| column.name.clone())
+                .collect(),
+        ),
+        choice => choice.clone(),
+    };
+    SavedAnalyzeOptions {
+        raw: options.raw,
+        columns,
+    }
 }
 
 #[cfg(test)]
@@ -115,39 +437,126 @@ impl Session {
             return Ok(None);
         };
         let memory_quota = self.analyze_memory_quota();
+        let persist_options = self
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        let default_columns = if self
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
+        {
+            AnalyzeColumnChoice::Predicate
+        } else {
+            AnalyzeColumnChoice::All
+        };
         for statement in &tables {
-            let mut options = statement.options;
-            options.memory_quota = memory_quota;
-            self.analyze_one_table(statement, &options)?;
+            let mut statement = statement.clone();
+            statement.persist_options = persist_options;
+            statement.default_columns = default_columns.clone();
+            statement.options.memory_quota = memory_quota;
+            self.analyze_one_table(&statement)?;
         }
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(Some(StmtOutput::Affected(0)))
     }
 
-    /// Analyzes one named table and publishes its statistics.
-    fn analyze_one_table(
+    /// Runs one `ANALYZE` through the session catalog when its resolved table
+    /// is temporary.
+    ///
+    /// A cluster session normally delegates `ANALYZE` to the TiKV-backed
+    /// executor. Temporary rows are the exception: LOCAL table metadata and
+    /// both kinds' row storage live in this session's catalog overlay, so the
+    /// shared cluster catalog cannot resolve or sample them. Go still builds
+    /// an ordinary analyze task for these tables; this narrow entry point lets
+    /// the cluster route preserve that behavior without creating a second
+    /// temporary-table analyzer.
+    pub fn analyze_temporary_table(
         &mut self,
         statement: &AnalyzeStatement,
-        options: &AnalyzeOptions,
-    ) -> Result<(), DriverError> {
+    ) -> Result<Option<(i64, Arc<tidb_stats::Table>)>, DriverError> {
+        let temporary = self.with_catalog_mut(|catalog| {
+            Ok(
+                match catalog.table_in(&statement.schema, &statement.table) {
+                    Some(TableEntry::Kv(table)) if table.is_temporary() => Some(table.clone()),
+                    _ => None,
+                },
+            )
+        })?;
+        let Some(table) = temporary else {
+            return Ok(None);
+        };
+        self.analyze_one_table(statement)?;
+        let table_id = table.table_id;
+        let statistics = self.with_catalog_mut(|catalog| {
+            catalog
+                .table_statistics(table_id)
+                .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))
+        })?;
+        Ok(Some((
+            table_id,
+            Arc::new(
+                tidb_executor::load_stats::statistics_table_from_planner_statistics(
+                    &table,
+                    table_id,
+                    &statistics,
+                ),
+            ),
+        )))
+    }
+
+    /// Reinstalls analyzed LOCAL temporary-table statistics after the shared
+    /// catalog image has been rebuilt.
+    ///
+    /// LOCAL metadata is owned by this session and therefore is absent while
+    /// the server rebuilds the shared catalog. Go's statistics cache is not:
+    /// an explicit temporary-table `ANALYZE` remains cached across an
+    /// unrelated infoschema or statistics refresh. Recreate only the planner
+    /// views for cache entries that still exist; ordinary temporary-table
+    /// reads never create one.
+    pub fn reinstall_local_temporary_statistics(
+        &self,
+        mut cached: impl FnMut(i64) -> Option<Arc<tidb_stats::Table>>,
+    ) {
+        let planner = self
+            .local_temporary_tables
+            .iter()
+            .filter_map(|(_, _, table)| {
+                let canonical = cached(table.table_id)?;
+                Some((
+                    table.table_id,
+                    Arc::new(tidb_executor::load_stats::table_statistics_from_table(
+                        &canonical, table,
+                    )),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if planner.is_empty() {
+            return;
+        }
+        let mut catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (table_id, statistics) in planner {
+            catalog.set_table_statistics(table_id, statistics);
+        }
+    }
+
+    /// Analyzes one named table and publishes its statistics.
+    fn analyze_one_table(&mut self, statement: &AnalyzeStatement) -> Result<(), DriverError> {
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
-        self.with_catalog_mut(|catalog| {
+        let usage_provider = self.column_stats_usage.clone();
+        let session_time_zone = self.session_time_zone();
+        let resource_group = self.active_resource_group.clone();
+        let result = self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
-                Some(TableEntry::Kv(kv)) => (
-                    kv.table_id,
-                    kv.partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| definition.id)
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                    kv.clone(),
-                ),
+                Some(TableEntry::Kv(kv)) => {
+                    let partition_ids = analyze_partition_ids(kv, &statement.partitions)?;
+                    (kv.table_id, partition_ids, kv.clone())
+                }
                 // Go raises 1146 for a name that is not a table, and
                 // `ErrAnalyzeMissColumn`-adjacent refusals for a view or a
                 // sequence; both are "there is nothing here to analyze", and
@@ -155,14 +564,98 @@ impl Session {
                 Some(_) => {
                     return Err(DriverError::unsupported(format!(
                         "`{schema}`.`{name}` is not a table whose rows this node can analyze"
-                    )))
+                    )));
                 }
                 None => {
                     return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
                         name.clone(),
-                    )))
+                    )));
                 }
             };
+            let index_tasks = select_index_tasks(&table, statement)?;
+            if statement.index_names.is_some() && index_tasks.run_full_sampling {
+                ctx.append_warning_parts(
+                    1105,
+                    "The version 2 would collect all statistics not only the selected indexes",
+                );
+            }
+            if matches!(statement.columns, AnalyzeColumnChoice::Explicit(_)) {
+                let mut suppress_predicate_warning = true;
+                let mut explicit_warning_emitted = false;
+                selected_column_ids(
+                    &table,
+                    &statement.columns,
+                    &AnalyzeColumnChoice::All,
+                    &HashSet::new(),
+                    table_id,
+                    &schema,
+                    &name,
+                    &ctx,
+                    &mut suppress_predicate_warning,
+                    &mut explicit_warning_emitted,
+                )?;
+            }
+            let mut persisted = std::collections::HashMap::new();
+            if statement.persist_options {
+                for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
+                    if let Some(options) = catalog.analyze_options(physical_id) {
+                        persisted.insert(physical_id, options);
+                    }
+                }
+            }
+            let resolution = resolve_analyze_options(
+                table_id,
+                &partition_ids,
+                statement.raw_options,
+                &statement.columns,
+                &persisted,
+                !statement.persist_options || statement.partitions.is_empty(),
+                !ctx.static_partition_prune(),
+            );
+            if resolution.ignored_partition_overrides {
+                ctx.append_warning_parts(
+                    1105,
+                    "Ignore columns and options when analyze partition in dynamic mode",
+                );
+            }
+            let needs_predicate = resolution.physical.iter().any(|options| {
+                effective_column_choice(&options.columns, &statement.default_columns)
+                    == AnalyzeColumnChoice::Predicate
+            });
+            let predicate_ids = if needs_predicate {
+                match &usage_provider {
+                    Some(provider) => provider
+                        .load_column_stats_usage(&session_time_zone, &resource_group)
+                        .map_err(DriverError::unsupported)?
+                        .keys()
+                        .filter(|item| item.table_id != 0 && !item.is_index)
+                        .map(|item| (item.table_id, item.id))
+                        .collect::<HashSet<_>>(),
+                    None => HashSet::new(),
+                }
+            } else {
+                HashSet::new()
+            };
+            let mut predicate_warning_emitted = false;
+            let mut explicit_warning_emitted = true;
+            let mut selections = std::collections::HashMap::new();
+            for options in &resolution.physical {
+                selections.insert(
+                    options.physical_id,
+                    selected_column_ids(
+                        &table,
+                        &options.columns,
+                        &statement.default_columns,
+                        &predicate_ids,
+                        table_id,
+                        &schema,
+                        &name,
+                        &ctx,
+                        &mut predicate_warning_emitted,
+                        &mut explicit_warning_emitted,
+                    )?,
+                );
+            }
             let realtime_count = |physical_id| {
                 // Go's `getAdjustedSampleRate` reads the CURRENT
                 // `mysql.stats_meta.count` of the physical table being
@@ -177,56 +670,145 @@ impl Session {
                 .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
                 .collect::<Vec<_>>();
             let global_count = realtime_count(table_id);
-            recover_analyze_panic(|| {
+            let execution: Result<(), DriverError> = recover_analyze_panic(|| {
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
 
-                if partition_ids.is_empty() {
-                    let mut table = table;
-                    let statistics = analyze_kv_table(&mut table, options, global_count, &ctx)
+                if index_tasks.run_full_sampling {
+                    if partition_ids.is_empty() {
+                        let mut scan_table = table.clone();
+                        let options = &resolution.physical[0];
+                        let mut effective = options.effective;
+                        effective.memory_quota = statement.options.memory_quota;
+                        let selected = selections
+                            .get(&table_id)
+                            .expect("the logical table selection exists");
+                        let statistics = analyze_kv_table_columns(
+                            &mut scan_table,
+                            &effective,
+                            global_count,
+                            &ctx,
+                            selected.as_ref(),
+                        )
                         .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                    #[cfg(test)]
-                    inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
-                    catalog.set_table_statistics(table_id, Arc::new(statistics));
-                    return Ok(());
-                }
-
-                let mut partition_statistics = Vec::with_capacity(partition_counts.len());
-                for (physical_id, realtime_count) in partition_counts {
-                    let mut partition = table.clone();
-                    partition.restrict_read_to_partitions(&[physical_id]);
-                    let statistics =
-                        analyze_kv_table(&mut partition, options, realtime_count, &ctx)
+                        #[cfg(test)]
+                        inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
+                        let statistics = merge_partial_statistics(
+                            catalog.table_statistics(table_id),
+                            statistics,
+                            selected.is_some(),
+                        );
+                        catalog.set_table_statistics(table_id, Arc::new(statistics));
+                    } else {
+                        let mut partition_statistics = Vec::with_capacity(partition_counts.len());
+                        for (physical_id, realtime_count) in partition_counts {
+                            let options = resolution
+                                .physical
+                                .iter()
+                                .find(|options| options.physical_id == physical_id)
+                                .expect("every requested partition has options");
+                            let mut effective = options.effective;
+                            effective.memory_quota = statement.options.memory_quota;
+                            let selected = selections
+                                .get(&physical_id)
+                                .expect("every requested partition has a selection");
+                            let mut partition = table.clone();
+                            partition.restrict_read_to_partitions(&[physical_id]);
+                            let statistics = analyze_kv_table_columns(
+                                &mut partition,
+                                &effective,
+                                realtime_count,
+                                &ctx,
+                                selected.as_ref(),
+                            )
                             .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                    partition_statistics.push((physical_id, Arc::new(statistics)));
+                            let statistics = merge_partial_statistics(
+                                catalog.table_statistics(physical_id),
+                                statistics,
+                                selected.is_some(),
+                            );
+                            partition_statistics.push((physical_id, Arc::new(statistics)));
+                        }
+
+                        // Go's static pruning mode analyzes the physical partitions
+                        // and deliberately does not merge a logical-table histogram.
+                        // Dynamic pruning performs that merge; analyzing the same
+                        // complete row set here gives its planner the same global
+                        // distribution without inventing a second statistics store.
+                        let global_statistics = if ctx.static_partition_prune() {
+                            None
+                        } else {
+                            let mut global = table.clone();
+                            let options = &resolution.physical[0];
+                            let mut effective = options.effective;
+                            effective.memory_quota = statement.options.memory_quota;
+                            let selected = selections
+                                .get(&table_id)
+                                .expect("the logical table selection exists");
+                            let statistics = analyze_kv_table_columns(
+                                &mut global,
+                                &effective,
+                                global_count,
+                                &ctx,
+                                selected.as_ref(),
+                            )
+                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                            Some(Arc::new(merge_partial_statistics(
+                                catalog.table_statistics(table_id),
+                                statistics,
+                                selected.is_some(),
+                            )))
+                        };
+                        #[cfg(test)]
+                        inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
+                        for (physical_id, statistics) in partition_statistics {
+                            catalog.set_table_statistics(physical_id, statistics);
+                        }
+                        if let Some(statistics) = global_statistics {
+                            catalog.set_table_statistics(table_id, statistics);
+                        }
+                    }
                 }
 
-                // Go's static pruning mode analyzes the physical partitions
-                // and deliberately does not merge a logical-table histogram.
-                // Dynamic pruning performs that merge; analyzing the same
-                // complete row set here gives its planner the same global
-                // distribution without inventing a second statistics store.
-                let global_statistics = if ctx.static_partition_prune() {
-                    None
-                } else {
-                    let mut global = table;
-                    Some(Arc::new(
-                        analyze_kv_table(&mut global, options, global_count, &ctx)
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?,
-                    ))
-                };
-                #[cfg(test)]
-                inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
-                for (physical_id, statistics) in partition_statistics {
-                    catalog.set_table_statistics(physical_id, statistics);
-                }
-                if let Some(statistics) = global_statistics {
-                    catalog.set_table_statistics(table_id, statistics);
+                let independent_options = resolution
+                    .physical
+                    .first()
+                    .expect("an ANALYZE plan has physical options");
+                let mut effective = independent_options.effective;
+                effective.memory_quota = statement.options.memory_quota;
+                for index_id in &index_tasks.independent_index_ids {
+                    let mut index_table = table.clone();
+                    let statistics =
+                        analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
+                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    let statistics = merge_independent_index_statistics(
+                        catalog.table_statistics(table_id),
+                        statistics,
+                    );
+                    catalog.set_table_statistics(table_id, Arc::new(statistics));
                 }
                 Ok(())
             })
-            .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?
-        })
+            .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?;
+            execution?;
+            if statement.persist_options {
+                for options in &resolution.physical {
+                    if options.is_partition && !ctx.static_partition_prune() {
+                        continue;
+                    }
+                    let selected = selections
+                        .get(&options.physical_id)
+                        .and_then(Option::as_ref);
+                    catalog.set_analyze_options(
+                        options.physical_id,
+                        saved_options(&table, options, selected),
+                    );
+                }
+            }
+            Ok(())
+        });
+        self.drain_context_warnings(&ctx);
+        result
     }
 
     /// Go's analyze memory quota, as one `ANALYZE` reads it.

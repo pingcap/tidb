@@ -268,6 +268,27 @@ fn no_backslash_escapes_like_default_reaches_a_table_filter() {
     );
 }
 
+#[test]
+fn no_backslash_escapes_like_default_changes_plan_cache_environment() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+    let enabled = session
+        .prepared_plan_cache_environment()
+        .expect("the default LIKE switch admits the cache");
+
+    session
+        .run("SET tidb_enable_no_backslash_escapes_in_like = OFF")
+        .unwrap();
+    let disabled = session
+        .prepared_plan_cache_environment()
+        .expect("disabling LIKE's implicit escape still admits the cache");
+
+    assert_ne!(
+        enabled, disabled,
+        "Go's plan-cache key includes EnableNoBackslashEscapesInLike"
+    );
+}
+
 /// Generated expressions are rewritten while DDL is admitted, so they must
 /// capture the same omitted-escape policy as ordinary query expressions.
 #[test]

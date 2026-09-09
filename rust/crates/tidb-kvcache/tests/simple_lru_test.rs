@@ -55,34 +55,38 @@ impl CacheKey for MockCacheKey {
     }
 }
 
-/// Go `memory.MemTotal()` (gopsutil's total physical RAM).
-fn mem_total() -> u64 {
-    let content = std::fs::read_to_string("/proc/meminfo").expect("read /proc/meminfo");
-    let kib: u64 = content
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))
-        .and_then(|value| value.split_whitespace().next())
-        .and_then(|value| value.parse().ok())
-        .expect("MemTotal line in /proc/meminfo");
-    kib * 1024
+// Go permits callers to discard constructor and query return values; Rust
+// must not add a `must_use` diagnostic at the transcreation boundary.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    SimpleLruCache::<Vec<u8>, ()>::new(1);
+    let cache = SimpleLruCache::<Vec<u8>, ()>::new(1);
+    cache.peek(b"missing");
+    cache.size();
+    cache.values();
+    cache.keys();
 }
 
-/// Go `memory.InstanceMemUsed()`; a real read keeps the guard arithmetic on
-/// the same operating-system boundary as the source.
+/// Deterministic stand-ins for Go's successful `memory.MemTotal()` and
+/// `memory.InstanceMemUsed()` calls. The production Rust API receives the
+/// process-memory probe from its owner; these tests exercise the resulting
+/// eviction policy without making the Go package's platform-neutral tests
+/// depend on Linux `/proc`.
+const TEST_MEM_TOTAL: u64 = 1_000_000;
+
 fn instance_mem_used() -> Result<u64, MemoryProbeError> {
-    Ok(mem_total() / 2)
+    Ok(TEST_MEM_TOTAL / 2)
 }
 
 /// Go `TestPut`: capacity eviction fires `onEvict` with the oldest pairs and
 /// leaves the newest `capacity` entries in MRU order.
 #[test]
 fn test_put() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru_max_mem = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
     let mut lru_zero_quota = SimpleLruCache::with_memory_guard(3, 0.0, 0, instance_mem_used);
-    assert_eq!(3, lru_max_mem.capacity());
-    assert_eq!(3, lru_zero_quota.capacity());
 
     let keys: Vec<MockCacheKey> = (0..5).map(MockCacheKey::new).collect();
     let vals: Vec<i64> = (0..5).collect();
@@ -140,7 +144,6 @@ fn contains(cache: &mut SimpleLruCache<MockCacheKey, i64>, key: &MockCacheKey) -
 fn test_zero_quota() {
     let mut lru: SimpleLruCache<MockCacheKey, i64> =
         SimpleLruCache::with_memory_guard(100, 0.0, 0, instance_mem_used);
-    assert_eq!(100, lru.capacity());
 
     for i in 0..100 {
         lru.put(MockCacheKey::new(i), i);
@@ -152,11 +155,9 @@ fn test_zero_quota() {
 /// every insert is evicted immediately.
 #[test]
 fn test_oom_guard() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
-    let mut lru =
-        SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
-    assert_eq!(3, lru.capacity());
+    let mut lru = SimpleLruCache::with_memory_guard(3, 1.0, max_mem, instance_mem_used);
 
     for i in 0..5 {
         lru.put(MockCacheKey::new(i), i);
@@ -173,7 +174,7 @@ fn test_oom_guard() {
 /// Go `TestGet`: misses return nothing, hits are promoted to the front.
 #[test]
 fn test_get() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -189,11 +190,14 @@ fn test_get() {
         assert!(lru.get(&keys[i]).is_none());
     }
 
+    // Go master added Peek: it returns the value without promoting key 2.
+    assert_eq!(lru.peek(&keys[2]), Some(&vals[2]));
+    assert_eq!(lru.keys()[0].identity(), keys[4].identity());
+
     for i in 2..5usize {
         let value = *lru.get(&keys[i]).expect("hit expected");
         assert_eq!(vals[i], value);
         assert_eq!(3, lru.size());
-        assert_eq!(3, lru.capacity());
 
         // The hit now sits at the front of the list carrying its key/value.
         let front_key = lru.keys()[0].identity();
@@ -206,7 +210,7 @@ fn test_get() {
 /// Go `TestDelete`.
 #[test]
 fn test_delete() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -229,7 +233,7 @@ fn test_delete() {
 /// Go `TestDeleteAll`.
 #[test]
 fn test_delete_all() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(3, 0.0, max_mem, instance_mem_used);
 
@@ -252,7 +256,7 @@ fn test_delete_all() {
 /// Go `TestValues`: values come back most-recently-used first.
 #[test]
 fn test_values() {
-    let max_mem = mem_total();
+    let max_mem = TEST_MEM_TOTAL;
 
     let mut lru = SimpleLruCache::with_memory_guard(5, 0.0, max_mem, instance_mem_used);
 
@@ -273,7 +277,6 @@ fn test_values() {
 #[test]
 fn test_put_profile_name() {
     let mut _lru: SimpleLruCache<Vec<u8>, ()> = SimpleLruCache::new(3);
-    assert_eq!(3, _lru.capacity());
     assert_eq!(
         PROFILE_NAME,
         "github.com/pingcap/tidb/pkg/util/kvcache.(*SimpleLRUCache).Put"

@@ -21,7 +21,6 @@ use crate::{
     task::Task,
     task_type::TaskType,
 };
-use std::sync::Arc;
 use tidb_expr::simple_expr::extract_columns_from_expressions;
 
 pub mod candidate;
@@ -31,7 +30,7 @@ mod table;
 /// Current statement's ranger inputs for native IndexJoin path construction.
 pub struct IndexJoinRangerSettings<'a> {
     /// Current statement bindings, shared by all alternatives in this search.
-    pub eval_constant: &'a crate::ranger::points::ConstantEvaluator<'a>,
+    pub eval_expression: &'a crate::ranger::points::ExpressionEvaluator<'a>,
     /// Go SessionVars.RangeMaxSize (64 MiB by default).
     pub range_max_size: i64,
     /// Go RegardNULLAsPoint.
@@ -49,7 +48,7 @@ pub struct IndexJoinRangerSettings<'a> {
 impl Default for IndexJoinRangerSettings<'_> {
     fn default() -> Self {
         Self {
-            eval_constant: &tidb_expr::constant::Constant::eval,
+            eval_expression: &crate::ranger::points::evaluate_static,
             range_max_size: 64 * 1024 * 1024,
             regard_null_as_point: true,
             opt_prefix_index_single_scan: true,
@@ -127,7 +126,7 @@ pub fn construct_index_join_static(
     let outer_schema = outer
         .schema()
         .ok_or_else(|| PlanError::internal("IndexJoin outer schema missing"))?;
-    if property.index_join.is_some()
+    if property.index_join_prop.is_some()
         || !property.all_same_order().0
         || !property.sort_items.iter().all(|item| {
             outer_schema
@@ -155,7 +154,7 @@ pub fn construct_index_join_static(
     } else {
         (right, left)
     };
-    let lookup = Arc::new(IndexJoinRuntimeProp::new(
+    let lookup = IndexJoinRuntimeProp::new(
         join.other_conditions.clone(),
         outer_keys.clone(),
         inner_keys.clone(),
@@ -165,7 +164,7 @@ pub fn construct_index_join_static(
             0.0
         },
         table_range_scan,
-    ));
+    );
     let mut requirements = [PhysicalProperty::default(), PhysicalProperty::default()];
     for requirement in &mut requirements {
         requirement.cte_producer_status = property.cte_producer_status;
@@ -178,7 +177,7 @@ pub fn construct_index_join_static(
         stats.row_count(),
         ordering_ratio,
     );
-    requirements[1 - outer_idx].index_join = Some(lookup);
+    requirements[1 - outer_idx].index_join_prop = Some(lookup);
     let mut base =
         BasePhysicalPlan::new(allocator, "IndexJoin", join.base.base.query_block_offset());
     base.base.set_schema(join.base.base.schema().cloned());
@@ -212,7 +211,7 @@ pub(super) fn find_inner_task(
     prop: &PhysicalProperty,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
-    let lookup = prop.index_join.as_ref().expect("IndexJoin property");
+    let lookup = prop.index_join_prop.as_ref().expect("IndexJoin property");
     if !lookup.table_range_scan() {
         return Err(PlanError::internal(
             "native IndexJoin secondary path statistics/selection is not implemented",

@@ -15,8 +15,8 @@
 //! Dependency-closed physical-property classifications from
 //! `pkg/planner/property/physical_property.go`.
 //!
-//! Classification, ordering and lookup requirements used by native task search.
-//! The complete MPP/vector/partial-order property machinery remains separate.
+//! Full expression columns are retained for structural hashing and equality;
+//! order and partition matching use their Go `UniqueID` where the source does.
 
 /// MPP exchange partitioning requirement.
 ///
@@ -75,7 +75,6 @@ impl MppPartitionType {
     }
 
     /// Returns the source `ToExchangeType` mapping.
-    #[must_use]
     pub const fn exchange_kind(self) -> ExchangeKind {
         match self {
             Self::Broadcast => ExchangeKind::Broadcast,
@@ -98,28 +97,9 @@ pub enum PhysicalPropMatchResult {
 
 impl PhysicalPropMatchResult {
     /// Returns whether the property is considered matched by the source.
-    #[must_use]
     pub const fn matched(self) -> bool {
         matches!(self, Self::Matched | Self::MatchedNeedMergeSort)
     }
-}
-
-/// Ordering work a source index path would have to perform for a task.
-///
-/// `findBestTask4LogicalDataSource` permits several ordering forms.  The
-/// bounded index-only transition has no `KeepOrder`, partial-order, or
-/// range-group merge-sort attachment yet, so callers must describe those
-/// requests and receive an explicit invalid task instead of losing them.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum IndexOrderingRequirement {
-    /// The parent has no ordering requirement.
-    None,
-    /// The index scan must preserve full order.
-    KeepOrder,
-    /// The source partial-order optimization is required.
-    PartialOrder,
-    /// The source grouped-range merge-sort path is required.
-    MergeSort,
 }
 
 /// The type of execution task a required property demands.
@@ -172,11 +152,16 @@ impl ColumnSortItem {
             .iter()
             .map(|item| {
                 let col = schema
-                    .and_then(|schema| schema.columns.iter().find(|col| col.unique_id == item.col))
+                    .and_then(|schema| {
+                        schema
+                            .columns
+                            .iter()
+                            .find(|col| col.unique_id == item.col.unique_id)
+                    })
                     .ok_or_else(|| {
                         crate::plan_base::PlanError::internal(format!(
                             "sort column {} is not in input schema",
-                            item.col
+                            item.col.unique_id
                         ))
                     })?;
                 Ok(Self::new(col.clone(), item.desc))
@@ -187,23 +172,330 @@ impl ColumnSortItem {
 
 /// One column of a required order, and the direction it is required in.
 ///
-/// `property.SortItem`.  Go holds an `*expression.Column` and compares it with
-/// `EqualColumn`, which is `UniqueID` equality and nothing else
-/// (`pkg/expression/column.go:327`); the identity is therefore carried here as
-/// that id, so two sort items compare exactly as Go's do.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// `property.SortItem`. Go's `Hash64`/`Equals` use the complete expression
+/// column, while physical-order matching methods explicitly use column
+/// `UniqueID`; retaining the complete column preserves both behaviors.
+#[derive(Clone, Debug)]
 pub struct SortItem {
-    /// The column's `UniqueID`.
-    pub col: i64,
+    /// Required column.
+    pub col: tidb_expr::column::Column,
     /// Whether the order is descending.
     pub desc: bool,
 }
 
+/// Go `MPPPartitionColumn`: one hash-exchange key and its collation id.
+#[derive(Clone, Debug)]
+pub struct MppPartitionColumn {
+    /// The expression column.
+    pub col: tidb_expr::column::Column,
+    /// Go `CollateID`.
+    pub collate_id: i32,
+}
+
+impl MppPartitionColumn {
+    /// Creates one partition column.
+    #[must_use]
+    pub fn new(col: i64, collate_id: i32) -> Self {
+        let mut column = tidb_expr::column::Column::default();
+        column.unique_id = col;
+        Self {
+            col: column,
+            collate_id,
+        }
+    }
+
+    /// Go `MPPPartitionColumn.Equal`.
+    pub fn equal(&self, other: &Self) -> bool {
+        (self.collate_id >= 0 || self.collate_id == other.collate_id)
+            && self.col.unique_id == other.col.unique_id
+    }
+
+    /// Go `MPPPartitionColumn.ResolveIndices`.
+    pub fn resolve_indices(
+        &self,
+        schema: &tidb_expr::schema::Schema,
+    ) -> Result<Self, &'static str> {
+        let Some(column) = self.col.resolve_indices_by_virtual_expr(schema) else {
+            return Err("MPP partition column not found in schema");
+        };
+        Ok(Self {
+            col: column,
+            collate_id: self.collate_id,
+        })
+    }
+
+    /// Go `MPPPartitionColumn.hashCode`.
+    pub fn hash_code(&self) -> Vec<u8> {
+        let mut code = Vec::new();
+        encode_column_id(&mut code, self.col.unique_id);
+        tidb_codec::encode_int(
+            &mut code,
+            if self.collate_id < 0 {
+                i64::from(self.collate_id)
+            } else {
+                1
+            },
+        );
+        code
+    }
+
+    /// Source-shaped owned memory accounting.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>() + self.col.orig_name.capacity()
+    }
+}
+
+/// Select partition columns at the source-provided match offsets.
+pub fn choose_partition_keys(
+    keys: &[MppPartitionColumn],
+    matches: &[usize],
+) -> Vec<MppPartitionColumn> {
+    matches.iter().map(|&index| keys[index].clone()).collect()
+}
+
+/// Go `GetCollateIDByNameForPartition`.
+pub fn collate_id_for_partition(name: &str) -> i32 {
+    tidb_datatype::rewrite_new_collation_id_if_needed(tidb_datatype::collation_name_to_id(name))
+}
+
+/// Go `GetCollateNameByIDForPartition`.
+pub fn collate_name_for_partition(id: i32) -> String {
+    tidb_datatype::collation_id_to_name(tidb_datatype::restore_collation_id_if_needed(id))
+}
+
+/// Go `IndexJoinRuntimeProp`: the lookup facts carried from an index-join
+/// candidate to the inner data source while `findBestTask` plans that child.
+#[derive(Clone, Debug)]
+pub struct IndexJoinRuntimeProp {
+    /// Conditions that may complete the final lookup-range column.
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// The driving join keys on the outer child.
+    pub outer_join_keys: Vec<tidb_expr::column::Column>,
+    /// The lookup keys on the inner child.
+    pub inner_join_keys: Vec<tidb_expr::column::Column>,
+    /// Estimated inner rows returned for one outer row.
+    pub avg_inner_row_count: f64,
+    /// Whether this candidate probes the clustered/table handle rather than
+    /// a secondary index.
+    pub table_range_scan: bool,
+}
+
+impl IndexJoinRuntimeProp {
+    /// Creates the lookup requirement for an index-join candidate.
+    #[must_use]
+    pub fn new(
+        other_conditions: Vec<tidb_expr::expression::Expression>,
+        outer_join_keys: Vec<tidb_expr::column::Column>,
+        inner_join_keys: Vec<tidb_expr::column::Column>,
+        avg_inner_row_count: f64,
+        table_range_scan: bool,
+    ) -> Self {
+        Self {
+            other_conditions,
+            outer_join_keys,
+            inner_join_keys,
+            avg_inner_row_count,
+            table_range_scan,
+        }
+    }
+    pub fn other_conditions(&self) -> &[tidb_expr::expression::Expression] {
+        &self.other_conditions
+    }
+    pub fn outer_join_keys(&self) -> &[tidb_expr::column::Column] {
+        &self.outer_join_keys
+    }
+    pub fn inner_join_keys(&self) -> &[tidb_expr::column::Column] {
+        &self.inner_join_keys
+    }
+    pub fn avg_inner_row_count(&self) -> f64 {
+        self.avg_inner_row_count
+    }
+    pub fn table_range_scan(&self) -> bool {
+        self.table_range_scan
+    }
+
+    /// The index-join suffix of Go PhysicalProperty.HashCode.
+    pub fn hash_code(&self) -> Vec<u8> {
+        let mut code = Vec::new();
+        for expression in &self.other_conditions {
+            code.extend_from_slice(expression.clone().hash_code());
+        }
+        for column in self.outer_join_keys.iter().chain(&self.inner_join_keys) {
+            encode_column_id(&mut code, column.unique_id);
+        }
+        tidb_codec::encode_float(&mut code, self.avg_inner_row_count);
+        encode_bool(&mut code, self.table_range_scan);
+        code
+    }
+    /// Go `IndexJoinRuntimeProp.CloneEssentialFields`.
+    pub fn clone_essential_fields(&self) -> Self {
+        self.clone()
+    }
+}
+
+/// Go `PartialOrderInfo`: ORDER BY items eligible for prefix-index ordering.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PartialOrderInfo {
+    /// The TopN ORDER BY items.
+    pub sort_items: Vec<SortItem>,
+}
+
+impl PartialOrderInfo {
+    /// Go `PartialOrderInfo.AllSameOrder`.
+    pub fn all_same_order(&self) -> (bool, bool) {
+        all_same_order(&self.sort_items)
+    }
+
+    /// Source-shaped owned memory accounting.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>() + self.sort_items.capacity() * std::mem::size_of::<SortItem>()
+    }
+}
+
+/// Go `PartialOrderMatchResult`.
+#[derive(Clone, Debug, Default)]
+pub struct PartialOrderMatchResult {
+    /// Whether an access path supplies the requested partial order.
+    pub matched: bool,
+    /// Unique ID of the final prefix-index column, when present.
+    pub prefix_col: Option<tidb_expr::column::Column>,
+    /// Prefix length in bytes.
+    pub prefix_len: usize,
+}
+
+impl PartialOrderMatchResult {
+    /// Source-shaped owned memory accounting.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self
+                .prefix_col
+                .as_ref()
+                .map_or(0, |column| column.orig_name.capacity())
+    }
+}
+
+impl PartialEq for PartialOrderMatchResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.matched == other.matched
+            && self.prefix_len == other.prefix_len
+            && match (&self.prefix_col, &other.prefix_col) {
+                (Some(left), Some(right)) => left.equals(right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+impl Eq for PartialOrderMatchResult {}
+
+/// Go `expression.VSInfo`, retained by `PhysicalProperty.VectorProp`.
+#[derive(Clone, Debug, Default)]
+pub struct VectorSearchInfo {
+    /// Distance function name.
+    pub distance_fn_name: String,
+    /// Pushdown function signature code.
+    pub fn_pb_code: i32,
+    /// Query vector constant. Go deliberately excludes it from property hash.
+    pub vector: tidb_datatype::VectorFloat32,
+    /// Vector column.
+    pub column: tidb_expr::column::Column,
+}
+
+impl PartialEq for VectorSearchInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.distance_fn_name == other.distance_fn_name
+            && self.fn_pb_code == other.fn_pb_code
+            && self.vector == other.vector
+            && self.column.equals(&other.column)
+    }
+}
+
+/// Go's anonymous `PhysicalProperty.VectorProp` field.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VectorProperty {
+    /// Vector-search requirement, when present.
+    pub search_info: Option<VectorSearchInfo>,
+    /// Requested TopK count. Go does not include this in property hashing.
+    pub top_k: u32,
+}
+
+impl PartialEq for IndexJoinRuntimeProp {
+    fn eq(&self, other: &Self) -> bool {
+        self.table_range_scan == other.table_range_scan
+            && self.avg_inner_row_count == other.avg_inner_row_count
+            && self.other_conditions.len() == other.other_conditions.len()
+            && self
+                .other_conditions
+                .iter()
+                .zip(&other.other_conditions)
+                .all(|(left, right)| left.equal(right))
+            && self
+                .outer_join_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .eq(other.outer_join_keys.iter().map(|column| column.unique_id))
+            && self
+                .inner_join_keys
+                .iter()
+                .map(|column| column.unique_id)
+                .eq(other.inner_join_keys.iter().map(|column| column.unique_id))
+    }
+}
+
+impl PartialEq for SortItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.col.equals(&other.col) && self.desc == other.desc
+    }
+}
+
+impl Eq for SortItem {}
+
+impl std::hash::Hash for SortItem {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.col.hash64());
+        state.write_u8(u8::from(self.desc));
+    }
+}
+
+impl PartialEq for MppPartitionColumn {
+    fn eq(&self, other: &Self) -> bool {
+        self.col.equals(&other.col) && self.collate_id == other.collate_id
+    }
+}
+
+impl Eq for MppPartitionColumn {}
+
 impl SortItem {
     /// A required order on `col`, ascending when `desc` is false.
     #[must_use]
-    pub const fn new(col: i64, desc: bool) -> Self {
+    pub fn new(col: i64, desc: bool) -> Self {
+        let mut column = tidb_expr::column::Column::default();
+        column.unique_id = col;
+        Self { col: column, desc }
+    }
+
+    /// Build a sort item from the complete source column.
+    #[must_use]
+    pub const fn from_column(col: tidb_expr::column::Column, desc: bool) -> Self {
         Self { col, desc }
+    }
+
+    /// Source-shaped owned memory accounting.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>() + self.col.orig_name.capacity()
+    }
+
+    /// Go `SortItem.Hash64`'s structural identity.
+    pub fn hash64(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Go `SortItem.Equals`.
+    pub fn equals(&self, other: &Self) -> bool {
+        self == other
     }
 }
 
@@ -211,90 +503,61 @@ impl std::fmt::Display for SortItem {
     /// `SortItem.String()`: `{col asc}` or `{col desc}`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let direction = if self.desc { "desc" } else { "asc" };
-        write!(f, "{{{} {direction}}}", self.col)
+        write!(f, "{{{} {direction}}}", column_string(&self.col))
     }
+}
+
+fn column_string(column: &tidb_expr::column::Column) -> String {
+    if column.orig_name.is_empty() {
+        format!("Column#{}", column.unique_id)
+    } else {
+        column.orig_name.clone()
+    }
+}
+
+/// Go `ExplainPartitionBy` with the source normalized-column behavior.
+pub fn explain_partition_by(partition_by: &[SortItem], normalized: bool) -> String {
+    if partition_by.is_empty() {
+        return String::new();
+    }
+    let columns = partition_by
+        .iter()
+        .map(|item| {
+            if normalized {
+                tidb_expr::expr_util::column_explain_info_normalized(&item.col)
+            } else {
+                column_string(&item.col)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("partition by {columns}")
+}
+
+/// Go `ExplainColumnList`.
+pub fn explain_column_list(columns: &[MppPartitionColumn]) -> Vec<u8> {
+    columns
+        .iter()
+        .map(|column| {
+            let collate = if tidb_datatype::new_collation_enabled() {
+                collate_name_for_partition(column.collate_id)
+            } else {
+                "N/A".to_owned()
+            };
+            format!("[name: {}, collate: {collate}]", column_string(&column.col))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into_bytes()
 }
 
 /// The physical property a parent requires of a child.
 ///
-/// Go's immutable inner lookup requirement. Its cached hash covers expressions,
-/// columns, average row count and table/index choice. Private fields prevent
-/// the memo key drifting after construction.
-#[derive(Clone, Debug)]
-pub struct IndexJoinRuntimeProp {
-    other_conditions: Vec<tidb_expr::expression::Expression>,
-    outer_join_keys: Vec<tidb_expr::column::Column>,
-    inner_join_keys: Vec<tidb_expr::column::Column>,
-    avg_inner_row_count: f64,
-    table_range_scan: bool,
-    hash_code: Vec<u8>,
-}
-
-impl IndexJoinRuntimeProp {
-    /// Go `enumerateIndexJoinByOuterIdx` constructs this definition once.
-    #[must_use]
-    pub fn new(
-        mut other_conditions: Vec<tidb_expr::expression::Expression>,
-        mut outer_join_keys: Vec<tidb_expr::column::Column>,
-        mut inner_join_keys: Vec<tidb_expr::column::Column>,
-        avg_inner_row_count: f64,
-        table_range_scan: bool,
-    ) -> Self {
-        let mut hash_code = Vec::new();
-        for expression in &mut other_conditions {
-            hash_code.extend_from_slice(expression.hash_code());
-        }
-        for column in outer_join_keys.iter_mut().chain(&mut inner_join_keys) {
-            hash_code.extend_from_slice(column.hash_code());
-        }
-        tidb_codec::encode_float(&mut hash_code, avg_inner_row_count);
-        tidb_codec::encode_int(&mut hash_code, i64::from(table_range_scan));
-        Self {
-            other_conditions,
-            outer_join_keys,
-            inner_join_keys,
-            avg_inner_row_count,
-            table_range_scan,
-            hash_code,
-        }
-    }
-    /// Residual join expressions used to derive a final-column bound.
-    pub fn other_conditions(&self) -> &[tidb_expr::expression::Expression] {
-        &self.other_conditions
-    }
-    /// Outer lookup columns in equality order.
-    pub fn outer_join_keys(&self) -> &[tidb_expr::column::Column] {
-        &self.outer_join_keys
-    }
-    /// Corresponding inner columns before path selection.
-    pub fn inner_join_keys(&self) -> &[tidb_expr::column::Column] {
-        &self.inner_join_keys
-    }
-    /// Equal-condition output count divided by outer rows.
-    pub fn avg_inner_row_count(&self) -> f64 {
-        self.avg_inner_row_count
-    }
-    /// Whether this candidate requires the clustered-handle path.
-    pub fn table_range_scan(&self) -> bool {
-        self.table_range_scan
-    }
-    /// Go PhysicalProperty.HashCode's IndexJoinProp suffix.
-    pub fn hash_code(&self) -> &[u8] {
-        &self.hash_code
-    }
-}
-
-impl PartialEq for IndexJoinRuntimeProp {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash_code == other.hash_code
-    }
-}
-
-/// Required order, placement and row cap, including an optional inner lookup.
+/// `property.PhysicalProperty`. This port carries the fields that decide a
+/// plan's shape -- including Go's root-only aggregation gate -- and the
+/// additional fields consumed by the wired planner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicalProperty {
-    /// Go IndexJoinProp. Inherited explicitly, not by CloneEssentialFields.
-    pub index_join: Option<std::sync::Arc<IndexJoinRuntimeProp>>,
     /// The required sort attributes, outermost first.
     pub sort_items: Vec<SortItem>,
     /// The task type the parent requires.
@@ -303,8 +566,10 @@ pub struct PhysicalProperty {
     pub expected_cnt: f64,
     /// Whether a sort enforcer may be added to satisfy this property.
     pub can_add_enforcer: bool,
-    /// Go NoCopPushDown: aggregates in this subtree must stay at root.
-    pub no_cop_push_down: bool,
+    /// Hash-partition columns required from an MPP child.
+    pub mpp_partition_cols: Vec<MppPartitionColumn>,
+    /// Required MPP partitioning kind.
+    pub mpp_partition_tp: MppPartitionType,
     /// Go `SortItemsForPartition`: "these sort only need to sort the data of
     /// one partition, instead of global" — the MPP window paths fill it;
     /// everywhere else it stays empty, which is exactly Go's zero value.
@@ -313,6 +578,19 @@ pub struct PhysicalProperty {
     /// consumer builds, so a producer that cannot run MPP poisons the whole
     /// sequence's MPP choice.
     pub cte_producer_status: CteProducerStatus,
+    /// Vector-search requirement carried only by an MPP property.
+    pub vector_prop: VectorProperty,
+    /// Go `NoCopPushDown`: force aggregation to stay at the root. This is an
+    /// essential property and must survive every child-property clone.
+    pub no_cop_push_down: bool,
+    /// Go `AdvisorySortItems`: order preferred by a DataSource for TopN over
+    /// IndexMerge, but not required for property satisfaction.
+    pub advisory_sort_items: Vec<SortItem>,
+    /// Go `IndexJoinProp`; present only while planning an index join's inner
+    /// child and the pass-through operators admitted by Go.
+    pub index_join_prop: Option<IndexJoinRuntimeProp>,
+    /// Prefix-index partial-order request.
+    pub partial_order_info: Option<PartialOrderInfo>,
 }
 
 impl Default for PhysicalProperty {
@@ -322,14 +600,19 @@ impl Default for PhysicalProperty {
     /// at every entry point, so the cap defaults to "no cap" rather than zero.
     fn default() -> Self {
         Self {
-            index_join: None,
             sort_items: Vec::new(),
             task_tp: TaskType::Root,
             expected_cnt: f64::MAX,
             can_add_enforcer: false,
-            no_cop_push_down: false,
+            mpp_partition_cols: Vec::new(),
+            mpp_partition_tp: MppPartitionType::default(),
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            vector_prop: VectorProperty::default(),
+            no_cop_push_down: false,
+            advisory_sort_items: Vec::new(),
+            index_join_prop: None,
+            partial_order_info: None,
         }
     }
 }
@@ -337,7 +620,6 @@ impl Default for PhysicalProperty {
 impl PhysicalProperty {
     /// `property.NewPhysicalProperty`: a required order over `cols`, all in
     /// the same direction.
-    #[must_use]
     pub fn new(
         task_tp: TaskType,
         cols: &[i64],
@@ -346,14 +628,36 @@ impl PhysicalProperty {
         enforced: bool,
     ) -> Self {
         Self {
-            index_join: None,
             sort_items: cols.iter().map(|&col| SortItem::new(col, desc)).collect(),
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
-            no_cop_push_down: false,
+            mpp_partition_cols: Vec::new(),
+            mpp_partition_tp: MppPartitionType::default(),
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
+            vector_prop: VectorProperty::default(),
+            no_cop_push_down: false,
+            advisory_sort_items: Vec::new(),
+            index_join_prop: None,
+            partial_order_info: None,
+        }
+    }
+
+    /// Go `NewPhysicalProperty`, retaining complete column values.
+    pub fn new_from_columns(
+        task_tp: TaskType,
+        cols: &[tidb_expr::column::Column],
+        desc: bool,
+        expected_cnt: f64,
+        enforced: bool,
+    ) -> Self {
+        Self {
+            sort_items: sort_items_from_columns(cols, desc),
+            task_tp,
+            expected_cnt,
+            can_add_enforcer: enforced,
+            ..Self::default()
         }
     }
 
@@ -365,19 +669,89 @@ impl PhysicalProperty {
     #[must_use]
     pub fn clone_essential_fields(&self) -> Self {
         Self {
-            index_join: None,
             sort_items: self.sort_items.clone(),
             sort_items_for_partition: self.sort_items_for_partition.clone(),
             task_tp: self.task_tp,
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
-            no_cop_push_down: self.no_cop_push_down,
+            mpp_partition_cols: self.mpp_partition_cols.clone(),
+            mpp_partition_tp: self.mpp_partition_tp,
             cte_producer_status: self.cte_producer_status,
+            // Go intentionally does not clone VectorProp.
+            vector_prop: VectorProperty::default(),
+            no_cop_push_down: self.no_cop_push_down,
+            advisory_sort_items: self.advisory_sort_items.clone(),
+            index_join_prop: None,
+            partial_order_info: self.partial_order_info.clone(),
+        }
+    }
+
+    /// Go `NeedMPPExchangeByEquivalence`: whether a child hash key lies
+    /// outside every equivalence closure of the required partition keys.
+    pub fn need_mpp_exchange_by_equivalence(
+        &self,
+        current_partition_columns: &[MppPartitionColumn],
+        fd: &tidb_funcdep::FdSet,
+    ) -> bool {
+        let required: Vec<_> = self
+            .mpp_partition_cols
+            .iter()
+            .map(|column| {
+                let closure =
+                    fd.closure_of_equivalence(&tidb_funcdep::ColSet::new(&[column.col.unique_id]));
+                (column, closure)
+            })
+            .collect();
+
+        current_partition_columns.iter().any(|key| {
+            !required.iter().any(|(required, closure)| {
+                closure.has(key.col.unique_id)
+                    && (key.collate_id >= 0 || key.collate_id == required.collate_id)
+            })
+        })
+    }
+
+    /// Go `IsSubsetOf`: return source-key offsets matching every required
+    /// partition column, or `None` when any requirement is absent.
+    pub fn is_subset_of(&self, keys: &[MppPartitionColumn]) -> Option<Vec<usize>> {
+        if self.mpp_partition_cols.len() > keys.len() {
+            return None;
+        }
+        self.mpp_partition_cols
+            .iter()
+            .map(|required| keys.iter().position(|key| required.equal(key)))
+            .collect()
+    }
+
+    /// Go `AllColsFromSchema`.
+    pub fn all_cols_from_schema(&self, schema: &tidb_expr::schema::Schema) -> bool {
+        self.sort_items.iter().all(|item| {
+            schema
+                .columns
+                .iter()
+                .any(|column| column.unique_id == item.col.unique_id)
+        })
+    }
+
+    /// Go `IsFlashProp`.
+    pub const fn is_flash_prop(&self) -> bool {
+        matches!(self.task_tp, TaskType::Mpp)
+    }
+
+    /// Go `GetAllPossibleChildTaskTypes`.
+    pub fn all_possible_child_task_types(&self) -> Vec<TaskType> {
+        if self.task_tp == TaskType::Root {
+            vec![
+                TaskType::CopSingleRead,
+                TaskType::CopMultiRead,
+                TaskType::Root,
+            ]
+        } else {
+            vec![self.task_tp]
         }
     }
 
     /// `IsSortItemEmpty`: whether the order property is empty.
-    #[must_use]
     pub fn is_sort_item_empty(&self) -> bool {
         self.sort_items.is_empty()
     }
@@ -387,37 +761,32 @@ impl PhysicalProperty {
     /// — same column (`EqualColumn` is `UniqueID` equality) and same
     /// direction. Both empty answers true, which is why the empty-sort check
     /// must run FIRST wherever Go runs it first.
-    #[must_use]
     pub fn is_sort_item_all_for_partition(&self) -> bool {
-        self.sort_items_for_partition == self.sort_items
+        self.sort_items_for_partition.len() == self.sort_items.len()
+            && self
+                .sort_items_for_partition
+                .iter()
+                .zip(&self.sort_items)
+                .all(|(partition, order)| {
+                    partition.col.unique_id == order.col.unique_id && partition.desc == order.desc
+                })
     }
 
     /// `NeedKeepOrder`: whether the property requires maintaining order.
     ///
-    /// Go also answers true for a `PartialOrderInfo`, which this port does not
-    /// carry; with that field absent the two spellings coincide.
-    #[must_use]
     pub fn need_keep_order(&self) -> bool {
-        !self.is_sort_item_empty()
+        !self.is_sort_item_empty() || self.partial_order_info.is_some()
     }
 
     /// `AllSameOrder`: whether every item runs the same direction, and which.
     ///
     /// An EMPTY property answers `(true, false)`, which is what makes an
     /// unordered parent demand an ASCENDING child order rather than no answer.
-    #[must_use]
     pub fn all_same_order(&self) -> (bool, bool) {
-        let Some(first) = self.sort_items.first() else {
-            return (true, false);
-        };
-        if self.sort_items.iter().any(|item| item.desc != first.desc) {
-            return (false, false);
-        }
-        (true, first.desc)
+        all_same_order(&self.sort_items)
     }
 
     /// `IsPrefix`: whether this order is a prefix of `other`'s.
-    #[must_use]
     pub fn is_prefix(&self, other: &Self) -> bool {
         if self.sort_items.len() > other.sort_items.len() {
             return false;
@@ -425,13 +794,148 @@ impl PhysicalProperty {
         self.sort_items
             .iter()
             .zip(&other.sort_items)
-            .all(|(mine, theirs)| mine == theirs)
+            .all(|(mine, theirs)| {
+                mine.col.unique_id == theirs.col.unique_id && mine.desc == theirs.desc
+            })
     }
 
     /// `GetSortDescForKeepOrder`: the direction a keep-order scan must run.
-    #[must_use]
     pub fn sort_desc_for_keep_order(&self) -> bool {
-        self.all_same_order().1
+        self.partial_order_info
+            .as_ref()
+            .filter(|partial| !partial.sort_items.is_empty())
+            .map_or_else(
+                || self.all_same_order().1,
+                |partial| partial.all_same_order().1,
+            )
+    }
+
+    /// Go `GetSortItemsForKeepOrder`, prioritizing partial order.
+    pub fn sort_items_for_keep_order(&self) -> Vec<SortItem> {
+        self.partial_order_info
+            .as_ref()
+            .filter(|partial| !partial.sort_items.is_empty())
+            .map_or_else(
+                || self.sort_items.clone(),
+                |partial| partial.sort_items.clone(),
+            )
+    }
+
+    /// Go `HashCode`, with every source field included in the same order.
+    pub fn hash_code(&self) -> Vec<u8> {
+        let mut code = Vec::new();
+        encode_bool(&mut code, self.can_add_enforcer);
+        tidb_codec::encode_int(&mut code, i64::from(self.task_tp.raw()));
+        tidb_codec::encode_float(&mut code, self.expected_cnt);
+        encode_sort_items(&mut code, &self.sort_items);
+        if self.task_tp == TaskType::Mpp {
+            tidb_codec::encode_int(&mut code, i64::from(self.mpp_partition_tp.raw()));
+            for column in &self.mpp_partition_cols {
+                encode_column_id(&mut code, column.col.unique_id);
+                tidb_codec::encode_int(
+                    &mut code,
+                    if column.collate_id < 0 {
+                        i64::from(column.collate_id)
+                    } else {
+                        1
+                    },
+                );
+            }
+            if let Some(vector) = &self.vector_prop.search_info {
+                encode_column_id(&mut code, vector.column.unique_id);
+                tidb_codec::encode_int(&mut code, i64::from(vector.fn_pb_code));
+            }
+        }
+        tidb_codec::encode_int(&mut code, self.cte_producer_status as i64);
+        if let Some(index_join) = &self.index_join_prop {
+            code.extend_from_slice(&index_join.hash_code());
+        }
+        encode_bool(&mut code, self.no_cop_push_down);
+        if let Some(partial) = &self.partial_order_info {
+            tidb_codec::encode_int(&mut code, 1);
+            encode_sort_items(&mut code, &partial.sort_items);
+        } else {
+            tidb_codec::encode_int(&mut code, 0);
+        }
+        encode_sort_items(&mut code, &self.advisory_sort_items);
+        code
+    }
+
+    /// Source-shaped owned memory accounting for the package fields.
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.sort_items.capacity() * std::mem::size_of::<SortItem>()
+            + self.sort_items_for_partition.capacity() * std::mem::size_of::<SortItem>()
+            + self.mpp_partition_cols.capacity() * std::mem::size_of::<MppPartitionColumn>()
+            + self.advisory_sort_items.capacity() * std::mem::size_of::<SortItem>()
+            + self
+                .partial_order_info
+                .as_ref()
+                .map_or(0, PartialOrderInfo::memory_usage)
+    }
+}
+
+/// Go `SortItemsFromCols`.
+pub fn sort_items_from_columns(columns: &[tidb_expr::column::Column], desc: bool) -> Vec<SortItem> {
+    columns
+        .iter()
+        .cloned()
+        .map(|column| SortItem::from_column(column, desc))
+        .collect()
+}
+
+fn all_same_order(items: &[SortItem]) -> (bool, bool) {
+    let Some(first) = items.first() else {
+        return (true, false);
+    };
+    if items.iter().any(|item| item.desc != first.desc) {
+        return (false, false);
+    }
+    (true, first.desc)
+}
+
+fn encode_bool(code: &mut Vec<u8>, value: bool) {
+    tidb_codec::encode_int(code, i64::from(value));
+}
+
+fn encode_column_id(code: &mut Vec<u8>, unique_id: i64) {
+    // Go `Column.HashCode`: column flag followed by mem-comparable UniqueID.
+    code.push(1);
+    tidb_codec::encode_int(code, unique_id);
+}
+
+fn encode_sort_items(code: &mut Vec<u8>, items: &[SortItem]) {
+    for item in items {
+        encode_column_id(code, item.col.unique_id);
+        encode_bool(code, item.desc);
+    }
+}
+
+/// Go `NeedEnforceExchanger`.
+pub fn need_enforce_exchanger(
+    current_type: MppPartitionType,
+    current_hash_cols: &[MppPartitionColumn],
+    required: &PhysicalProperty,
+    fd: Option<&tidb_funcdep::FdSet>,
+) -> bool {
+    match required.mpp_partition_tp {
+        MppPartitionType::Any => false,
+        MppPartitionType::Broadcast => true,
+        MppPartitionType::SinglePartition => current_type != MppPartitionType::SinglePartition,
+        MppPartitionType::Hash | MppPartitionType::Unknown(_) => {
+            if current_type != MppPartitionType::Hash {
+                return true;
+            }
+            if let Some(fd) = fd.filter(|_| !current_hash_cols.is_empty()) {
+                return required.need_mpp_exchange_by_equivalence(current_hash_cols, fd);
+            }
+            required.mpp_partition_cols.len() != current_hash_cols.len()
+                || required
+                    .mpp_partition_cols
+                    .iter()
+                    .zip(current_hash_cols)
+                    .any(|(left, right)| !left.equal(right))
+        }
     }
 }
 
@@ -451,7 +955,95 @@ impl std::fmt::Display for PhysicalProperty {
 
 #[cfg(test)]
 mod required_property_tests {
-    use super::{PhysicalProperty, SortItem, TaskType};
+    use super::{
+        need_enforce_exchanger, CteProducerStatus, MppPartitionColumn, MppPartitionType,
+        PartialOrderInfo, PhysicalProperty, SortItem, TaskType,
+    };
+    use tidb_funcdep::{ColSet, FdSet};
+
+    fn cols(values: &[i64]) -> ColSet {
+        ColSet::new(values)
+    }
+
+    fn partition_cols(values: &[i64]) -> Vec<MppPartitionColumn> {
+        values
+            .iter()
+            .map(|value| MppPartitionColumn::new(*value, 0))
+            .collect()
+    }
+
+    fn tpch_q3_fd() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[1, 10]), cols(&[1, 10]));
+        fd.add_strict(cols(&[1]), cols(&[2, 3, 4, 5, 6, 8]));
+        fd.add_strict(cols(&[]), cols(&[7]));
+        fd.add_strict(cols(&[9]), cols(&[10, 11, 12, 13, 14, 15, 16, 17]));
+        fd.add_strict(
+            cols(&[10, 21]),
+            cols(&[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]),
+        );
+        fd.add_equivalence(cols(&[9]), cols(&[18]));
+        fd.add_equivalence(cols(&[1]), cols(&[10]));
+        fd
+    }
+
+    fn fd_2_3_equivalent_to_4() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[2]), cols(&[4]));
+        fd.add_equivalence(cols(&[3]), cols(&[4]));
+        fd
+    }
+
+    fn fd_2_equivalent_to_4_5() -> FdSet {
+        let mut fd = FdSet::new();
+        fd.add_equivalence(cols(&[2]), cols(&[4]));
+        fd.add_equivalence(cols(&[2]), cols(&[5]));
+        fd
+    }
+
+    /// Pinned Go `TestNeedEnforceExchangerWithHashByEquivalence`, all six rows.
+    #[test]
+    fn need_mpp_exchange_by_equivalence_six_case_fd_table() {
+        let cases = [
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9][..], false),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9, 13][..], false),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[9, 17][..], true),
+            (tpch_q3_fd(), &[18, 13, 16][..], &[1, 17][..], true),
+            (
+                fd_2_3_equivalent_to_4(),
+                &[1, 2, 3][..],
+                &[1, 2, 4, 5][..],
+                true,
+            ),
+            (fd_2_equivalent_to_4_5(), &[1, 2][..], &[1, 2, 5][..], false),
+        ];
+
+        for (fd, required, current, expected) in cases {
+            let property = PhysicalProperty {
+                mpp_partition_cols: partition_cols(required),
+                ..PhysicalProperty::default()
+            };
+            assert_eq!(
+                property.need_mpp_exchange_by_equivalence(&partition_cols(current), &fd),
+                expected,
+                "required={required:?} current={current:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mpp_exchange_equivalence_obeys_collation_id_rule() {
+        let property = PhysicalProperty {
+            mpp_partition_cols: vec![MppPartitionColumn::new(1, -45)],
+            ..PhysicalProperty::default()
+        };
+        let fd = FdSet::new();
+        assert!(
+            !property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, -45)], &fd,)
+        );
+        assert!(property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, -46)], &fd,));
+        assert!(!property.need_mpp_exchange_by_equivalence(&[MppPartitionColumn::new(1, 45)], &fd,));
+    }
 
     /// `AllSameOrder` answers `(true, false)` for the EMPTY property, which is
     /// what lets a parent with no order of its own still demand an ascending
@@ -499,7 +1091,107 @@ mod required_property_tests {
         let prop = PhysicalProperty::new(TaskType::CopSingleRead, &[7], true, 10.0, false);
         assert_eq!(
             prop.to_string(),
-            "Prop{cols: [{7 desc}], TaskTp: copSingleReadTask, expectedCount: 10}"
+            "Prop{cols: [{Column#7 desc}], TaskTp: copSingleReadTask, expectedCount: 10}"
         );
+    }
+
+    #[test]
+    fn essential_clone_preserves_cte_and_no_cop_but_not_enforcer_or_index_join() {
+        let prop = PhysicalProperty {
+            can_add_enforcer: true,
+            mpp_partition_cols: vec![MppPartitionColumn::new(8, -45)],
+            mpp_partition_tp: super::MppPartitionType::Hash,
+            cte_producer_status: CteProducerStatus::AllCteCanMpp,
+            no_cop_push_down: true,
+            ..PhysicalProperty::default()
+        };
+        let cloned = prop.clone_essential_fields();
+        assert_eq!(cloned.cte_producer_status, CteProducerStatus::AllCteCanMpp);
+        assert!(cloned.no_cop_push_down);
+        assert!(!cloned.can_add_enforcer);
+        assert!(cloned.index_join_prop.is_none());
+        assert_eq!(cloned.mpp_partition_cols, prop.mpp_partition_cols);
+        assert_eq!(cloned.mpp_partition_tp, prop.mpp_partition_tp);
+    }
+
+    #[test]
+    fn partial_order_is_prioritized_for_keep_order() {
+        let prop = PhysicalProperty {
+            sort_items: vec![SortItem::new(1, false)],
+            partial_order_info: Some(PartialOrderInfo {
+                sort_items: vec![SortItem::new(2, true)],
+            }),
+            ..PhysicalProperty::default()
+        };
+        assert!(prop.need_keep_order());
+        assert!(prop.sort_desc_for_keep_order());
+        assert_eq!(prop.sort_items_for_keep_order()[0].col.unique_id, 2);
+        assert!(prop.clone_essential_fields().partial_order_info.is_some());
+    }
+
+    #[test]
+    fn exchanger_enforcement_matches_source_switch() {
+        let hash = MppPartitionColumn::new(1, 0);
+        let mut required = PhysicalProperty::default();
+        assert!(!need_enforce_exchanger(
+            MppPartitionType::Any,
+            &[],
+            &required,
+            None
+        ));
+        required.mpp_partition_tp = MppPartitionType::Broadcast;
+        assert!(need_enforce_exchanger(
+            MppPartitionType::Broadcast,
+            &[],
+            &required,
+            None
+        ));
+        required.mpp_partition_tp = MppPartitionType::SinglePartition;
+        assert!(!need_enforce_exchanger(
+            MppPartitionType::SinglePartition,
+            &[],
+            &required,
+            None
+        ));
+        required.mpp_partition_tp = MppPartitionType::Hash;
+        required.mpp_partition_cols = vec![hash.clone()];
+        assert!(!need_enforce_exchanger(
+            MppPartitionType::Hash,
+            &[hash],
+            &required,
+            None
+        ));
+        assert!(need_enforce_exchanger(
+            MppPartitionType::Broadcast,
+            &[],
+            &required,
+            None
+        ));
+    }
+
+    #[test]
+    fn hash_identity_includes_source_hashed_fields() {
+        let base = PhysicalProperty::default();
+        let base_hash = base.hash_code();
+        for changed in [
+            PhysicalProperty {
+                can_add_enforcer: true,
+                ..base.clone()
+            },
+            PhysicalProperty {
+                no_cop_push_down: true,
+                ..base.clone()
+            },
+            PhysicalProperty {
+                advisory_sort_items: vec![SortItem::new(1, false)],
+                ..base.clone()
+            },
+            PhysicalProperty {
+                partial_order_info: Some(PartialOrderInfo::default()),
+                ..base.clone()
+            },
+        ] {
+            assert_ne!(changed.hash_code(), base_hash);
+        }
     }
 }

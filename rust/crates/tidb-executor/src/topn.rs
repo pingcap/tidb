@@ -58,20 +58,19 @@
 //!
 //! * **Keys are materialized.** Go's planner guarantees a `TopN`'s by-items
 //!   are plain child columns (`buildKeyColumns` unwraps `*expression.Column`),
-//!   so Go compares by re-reading the chunk cell. This tier's driver hands the
-//!   operator arbitrary by-item EXPRESSIONS, so each stored row carries its
-//!   evaluated key -- the same choice [`crate::sort::SortExec`] makes, and the
-//!   same over-count against the memory quota, which the tracker reports
-//!   honestly.
+//!   so Go compares by re-reading the chunk cell. The executor rejects other
+//!   expressions with Go's `Get unexpected expression` error; each supported
+//!   stored row carries its evaluated column keys for spill merges; constants
+//!   are positional placeholders because Go omits them, and the tracker
+//!   reports that memory honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
-//! * **No parallel workers, no `RankInfo`.** Go's worker pool and
-//!   `ROW_NUMBER`-style rank truncation are deferred. The SPILL is ported --
-//!   see [`crate::topn_spill`] for the mechanism and for the two places the
-//!   single-threaded shape differs from Go's.
+//! * The prefix-key RankTopN path is represented by [`RankPrefix`]. It keeps
+//!   the child read bounded to the first `offset + count` rows plus the rows
+//!   sharing the boundary prefix, matching Go's `RankInfo` short-circuit.
 
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -82,7 +81,8 @@ use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
-use crate::sort::{less_by_items, SortByItem};
+use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use crate::sort_util::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
@@ -90,7 +90,8 @@ use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 /// this many times the retained row count.
 const TOP_N_COMPACTION_FACTOR: usize = 4;
 
-/// Go `sortexec.TopNExec` (unparallel, in memory).
+/// Go `sortexec.TopNExec`: bounded in memory until spill, then using the
+/// statement's executor concurrency for its spill workers.
 pub struct TopNExec<C: Columns> {
     /// Go `ColumnIdxsUsedByChild`: output projection after ranking full input rows.
     output_columns: Option<Vec<usize>>,
@@ -98,9 +99,15 @@ pub struct TopNExec<C: Columns> {
     /// Go `ByItems`.
     by_items: Vec<SortByItem>,
     child: Box<dyn Executor>,
+    /// Go `ColumnIdxsUsedByChild`: inline projection applied only while
+    /// emitting retained child rows, after all ordering comparisons finish.
+    column_idxs_used_by_child: Option<Vec<usize>>,
     ctx: C,
     /// Go `Limit.Offset`: how many of the ordered rows to drop.
     offset: u64,
+    /// Go `Limit.Count`: a zero count is rewritten to a dual by the planner,
+    /// so `Next` must not drain the child even when `offset` is nonzero.
+    count: u64,
     /// Go `chkHeap.totalLimit` = `Limit.Offset + Limit.Count`, saturated the
     /// way [`crate::limit::LimitExec`] saturates its `end` (Go's planner
     /// clamps the count so the sum cannot wrap).
@@ -110,6 +117,10 @@ pub struct TopNExec<C: Columns> {
     /// Go `TopNExec.chkHeap`: the retained rows, the pointers into them, the
     /// sift rules, and the emit cursor -- all of `topn_chunk_heap.go`.
     heap: TopNChunkHeap,
+    /// Go `RankInfo`: present only when the planner found a prefix-ordered
+    /// index path. RankTopN retains the boundary prefix group rather than
+    /// materializing the entire child.
+    rank_prefix: Option<RankPrefix>,
     memory: StatementMemory,
     /// Go `TopNExec.memTracker`.
     tracker: Arc<Tracker>,
@@ -120,6 +131,9 @@ pub struct TopNExec<C: Columns> {
     enable_tmp_storage_on_oom: bool,
     /// Raised by the spill action; see [`crate::topn_spill`].
     need_spill: Arc<AtomicBool>,
+    /// Monotonic generations let post-spill workers coordinate repeated
+    /// requests without losing a trigger between chunks.
+    spill_generation: Arc<AtomicUsize>,
     /// The action registered on the session tracker, kept so `close` can
     /// unbind it.
     registered_action: Option<ArcAction>,
@@ -134,11 +148,234 @@ pub struct TopNExec<C: Columns> {
     /// rows it dropped -- Go's `outputRowNum`, which is compared against BOTH
     /// `offset` and `offset + count`.
     merged: u64,
+    /// Go `multiWayMergeImpl.elements`: one current head per non-empty run,
+    /// maintained as a min-heap throughout chunk-at-a-time result emission.
+    merge_heads: Vec<TopNMergeHead>,
+    merge_initialized: bool,
     /// Go `spillChunkSize` (a package var so tests can shrink it).
     spill_chunk_size: usize,
+    /// Go `TopNExec.Concurrency`: workers are activated only after spilling
+    /// starts; the ordinary in-memory TopN remains serial.
+    parallelism: usize,
+    /// Per-worker input receipts retained for focused concurrency tests.
+    parallel_worker_chunks: Vec<usize>,
 }
 
-impl<C: Columns> TopNExec<C> {
+struct ParallelTopNWorkerResult {
+    runs: Vec<SpilledRun>,
+    chunks: usize,
+}
+
+/// Shared state for Go's repeated `topNSpillHelper.spill` rounds. The action
+/// raises `need_spill` and advances `generation`; each worker spills once for
+/// that generation, and the last worker clears the flag so a later quota
+/// crossing can request another round.
+struct ParallelTopNSpillState {
+    need_spill: Arc<AtomicBool>,
+    generation: Arc<AtomicUsize>,
+    completed_workers: Arc<AtomicUsize>,
+    worker_count: usize,
+}
+
+fn spill_parallel_worker_heap(
+    heap: &mut TopNChunkHeap,
+    field_types: &[FieldType],
+    spill_chunk_size: usize,
+    disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    memory: &StatementMemory,
+    tracker: &Arc<Tracker>,
+    accounted: &mut i64,
+    runs: &mut Vec<SpilledRun>,
+) -> Result<(), ExecError> {
+    if !heap.is_row_ptrs_init() {
+        heap.init_ptrs();
+        heap.heap_init();
+    }
+    heap.take_cmp_err()?;
+    heap.sort_row_ptrs_ascending(0)?;
+    if !heap.is_empty() {
+        runs.push(SpilledRun::write(
+            field_types,
+            heap.chunks(),
+            heap.row_ptrs(),
+            0,
+            spill_chunk_size,
+            disk_tracker,
+            memory.spill_storage(),
+            memory,
+        )?);
+    }
+    heap.clear();
+    if *accounted != 0 {
+        tracker.consume(-*accounted);
+        *accounted = 0;
+    }
+    Ok(())
+}
+
+fn maybe_spill_parallel_worker_heap(
+    heap: &mut TopNChunkHeap,
+    field_types: &[FieldType],
+    spill_chunk_size: usize,
+    disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    memory: &StatementMemory,
+    tracker: &Arc<Tracker>,
+    accounted: &mut i64,
+    runs: &mut Vec<SpilledRun>,
+    state: &ParallelTopNSpillState,
+    seen_generation: &mut Option<usize>,
+) -> Result<(), ExecError> {
+    if !state.need_spill.load(SeqCst) {
+        return Ok(());
+    }
+    let generation = state.generation.load(SeqCst);
+    if *seen_generation == Some(generation) {
+        return Ok(());
+    }
+    spill_parallel_worker_heap(
+        heap,
+        field_types,
+        spill_chunk_size,
+        disk_tracker,
+        memory,
+        tracker,
+        accounted,
+        runs,
+    )?;
+    *seen_generation = Some(generation);
+    let completed = state.completed_workers.fetch_add(1, SeqCst) + 1;
+    if completed == state.worker_count {
+        state.completed_workers.store(0, SeqCst);
+        state.need_spill.store(false, SeqCst);
+    }
+    Ok(())
+}
+
+struct TopNMergeHead {
+    run_id: usize,
+    key: Vec<Datum>,
+}
+
+/// The prefix-index keys that make Go's RankTopN safe to stop reading.
+///
+/// Go carries these as `RankInfo.TruncateKeyExprs`, field types, and prefix
+/// lengths: `getPrefixKeys` builds one key per declared column and
+/// `slices.Equal` compares every element. The physical TopN exposes one
+/// `PrefixCol`/`PrefixLen` pair, so the executor stores the resolved child
+/// column index and type instead of re-evaluating an expression on every row,
+/// while the source package's multi-key surface keeps more than one.
+#[derive(Clone, Debug)]
+struct RankPrefix {
+    columns: Vec<RankPrefixColumn>,
+}
+
+/// One `RankInfo.TruncateKeyExprs` entry resolved to a child column.
+#[derive(Clone, Debug)]
+struct RankPrefixColumn {
+    column_idx: usize,
+    prefix_len: i64,
+    field_type: FieldType,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_parallel_topn_worker<C>(
+    input: std::sync::mpsc::Receiver<Chunk>,
+    by_items: Vec<SortByItem>,
+    field_types: Vec<FieldType>,
+    init_cap: usize,
+    max_chunk_size: usize,
+    total_limit: u64,
+    ctx: C,
+    tracker: Arc<Tracker>,
+    memory: StatementMemory,
+    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    spill_chunk_size: usize,
+    spill_state: Arc<ParallelTopNSpillState>,
+) -> Result<ParallelTopNWorkerResult, ExecError>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
+    let mut heap = TopNChunkHeap::new();
+    heap.init(
+        by_items.clone(),
+        field_types.clone(),
+        init_cap,
+        max_chunk_size,
+        total_limit,
+        0,
+    );
+    let mut chunks = 0usize;
+    let mut accounted = 0i64;
+    let mut seen_generation = None;
+    let mut runs = Vec::new();
+    let result = (|| -> Result<ParallelTopNWorkerResult, ExecError> {
+        while let Ok(chunk) = input.recv() {
+            chunks += 1;
+            let keys = (0..chunk.num_rows())
+                .map(|row| eval_sort_key(&by_items, &ctx, chunk.get_row(row)))
+                .collect::<Result<Vec<_>, _>>()?;
+            if (heap.stored_len() as u64) < total_limit {
+                heap.add_chunk(chunk, keys);
+            } else {
+                if !heap.is_row_ptrs_init() {
+                    heap.init_ptrs();
+                    heap.heap_init();
+                }
+                heap.process_chk(&chunk, keys);
+                heap.take_cmp_err()?;
+                if heap.stored_len() > heap.len() * TOP_N_COMPACTION_FACTOR {
+                    heap.do_compaction();
+                }
+            }
+            let bytes = heap.memory_usage();
+            tracker.consume(bytes - accounted);
+            accounted = bytes;
+            memory.check()?;
+            maybe_spill_parallel_worker_heap(
+                &mut heap,
+                &field_types,
+                spill_chunk_size,
+                &disk_tracker,
+                &memory,
+                &tracker,
+                &mut accounted,
+                &mut runs,
+                &spill_state,
+                &mut seen_generation,
+            )?;
+        }
+        maybe_spill_parallel_worker_heap(
+            &mut heap,
+            &field_types,
+            spill_chunk_size,
+            &disk_tracker,
+            &memory,
+            &tracker,
+            &mut accounted,
+            &mut runs,
+            &spill_state,
+            &mut seen_generation,
+        )?;
+        spill_parallel_worker_heap(
+            &mut heap,
+            &field_types,
+            spill_chunk_size,
+            &disk_tracker,
+            &memory,
+            &tracker,
+            &mut accounted,
+            &mut runs,
+        )?;
+        Ok(ParallelTopNWorkerResult { runs, chunks })
+    })();
+    tracker.consume(-accounted);
+    result
+}
+
+impl<C> TopNExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     /// Builds a `TopN` over `child` keeping `count` rows from `offset` in
     /// `by_items` order.
     ///
@@ -170,22 +407,91 @@ impl<C: Columns> TopNExec<C> {
             meta,
             by_items,
             child,
+            column_idxs_used_by_child: None,
             ctx,
             offset,
+            count,
             total_limit: offset + count,
             fetched: false,
             heap: TopNChunkHeap::new(),
+            rank_prefix: None,
             memory,
             tracker,
             disk_tracker,
             enable_tmp_storage_on_oom,
             need_spill: Arc::new(AtomicBool::new(false)),
+            spill_generation: Arc::new(AtomicUsize::new(0)),
             registered_action: None,
             runs: Vec::new(),
             spilled_runs: 0,
             merged: 0,
+            merge_heads: Vec::new(),
+            merge_initialized: false,
             spill_chunk_size: SPILL_CHUNK_SIZE,
+            parallelism: 1,
+            parallel_worker_chunks: Vec::new(),
         }
+    }
+
+    /// Resolves Go `TopNExec.Concurrency` for this statement. It affects only
+    /// the post-spill worker phase, matching Go's activation boundary.
+    #[must_use]
+    pub fn with_parallelism(mut self, parallelism: usize) -> Self {
+        self.parallelism = parallelism.max(1);
+        self
+    }
+
+    /// Installs Go's inline projection from child columns to this TopN's
+    /// output schema. `None` means both schemas have identical column order.
+    #[must_use]
+    pub fn with_output_offsets(mut self, offsets: Option<Vec<usize>>) -> Self {
+        self.column_idxs_used_by_child = offsets;
+        self
+    }
+
+    /// Enables Go's RankTopN read short-circuit for a planner-provided prefix
+    /// column. `prefix_len` is the declared index key-part length in
+    /// characters (or bytes for binary/ascii fields); `-1` means whole value.
+    #[must_use]
+    pub fn with_rank_prefix(
+        mut self,
+        column_idx: usize,
+        prefix_len: i64,
+        field_type: FieldType,
+    ) -> Self {
+        self.rank_prefix = Some(RankPrefix {
+            columns: vec![RankPrefixColumn {
+                column_idx,
+                prefix_len,
+                field_type,
+            }],
+        });
+        self
+    }
+
+    /// Installs every Go `RankInfo.TruncateKeyExprs` entry at once, the source
+    /// package's multi-column surface. An empty list is the source's
+    /// `len(TruncateKeyExprs) == 0`, which does not take the RankTopN path.
+    #[must_use]
+    pub fn with_rank_prefixes<I>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = (usize, i64, FieldType)>,
+    {
+        let columns = columns
+            .into_iter()
+            .map(|(column_idx, prefix_len, field_type)| RankPrefixColumn {
+                column_idx,
+                prefix_len,
+                field_type,
+            })
+            .collect::<Vec<_>>();
+        self.rank_prefix = (!columns.is_empty()).then_some(RankPrefix { columns });
+        self
+    }
+
+    #[cfg(test)]
+    fn parallel_worker_chunks(&self) -> &[usize] {
+        &self.parallel_worker_chunks
     }
 
     /// Go `SetSmallSpillChunkSizeForTest`.
@@ -233,11 +539,7 @@ impl<C: Columns> TopNExec<C> {
 
     /// Evaluates the by-item keys for one row.
     fn eval_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<Datum>, ExecError> {
-        let mut key = Vec::with_capacity(self.by_items.len());
-        for item in &self.by_items {
-            key.push(item.expr.eval(&self.ctx, row)?);
-        }
-        Ok(key)
+        eval_sort_key(&self.by_items, &self.ctx, row)
     }
 
     /// The by-item keys of every row of `chunk`.
@@ -249,6 +551,54 @@ impl<C: Columns> TopNExec<C> {
         (0..chunk.num_rows())
             .map(|r| self.eval_key(chunk.get_row(r)))
             .collect()
+    }
+
+    /// Returns Go's truncated RankTopN prefix keys for one child row.
+    fn rank_prefix_key(&self, row: tidb_chunk::row::Row<'_>) -> Vec<Datum> {
+        let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
+        prefix
+            .columns
+            .iter()
+            .map(|column| {
+                let mut value = row.get_datum(column.column_idx, &column.field_type);
+                crate::index_prefix_cut::cut_datum_by_prefix_len(
+                    &mut value,
+                    column.prefix_len,
+                    &column.field_type,
+                );
+                value
+            })
+            .collect()
+    }
+
+    /// Compares two truncated prefix-key vectors under each source column's
+    /// rule. Go's `slices.Equal` requires equal lengths and equal elements;
+    /// NULL remains equal to NULL and ordered below every value, exactly as
+    /// Go's `truncateKey` marker behaves.
+    fn rank_prefixes_equal(&self, left: &[Datum], right: &[Datum]) -> Result<bool, ExecError> {
+        let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
+        if left.len() != prefix.columns.len() || right.len() != prefix.columns.len() {
+            return Ok(false);
+        }
+        for (index, column) in prefix.columns.iter().enumerate() {
+            let equal = if column.prefix_len == tidb_datatype::UNSPECIFIED_LENGTH {
+                // Go's `UnspecifiedLength` (`-1`) path compares the hash-encoded
+                // complete datum, not its expression collation. In particular,
+                // `utf8mb4_general_ci` values that differ only by case remain
+                // distinct here; collation folding belongs only to a truncated key.
+                left[index] == right[index]
+            } else {
+                tidb_expr::compare_datums_with_collation(
+                    &left[index],
+                    &right[index],
+                    column.field_type.collation(),
+                )? == Ordering::Equal
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Go `chunk.List.Add`: takes a whole child chunk into the store, with the
@@ -280,14 +630,59 @@ impl<C: Columns> TopNExec<C> {
     /// One segment with no spill is the whole in-memory operator, unchanged.
     /// Each spill turns the segment's heap into one sorted run
     /// (`executeTopNWhenSpillTriggered` -> `spillHeap`) and the next segment
-    /// starts from an empty heap over the rest of the child -- which is what
-    /// Go's `topNWorker`s do, on one thread instead of `Concurrency` of them.
+    /// starts from an empty heap over the rest of the child. This handles the
+    /// initial in-memory segment. After the first spill,
+    /// [`Self::fetch_parallel_remainder`] distributes later chunks across
+    /// `Concurrency` workers, matching Go's post-spill worker boundary.
+    fn fetch_rank_topn(&mut self) -> Result<(), ExecError> {
+        self.ensure_heap_init();
+        let mut boundary_prefix: Option<Vec<Datum>> = None;
+        let mut boundary_complete = false;
+        while !boundary_complete || (self.stored_len() as u64) < self.total_limit {
+            let mut chunk = self.child.new_chunk();
+            self.child.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            for row_idx in 0..chunk.num_rows() {
+                let row = chunk.get_row(row_idx);
+                let prefix = self.rank_prefix_key(row);
+                if let Some(boundary) = boundary_prefix.as_ref() {
+                    if !self.rank_prefixes_equal(&prefix, boundary)? {
+                        boundary_complete = true;
+                        break;
+                    }
+                }
+                let key = self.eval_key(row)?;
+                self.heap.append_row(row, key);
+                if (self.stored_len() as u64) == self.total_limit {
+                    boundary_prefix = Some(prefix);
+                }
+            }
+            self.account()?;
+            if boundary_complete {
+                break;
+            }
+        }
+        self.heap.init_ptrs();
+        self.sort_survivors_ascending()
+    }
+
+    /// Go `loadChunksUntilTotalLimit` + `executeTopNWhenNoSpillTriggered` +
+    /// `executeTopN`, run as SEGMENTS: a segment ends when the child is
+    /// exhausted, or when the spill action says the store has to go to disk.
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
-        // touching the child keeps the heap's `rowPtrs[0]` in bounds.
-        if self.total_limit == 0 {
+        // touching the child keeps the heap's `rowPtrs[0]` in bounds. Check
+        // the count itself: OFFSET may be nonzero while LIMIT is zero.
+        if self.count == 0 {
             return Ok(());
+        }
+        validate_by_items(&self.by_items)?;
+
+        if self.rank_prefix.is_some() {
+            return self.fetch_rank_topn();
         }
 
         loop {
@@ -296,6 +691,10 @@ impl<C: Columns> TopNExec<C> {
                 break;
             }
             self.spill_heap()?;
+            if self.parallelism > 1 {
+                self.fetch_parallel_remainder()?;
+                break;
+            }
         }
 
         // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
@@ -309,6 +708,97 @@ impl<C: Columns> TopNExec<C> {
         }
 
         self.sort_survivors_ascending()
+    }
+
+    /// Go `executeTopNWhenSpillTriggered`: the caller keeps fetching child
+    /// chunks while persistent executor-pool tasks each maintain a bounded
+    /// TopN heap. Each shared spill request drains every worker heap once;
+    /// after input EOF each worker's final heap becomes another sorted run,
+    /// and the ordinary run merger combines all runs with the pre-spill run.
+    fn fetch_parallel_remainder(&mut self) -> Result<(), ExecError> {
+        let workers = self.parallelism;
+        let field_types = self.child.ret_field_types().to_vec();
+        let init_cap = self.child.init_cap();
+        let max_chunk_size = self.child.max_chunk_size();
+        let mut senders = Vec::with_capacity(workers);
+        let mut results = Vec::with_capacity(workers);
+        let spill_state = Arc::new(ParallelTopNSpillState {
+            need_spill: Arc::clone(&self.need_spill),
+            generation: Arc::clone(&self.spill_generation),
+            completed_workers: Arc::new(AtomicUsize::new(0)),
+            worker_count: workers,
+        });
+        for _ in 0..workers {
+            let (sender, input) = std::sync::mpsc::sync_channel(1);
+            senders.push(sender);
+            let by_items = self.by_items.clone();
+            let field_types = field_types.clone();
+            let ctx = self.ctx.clone();
+            let tracker = Arc::clone(&self.tracker);
+            let memory = self.memory.clone();
+            let disk_tracker = Arc::clone(&self.disk_tracker);
+            let total_limit = self.total_limit;
+            let spill_chunk_size = self.spill_chunk_size;
+            let spill_state = Arc::clone(&spill_state);
+            results.push(crate::worker_pool::spawn(move || {
+                recover_worker_panic(|| {
+                    run_parallel_topn_worker(
+                        input,
+                        by_items,
+                        field_types,
+                        init_cap,
+                        max_chunk_size,
+                        total_limit,
+                        ctx,
+                        tracker,
+                        memory,
+                        disk_tracker,
+                        spill_chunk_size,
+                        spill_state,
+                    )
+                })
+            }));
+        }
+
+        let mut next_worker = 0usize;
+        let fetch_result = loop {
+            let mut chunk = self.child.new_chunk();
+            if let Err(error) = self.child.next(&mut chunk) {
+                break Err(error);
+            }
+            if chunk.num_rows() == 0 {
+                break Ok(());
+            }
+            if senders[next_worker].send(chunk).is_err() {
+                break Err(ExecError::internal(
+                    "parallel TopN worker stopped before input EOF",
+                ));
+            }
+            next_worker = (next_worker + 1) % workers;
+        };
+        drop(senders);
+
+        let mut worker_result = Ok(());
+        self.parallel_worker_chunks.clear();
+        for result in results {
+            let result = result
+                .recv()
+                .map_err(|_| ExecError::internal("parallel TopN worker dropped its result"))
+                .and_then(|result| result);
+            match result {
+                Ok(result) => {
+                    self.parallel_worker_chunks.push(result.chunks);
+                    for run in result.runs {
+                        self.runs.push(run);
+                        self.spilled_runs += 1;
+                    }
+                }
+                Err(error) if worker_result.is_ok() => worker_result = Err(error),
+                Err(_) => {}
+            }
+        }
+        self.need_spill.store(false, SeqCst);
+        fetch_result.and(worker_result)
     }
 
     /// One segment. Returns `true` when the child is exhausted (no spill is
@@ -375,9 +865,39 @@ impl<C: Columns> TopNExec<C> {
                 &field_types,
                 self.heap.chunks(),
                 self.heap.row_ptrs(),
+                self.heap.idx(),
                 self.spill_chunk_size,
                 &self.disk_tracker,
                 self.memory.spill_storage(),
+                &self.memory,
+            )?;
+            self.runs.push(run);
+            self.spilled_runs += 1;
+        }
+        self.heap.clear();
+        self.tracker.replace_bytes_used(0);
+        self.need_spill.store(false, SeqCst);
+        Ok(())
+    }
+
+    /// Go `generateTopNResultsWhenNoSpillTriggered` -> `spillHeap` when an
+    /// external executor raises the spill flag during output. The heap's
+    /// pointer order is already ascending; only the suffix at `idx` remains
+    /// to be written, because rows before it have reached the caller.
+    fn spill_remaining_heap(&mut self) -> Result<(), ExecError> {
+        let start = self.heap.idx().min(self.heap.len());
+        let remaining = self.heap.row_ptrs()[start..].to_vec();
+        if !remaining.is_empty() {
+            let field_types = self.child.ret_field_types().to_vec();
+            let run = SpilledRun::write(
+                &field_types,
+                self.heap.chunks(),
+                &remaining,
+                start,
+                self.spill_chunk_size,
+                &self.disk_tracker,
+                self.memory.spill_storage(),
+                &self.memory,
             )?;
             self.runs.push(run);
             self.spilled_runs += 1;
@@ -405,41 +925,100 @@ impl<C: Columns> TopNExec<C> {
     /// longer than `offset + count`, so the cut Go's shortcut omits can never
     /// fire either.
     ///
-    /// FAITHFUL ADAPTATION: Go's merger is a heap (`multi_way_merge.go`); this
-    /// picks the minimum by scanning the runs, the same choice
-    /// [`crate::sort::SortExec`]'s merge made and the same output for the
-    /// handful of runs a spill produces. Ties resolve to the earlier run in
-    /// both.
+    /// Like Go's `multiWayMergeImpl`, the current run heads live in a
+    /// persistent min-heap. Replacing one head is O(log runs), and the heap is
+    /// retained when a result chunk fills so later `Next` calls resume without
+    /// rebuilding it.
     fn next_merged(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         let limit = self.total_limit;
         let mut runs = std::mem::take(&mut self.runs);
         let result = (|| -> Result<(), ExecError> {
-            while !req.is_full() && self.merged < limit {
-                for run in &mut runs {
+            if !self.merge_initialized {
+                self.merge_heads.clear();
+                for (run_id, run) in runs.iter_mut().enumerate() {
                     run.load_head(&self.by_items, &self.ctx)?;
-                }
-                let mut best: Option<usize> = None;
-                for (i, run) in runs.iter().enumerate() {
-                    let Some(key) = run.head_key() else {
-                        continue;
-                    };
-                    match best {
-                        None => best = Some(i),
-                        Some(b) => {
-                            let other = runs[b].head_key().expect("a loaded head");
-                            if less_by_items(&self.by_items, key, other)? == Ordering::Less {
-                                best = Some(i);
-                            }
-                        }
+                    if let Some(key) = run.head_key() {
+                        self.merge_heads.push(TopNMergeHead {
+                            run_id,
+                            key: key.to_vec(),
+                        });
                     }
                 }
-                let Some(i) = best else { break };
+                let mut compare_error = None;
+                crate::topn_chunk_heap::go_heap::init(&mut self.merge_heads, &mut |left, right| {
+                    match less_by_items(&self.by_items, &left.key, &right.key) {
+                        Ok(ordering) => ordering == Ordering::Less,
+                        Err(error) => {
+                            if compare_error.is_none() {
+                                compare_error = Some(error);
+                            }
+                            false
+                        }
+                    }
+                });
+                if let Some(error) = compare_error {
+                    return Err(error);
+                }
+                self.merge_initialized = true;
+            }
+            while !req.is_full() && self.merged < limit {
+                let Some(head) = self.merge_heads.first() else {
+                    break;
+                };
+                let run_id = head.run_id;
                 if self.merged >= self.offset {
-                    runs[i].take_head_into(req, self.output_columns.as_deref());
+                    runs[run_id].take_head_into(req, self.column_idxs_used_by_child.as_deref());
                 } else {
-                    runs[i].drop_head();
+                    runs[run_id].drop_head();
                 }
                 self.merged += 1;
+                runs[run_id].load_head(&self.by_items, &self.ctx)?;
+                if let Some(key) = runs[run_id].head_key() {
+                    self.merge_heads[0].key = key.to_vec();
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::fix(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
+                } else {
+                    let mut compare_error = None;
+                    crate::topn_chunk_heap::go_heap::remove(
+                        &mut self.merge_heads,
+                        0,
+                        &mut |left, right| match less_by_items(
+                            &self.by_items,
+                            &left.key,
+                            &right.key,
+                        ) {
+                            Ok(ordering) => ordering == Ordering::Less,
+                            Err(error) => {
+                                if compare_error.is_none() {
+                                    compare_error = Some(error);
+                                }
+                                false
+                            }
+                        },
+                    );
+                    if let Some(error) = compare_error {
+                        return Err(error);
+                    }
+                }
             }
             Ok(())
         })();
@@ -448,7 +1027,10 @@ impl<C: Columns> TopNExec<C> {
     }
 }
 
-impl<C: Columns> Executor for TopNExec<C> {
+impl<C> Executor for TopNExec<C>
+where
+    C: Columns + Clone + Send + Sync + 'static,
+{
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
         self.heap.clear();
@@ -457,8 +1039,12 @@ impl<C: Columns> Executor for TopNExec<C> {
         }
         self.runs.clear();
         self.spilled_runs = 0;
+        self.parallel_worker_chunks.clear();
         self.merged = 0;
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         self.need_spill.store(false, SeqCst);
+        self.spill_generation.store(0, SeqCst);
         // Go `TopNExec.Open`: an operator re-opened by an Apply's inner side
         // must not keep charging for the rows it just dropped.
         self.tracker.replace_bytes_used(0);
@@ -473,6 +1059,7 @@ impl<C: Columns> Executor for TopNExec<C> {
         if self.enable_tmp_storage_on_oom {
             let (action, need_spill) = TopNSpillAction::new(&self.tracker);
             self.need_spill = need_spill;
+            self.spill_generation = action.spill_generation();
             let action: ArcAction = action;
             self.memory
                 .session_tracker()
@@ -491,12 +1078,23 @@ impl<C: Columns> Executor for TopNExec<C> {
         if !self.runs.is_empty() {
             return self.next_merged(req);
         }
-        let remaining = self.heap.len().saturating_sub(self.heap.idx());
+        let output_limit = self.rank_prefix.as_ref().map_or(self.heap.len(), |_| {
+            self.heap.len().min(self.total_limit as usize)
+        });
+        let remaining = output_limit.saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
+            // Go polls the shared spill flag every ten output rows. If the
+            // flag came from another executor, preserve already-emitted rows
+            // and switch the rest of this request to the on-disk run.
+            if self.heap.idx() % 10 == 0 && self.need_spill.load(SeqCst) {
+                self.spill_remaining_heap()?;
+                self.merged = self.offset;
+                return self.next_merged(req);
+            }
             req.append_row_by_col_idxs(
                 self.heap.row_at(self.heap.idx()),
-                self.output_columns.as_deref(),
+                self.column_idxs_used_by_child.as_deref(),
             );
             self.heap.advance_idx();
         }
@@ -509,6 +1107,8 @@ impl<C: Columns> Executor for TopNExec<C> {
             run.close();
         }
         self.runs.clear();
+        self.merge_heads.clear();
+        self.merge_initialized = false;
         if let Some(action) = self.registered_action.take() {
             self.memory
                 .session_tracker()
@@ -545,9 +1145,12 @@ mod tests {
     use crate::limit::LimitExec;
     use crate::mem_quota::OomAction;
     use crate::sort::SortExec;
+    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
     use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
 
     fn long() -> FieldType {
@@ -562,6 +1165,59 @@ mod tests {
         rows: Vec<Vec<Option<i64>>>,
         cursor: usize,
         batch: usize,
+    }
+
+    struct CountingSource {
+        meta: ExecutorMeta,
+        rows: Vec<Vec<i64>>,
+        cursor: usize,
+        batch: usize,
+        emitted: Arc<AtomicUsize>,
+    }
+
+    impl Executor for CountingSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.cursor = 0;
+            self.emitted.store(0, SeqCst);
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.cursor + self.batch).min(self.rows.len());
+            for row in &self.rows[self.cursor..end] {
+                for (column, value) in row.iter().copied().enumerate() {
+                    req.append_int64(column, value);
+                }
+            }
+            self.emitted.fetch_add(end - self.cursor, SeqCst);
+            self.cursor = end;
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
     }
 
     impl Executor for ChunkedSource {
@@ -620,6 +1276,17 @@ mod tests {
         Expression::Column(c)
     }
 
+    fn scalar_plus_col_expr(idx: usize) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![
+                col_expr(idx),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ))
+    }
+
     pub(super) fn source(
         rows: &[Vec<Option<i64>>],
         n_cols: usize,
@@ -661,6 +1328,269 @@ mod tests {
             count,
             memory,
         )
+    }
+
+    #[test]
+    fn rank_topn_stops_after_the_boundary_prefix_group() {
+        let rows = vec![
+            vec![1],
+            vec![1],
+            vec![2],
+            vec![2],
+            vec![2],
+            vec![3],
+            vec![3],
+            vec![4],
+        ];
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let child = Box::new(CountingSource {
+            meta: ExecutorMeta::new(schema_of(1), 0, 2, 4),
+            rows,
+            cursor: 0,
+            batch: 2,
+            emitted: Arc::clone(&emitted),
+        });
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            child,
+            NoColumns,
+            0,
+            3,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, -1, long());
+
+        assert_eq!(
+            drain(&mut exec),
+            vec![vec![Some(1)], vec![Some(1)], vec![Some(2)]]
+        );
+        assert_eq!(
+            emitted.load(SeqCst),
+            6,
+            "RankTopN must fetch the boundary group but not later prefix groups"
+        );
+    }
+
+    /// A child of two string key columns and an integer payload, emitted
+    /// `batch` rows at a time so the RankTopN boundary scan crosses chunk edges.
+    struct RankPrefixSource {
+        meta: ExecutorMeta,
+        rows: Vec<(String, String, i64)>,
+        cursor: usize,
+        batch: usize,
+        emitted: Arc<AtomicUsize>,
+    }
+
+    impl Executor for RankPrefixSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.cursor = 0;
+            self.emitted.store(0, SeqCst);
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.cursor + self.batch).min(self.rows.len());
+            for (first, second, payload) in &self.rows[self.cursor..end] {
+                req.append_string(0, first.as_str());
+                req.append_string(1, second.as_str());
+                req.append_int64(2, *payload);
+            }
+            self.emitted.fetch_add(end - self.cursor, SeqCst);
+            self.cursor = end;
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    fn rank_prefix_schema(field_type: &FieldType) -> Schema {
+        let columns = [
+            (0i64, field_type.clone()),
+            (1, field_type.clone()),
+            (2, long()),
+        ]
+        .into_iter()
+        .map(|(index, field_type)| {
+            let mut column = Column::new(index + 1, field_type);
+            column.index = index;
+            column
+        })
+        .collect();
+        Schema::new(columns)
+    }
+
+    fn by_typed(items: &[(usize, bool, FieldType)]) -> Vec<SortByItem> {
+        items
+            .iter()
+            .map(|(idx, desc, field_type)| {
+                let mut column = Column::new(*idx as i64 + 1, field_type.clone());
+                column.index = *idx as i64;
+                SortByItem {
+                    expr: Expression::Column(column),
+                    desc: *desc,
+                }
+            })
+            .collect()
+    }
+
+    /// Reads only the payload column, which the string key columns make
+    /// `drain` (all-int64) unusable for.
+    fn drain_payload(exec: &mut dyn Executor) -> Vec<i64> {
+        exec.open().unwrap();
+        let mut out = Vec::new();
+        let mut req = exec.new_chunk();
+        loop {
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            for r in 0..req.num_rows() {
+                out.push(req.get_row(r).get_int64(2));
+            }
+        }
+        exec.close().unwrap();
+        out
+    }
+
+    /// Go `TestRankTopN`'s second case: two `RankInfo.TruncateKeyExprs`
+    /// entries with prefix counts `-1` (whole value) and `12`. Go builds one
+    /// `truncateKey` per entry and compares all of them with `slices.Equal`,
+    /// so a row differing only in EITHER column ends the boundary group.
+    #[test]
+    fn rank_topn_compares_every_declared_prefix_column() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+
+        // Scenario A: the first row after the boundary differs only in the
+        // 12-character prefix of column 1, so an implementation that compared
+        // only column 0 would keep reading later chunks.
+        let scenario_a = vec![
+            ("A".to_owned(), "0123456789ab_1".to_owned(), 1),
+            ("A".to_owned(), "0123456789ab_2".to_owned(), 2),
+            ("A".to_owned(), "0123456789cd_1".to_owned(), 3),
+            ("A".to_owned(), "0123456789zz_1".to_owned(), 4),
+            ("B".to_owned(), "0123456789ab_1".to_owned(), 5),
+            ("B".to_owned(), "0123456789cd_1".to_owned(), 6),
+        ];
+        // Scenario B: the first row after the boundary differs only in column
+        // 0, so an implementation that compared only column 1 would keep
+        // reading later chunks.
+        let scenario_b = vec![
+            ("A".to_owned(), "0123456789ab_1".to_owned(), 1),
+            ("A".to_owned(), "0123456789ab_2".to_owned(), 2),
+            ("B".to_owned(), "0123456789ab_1".to_owned(), 3),
+            ("B".to_owned(), "0123456789cd_1".to_owned(), 4),
+        ];
+
+        for (rows, label) in [(scenario_a, "column-1 prefix"), (scenario_b, "column 0")] {
+            let emitted = Arc::new(AtomicUsize::new(0));
+            let schema = rank_prefix_schema(&field_type);
+            let child = Box::new(RankPrefixSource {
+                meta: ExecutorMeta::new(schema.clone(), 0, 4, 1),
+                rows,
+                cursor: 0,
+                batch: 1,
+                emitted: Arc::clone(&emitted),
+            });
+            let mut exec = TopNExec::new(
+                ExecutorMeta::new(schema, 1, 2, 1),
+                by_typed(&[
+                    (0, false, field_type.clone()),
+                    (1, false, field_type.clone()),
+                ]),
+                child,
+                NoColumns,
+                0,
+                2,
+                StatementMemory::default(),
+            )
+            .with_rank_prefixes([(0, -1, field_type.clone()), (1, 12, field_type.clone())]);
+
+            assert_eq!(
+                drain_payload(&mut exec),
+                vec![1, 2],
+                "RankTopN must emit the boundary pair for the {label} scenario"
+            );
+            assert_eq!(
+                emitted.load(SeqCst),
+                3,
+                "RankTopN must stop at the first row outside the boundary pair for the {label} scenario"
+            );
+        }
+    }
+
+    #[test]
+    fn rank_topn_unspecified_prefix_uses_exact_value_equality() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            source(&[vec![Some(1)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, tidb_datatype::UNSPECIFIED_LENGTH, field_type);
+
+        let upper = vec![Datum::new_collation_string(
+            b"Prefix".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        )];
+        let lower = vec![Datum::new_collation_string(
+            b"prefix".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        )];
+        assert!(!exec.rank_prefixes_equal(&upper, &lower).unwrap());
+    }
+
+    #[test]
+    fn rank_topn_truncated_prefix_uses_column_collation() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            source(&[vec![Some(1)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, 3, field_type.clone());
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), 2);
+        chunk.append_string(0, "abcXYZ");
+        chunk.append_string(0, "abcxyz");
+
+        let left = exec.rank_prefix_key(chunk.get_row(0));
+        let right = exec.rank_prefix_key(chunk.get_row(1));
+        assert!(exec.rank_prefixes_equal(&left, &right).unwrap());
+        assert_eq!(left[0].as_raw_bytes(), Some(&b"abc"[..]));
     }
 
     /// The INDEPENDENT oracle: the `Sort` + `Limit` pair this operator
@@ -786,6 +1716,37 @@ mod tests {
         }
     }
 
+    /// Go `TopNExec.ColumnIdxsUsedByChild`: ordering uses the complete child
+    /// row, while output applies the physical TopN's pruned/reordered schema.
+    #[test]
+    fn topn_applies_inline_projection_only_when_emitting_rows() {
+        let rows = vec![
+            vec![Some(10), Some(3), Some(100)],
+            vec![Some(20), Some(1), Some(200)],
+            vec![Some(30), Some(2), Some(300)],
+        ];
+        let child_schema = schema_of(3);
+        let output_schema = Schema::new(vec![
+            child_schema.columns[2].clone(),
+            child_schema.columns[0].clone(),
+        ]);
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(output_schema, 1, 4, 32),
+            by(&[(1, false)]),
+            source(&rows, 3, 2),
+            NoColumns,
+            0,
+            2,
+            StatementMemory::default(),
+        )
+        .with_output_offsets(Some(vec![2, 0]));
+
+        assert_eq!(
+            drain(&mut exec),
+            vec![vec![Some(200), Some(20)], vec![Some(300), Some(30)]]
+        );
+    }
+
     #[test]
     fn nulls_order_below_every_value_and_desc_negates_that() {
         let rows = vec![
@@ -828,12 +1789,34 @@ mod tests {
 
     /// A zero count never reaches the child: Go's `LogicalTopN.AttachChild`
     /// replaces the whole operator with a dual, so the heap's `rowPtrs[0]` is
-    /// never indexed on an empty store.
+    /// never indexed on an empty store. This remains true when OFFSET is
+    /// nonzero; checking only `offset + count == 0` would drain the child.
     #[test]
     fn a_zero_count_returns_nothing_without_draining_the_child() {
-        let rows: Vec<Vec<Option<i64>>> = (0..5).map(|v| vec![Some(v), Some(0)]).collect();
-        let mut exec = topn_over(&rows, 2, 2, &[(0, false)], 0, 0, StatementMemory::default());
+        let rows: Vec<Vec<i64>> = (0..5).map(|v| vec![v, 0]).collect();
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let child = Box::new(CountingSource {
+            meta: ExecutorMeta::new(schema_of(2), 0, 2, 4),
+            rows,
+            cursor: 0,
+            batch: 2,
+            emitted: Arc::clone(&emitted),
+        });
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 2, 4),
+            by(&[(0, false)]),
+            child,
+            NoColumns,
+            7,
+            0,
+            StatementMemory::default(),
+        );
         assert!(drain(&mut exec).is_empty());
+        assert_eq!(
+            emitted.load(SeqCst),
+            0,
+            "LIMIT 0 must not fetch rows even with a nonzero OFFSET"
+        );
     }
 
     #[test]
@@ -861,6 +1844,34 @@ mod tests {
         exec.close().unwrap();
     }
 
+    /// Go `TopNExec.initBeforeLoadingChunks` shares `buildKeyColumns` with
+    /// `SortExec`: scalar by-items are rejected before the child is drained.
+    #[test]
+    fn topn_rejects_non_column_by_item_like_go() {
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 4, 32),
+            vec![SortByItem {
+                expr: scalar_plus_col_expr(0),
+                desc: false,
+            }],
+            source(&[vec![Some(2)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let error = exec
+            .next(&mut req)
+            .expect_err("scalar TopN keys must be rejected");
+        assert!(
+            matches!(error, ExecError::Unsupported(ref message) if message == "Get unexpected expression"),
+            "unexpected error: {error:?}"
+        );
+        exec.close().unwrap();
+    }
+
     /// The point of the operator: a `TopN` over many rows holds `offset +
     /// count` of them, so it completes under a quota the equivalent `Sort`
     /// cannot survive.
@@ -870,7 +1881,9 @@ mod tests {
         // Big enough for several child chunks -- so the bound being tested
         // is the SIZE OF THE STORE, not the size of one incoming chunk, which
         // both operators must be able to hold.
-        let quota = 200_000;
+        // The sort stores compact row handles now, so use a quota that is
+        // still comfortably above one child chunk but below the full store.
+        let quota = 100_000;
 
         // Spilling OFF for the sort: the contrast this test draws is between
         // an operator that must HOLD every row and one that holds only `n`.
@@ -1138,6 +2151,7 @@ mod spill_tests {
     use crate::mem_quota::OomAction;
     use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
+    use tidb_util::sqlkiller::KillSignal;
 
     fn topn(
         rows: &[Vec<Option<i64>>],
@@ -1314,6 +2328,72 @@ mod spill_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Go `executeTopNWhenSpillTriggered`: once the first heap spills, child
+    /// chunks are shared by `TopNExec.Concurrency` workers and their sorted
+    /// heaps join the same multi-way merge.
+    #[test]
+    fn spilled_topn_uses_parallel_workers_and_preserves_the_answer() {
+        let dir = scratch_temp_dir("topn-parallel-workers");
+        let rows = shuffled_rows(4096);
+        let items = [(0, false), (1, false)];
+
+        let mut reference = topn(&rows, &items, 37, 300, StatementMemory::default());
+        let expected = drain(&mut reference);
+
+        let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(4);
+        exec.set_spill_chunk_size_for_test(64);
+        let got = drain(&mut exec);
+
+        assert_eq!(got, expected);
+        assert!(
+            exec.num_spilled_runs() > 1,
+            "the worker runs must be merged"
+        );
+        assert!(
+            exec.parallel_worker_chunks()
+                .iter()
+                .filter(|&&chunks| chunks > 0)
+                .count()
+                > 1,
+            "post-spill input was not distributed: {:?}",
+            exec.parallel_worker_chunks()
+        );
+        assert!(spill_files_in(&dir).is_empty(), "close leaked worker runs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go's `fetchChunksFromChild` checks the shared spill flag after each
+    /// dispatched chunk and `topNSpillHelper.spill` drains every worker heap
+    /// before fetching more input. A trigger that arrives during the
+    /// post-spill phase therefore creates an intermediate run, not only the
+    /// one final run per worker. This regression records the fail-before
+    /// evidence for that seam and guards the worker-round contract.
+    #[test]
+    fn parallel_topn_re_spills_worker_heaps_after_shared_trigger() {
+        let dir = scratch_temp_dir("topn-parallel-repeat-spill");
+        let rows = shuffled_rows(256);
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 0, 32, memory).with_parallelism(2);
+        exec.set_spill_chunk_size_for_test(8);
+        exec.open().unwrap();
+
+        // Simulate a shared session-quota trigger before the first worker
+        // batch. Go responds by spilling both worker heaps, then continues
+        // and spills their final heaps at EOF as a second round.
+        exec.need_spill.store(true, SeqCst);
+        exec.fetch_parallel_remainder().unwrap();
+
+        assert!(
+            exec.num_spilled_runs() > 2,
+            "a repeated worker spill must create an intermediate run per worker; got {}",
+            exec.num_spilled_runs()
+        );
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The OFFSET path through the merge: Go counts every merged row against
     /// both `offset` and `offset + count`, so the rows dropped before the
     /// offset are the merged ones, not each run's own first rows.
@@ -1413,6 +2493,93 @@ mod spill_tests {
         );
         assert_eq!(got, expected);
         drop(exec);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go polls `isSpillNeeded` every ten rows while emitting an otherwise
+    /// in-memory heap. A trigger raised by another executor must spill only
+    /// the rows that have not already been emitted, then continue through the
+    /// run without replaying earlier output.
+    #[test]
+    fn topn_spills_remaining_rows_when_triggered_during_output() {
+        let dir = scratch_temp_dir("topn-output-trigger");
+        let rows = (0..64).map(|i| vec![Some(i), Some(i)]).collect::<Vec<_>>();
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 3, 61, memory);
+        exec.set_spill_chunk_size_for_test(8);
+        exec.open().unwrap();
+
+        let mut req = exec.new_chunk();
+        req.set_required_rows(5, exec.max_chunk_size());
+        exec.next(&mut req).unwrap();
+        assert_eq!(
+            (0..req.num_rows())
+                .map(|row| req.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (3..8).collect::<Vec<_>>(),
+        );
+
+        // Simulate another executor crossing the session quota while this
+        // TopN is emitting. Go's result goroutine observes this on its next
+        // ten-row poll; the Rust path must make the same transition.
+        exec.need_spill.store(true, SeqCst);
+        req.set_required_rows(20, exec.max_chunk_size());
+        exec.next(&mut req).unwrap();
+        assert_eq!(
+            (0..req.num_rows())
+                .map(|row| req.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (8..28).collect::<Vec<_>>(),
+        );
+        assert_eq!(exec.num_spilled_runs(), 1);
+
+        let mut output = (0..req.num_rows())
+            .map(|row| req.get_row(row).get_int64(0))
+            .collect::<Vec<_>>();
+        loop {
+            req.set_required_rows(32, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
+        }
+        assert_eq!(output, (8..64).collect::<Vec<_>>());
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go's `topNSpillHelper.spillHeap` polls `SQLKiller.HandleSignal` every
+    /// 100 retained rows while serializing a run. A cancellation raised after
+    /// the heap was selected must therefore abort the write and leave no
+    /// partial spill file behind.
+    #[test]
+    fn topn_spill_honors_query_kill_during_run_write() {
+        let dir = scratch_temp_dir("topn-spill-kill");
+        let rows = shuffled_rows(256);
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 0, 128, memory);
+        exec.set_spill_chunk_size_for_test(16);
+        exec.open().unwrap();
+        assert!(exec.run_one_segment().unwrap());
+
+        exec.memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = exec.spill_heap();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed spill must return an executor cancellation error: {result:?}"
+        );
+
+        exec.close().unwrap();
+        assert!(
+            spill_files_in(&dir).is_empty(),
+            "a cancelled spill must remove its partial run"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

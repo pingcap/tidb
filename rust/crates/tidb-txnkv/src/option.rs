@@ -201,6 +201,8 @@ pub const INTERNAL_TXN_BOOTSTRAP: &str = INTERNAL_TXN_OTHERS;
 pub const INTERNAL_TXN_META: &str = INTERNAL_TXN_OTHERS;
 /// DDL.
 pub const INTERNAL_TXN_DDL: &str = "ddl";
+/// Materialized view maintenance operations.
+pub const INTERNAL_TXN_MVIEW_MAINTENANCE: &str = "mview_maintain";
 /// Prefix for DDL backfill request types.
 pub const INTERNAL_TXN_BACKFILL_DDL_PREFIX: &str = "ddl_";
 /// Cache-table work aliases the miscellaneous category.

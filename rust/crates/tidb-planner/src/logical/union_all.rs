@@ -17,7 +17,7 @@
 //! `pkg/planner/core/operator/logicalop/logical_partition_union_all.go`:
 //! `LogicalPartitionUnionAll`, the same operator over a partitioned table.
 //!
-//! SEED of `pkg/planner/core`. Both were [`crate::logical::TodoLogicalOp`]
+//! SEED of `pkg/planner/core`. Both were `LogicalPlan` placeholder arms
 //! before this batch.
 //!
 //! # Why one file and an embedded struct
@@ -161,9 +161,15 @@ impl LogicalUnionAll {
     /// The offset is folded into the count because each branch must supply
     /// enough rows for the union's own offset to be applied ONCE, above.
     #[must_use]
-    pub fn push_down_topn_for_child(topn: &LogicalTopN) -> LogicalTopN {
-        let mut base = topn.base.shell();
-        base.set_children(Vec::new());
+    pub fn push_down_topn_for_child(
+        topn: &LogicalTopN,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> LogicalTopN {
+        let base = BaseLogicalPlan::new(
+            allocator,
+            LogicalTopN::TYPE,
+            topn.base.base.query_block_offset(),
+        );
         LogicalTopN {
             base,
             by_items: topn.by_items.clone(),

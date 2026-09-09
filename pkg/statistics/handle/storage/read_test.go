@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -94,6 +95,108 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestReadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	writerTK := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	writerTK.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values " +
+		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
+		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := dom.InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.Columns[1]
+	before, err := storage.ReadColumnDistributionStats(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	resume := make(chan struct{}, 1)
+	blocked := make(chan struct{}, 1)
+	t.Cleanup(func() {
+		select {
+		case resume <- struct{}{}:
+		default:
+		}
+	})
+	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithParams"
+	require.NoError(t, failpoint.EnableCall(failpointName,
+		func(tableID int64, _ bool, _ int64, _ int) {
+			if tableID != tblInfo.ID {
+				return
+			}
+			select {
+			case blocked <- struct{}{}:
+				close(entered)
+				<-resume
+			default:
+			}
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	type loadResult struct {
+		stats *statistics.Column
+		err   error
+	}
+	resultCh := make(chan loadResult, 1)
+	go func() {
+		stats, loadErr := storage.ReadColumnDistributionStats(
+			context.Background(), tk.Session(), tblInfo.ID, colInfo)
+		resultCh <- loadResult{stats: stats, err: loadErr}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto pre-split stats loader did not reach TopN loading")
+	}
+
+	// Use another session to replace the statistics while the loader is paused.
+	writerTK.MustExec("update t set b = 9")
+	writerTK.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	resume <- struct{}{}
+	result := <-resultCh
+	require.NoError(t, result.err)
+	require.Equal(t, before.LastUpdateVersion, result.stats.LastUpdateVersion)
+	require.Equal(t, before.TopN, result.stats.TopN)
+	require.Equal(t, before.Histogram, result.stats.Histogram)
+
+	after, err := storage.ReadColumnDistributionStats(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo)
+	require.NoError(t, err)
+	require.NotEqual(t, before.LastUpdateVersion, after.LastUpdateVersion)
+	require.Equal(t, uint64(20), after.TopN.TopN[0].Count)
+}
+
+func TestGetTableSizeStatsSkipsColumnLengthWhenUnneeded(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	called := false
+	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/getColLengthTables"
+	require.NoError(t, failpoint.EnableCall(failpointName, func() {
+		called = true
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	_, err := storage.GetTableSizeStats(tk.Session(), false, 1)
+	require.NoError(t, err)
+	require.False(t, called)
+
+	_, err = storage.GetTableSizeStats(tk.Session(), true, 1)
+	require.NoError(t, err)
+	require.True(t, called)
 }
 
 func TestLoadNonExistentIndexStats(t *testing.T) {

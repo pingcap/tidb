@@ -120,7 +120,7 @@ pub struct DecodedKey {
     #[serde(rename = "index_name", skip_serializing_if = "String::is_empty")]
     /// Index name, when the index still exists in the resolved table.
     pub index_name: String,
-    #[serde(rename = "index_values", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "index_values", skip_serializing_if = "option_vec_is_empty")]
     /// Decoded index values. `None` preserves Go's nil slice distinction.
     pub index_values: Option<Vec<String>>,
     #[serde(rename = "db_id", skip_serializing_if = "is_zero")]
@@ -146,6 +146,10 @@ fn is_zero(value: &i64) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn option_vec_is_empty(value: &Option<Vec<String>>) -> bool {
+    value.as_ref().is_none_or(Vec::is_empty)
 }
 
 /// Failure returned by [`decode_key`]. The partially populated result is kept
@@ -303,9 +307,7 @@ fn decode_index(
         table.and_then(|table| table.indexes.iter().find(|index| index.id == index_id))
     {
         decoded.index_name.clone_from(&index.name);
-        if !values.is_empty() {
-            decoded.index_values = Some(values);
-        }
+        decoded.index_values = Some(values);
     }
     Ok(decoded)
 }

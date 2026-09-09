@@ -143,7 +143,6 @@ where
     if all.len() <= 1 || concurrency <= 1 {
         return all.into_iter().map(|task| task()).collect();
     }
-    let shared = shared();
     let (result_tx, result_rx) = std::sync::mpsc::channel::<(usize, R)>();
     // Keepalive sender: holds the channel open while results are still in
     // flight even though every per-task clone has been moved into a task.
@@ -200,12 +199,14 @@ mod tests {
     fn map_preserves_submission_order() {
         let inputs: Vec<usize> = (0..32).collect();
         let out = map(
-            inputs.iter().map(|&i| move || {
-                // Variable "work" so completion order differs from submission.
-                if i % 3 == 0 {
-                    std::thread::sleep(std::time::Duration::from_micros(50));
+            inputs.iter().map(|&i| {
+                move || {
+                    // Variable "work" so completion order differs from submission.
+                    if i % 3 == 0 {
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    }
+                    i * i
                 }
-                i * i
             }),
             4,
         );

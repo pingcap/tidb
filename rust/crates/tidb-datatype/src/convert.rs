@@ -71,6 +71,11 @@ pub enum ScalarConversionEvent {
     RoundedToScale,
     /// Conversion saturated at a target boundary.
     Overflow(ScalarConversionError),
+    /// A TIMESTAMP wall clock fell in a daylight-saving gap and was adjusted
+    /// to Go's closest valid transition boundary. The statement layer keeps
+    /// this diagnostic distinct from ordinary truncation because Go reports
+    /// errno 8179 while still storing the adjusted value.
+    TimestampInDSTTransition,
 }
 
 /// A best-effort source conversion result and its warning/error event.
@@ -232,9 +237,8 @@ pub fn convert_uint_to_uint(
 
 /// `ConvertFloatToUint`.
 ///
-/// DIVERGENCE, deliberately stricter than the source: Go reaches
-/// `strconv.FormatFloat` on a NaN input and panics. Here a non-finite input
-/// saturates at the upper bound and reports an overflow.
+/// Go's `big.Float.SetFloat64` panics for NaN; infinities remain accepted and
+/// are reported as out-of-range by the subsequent `Uint64` conversion.
 pub fn convert_float_to_uint(
     flags: ConversionFlags,
     value: f64,
@@ -242,6 +246,7 @@ pub fn convert_float_to_uint(
     target: FieldTypeCode,
 ) -> Result<u64, (u64, ScalarConversionError)> {
     let rounded = round_float(value);
+    assert!(!rounded.is_nan(), "Float.SetFloat64(NaN)");
     if rounded < 0.0 {
         if !flags.allow_negative_to_unsigned() {
             return Err((0, overflow(rounded, target)));
@@ -298,9 +303,7 @@ pub fn convert_decimal_str_to_uint(
     target: FieldTypeCode,
 ) -> Result<u64, (u64, ScalarConversionError)> {
     let expanded = convert_scientific_notation(input).map_err(|error| (0, error))?;
-    let (mut integer, fraction) = expanded
-        .split_once('.')
-        .map_or((expanded.as_str(), ""), |parts| parts);
+    let (mut integer, fraction) = expanded.split_once('.').unwrap_or((expanded.as_str(), ""));
     integer = integer.trim_start_matches('0');
     if integer.is_empty() {
         integer = "0";
@@ -345,6 +348,28 @@ pub fn convert_decimal_to_uint(
 pub struct NumericPrefix {
     value: String,
     truncated: bool,
+}
+
+/// Returns the subject Go includes in a `Truncated incorrect DOUBLE value`
+/// diagnostic. `StrToFloat` trims Unicode whitespace before
+/// `getValidFloatPrefix`, and that helper shortens the same subject at the
+/// first NUL byte before formatting the error.
+pub fn float_warning_input(input: &str) -> &str {
+    let nul_cut = input.trim().split('\0').next().unwrap_or_default();
+    warning_subject_byte_cap(nul_cut)
+}
+
+/// Go's `ErrTruncatedWrongVal` template caps the quoted subject at 128 bytes
+/// (`"Truncated incorrect %-.64s value: '%-.128s'"`). The cut rounds down to
+/// a char boundary: identical for ASCII, multi-byte input loses the partial
+/// rune Go's byte cut would have split.
+pub fn warning_subject_byte_cap(input: &str) -> &str {
+    let end = input.len().min(128);
+    let mut cut = end;
+    while cut > 0 && !input.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &input[..cut]
 }
 
 impl NumericPrefix {
@@ -883,6 +908,7 @@ pub fn number_to_duration(
                 fsp,
                 false,
                 false,
+                true,
                 &chrono_tz::UTC,
             ) {
                 return parsed.time.to_duration().map(Converted::exact);
@@ -1238,6 +1264,17 @@ mod tests {
         );
     }
 
+    #[test]
+    #[should_panic(expected = "Float.SetFloat64(NaN)")]
+    fn convert_float_to_uint_nan_panics_like_go() {
+        let _ = convert_float_to_uint(
+            ConversionFlags::from_bits(0),
+            f64::NAN,
+            u64::MAX,
+            FieldTypeCode::LongLong,
+        );
+    }
+
     /// Source: `pkg/types/convert_test.go::TestConvertScientificNotation`.
     #[test]
     fn test_convert_scientific_notation() {
@@ -1355,6 +1392,13 @@ mod tests {
             assert_eq!(actual.truncated(), truncated, "{input:?}");
         }
         assert_source_float_string_to_integer_rows();
+    }
+
+    #[test]
+    fn float_warning_input_truncates_at_nul_like_go() {
+        assert_eq!(float_warning_input("\0 12"), "");
+        assert_eq!(float_warning_input(" 12\0suffix "), "12");
+        assert_eq!(float_warning_input(" 12abc "), "12abc");
     }
 
     /// `pkg/types/convert_test.go:843` `TestGetValidInt`, first table: the
@@ -1910,6 +1954,7 @@ mod decimal_from_text_source_rows {
                 Some(ScalarConversionEvent::Truncated) => "truncated",
                 Some(ScalarConversionEvent::Overflow(_)) => "overflow",
                 Some(ScalarConversionEvent::RoundedToScale) => "rounded",
+                Some(ScalarConversionEvent::TimestampInDSTTransition) => "timestamp-dst",
             };
             assert_eq!(kind, event, "{input:?}");
         }

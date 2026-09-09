@@ -39,15 +39,15 @@
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::ClusterCatalog;
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+#[cfg(test)]
+use tidb_exec::cluster_stats_load::ClusterStatsItem;
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
-use tidb_executor::driver::{SequenceDef, Catalog, ViewDef};
+use tidb_executor::driver::{Catalog, SequenceDef, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{GoShared, SchemaState, TableInfo};
-use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_session::{Session, SharedCatalog};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
@@ -368,7 +368,8 @@ impl KvTableTemplates {
     }
 
     fn insert(&mut self, schema: &str, name: &str, table: KvTable) {
-        self.tables.insert((schema.to_owned(), name.to_owned()), table);
+        self.tables
+            .insert((schema.to_owned(), name.to_owned()), table);
     }
 }
 
@@ -426,8 +427,7 @@ pub fn cluster_session_catalog_with_templates(
                         .expect("the schema was created just above this loop"),
                     None => skipped.push(SkippedTable {
                         name: format!("{schema}.{}", table.name.original()),
-                        reason: "it is a sequence and this tier has no sequence counter"
-                            .to_owned(),
+                        reason: "it is a sequence and this tier has no sequence counter".to_owned(),
                     }),
                 }
                 continue;
@@ -461,10 +461,22 @@ pub fn cluster_session_catalog_with_templates(
                     if let Some(loaded_stats) =
                         stats.get(&table.id).and_then(TableStatsState::loaded)
                     {
-                        let statistics = stats_templates.get_or_build(table.id, || {
-                            planner_statistics(loaded_stats, table)
-                        });
+                        let statistics = stats_templates
+                            .get_or_build(table.id, || planner_statistics(loaded_stats, table));
                         catalog.set_table_statistics(table.id, statistics);
+                    }
+                    if let Some(partition) = &table.partition {
+                        for definition in partition.read().definitions.snapshot() {
+                            let physical_id = definition.id;
+                            if let Some(loaded_stats) =
+                                stats.get(&physical_id).and_then(TableStatsState::loaded)
+                            {
+                                let statistics = stats_templates.get_or_build(physical_id, || {
+                                    planner_statistics(loaded_stats, table)
+                                });
+                                catalog.set_table_statistics(physical_id, statistics);
+                            }
+                        }
                     }
                     catalog
                         .register_kv_in(&schema, table.name.original(), kv_table)
@@ -682,9 +694,14 @@ pub(crate) fn cluster_table(
             let expression =
                 tidb_model::generated_expr::parse_expression(&column.generated_expr_string)
                     .map_err(|error| {
-                        format!("its generated column {name} cannot be parsed: {}", error.message)
+                        format!(
+                            "its generated column {name} cannot be parsed: {}",
+                            error.message
+                        )
                     })?;
-            let (names, types) = generated_schema.as_ref().expect("generated schema collected");
+            let (names, types) = generated_schema
+                .as_ref()
+                .expect("generated schema collected");
             Some(
                 tidb_executor::generated_column::build_added_generated_column(
                     &name,
@@ -694,7 +711,9 @@ pub(crate) fn cluster_table(
                     types,
                     &tidb_datatype::SessionTimeZone::utc(),
                 )
-                .map_err(|error| format!("its generated column {name} cannot be built: {error:?}"))?,
+                .map_err(|error| {
+                    format!("its generated column {name} cannot be built: {error:?}")
+                })?,
             )
         } else {
             None
@@ -714,11 +733,25 @@ pub(crate) fn cluster_table(
     }
     let hidden = kv_columns.split_off(visible_count);
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
-    kv_table.set_all_columns_public(table.columns.iter_deref().all(|column| column.read().state == SchemaState::PUBLIC));
+    kv_table.set_all_columns_public(
+        table
+            .columns
+            .iter_deref()
+            .all(|column| column.read().state == SchemaState::PUBLIC),
+    );
     for column in hidden {
         kv_table.add_hidden_column(column);
     }
     kv_table.set_name(table.name.original());
+    let constraints = table
+        .constraints
+        .iter_deref()
+        .map(|constraint| constraint.read().clone())
+        .collect::<Vec<_>>();
+    kv_table
+        .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
+        .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
+    kv_table.set_max_constraint_id(table.max_constraint_id);
     // Go `TableInfo.Comment` reaches every reader of the loaded table:
     // `SHOW CREATE TABLE` prints it and
     // `information_schema.tables.table_comment` reports it. Dropping it
@@ -753,6 +786,12 @@ pub(crate) fn cluster_table(
             .unwrap_or(tidb_executor::TableCharset::default().collation),
     });
     kv_table.set_cache_status(table.table_cache_status_type);
+    kv_table.set_tiflash_replica(
+        table
+            .tiflash_replica
+            .as_ref()
+            .map(|replica| replica.read().clone()),
+    );
     // Go `TableInfo.TempTableType`, which the meta store really does carry:
     // a GLOBAL temporary table is created by an ordinary DDL job and its
     // `TableInfo` is persisted like any other. Dropping it here would make
@@ -795,7 +834,9 @@ pub(crate) fn cluster_table(
     } else if table.is_common_handle {
         let handles = clustered_handle_offsets(table, &columns)?;
         kv_table.set_common_handle_offsets(handles);
+        kv_table.set_common_handle_version(table.common_handle_version);
     }
+    kv_table.set_has_affinity(table.affinity.is_some());
     if table.contains_auto_random_bits() {
         let offset = if table.pk_is_handle {
             kv_table
@@ -857,10 +898,7 @@ pub(crate) fn cluster_table(
         });
         if let Some(dependences) = array_part {
             if dependences.len() == 1 {
-                kv_table.set_mv_key_part_source(
-                    index.id,
-                    dependences[0].to_utf8_lossy_go(),
-                );
+                kv_table.set_mv_key_part_source(index.id, dependences[0].to_utf8_lossy_go());
             }
         }
     }
@@ -921,6 +959,11 @@ fn partition_spec_for(
         .into_iter()
         .map(|column| column.original().to_owned())
         .collect();
+    let overlapping_dropping_partition_indices = (0..definitions.len())
+        .map(|index| {
+            usize::try_from(partition.get_overlapping_dropping_partition_idx(index as isize)).ok()
+        })
+        .collect::<Vec<_>>();
     tidb_executor::ddl::partition_spec_from_metadata(
         partition.partition_type,
         &partition.expr,
@@ -929,6 +972,7 @@ fn partition_spec_for(
         // `PARTITION BY KEY ()` and Go filled the columns in from the key.
         partition.is_empty_columns,
         &definitions,
+        &overlapping_dropping_partition_indices,
         &names,
         &types,
     )
@@ -987,6 +1031,7 @@ pub(crate) fn kv_index(
         prefix_lengths,
         visible: !index.invisible,
         global: index.global,
+        global_index_version: index.global_index_version,
         clustered_primary: false,
     })
 }
@@ -995,85 +1040,25 @@ pub(crate) fn kv_index(
 /// scaling in the estimator reads off a column.
 const UNSIGNED_FLAG: u32 = 1 << 5;
 
-/// Translates one table's loaded `mysql.stats_*` rows into the shape the
-/// planner's estimator reads.
-///
-/// This is the ONE place the storage form and the estimation form meet: the
-/// loader ([`tidb_exec::cluster_stats_load`]) owns how a histogram is stored,
-/// [`tidb_planner::cardinality`] owns how it is read, and neither has to know
-/// the other. A histogram whose `hist_id` names no current column or index --
-/// a dropped one whose stats rows have not been GC'd -- is skipped, because
-/// the estimator keys on the live schema.
-fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
-    let mut columns = std::collections::BTreeMap::new();
-    for column in table.cols().iter_deref() {
-        let (id, unsigned) = {
+/// Adapts Go `TableInfo` metadata to the common canonical-table planner view.
+pub(crate) fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
+    let columns = table
+        .cols()
+        .iter_deref()
+        .map(|column| {
             let column = column.read();
             (column.id, column.field_type.flags() & UNSIGNED_FLAG != 0)
-        };
-        let Some(item) = stats.column(id).filter(stats_available) else {
-            continue;
-        };
-        columns.insert(
-            id,
-            ColumnStats {
-                histogram: item.histogram.clone(),
-                topn: item.topn.clone(),
-                cms: item.cms.clone(),
-                stats_ver: item.stats_ver,
-                unsigned,
-            },
-        );
-    }
-    let mut indexes = std::collections::BTreeMap::new();
-    for index in table.indices.iter_deref() {
-        let (id, num_columns, unique) = {
+        })
+        .collect::<Vec<_>>();
+    let indexes = table
+        .indices
+        .iter_deref()
+        .map(|index| {
             let index = index.read();
             (index.id, index.columns.len(), index.unique)
-        };
-        let Some(item) = stats.index(id).filter(stats_available) else {
-            continue;
-        };
-        indexes.insert(id, index_statistics(item, num_columns, unique));
-    }
-    // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
-    // it both from an uninitialized histogram set and from a zero row count,
-    // and that rule lives in one place for both tiers. The two TSOs ride
-    // along unchanged: `SHOW STATS_META` renders them verbatim as
-    // `Update_time` and `Last_analyze_time`, so no field of the stored row is
-    // lost in this translation.
-    TableStatistics::new(
-        i64::try_from(stats.row_count).unwrap_or(i64::MAX),
-        stats.modify_count,
-        columns,
-        indexes,
-    )
-    .with_stat_versions(stats.version, stats.last_analyze_version)
-    .with_shared_load_state(Arc::clone(&stats.load_state))
-}
-
-/// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
-/// this histogram was actually collected.
-///
-/// A `stats_histograms` row can exist with `stats_ver = 0` -- an ADD COLUMN
-/// synthesizes one from the default value -- so the version alone is not the
-/// test; Go also accepts a non-zero NDV or null count, which is that
-/// synthesized case.
-fn stats_available(item: &&ClusterStatsItem) -> bool {
-    item.stats_ver > 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0
-}
-
-/// One index histogram, with the two schema facts the estimator needs that
-/// the stored row does not carry.
-fn index_statistics(item: &ClusterStatsItem, num_columns: usize, unique: bool) -> IndexStats {
-    IndexStats {
-        histogram: item.histogram.clone(),
-        topn: item.topn.clone(),
-        cms: item.cms.clone(),
-        stats_ver: item.stats_ver,
-        num_columns,
-        unique,
-    }
+        })
+        .collect::<Vec<_>>();
+    tidb_executor::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
 /// The public-column offsets of a clustered composite handle, in key order.
@@ -1116,6 +1101,7 @@ mod tests {
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_exec::cluster_stats_load::ClusterTableStats;
     use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
     use tidb_executor::storage::StorageError;
     use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
@@ -1273,6 +1259,31 @@ mod tests {
 
     #[test]
     fn loaded_column_ndv_reaches_grouped_cluster_plans() {
+        struct FixedStorageStatistics {
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+            column_length_requests: Arc<std::sync::Mutex<Vec<bool>>>,
+            fail: Arc<std::sync::atomic::AtomicBool>,
+            values: tidb_session::TableStorageStatistics,
+        }
+
+        impl tidb_session::TableStorageStatsProvider for FixedStorageStatistics {
+            fn load_table_storage_statistics(
+                &self,
+                _resource_group: &str,
+                need_column_lengths: bool,
+            ) -> Result<Vec<tidb_session::TableStorageStatistics>, String> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                self.column_length_requests
+                    .lock()
+                    .unwrap()
+                    .push(need_column_lengths);
+                if self.fail.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err("stats read failed".to_owned());
+                }
+                Ok(vec![self.values.clone()])
+            }
+        }
+
         let table = TableInfo {
             id: 130,
             name: CiString::new("order_line"),
@@ -1293,9 +1304,11 @@ mod tests {
                 is_index: false,
                 stats_ver: 2,
                 flag: 1,
+                load_status: tidb_stats::StatsLoadedStatus::full_load(),
                 histogram: Default::default(),
                 topn: None,
                 cms: None,
+                fm_sketch: None,
             };
             item.histogram.id = id;
             item.histogram.ndv = ndv;
@@ -1311,21 +1324,23 @@ mod tests {
         let loaded_stats = ClusterTableStats {
             table_id: table.id,
             version,
+            snapshot: version,
             last_analyze_version: version,
+            last_stats_hist_version: version,
             modify_count: 0,
             row_count: 3_000_065,
             columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
             indexes: Vec::new(),
-            load_state: Default::default(),
         };
-        let translated = planner_statistics(&loaded_stats, &table);
+        let loaded_stats = loaded_stats.to_statistics_table(&table);
+        let table_id = table.id;
+        let translated = planner_statistics(loaded_stats.as_ref(), &table);
         assert!(!translated.pseudo);
         assert_eq!(
             translated.columns.keys().copied().collect::<Vec<_>>(),
             vec![1, 2, 3]
         );
-        let snapshot =
-            StatsSnapshot::from([(table.id, TableStatsState::Loaded(Arc::new(loaded_stats)))]);
+        let snapshot = StatsSnapshot::from([(table.id, TableStatsState::Loaded(loaded_stats))]);
         let (storage, _, _) = cluster_storage();
         let (mut session, skipped) = session_with_cluster_storage(
             &one_table_catalog(table),
@@ -1333,6 +1348,19 @@ mod tests {
             &snapshot,
             &LocalTableAutoIds::default(),
         );
+        let storage_stats_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let column_length_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fail_storage_stats = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        session.set_table_storage_stats_provider(Arc::new(FixedStorageStatistics {
+            calls: Arc::clone(&storage_stats_reads),
+            column_length_requests: Arc::clone(&column_length_requests),
+            fail: Arc::clone(&fail_storage_stats),
+            values: tidb_session::TableStorageStatistics {
+                table_id,
+                table: (3_000_065, 24, 72_001_560, 0),
+                partitions: Vec::new(),
+            },
+        }));
         assert!(skipped.is_empty(), "{skipped:?}");
         {
             let catalog = session.shared_catalog();
@@ -1344,6 +1372,106 @@ mod tests {
             assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);
         }
         session.run("USE app").unwrap();
+        session
+            .run(
+                "SELECT TABLE_NAME FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap();
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            0,
+            "Go skips the two restricted reads when no size column is requested"
+        );
+        assert!(column_length_requests.lock().unwrap().is_empty());
+        let StmtResult::Rows(rows) = session
+            .run(
+                "SELECT TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH \
+                 FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap()
+        else {
+            panic!("expected information_schema rows");
+        };
+        assert_eq!(
+            rows,
+            vec![vec![
+                Datum::Int(3_000_065),
+                Datum::Int(24),
+                Datum::Int(72_001_560),
+                Datum::Int(0),
+            ]]
+        );
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            1
+        );
+        assert_eq!(*column_length_requests.lock().unwrap(), vec![true]);
+        {
+            let catalog = session.shared_catalog();
+            let catalog = catalog.lock().unwrap();
+            let tidb_executor::TableEntry::Kv(table) =
+                catalog.table_in("app", "order_line").expect("table")
+            else {
+                panic!("order_line is a base table")
+            };
+            assert_eq!(
+                table.storage_statistics(),
+                (0, 0, 0, 0),
+                "statement-local TableSizeStats must not mutate the shared catalog"
+            );
+        }
+        let StmtResult::Rows(rows) = session
+            .run(
+                "WITH s AS (SELECT TABLE_ROWS FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line') \
+                 SELECT TABLE_ROWS FROM s",
+            )
+            .unwrap()
+        else {
+            panic!("CTE statistics query must return rows")
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(3_000_065)]]);
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            2,
+            "the resolved memory-table scan inside a CTE must refresh"
+        );
+        assert_eq!(
+            *column_length_requests.lock().unwrap(),
+            vec![true, false],
+            "TABLE_ROWS alone reads stats_meta without scanning stats_histograms"
+        );
+        session
+            .run(
+                "SELECT TABLE_NAME FROM information_schema.partitions \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap();
+        assert_eq!(
+            storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
+            2,
+            "current Go's updateStatsCacheIfNeed self-prunes on the retained \
+             columns (infoschema_reader.go:646-661): a TABLE_NAME-only \
+             PARTITIONS projection retains no size column, so no refresh runs"
+        );
+        fail_storage_stats.store(true, std::sync::atomic::Ordering::Release);
+        let StmtResult::Rows(rows) = session
+            .run(
+                "SELECT TABLE_ROWS FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap()
+        else {
+            panic!("failed statistics read remains a successful information-schema query")
+        };
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Int(0)]],
+            "a seam provider that refuses its read is served with zero size \
+             columns; Go's own provider path warns and serves its cache instead"
+        );
         let StmtResult::Rows(rows) = session
             .run(
                 "EXPLAIN FORMAT='brief' SELECT ol_d_id, SUM(ol_amount) \
@@ -1643,9 +1771,12 @@ mod tests {
             let mut value = column(2, 1, "v", false);
             value.state = state;
             let table = TableInfo {
-                id: 302, name: CiString::new("t"),
+                id: 302,
+                name: CiString::new("t"),
                 columns: vec![column(1, 0, "id", true), value].into(),
-                pk_is_handle: true, state: SchemaState::PUBLIC, ..TableInfo::default()
+                pk_is_handle: true,
+                state: SchemaState::PUBLIC,
+                ..TableInfo::default()
             };
             let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
             assert_eq!(loaded.all_columns_public(), state == SchemaState::PUBLIC);
@@ -2100,8 +2231,8 @@ mod tests {
         // Now the backfill's own view of the same table: no counter at all.
         let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
-        let index = kv_index(&index(1, "vi", "v", 1, -1), &walked.columns)
-            .expect("a full-value index");
+        let index =
+            kv_index(&index(1, "vi", "v", 1, -1), &walked.columns).expect("a full-value index");
 
         walked
             .create_index_with_context(index, &tidb_executor::StmtContext::default())
@@ -2140,7 +2271,9 @@ mod tests {
             .unwrap();
         for (value, expected) in [("alphabet", 1), ("alphanumeric", 2), ("beta", 3)] {
             let StmtResult::Rows(rows) = session
-                .run(&format!("SELECT id FROM ci FORCE INDEX(idx) WHERE c='{value}'"))
+                .run(&format!(
+                    "SELECT id FROM ci FORCE INDEX(idx) WHERE c='{value}'"
+                ))
                 .unwrap()
             else {
                 panic!("expected rows");
@@ -2352,8 +2485,11 @@ mod tests {
             enable: true,
             ..tidb_model::partition::PartitionInfo::default()
         };
-        partition.definitions =
-            vec![partition_definition(401, "p0"), partition_definition(402, "p1")].into();
+        partition.definitions = vec![
+            partition_definition(401, "p0"),
+            partition_definition(402, "p1"),
+        ]
+        .into();
         let table = TableInfo {
             id: 400,
             name: CiString::new("hashed"),
@@ -2427,8 +2563,11 @@ mod tests {
             enable: false,
             ..tidb_model::partition::PartitionInfo::default()
         };
-        partition.definitions =
-            vec![partition_definition(601, "p0"), partition_definition(602, "p1")].into();
+        partition.definitions = vec![
+            partition_definition(601, "p0"),
+            partition_definition(602, "p1"),
+        ]
+        .into();
         let table = TableInfo {
             id: 600,
             name: CiString::new("disabled"),
@@ -2439,8 +2578,8 @@ mod tests {
             ..TableInfo::default()
         };
         let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
-            .expect("the table loads");
+        let loaded =
+            cluster_table(&table, &storage, &AutoIdSource::Unavailable).expect("the table loads");
         assert!(
             loaded.partition().is_none(),
             "disabled partitioning must not route"
@@ -2487,7 +2626,10 @@ mod tests {
         assert_eq!(spec.physical_ids(), vec![701, 702]);
         let tidb_executor::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
         else {
-            panic!("RANGE metadata must rebuild as a RANGE spec, got {:?}", spec.kind);
+            panic!(
+                "RANGE metadata must rebuild as a RANGE spec, got {:?}",
+                spec.kind
+            );
         };
         assert!(
             matches!(
@@ -2537,7 +2679,10 @@ mod tests {
             ..
         } = &spec.kind
         else {
-            panic!("LIST COLUMNS metadata must rebuild as one, got {:?}", spec.kind);
+            panic!(
+                "LIST COLUMNS metadata must rebuild as one, got {:?}",
+                spec.kind
+            );
         };
         assert_eq!(values.len(), 2, "both listed values kept their owner");
         assert_eq!(

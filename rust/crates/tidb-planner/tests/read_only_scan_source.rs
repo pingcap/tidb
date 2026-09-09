@@ -3,13 +3,19 @@
 
 //! Source-derived admission tests for the first direct table-read lowering.
 
+use tidb_error::{mysql::errcode, tidb};
 use tidb_planner::{
     access_path::ResolvedTableScanKind,
-    physical_selection::{ComparisonOp, ComparisonOperand},
+    configured_catalog::ConfiguredTableLookupError,
+    index_task::ScanReadTaskRejection,
     read_only_scan::{
         BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredScalarType,
-        ConfiguredTable, ReadLockRequest, ReadLockWait, ReadOnlyScanError, ReadOnlyScanPlan,
-        UnsupportedReadOnlyFeature,
+        ConfiguredTable, PreparedBindError, PreparedPlanError, ReadLockRequest, ReadLockWait,
+        ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        UnsupportedReadOnlyPredicate,
+    },
+    signed_bigint_ranger::{
+        BigIntComparison, BigIntComparisonError, ComparisonOp, ComparisonOperand,
     },
 };
 
@@ -33,6 +39,122 @@ fn unsupported(sql: &str, feature: UnsupportedReadOnlyFeature) {
 }
 
 #[test]
+fn read_only_errors_keep_their_go_wire_identity() {
+    let cases = [
+        (
+            ReadOnlyScanError::Parse("bad SELECT".to_owned()),
+            errcode::ErrParse,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::Unsupported(UnsupportedReadOnlyFeature::Ordering),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::UnsupportedPredicate(
+                UnsupportedReadOnlyPredicate::BooleanOperator,
+            ),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::UnknownTable("missing".to_owned()),
+            errcode::ErrNoSuchTable,
+            *b"42S02",
+        ),
+        (
+            ReadOnlyScanError::UnknownColumn("missing".to_owned()),
+            errcode::ErrBadField,
+            *b"42S22",
+        ),
+        (
+            ReadOnlyScanError::InvalidConfiguration("bad table"),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::InvalidComparison(BigIntComparisonError::InvalidOperands),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::InvalidColumnIndex {
+                index: 1,
+                column_count: 0,
+            },
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::PlannerRejected(ScanReadTaskRejection::MixedAccessPaths),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::UnexpectedPlannerTask,
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+    ];
+    for (error, code, state) in cases {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
+
+    let prepared_cases = [
+        (
+            PreparedPlanError::ReadOnly(ReadOnlyScanError::Parse("bad SELECT".to_owned())),
+            errcode::ErrParse,
+            *b"42000",
+        ),
+        (
+            PreparedPlanError::Catalog(ConfiguredTableLookupError::UnknownTable(
+                "missing".to_owned(),
+            )),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            PreparedPlanError::Catalog(ConfiguredTableLookupError::AmbiguousTable(
+                "accounts".to_owned(),
+            )),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            PreparedPlanError::PrimaryKeyComparison,
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            PreparedPlanError::MarkerPosition(2),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+    ];
+    for (error, code, state) in prepared_cases {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
+
+    for (error, code, state) in [
+        (
+            PreparedBindError::ParameterCount(0),
+            tidb::errcode::ErrWrongParamCount,
+            *b"HY000",
+        ),
+        (
+            PreparedBindError::ReadOnly(ReadOnlyScanError::Unsupported(
+                UnsupportedReadOnlyFeature::Limit,
+            )),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+    ] {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
+}
+
+#[test]
 fn direct_projection_preserves_alias_source_identity_and_scan_order() {
     let plan = ReadOnlyScanPlan::lower(
         "SELECT accounts.balance AS amount, id FROM test.accounts",
@@ -46,7 +168,7 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
         Some(ResolvedTableScanKind::Full)
     );
     assert_eq!(
-        plan.table_scan().explain_id().as_deref(),
+        plan.table_scan().resolved_explain_id(false).as_deref(),
         Some("TableFullScan_1")
     );
     let [balance, id] = plan.projected_columns() else {
@@ -67,7 +189,10 @@ fn direct_projection_preserves_alias_source_identity_and_scan_order() {
     assert!(id.scan_column().pk_handle);
 
     assert_eq!(
-        plan.table_scan().pushdown().columns,
+        plan.table_scan()
+            .pushdown()
+            .expect("read-only scan has TiKV fields")
+            .columns,
         [balance.scan_column().clone(), id.scan_column().clone()]
     );
     for column in plan.projected_columns() {
@@ -159,7 +284,14 @@ fn bound_relation_reuses_sql_lowering_for_all_columns_ranges_and_residuals() {
     assert_eq!(structured.handle_ranges().len(), 1);
     assert_eq!(structured.handle_ranges()[0].start(), -5);
     assert_eq!(structured.handle_ranges()[0].end(), i64::MAX);
-    let conditions = structured.selection().unwrap().conditions();
+    let conditions = structured
+        .selection()
+        .unwrap()
+        .conditions
+        .iter()
+        .map(BigIntComparison::from_expression)
+        .collect::<Option<Vec<_>>>()
+        .unwrap();
     assert_eq!(conditions.len(), 1);
     assert_eq!(conditions[0].op(), ComparisonOp::Gt);
     assert_eq!(conditions[0].lhs(), ComparisonOperand::InputOffset(1));
@@ -534,7 +666,9 @@ fn nullable_columns_drop_the_not_null_flag_and_never_apply_to_the_handle() {
             ConfiguredColumn::stored_char_not_null("label", 11, 16),
         ],
     );
-    table.validate().expect("nullable columns are a valid table");
+    table
+        .validate()
+        .expect("nullable columns are a valid table");
     assert!(!table.columns()[0].is_nullable());
     assert!(table.columns()[1].is_nullable());
     assert!(!table.columns()[2].is_nullable());
@@ -544,7 +678,11 @@ fn nullable_columns_drop_the_not_null_flag_and_never_apply_to_the_handle() {
     let [id, balance, label] = plan.projected_columns() else {
         panic!("three projections");
     };
-    assert_eq!(id.scan_column().flag, 3, "the handle keeps NOT_NULL|PRI_KEY");
+    assert_eq!(
+        id.scan_column().flag,
+        3,
+        "the handle keeps NOT_NULL|PRI_KEY"
+    );
     assert!(!id.is_nullable());
     assert_eq!(balance.scan_column().flag, 0, "nullable drops NOT_NULL");
     assert!(balance.is_nullable());

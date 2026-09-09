@@ -486,22 +486,26 @@ impl From<tidb_datatype::DatumValueError> for PointBuilderError {
 /// pushes through `sctx.SetSkipPlanCache`, for the plan-cache caller to
 /// consume when that surface wires in.
 pub struct PointBuilder<'a> {
-    eval_constant: &'a ConstantEvaluator<'a>,
+    eval_expression: &'a ExpressionEvaluator<'a>,
     /// Go `builder.err`.
     pub err: Option<PointBuilderError>,
     /// Go `SetSkipPlanCache`'s reason, recorded not applied.
     pub skip_plan_cache_reason: Option<String>,
 }
 
-/// The current statement's evaluation of an already-built constant. Like
+/// The current statement's evaluation of an already-built expression. Like
 /// Go's ranger expression context, this never rewrites an AST or captures a
 /// prepared parameter's planning-time value.
-pub type ConstantEvaluator<'a> =
-    dyn Fn(&tidb_expr::constant::Constant) -> Result<Datum, tidb_expr::EvalError> + 'a;
+pub type ExpressionEvaluator<'a> = dyn Fn(&Expression) -> Result<Datum, tidb_expr::EvalError> + 'a;
+
+/// Evaluate an expression without execution bindings.
+pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    expression.eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+}
 
 impl Default for PointBuilder<'_> {
     fn default() -> Self {
-        Self::new(&tidb_expr::constant::Constant::eval)
+        Self::new(&crate::ranger::points::evaluate_static)
     }
 }
 
@@ -519,9 +523,9 @@ use tidb_expr::scalar_function::ScalarFunction;
 
 impl<'a> PointBuilder<'a> {
     /// Build ranges using this execution's parameters, flags and warnings.
-    pub fn new(eval_constant: &'a ConstantEvaluator<'a>) -> Self {
+    pub fn new(eval_expression: &'a ExpressionEvaluator<'a>) -> Self {
         Self {
-            eval_constant,
+            eval_expression,
             err: None,
             skip_plan_cache_reason: None,
         }
@@ -540,15 +544,15 @@ impl<'a> PointBuilder<'a> {
             Expression::ScalarFunction(scalar) => {
                 self.build_from_scalar_func(scalar, new_tp, prefix_len, convert_to_sort_key)
             }
-            Expression::Constant(constant) => self.build_from_constant(constant),
+            Expression::Constant(_) => self.build_from_constant(expr),
             Expression::CorrelatedColumn(_) => get_full_range(),
         }
     }
 
     /// Go `buildFromConstant`: NULL is an empty range, falsy is empty,
     /// truthy is full.
-    fn build_from_constant(&mut self, constant: &tidb_expr::constant::Constant) -> Vec<Point> {
-        let dt = match (self.eval_constant)(constant) {
+    fn build_from_constant(&mut self, constant: &Expression) -> Vec<Point> {
+        let dt = match (self.eval_expression)(constant) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -684,24 +688,17 @@ impl<'a> PointBuilder<'a> {
                 "le" => OP_GE,
                 other => other,
             };
-            (col, constant, op.to_owned())
+            (col, &scalar.args[0], op.to_owned())
         } else {
             return Vec::new();
         };
         let Some(ft) = column.ret_type.as_ref() else {
             return Vec::new();
         };
-        let value = match constant {
-            Expression::Constant(constant) => (self.eval_constant)(constant),
-            Expression::CorrelatedColumn(column) => Ok(column.eval()),
-            _ => return Vec::new(),
-        };
-        let mut value = match value {
-            Ok(value) => value,
-            Err(error) => {
-                self.err = Some(PointBuilderError::Eval(error));
-                return Vec::new();
-            }
+        // Go evaluates either non-column operand using the current statement
+        // context and an empty row, including scalar functions of parameters.
+        let Ok(mut value) = (self.eval_expression)(constant) else {
+            return Vec::new();
         };
         if op != OP_NULL_EQ && matches!(value, Datum::Null) {
             return Vec::new();
@@ -917,17 +914,17 @@ impl<'a> PointBuilder<'a> {
         };
         let mut range_points: Vec<Point> = Vec::with_capacity((scalar.args.len() - 1) * 2);
         for e in &scalar.args[1..] {
-            let Expression::Constant(constant) = e else {
+            let Expression::Constant(_) = e else {
                 self.err = Some(PointBuilderError::Unsupported(format!(
                     "expr:{e:?} is not constant"
                 )));
                 return (get_full_range(), has_null);
             };
-            let mut dt = match (self.eval_constant)(constant) {
+            let mut dt = match (self.eval_expression)(e) {
                 Ok(value) => value,
                 Err(_) => {
                     // Go buildFromIn reports unsupported evaluation here,
-                    // unlike scalar comparisons which retain the eval error.
+                    // while scalar comparisons simply produce no points.
                     self.err = Some(PointBuilderError::Unsupported(format!(
                         "expr:{e:?} is not evaluated"
                     )));
@@ -1049,10 +1046,10 @@ impl<'a> PointBuilder<'a> {
         if !tidb_datatype::compatible_collate(tp_of_pattern.collation_name(), collation) {
             return get_full_range();
         }
-        let Expression::Constant(pattern_const) = &scalar.args[1] else {
+        let Expression::Constant(_) = &scalar.args[1] else {
             return get_full_range();
         };
-        let pattern_value = match (self.eval_constant)(pattern_const) {
+        let pattern_value = match (self.eval_expression)(&scalar.args[1]) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -1092,10 +1089,10 @@ impl<'a> PointBuilder<'a> {
             }
             return res;
         }
-        let Expression::Constant(escape_const) = &scalar.args[2] else {
+        let Expression::Constant(_) = &scalar.args[2] else {
             return get_full_range();
         };
-        let escape_value = match (self.eval_constant)(escape_const) {
+        let escape_value = match (self.eval_expression)(&scalar.args[2]) {
             Ok(value) => value,
             Err(error) => {
                 self.err = Some(PointBuilderError::Eval(error));
@@ -1923,7 +1920,8 @@ mod tests {
         ];
         for (expression, value, expected) in cases {
             let ctx = Params(vec![value]);
-            let evaluate = |constant: &Constant| constant.eval_in(&ctx);
+            let evaluate =
+                |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
             let mut builder = PointBuilder::new(&evaluate);
             assert_eq!(show(&build_on_long(&expression, &mut builder)), expected);
             assert!(builder.err.is_none(), "{:?}", builder.err);
@@ -1933,7 +1931,8 @@ mod tests {
         let expression = func_expr("eq", vec![col, Expression::Constant(deferred)]);
         for value in [9, 2] {
             let ctx = Params(vec![Datum::Int(value)]);
-            let evaluate = |constant: &Constant| constant.eval_in(&ctx);
+            let evaluate =
+                |expression: &Expression| expression.eval(&ctx, tidb_chunk::row::Row::empty());
             let mut builder = PointBuilder::new(&evaluate);
             assert_eq!(
                 show(&build_on_long(&expression, &mut builder)),
@@ -1975,6 +1974,46 @@ mod tests {
         ));
         assert_eq!(case("eq", vec![a.clone(), null.clone()]), "");
         assert_eq!(case("nulleq", vec![a.clone(), null]), "[<nil> <nil>]");
+    }
+
+    /// Go's `buildFromBinOp` evaluates a strict constant expression operand,
+    /// not only a bare `*expression.Constant`. This matters for the unsigned
+    /// domain fixup: `a > CAST(-1 AS DECIMAL)` is rewritten to `a >= 0`, while
+    /// the mirrored less-than predicate has no valid range.
+    #[test]
+    fn bin_op_points_evaluate_wrapped_strict_constants() {
+        let mut unsigned_decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        unsigned_decimal.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        let column =
+            Expression::Column(tidb_expr::column::Column::new(1, unsigned_decimal.clone()));
+        let mut decimal_result = unsigned_decimal.clone();
+        decimal_result.set_flen(1);
+        decimal_result.set_decimal(0);
+        let wrapped_negative = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("cast_decimal"),
+            decimal_result,
+            vec![func_expr("unaryminus", vec![int_const_expr(1)])],
+        ));
+        let compare = |name: &str| {
+            let expression = func_expr(name, vec![column.clone(), wrapped_negative.clone()]);
+            let mut builder = PointBuilder::default();
+            builder.build(
+                &expression,
+                &unsigned_decimal,
+                super::super::checker::UNSPECIFIED_LENGTH,
+                false,
+            )
+        };
+
+        let greater = compare("gt");
+        assert_eq!(
+            greater.len(),
+            2,
+            "a > -1 should clamp to [0,+inf]: {greater:?}"
+        );
+        assert!(matches!(greater[0].value, Datum::Decimal(_)));
+        assert!(matches!(greater[1].value, Datum::MaxValue));
+        assert!(compare("lt").is_empty(), "a < -1 has no unsigned range");
     }
 
     /// AND intersects, OR unions — `a > 1 AND a < 5`, `a < 2 OR a > 5`.
@@ -2083,16 +2122,18 @@ mod tests {
 
         // The SAME compiled LIKE uses this execution's pattern AND escape.
         let like = like_for_parameters(&str_ft);
-        let evaluate = |constant: &tidb_expr::constant::Constant| match constant
-            .param_marker
-            .map(|marker| marker.order)
-        {
-            Some(0) => Ok(Datum::new_collation_string(
-                b"new!_%".to_vec(),
-                Collation::Utf8Mb4Bin,
-            )),
-            Some(1) => Ok(Datum::Int(i64::from(b'!'))),
-            _ => constant.eval(),
+        let evaluate = |expression: &Expression| match expression {
+            Expression::Constant(constant) => {
+                match constant.param_marker.map(|marker| marker.order) {
+                    Some(0) => Ok(Datum::new_collation_string(
+                        b"new!_%".to_vec(),
+                        Collation::Utf8Mb4Bin,
+                    )),
+                    Some(1) => Ok(Datum::Int(i64::from(b'!'))),
+                    _ => constant.eval(),
+                }
+            }
+            _ => evaluate_static(expression),
         };
         let mut builder = PointBuilder::new(&evaluate);
         let points = builder.build(

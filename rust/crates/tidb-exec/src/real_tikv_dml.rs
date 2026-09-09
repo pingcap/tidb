@@ -25,10 +25,10 @@
 //! * INSERT counts one row per successfully added record
 //!   (`pkg/executor/insert_common.go` `addRecordWithAutoIDHint` calls
 //!   `AddAffectedRows(1)` only after `AddRecord` returns).
-//! * UPDATE counts a row only when the new value differs from the old one
-//!   (`pkg/executor/write.go`: an unchanged row takes `AddTouchedRows(1)` and
-//!   adds an affected row only under `ClientFoundRows`, which this bounded path
-//!   does not negotiate).
+//! * UPDATE counts a row only when the new value differs from the old one by
+//!   default. The server applies its negotiated `ClientFoundRows` bit to the
+//!   completed report, turning an unchanged matched update from zero into one
+//!   without publishing a mutation (`pkg/executor/write.go`).
 //! * A missing UPDATE row matches nothing and publishes nothing.
 
 use std::collections::BTreeMap;
@@ -627,13 +627,15 @@ fn staged_or_snapshot<S: WritePlanningSnapshot>(
     match mutation.kind() {
         OptimisticMutationKind::Delete
         | OptimisticMutationKind::IndexDelete
-        | OptimisticMutationKind::MetaDelete => Ok(None),
+        | OptimisticMutationKind::MetaDelete
+        | OptimisticMutationKind::SystemRowDelete => Ok(None),
         OptimisticMutationKind::LockOnly => snapshot.read_at_snapshot(key, call),
         OptimisticMutationKind::Insert
         | OptimisticMutationKind::PutExisting
         | OptimisticMutationKind::IndexPut
         | OptimisticMutationKind::UniqueIndexInsert
-        | OptimisticMutationKind::MetaPut => Ok(Some(mutation.value().to_vec())),
+        | OptimisticMutationKind::MetaPut
+        | OptimisticMutationKind::SystemRowPut => Ok(Some(mutation.value().to_vec())),
     }
 }
 
@@ -1762,6 +1764,12 @@ pub enum ConfiguredWriteOutcome {
         affected_rows: u64,
         /// Warnings produced while planning this statement.
         warnings: Vec<ConfiguredWriteWarning>,
+        /// Go commit detail `WriteSize`: encoded key and value bytes.
+        write_size: isize,
+        /// Go commit detail `WriteKeys`: number of final mutations.
+        write_keys: isize,
+        /// Go scan detail `ProcessedKeys` observed while planning the write.
+        processed_keys: i64,
     },
     /// Nothing was published; the statement still has an affected-row count.
     NoPublication {
@@ -1773,6 +1781,8 @@ pub enum ConfiguredWriteOutcome {
         affected_rows: u64,
         /// Warnings raised while determining that no mutation is needed.
         warnings: Vec<ConfiguredWriteWarning>,
+        /// Go scan detail `ProcessedKeys` observed while planning the write.
+        processed_keys: i64,
     },
 }
 
@@ -1829,6 +1839,65 @@ pub struct ConfiguredWriteReport {
     pub no_write: Option<NoWriteReason>,
     /// Warnings the server must expose in the statement's OK packet.
     pub warnings: Vec<ConfiguredWriteWarning>,
+    /// Go commit detail `WriteSize`; zero when nothing was published.
+    pub write_size: isize,
+    /// Go commit detail `WriteKeys`; zero when nothing was published.
+    pub write_keys: isize,
+    /// Go scan detail `ProcessedKeys` for the statement.
+    pub processed_keys: i64,
+}
+
+impl ConfiguredWriteReport {
+    /// Applies Go's negotiated `CLIENT_FOUND_ROWS` presentation rule after
+    /// storage planning. Configured writes are point writes, so an unchanged
+    /// match is exactly one affected row; a missing row remains zero and an
+    /// identical REPLACE already reports one independently of this bit.
+    #[must_use]
+    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
+        if enabled && self.no_write == Some(NoWriteReason::UnchangedRow) {
+            self.affected_rows = 1;
+        }
+        self
+    }
+}
+
+/// Composes the OK-packet info text Go's statement contexts answer DML with
+/// (Go `StmtCtx.SetMessage`), dispatching on the write family:
+///
+/// * INSERT/REPLACE — `Records: <records>  Duplicates: <dups>  Warnings:
+///   <warnings>` once the statement attempted more than one row or ran as
+///   INSERT ... SELECT (Go `InsertExec.setMessage` / `ReplaceExec.setMessage`);
+/// * UPDATE — `Rows matched: <matched>  Changed: <changed>  Warnings:
+///   <warnings>` unconditionally (Go `UpdateExec.setMessage`), where this
+///   tier's point update knows the pair exactly from the plan outcome;
+/// * DELETE — none (Go's DELETE sets no message).
+#[must_use]
+pub fn compose_configured_write_message(
+    write: &ConfiguredPreparedWrite,
+    report: &ConfiguredWriteReport,
+) -> Option<String> {
+    let warnings = u64::try_from(report.warnings.len()).unwrap_or(u64::MAX);
+    match write {
+        ConfiguredPreparedWrite::UpdatePoint { .. } => {
+            let matched = match report.no_write {
+                Some(NoWriteReason::MissingRow) => 0,
+                _ => 1,
+            };
+            tidb_planner::prepared_dml::compose_update_ok_message(
+                matched,
+                report.affected_rows,
+                warnings,
+            )
+        }
+        _ => {
+            let records = tidb_planner::prepared_dml::configured_write_record_rows(write);
+            tidb_planner::prepared_dml::compose_insert_ok_message(
+                records,
+                report.affected_rows,
+                warnings,
+            )
+        }
+    }
 }
 
 /// Opens one transaction on the shared authority, publishes a bound write, and
@@ -1852,23 +1921,33 @@ pub fn commit_configured_write<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
             outcome,
             affected_rows,
             warnings,
+            write_size,
+            write_keys,
+            processed_keys,
         } => {
             classify_configured_write_commit_outcome(&outcome)?;
             Ok(ConfiguredWriteReport {
                 affected_rows,
                 no_write: None,
                 warnings,
+                write_size,
+                write_keys,
+                processed_keys,
             })
         }
         ConfiguredWriteOutcome::NoPublication {
             reason,
             affected_rows,
             warnings,
+            processed_keys,
             ..
         } => Ok(ConfiguredWriteReport {
             affected_rows,
             no_write: Some(reason),
             warnings,
+            write_size: 0,
+            write_keys: 0,
+            processed_keys,
         }),
     }
 }
@@ -1913,6 +1992,34 @@ where
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
         Ok(self.snapshot_get(key, call)?.value)
     }
+}
+
+struct CountingWritePlanningSnapshot<'a, S> {
+    inner: &'a mut S,
+    processed_keys: i64,
+}
+
+impl<S: WritePlanningSnapshot> WritePlanningSnapshot for CountingWritePlanningSnapshot<'_, S> {
+    fn read_at_snapshot(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
+        let value = self.inner.read_at_snapshot(key, call)?;
+        if value.is_some() {
+            self.processed_keys = self.processed_keys.wrapping_add(1);
+        }
+        Ok(value)
+    }
+}
+
+fn mutation_write_details(mutations: &[OptimisticMutation]) -> (isize, isize) {
+    mutations
+        .iter()
+        .fold((0_isize, 0_isize), |(size, keys), mutation| {
+            let mutation_size = mutation.key().len().wrapping_add(mutation.value().len()) as isize;
+            (size.wrapping_add(mutation_size), keys.wrapping_add(1))
+        })
 }
 
 /// Plans one bound write against `snapshot` without publishing it.
@@ -1985,15 +2092,29 @@ where
     L: RegionRecoveryLoader,
     T: TimestampSource,
 {
-    match plan_configured_write(&mut transaction, write, call, session_tz)? {
+    let (plan, processed_keys) = {
+        let mut snapshot = CountingWritePlanningSnapshot {
+            inner: &mut transaction,
+            processed_keys: 0,
+        };
+        let plan = plan_configured_write(&mut snapshot, write, call, session_tz)?;
+        (plan, snapshot.processed_keys)
+    };
+    match plan {
         ConfiguredWritePlan::Write {
             mutations,
             affected_rows,
-        } => Ok(ConfiguredWriteOutcome::Published {
-            outcome: Box::new(transaction.commit(mutations, call)?),
-            affected_rows,
-            warnings: Vec::new(),
-        }),
+        } => {
+            let (write_size, write_keys) = mutation_write_details(&mutations);
+            Ok(ConfiguredWriteOutcome::Published {
+                outcome: Box::new(transaction.commit(mutations, call)?),
+                affected_rows,
+                warnings: Vec::new(),
+                write_size,
+                write_keys,
+                processed_keys,
+            })
+        }
         ConfiguredWritePlan::NoWrite {
             reason,
             affected_rows,
@@ -2002,6 +2123,7 @@ where
             reason,
             affected_rows,
             warnings: Vec::new(),
+            processed_keys,
         }),
         ConfiguredWritePlan::Ignore {
             mutations,
@@ -2012,17 +2134,22 @@ where
             reason: NoWriteReason::IgnoredDuplicate,
             affected_rows,
             warnings,
+            processed_keys,
         }),
         ConfiguredWritePlan::Ignore {
             mutations,
             affected_rows,
             warnings,
         } => {
+            let (write_size, write_keys) = mutation_write_details(&mutations);
             let outcome = transaction.commit(mutations, call)?;
             Ok(ConfiguredWriteOutcome::Published {
                 outcome: Box::new(outcome),
                 affected_rows,
                 warnings,
+                write_size,
+                write_keys,
+                processed_keys,
             })
         }
     }
@@ -2051,5 +2178,92 @@ mod commit_error_tests {
             Err(ConfiguredWriteError::Commit(error))
                 if error.code == tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
         ));
+    }
+}
+
+#[cfg(test)]
+mod write_message_tests {
+    use super::{compose_configured_write_message, ConfiguredWriteReport, NoWriteReason};
+    use tidb_planner::prepared_dml::{
+        configured_write_record_rows, ConfiguredAssignment, ConfiguredPreparedWrite,
+        PreparedBindValue,
+    };
+    use tidb_planner::read_only_scan::ConfiguredTable;
+
+    fn table() -> ConfiguredTable {
+        ConfiguredTable::new("u6", "t", 11, std::iter::empty())
+    }
+
+    /// Go `UpdateExec.setMessage` answers every UPDATE unconditionally, with
+    /// the pair derived from the plan outcome: a vanished row matched nothing,
+    /// a no-op value still matched, and a published write matched and changed.
+    #[test]
+    fn update_point_composes_the_matched_changed_text() {
+        let write = ConfiguredPreparedWrite::UpdatePoint {
+            table: table(),
+            handle: 1,
+            column_index: 0,
+            assignment: ConfiguredAssignment::Set(PreparedBindValue::Null),
+        };
+
+        let missing = ConfiguredWriteReport {
+            affected_rows: 0,
+            no_write: Some(NoWriteReason::MissingRow),
+            warnings: Vec::new(),
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(&write, &missing),
+            Some("Rows matched: 0  Changed: 0  Warnings: 0".to_owned())
+        );
+
+        let unchanged = ConfiguredWriteReport {
+            affected_rows: 0,
+            no_write: Some(NoWriteReason::UnchangedRow),
+            warnings: vec![],
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(&write, &unchanged),
+            Some("Rows matched: 1  Changed: 0  Warnings: 0".to_owned())
+        );
+    }
+
+    /// DELETE composes no message (Go's DELETE sets none).
+    #[test]
+    fn delete_point_composes_nothing() {
+        let report = ConfiguredWriteReport {
+            affected_rows: 1,
+            no_write: None,
+            warnings: Vec::new(),
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(
+                &ConfiguredPreparedWrite::DeletePoint {
+                    table: table(),
+                    handle: 1,
+                },
+                &report
+            ),
+            None
+        );
+    }
+
+    /// The attempted-row counter still drives the insert gate.
+    #[test]
+    fn insert_rows_drive_the_record_count() {
+        let write = ConfiguredPreparedWrite::ReplaceRows {
+            table: table(),
+            rows: Vec::new(),
+        };
+        // Zero rows attempt zero records; the count tracks the family's rows.
+        assert_eq!(configured_write_record_rows(&write), 0);
     }
 }

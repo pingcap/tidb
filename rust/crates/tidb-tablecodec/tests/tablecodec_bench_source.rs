@@ -109,6 +109,7 @@ fn benchmark_decode_index_key_int_handle() {
         assert_eq!(
             decode_handle_in_index_value(&idx_val)
                 .unwrap()
+                .unwrap()
                 .int_value(),
             Some(256)
         );
@@ -124,13 +125,13 @@ fn benchmark_decode_index_key_common_handle() {
     idx_val.push(COMMON_HANDLE_FLAG);
     idx_val.extend_from_slice(&(encoded.len() as u16).to_be_bytes());
     idx_val.extend_from_slice(&encoded);
-    let handle = decode_handle_in_index_value(&idx_val).unwrap();
+    let handle = decode_handle_in_index_value(&idx_val).unwrap().unwrap();
     assert!(matches!(
         handle,
         tidb_txnkv::Handle::Common(_)
     ), "expected common handle, got {handle:?}");
     for _ in 0..ITERATIONS {
-        decode_handle_in_index_value(&idx_val).unwrap();
+        decode_handle_in_index_value(&idx_val).unwrap().unwrap();
     }
 }
 

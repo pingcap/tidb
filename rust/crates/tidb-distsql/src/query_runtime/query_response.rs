@@ -17,7 +17,7 @@
 
 use tidb_datatype::{FieldType, SessionTimeZone};
 
-use crate::distsql_runtime::SelectResultMetadata;
+use crate::distsql_runtime::{LimiterWaitStats, SelectResultMetadata};
 use crate::response_channel::{ResponseRuntimeStats, SelectResponseIter};
 use crate::warning::WarningCollector;
 
@@ -69,6 +69,17 @@ pub trait QueryResponse {
         _required_rows: usize,
     ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.next()
+    }
+
+    /// Returns request-limiter wait evidence accumulated by this response.
+    ///
+    /// Go's `selectResult.closeImpl` reads `HasLimiterWaitStats` from the
+    /// response after consumption. Most response owners have no limiter and
+    /// therefore keep the zero default; transport owners override this when
+    /// they admit TiKV attempts through a request limiter.
+    #[must_use]
+    fn limiter_wait_stats(&self) -> LimiterWaitStats {
+        LimiterWaitStats::default()
     }
 
     /// Closes the response owner and releases any unconsumed subsets.
@@ -156,7 +167,8 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             .take()
             .expect("an open query result owns its response");
         self.closed = true;
-        SelectResponseIter::from_query_response(
+        let limiter_wait = response.limiter_wait_stats();
+        let mut iter = SelectResponseIter::from_query_response(
             Box::new(response),
             self.final_field_types.clone(),
             intermediate_output_types,
@@ -164,7 +176,9 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             self.warnings.clone(),
             self.metadata.clone(),
             self.runtime_stats_collector_enabled,
-        )
+        );
+        iter.record_limiter_wait(limiter_wait);
+        iter
     }
 
     /// Closes the raw response owner. Closing is idempotent.

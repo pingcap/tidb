@@ -33,6 +33,14 @@ pub enum DriverError {
         /// Go's message, verbatim.
         message: String,
     },
+    /// A DDL validation error whose Go error number and text were produced by
+    /// a shared metadata builder.
+    DdlCoded {
+        /// MySQL/TiDB error number.
+        errno: u16,
+        /// Client-visible message.
+        message: String,
+    },
     /// The general refusal: this tier does not implement what the statement
     /// asked for, and the carried text says which part.
     ///
@@ -55,6 +63,13 @@ pub enum DriverError {
     /// the bytes. Build one with [`DriverError::unsupported`], which takes
     /// either.
     Unsupported(Cow<'static, str>),
+    /// Go `dbterror.ErrSequenceUnsupportedTableOption` (8227), carrying the
+    /// option value from `CreateSequenceStmt.TblOptions`.
+    SequenceUnsupportedTableOption(String),
+    /// Go `plannererrors.ErrNotSupportedWithSem` (8132): the configured SEM
+    /// v2 policy rejects this statement for a caller without
+    /// `RESTRICTED_SQL_ADMIN`.
+    NotSupportedWithSem(String),
     /// Go `dbterror.ErrTableOptionUnionUnsupported` (8232).
     TableOptionUnionUnsupported,
     /// Go `dbterror.ErrTableOptionInsertMethodUnsupported` (8233).
@@ -93,6 +108,25 @@ pub enum DriverError {
     /// Go `dbterror.ErrTempTableNotAllowedWithTTL` (8151): `TTL` on a
     /// temporary table (`checkTTLInfoValid`).
     TempTableNotAllowedWithTTL,
+    /// Go `ErrBadField` (1054) against the "TTL config" clause: the column a
+    /// `TTL =` definition names does not exist (`checkTTLInfoColumnType`).
+    UnknownColumnInTtlConfig(String),
+    /// Go `dbterror.ErrUnsupportedColumnInTTLConfig` (8148): the TTL column
+    /// is not a DATETIME, DATE or TIMESTAMP.
+    UnsupportedColumnInTtlConfig(String),
+    /// Go `dbterror.ErrTTLColumnCannotDrop` (8149): the column named by the
+    /// TTL config cannot be dropped while the config stands.
+    TtlColumnCannotDrop(String),
+    /// Go `dbterror.ErrSetTTLOptionForNonTTLTable` (8150): an enable-only or
+    /// interval-only ALTER TTL option on a table without a TTL config,
+    /// carrying the option name.
+    SetTtlOptionForNonTtlTable(String),
+    /// Go `dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL` (8153): a TTL table
+    /// whose clustered primary key contains a FLOAT or DOUBLE column.
+    UnsupportedPrimaryKeyTypeWithTtl,
+    /// Go `dbterror.ErrUnsupportedTTLReferencedByFK` (8152): the TTL config
+    /// is added to a table another table's foreign key refers to.
+    TtlReferencedByForeignKey,
     /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
     /// statement name: a local temporary table exists only in the session,
     /// so the DDL job every one of these would need cannot be submitted.
@@ -108,6 +142,8 @@ pub enum DriverError {
     Txn(TxnErrorKind),
     /// A session-variable statement failed.
     Var(VarErrorKind),
+    /// Go `variable.ErrSnapshotTooOld` (8055).
+    SnapshotTooOld(String),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
     /// Go `autoid.ErrAutoincReadFailed` (1467): the AUTO_INCREMENT column has
@@ -154,6 +190,64 @@ pub enum DriverError {
         value: String,
         /// `ENUM` or `SET`, as Go spells it in the message.
         type_name: &'static str,
+    },
+    /// Go `dbterror.ErrTooLongValueForType` (3505), carrying the column.
+    TooLongEnumSetValue {
+        /// The column whose ENUM/SET member exceeded the configured limit.
+        column: String,
+    },
+    /// Go `dbterror.ErrUnsupportedShardRowIDBits` (8200): `shard_row_id_bits`
+    /// on a table whose primary key is the clustered row id.
+    UnsupportedShardRowIdBits,
+    /// Go `types.ErrTooBigDisplayWidth` (1439), carrying the column and the
+    /// type's maximum display width (BIT 64, FLOAT/DOUBLE 255).
+    TooBigDisplayWidth {
+        /// The column it was declared on.
+        column: String,
+        /// The type's own maximum.
+        maximum: i64,
+    },
+    /// Go `types.ErrTooBigFieldLength` (1074), carrying the column and the
+    /// maximum character length (CHAR 255, VARCHAR 65535/charset-maxlen).
+    TooBigFieldLength {
+        /// The column it was declared on.
+        column: String,
+        /// The charset/type-specific maximum.
+        maximum: i64,
+    },
+    /// Go `types.ErrInvalidFieldSize` (3013), carrying the column: `BIT(0)`.
+    InvalidFieldSize {
+        /// The column it was declared on.
+        column: String,
+    },
+    /// Go `types.ErrTooBigScale` (1425), carrying the declared scale, the
+    /// column and the type's maximum (30).
+    TooBigScale {
+        /// The scale the column declared.
+        scale: i64,
+        /// The column it was declared on.
+        column: String,
+        /// The type's own maximum.
+        maximum: i64,
+    },
+    /// Go `ErrTooBigSet` (1097), carrying the column: more than 64 members.
+    TooManySetMembers {
+        /// The column it was declared on.
+        column: String,
+    },
+    /// Go `types.ErrIllegalValueForType` (1367), carrying the member with the
+    /// embedded comma: `Illegal SET 'a,b' value found during parsing`.
+    IllegalValueForType {
+        /// The type name in Go's message spelling (`SET`).
+        type_name: &'static str,
+        /// The offending member.
+        value: String,
+    },
+    /// Go `types.ErrWrongFieldSpec` (1063), carrying the column: `FLOAT(p)`
+    /// with p above 24.
+    WrongFieldSpec {
+        /// The column it was declared on.
+        column: String,
     },
     /// Go `ErrCantDropFieldOrKey` (1091), with the index-specific message.
     UnknownIndex(String),
@@ -202,6 +296,22 @@ pub enum DriverError {
         /// The table it looked in.
         table: String,
     },
+    /// Go `ErrNoReferencedTable` (1824): a CREATE/ALTER FOREIGN KEY names a
+    /// table that cannot be opened while foreign-key checks are enabled.
+    ForeignKeyReferencedTableMissing(String),
+    /// Go `ErrForeignKeyNoColumn` (3734): a referenced column is absent from
+    /// the parent table while adding a FOREIGN KEY.
+    ForeignKeyReferencedColumnMissing {
+        /// The missing parent-side column.
+        column: String,
+        /// The constraint name Go includes in the diagnostic.
+        constraint: String,
+        /// The parent table being inspected.
+        table: String,
+    },
+    /// Go `ErrKeyColumnDoesNotExits` (1072): a FOREIGN KEY names a child
+    /// column that is absent from the table being created or altered.
+    ForeignKeyChildColumnMissing(String),
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
     /// Go `ErrWrongSubKey` / `dbterror.ErrIncorrectPrefixKey` (1089): an
@@ -345,7 +455,7 @@ pub enum DriverError {
     WindowNoInheritFrame(String),
     /// Go `plannererrors.ErrNotSupportedYet` (1235) as the window builder
     /// raises it, carrying the feature text Go names.
-    NotSupportedYet(&'static str),
+    NotSupportedYet(Cow<'static, str>),
     /// Go `plannererrors.ErrWindowFrameIllegal` (3586): a frame bound whose
     /// offset is negative, NULL or non-integral, or a `start` bound that ranks
     /// AFTER its `end` bound.
@@ -474,12 +584,20 @@ pub enum DriverError {
     PartitionSubpartition,
     /// Go `ErrPartitionMgmtOnNonpartitioned` (1505).
     PartitionManagementOnNonpartitioned,
+    /// Go `plannererrors.ErrPartitionClauseOnNonpartitioned` (1747).
+    PartitionClauseOnNonpartitioned,
     /// Go `dbterror.ErrDropPartitionNonExistent` (1507).
     PartitionDropNonexistent,
     /// Go `dbterror.ErrDropLastPartition` (1508).
     PartitionDropLast,
     /// Go `dbterror.ErrOnlyOnRangeListPartition` (1512).
     PartitionOnlyRangeList(&'static str),
+    /// Go `dbterror.ErrCoalesceOnlyOnHashPartition` (1509): COALESCE
+    /// PARTITION on a RANGE or LIST table.
+    CoalesceOnlyOnHashPartition,
+    /// Go `ast.ErrCoalescePartitionNoPartition` (1515): COALESCE PARTITION
+    /// with a count below one.
+    CoalescePartitionNoPartition,
     /// Go `dbterror.ErrUniqueKeyNeedAllFieldsInPf` (1503), carrying the kind
     /// of key Go names (`CLUSTERED INDEX`).
     PartitionUniqueKeyNeedAllFields(String),
@@ -531,6 +649,9 @@ pub enum DriverError {
     PartitionDuplicateField(String),
     /// Go `dbterror.ErrWrongTypeColumnValue` (1654).
     PartitionColumnValueWrongType,
+    /// Go `ast.ErrPartitionColumnList` (1653): a RANGE/LIST COLUMNS bound
+    /// tuple has a different arity from the partition column list.
+    PartitionColumnList,
     /// Go `dbterror.ErrGlobalIndexNotExplicitlySet` (8264), carrying the
     /// index name: a unique index that does not include every partitioning
     /// column, without `GLOBAL`.
@@ -719,6 +840,14 @@ pub enum DriverError {
         /// The offending row's 1-based position.
         row: usize,
     },
+    /// Go `ErrTimeStampInDSTTransition` (8179): a TIMESTAMP wall clock in a
+    /// daylight-saving gap was adjusted, but remains a valid stored value.
+    TimestampInDSTTransition {
+        /// The source value as written by the statement.
+        value: String,
+        /// Go `Location.String()` for the session zone.
+        timezone: String,
+    },
     /// Go `ErrTruncatedWrongValueForField` (1265), row form.
     DataTruncatedAtRow {
         /// The column being modified.
@@ -774,6 +903,25 @@ pub enum DriverError {
         /// Go's `%s` reason clause.
         reason: String,
     },
+    /// Go `ErrForeignKeyColumnNotNull` (1830): SET NULL would write a child
+    /// column declared NOT NULL.
+    ForeignKeyColumnNotNull {
+        /// The child column that would receive NULL.
+        column: String,
+        /// The constraint carrying the SET NULL action.
+        constraint: String,
+    },
+    /// Go `ErrForeignKeyNoIndexInParent` (1822): no full-length leading index
+    /// covers the referenced columns in the parent table.
+    ForeignKeyNoIndexInParent {
+        /// The constraint whose parent lookup failed.
+        constraint: String,
+        /// The parent table named in REFERENCES.
+        table: String,
+    },
+    /// Go `infoschema.ErrForeignKeyOnPartitioned` (1506): foreign keys are
+    /// not supported when either the child or parent table is partitioned.
+    ForeignKeyOnPartitioned,
     /// Go `ErrNoReferencedRow2` (1452): a child-side `INSERT`/`UPDATE` named
     /// a parent row that does not exist.
     ForeignKeyNoReferencedRow {
@@ -789,6 +937,33 @@ pub enum DriverError {
         table: String,
         /// The constraint as `SHOW CREATE TABLE` would print it.
         constraint: String,
+    },
+    /// Go `dbterror.ErrTruncateIllegalForeignKey` (1701): `TRUNCATE TABLE`
+    /// would remove a parent still referenced by a child outside the same
+    /// statement.
+    ForeignKeyTableReferenced {
+        /// The child schema, child table and constraint as Go formats them.
+        detail: String,
+    },
+    /// Go `dbterror.ErrForeignKeyCannotDrop` (3730): `DROP TABLE` would remove
+    /// a parent still referenced by a child outside the same statement.
+    ForeignKeyTableCannotDrop {
+        /// The parent table being removed.
+        parent_table: String,
+        /// The referring constraint name.
+        constraint: String,
+        /// The child table that owns the constraint.
+        child_table: String,
+    },
+    /// Go `dbterror.ErrForeignKeyCannotDrop` (3730): `DROP DATABASE` would
+    /// remove a parent table still referenced by a child in another schema.
+    ForeignKeyDatabaseReferenced {
+        /// The parent table being removed.
+        parent_table: String,
+        /// The referring constraint name.
+        constraint: String,
+        /// The child table that owns the constraint.
+        child_table: String,
     },
     /// Go `ErrFkExceedMaxDepth` (3008): a cascade recursed deeper than
     /// MySQL's 15 levels.
@@ -854,6 +1029,12 @@ pub enum DriverError {
         /// The violated key's name.
         key: String,
     },
+    /// Go `ErrWrongValueCountOnRow` (1136): a VALUES row's width does not
+    /// match the column list (row 1) or the preceding row's width (row N).
+    WrongValueCountOnRow {
+        /// Go's 1-based row number in the statement.
+        row: usize,
+    },
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
@@ -897,6 +1078,9 @@ pub enum DriverError {
     /// Measured: `ALTER TABLE c DROP CONSTRAINT fk1` where `fk1` IS a foreign
     /// key answers this error and leaves the key in place.
     CheckConstraintNotExists(String),
+    /// Go `table.ErrCheckConstraintViolated` (3819): a writable CHECK
+    /// constraint evaluated to false for an inserted or updated row.
+    CheckConstraintViolated(String),
     /// Go's `preprocessor`'s `CREATE BINDING` check (`preprocess.go`), a plain
     /// error and so 1105: the origin and hinted statements do not normalize to
     /// the same text once their hints are erased. Both normalized texts are

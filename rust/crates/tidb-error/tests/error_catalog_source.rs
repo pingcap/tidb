@@ -70,8 +70,8 @@ fn tidb_catalog_has_a_message_for_every_source_error_code() {
     // pkg/errno/errname_test.go:29:TestAllErrCodeHasMsg
     // pkg/errno/errname_test.go:26:pkg/errno/errcode.go
     // pkg/errno/errname_test.go:0:errname_test.go
-    assert_eq!(tidb::errcode::ALL_CODES.len(), 1166);
-    assert_eq!(tidb::CATALOG.len(), 1164);
+    assert_eq!(tidb::errcode::ALL_CODES.len(), 1167);
+    assert_eq!(tidb::CATALOG.len(), 1165);
     for &(name, code) in tidb::errcode::ALL_CODES {
         if name.starts_with("Err") {
             assert!(
@@ -105,6 +105,12 @@ fn tidb_catalog_preserves_reserved_range_and_extended_metadata() {
         tidb::errname::ErrDBaccessDenied.raw,
         "Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'"
     );
+    assert_eq!(tidb::errcode::ErrSharedLockLost, 9015);
+    assert_eq!(
+        tidb::errname::ErrSharedLockLost.raw,
+        "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s"
+    );
+    assert_eq!(tidb::errname::ErrSharedLockLost.redact_arg_pos, &[1]);
 }
 
 #[test]

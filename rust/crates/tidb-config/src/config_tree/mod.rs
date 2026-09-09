@@ -14,19 +14,14 @@
 
 //! Transcreation of Go `pkg/config/config.go`'s top-level `Config` tree.
 //!
-//! PACKAGE IN PROGRESS: this is the seed of the `pkg/config` `Config`
-//! struct. It currently covers the self-contained marshaling helpers
-//! (`nullableBool`, `AtomicBool`), the error-message-extension
-//! preparation, the `CSE`/`TrxSummary` sub-sections,
-//! `max_allowed_packet` validity, and `FlattenConfigItems`. Still to land within the same package
-//! claim: the sub-section structs (Log/Instance/Security/Performance/...),
-//! the `Config` struct + `DefaultConfig`, `Valid`, `Load` (TOML), and the
-//! `config_util` helpers. The tikvcfg-embedded fields use
-//! [`crate::tikvcfg`]; the actual TiKV client is `tikv/client-rust`.
+//! The tikvcfg-embedded fields use [`crate::tikvcfg`]; the actual TiKV
+//! client is `tikv/client-rust`.
+
+use tidb_hack::go_to_lower;
 
 pub mod big_sections;
 pub mod config;
-pub mod errmsg;
+mod errmsg;
 pub mod helpers;
 pub mod load;
 pub mod log_instance;
@@ -35,24 +30,25 @@ pub mod sections;
 
 pub use big_sections::{Performance, Security, Status};
 pub use config::{new_config, Config};
-pub use errmsg::{extend_error_message, extended_error_message};
 pub use helpers::{
-    flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet, Cse,
-    ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,
+    clone_conf, flatten_config_items, prepare_error_message_extensions, valid_max_allowed_packet,
+    ConfReloadFunc, Cse, ErrorMessageExtension, TrxSummary, DEF_MAX_ALLOWED_PACKET,
 };
-pub use load::{is_all_removed_config_items, is_defined, InstanceConfigSection, LoadError};
-pub use log_instance::{FileLogConfig, Instance, Log};
+pub use load::{
+    initialize_config, is_all_removed_config_items, is_defined, InstanceConfigSection, LoadError,
+};
+pub use log_instance::{FileLogConfig, Instance, Log, RuntimeLogConfig};
 pub use marshal::{AtomicBool, NullableBool, NB_FALSE, NB_TRUE, NB_UNSET};
 pub use sections::{
     Experimental, IsolationRead, OpenTracing, OpenTracingReporter, OpenTracingSampler,
     PessimisticTxn, PlanCache, Plugin, PreparedPlanCache, ProxyProtocol, RuV2Config, Standby,
-    StarterParams, TopSql,
+    StarterParams, TopSql, TracingConfiguration,
 };
 
 /// Validates a zap log level string (Go's final `Config.Valid` check via
 /// `zap.AtomicLevel.UnmarshalText`).
 pub fn parse_log_level(level: &str) -> Result<(), String> {
-    match level.to_lowercase().as_str() {
+    match go_to_lower(level).as_str() {
         "debug" | "info" | "warn" | "warning" | "error" | "dpanic" | "panic" | "fatal" | "" => {
             Ok(())
         }

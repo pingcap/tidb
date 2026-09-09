@@ -18,6 +18,8 @@
 //! index-prefix relation over owned strings. Catalog lookup and optimizer
 //! statistics remain external planner boundaries.
 
+use tidb_hack::go_to_lower;
+
 /// A normalized table column identity.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Column {
@@ -34,9 +36,9 @@ impl Column {
     #[must_use]
     pub fn new(schema_name: &str, table_name: &str, column_name: &str) -> Self {
         Self {
-            schema_name: schema_name.to_lowercase(),
-            table_name: table_name.to_lowercase(),
-            column_name: column_name.to_lowercase(),
+            schema_name: go_to_lower(schema_name),
+            table_name: go_to_lower(table_name),
+            column_name: go_to_lower(column_name),
         }
     }
 
@@ -68,9 +70,9 @@ impl Index {
     #[must_use]
     pub fn new(schema_name: &str, table_name: &str, index_name: &str, columns: &[&str]) -> Self {
         Self {
-            schema_name: schema_name.to_lowercase(),
-            table_name: table_name.to_lowercase(),
-            index_name: index_name.to_lowercase(),
+            schema_name: go_to_lower(schema_name),
+            table_name: go_to_lower(table_name),
+            index_name: go_to_lower(index_name),
             columns: columns
                 .iter()
                 .map(|column| Column::new(schema_name, table_name, column))

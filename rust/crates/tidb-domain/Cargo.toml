@@ -11,6 +11,7 @@ description = "Go pkg/domain (seed): sysvar cache, schema checker, domain contex
 workspace = true
 
 [dependencies]
+toml.workspace = true
 tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-ast = { path = "../tidb-ast" }
@@ -18,16 +19,21 @@ tidb-mysql = { path = "../tidb-mysql" }
 # `serverinfo`'s `getServerInfo` reads the global config, exactly as Go's
 # `pkg/domain/serverinfo` imports `pkg/config`.
 tidb-config = { path = "../tidb-config" }
+tidb-util = { path = "../tidb-util" }
 # The node id Go mints with `uuid.New()` for its DDL owner and publishes as
 # `TIDB_SERVERS_INFO.DDL_ID`.
 getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing = "0.1"
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 # `ru_stats.go` computes interval buckets from local midnight and documents
 # DST as load-bearing; chrono replaces Go's time.Time/time.Location.
 chrono.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
+tidb-parser = { path = "../tidb-parser" }
 # The upstream ru_stats test pins Asia/Shanghai and Australia/Lord_Howe.
 chrono-tz.workspace = true

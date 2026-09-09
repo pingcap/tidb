@@ -40,10 +40,10 @@ pub use charset::canonical_charset;
 pub use collation::canonical_collation;
 pub use escape::unescape_char;
 pub use features::{
-    can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_RANDOM,
-    FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX, FEATURE_ID_FORCE_AUTO_INC,
-    FEATURE_ID_GLOBAL_INDEX, FEATURE_ID_PLACEMENT, FEATURE_ID_PRESPLIT, FEATURE_ID_RESOURCE_GROUP,
-    FEATURE_ID_SPLIT_REGION, FEATURE_ID_TIDB, FEATURE_ID_TTL,
+    can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_PRE_SPLIT,
+    FEATURE_ID_AUTO_RANDOM, FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX,
+    FEATURE_ID_FORCE_AUTO_INC, FEATURE_ID_GLOBAL_INDEX, FEATURE_ID_PLACEMENT, FEATURE_ID_PRESPLIT,
+    FEATURE_ID_RESOURCE_GROUP, FEATURE_ID_SPLIT_REGION, FEATURE_ID_TIDB, FEATURE_ID_TTL,
 };
 pub use keyword_catalog::{Keyword, KEYWORDS};
 
@@ -378,7 +378,16 @@ impl<'a> Lexer<'a> {
             Some(canon) => canon.to_string(),
             None => match kind {
                 TokenKind::Ident if raw.starts_with('`') => unquote(raw, '`'),
-                TokenKind::Ident if raw.starts_with('"') => unquote(raw, '"'),
+                // ANSI_QUOTES flipped a double-quoted string into an
+                // identifier: Go flips only `tok` and keeps `v.Lit` as the
+                // scanString-DECODED buffer (`lexer.go:244-248`), so the
+                // text resolves backslash escapes AND doubled quotes — not
+                // just the raw-span doubled-delimiter collapse
+                // (divergence item 9).
+                TokenKind::Ident if raw.starts_with('"') => String::from_utf8_lossy(
+                    &decode_quoted_string(raw.as_bytes(), self.sql_mode.no_backslash_escapes),
+                )
+                .into_owned(),
                 _ => raw.to_string(),
             },
         };
@@ -412,9 +421,7 @@ impl<'a> Lexer<'a> {
         // allocates here, and anything past the bound is simply not a keyword
         // -- the same negative the old binary search produced.
         let mut upper_buffer = [0u8; KEYWORD_UPPER_MAX];
-        let Some(upper) = uppercased_into(text, &mut upper_buffer) else {
-            return None;
-        };
+        let upper = uppercased_into(text, &mut upper_buffer)?;
 
         // Builtin function keywords normally require an adjacent `(`. Under
         // IGNORE_SPACE, Go scans past whitespace for this one decision without
@@ -547,8 +554,15 @@ impl<'a> Lexer<'a> {
         self.r.inc(); // '@'
         if self.r.peek() == b'@' {
             self.r.inc();
-            // optional global./session./local./instance. prefix
-            for pfx in ["global.", "session.", "local.", "instance."] {
+            // Optional global./session./local. prefix — Go's `startWithAt`
+            // (lexer.go:671) matches exactly these three. `@@instance.` is
+            // deliberately NOT a scanner prefix there: `.` is a user-var
+            // char, so the identifier run folds it into the same single
+            // token, and the grammar splits `@@instance.` from the literal
+            // instead (parser.y SystemVariable/VariableAssignment actions).
+            // A quoted body after `@@instance.` therefore lexes as separate
+            // tokens in Go — mirror that here.
+            for pfx in ["global.", "session.", "local."] {
                 if self.r.starts_with_ci(pfx) {
                     self.r.inc_n(pfx.len());
                     break;
@@ -1063,15 +1077,13 @@ fn uppercased_into<'b>(text: &str, buffer: &'b mut [u8]) -> Option<&'b str> {
 }
 
 struct KeywordSets {
-    general: tidb_util::fast_hash::FxHashSet<&'static str>,
-    builtin: tidb_util::fast_hash::FxHashSet<&'static str>,
-    window: tidb_util::fast_hash::FxHashSet<&'static str>,
+    general: std::collections::HashSet<&'static str>,
+    builtin: std::collections::HashSet<&'static str>,
+    window: std::collections::HashSet<&'static str>,
 }
 
 /// The three generated keyword tables as hashed name sets. Go resolves a word
-/// with one `tokenMap` probe (`pkg/parser/misc.go`); hashing once here replaces
-/// the per-token binary searches whose probe-by-probe string compares showed up
-/// as the lexer's dominant cost under load.
+/// with one `tokenMap` probe (`pkg/parser/misc.go`).
 fn keyword_sets() -> &'static KeywordSets {
     static SETS: std::sync::OnceLock<KeywordSets> = std::sync::OnceLock::new();
     SETS.get_or_init(|| KeywordSets {
@@ -1152,7 +1164,9 @@ fn decode_hex_literal(raw: &[u8]) -> Vec<u8> {
     }
     padded.extend_from_slice(digits);
     padded
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = std::str::from_utf8(pair).expect("hex digits are ASCII");
             u8::from_str_radix(text, 16).expect("HexLit is validated while scanning")
@@ -1192,23 +1206,17 @@ mod tests {
     #[path = "consistent_source.rs"]
     mod consistent_source;
 
-    #[path = "go_parity_b051_source.rs"]
-    mod go_parity_b051_source;
+    #[path = "charset_digester_sm3_source.rs"]
+    mod charset_digester_sm3_source;
 
-    #[path = "go_parity_b052_source.rs"]
-    mod go_parity_b052_source;
+    #[path = "lexer_parser_privileges_source.rs"]
+    mod lexer_parser_privileges_source;
 
-    #[path = "go_parity_b053_source.rs"]
-    mod go_parity_b053_source;
+    #[path = "parser_parse_restore_source.rs"]
+    mod parser_parse_restore_source;
 
-    #[path = "go_parity_b054_source.rs"]
-    mod go_parity_b054_source;
-
-    #[path = "go_parity_b055_source.rs"]
-    mod go_parity_b055_source;
-
-    #[path = "go_parity_b056_source.rs"]
-    mod go_parity_b056_source;
+    #[path = "field_type_terror_source.rs"]
+    mod field_type_terror_source;
 
     /// Renders a SQL string to its space-joined token labels for compact
     /// assertions (the terminal `Eof` is dropped).

@@ -462,7 +462,7 @@ fn duration_parse_events_classify_source_warning_branches() {
 }
 
 #[test]
-fn round_duration_fsp_matches_source_half_away_from_zero_rows() {
+fn round_duration_fsp_matches_source_round_rows() {
     // Source: pkg/types/time.go::Duration.RoundFrac and
     // pkg/types/time_test.go::TestRoundFrac duration rows.
     let second = 1_000_000_000_i64;
@@ -485,6 +485,18 @@ fn round_duration_fsp_matches_source_half_away_from_zero_rows() {
     let negative = round_duration_fsp(-999_999_000, 6, 0).unwrap();
     assert_eq!(negative.nanoseconds(), -second);
     assert_eq!(negative.fsp(), 0);
+
+    // Go's time.Time.Round resolves an exact negative tie toward positive
+    // infinity (`-1.5ms` -> `-1ms`), while a value past the tie still rounds
+    // away from zero (`-1.501ms` -> `-2ms`).
+    assert_eq!(
+        round_duration_fsp(-1_500_000, 6, 3).unwrap().nanoseconds(),
+        -1_000_000
+    );
+    assert_eq!(
+        round_duration_fsp(-1_501_000, 6, 3).unwrap().nanoseconds(),
+        -2_000_000
+    );
 
     let unchanged = round_duration_fsp(123, 4, 4).unwrap();
     assert_eq!(unchanged.nanoseconds(), 123);

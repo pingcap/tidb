@@ -137,19 +137,30 @@ pub fn parse_standard(spec: &str) -> Result<Schedule, String> {
 }
 
 fn parse_descriptor(descriptor: &str, spec: &str) -> Result<Schedule, String> {
-    let lowered = descriptor.to_ascii_lowercase();
     let expand = |text: &str| parse_standard(text);
-    match lowered.as_str() {
+    // robfig's switch is on the raw text: `@YEARLY` falls into `default` and is
+    // rejected, exactly like an unknown descriptor.
+    match descriptor {
         "yearly" | "annually" => expand("0 0 1 1 *"),
         "monthly" => expand("0 0 1 * *"),
         "weekly" => expand("0 0 * * 0"),
         "daily" | "midnight" => expand("0 0 * * *"),
         "hourly" => expand("0 * * * *"),
         _ => {
-            if let Some(rest) = lowered.strip_prefix("every ") {
-                let delay = parse_go_duration(rest.trim())
+            // robfig slices `descriptor[7:]` without trimming, so `@every  1h`
+            // (double space) fails `time.ParseDuration` just like any other
+            // malformed operand.
+            if let Some(rest) = descriptor.strip_prefix("every ") {
+                let delay = parse_go_duration(rest)
                     .map_err(|err| format!("failed to parse duration {rest}: {err}"))?;
-                return Ok(Schedule::ConstantDelay(delay.max(SECOND)));
+                // robfig's `Every`: round sub-second delays up to one second,
+                // truncate sub-second nanos from anything longer.
+                let delay = if delay < SECOND {
+                    SECOND
+                } else {
+                    delay - delay % SECOND
+                };
+                return Ok(Schedule::ConstantDelay(delay));
             }
             Err(format!("unrecognized descriptor: {spec}"))
         }
@@ -157,9 +168,10 @@ fn parse_descriptor(descriptor: &str, spec: &str) -> Result<Schedule, String> {
 }
 
 /// robfig's `getField`: a comma-separated list of ranges, or-ed together.
+/// `strings.FieldsFunc` skips empty segments, so `0,,1` parses as `0,1`.
 fn get_field(field: &str, bounds: &Bounds) -> Result<u64, String> {
     let mut bits = 0_u64;
-    for expression in field.split(',') {
+    for expression in field.split(',').filter(|segment| !segment.is_empty()) {
         bits |= get_range(expression, bounds)?;
     }
     Ok(bits)
@@ -167,53 +179,59 @@ fn get_field(field: &str, bounds: &Bounds) -> Result<u64, String> {
 
 /// robfig's `getRange`: `*`, `?`, `n`, `a-b`, and any of those with `/step`.
 fn get_range(expression: &str, bounds: &Bounds) -> Result<u64, String> {
-    let (range_and_step, extra) = {
-        let mut parts = expression.splitn(3, '/');
-        let first = parts.next().unwrap_or_default();
-        (first, parts.collect::<Vec<_>>())
-    };
-    if extra.len() > 1 {
-        return Err(format!("too many slashes: {expression}"));
-    }
+    let range_and_step: Vec<&str> = expression.split('/').collect();
+    let low_and_high: Vec<&str> = range_and_step[0].split('-').collect();
+    let single_digit = low_and_high.len() == 1;
 
-    let single_digit_star = range_and_step == "*" || range_and_step == "?";
-    let (start, end) = if single_digit_star {
+    let mut extra = 0_u64;
+    let (start, mut end) = if low_and_high[0] == "*" || low_and_high[0] == "?" {
+        extra = STAR_BIT;
         (bounds.min, bounds.max)
     } else {
-        let mut halves = range_and_step.splitn(2, '-');
-        let low = halves.next().unwrap_or_default();
-        let start = parse_int_or_name(low, bounds)?;
-        match halves.next() {
-            None => {
-                if extra.is_empty() {
-                    (start, start)
-                } else {
-                    // "N/step" means "N through the maximum", stepping.
-                    (start, bounds.max)
-                }
-            }
-            Some(high) => (start, parse_int_or_name(high, bounds)?),
-        }
+        let start = parse_int_or_name(low_and_high[0], bounds)?;
+        let end = match low_and_high.len() {
+            1 => start,
+            2 => parse_int_or_name(low_and_high[1], bounds)?,
+            _ => return Err(format!("too many hyphens: {expression}")),
+        };
+        (start, end)
     };
 
+    let step = match range_and_step.len() {
+        1 => 1,
+        2 => {
+            let step = must_parse_int(range_and_step[1])?;
+            // Special handling: N/step means N-max/step.
+            if single_digit {
+                end = bounds.max;
+            }
+            step
+        }
+        _ => return Err(format!("too many slashes: {expression}")),
+    };
+
+    if start < bounds.min {
+        return Err(format!(
+            "beginning of range ({start}) below minimum ({}): {expression}",
+            bounds.min
+        ));
+    }
+    if end > bounds.max {
+        return Err(format!(
+            "end of range ({end}) above maximum ({}): {expression}",
+            bounds.max
+        ));
+    }
     if start > end {
         return Err(format!(
             "beginning of range ({start}) beyond end of range ({end}): {expression}"
         ));
     }
-
-    let step = match extra.first() {
-        None => 1,
-        Some(text) => {
-            let step = must_parse_int(text)?;
-            if step == 0 {
-                return Err(format!(
-                    "step of range should be a positive number: {expression}"
-                ));
-            }
-            step
-        }
-    };
+    if step == 0 {
+        return Err(format!(
+            "step of range should be a positive number: {expression}"
+        ));
+    }
 
     let mut bits = 0_u64;
     let mut value = start;
@@ -221,9 +239,12 @@ fn get_range(expression: &str, bounds: &Bounds) -> Result<u64, String> {
         bits |= 1 << value;
         value += step;
     }
-    if single_digit_star {
-        bits |= STAR_BIT;
+    // A stepped star is no longer a star for the dom/dow rule (robfig clears
+    // the bit when step > 1, so `*/2` matches via the plain bit set).
+    if step > 1 {
+        extra = 0;
     }
+    bits |= extra;
     Ok(bits)
 }
 
@@ -234,27 +255,17 @@ fn parse_int_or_name(text: &str, bounds: &Bounds) -> Result<u32, String> {
             return Ok(index as u32 + bounds.min);
         }
     }
-    let value = must_parse_int(text)?;
-    if value < bounds.min {
-        return Err(format!(
-            "beginning of range ({value}) below minimum ({}): {text}",
-            bounds.min
-        ));
-    }
-    if value > bounds.max {
-        return Err(format!(
-            "end of range ({value}) above maximum ({}): {text}",
-            bounds.max
-        ));
-    }
-    Ok(value)
+    must_parse_int(text)
 }
 
 fn must_parse_int(text: &str) -> Result<u32, String> {
-    let value: u32 = text
+    let value: i64 = text
         .parse()
         .map_err(|_| format!("failed to parse int from {text}"))?;
-    Ok(value)
+    if value < 0 {
+        return Err(format!("negative number ({value}) not allowed: {text}"));
+    }
+    Ok(value as u32)
 }
 
 /// Go's `time.ParseDuration`, reached only through `@every`. Supports the same
@@ -465,6 +476,7 @@ fn day_matches(dom: u64, dow: u64, time: &GoTime) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_util::timeutil::system_location;
 
     #[test]
     fn descriptors_expand_to_specs() {
@@ -505,5 +517,102 @@ mod tests {
             .unwrap_err()
             .starts_with("end of range (61)"));
         assert!(parse_standard("@nope").is_err());
+    }
+
+    #[test]
+    fn stepped_star_clears_star_bit_like_go() {
+        // robfig keeps the star bit only for an unstepped star: `*/1` and `*`
+        // carry it, `*/2` does not.
+        let star_bit = |spec: &str| match parse_standard(spec).unwrap() {
+            Schedule::Spec { minute, .. } => minute & STAR_BIT == STAR_BIT,
+            Schedule::ConstantDelay(_) => panic!("expected spec"),
+        };
+        assert!(star_bit("* * * * *"));
+        assert!(star_bit("*/1 * * * *"));
+        assert!(!star_bit("*/2 * * * *"));
+
+        // With the bit cleared, the dom/dow rule ORs restricted fields: day
+        // 5 (Monday) matches `0 0 */2 * 1` through the dow arm even though 5
+        // is not odd.
+        let time = GoTime::date(2026, 1, 5, 0, 0, 0, 0, &system_location());
+        match parse_standard("0 0 */2 * 1").unwrap() {
+            Schedule::Spec { dom, dow, .. } => assert!(day_matches(dom, dow, &time)),
+            Schedule::ConstantDelay(_) => panic!("expected spec"),
+        }
+    }
+
+    #[test]
+    fn descriptors_are_case_sensitive_like_go() {
+        assert_eq!(
+            parse_standard("@YEARLY"),
+            Err("unrecognized descriptor: @YEARLY".to_string())
+        );
+        assert_eq!(
+            parse_standard("@EVERY 1h"),
+            Err("unrecognized descriptor: @EVERY 1h".to_string())
+        );
+        assert_eq!(
+            parse_standard("@Daily"),
+            Err("unrecognized descriptor: @Daily".to_string())
+        );
+    }
+
+    #[test]
+    fn every_truncates_sub_second_nanos() {
+        assert_eq!(
+            parse_standard("@every 90.5s"),
+            Ok(Schedule::ConstantDelay(90 * SECOND))
+        );
+        assert_eq!(
+            parse_standard("@every 500ms"),
+            Ok(Schedule::ConstantDelay(SECOND))
+        );
+        assert_eq!(
+            parse_standard("@every 1h30m"),
+            Ok(Schedule::ConstantDelay(90 * MINUTE))
+        );
+    }
+
+    #[test]
+    fn empty_comma_segments_are_skipped_like_go() {
+        assert_eq!(
+            parse_standard("0,,1 * * * *"),
+            parse_standard("0,1 * * * *")
+        );
+        assert_eq!(
+            parse_standard("0,1, * * * *"),
+            parse_standard("0,1 * * * *")
+        );
+    }
+
+    #[test]
+    fn range_error_order_and_text_match_go() {
+        // Bounds are checked after both endpoints parse, mirroring robfig.
+        assert_eq!(
+            parse_standard("61-70 1 * * *").unwrap_err(),
+            "end of range (70) above maximum (59): 61-70"
+        );
+        assert_eq!(
+            parse_standard("0 0 0 * *").unwrap_err(),
+            "beginning of range (0) below minimum (1): 0"
+        );
+        assert_eq!(
+            parse_standard("1-2-3 * * * *").unwrap_err(),
+            "too many hyphens: 1-2-3"
+        );
+        assert_eq!(
+            parse_standard("5-2 * * * *").unwrap_err(),
+            "beginning of range (5) beyond end of range (2): 5-2"
+        );
+        // A negative value reaches robfig's negative-number branch only as a
+        // step: a bare `-1` is split on the hyphen first.
+        assert_eq!(
+            parse_standard("*/-2 * * * *").unwrap_err(),
+            "negative number (-2) not allowed: -2"
+        );
+        assert_eq!(
+            parse_standard("0 0/0 * * *").unwrap_err(),
+            "step of range should be a positive number: 0/0"
+        );
     }
 }

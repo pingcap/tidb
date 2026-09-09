@@ -16,20 +16,14 @@ const MYSQL_COMPATIBILITY_VERSION: &str = "8.0.11";
 /// Fixed separator embedded in TiDB's MySQL-compatible server version.
 pub const VersionSeparator: &str = "-TiDB-";
 const TIDBX_RELEASE_VERSION_PREFIX: &str = "CLOUD.";
-/// Classic development-build placeholder.
-pub const LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER: &str = "v8.4.0-this-is-a-placeholder";
-/// Next-generation development-build placeholder.
-pub const TIDBX_PLACEHOLDER_RELEASE_VERSION: &str = "v26.3.0-this-is-a-placeholder";
+const LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER: &str = "v8.4.0-this-is-a-placeholder";
+const TIDBX_PLACEHOLDER_RELEASE_VERSION: &str = "v26.3.0-this-is-a-placeholder";
 /// Build-time default release version. Cargo/build environments may inject the
 /// same value that the Go linker writes into `TiDBReleaseVersion`.
 pub const TIDB_RELEASE_VERSION: &str = match option_env!("TIDB_RELEASE_VERSION") {
     Some(version) => version,
     None => LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER,
 };
-/// Classic development-build server-version placeholder.
-/// Runtime consumers must use [`runtime_versions`], whose default incorporates
-/// an injected [`TIDB_RELEASE_VERSION`].
-pub const LEGACY_SERVER_VERSION_PLACEHOLDER: &str = "8.0.11-TiDB-v8.4.0-this-is-a-placeholder";
 /// Earliest accepted next-generation release year.
 pub const TiDBXVerMinYear: u64 = 2025;
 /// Latest accepted next-generation release year.
@@ -65,7 +59,6 @@ fn runtime_version_state() -> &'static RwLock<RuntimeVersions> {
 }
 
 /// Returns one coherent snapshot of the mutable process-wide versions.
-#[must_use]
 pub fn runtime_versions() -> RuntimeVersions {
     runtime_version_state()
         .read()
@@ -86,16 +79,7 @@ pub fn set_runtime_versions(release_version: impl Into<String>, server_version: 
     };
 }
 
-/// Restores the build-injected defaults. This is primarily useful for
-/// embedding/tests that repeatedly construct a server in one process.
-pub fn reset_runtime_versions() {
-    *runtime_version_state()
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = RuntimeVersions::build_default();
-}
-
 /// Rewrites only the classic development placeholder into its next-gen form.
-#[must_use]
 pub fn normalize_tidb_release_version_for_next_gen(version: &str) -> &str {
     if version == LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER {
         TIDBX_PLACEHOLDER_RELEASE_VERSION
@@ -105,7 +89,7 @@ pub fn normalize_tidb_release_version_for_next_gen(version: &str) -> &str {
 }
 
 /// Exact validation failure returned by next-generation version conversion.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct InvalidReleaseVersion(String);
 impl fmt::Display for InvalidReleaseVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -128,10 +112,10 @@ fn parse_coreos_semver(raw: &str) -> Option<(i64, i64, i64, &str)> {
     // This deliberately follows coreos/go-semver v0.3.1's Set method rather
     // than the stricter Rust semver crate: split metadata first, then
     // prerelease, accept leading zeroes, and parse all numeric fields as i64.
-    let (without_metadata, metadata) = raw.split_once('+').map_or((raw, ""), |parts| parts);
+    let (without_metadata, metadata) = raw.split_once('+').unwrap_or((raw, ""));
     let (version, prerelease) = without_metadata
         .split_once('-')
-        .map_or((without_metadata, ""), |parts| parts);
+        .unwrap_or((without_metadata, ""));
     if !valid_semver_identifier(prerelease) || !valid_semver_identifier(metadata) {
         return None;
     }
@@ -204,7 +188,6 @@ constants! { u16;
     ServerStatusWasSlow = 0x0800; ServerPSOutParams = 0x1000;
 }
 /// Returns whether a server-status word advertises an existing cursor.
-#[must_use]
 pub const fn has_cursor_exists_flag(status: u16) -> bool {
     status & ServerStatusCursorExists != 0
 }
@@ -330,7 +313,6 @@ pub const COMMAND_NAMES: &[(u8, &str)] = &[
     (ComResetConnection, "Reset connect"),
 ];
 /// Returns a command's source diagnostic name.
-#[must_use]
 pub fn command_name(command: u8) -> Option<&'static str> {
     COMMAND_NAMES
         .iter()
@@ -360,7 +342,6 @@ pub const DEFAULT_LENGTH_OF_TIME_FRACTION: &[(i32, usize)] =
     &[(0, 0), (1, 1), (2, 1), (3, 2), (4, 2), (5, 3), (6, 3)];
 
 /// Returns the default physical storage length for a MySQL type.
-#[must_use]
 pub const fn default_mysql_type_length(tp: u8) -> Option<usize> {
     use crate::types::*;
     match tp {
@@ -374,7 +355,6 @@ pub const fn default_mysql_type_length(tp: u8) -> Option<usize> {
     }
 }
 /// Returns the storage bytes for a fractional-seconds precision.
-#[must_use]
 pub const fn default_time_fraction_length(fsp: i32) -> Option<usize> {
     match fsp {
         0 => Some(0),
@@ -480,6 +460,10 @@ impl SqlMode {
     pub const fn has_no_backslash_escapes_mode(self) -> bool {
         self.has(ModeNoBackslashEscapes)
     }
+    /// Tests `NO_AUTO_VALUE_ON_ZERO`.
+    pub const fn has_no_auto_value_on_zero_mode(self) -> bool {
+        self.has(ModeNoAutoValueOnZero)
+    }
     /// Tests `IGNORE_SPACE`.
     pub const fn has_ignore_space_mode(self) -> bool {
         self.has(ModeIgnoreSpace)
@@ -494,12 +478,10 @@ impl SqlMode {
     }
 }
 /// Deletes bits from an SQL mode.
-#[must_use]
 pub const fn delete_sql_mode(original: SqlMode, delete: SqlMode) -> SqlMode {
     SqlMode(original.0 & !delete.0)
 }
 /// Adds bits to an SQL mode.
-#[must_use]
 pub const fn set_sql_mode(original: SqlMode, add: SqlMode) -> SqlMode {
     SqlMode(original.0 | add.0)
 }
@@ -542,7 +524,6 @@ pub const SQL_MODE_NAMES: &[(&str, SqlMode)] = &[
 ];
 
 /// Resolves a source combination mode to its ordered expansion.
-#[must_use]
 pub fn combination_sql_mode(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "ANSI" => Some(&[
@@ -585,7 +566,6 @@ pub fn combination_sql_mode(name: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Uppercases, expands combinations, and removes duplicates in source order.
-#[must_use]
 pub fn format_sql_mode_str(input: &str) -> String {
     let upper = crate::to_uppercase(input.trim_end_matches(' '));
     let mut seen = HashSet::new();
@@ -606,12 +586,10 @@ pub fn format_sql_mode_str(input: &str) -> String {
 }
 
 /// Invalid SQL-mode token plus the valid prefix accumulated before it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct InvalidSqlMode {
     /// Valid prefix bits.
     pub partial: SqlMode,
-    /// Exact invalid token.
-    pub value: String,
     /// Authoritative MySQL error identity and catalog-rendered message.
     pub sql_error: SqlError,
 }
@@ -644,7 +622,6 @@ pub fn get_sql_mode(input: &str) -> Result<SqlMode, InvalidSqlMode> {
                 );
                 return Err(InvalidSqlMode {
                     partial: result,
-                    value: value.to_owned(),
                     sql_error,
                 });
             }
@@ -668,7 +645,6 @@ pub enum Priority {
 }
 impl Priority {
     /// Source map spelling, including `NO_PRIORITY` for the zero value.
-    #[must_use]
     pub const fn as_name(self) -> &'static str {
         match self {
             Self::None => "NO_PRIORITY",
@@ -678,7 +654,6 @@ impl Priority {
         }
     }
     /// SQL text emitted by Restore.
-    #[must_use]
     pub const fn restore(self) -> &'static str {
         match self {
             Self::None => "",
@@ -689,7 +664,6 @@ impl Priority {
     }
 }
 /// Parses a priority case-insensitively, defaulting to no priority.
-#[must_use]
 pub fn priority_from_str(value: &str) -> Priority {
     match crate::to_uppercase(value).as_str() {
         "HIGH_PRIORITY" => Priority::High,

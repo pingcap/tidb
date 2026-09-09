@@ -76,7 +76,7 @@ use super::window::{
 };
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
-use crate::plan_base::PossiblePropertiesInfo;
+use crate::plan_base::{PlanIdAllocator, PossiblePropertiesInfo};
 use crate::stats_info::StatsInfo;
 
 fn column(unique_id: i64) -> Column {
@@ -392,6 +392,55 @@ fn projection_prunes_unused_outputs_and_reports_child_needs() {
     );
 }
 
+/// Go `LogicalProjection.PruneColumns`'s all-pruned tail
+/// (`logical_projection.go:139`): the deletion loop runs even when NO output
+/// is used, so the projection empties and the caller replaces it with its
+/// child. Skipping the loop kept a join-reorder restore projection alive
+/// where Go drops it.
+#[test]
+fn projection_pruning_empties_when_no_output_is_used() {
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::with_id(1, LogicalProjection::TYPE, 0),
+        vec![col_expr(10), col_expr(11)],
+    );
+    let mut output = schema(&[1, 2]);
+    let (child_used, empty) = projection.prune_columns_local(&[], &mut output);
+    assert!(empty, "every output was pruned, so the projection is empty");
+    assert!(child_used.is_empty());
+    assert!(projection.exprs.is_empty());
+    assert!(output.columns.is_empty());
+}
+
+/// Go `LogicalAggregation.CanPullUp()` (`logical_aggregation.go:815`): an
+/// aggregation may move above an apply only when it has no grouping and every
+/// argument becomes NULL over a NULL child row. `COUNT(*)`'s constant argument
+/// is the canonical refusal.
+#[test]
+fn aggregation_can_pull_up_needs_no_grouping_and_null_arguments() {
+    let child = schema(&[1]);
+    let mut sum = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg("sum", vec![col_expr(1)])],
+        Vec::new(),
+    );
+    assert!(sum.can_pull_up(&child));
+    sum.group_by_items = vec![col_expr(1)];
+    assert!(
+        !sum.can_pull_up(&child),
+        "a grouping makes the pull-up unsound"
+    );
+
+    let count = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(2, LogicalAggregation::TYPE, 0),
+        vec![agg("count", vec![one()])],
+        Vec::new(),
+    );
+    assert!(
+        !count.can_pull_up(&child),
+        "COUNT's constant argument is not NULL over an empty input"
+    );
+}
+
 /// Go `LogicalProjection.buildSchemaByExprs` (`logical_projection.go:505`)
 /// and `BuildKeyInfo` (`:163`): a key survives only when its columns are
 /// projected as bare references.
@@ -643,6 +692,21 @@ fn aggregation_derive_stats_uses_the_group_ndv() {
     assert!((stats.col_ndvs()[&100] - 25.0).abs() < 1e-9);
     assert!((stats.col_ndvs()[&101] - 25.0).abs() < 1e-9);
     assert!((agg_plan.input_count - 1000.0).abs() < 1e-9);
+}
+
+/// Go's production `EstimateColsNDVWithMatchedLen` uses the largest scalar
+/// NDV for a multi-column group when no exact GroupNDV exists.
+#[test]
+fn aggregation_derive_stats_does_not_multiply_group_column_ndvs() {
+    let mut agg_plan = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![],
+        vec![col_expr(1), col_expr(2)],
+    );
+    let output = schema(&[100]);
+    let child = StatsInfo::new(1000.0, [(1, 25.0), (2, 40.0)]);
+    let (stats, _) = agg_plan.derive_stats(&[child], &output, &[true]).unwrap();
+    assert!((stats.row_count() - 40.0).abs() < 1e-9);
 }
 
 /// A scalar aggregate is exactly one row.
@@ -1029,13 +1093,16 @@ fn data_source_correlated_cols_come_from_pushed_down_conds() {
 }
 
 /// Go `DataSource.PredicatePushDown` (`logical_datasource.go:185`): every
-/// predicate is recorded in `AllConds`, and only the pushable ones stay.
+/// predicate is recorded in `AllConds`, and only the store-supported ones
+/// stay in `PushedDownConds`; the rest go back to the parent.
 #[test]
 fn data_source_records_all_conds_and_returns_the_remainder() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     let pushable = eq(col_expr(1), one());
-    let kept = eq(col_expr(2), one());
-    let remaining = source.predicate_push_down_local(vec![pushable.clone()], vec![kept.clone()]);
+    // Go admits only the one-argument RoundInt/RoundReal/RoundDec PbCodes, so
+    // `round(col, 1)` is the non-pushable half of the split.
+    let kept = Expression::ScalarFunction(call("round", vec![col_expr(2), one()]));
+    let remaining = source.predicate_push_down_local(vec![pushable.clone(), kept.clone()]);
     assert_eq!(source.all_conds.len(), 2);
     assert_eq!(source.pushed_down_conds.len(), 1);
     assert_eq!(remaining.len(), 1);
@@ -1053,6 +1120,7 @@ fn data_source_prune_columns_separates_conds_from_output() {
             id,
             name: format!("c{id}"),
             is_primary_key: false,
+            is_not_null: false,
         })
         .collect();
     source.all_conds = vec![eq(col_expr(2), one())];
@@ -1102,11 +1170,13 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: false,
+            is_not_null: false,
         },
         DataSourceColumn {
             id: 2,
             name: "id".to_owned(),
             is_primary_key: true,
+            is_not_null: true,
         },
     ];
     let mut output = schema(&[1, 2]);
@@ -1121,6 +1191,65 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     source.build_key_info(&mut output, Vec::new());
     assert!(output.pk_or_uk.is_empty());
     assert!(source.get_pk_is_handle_col(&output).is_none());
+}
+
+#[test]
+fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
+    let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
+    source.columns = vec![
+        DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: false,
+            is_not_null: true,
+        },
+        DataSourceColumn {
+            id: 2,
+            name: "b".to_owned(),
+            is_primary_key: false,
+            is_not_null: true,
+        },
+    ];
+    source.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        columns: vec![
+            crate::plan_builder::catalog::SourceIndexColumn {
+                name: "a".to_owned(),
+                ..Default::default()
+            },
+            crate::plan_builder::catalog::SourceIndexColumn {
+                name: "b".to_owned(),
+                ..Default::default()
+            },
+        ],
+        unique: true,
+        is_public: true,
+        ..Default::default()
+    }];
+    let mut output = schema(&[1, 2]);
+    for column in &mut output.columns {
+        column
+            .ret_type
+            .as_mut()
+            .unwrap()
+            .add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    }
+    let (strong, nullable) = source.index_keys(&output);
+    assert_eq!(
+        strong[0]
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(nullable.is_empty());
+
+    source.columns[1].is_not_null = false;
+    let (strong, nullable) = source.index_keys(&output);
+    assert!(strong.is_empty());
+    assert_eq!(nullable.len(), 1);
+
+    let (strong, nullable) = source.index_keys(&schema(&[1]));
+    assert!(strong.is_empty() && nullable.is_empty());
 }
 
 /// Go `DataSource.PreparePossibleProperties` (`logical_datasource.go:343`):
@@ -1408,10 +1537,16 @@ fn limit_explain_info_is_exact_without_partitioning() {
 /// TopN with NO order — so `IsLimit()` — and does NOT carry `PartitionBy`.
 #[test]
 fn limit_converts_to_a_topn_that_is_still_a_limit() {
-    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 4), 2, 9);
+    let allocator = PlanIdAllocator::new();
+    let mut limit = LogicalLimit::new(
+        BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 4),
+        2,
+        9,
+    );
+    let limit_id = limit.base.base.id();
     limit.prefer_limit_to_cop = true;
     limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
-    let topn = limit.convert_to_topn();
+    let topn = limit.convert_to_topn(&allocator);
     assert!(topn.is_limit());
     assert_eq!(topn.offset, 2);
     assert_eq!(topn.count, 9);
@@ -1419,12 +1554,14 @@ fn limit_converts_to_a_topn_that_is_still_a_limit() {
     assert!(topn.partition_by.is_empty());
     assert_eq!(topn.base.base.tp(), LogicalTopN::TYPE);
     assert_eq!(topn.base.base.query_block_offset(), 4);
+    assert_ne!(topn.base.base.id(), limit_id);
 }
 
 /// Go `LogicalTopN.AttachChild` (`logical_top_n.go:200`), dual branch: the
 /// dual absorbs the window and the TopN disappears.
 #[test]
 fn topn_attach_child_folds_into_a_table_dual() {
+    let allocator = PlanIdAllocator::new();
     let dual = |rows: usize| {
         LogicalPlan::TableDual(super::LogicalTableDual {
             base: BaseLogicalPlan::with_id(1, "TableDual", 0),
@@ -1437,7 +1574,7 @@ fn topn_attach_child_folds_into_a_table_dual() {
         2,
         3,
     );
-    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(10)) else {
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(10), &allocator) else {
         panic!("a dual child must absorb the TopN");
     };
     // min(10 - 2, 3) == 3.
@@ -1449,7 +1586,7 @@ fn topn_attach_child_folds_into_a_table_dual() {
         5,
         3,
     );
-    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(4)) else {
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(4), &allocator) else {
         panic!("a dual child must absorb the TopN");
     };
     // The offset skips past the end: nothing is left.
@@ -1461,6 +1598,10 @@ fn topn_attach_child_folds_into_a_table_dual() {
 /// `PartitionBy`.
 #[test]
 fn topn_attach_child_degrades_to_a_limit_without_by_items() {
+    let allocator = PlanIdAllocator::new();
+    for _ in 0..3 {
+        allocator.alloc();
+    }
     let mut topn = LogicalTopN::new(
         BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
         vec![],
@@ -1482,7 +1623,7 @@ fn topn_attach_child_degrades_to_a_limit_without_by_items() {
         },
         vec![],
     ));
-    let LogicalPlan::Limit(limit) = topn.attach_child(child) else {
+    let LogicalPlan::Limit(limit) = topn.attach_child(child, &allocator) else {
         panic!("a TopN with no ByItems must become a Limit");
     };
     assert_eq!(limit.offset, 1);
@@ -1491,11 +1632,13 @@ fn topn_attach_child_degrades_to_a_limit_without_by_items() {
     assert_eq!(limit.partition_by.len(), 1);
     assert_eq!(limit.base.child_len(), 1);
     assert_eq!(limit.base.base.tp(), LogicalLimit::TYPE);
+    assert_eq!(limit.base.base.id(), 4);
 }
 
 /// Go `LogicalTopN.AttachChild` (`logical_top_n.go:224`), default branch.
 #[test]
 fn topn_attach_child_keeps_a_real_topn() {
+    let allocator = PlanIdAllocator::new();
     let topn = LogicalTopN::new(
         BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
         vec![by(col_expr(1), false)],
@@ -1507,7 +1650,7 @@ fn topn_attach_child_keeps_a_real_topn() {
         BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0),
         vec![],
     ));
-    let attached = topn.attach_child(child);
+    let attached = topn.attach_child(child, &allocator);
     assert!(matches!(attached, LogicalPlan::TopN(_)));
     assert_eq!(attached.children().len(), 1);
 }
@@ -1615,15 +1758,18 @@ fn union_all_repairs_only_a_child_wider_than_itself() {
 /// copy folds the offset into the count and keeps no offset of its own.
 #[test]
 fn union_all_child_topn_folds_the_offset_into_the_count() {
+    let allocator = PlanIdAllocator::new();
+    // The child allocates its plan id from the same allocator; hardcode a
+    // non-allocating id for the original so the identity assert is exact.
     let mut topn = LogicalTopN::new(
-        BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 2),
+        BaseLogicalPlan::with_id(1000, LogicalTopN::TYPE, 2),
         vec![by(col_expr(7), true)],
         10,
         5,
     );
     topn.prefer_limit_to_cop = true;
     topn.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
-    let child = LogicalUnionAll::push_down_topn_for_child(&topn);
+    let child = LogicalUnionAll::push_down_topn_for_child(&topn, &allocator);
     assert_eq!(child.offset, 0);
     assert_eq!(child.count, 15);
     assert!(child.prefer_limit_to_cop);
@@ -1633,6 +1779,7 @@ fn union_all_child_topn_folds_the_offset_into_the_count() {
     // PartitionBy does NOT travel with it.
     assert!(child.partition_by.is_empty());
     assert!(child.base.children().is_empty());
+    assert_ne!(child.base.base.id(), topn.base.base.id());
 }
 
 /// Go `LogicalUnionAll.DeriveStats` (`logical_union_all.go:187`): rows and
@@ -1869,10 +2016,12 @@ fn apply_derive_stats_takes_the_lateral_estimate_and_floors_it() {
 
     let mut la = apply(LogicalJoinType::Inner);
     la.is_lateral = true;
+    la.join.equal_conditions = vec![call("eq", vec![col_expr(1), col_expr(2)])];
     let (stats, _) = la
         .derive_stats(&children, &output, 1, Some(500.0), &[true])
         .unwrap();
     assert!((stats.row_count() - 500.0).abs() < 1e-9);
+    assert!((la.join.equal_cond_out_cnt - 500.0).abs() < 1e-9);
 
     // A left outer apply never drops below its outer count.
     let mut la = apply(LogicalJoinType::LeftOuter);
@@ -1882,27 +2031,30 @@ fn apply_derive_stats_takes_the_lateral_estimate_and_floors_it() {
         .unwrap();
     assert!((stats.row_count() - 80.0).abs() < 1e-9);
 
-    // No estimate and no correlation: Go's Cartesian bound.
+    // No explicit key but a correlated inner: Go's product bound, because
+    // the right profile already includes the pushed correlated predicate.
     let mut la = apply(LogicalJoinType::Inner);
     la.is_lateral = true;
+    la.cor_cols = vec![cor(1)];
     let (stats, _) = la
         .derive_stats(&children, &output, 1, None, &[true])
         .unwrap();
     assert!((stats.row_count() - 240.0).abs() < 1e-9);
 }
 
-/// `needs_lateral_row_count_estimate` names exactly Go's two estimator
-/// branches, so a caller cannot take the Cartesian fallback by accident.
+/// `needs_lateral_row_count_estimate` names exactly Go's keyed estimator
+/// branch, while correlated lateral predicates without an explicit key keep
+/// the product fallback.
 #[test]
 fn apply_reports_when_the_lateral_estimate_is_mandatory() {
     let mut la = apply(LogicalJoinType::Inner);
     // Not lateral at all.
     assert!(!la.needs_lateral_row_count_estimate());
     la.is_lateral = true;
-    // Lateral, but neither join keys nor correlation: Go's third branch.
+    // Lateral, but neither join keys nor correlation: Go's product branch.
     assert!(!la.needs_lateral_row_count_estimate());
     la.cor_cols = vec![cor(1)];
-    assert!(la.needs_lateral_row_count_estimate());
+    assert!(!la.needs_lateral_row_count_estimate());
     la.cor_cols.clear();
     la.join.equal_conditions = vec![call("eq", vec![col_expr(1), col_expr(2)])];
     assert!(la.needs_lateral_row_count_estimate());
@@ -2509,7 +2661,8 @@ fn cte_drops_correlated_predicates_unless_it_is_inside_an_apply() {
 /// ABOVE the CTE, never pushed into it — and it may still collapse to a limit.
 #[test]
 fn cte_attaches_a_topn_above_itself() {
-    let plan = cte(cte_class(|_| {})).push_down_topn(None);
+    let allocator = PlanIdAllocator::new();
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, None);
     assert!(matches!(plan, LogicalPlan::CTE(_)));
 
     let topn = LogicalTopN::new(
@@ -2518,7 +2671,7 @@ fn cte_attaches_a_topn_above_itself() {
         0,
         5,
     );
-    let plan = cte(cte_class(|_| {})).push_down_topn(Some(topn));
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, Some(topn));
     assert!(matches!(plan, LogicalPlan::TopN(_)));
     assert!(matches!(plan.children()[0], LogicalPlan::CTE(_)));
 
@@ -2529,7 +2682,7 @@ fn cte_attaches_a_topn_above_itself() {
         0,
         5,
     );
-    let plan = cte(cte_class(|_| {})).push_down_topn(Some(limit_shaped));
+    let plan = cte(cte_class(|_| {})).push_down_topn(&allocator, Some(limit_shaped));
     assert!(matches!(plan, LogicalPlan::Limit(_)));
 }
 
@@ -2787,10 +2940,13 @@ fn sequence_addresses_only_its_last_child() {
         LogicalSequence::schema(&schemas).unwrap().columns[0].unique_id,
         9
     );
-    assert!(LogicalSequence::schema(&[]).is_none());
+    assert!(std::panic::catch_unwind(|| LogicalSequence::schema(&[])).is_err());
     assert_eq!(LogicalSequence::predicate_push_down_child(4), Some(3));
     assert_eq!(LogicalSequence::prune_columns_child(4), Some(3));
-    assert_eq!(LogicalSequence::predicate_push_down_child(0), None);
+    assert!(
+        std::panic::catch_unwind(|| { LogicalSequence::predicate_push_down_child(0) }).is_err()
+    );
+    assert!(std::panic::catch_unwind(|| LogicalSequence::prune_columns_child(0)).is_err());
 }
 
 /// Go `LogicalSequence.DeriveStats` (`logical_sequence.go:82`): the LAST
@@ -2812,7 +2968,10 @@ fn sequence_adopts_the_last_child_profile_and_reports_its_reload_flag() {
     assert!((stats.row_count() - 77.0).abs() < 1e-9);
     // No reload flags at all defaults to reloaded.
     assert!(op.derive_stats(&children, &[]).unwrap().1);
-    assert!(op.derive_stats(&[], &[true]).is_none());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        op.derive_stats(&[], &[true])
+    }))
+    .is_err());
 
     let info = op.prepare_possible_properties(&[
         Some(PossiblePropertiesInfo {
@@ -3460,6 +3619,8 @@ fn mem_table(table_name: &str) -> LogicalMemTable {
 fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     let mut other = mem_table("COLUMNS");
     assert!(!other.is_prunable());
+    assert!(mem_table("tables").is_prunable());
+    assert!(mem_table("partitions").is_prunable());
     let mut mem_schema = schema(&[1, 2, 3]);
     assert!(other
         .prune_columns(&mut mem_schema, &[column(1)])
@@ -3499,6 +3660,40 @@ fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     // Nothing used at all still leaves the single remaining column.
     assert!(slow.prune_columns(&mut mem_schema, &[]).is_empty());
     assert_eq!(mem_schema.len(), 1);
+
+    // Go added PARTITIONS to the same allow-list so a TABLE_ROWS-only
+    // information-schema query can prune the size columns before the physical
+    // stats detector decides whether histogram data is needed.
+    let mut partitions = mem_table("PARTITIONS");
+    partitions.columns = vec![
+        MemTableColumn {
+            id: 10,
+            name: "TABLE_NAME".to_owned(),
+        },
+        MemTableColumn {
+            id: 11,
+            name: "TABLE_ROWS".to_owned(),
+        },
+        MemTableColumn {
+            id: 12,
+            name: "DATA_LENGTH".to_owned(),
+        },
+    ];
+    let mut partition_schema = schema(&[10, 11, 12]);
+    assert_eq!(
+        partitions.prune_columns(&mut partition_schema, &[column(11)]),
+        vec![2, 0]
+    );
+    assert_eq!(
+        partition_schema
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![11]
+    );
+    assert_eq!(partitions.columns.len(), 1);
+    assert_eq!(partitions.columns[0].name, "TABLE_ROWS");
 }
 
 /// Go `LogicalMemTable.PushDownTopN` (`logical_mem_table.go:114`),
@@ -3798,4 +3993,145 @@ fn the_last_operators_are_wired_into_the_enum() {
     assert!(plans
         .iter()
         .all(|plan| plan.extract_correlated_cols().is_empty()));
+}
+
+// ***** ExtractColGroups child-access boundaries *****
+
+/// Go `LogicalJoin.ExtractColGroups` (`logical_join.go:628`) indexes
+/// `p.Children()[0]` unconditionally for the left-side outer join types.
+#[test]
+fn join_extract_col_groups_panics_on_a_childless_left_outer_join_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        join.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}
+
+/// Go indexes `p.Children()[1].Schema()` for `RightOuterJoin` — a lone child
+/// panics too, before the schema is even inspected.
+#[test]
+fn join_extract_col_groups_panics_on_a_single_child_right_outer_join_like_go() {
+    let mut base = BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0);
+    base.set_children(vec![LogicalPlan::TableDual(super::LogicalTableDual {
+        base: BaseLogicalPlan::with_id(2, "TableDual", 0),
+        row_count: 1,
+    })]);
+    let join = LogicalPlan::Join(LogicalJoin::new(base, LogicalJoinType::RightOuter));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        join.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+    join.dismantle();
+}
+
+/// Go `LogicalApply.ExtractColGroups` (`logical_apply.go:250`) indexes
+/// `la.Children()[0]` for the left-side outer join types.
+#[test]
+fn apply_extract_col_groups_panics_on_a_childless_apply_like_go() {
+    let apply = LogicalPlan::Apply(LogicalApply::new(
+        BaseLogicalPlan::with_id(1, LogicalApply::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        apply.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}
+
+/// Go `LogicalWindow.ExtractColGroups` (`logical_window.go:427`) checks
+/// `len(colGroups) == 0` first, so empty groups never reach the child index.
+#[test]
+fn window_extract_col_groups_only_indexes_the_child_for_non_empty_groups() {
+    let window = LogicalPlan::Window(LogicalWindow::new(
+        BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
+        Vec::new(),
+    ));
+    assert!(window.extract_col_groups(&[]).is_empty());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        window.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}
+
+// ***** Aggregation AggFuncs index boundaries *****
+
+/// Go `getAggFuncsColsForFirstRow` (`logical_aggregation.go:724-725`) indexes
+/// `la.AggFuncs[idx]` and `Args[0]` unguarded while walking the schema.
+#[test]
+fn first_row_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, vec![col_expr(1)])],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9, 10]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        aggregation.agg_funcs_cols_for_first_row(&schema);
+    }))
+    .is_err());
+}
+
+#[test]
+fn first_row_columns_panics_on_an_argument_less_firstrow_like_go() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, Vec::new())],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        aggregation.agg_funcs_cols_for_first_row(&schema);
+    }))
+    .is_err());
+}
+
+/// Go `PruneColumns` (`logical_aggregation.go:123`) indexes `la.AggFuncs[i]`
+/// directly over the schema-derived `used` list.
+#[test]
+fn prune_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
+    let mut aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_FIRST_ROW, vec![col_expr(1)])],
+        Vec::new(),
+    );
+    let mut schema = schema(&[9, 10]);
+    let parent = vec![column(9)];
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        aggregation.prune_columns_local(&parent, &mut schema);
+    }))
+    .is_err());
+}
+
+/// Go `getAggFuncsColsForConstResult` guards `idx >= len(la.AggFuncs)` with
+/// an explicit break — a longer schema is NOT a panic there.
+#[test]
+fn const_result_columns_keeps_gos_explicit_length_guard() {
+    let aggregation = LogicalAggregation::new(
+        super::BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg(AGG_FUNC_MAX, vec![col_expr(1)])],
+        vec![col_expr(2)],
+    );
+    let schema = schema(&[9, 10]);
+    let (cols, exprs) = aggregation.agg_funcs_cols_for_const_result(&schema);
+    assert!(cols.is_empty() && exprs.is_empty());
+}
+
+/// Go `LogicalProjection.DeriveStats` (`logical_projection.go:296`) indexes
+/// `selfSchema.Columns[i]` directly while walking `p.Exprs`.
+#[test]
+fn projection_derive_stats_panics_when_the_schema_outgrows_the_exprs_like_go() {
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::with_id(1, LogicalProjection::TYPE, 0),
+        vec![col_expr(10), col_expr(11)],
+    );
+    projection.base.base.set_schema(Some(schema(&[100])));
+    let child = StatsInfo::new(50.0, [(10, 7.0)]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        projection.derive_stats(&[child], &schema(&[100]), &[true])
+    }))
+    .is_err());
 }

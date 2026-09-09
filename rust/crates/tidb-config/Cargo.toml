@@ -18,6 +18,7 @@ base64 = { workspace = true }
 serde = { workspace = true }
 regex = { workspace = true }
 rustix = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 serde_ignored = "0.1"

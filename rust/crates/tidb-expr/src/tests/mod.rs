@@ -17,26 +17,61 @@
 use super::*;
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 
+mod advisory_get_lock_integration_source;
+mod aggregation_arithmetic_cast_source;
 mod binary_string_signature;
+mod builtin_info_json_math_source;
+mod builtin_math_misc_op_source;
+mod builtin_string_time_source;
+mod builtin_time_calendars_source;
+mod builtin_vectorized_time_infra_source;
 mod collation_compare;
 mod compare;
+mod compare_control_source;
+mod compare_time_builtin_rows_source;
+mod constant_test_go_tables_source;
+mod context_override_values_source;
 mod control;
+mod convert_using_signature_source;
+mod crypto_encryption_source;
 mod datetime;
+mod distsql_pb_roundtrip_gap_source;
 mod etint_argument;
-mod go_arithmetic_values;
-mod go_control_op_math_values;
-mod go_parity_b066;
-mod go_parity_b068;
-mod go_string_values;
-mod go_time_values;
 mod etstring_argument;
 mod evaluator_binop;
+mod evaluator_go_tables_source;
+mod expr_to_pb_lowering_gap_source;
+mod expr_to_pb_switcher_source;
+mod expression_null_const_source;
+mod expression_with_null_source;
+mod filter_extract_dnf_source;
+mod find_in_set_lookup_source;
+mod function_traits_source;
+mod go_arithmetic_values;
+mod go_control_op_math_values;
+mod go_string_values;
+mod go_time_values;
+mod hash_group_key_codec_matrix_source;
+mod helper_current_timestamp_source;
+mod ilike_info_cast_source;
+mod in_func_decimal_collation_source;
+mod json_merge_patch_integration_source;
 mod math;
 mod operand_dispatch;
 mod regexp_like;
+mod regexp_vec_cache_source;
+mod scalar_function_semantics_source;
+mod setvar_getvar_values_getparam_source;
+mod util_filter_condition_source;
+mod vectorizable_and_chunk_eval_source;
+mod vectorized_filter_consider_null_gap_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
+    e_with(expr, &NoColumns)
+}
+
+fn e_with(expr: &str, cols: &dyn Columns) -> String {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
     let Stmt::Query(query) = stmt else {
         panic!("not query")
@@ -45,7 +80,7 @@ pub(super) fn e(expr: &str) -> String {
         panic!("not select")
     };
     match &s.fields[0] {
-        SelectField::Expr { expr, .. } => match eval(expr) {
+        SelectField::Expr { expr, .. } => match eval_in(expr, cols) {
             Ok(v) => v.label(),
             Err(err) => format!("{err:?}"),
         },
@@ -1758,6 +1793,34 @@ fn bitwise_and_div_by_zero() {
 }
 
 #[test]
+fn ast_integer_overflow_preserves_go_error_shape() {
+    struct NoUnsignedSubtraction;
+
+    impl Columns for NoUnsignedSubtraction {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn no_unsigned_subtraction(&self) -> bool {
+            true
+        }
+    }
+
+    assert_eq!(
+        e("9223372036854775807 + 1"),
+        "DataOutOfRange { value: \"BIGINT\", expression: \"(9223372036854775807 + 1)\" }"
+    );
+    assert_eq!(
+        e("18446744073709551615 + 1"),
+        "DataOutOfRange { value: \"BIGINT UNSIGNED\", expression: \"(18446744073709551615 + 1)\" }"
+    );
+    assert_eq!(
+        e_with("0 - 18446744073709551615", &NoUnsignedSubtraction,),
+        "DataOutOfRange { value: \"BIGINT\", expression: \"(0 - 18446744073709551615)\" }"
+    );
+}
+
+#[test]
 fn out_of_domain_is_unsupported() {
     // A user variable reference is NEVER an error (confirmed via
     // `gorun`: an unset/session-less `@x` reads as `NULL`, unlike
@@ -1889,7 +1952,10 @@ fn floats() {
     // the one case the differential corpus can't itself assert
     // (`ERR` goldens are skipped, not compared), so it's covered
     // directly here instead.
-    assert_eq!(e("1e300 * 1e300"), "FloatOverflow");
+    assert_eq!(
+        e("1e300 * 1e300"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"(1e+300 * 1e+300)\" }"
+    );
     assert_eq!(e("1e-300 * 1e-300"), "FLOAT:0"); // underflow to zero is fine
                                                  // Bitwise/shift rounds to the nearest i64 first — but TIES TO
                                                  // EVEN, the OPPOSITE tie-breaking rule from Decimal's own `~`
@@ -2152,9 +2218,8 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
     ] {
         assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }
-    // `-0x1A` is Go's -26; only the label's TYPE differs between this tier
-    // and the chunk tier, which `gorun` cannot distinguish, so the value is
-    // what is asserted.
-    assert_eq!(e("-0x1A"), "DEC:-26");
+    // `-0x1A` is a BinaryLiteral in Go's unary-minus table and therefore
+    // takes the REAL signature in both the AST and CHUNK evaluators.
+    assert_eq!(e("-0x1A"), "FLOAT:-26");
     assert_eq!(chunk_e("-0x1A"), "FLOAT:-26");
 }

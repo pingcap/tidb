@@ -50,6 +50,23 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
+func TestGlobalInfoSyncerInitServerInfoOptions(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(
+		context.Background(), "test", func() uint64 { return 1 },
+		nil, nil, nil, nil, keyspace.CodecV1, true, nil,
+		serverinfo.WithoutStatusEndpointClaim(),
+	)
+	require.NoError(t, err)
+
+	client := &mockResourceManagerClient{}
+	getResp, err := client.Get(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, getResp.Header)
+	putResp, err := client.Put(context.Background(), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, putResp.Header)
+}
+
 func TestPutBundlesRetry(t *testing.T) {
 	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)

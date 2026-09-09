@@ -150,9 +150,13 @@ pub fn get_hash_joins(
         }
         // Go getHashJoin tries pushing the enclosing lookup requirement to
         // each child separately. The other child's scan remains independent.
-        for lookup_child in 0..if property.index_join.is_some() { 2 } else { 1 } {
+        for lookup_child in 0..if property.index_join_prop.is_some() {
+            2
+        } else {
+            1
+        } {
             let mut requirements = requirements.clone();
-            requirements[lookup_child].index_join = property.index_join.clone();
+            requirements[lookup_child].index_join_prop = property.index_join_prop.clone();
             let mut base =
                 BasePhysicalPlan::new(allocator, "HashJoin", join.base.base.query_block_offset());
             base.base.set_schema(join.base.base.schema().cloned());

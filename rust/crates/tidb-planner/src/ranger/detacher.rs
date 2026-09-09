@@ -160,10 +160,7 @@ pub fn extract_access_conditions_for_column<'a>(
         length: UNSPECIFIED_LENGTH,
         opt_prefix_index_single_scan,
     };
-    conds
-        .iter()
-        .filter(|expr| checker.check(expr).0)
-        .collect()
+    conds.iter().filter(|expr| checker.check(expr).0).collect()
 }
 
 /// Go `DetachCondsForColumn`.
@@ -184,7 +181,7 @@ pub fn detach_conds_for_column(
 use tidb_datatype::Datum;
 
 use super::points::{
-    range_point_cmp, ConstantEvaluator, Point, PointBuilder, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT,
+    range_point_cmp, ExpressionEvaluator, Point, PointBuilder, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT,
     OP_NE, OP_NULL_EQ,
 };
 
@@ -212,7 +209,7 @@ pub fn get_potential_eq_or_in_col_offset(
         expr,
         cols,
         regard_null_as_point,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -220,7 +217,7 @@ fn get_potential_eq_or_in_col_offset_in(
     expr: &Expression,
     cols: &[tidb_expr::column::Column],
     regard_null_as_point: bool,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
 ) -> i64 {
     let Expression::ScalarFunction(f) = expr else {
         return -1;
@@ -235,7 +232,7 @@ fn get_potential_eq_or_in_col_offset_in(
                     dnf_item,
                     cols,
                     regard_null_as_point,
-                    eval_constant,
+                    eval_expression,
                 );
                 if cur_offset == -1 {
                     return -1;
@@ -271,10 +268,10 @@ fn get_potential_eq_or_in_col_offset_in(
             {
                 return -1;
             }
-            let Expression::Constant(const_val) = const_side else {
+            let Expression::Constant(_) = const_side else {
                 return -1;
             };
-            let Ok(val) = eval_constant(const_val) else {
+            let Ok(val) = eval_expression(const_side) else {
                 return -1;
             };
             // col <=> NULL stays a range scan, not a point get (nullable
@@ -525,7 +522,7 @@ pub fn extract_eq_and_in_condition(
         cols,
         lengths,
         regard_null_as_point,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -535,9 +532,9 @@ pub fn extract_eq_and_in_condition_in(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     regard_null_as_point: bool,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
 ) -> EqAndInExtraction {
-    let mut builder = PointBuilder::new(eval_constant);
+    let mut builder = PointBuilder::new(eval_expression);
     let mut accesses: Vec<Option<Expression>> = vec![None; cols.len()];
     let mut points: Vec<Vec<Point>> = vec![Vec::new(); cols.len()];
     let mut merged: Vec<bool> = vec![false; cols.len()];
@@ -546,7 +543,7 @@ pub fn extract_eq_and_in_condition_in(
     let mut offsets = vec![-1_i64; conditions.len()];
     for (i, cond) in conditions.iter().enumerate() {
         let offset =
-            get_potential_eq_or_in_col_offset_in(cond, cols, regard_null_as_point, eval_constant);
+            get_potential_eq_or_in_col_offset_in(cond, cols, regard_null_as_point, eval_expression);
         offsets[i] = offset;
         if offset == -1 {
             continue;
@@ -700,7 +697,7 @@ pub struct DetachRangeResult {
 /// Go `rangeDetacher`: one detach run's inputs.
 pub struct RangeDetacher<'a> {
     /// Evaluation of retained constants in the current statement context.
-    pub eval_constant: &'a ConstantEvaluator<'a>,
+    pub eval_expression: &'a ExpressionEvaluator<'a>,
     /// Go `cols`.
     pub cols: &'a [tidb_expr::column::Column],
     /// Go `lengths`.
@@ -713,6 +710,8 @@ pub struct RangeDetacher<'a> {
     pub convert_to_sort_key: bool,
     /// Go `rangeMaxSize`.
     pub range_max_size: i64,
+    /// Shared statement handler, retained across recursive candidate construction.
+    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Go's session `RegardNULLAsPoint` (default true).
     pub regard_null_as_point: bool,
     /// Go's session `OptPrefixIndexSingleScan` (default true).
@@ -728,6 +727,12 @@ pub struct RangeDetacher<'a> {
 }
 
 impl RangeDetacher<'_> {
+    fn record_range_fallback(&self) {
+        if let Some(handler) = self.range_fallback_handler {
+            handler.record_range_fallback(self.range_max_size);
+        }
+    }
+
     /// Go `buildRangeOnColsByCNFCond` (`ranger.go:553`): the leading eq/in
     /// chain appends column by column; the tail's non-equal conditions
     /// intersect into ONE more column's points.
@@ -739,7 +744,7 @@ impl RangeDetacher<'_> {
         (super::types::Ranges, Vec<Expression>, Vec<Expression>),
         super::points::PointBuilderError,
     > {
-        let mut builder = PointBuilder::new(self.eval_constant);
+        let mut builder = PointBuilder::new(self.eval_expression);
         let mut ranges = super::types::Ranges::new();
         for i in 0..eq_and_in_count {
             let point = builder.build(
@@ -775,6 +780,7 @@ impl RangeDetacher<'_> {
             };
             ranges = new_ranges;
             if fallback {
+                self.record_range_fallback();
                 return Ok((
                     ranges,
                     access_conds[..i].to_vec(),
@@ -827,6 +833,7 @@ impl RangeDetacher<'_> {
             };
             ranges = new_ranges;
             if fallback {
+                self.record_range_fallback();
                 return Ok((
                     ranges,
                     access_conds[..eq_and_in_count].to_vec(),
@@ -868,7 +875,7 @@ impl RangeDetacher<'_> {
             self.cols,
             self.lengths,
             self.regard_null_as_point,
-            self.eval_constant,
+            self.eval_expression,
         );
         if extraction.empty_range {
             return Ok(res);
@@ -969,7 +976,7 @@ pub fn detach_simple_cond_and_build_range_for_index(
         cols,
         lengths,
         range_max_size,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -979,7 +986,7 @@ pub fn detach_simple_cond_and_build_range_for_index_in(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
 ) -> Result<
     (super::types::Ranges, Vec<Expression>, Vec<Expression>),
     super::points::PointBuilderError,
@@ -993,7 +1000,7 @@ pub fn detach_simple_cond_and_build_range_for_index_in(
         })
         .collect();
     let mut detacher = RangeDetacher {
-        eval_constant,
+        eval_expression,
         cols,
         lengths,
         new_tp_slice,
@@ -1001,6 +1008,7 @@ pub fn detach_simple_cond_and_build_range_for_index_in(
         convert_to_sort_key: true,
         range_max_size,
         regard_null_as_point: true,
+        range_fallback_handler: None,
         opt_prefix_index_single_scan: true,
         skip_plan_cache_reason: None,
         fix_44389: false,
@@ -1152,13 +1160,9 @@ fn is_same_value(lhs: &Option<ValueInfo>, rhs: &Option<ValueInfo>) -> bool {
     }
 }
 
-/// This port's stand-in for `Ranges.MemUsage` in the DNF accumulation
-/// (Go sizes with `unsafe.Sizeof`; see `ranger.rs`'s module header).
+/// Go `Ranges.MemUsage`, including collators and variable-length datum payloads.
 fn ranges_mem_estimate(ranges: &super::types::Ranges) -> i64 {
-    ranges
-        .iter()
-        .map(|ran| 96 + 72 * (ran.low_val.len() as i64 + ran.high_val.len() as i64))
-        .sum()
+    super::types::ranges_mem_usage(ranges)
 }
 
 impl RangeDetacher<'_> {
@@ -1182,13 +1186,14 @@ impl RangeDetacher<'_> {
             // Consecutive-merge OFF here: point ranges must stay points so
             // later columns can append (issue 41572).
             let mut inner = RangeDetacher {
-                eval_constant: self.eval_constant,
+                eval_expression: self.eval_expression,
                 cols: self.cols,
                 lengths: self.lengths,
                 new_tp_slice: self.new_tp_slice.clone(),
                 merge_consecutive: false,
                 convert_to_sort_key: self.convert_to_sort_key,
                 range_max_size: self.range_max_size,
+                range_fallback_handler: self.range_fallback_handler,
                 regard_null_as_point: self.regard_null_as_point,
                 opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                 skip_plan_cache_reason: None,
@@ -1311,13 +1316,14 @@ impl RangeDetacher<'_> {
             let new_tps: Vec<tidb_datatype::FieldType> =
                 self.new_tp_slice[eq_or_in_count..].to_vec();
             let mut tail_detacher = RangeDetacher {
-                eval_constant: self.eval_constant,
+                eval_expression: self.eval_expression,
                 cols: new_cols,
                 lengths: new_lengths,
                 new_tp_slice: new_tps,
                 merge_consecutive: self.merge_consecutive,
                 convert_to_sort_key: self.convert_to_sort_key,
                 range_max_size: self.range_max_size,
+                range_fallback_handler: self.range_fallback_handler,
                 regard_null_as_point: self.regard_null_as_point,
                 opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                 skip_plan_cache_reason: None,
@@ -1338,6 +1344,7 @@ impl RangeDetacher<'_> {
                     self.range_max_size,
                 );
                 if range_fallback {
+                    self.record_range_fallback();
                     // Go: the tail's ACCESS conds demote to remained, and
                     // the point ranges stand as the answer.
                     res.ranges = new_ranges;
@@ -1421,7 +1428,7 @@ impl RangeDetacher<'_> {
             length: self.lengths[0],
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
-        let mut builder = PointBuilder::new(self.eval_constant);
+        let mut builder = PointBuilder::new(self.eval_expression);
         let dnf_items = flatten_dnf_conditions(condition);
         let mut new_access_items = Vec::with_capacity(dnf_items.len());
         let mut min_access_conds: i64 = -1;
@@ -1457,6 +1464,7 @@ impl RangeDetacher<'_> {
                 total_mem += ranges_mem_estimate(&res.ranges);
                 total_ranges.extend(res.ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1519,6 +1527,7 @@ impl RangeDetacher<'_> {
                     &mut self.skip_plan_cache_reason,
                 )?;
                 if fallback {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1530,6 +1539,7 @@ impl RangeDetacher<'_> {
                 total_mem += ranges_mem_estimate(&ranges);
                 total_ranges.extend(ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1609,7 +1619,7 @@ pub fn detach_cond_and_build_range_for_index(
         cols,
         lengths,
         range_max_size,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -1619,7 +1629,7 @@ pub fn detach_cond_and_build_range_for_index_in(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     detach_cond_and_build_range(
         conditions,
@@ -1628,7 +1638,47 @@ pub fn detach_cond_and_build_range_for_index_in(
         range_max_size,
         true,
         true,
-        eval_constant,
+        eval_expression,
+        None,
+    )
+}
+
+/// Builds index ranges with the statement's shared quota-fallback handler.
+pub fn detach_index_range_with_fallback_handler(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    handler: &tidb_util::context::RangeFallbackHandler,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_index_range_with_fallback_handler_in(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        handler,
+        &super::points::evaluate_static,
+    )
+}
+
+/// Builds ranges with the same execution values and quota owner as the planner.
+pub fn detach_index_range_with_fallback_handler_in(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    handler: &tidb_util::context::RangeFallbackHandler,
+    eval_expression: &ExpressionEvaluator<'_>,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        true,
+        true,
+        eval_expression,
+        Some(handler),
     )
 }
 
@@ -1645,7 +1695,7 @@ pub fn detach_cond_and_build_range_for_partition(
         cols,
         lengths,
         range_max_size,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -1655,7 +1705,7 @@ pub fn detach_cond_and_build_range_for_partition_in(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     detach_cond_and_build_range(
         conditions,
@@ -1664,7 +1714,28 @@ pub fn detach_cond_and_build_range_for_partition_in(
         range_max_size,
         false,
         false,
-        eval_constant,
+        eval_expression,
+        None,
+    )
+}
+
+/// Builds partition ranges with the statement's shared quota-fallback handler.
+pub fn detach_partition_range_with_fallback_handler(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    handler: &tidb_util::context::RangeFallbackHandler,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        false,
+        false,
+        &super::points::evaluate_static,
+        Some(handler),
     )
 }
 
@@ -1676,7 +1747,8 @@ fn detach_cond_and_build_range(
     range_max_size: i64,
     convert_to_sort_key: bool,
     merge_consecutive: bool,
-    eval_constant: &ConstantEvaluator<'_>,
+    eval_expression: &ExpressionEvaluator<'_>,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
         .iter()
@@ -1687,13 +1759,14 @@ fn detach_cond_and_build_range(
         })
         .collect();
     let mut detacher = RangeDetacher {
-        eval_constant,
+        eval_expression,
         cols,
         lengths,
         new_tp_slice,
         merge_consecutive,
         convert_to_sort_key,
         range_max_size,
+        range_fallback_handler,
         regard_null_as_point: true,
         opt_prefix_index_single_scan: true,
         skip_plan_cache_reason: None,

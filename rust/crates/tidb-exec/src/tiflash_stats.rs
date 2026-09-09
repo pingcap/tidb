@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/execdetails`, covering `tiflash_stats.go`:
+//! Go `pkg/util/execdetails/tiflash_stats.go`:
 //! [`TiflashStats`], [`TiFlashScanContext`], [`TiFlashColumnarScanContext`],
 //! [`TiFlashWaitSummary`], and [`TiFlashNetworkTrafficSummary`] with their
 //! byte-exact `String()` renderings and their `Clone`/`Merge`/
@@ -20,25 +20,10 @@
 //! `TiFlashNetworkTrafficSummary.UpdateTiKVExecDetails` and
 //! `GetInterZoneTrafficBytes`.
 //!
-//! Narrowings (Go input → Rust snapshot shape):
-//! - `*tipb.TiFlashScanContext` → [`TiFlashScanContextSnapshot`] (with
-//!   `*tipb.RegionsOfInstance` → [`RegionOfInstanceSnapshot`]),
-//!   `*tipb.ColumnarScanContext` → [`ColumnarScanContextSnapshot`],
-//!   `*tipb.TiFlashWaitSummary` → [`TiFlashWaitSummarySnapshot`], and
-//!   `*tipb.TiFlashNetWorkSummary` → [`TiFlashNetworkSummarySnapshot`]: the
-//!   tipb protobufs are not available, so each snapshot carries exactly the
-//!   fields the ported `mergeExecSummary` bodies read, with the proto
-//!   optionals collapsed to the `Get*` accessors' zero-default results. The
-//!   Go nil-summary early return survives as the `Option` parameter.
-//!   `TiFlashNetworkTrafficSummary.mergeExecSummary` is the one Go body that
-//!   dereferences the proto pointers directly (`*summary.InnerZoneSendBytes`,
-//!   no getters — a nil field would panic in Go); the snapshot's plain `u64`
-//!   fields make that arm total here.
-//! - client-go `*util.ExecDetails` (atomic `int64` counters) →
-//!   [`crate::slow_log_format::TikvExecDetailsSnapshot`]:
-//!   `UpdateTiKVExecDetails`'s `atomic.AddInt64` calls — the only
-//!   `sync/atomic` use in `tiflash_stats.go` — collapse to plain `+=` on the
-//!   already-loaded snapshot value, single-threaded on this seed's side.
+//! The merge entry points consume the generated `tipb` protobuf messages
+//! directly, preserving Go's optional-field behavior.
+//! - client-go `*util.ExecDetails` reuses the live atomic
+//!   [`tikv_client::util::ExecDetails`] representation.
 //! - Go `Clone` methods (field-by-field deep copies, including the
 //!   `regionsOfInstance` map copy) are the `#[derive(Clone)]` impls here;
 //!   the derives copy exactly the same fields.
@@ -51,12 +36,6 @@
 //!   instead of panicking in debug builds.
 //!
 //! Boundaries:
-//! - `MergeTiFlashRUConsumption` is NOT ported: it unmarshals a
-//!   `resource_manager.Consumption` protobuf out of
-//!   `summary.GetRuConsumption()` bytes and feeds client-go
-//!   `util.RUDetails.UpdateTiFlash`/`Merge`; neither the kvproto
-//!   `resource_manager` decoder nor the live `RUDetails` accumulator exists
-//!   here.
 //!
 //! The Go tests (`TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
 //! `TestColumnarScanContextStats`) drive these types through
@@ -69,241 +48,18 @@
 
 use std::collections::HashMap;
 
-use crate::slow_log_format::TikvExecDetailsSnapshot;
+use tidb_proto::{
+    ColumnarScanContext as ProtoColumnarScanContext, ExecutorExecutionSummary,
+    TiFlashNetWorkSummary as ProtoTiFlashNetworkSummary,
+    TiFlashScanContext as ProtoTiFlashScanContext, TiFlashWaitSummary as ProtoTiFlashWaitSummary,
+};
 
 /// Go `time.Millisecond` in nanoseconds, the [`TiFlashWaitSummary`]
 /// significance threshold.
 const MILLISECOND_NS: u64 = 1_000_000;
 
-/// One `*tipb.RegionsOfInstance` entry as
-/// `TiFlashScanContext.mergeExecSummary` reads it (`GetInstanceId()`,
-/// `GetRegionNum()`), zero-defaulted.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RegionOfInstanceSnapshot {
-    /// Go `instance.GetInstanceId()` (`""` when unset).
-    pub instance_id: String,
-    /// Go `instance.GetRegionNum()` (0 when unset).
-    pub region_num: u64,
-}
-
-/// The fields `TiFlashScanContext.mergeExecSummary` reads off a
-/// `*tipb.TiFlashScanContext`, with proto optionals collapsed to Go's
-/// zero-defaulted getter results.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TiFlashScanContextSnapshot {
-    /// Go `summary.GetDmfileDataScannedRows()`.
-    pub dmfile_data_scanned_rows: u64,
-    /// Go `summary.GetDmfileDataSkippedRows()`.
-    pub dmfile_data_skipped_rows: u64,
-    /// Go `summary.GetDmfileMvccScannedRows()`.
-    pub dmfile_mvcc_scanned_rows: u64,
-    /// Go `summary.GetDmfileMvccSkippedRows()`.
-    pub dmfile_mvcc_skipped_rows: u64,
-    /// Go `summary.GetDmfileLmFilterScannedRows()`.
-    pub dmfile_lm_filter_scanned_rows: u64,
-    /// Go `summary.GetDmfileLmFilterSkippedRows()`.
-    pub dmfile_lm_filter_skipped_rows: u64,
-    /// Go `summary.GetTotalDmfileRsCheckMs()`.
-    pub total_dmfile_rs_check_ms: u64,
-    /// Go `summary.GetTotalDmfileReadMs()`.
-    pub total_dmfile_read_ms: u64,
-    /// Go `summary.GetTotalBuildSnapshotMs()`.
-    pub total_build_snapshot_ms: u64,
-    /// Go `summary.GetLocalRegions()`.
-    pub local_regions: u64,
-    /// Go `summary.GetRemoteRegions()`.
-    pub remote_regions: u64,
-    /// Go `summary.GetTotalLearnerReadMs()`.
-    pub total_learner_read_ms: u64,
-    /// Go `summary.GetDisaggReadCacheHitBytes()`.
-    pub disagg_read_cache_hit_bytes: u64,
-    /// Go `summary.GetDisaggReadCacheMissBytes()`.
-    pub disagg_read_cache_miss_bytes: u64,
-    /// Go `summary.GetSegments()`.
-    pub segments: u64,
-    /// Go `summary.GetReadTasks()`.
-    pub read_tasks: u64,
-    /// Go `summary.GetDeltaRows()`.
-    pub delta_rows: u64,
-    /// Go `summary.GetDeltaBytes()`.
-    pub delta_bytes: u64,
-    /// Go `summary.GetMvccInputRows()`.
-    pub mvcc_input_rows: u64,
-    /// Go `summary.GetMvccInputBytes()`.
-    pub mvcc_input_bytes: u64,
-    /// Go `summary.GetMvccOutputRows()`.
-    pub mvcc_output_rows: u64,
-    /// Go `summary.GetTotalBuildBitmapMs()`.
-    pub total_build_bitmap_ms: u64,
-    /// Go `summary.GetTotalBuildInputstreamMs()`.
-    pub total_build_inputstream_ms: u64,
-    /// Go `summary.GetStaleReadRegions()`.
-    pub stale_read_regions: u64,
-    /// Go `summary.GetVectorIdxLoadFromS3()`.
-    pub vector_idx_load_from_s3: u64,
-    /// Go `summary.GetVectorIdxLoadFromDisk()`.
-    pub vector_idx_load_from_disk: u64,
-    /// Go `summary.GetVectorIdxLoadFromCache()`.
-    pub vector_idx_load_from_cache: u64,
-    /// Go `summary.GetVectorIdxLoadTimeMs()`.
-    pub vector_idx_load_time_ms: u64,
-    /// Go `summary.GetVectorIdxSearchTimeMs()`.
-    pub vector_idx_search_time_ms: u64,
-    /// Go `summary.GetVectorIdxSearchVisitedNodes()`.
-    pub vector_idx_search_visited_nodes: u64,
-    /// Go `summary.GetVectorIdxSearchDiscardedNodes()`.
-    pub vector_idx_search_discarded_nodes: u64,
-    /// Go `summary.GetVectorIdxReadVecTimeMs()`.
-    pub vector_idx_read_vec_time_ms: u64,
-    /// Go `summary.GetVectorIdxReadOthersTimeMs()`.
-    pub vector_idx_read_others_time_ms: u64,
-    /// Go `summary.GetFtsNFromInmemoryNoindex()`.
-    pub fts_n_from_inmemory_noindex: u32,
-    /// Go `summary.GetFtsNFromTinyIndex()`.
-    pub fts_n_from_tiny_index: u32,
-    /// Go `summary.GetFtsNFromTinyNoindex()`.
-    pub fts_n_from_tiny_noindex: u32,
-    /// Go `summary.GetFtsNFromDmfIndex()`.
-    pub fts_n_from_dmf_index: u32,
-    /// Go `summary.GetFtsNFromDmfNoindex()`.
-    pub fts_n_from_dmf_noindex: u32,
-    /// Go `summary.GetFtsRowsFromInmemoryNoindex()`.
-    pub fts_rows_from_inmemory_noindex: u64,
-    /// Go `summary.GetFtsRowsFromTinyIndex()`.
-    pub fts_rows_from_tiny_index: u64,
-    /// Go `summary.GetFtsRowsFromTinyNoindex()`.
-    pub fts_rows_from_tiny_noindex: u64,
-    /// Go `summary.GetFtsRowsFromDmfIndex()`.
-    pub fts_rows_from_dmf_index: u64,
-    /// Go `summary.GetFtsRowsFromDmfNoindex()`.
-    pub fts_rows_from_dmf_noindex: u64,
-    /// Go `summary.GetFtsIdxLoadTotalMs()`.
-    pub fts_idx_load_total_ms: u64,
-    /// Go `summary.GetFtsIdxLoadFromCache()`.
-    pub fts_idx_load_from_cache: u32,
-    /// Go `summary.GetFtsIdxLoadFromColumnFile()`.
-    pub fts_idx_load_from_column_file: u32,
-    /// Go `summary.GetFtsIdxLoadFromStableS3()`.
-    pub fts_idx_load_from_stable_s3: u32,
-    /// Go `summary.GetFtsIdxLoadFromStableDisk()`.
-    pub fts_idx_load_from_stable_disk: u32,
-    /// Go `summary.GetFtsIdxSearchN()`.
-    pub fts_idx_search_n: u32,
-    /// Go `summary.GetFtsIdxSearchTotalMs()`.
-    pub fts_idx_search_total_ms: u64,
-    /// Go `summary.GetFtsIdxDmSearchRows()`.
-    pub fts_idx_dm_search_rows: u64,
-    /// Go `summary.GetFtsIdxDmTotalReadFtsMs()`.
-    pub fts_idx_dm_total_read_fts_ms: u64,
-    /// Go `summary.GetFtsIdxDmTotalReadOthersMs()`.
-    pub fts_idx_dm_total_read_others_ms: u64,
-    /// Go `summary.GetFtsIdxTinySearchRows()`.
-    pub fts_idx_tiny_search_rows: u64,
-    /// Go `summary.GetFtsIdxTinyTotalReadFtsMs()`.
-    pub fts_idx_tiny_total_read_fts_ms: u64,
-    /// Go `summary.GetFtsIdxTinyTotalReadOthersMs()`.
-    pub fts_idx_tiny_total_read_others_ms: u64,
-    /// Go `summary.GetFtsBruteTotalReadMs()`.
-    pub fts_brute_total_read_ms: u64,
-    /// Go `summary.GetFtsBruteTotalSearchMs()`.
-    pub fts_brute_total_search_ms: u64,
-    /// Go `summary.GetInvertedIdxLoadFromS3()`.
-    pub inverted_idx_load_from_s3: u32,
-    /// Go `summary.GetInvertedIdxLoadFromDisk()`.
-    pub inverted_idx_load_from_disk: u32,
-    /// Go `summary.GetInvertedIdxLoadFromCache()`.
-    pub inverted_idx_load_from_cache: u32,
-    /// Go `summary.GetInvertedIdxLoadTimeMs()`.
-    pub inverted_idx_load_time_ms: u64,
-    /// Go `summary.GetInvertedIdxSearchTimeMs()`.
-    pub inverted_idx_search_time_ms: u64,
-    /// Go `summary.GetInvertedIdxSearchSkippedPacks()`.
-    pub inverted_idx_search_skipped_packs: u32,
-    /// Go `summary.GetInvertedIdxIndexedRows()`.
-    pub inverted_idx_indexed_rows: u64,
-    /// Go `summary.GetInvertedIdxSearchSelectedRows()`.
-    pub inverted_idx_search_selected_rows: u64,
-    /// Go `summary.GetMinLocalStreamMs()`.
-    pub min_local_stream_ms: u64,
-    /// Go `summary.GetMaxLocalStreamMs()`.
-    pub max_local_stream_ms: u64,
-    /// Go `summary.GetMinRemoteStreamMs()`.
-    pub min_remote_stream_ms: u64,
-    /// Go `summary.GetMaxRemoteStreamMs()`.
-    pub max_remote_stream_ms: u64,
-    /// Go `summary.GetRegionsOfInstance()` (empty when unset).
-    pub regions_of_instance: Vec<RegionOfInstanceSnapshot>,
-}
-
-/// The fields `TiFlashColumnarScanContext.mergeExecSummary` reads off a
-/// `*tipb.ColumnarScanContext`, zero-defaulted like Go's getters.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ColumnarScanContextSnapshot {
-    /// Go `summary.GetRegions()`.
-    pub regions: u64,
-    /// Go `summary.GetReadTasks()`.
-    pub read_tasks: u64,
-    /// Go `summary.GetPhysicalTables()`.
-    pub physical_tables: u64,
-    /// Go `summary.GetColumns()`.
-    pub columns: u64,
-    /// Go `summary.GetUserReadBytes()`.
-    pub user_read_bytes: u64,
-    /// Go `summary.GetMvccInputRows()`.
-    pub mvcc_input_rows: u64,
-    /// Go `summary.GetMvccInputBytes()`.
-    pub mvcc_input_bytes: u64,
-    /// Go `summary.GetMvccOutputRows()`.
-    pub mvcc_output_rows: u64,
-    /// Go `summary.GetTotalReadBlockMs()`.
-    pub total_read_block_ms: u64,
-    /// Go `summary.GetTotalSerializeBlockMs()`.
-    pub total_serialize_block_ms: u64,
-    /// Go `summary.GetTotalInitReaderMs()`.
-    pub total_init_reader_ms: u64,
-    /// Go `summary.GetTotalPrefetchMs()`.
-    pub total_prefetch_ms: u64,
-    /// Go `summary.GetRoughCheckTotalPacks()`.
-    pub rough_check_total_packs: u64,
-    /// Go `summary.GetRoughCheckSelectedPacks()`.
-    pub rough_check_selected_packs: u64,
-    /// Go `summary.GetRoughCheckSkippedPacks()`.
-    pub rough_check_skipped_packs: u64,
-    /// Go `summary.GetRoughCheckUnknownPacks()`.
-    pub rough_check_unknown_packs: u64,
-    /// Go `summary.GetRemoteSegments()`.
-    pub remote_segments: u64,
-    /// Go `summary.GetTotalSegments()`.
-    pub total_segments: u64,
-    /// Go `summary.GetTotalDeserializeBlockMs()`.
-    pub total_deserialize_block_ms: u64,
-}
-
-/// The fields `TiFlashWaitSummary.mergeExecSummary` reads off a
-/// `*tipb.TiFlashWaitSummary`, zero-defaulted like Go's getters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TiFlashWaitSummarySnapshot {
-    /// Go `summary.GetMinTSOWaitNs()`.
-    pub min_tso_wait_ns: u64,
-    /// Go `summary.GetPipelineBreakerWaitNs()`.
-    pub pipeline_breaker_wait_ns: u64,
-    /// Go `summary.GetPipelineQueueWaitNs()`.
-    pub pipeline_queue_wait_ns: u64,
-}
-
-/// The fields `TiFlashNetworkTrafficSummary.mergeExecSummary` reads off a
-/// `*tipb.TiFlashNetWorkSummary`. Go dereferences the proto pointers
-/// directly here (no `Get*` guards); the plain `u64` fields make that total.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TiFlashNetworkSummarySnapshot {
-    /// Go `*summary.InnerZoneSendBytes`.
-    pub inner_zone_send_bytes: u64,
-    /// Go `*summary.InterZoneSendBytes`.
-    pub inter_zone_send_bytes: u64,
-    /// Go `*summary.InnerZoneReceiveBytes`.
-    pub inner_zone_receive_bytes: u64,
-    /// Go `*summary.InterZoneReceiveBytes`.
-    pub inter_zone_receive_bytes: u64,
+fn proto_value<T: Copy + Default>(value: Option<T>) -> T {
+    value.unwrap_or_default()
 }
 
 /// Go `TiflashStats`: contains tiflash execution stats. The Go fields are
@@ -770,103 +526,109 @@ impl TiFlashScanContext {
         }
     }
 
-    /// Go `TiFlashScanContext.mergeExecSummary`: merges a
-    /// `tipb.TiFlashScanContext` (its snapshot narrowing) directly; a `None`
-    /// summary is Go's nil early return.
-    pub fn merge_exec_summary(&mut self, summary: Option<&TiFlashScanContextSnapshot>) {
+    /// Go `TiFlashScanContext.mergeExecSummary`.
+    pub fn merge_exec_summary(&mut self, summary: Option<&ProtoTiFlashScanContext>) {
         let Some(summary) = summary else {
             return;
         };
-        self.dmfile_data_scanned_rows += summary.dmfile_data_scanned_rows;
-        self.dmfile_data_skipped_rows += summary.dmfile_data_skipped_rows;
-        self.dmfile_mvcc_scanned_rows += summary.dmfile_mvcc_scanned_rows;
-        self.dmfile_mvcc_skipped_rows += summary.dmfile_mvcc_skipped_rows;
-        self.dmfile_lm_filter_scanned_rows += summary.dmfile_lm_filter_scanned_rows;
-        self.dmfile_lm_filter_skipped_rows += summary.dmfile_lm_filter_skipped_rows;
-        self.total_dmfile_rs_check_ms += summary.total_dmfile_rs_check_ms;
-        self.total_dmfile_read_ms += summary.total_dmfile_read_ms;
-        self.total_build_snapshot_ms += summary.total_build_snapshot_ms;
-        self.local_regions += summary.local_regions;
-        self.remote_regions += summary.remote_regions;
-        self.total_learner_read_ms += summary.total_learner_read_ms;
-        self.disagg_read_cache_hit_bytes += summary.disagg_read_cache_hit_bytes;
-        self.disagg_read_cache_miss_bytes += summary.disagg_read_cache_miss_bytes;
-        self.segments += summary.segments;
-        self.read_tasks += summary.read_tasks;
-        self.delta_rows += summary.delta_rows;
-        self.delta_bytes += summary.delta_bytes;
-        self.mvcc_input_rows += summary.mvcc_input_rows;
-        self.mvcc_input_bytes += summary.mvcc_input_bytes;
-        self.mvcc_output_rows += summary.mvcc_output_rows;
-        self.total_build_bitmap_ms += summary.total_build_bitmap_ms;
-        self.total_build_input_stream_ms += summary.total_build_inputstream_ms;
-        self.stale_read_regions += summary.stale_read_regions;
+        self.dmfile_data_scanned_rows += proto_value(summary.dmfile_data_scanned_rows);
+        self.dmfile_data_skipped_rows += proto_value(summary.dmfile_data_skipped_rows);
+        self.dmfile_mvcc_scanned_rows += proto_value(summary.dmfile_mvcc_scanned_rows);
+        self.dmfile_mvcc_skipped_rows += proto_value(summary.dmfile_mvcc_skipped_rows);
+        self.dmfile_lm_filter_scanned_rows += proto_value(summary.dmfile_lm_filter_scanned_rows);
+        self.dmfile_lm_filter_skipped_rows += proto_value(summary.dmfile_lm_filter_skipped_rows);
+        self.total_dmfile_rs_check_ms += proto_value(summary.total_dmfile_rs_check_ms);
+        self.total_dmfile_read_ms += proto_value(summary.total_dmfile_read_ms);
+        self.total_build_snapshot_ms += proto_value(summary.total_build_snapshot_ms);
+        self.local_regions += proto_value(summary.local_regions);
+        self.remote_regions += proto_value(summary.remote_regions);
+        self.total_learner_read_ms += proto_value(summary.total_learner_read_ms);
+        self.disagg_read_cache_hit_bytes += proto_value(summary.disagg_read_cache_hit_bytes);
+        self.disagg_read_cache_miss_bytes += proto_value(summary.disagg_read_cache_miss_bytes);
+        self.segments += proto_value(summary.segments);
+        self.read_tasks += proto_value(summary.read_tasks);
+        self.delta_rows += proto_value(summary.delta_rows);
+        self.delta_bytes += proto_value(summary.delta_bytes);
+        self.mvcc_input_rows += proto_value(summary.mvcc_input_rows);
+        self.mvcc_input_bytes += proto_value(summary.mvcc_input_bytes);
+        self.mvcc_output_rows += proto_value(summary.mvcc_output_rows);
+        self.total_build_bitmap_ms += proto_value(summary.total_build_bitmap_ms);
+        self.total_build_input_stream_ms += proto_value(summary.total_build_inputstream_ms);
+        self.stale_read_regions += proto_value(summary.stale_read_regions);
 
-        self.vector_idx_load_from_s3 += summary.vector_idx_load_from_s3;
-        self.vector_idx_load_from_disk += summary.vector_idx_load_from_disk;
-        self.vector_idx_load_from_cache += summary.vector_idx_load_from_cache;
-        self.vector_idx_load_time_ms += summary.vector_idx_load_time_ms;
-        self.vector_idx_search_time_ms += summary.vector_idx_search_time_ms;
-        self.vector_idx_search_visited_nodes += summary.vector_idx_search_visited_nodes;
-        self.vector_idx_search_discarded_nodes += summary.vector_idx_search_discarded_nodes;
-        self.vector_idx_read_vec_time_ms += summary.vector_idx_read_vec_time_ms;
-        self.vector_idx_read_others_time_ms += summary.vector_idx_read_others_time_ms;
+        self.vector_idx_load_from_s3 += proto_value(summary.vector_idx_load_from_s3);
+        self.vector_idx_load_from_disk += proto_value(summary.vector_idx_load_from_disk);
+        self.vector_idx_load_from_cache += proto_value(summary.vector_idx_load_from_cache);
+        self.vector_idx_load_time_ms += proto_value(summary.vector_idx_load_time_ms);
+        self.vector_idx_search_time_ms += proto_value(summary.vector_idx_search_time_ms);
+        self.vector_idx_search_visited_nodes +=
+            proto_value(summary.vector_idx_search_visited_nodes);
+        self.vector_idx_search_discarded_nodes +=
+            proto_value(summary.vector_idx_search_discarded_nodes);
+        self.vector_idx_read_vec_time_ms += proto_value(summary.vector_idx_read_vec_time_ms);
+        self.vector_idx_read_others_time_ms += proto_value(summary.vector_idx_read_others_time_ms);
 
-        self.fts_n_from_inmemory_noindex += summary.fts_n_from_inmemory_noindex;
-        self.fts_n_from_tiny_index += summary.fts_n_from_tiny_index;
-        self.fts_n_from_tiny_noindex += summary.fts_n_from_tiny_noindex;
-        self.fts_n_from_dmf_index += summary.fts_n_from_dmf_index;
-        self.fts_n_from_dmf_noindex += summary.fts_n_from_dmf_noindex;
-        self.fts_rows_from_inmemory_noindex += summary.fts_rows_from_inmemory_noindex;
-        self.fts_rows_from_tiny_index += summary.fts_rows_from_tiny_index;
-        self.fts_rows_from_tiny_noindex += summary.fts_rows_from_tiny_noindex;
-        self.fts_rows_from_dmf_index += summary.fts_rows_from_dmf_index;
-        self.fts_rows_from_dmf_noindex += summary.fts_rows_from_dmf_noindex;
-        self.fts_idx_load_total_ms += summary.fts_idx_load_total_ms;
-        self.fts_idx_load_from_cache += summary.fts_idx_load_from_cache;
-        self.fts_idx_load_from_column_file += summary.fts_idx_load_from_column_file;
-        self.fts_idx_load_from_stable_s3 += summary.fts_idx_load_from_stable_s3;
-        self.fts_idx_load_from_stable_disk += summary.fts_idx_load_from_stable_disk;
-        self.fts_idx_search_n += summary.fts_idx_search_n;
-        self.fts_idx_search_total_ms += summary.fts_idx_search_total_ms;
-        self.fts_idx_dm_search_rows += summary.fts_idx_dm_search_rows;
-        self.fts_idx_dm_total_read_fts_ms += summary.fts_idx_dm_total_read_fts_ms;
-        self.fts_idx_dm_total_read_others_ms += summary.fts_idx_dm_total_read_others_ms;
-        self.fts_idx_tiny_search_rows += summary.fts_idx_tiny_search_rows;
-        self.fts_idx_tiny_total_read_fts_ms += summary.fts_idx_tiny_total_read_fts_ms;
-        self.fts_idx_tiny_total_read_others_ms += summary.fts_idx_tiny_total_read_others_ms;
-        self.fts_brute_total_read_ms += summary.fts_brute_total_read_ms;
-        self.fts_brute_total_search_ms += summary.fts_brute_total_search_ms;
+        self.fts_n_from_inmemory_noindex += proto_value(summary.fts_n_from_inmemory_noindex);
+        self.fts_n_from_tiny_index += proto_value(summary.fts_n_from_tiny_index);
+        self.fts_n_from_tiny_noindex += proto_value(summary.fts_n_from_tiny_noindex);
+        self.fts_n_from_dmf_index += proto_value(summary.fts_n_from_dmf_index);
+        self.fts_n_from_dmf_noindex += proto_value(summary.fts_n_from_dmf_noindex);
+        self.fts_rows_from_inmemory_noindex += proto_value(summary.fts_rows_from_inmemory_noindex);
+        self.fts_rows_from_tiny_index += proto_value(summary.fts_rows_from_tiny_index);
+        self.fts_rows_from_tiny_noindex += proto_value(summary.fts_rows_from_tiny_noindex);
+        self.fts_rows_from_dmf_index += proto_value(summary.fts_rows_from_dmf_index);
+        self.fts_rows_from_dmf_noindex += proto_value(summary.fts_rows_from_dmf_noindex);
+        self.fts_idx_load_total_ms += proto_value(summary.fts_idx_load_total_ms);
+        self.fts_idx_load_from_cache += proto_value(summary.fts_idx_load_from_cache);
+        self.fts_idx_load_from_column_file += proto_value(summary.fts_idx_load_from_column_file);
+        self.fts_idx_load_from_stable_s3 += proto_value(summary.fts_idx_load_from_stable_s3);
+        self.fts_idx_load_from_stable_disk += proto_value(summary.fts_idx_load_from_stable_disk);
+        self.fts_idx_search_n += proto_value(summary.fts_idx_search_n);
+        self.fts_idx_search_total_ms += proto_value(summary.fts_idx_search_total_ms);
+        self.fts_idx_dm_search_rows += proto_value(summary.fts_idx_dm_search_rows);
+        self.fts_idx_dm_total_read_fts_ms += proto_value(summary.fts_idx_dm_total_read_fts_ms);
+        self.fts_idx_dm_total_read_others_ms +=
+            proto_value(summary.fts_idx_dm_total_read_others_ms);
+        self.fts_idx_tiny_search_rows += proto_value(summary.fts_idx_tiny_search_rows);
+        self.fts_idx_tiny_total_read_fts_ms += proto_value(summary.fts_idx_tiny_total_read_fts_ms);
+        self.fts_idx_tiny_total_read_others_ms +=
+            proto_value(summary.fts_idx_tiny_total_read_others_ms);
+        self.fts_brute_total_read_ms += proto_value(summary.fts_brute_total_read_ms);
+        self.fts_brute_total_search_ms += proto_value(summary.fts_brute_total_search_ms);
 
-        self.inverted_idx_load_from_s3 += summary.inverted_idx_load_from_s3;
-        self.inverted_idx_load_from_disk += summary.inverted_idx_load_from_disk;
-        self.inverted_idx_load_from_cache += summary.inverted_idx_load_from_cache;
-        self.inverted_idx_load_time_ms += summary.inverted_idx_load_time_ms;
-        self.inverted_idx_search_time_ms += summary.inverted_idx_search_time_ms;
-        self.inverted_idx_search_skipped_packs += summary.inverted_idx_search_skipped_packs;
-        self.inverted_idx_indexed_rows += summary.inverted_idx_indexed_rows;
-        self.inverted_idx_search_selected_rows += summary.inverted_idx_search_selected_rows;
+        self.inverted_idx_load_from_s3 += proto_value(summary.inverted_idx_load_from_s3);
+        self.inverted_idx_load_from_disk += proto_value(summary.inverted_idx_load_from_disk);
+        self.inverted_idx_load_from_cache += proto_value(summary.inverted_idx_load_from_cache);
+        self.inverted_idx_load_time_ms += proto_value(summary.inverted_idx_load_time_ms);
+        self.inverted_idx_search_time_ms += proto_value(summary.inverted_idx_search_time_ms);
+        self.inverted_idx_search_skipped_packs +=
+            proto_value(summary.inverted_idx_search_skipped_packs);
+        self.inverted_idx_indexed_rows += proto_value(summary.inverted_idx_indexed_rows);
+        self.inverted_idx_search_selected_rows +=
+            proto_value(summary.inverted_idx_search_selected_rows);
 
-        if self.min_local_stream_ms == 0 || summary.min_local_stream_ms < self.min_local_stream_ms {
-            self.min_local_stream_ms = summary.min_local_stream_ms;
+        let min_local_stream_ms = proto_value(summary.min_local_stream_ms);
+        if self.min_local_stream_ms == 0 || min_local_stream_ms < self.min_local_stream_ms {
+            self.min_local_stream_ms = min_local_stream_ms;
         }
-        if summary.max_local_stream_ms > self.max_local_stream_ms {
-            self.max_local_stream_ms = summary.max_local_stream_ms;
+        let max_local_stream_ms = proto_value(summary.max_local_stream_ms);
+        if max_local_stream_ms > self.max_local_stream_ms {
+            self.max_local_stream_ms = max_local_stream_ms;
         }
-        if self.min_remote_stream_ms == 0
-            || summary.min_remote_stream_ms < self.min_remote_stream_ms
-        {
-            self.min_remote_stream_ms = summary.min_remote_stream_ms;
+        let min_remote_stream_ms = proto_value(summary.min_remote_stream_ms);
+        if self.min_remote_stream_ms == 0 || min_remote_stream_ms < self.min_remote_stream_ms {
+            self.min_remote_stream_ms = min_remote_stream_ms;
         }
-        if summary.max_remote_stream_ms > self.max_remote_stream_ms {
-            self.max_remote_stream_ms = summary.max_remote_stream_ms;
+        let max_remote_stream_ms = proto_value(summary.max_remote_stream_ms);
+        if max_remote_stream_ms > self.max_remote_stream_ms {
+            self.max_remote_stream_ms = max_remote_stream_ms;
         }
 
         for instance in &summary.regions_of_instance {
             *self
                 .regions_of_instance
-                .entry(instance.instance_id.clone())
-                .or_insert(0) += instance.region_num;
+                .entry(instance.instance_id.clone().unwrap_or_default())
+                .or_insert(0) += proto_value(instance.region_num);
         }
     }
 
@@ -1015,37 +777,37 @@ impl TiFlashColumnarScanContext {
         self.total_deserialize_block_ms += other.total_deserialize_block_ms;
     }
 
-    /// Go `TiFlashColumnarScanContext.mergeExecSummary`: merges a
-    /// `tipb.ColumnarScanContext` (its snapshot narrowing) directly; a
-    /// `None` summary is Go's nil early return.
-    pub fn merge_exec_summary(&mut self, summary: Option<&ColumnarScanContextSnapshot>) {
+    /// Go `TiFlashColumnarScanContext.mergeExecSummary`.
+    pub fn merge_exec_summary(&mut self, summary: Option<&ProtoColumnarScanContext>) {
         let Some(summary) = summary else {
             return;
         };
         self.has_stats = true;
-        self.regions += summary.regions;
-        self.read_tasks += summary.read_tasks;
-        if summary.physical_tables > self.physical_tables {
-            self.physical_tables = summary.physical_tables;
+        self.regions += proto_value(summary.regions);
+        self.read_tasks += proto_value(summary.read_tasks);
+        let physical_tables = proto_value(summary.physical_tables);
+        if physical_tables > self.physical_tables {
+            self.physical_tables = physical_tables;
         }
-        if summary.columns > self.columns {
-            self.columns = summary.columns;
+        let columns = proto_value(summary.columns);
+        if columns > self.columns {
+            self.columns = columns;
         }
-        self.user_read_bytes += summary.user_read_bytes;
-        self.mvcc_input_rows += summary.mvcc_input_rows;
-        self.mvcc_input_bytes += summary.mvcc_input_bytes;
-        self.mvcc_output_rows += summary.mvcc_output_rows;
-        self.total_read_block_ms += summary.total_read_block_ms;
-        self.total_serialize_block_ms += summary.total_serialize_block_ms;
-        self.total_init_reader_ms += summary.total_init_reader_ms;
-        self.total_prefetch_ms += summary.total_prefetch_ms;
-        self.rough_check_total_packs += summary.rough_check_total_packs;
-        self.rough_check_selected_packs += summary.rough_check_selected_packs;
-        self.rough_check_skipped_packs += summary.rough_check_skipped_packs;
-        self.rough_check_unknown_packs += summary.rough_check_unknown_packs;
-        self.remote_segments += summary.remote_segments;
-        self.total_segments += summary.total_segments;
-        self.total_deserialize_block_ms += summary.total_deserialize_block_ms;
+        self.user_read_bytes += proto_value(summary.user_read_bytes);
+        self.mvcc_input_rows += proto_value(summary.mvcc_input_rows);
+        self.mvcc_input_bytes += proto_value(summary.mvcc_input_bytes);
+        self.mvcc_output_rows += proto_value(summary.mvcc_output_rows);
+        self.total_read_block_ms += proto_value(summary.total_read_block_ms);
+        self.total_serialize_block_ms += proto_value(summary.total_serialize_block_ms);
+        self.total_init_reader_ms += proto_value(summary.total_init_reader_ms);
+        self.total_prefetch_ms += proto_value(summary.total_prefetch_ms);
+        self.rough_check_total_packs += proto_value(summary.rough_check_total_packs);
+        self.rough_check_selected_packs += proto_value(summary.rough_check_selected_packs);
+        self.rough_check_skipped_packs += proto_value(summary.rough_check_skipped_packs);
+        self.rough_check_unknown_packs += proto_value(summary.rough_check_unknown_packs);
+        self.remote_segments += proto_value(summary.remote_segments);
+        self.total_segments += proto_value(summary.total_segments);
+        self.total_deserialize_block_ms += proto_value(summary.total_deserialize_block_ms);
     }
 
     /// Go `TiFlashColumnarScanContext.Empty`.
@@ -1139,12 +901,10 @@ impl TiFlashWaitSummary {
         }
     }
 
-    /// Go `TiFlashWaitSummary.mergeExecSummary`: merges a
-    /// `tipb.TiFlashWaitSummary` (its snapshot narrowing) directly; a
-    /// `None` summary is Go's nil early return.
+    /// Go `TiFlashWaitSummary.mergeExecSummary`.
     pub fn merge_exec_summary(
         &mut self,
-        summary: Option<&TiFlashWaitSummarySnapshot>,
+        summary: Option<&ProtoTiFlashWaitSummary>,
         execution_time: u64,
     ) {
         let Some(summary) = summary else {
@@ -1152,9 +912,9 @@ impl TiFlashWaitSummary {
         };
         if self.execution_time < execution_time {
             self.execution_time = execution_time;
-            self.min_tso_wait_time = summary.min_tso_wait_ns;
-            self.pipeline_breaker_wait_time = summary.pipeline_breaker_wait_ns;
-            self.pipeline_queue_wait_time = summary.pipeline_queue_wait_ns;
+            self.min_tso_wait_time = proto_value(summary.min_tso_wait_ns);
+            self.pipeline_breaker_wait_time = proto_value(summary.pipeline_breaker_wait_ns);
+            self.pipeline_queue_wait_time = proto_value(summary.pipeline_queue_wait_ns);
         }
     }
 
@@ -1185,21 +945,24 @@ pub struct TiFlashNetworkTrafficSummary {
 impl TiFlashNetworkTrafficSummary {
     /// Go `TiFlashNetworkTrafficSummary.UpdateTiKVExecDetails`: updates
     /// `tikvDetails` with this summary's values. Go's nil-`tikvDetails`
-    /// early return is the caller's `Option` here, and Go's
-    /// `atomic.AddInt64` on the live client-go `util.ExecDetails` collapses
-    /// to plain `+=` on the already-loaded snapshot.
+    /// early return is represented by the caller not invoking this method.
     #[expect(
         clippy::cast_possible_wrap,
         reason = "Go int64(uint64) conversions before atomic.AddInt64"
     )]
-    pub fn update_tikv_exec_details(&self, tikv_details: &mut TikvExecDetailsSnapshot) {
-        tikv_details.unpacked_bytes_sent_mpp_cross_zone += self.inter_zone_send_bytes as i64;
-        tikv_details.unpacked_bytes_sent_mpp_total += self.inter_zone_send_bytes as i64;
-        tikv_details.unpacked_bytes_sent_mpp_total += self.inner_zone_send_bytes as i64;
-
-        tikv_details.unpacked_bytes_received_mpp_cross_zone += self.inter_zone_receive_bytes as i64;
-        tikv_details.unpacked_bytes_received_mpp_total += self.inter_zone_receive_bytes as i64;
-        tikv_details.unpacked_bytes_received_mpp_total += self.inner_zone_receive_bytes as i64;
+    pub fn update_tikv_exec_details(&self, tikv_details: &tikv_client::util::ExecDetails) {
+        tikv_details
+            .traffic
+            .add_request(self.inter_zone_send_bytes as i64, true, true);
+        tikv_details
+            .traffic
+            .add_request(self.inner_zone_send_bytes as i64, true, false);
+        tikv_details
+            .traffic
+            .add_response(self.inter_zone_receive_bytes as i64, true, true);
+        tikv_details
+            .traffic
+            .add_response(self.inner_zone_receive_bytes as i64, true, false);
     }
 
     /// Go `TiFlashNetworkTrafficSummary.Empty`: if no any network traffic,
@@ -1265,19 +1028,23 @@ impl TiFlashNetworkTrafficSummary {
         self.inter_zone_receive_bytes += other.inter_zone_receive_bytes;
     }
 
-    /// Go `TiFlashNetworkTrafficSummary.mergeExecSummary`: merges a
-    /// `tipb.TiFlashNetWorkSummary` (its snapshot narrowing) directly; a
-    /// `None` summary is Go's nil early return. Go dereferences the proto
-    /// field pointers without getters here; the snapshot's plain fields
-    /// make that total.
-    pub fn merge_exec_summary(&mut self, summary: Option<&TiFlashNetworkSummarySnapshot>) {
+    /// Go `TiFlashNetworkTrafficSummary.mergeExecSummary`.
+    pub fn merge_exec_summary(&mut self, summary: Option<&ProtoTiFlashNetworkSummary>) {
         let Some(summary) = summary else {
             return;
         };
-        self.inner_zone_send_bytes += summary.inner_zone_send_bytes;
-        self.inter_zone_send_bytes += summary.inter_zone_send_bytes;
-        self.inner_zone_receive_bytes += summary.inner_zone_receive_bytes;
-        self.inter_zone_receive_bytes += summary.inter_zone_receive_bytes;
+        self.inner_zone_send_bytes += summary
+            .inner_zone_send_bytes
+            .expect("TiFlashNetWorkSummary.inner_zone_send_bytes is nil");
+        self.inter_zone_send_bytes += summary
+            .inter_zone_send_bytes
+            .expect("TiFlashNetWorkSummary.inter_zone_send_bytes is nil");
+        self.inner_zone_receive_bytes += summary
+            .inner_zone_receive_bytes
+            .expect("TiFlashNetWorkSummary.inner_zone_receive_bytes is nil");
+        self.inter_zone_receive_bytes += summary
+            .inter_zone_receive_bytes
+            .expect("TiFlashNetWorkSummary.inter_zone_receive_bytes is nil");
     }
 
     /// Go `TiFlashNetworkTrafficSummary.GetInterZoneTrafficBytes`: the inter
@@ -1296,19 +1063,34 @@ impl TiFlashNetworkTrafficSummary {
     }
 }
 
-// boundary: Go `MergeTiFlashRUConsumption` (tiflash_stats.go) is not ported —
-// it protobuf-unmarshals `resource_manager.Consumption` out of
-// `summary.GetRuConsumption()` bytes and feeds client-go
-// `util.RUDetails.UpdateTiFlash`/`Merge`, neither of which exists here.
+/// Go `MergeTiFlashRUConsumption`: decode and merge TiFlash RU consumption
+/// from executor summaries. Accumulation is staged so a decode error leaves
+/// `ru_details` unchanged, matching Go.
+pub fn merge_tiflash_ru_consumption(
+    execution_summaries: &[ExecutorExecutionSummary],
+    ru_details: &tikv_client::RuDetails,
+) -> Result<(), prost::DecodeError> {
+    use prost::Message as _;
+
+    let new_ru_details = tikv_client::RuDetails::new();
+    for summary in execution_summaries {
+        let Some(bytes) = summary.ru_consumption.as_deref() else {
+            continue;
+        };
+        let consumption = tikv_client::proto::resource_manager::Consumption::decode(bytes)?;
+        new_ru_details.update_tiflash(&consumption);
+    }
+    ru_details.merge(&new_ru_details);
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exec_details::ScanDetail;
     use crate::runtime_stats::{
-        CopScanDetail, CopTimeDetail, ExecutionSummaryDetailInfo, ExecutorExecutionSummarySnapshot,
-        RuntimeStats as _, RuntimeStatsColl, StoreType,
+        CopScanDetail, CopTimeDetail, RuntimeStats as _, RuntimeStatsColl, StoreType,
     };
+    use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
 
     /// Go `mockExecutorExecutionSummaryForTiFlash` (execdetails_test.go).
     /// NOTE: as in Go, `pipeline_breaker_wait_time` feeds
@@ -1338,42 +1120,43 @@ mod tests {
         inner_zone_receive_bytes: u64,
         inter_zone_receive_bytes: u64,
         executor_id: &str,
-    ) -> ExecutorExecutionSummarySnapshot {
-        let tiflash_scan_context = TiFlashScanContextSnapshot {
-            dmfile_data_scanned_rows: dmfile_scanned_rows,
-            dmfile_data_skipped_rows: dmfile_skipped_rows,
-            total_dmfile_rs_check_ms,
-            total_dmfile_read_ms: total_dmfile_read_time_ms,
-            total_build_snapshot_ms,
-            local_regions,
-            remote_regions,
-            total_learner_read_ms,
-            disagg_read_cache_hit_bytes,
-            disagg_read_cache_miss_bytes,
-            ..TiFlashScanContextSnapshot::default()
+    ) -> ExecutorExecutionSummary {
+        let tiflash_scan_context = ProtoTiFlashScanContext {
+            dmfile_data_scanned_rows: Some(dmfile_scanned_rows),
+            dmfile_data_skipped_rows: Some(dmfile_skipped_rows),
+            total_dmfile_rs_check_ms: Some(total_dmfile_rs_check_ms),
+            total_dmfile_read_ms: Some(total_dmfile_read_time_ms),
+            total_build_snapshot_ms: Some(total_build_snapshot_ms),
+            local_regions: Some(local_regions),
+            remote_regions: Some(remote_regions),
+            total_learner_read_ms: Some(total_learner_read_ms),
+            disagg_read_cache_hit_bytes: Some(disagg_read_cache_hit_bytes),
+            disagg_read_cache_miss_bytes: Some(disagg_read_cache_miss_bytes),
+            ..ProtoTiFlashScanContext::default()
         };
-        let tiflash_wait_summary = TiFlashWaitSummarySnapshot {
-            min_tso_wait_ns: min_tso_wait_time,
-            pipeline_queue_wait_ns: pipeline_breaker_wait_time,
-            pipeline_breaker_wait_ns: pipeline_queue_time,
+        let tiflash_wait_summary = ProtoTiFlashWaitSummary {
+            min_tso_wait_ns: Some(min_tso_wait_time),
+            pipeline_queue_wait_ns: Some(pipeline_breaker_wait_time),
+            pipeline_breaker_wait_ns: Some(pipeline_queue_time),
         };
-        let tiflash_network_summary = TiFlashNetworkSummarySnapshot {
-            inner_zone_send_bytes,
-            inter_zone_send_bytes,
-            inner_zone_receive_bytes,
-            inter_zone_receive_bytes,
+        let tiflash_network_summary = ProtoTiFlashNetworkSummary {
+            inner_zone_send_bytes: Some(inner_zone_send_bytes),
+            inter_zone_send_bytes: Some(inter_zone_send_bytes),
+            inner_zone_receive_bytes: Some(inner_zone_receive_bytes),
+            inter_zone_receive_bytes: Some(inter_zone_receive_bytes),
         };
-        ExecutorExecutionSummarySnapshot {
-            time_processed_ns,
-            num_produced_rows,
-            num_iterations,
-            concurrency,
-            executor_id: executor_id.to_owned(),
+        ExecutorExecutionSummary {
+            time_processed_ns: Some(time_processed_ns),
+            num_produced_rows: Some(num_produced_rows),
+            num_iterations: Some(num_iterations),
+            concurrency: Some(concurrency),
+            executor_id: Some(executor_id.to_owned()),
             detail_info: Some(ExecutionSummaryDetailInfo::TiflashScanContext(
                 tiflash_scan_context,
             )),
             tiflash_wait_summary: Some(tiflash_wait_summary),
             tiflash_network_summary: Some(tiflash_network_summary),
+            ..ExecutorExecutionSummary::default()
         }
     }
 
@@ -1405,39 +1188,40 @@ mod tests {
         total_segments: u64,
         total_deserialize_block_ms: u64,
         executor_id: &str,
-    ) -> ExecutorExecutionSummarySnapshot {
-        let columnar_scan_context = ColumnarScanContextSnapshot {
-            regions,
-            read_tasks,
-            physical_tables,
-            columns,
-            user_read_bytes,
-            mvcc_input_rows,
-            mvcc_input_bytes,
-            mvcc_output_rows,
-            total_read_block_ms,
-            total_serialize_block_ms,
-            total_init_reader_ms,
-            total_prefetch_ms,
-            rough_check_total_packs,
-            rough_check_selected_packs,
-            rough_check_skipped_packs,
-            rough_check_unknown_packs,
-            remote_segments,
-            total_segments,
-            total_deserialize_block_ms,
+    ) -> ExecutorExecutionSummary {
+        let columnar_scan_context = ProtoColumnarScanContext {
+            regions: Some(regions),
+            read_tasks: Some(read_tasks),
+            physical_tables: Some(physical_tables),
+            columns: Some(columns),
+            user_read_bytes: Some(user_read_bytes),
+            mvcc_input_rows: Some(mvcc_input_rows),
+            mvcc_input_bytes: Some(mvcc_input_bytes),
+            mvcc_output_rows: Some(mvcc_output_rows),
+            total_read_block_ms: Some(total_read_block_ms),
+            total_serialize_block_ms: Some(total_serialize_block_ms),
+            total_init_reader_ms: Some(total_init_reader_ms),
+            total_prefetch_ms: Some(total_prefetch_ms),
+            rough_check_total_packs: Some(rough_check_total_packs),
+            rough_check_selected_packs: Some(rough_check_selected_packs),
+            rough_check_skipped_packs: Some(rough_check_skipped_packs),
+            rough_check_unknown_packs: Some(rough_check_unknown_packs),
+            remote_segments: Some(remote_segments),
+            total_segments: Some(total_segments),
+            total_deserialize_block_ms: Some(total_deserialize_block_ms),
         };
-        ExecutorExecutionSummarySnapshot {
-            time_processed_ns,
-            num_produced_rows,
-            num_iterations,
-            concurrency,
-            executor_id: executor_id.to_owned(),
+        ExecutorExecutionSummary {
+            time_processed_ns: Some(time_processed_ns),
+            num_produced_rows: Some(num_produced_rows),
+            num_iterations: Some(num_iterations),
+            concurrency: Some(concurrency),
+            executor_id: Some(executor_id.to_owned()),
             detail_info: Some(ExecutionSummaryDetailInfo::ColumnarScanContext(
                 columnar_scan_context,
             )),
             tiflash_wait_summary: None,
             tiflash_network_summary: None,
+            ..ExecutorExecutionSummary::default()
         }
     }
 
@@ -1566,16 +1350,13 @@ mod tests {
             ),
         );
         let scan_detail = CopScanDetail {
-            base: ScanDetail {
-                total_keys: 10,
-                processed_keys: 10,
-                rocksdb_delete_skipped_count: 10,
-                rocksdb_key_skipped_count: 1,
-                rocksdb_block_cache_hit_count: 10,
-                rocksdb_block_read_count: 10,
-                rocksdb_block_read_byte: 100,
-                ..ScanDetail::default()
-            },
+            total_keys: 10,
+            processed_keys: 10,
+            rocksdb_delete_skipped_count: 10,
+            rocksdb_key_skipped_count: 1,
+            rocksdb_block_cache_hit_count: 10,
+            rocksdb_block_read_count: 10,
+            rocksdb_block_read_bytes: 100,
             ..CopScanDetail::default()
         };
         stats.record_cop_stats(
@@ -1588,6 +1369,7 @@ mod tests {
         assert!(stats.exists_cop_stats(table_scan_id));
 
         let cop = stats.get_cop_stats(table_scan_id).unwrap();
+        let cop = cop.lock().expect("CopRuntimeStats mutex poisoned");
         assert_eq!(
             "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_network: {inner_zone_send_bytes: 11000, inter_zone_send_bytes: 22000, inner_zone_receive_bytes: 33000, inter_zone_receive_bytes: 44000}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}",
             cop.string()
@@ -1599,13 +1381,16 @@ mod tests {
             "time:3ns, loops:3, threads:2, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_network: {inner_zone_send_bytes: 11000, inter_zone_send_bytes: 22000, inner_zone_receive_bytes: 33000, inter_zone_receive_bytes: 44000}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}",
             cop_stats.string()
         );
-        // Not in the Go test: pins the `RecordCopStats` merge (the Go
-        // fields are recorded but unread there).
-        assert_eq!(cop.scan_detail, scan_detail);
-        assert_eq!(cop.time_detail, CopTimeDetail::default());
-
         let expected = "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:6, remote_regions:2, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:50ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:20192, data_skipped_rows:86000, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:100ms, tot_read:3000ms, disagg_cache_hit_bytes: 20, disagg_cache_miss_bytes: 0}}";
-        assert_eq!(expected, stats.get_cop_stats(agg_id).unwrap().string());
+        assert_eq!(
+            expected,
+            stats
+                .get_cop_stats(agg_id)
+                .unwrap()
+                .lock()
+                .expect("CopRuntimeStats mutex poisoned")
+                .string()
+        );
 
         let root_stats = stats.get_root_stats(table_reader_id);
         let _ = root_stats;
@@ -1615,6 +1400,9 @@ mod tests {
             .get_stmt_cop_runtime_stats()
             .tiflash_network_stats
             .unwrap();
+        let stmt_network_stats = stmt_network_stats
+            .lock()
+            .expect("TiFlashNetworkTrafficSummary mutex poisoned");
         assert_eq!(stmt_network_stats.inner_zone_send_bytes, 11000u64);
         assert_eq!(stmt_network_stats.inter_zone_send_bytes, 22000u64);
         assert_eq!(stmt_network_stats.inner_zone_receive_bytes, 33000u64);
@@ -1637,7 +1425,7 @@ mod tests {
         );
         match &mut exec_summary.detail_info {
             Some(ExecutionSummaryDetailInfo::TiflashScanContext(scan)) => {
-                scan.vector_idx_load_from_s3 = v;
+                scan.vector_idx_load_from_s3 = Some(v);
             }
             _ => unreachable!("mock builds the scan variant"),
         }
@@ -1645,7 +1433,9 @@ mod tests {
         let s = stats.get_cop_stats(1).unwrap();
         assert_eq!(
             "tiflash_task:{time:0s, loops:0, threads:0}, vector_idx:{load:{total:0ms,from_s3:1,from_disk:0,from_cache:0},search:{total:0ms,visited_nodes:0,discarded_nodes:0},read:{vec_total:0ms,others_total:0ms}}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:0, remote_regions:0, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:0ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:0, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:0ms, tot_read:0ms}}",
-            s.string()
+            s.lock()
+                .expect("CopRuntimeStats mutex poisoned")
+                .string()
         );
     }
 
@@ -1715,7 +1505,9 @@ mod tests {
         let s = stats.get_cop_stats(1).unwrap();
         assert_eq!(
             "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:5, tasks:2, threads:3}, columnar_scan:{mvcc_input_rows:110, mvcc_input_bytes:6144, mvcc_output_rows:88, regions:6, read_tasks:10, physical_tables:3, columns:5, user_read_bytes:3072, read_block:8ms, serialize_block:10ms, init_reader:12ms, prefetch:14ms, deserialize_block:28ms, rough_check:{total:16, selected:18, skipped:20, unknown:22}, remote_segments:24, total_segments:26}",
-            s.string()
+            s.lock()
+                .expect("CopRuntimeStats mutex poisoned")
+                .string()
         );
 
         let mut zero_stats = RuntimeStatsColl::new(None);
@@ -1746,7 +1538,12 @@ mod tests {
             "tablescan_1",
         );
         zero_stats.record_one_cop_task(1, StoreType::TiFlash, &zero_exec_summary);
-        let zero_string = zero_stats.get_cop_stats(1).unwrap().string();
+        let zero_string = zero_stats
+            .get_cop_stats(1)
+            .unwrap()
+            .lock()
+            .expect("CopRuntimeStats mutex poisoned")
+            .string();
         assert!(zero_string.contains("columnar_scan:{"));
         assert!(!zero_string.contains("tiflash_scan:{"));
     }

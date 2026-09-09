@@ -81,6 +81,21 @@ func TestSysVar(t *testing.T) {
 	analyzeScan := variable.GetSysVar(vardef.TiDBAnalyzeDistSQLScanConcurrency)
 	require.NotNil(t, analyzeScan)
 	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
+
+	analyzeStoreBatch := variable.GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, analyzeStoreBatch)
+	require.Equal(t, "4", analyzeStoreBatch.Value)
+	require.Equal(t, uint64(8), analyzeStoreBatch.MaxValue)
+}
+
+func TestTiDBAnalyzeStoreBatchSize(t *testing.T) {
+	sv := variable.GetSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, sv)
+
+	vars := variable.NewSessionVars(nil)
+	require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+	require.NoError(t, sv.SetSessionFromHook(vars, "8"))
+	require.Equal(t, 8, vars.AnalyzeStoreBatchSize)
 }
 
 func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
@@ -634,12 +649,14 @@ func TestSetSysVar(t *testing.T) {
 	originalCfg := *config.GetGlobalConfig()
 	originalDeployMode := deploymode.Get()
 	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Load()
 	t.Cleanup(func() {
 		config.StoreGlobalConfig(&originalCfg)
 		if kerneltype.IsNextGen() {
 			require.NoError(t, deploymode.Set(originalDeployMode))
 		}
 		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
 	})
 
 	mock := variable.NewMockGlobalAccessor4Tests()
@@ -669,6 +686,12 @@ func TestSetSysVar(t *testing.T) {
 
 	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
 	require.True(t, tidbtls.RequireSecureTransport.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+	require.True(t, vardef.EnableConnectionEventLog.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.Off, false))
+	require.False(t, vardef.EnableConnectionEventLog.Load())
 }
 
 func TestSkipSysvarCache(t *testing.T) {

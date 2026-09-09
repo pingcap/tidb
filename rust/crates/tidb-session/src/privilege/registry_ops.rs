@@ -25,6 +25,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::Ordering;
 
 use super::*;
+use tidb_util::stringutil::go_to_upper;
 
 fn compare_host(left: &str, right: &str) -> Comparison {
     if left == "%" || right == "%" {
@@ -76,10 +77,13 @@ fn host_matches(pattern: &str, host: &str) -> bool {
 }
 
 fn database_matches(pattern: &str, database: &str) -> bool {
-    wildcard_match(
-        database.to_ascii_uppercase().as_bytes(),
-        pattern.to_ascii_uppercase().as_bytes(),
-    )
+    // Go's cache compiles `strings.ToUpper(db)` (not ASCII-only folding)
+    // before applying its binary wildcard matcher.  MySQL identifiers may
+    // contain non-ASCII letters, so preserve the same Unicode case mapping
+    // here instead of silently making those grants case-sensitive.
+    let database = go_to_upper(database);
+    let pattern = go_to_upper(pattern);
+    wildcard_match(database.as_bytes(), pattern.as_bytes())
 }
 
 fn parse_ipv4_network(pattern: &str) -> Option<(Ipv4Addr, Ipv4Addr)> {
@@ -1134,7 +1138,9 @@ impl PrivilegeRegistry {
         if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
             return true;
         }
-        if tidb_util::sem::is_enabled() && tidb_util::sem::is_restricted_privilege(&name) {
+        if tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_restricted_privilege(&name)
+        {
             return false;
         }
         if with_grant && !self.has_global_priv(user, host, GlobalPriv::GrantOption) {
@@ -1416,8 +1422,8 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         database: &str,
     ) -> bool {
-        if tidb_util::sem::is_enabled()
-            && tidb_util::sem::is_invisible_schema(database)
+        if tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_invisible_schema(database)
             && !self.has_dynamic_priv_with_roles(
                 user,
                 host,
@@ -1930,5 +1936,15 @@ impl PrivilegeRegistry {
             role_edges,
             default_roles,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::database_matches;
+
+    #[test]
+    fn database_matching_folds_non_ascii_like_go_strings_to_upper() {
+        assert!(database_matches("ТЕ%", "тест"));
     }
 }

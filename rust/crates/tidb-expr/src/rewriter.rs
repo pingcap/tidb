@@ -14,6 +14,10 @@
 
 //! Go-shaped AST-to-planner expression rewriting and constant-fold ordering.
 
+use crate::aggregation::wrap_cast::{
+    wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
+    wrap_with_cast_as_real, wrap_with_cast_as_string, wrap_with_cast_as_time,
+};
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
@@ -21,7 +25,10 @@ use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    default_field_type_for_value, Datum, EvalType, FieldType, FieldTypeCode, FieldTypeValue,
+    TimeType,
+};
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
 /// literal too large for a `MyDecimal` saturates to.
@@ -34,9 +41,11 @@ pub(crate) mod result_type;
 
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
+pub(crate) use result_type::adjust_ret_ft_for_cast_string;
+pub(crate) use result_type::builtin_return_type;
 pub use result_type::go_result_type_code;
 use result_type::{
-    binary_literal_type, builtin_return_type, cast_target, decimal_literal_type, int_literal_type,
+    binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset, validate_cast_type, validate_name_const_args,
 };
 
@@ -74,6 +83,22 @@ pub trait ColumnResolver {
         col.index = index as i64;
         col.orig_name = self.orig_name(path).unwrap_or_default();
         Some(col)
+    }
+
+    /// Resolves a column-shaped AST leaf to the complete expression Go's
+    /// plan-aware rewriter produces. Ordinary scopes return a plain column;
+    /// a nested-query scope may override this with a `CorrelatedColumn` that
+    /// retains the outer binding identity.
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        self.resolve_column(path).map(Expression::Column)
+    }
+
+    /// Go `clauseMsg` (`planbuilder.go:132`): the clause an unknown-column
+    /// error names. Go's plan-aware rewriter reads it from `er.clause()`; the
+    /// default is Go's `expressionClause` spelling, which is what a resolver
+    /// without a statement clause reports.
+    fn clause_message(&self) -> &'static str {
+        "expression"
     }
 
     /// Resolves the Go `Column.OrigName` carried by a source column. The
@@ -135,12 +160,11 @@ pub trait ColumnResolver {
         crate::collation_derive::connection_charset_info()
     }
 
-    /// Length of the immutable server identity returned by `TIDB_VERSION()`.
+    /// Length of the process identity returned by `TIDB_VERSION()`.
     /// Go reads the process globals while building this function and uses the
     /// same rendered value to set its result width.
     fn tidb_info_len(&self) -> usize {
-        tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
-            .len()
+        tidb_util::printer::get_tidb_info().len()
     }
 
     /// The third argument Go supplies to `like()` when SQL omitted `ESCAPE`.
@@ -152,6 +176,15 @@ pub trait ColumnResolver {
     /// Whether integer subtraction is forced onto the signed result domain.
     fn no_unsigned_subtraction(&self) -> bool {
         false
+    }
+
+    /// The live statement context Go's comparison builder uses while
+    /// refining an integer column against a non-integer constant. A planner
+    /// resolver can expose it so conversion diagnostics are raised once at
+    /// build time; context-free resolvers retain the historical no-warning
+    /// structural rewrite.
+    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+        None
     }
 
     /// The statement's `div_precision_increment` used to build `/` metadata.
@@ -194,6 +227,12 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     }
     fn resolve_column(&self, path: &[String]) -> Option<Column> {
         (**self).resolve_column(path)
+    }
+    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        (**self).resolve_expression(path)
+    }
+    fn clause_message(&self) -> &'static str {
+        (**self).clause_message()
     }
     fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
         (**self).param_value(order)
@@ -372,10 +411,11 @@ fn constant_string(text: &str) -> Expression {
 /// charset, is wrapped with the implicit `to_binary` call that performs the
 /// UTF-8 -> charset transcode. See `crate::convert_charset` for why that is
 /// the only place the bytes ever change.
-fn wrap_binary_literals(
+pub(crate) fn wrap_binary_literals(
     name: &str,
     result_charset: &str,
     args: Vec<Expression>,
+    fold: impl Fn(&mut Expression),
 ) -> Vec<Expression> {
     let prop = crate::convert_charset::func_prop(name);
     if prop == crate::convert_charset::FuncProp::None {
@@ -395,13 +435,31 @@ fn wrap_binary_literals(
             }
             let mut ret_type = FieldType::new(FieldTypeCode::VarString);
             set_binary_charset(&mut ret_type);
-            Expression::ScalarFunction(ScalarFunction::new(
+            let mut wrapped = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("to_binary"),
                 ret_type,
                 vec![arg],
-            ))
+            ));
+            // Go BuildToBinaryFunction folds this new child before its
+            // parent inspects argument constancy.
+            fold(&mut wrapped);
+            wrapped
         })
         .collect()
+}
+
+/// Reapplies the result-charset rules whose Go function classes override the
+/// generic collation derivation after `newBaseBuiltinFuncWithTp` returns.
+pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(), EvalError> {
+    let Expression::ScalarFunction(func) = expr else {
+        return Ok(());
+    };
+    if returns_binary_string(func.func_name.lowercase()) {
+        if let Some(field_type) = func.ret_type.as_mut() {
+            set_binary_charset(field_type);
+        }
+    }
+    result_type::restore_char_result_charset(func)
 }
 
 /// Applies the two `ETReal` argument declarations of Go's
@@ -475,7 +533,7 @@ fn binary_expression(
     left: Expression,
     right: Expression,
     resolver: &impl ColumnResolver,
-) -> Expression {
+) -> Result<Expression, EvalError> {
     let name = binary_op_name(op);
     let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_context(
         name,
@@ -497,11 +555,168 @@ fn binary_expression(
                 }
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
+                if let Some(ctx) = resolver.comparison_context() {
+                    let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(name),
+                        ret_type.clone(),
+                        args,
+                    ));
+                    crate::builtin_compare::refine_comparison_dyn(&mut expression, ctx)?;
+                    return Ok(expression);
+                } else {
+                    crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
+                }
                 crate::builtin_compare::prepare_json_comparison_args(&mut args);
+                crate::builtin_compare::wrap_comparison_arguments_with_fold(
+                    &mut args,
+                    resolver.connection_charset_info(),
+                    |argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
+                )?;
             }
-            Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ret_type, args))
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type,
+                args,
+            )))
         }
-        None => scalar(name, vec![left, right]),
+        None => Ok(scalar(name, vec![left, right])),
+    }
+}
+
+/// Go `ResolveType4Between` (`pkg/expression/builtin_compare.go:395`), which
+/// resolves one comparison domain across all three BETWEEN operands before
+/// the two binary comparisons are built.
+fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
+    let eval_type = |expr: &Expression| {
+        expr.static_type()
+            .map_or(EvalType::String, FieldType::eval_type)
+    };
+    let base_cmp_type = |lhs: EvalType, rhs: EvalType| {
+        if lhs.is_string_kind() && rhs.is_string_kind() {
+            EvalType::String
+        } else if lhs == EvalType::Int && rhs == EvalType::Int {
+            EvalType::Int
+        } else if (lhs == EvalType::Decimal && rhs == EvalType::String)
+            || (lhs == EvalType::String && rhs == EvalType::Decimal)
+        {
+            EvalType::Real
+        } else if (lhs == EvalType::Int || lhs == EvalType::Decimal)
+            && (rhs == EvalType::Int || rhs == EvalType::Decimal)
+        {
+            EvalType::Decimal
+        } else {
+            EvalType::Real
+        }
+    };
+
+    let mut cmp_type = eval_type(args[0]);
+    for arg in &args[1..] {
+        cmp_type = base_cmp_type(cmp_type, eval_type(arg));
+    }
+    if cmp_type == EvalType::String {
+        if args[0]
+            .static_type()
+            .is_some_and(|field_type| field_type.code() == FieldTypeCode::Duration)
+        {
+            cmp_type = EvalType::Duration;
+        } else if args.iter().any(|arg| {
+            arg.static_type()
+                .is_some_and(|field_type| field_type.code().is_type_temporal())
+        }) {
+            cmp_type = EvalType::Datetime;
+        }
+    }
+    if args.iter().all(|arg| {
+        arg.static_type()
+            .is_some_and(|field_type| field_type.eval_type() == EvalType::Int)
+            || matches!(
+                arg,
+                Expression::Constant(constant)
+                    if matches!(&constant.value, Datum::BinaryLiteral(_))
+            )
+    }) {
+        return EvalType::Int;
+    }
+    cmp_type
+}
+
+/// Go `newBaseBuiltinFuncWithFieldTypes`' implicit cast for one CASE branch:
+/// every THEN/ELSE argument is wrapped in the MERGED control type. Decimal,
+/// datetime, timestamp, and duration targets take the FULL merged type
+/// (`flen`/`decimal`), which is what turns a folded `0` into `0.0000`; the
+/// other families use the same `WrapWithCastAs*` helpers Go calls.
+fn wrap_case_branch(
+    branch: Expression,
+    target: &FieldType,
+    connection: (&str, &str),
+) -> Result<Expression, EvalError> {
+    let already = branch.static_type().is_some_and(|source| source == target);
+    match target.eval_type() {
+        EvalType::Int => wrap_with_cast_as_int(branch, Some(target)),
+        EvalType::Real => wrap_with_cast_as_real(branch),
+        EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
+            if already {
+                Ok(branch)
+            } else {
+                crate::simple_expr::build_cast_function(branch, target.clone(), false)
+            }
+        }
+        EvalType::String => wrap_with_cast_as_string(branch, connection),
+        EvalType::Json => crate::aggregation::wrap_cast::wrap_with_cast_as_json(branch),
+        EvalType::VectorFloat32 => Ok(branch),
+    }
+}
+
+/// Applies Go's `wrapExpWithCast` to all three BETWEEN operands. The common
+/// type is deliberately chosen once, rather than allowing the lower and upper
+/// comparisons to infer independently from their two arms.
+fn wrap_between_arguments(
+    args: [&Expression; 3],
+    cmp_type: EvalType,
+    connection: (&str, &str),
+) -> Result<[Expression; 3], EvalError> {
+    let [expr, low, high] = args;
+    match cmp_type {
+        EvalType::Int => Ok([
+            wrap_with_cast_as_int(expr.clone(), None)?,
+            wrap_with_cast_as_int(low.clone(), None)?,
+            wrap_with_cast_as_int(high.clone(), None)?,
+        ]),
+        EvalType::Real => Ok([
+            wrap_with_cast_as_real(expr.clone())?,
+            wrap_with_cast_as_real(low.clone())?,
+            wrap_with_cast_as_real(high.clone())?,
+        ]),
+        EvalType::Decimal => Ok([
+            wrap_with_cast_as_decimal(expr.clone())?,
+            wrap_with_cast_as_decimal(low.clone())?,
+            wrap_with_cast_as_decimal(high.clone())?,
+        ]),
+        EvalType::String => Ok([
+            wrap_with_cast_as_string(expr.clone(), connection)?,
+            wrap_with_cast_as_string(low.clone(), connection)?,
+            wrap_with_cast_as_string(high.clone(), connection)?,
+        ]),
+        EvalType::Duration => Ok([
+            wrap_with_cast_as_duration(expr.clone())?,
+            wrap_with_cast_as_duration(low.clone())?,
+            wrap_with_cast_as_duration(high.clone())?,
+        ]),
+        EvalType::Datetime => {
+            let target = FieldType::new(FieldTypeCode::Datetime);
+            Ok([
+                wrap_with_cast_as_time(expr.clone(), target.clone())?,
+                wrap_with_cast_as_time(low.clone(), target.clone())?,
+                wrap_with_cast_as_time(high.clone(), target)?,
+            ])
+        }
+        // ResolveType4Between returns one of the six cases above for all
+        // currently supported scalar field types. Preserve the source shape
+        // if a future type reaches this narrow adapter before its Go cast is
+        // transcreated.
+        EvalType::Timestamp | EvalType::Json | EvalType::VectorFloat32 => {
+            Ok([expr.clone(), low.clone(), high.clone()])
+        }
     }
 }
 
@@ -524,12 +739,12 @@ fn rewrite_comparison(
         (Expr::Row(left), Expr::Row(right)) => rewrite_row_comparison(op, left, right, resolver),
         (Expr::Row(left), _) => Err(EvalError::OperandColumns(left.len())),
         (_, Expr::Row(_)) => Err(EvalError::OperandColumns(1)),
-        _ => Ok(binary_expression(
+        _ => binary_expression(
             op,
             rewrite_expr_resolved(left, resolver)?,
             rewrite_expr_resolved(right, resolver)?,
             resolver,
-        )),
+        ),
     }
 }
 
@@ -543,7 +758,7 @@ fn compose_comparisons(
         .next()
         .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
     comparisons.try_fold(first, |condition, comparison| {
-        Ok(binary_expression(join, condition, comparison?, resolver))
+        binary_expression(join, condition, comparison?, resolver)
     })
 }
 
@@ -633,10 +848,9 @@ fn rewrite_expr_resolved_inner(
         if let Some(constant) = resolver.resolve_constant(path) {
             return Ok(constant);
         }
-        let col = resolver
-            .resolve_column(path)
-            .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
-        return Ok(Expression::Column(col));
+        return resolver.resolve_expression(path).ok_or_else(|| {
+            EvalError::UnknownColumnInClause(path.join("."), resolver.clause_message())
+        });
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
@@ -704,14 +918,7 @@ fn derive_tree_collation_with_connection(
     crate::collation_derive::apply_derived_collation(expr, &ec);
     // Some getFunction implementations overwrite generic derivation with a
     // fixed result charset. Reapply those source-owned result rules last.
-    if let Expression::ScalarFunction(func) = expr {
-        if returns_binary_string(func.func_name.lowercase()) {
-            if let Some(ft) = func.ret_type.as_mut() {
-                set_binary_charset(ft);
-            }
-        }
-        result_type::restore_char_result_charset(func)?;
-    }
+    restore_function_result_charset(expr)?;
     Ok(())
 }
 
@@ -762,7 +969,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
-            Ok(binary_expression(*op, left, right, resolver))
+            binary_expression(*op, left, right, resolver)
         }
         Expr::Int(_)
         | Expr::Float(_)
@@ -798,17 +1005,33 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
 /// stack while planning. Each group pays only its own arms now, and the
 /// dispatcher that recurses pays almost nothing.
 #[inline(never)]
-fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+fn rewrite_leaf_literal(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
     match expr {
-        Expr::ParamMarker { order, .. } => {
+        Expr::ParamMarker {
+            order,
+            in_execute,
+            value,
+            ..
+        } => {
+            // Go ParamMarkerExpression reads the marker's current Datum at
+            // construction; runtime Constant evaluation reads this execution's
+            // parameter context. Standalone resolvers can supply an uninstalled
+            // marker directly without changing its absolute order.
+            let datum = match (in_execute, value) {
+                (true, Some(value)) => value.clone(),
+                _ => resolver.param_value(*order)?,
+            };
             let value = crate::expr_util::ParamMarkerValue {
-                datum: resolver.param_value(*order)?,
+                datum,
                 order: i64::try_from(*order)
                     .map_err(|_| EvalError::Unsupported("prepared parameter index overflow"))?,
             };
-            Ok(Expression::Constant(crate::expr_util::param_marker_expression(
-                &value, true, false, None,
-            )))
+            Ok(Expression::Constant(
+                crate::expr_util::param_marker_expression(&value, true, false, None),
+            ))
         }
         // Go's `ast.NewValueExpr` hands the scanned literal to
         // `types.NewDatum`, whose int64/uint64 split puts a literal above
@@ -1016,7 +1239,10 @@ fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<E
 /// stack while planning. Each group pays only its own arms now, and the
 /// dispatcher that recurses pays almost nothing.
 #[inline(never)]
-fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
+fn rewrite_leaf_compound(
+    expr: &Expr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
     match expr {
         // Go's `in` builtin takes the tested value as args[0] and the list as
         // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
@@ -1040,12 +1266,7 @@ fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<
                     "an IN expression with no candidates",
                 ))??;
                 let call = comparisons.try_fold(first, |condition, comparison| {
-                    Ok(binary_expression(
-                        BinaryOp::LogicOr,
-                        condition,
-                        comparison?,
-                        resolver,
-                    ))
+                    binary_expression(BinaryOp::LogicOr, condition, comparison?, resolver)
                 })?;
                 if *not {
                     let ret_type = call
@@ -1097,14 +1318,19 @@ fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<
             let value = rewrite_expr_resolved(expr, resolver)?;
             let low = rewrite_expr_resolved(low, resolver)?;
             let high = rewrite_expr_resolved(high, resolver)?;
+            let [value, low, high] = wrap_between_arguments(
+                [&value, &low, &high],
+                resolve_type4_between([&value, &low, &high]),
+                resolver.connection_charset_info(),
+            )?;
             let (lower_op, upper_op, joiner) = if *not {
                 (BinaryOp::Lt, BinaryOp::Gt, "or")
             } else {
                 (BinaryOp::Ge, BinaryOp::Le, "and")
             };
             let compare = binary_expression;
-            let lower = compare(lower_op, value.clone(), low, resolver);
-            let upper = compare(upper_op, value, high, resolver);
+            let lower = compare(lower_op, value.clone(), low, resolver)?;
+            let upper = compare(upper_op, value, high, resolver)?;
             // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
             // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
             // is `[true]`/`[false]`, not `[1]`/`[0]`.
@@ -1226,11 +1452,38 @@ fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<
                 })
                 .cloned()
                 .collect();
-            let ret_type = builtin_return_type("case_when", &branches).ok_or(
-                EvalError::Unsupported("a CASE whose branches have different types"),
-            )?;
+            let ret_type = builtin_return_type("case", &branches).ok_or(EvalError::Unsupported(
+                "a CASE whose branches have different types",
+            ))?;
+            // Go's `caseWhenFunctionClass.getFunction` builds the signature
+            // with the merged type as every result argument's expected type,
+            // so the branches are cast to it before the function is built.
+            let connection = resolver.connection_charset_info();
+            let mut result_indexes: Vec<usize> = (1..args.len()).step_by(2).collect();
+            if args.len() % 2 == 1 {
+                // The trailing ELSE is a result branch too.
+                result_indexes.push(args.len() - 1);
+            }
+            for index in result_indexes {
+                let branch = args[index].clone();
+                let mut wrapped = wrap_case_branch(branch, &ret_type, connection)?;
+                // Go `BuildCastFunctionWithCheck` (`builtin_cast.go:2655`)
+                // folds the constant cast it just built, which is why a
+                // constant branch renders as the cast's own type
+                // (`0.0000`). Rust's builders defer that fold so conversion
+                // diagnostics stay with the live statement context; this is
+                // that context, and a non-constant branch is untouched.
+                if let Some(context) = resolver.comparison_context() {
+                    crate::constant_fold::fold_constant_in_mode(
+                        &mut wrapped,
+                        context,
+                        ConstantFoldMode::Normal,
+                    );
+                }
+                args[index] = wrapped;
+            }
             Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("case_when"),
+                CiString::new("case"),
                 ret_type,
                 args,
             )))
@@ -1319,23 +1572,20 @@ fn rewrite_leaf_compound(expr: &Expr, resolver: &impl ColumnResolver) -> Result<
 #[inline(never)]
 fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
-        // `EXTRACT(unit FROM value)` is sugar for the SAME single-argument
-        // function `unit` already names, exactly as the AST evaluator treats
-        // it (see `crate::eval_in`'s own `Expr::Extract` arm) — so it is
-        // rewritten into that builtin call and needs no chunk machinery of
-        // its own. This includes a composite unit (`HOUR_MINUTE`,
-        // `DAY_SECOND`, ...): `time_fn::dispatch` names a function for those
-        // too (`time_fn::calendar::extract_composite`), and
-        // `builtin_return_type` below types them the same `int()` as every
-        // other EXTRACT unit.
-        Expr::Extract { unit, value } => rewrite_expr_resolved(
-            &Expr::Func {
-                name: unit.clone(),
-                args: vec![(**value).clone()],
-                origin_position: 0,
-            },
-            resolver,
-        ),
+        // Go's parser keeps `EXTRACT(unit FROM value)` as a two-argument
+        // `extract` call: `parseExtractFunc` builds `FuncCallExpr{FnName:
+        // ast.Extract, Args: [TimeUnitExpr, value]}` and the rewriter turns
+        // the unit into a VARCHAR constant (`expression_rewriter.go:1838`).
+        // Go's `extractFunctionClass.getFunction` then types the VALUE per
+        // unit; this port's shared unit functions coerce the value the same
+        // way, so the call is built here with the unit as the first argument
+        // and the value second, exactly as the AST evaluator's own
+        // `Expr::Extract` arm evaluates it (`crate::eval_in`).
+        Expr::Extract { unit, value } => {
+            let unit = constant(Datum::new_string(unit.clone()), FieldTypeCode::VarString);
+            let value = rewrite_expr_resolved(value, resolver)?;
+            Ok(scalar("extract", vec![unit, value]))
+        }
         // The first GET_FORMAT argument is grammar, not an expression. Go's
         // parser turns it into the signature's first ETString constant and
         // collapses TIMESTAMP into DATETIME before evaluation.
@@ -1417,6 +1667,20 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            // Go resolves every FuncCallExpr through its function class
+            // before a physical operator can suppress row evaluation (for
+            // example an empty table). Keep DATE_ADD's Rust interval node
+            // aligned with Go's three internal arguments.
+            let arity_count = if matches!(
+                lowered.as_str(),
+                "date_add" | "date_sub" | "adddate" | "subdate"
+            ) && matches!(args.as_slice(), [_, Expr::Interval { .. }])
+            {
+                3
+            } else {
+                args.len()
+            };
+            crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             if lowered == "name_const" {
                 validate_name_const_args(args)?;
@@ -1554,7 +1818,26 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if lowered == "tidb_version" {
                 ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
             }
-            let rewritten = wrap_binary_literals(&lowered, ret_type.charset_name(), rewritten);
+            // Go derives the function collation before applying
+            // `HandleBinaryLiteral`. In particular, CONCAT with a binary
+            // operand has a binary result, so a non-legacy argument such as
+            // GBK must be wrapped with `to_binary` before the node is built.
+            // The tree-level derivation below still stamps the complete
+            // `ExprCollation` (including coercibility and repertoire), but
+            // this early charset/collation result is needed for the
+            // construction-time conversion decision itself.
+            let derived = crate::collation_derive::derive_collation_with_connection(
+                &lowered,
+                &rewritten,
+                ret_type.eval_type(),
+                resolver.connection_charset_info(),
+            )?;
+            ret_type.set_charset_name(derived.charset);
+            ret_type.set_collation_name(derived.collation);
+            let rewritten =
+                wrap_binary_literals(&lowered, ret_type.charset_name(), rewritten, |expression| {
+                    resolver.fold_constant(expression, ConstantFoldMode::Normal)
+                });
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(&lowered),
                 ret_type,
@@ -1634,7 +1917,10 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
             // a gbk-charset argument transcodes on the way in, which is why
             // `HEX(CAST(gbk_col AS BINARY))` reports the GBK bytes.
-            let args = wrap_binary_literals("cast", ret_type.charset_name(), vec![arg]);
+            let args =
+                wrap_binary_literals("cast", ret_type.charset_name(), vec![arg], |expression| {
+                    resolver.fold_constant(expression, ConstantFoldMode::Normal)
+                });
             let charset_name = ret_type.charset_name().to_owned();
             let collation_name = ret_type.collation_name().to_owned();
             let mut node = Expression::ScalarFunction(ScalarFunction::new(
@@ -1767,7 +2053,6 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         )),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -2144,6 +2429,48 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// `HandleBinaryLiteral` runs after collation derivation in Go. A BINARY
+    /// CONCAT result therefore encodes the GBK argument before appending the
+    /// raw suffix; deriving only after construction would retain UTF-8 bytes.
+    #[test]
+    fn concat_derives_binary_before_wrapping_gbk_string() {
+        struct GbkResolver;
+
+        impl ColumnResolver for GbkResolver {
+            fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+                None
+            }
+
+            fn connection_charset_info(&self) -> (&str, &str) {
+                ("gbk", "gbk_bin")
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let expression = Expr::Func {
+            name: "CONCAT".to_owned(),
+            args: vec![
+                Expr::String("中文".to_owned()),
+                Expr::Hex("D2BB".to_owned()),
+            ],
+            origin_position: 0,
+        };
+        let rewritten = rewrite_expr_resolved(&expression, &GbkResolver).unwrap();
+        let mut chunk = Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        let value = rewritten
+            .eval(&NoColumns, chunk.get_row(0))
+            .expect("mixed-charset CONCAT evaluates");
+
+        assert_eq!(
+            value.as_raw_bytes(),
+            Some(&[0xd6, 0xd0, 0xce, 0xc4, 0xd2, 0xbb][..])
+        );
     }
 
     /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return
@@ -2839,7 +3166,7 @@ mod builtin_type_tests {
         let binary_discarded = tidb_util::plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str();
         assert_eq!(
             eval(&format!("tidb_decode_binary_plan('{binary_discarded}')")),
-            text_datum(tidb_util::plancodec::PLAN_DISCARDED_DECODED)
+            text_datum("(plan discarded because too long)")
         );
         assert_eq!(
             eval("time_format('23:00:00', '%H %k')"),

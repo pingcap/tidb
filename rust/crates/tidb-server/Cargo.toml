@@ -14,6 +14,8 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+chrono.workspace = true
+crossbeam-channel = "0.5"
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 ctrlc.workspace = true
@@ -25,39 +27,64 @@ rustls-pemfile.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-unistore = { path = "../tidb-unistore" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-error = { path = "../tidb-error" }
+tidb-log = { path = "../tidb-log" }
+tidb-errmsg = { path = "../tidb-errmsg" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-owner = { path = "../tidb-owner" }
+tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 # `pkg/domain/serverinfo`'s syncer: this node's /tidb/server/info entry.
 tidb-domain = { path = "../tidb-domain" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-session = { path = "../tidb-session" }
+tidb-schemaver = { path = "../tidb-schemaver" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
+tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
+tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
+tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
+tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true
 
 [dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
 prost.workspace = true
 # The TLS tests act as a real client against this node's own material.
 rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
-tidb-proto = { path = "../tidb-proto" }
-tidb-tablecodec = { path = "../tidb-tablecodec" }
 
 [[test]]
 name = "all"
@@ -77,4 +104,15 @@ path = "tests/configured_user_store_source.rs"
 # (the global_allocator in src/bin/tidb-server.rs). The opt-out exists
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
-jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+failpoints = [
+    "tidb-ddl-serverstate/failpoints",
+    "tidb-resourcemanager/failpoints",
+    "tidb-stats-handle-cache/failpoints",
+    "tidb-util/failpoints",
+]
+jemalloc = [
+    "dep:tikv-jemallocator",
+    "dep:tikv-jemalloc-sys",
+    "tidb-util/jemalloc",
+    "tikv-jemallocator/profiling",
+]

@@ -28,7 +28,7 @@ use tidb_meta::transaction::{
     split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
-    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats, TtlTuneFactors,
+    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats,
     NAME_EXTRACT_REGEXP,
 };
 use tidb_meta::{key, structure, value, MetaError, Result};
@@ -39,6 +39,28 @@ use tidb_model::{
     ActionType, DBInfo, MaskingPolicyInfo, MaskingPolicyStatus, MaskingPolicyType, PolicyInfo,
     SchemaDiff, TableInfo,
 };
+
+#[test]
+#[deny(unused_must_use)]
+fn mutator_source_returns_may_be_ignored_like_go() {
+    let meta = Mutator::new(MemoryTransaction::default());
+    Mutator::new(MemoryTransaction::default());
+    meta.start_ts();
+    meta.global_id_key();
+    meta.encoded_schema_diff_key(1);
+    meta.auto_table_id_key_value(1, 2, 3);
+    meta.auto_ids(1, 2);
+    meta.ddl_job_history_key(1);
+    let accessors = meta.auto_ids(1, 2);
+    accessors.row_id();
+    accessors.increment_id(5);
+    accessors.random_id();
+    accessors.sequence_value();
+    accessors.sequence_cycle();
+
+    Mutator::new_with_options(MemoryTransaction::default(), &mut []);
+    Mutator::new_reader(MemoryTransaction::default());
+}
 
 #[test]
 fn global_ids_are_atomic_contiguous_and_source_limited() {
@@ -1002,6 +1024,11 @@ fn bootstrap_schema_diff_and_raw_bdr_role_round_trip() {
     assert_eq!(meta.bootstrap_version().unwrap(), 1);
     meta.finish_bootstrap(10).unwrap();
     assert_eq!(meta.bootstrap_version().unwrap(), 10);
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 0);
+    meta.finish_starter_bootstrap(1).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
+    meta.finish_starter_bootstrap(10).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
 
     let diff = SchemaDiff {
         version: 100,
@@ -1273,6 +1300,10 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
         (key::MASKING_POLICY_GLOBAL_ID, Mutator::masking_policy_id),
         (key::SCHEMA_VERSION, Mutator::schema_version),
         (key::BOOTSTRAP, Mutator::bootstrap_version),
+        (
+            key::STARTER_BOOTSTRAP,
+            Mutator::starter_bootstrap_version,
+        ),
     ] {
         assert_eq!(
             getter(&with_string_value(logical_key, b"x")),
@@ -1954,7 +1985,7 @@ fn ddl_history_preserves_constructor_and_both_next_error_boundaries() {
 #[test]
 fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let meta = Mutator::new(MemoryTransaction::default());
-    let factors = TtlTuneFactors::default();
+    let factors = tidb_dxf::schstatus::TtlTuneFactors::default();
     meta.set_dxf_schedule_tune_factors("ks", &factors).unwrap();
     let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks");
     let dxf = meta
@@ -1964,10 +1995,14 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     assert_eq!(meta.dxf_schedule_tune_factors("ks").unwrap(), Some(factors));
     assert_eq!(meta.dxf_schedule_tune_factors("missing").unwrap(), None);
 
-    let factors = TtlTuneFactors {
-        ttl_nanoseconds: 3_600_000_000_000,
-        amplify_factor: 1.5,
-        ..Default::default()
+    let factors = tidb_dxf::schstatus::TtlTuneFactors {
+        ttl_info: tidb_dxf::schstatus::TtlInfo {
+            ttl_nanoseconds: 3_600_000_000_000,
+            ..Default::default()
+        },
+        tune_factors: tidb_dxf::schstatus::TuneFactors {
+            amplify_factor: 1.5,
+        },
     };
     meta.set_dxf_schedule_tune_factors("ks2", &factors).unwrap();
     let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks2");

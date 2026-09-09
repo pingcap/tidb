@@ -204,6 +204,8 @@ message KeyError {
   AssertionFailed assertion_failed = 10;
   PrimaryMismatch primary_mismatch = 11;
   TxnLockNotFound txn_lock_not_found = 12;
+  LockUpgradeConflict lock_upgrade_conflict = 13;
+  SharedLockLost shared_lock_lost = 14;
   // Upstream field 100 is debug-only MVCC metadata.
 }
 
@@ -224,6 +226,24 @@ message WriteConflict {
   bytes primary = 4;
   uint64 conflict_commit_ts = 5;
   Reason reason = 6;
+}
+
+message LockUpgradeConflict {
+  enum Reason {
+    Unknown = 0;
+    DuplicateInFlight = 1;
+    SecondUpgrader = 2;
+  }
+
+  bytes key = 1;
+  uint64 start_ts = 2;
+  uint64 owner_start_ts = 3;
+  Reason reason = 4;
+}
+
+message SharedLockLost {
+  bytes key = 1;
+  uint64 start_ts = 2;
 }
 
 message AlreadyExist { bytes key = 1; }

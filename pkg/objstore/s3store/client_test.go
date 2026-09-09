@@ -93,6 +93,17 @@ func TestClientPermission(t *testing.T) {
 	})
 }
 
+func TestMultipartWriterRejectsExcessParts(t *testing.T) {
+	u := &multipartWriter{
+		createOutput:  &s3.CreateMultipartUploadOutput{},
+		completeParts: make([]types.CompletedPart, storeapi.MaxUploadParts),
+	}
+
+	n, err := u.Write(context.Background(), []byte("part"))
+	require.Zero(t, n)
+	require.ErrorIs(t, err, storeapi.ErrExceedMaxUploadParts)
+}
+
 func TestClientGetObject(t *testing.T) {
 	s := CreateS3Suite(t)
 	ctx := context.Background()

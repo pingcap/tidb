@@ -1357,6 +1357,52 @@ func testSecurityEnhancedModeSysVars(t *testing.T, semVer string) {
 	}
 }
 
+func TestColumnarStorageEnabledSEMV2(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER tenant, cloudadmin")
+	tk.MustExec("GRANT SUPER ON *.* TO tenant")
+	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* TO cloudadmin")
+
+	origVer := mysql.TiDBReleaseVersion
+	mysql.TiDBReleaseVersion = "v9.0.0"
+	t.Cleanup(func() {
+		mysql.TiDBReleaseVersion = origVer
+		semv2.Disable()
+	})
+
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v8.4.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBColumnarStorageEnabled, Readonly: true, Hidden: true},
+		},
+	}))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "tenant",
+		Hostname:     "localhost",
+		AuthUsername: "tenant",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_columnar_storage_enabled'`).Check(testkit.Rows())
+	_, err := tk.Exec("SET GLOBAL tidb_columnar_storage_enabled = 'OFF'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@GLOBAL.tidb_columnar_storage_enabled")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "cloudadmin",
+		Hostname:     "localhost",
+		AuthUsername: "cloudadmin",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+	tk.MustExec("SET GLOBAL tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_columnar_storage_enabled").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_columnar_storage_enabled = 'ON'")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_columnar_storage_enabled").Check(testkit.Rows("1"))
+}
+
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func TestViewDefiner(t *testing.T) {
@@ -1533,6 +1579,51 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+}
+
+func TestInfoSchemaUserAttributes(t *testing.T) {
+	// USER_ATTRIBUTES visibility follows MySQL 8.0.22+ rules and requires SELECT or UPDATE
+	// on mysql.user to see all rows. SUPER alone is not sufficient.
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, uacreateonly, uasystemholder")
+	tk.MustExec(`CREATE USER uavictim@'%' ATTRIBUTE '{"secret": "victim-data"}'`)
+	tk.MustExec(`ALTER USER root@'%' ATTRIBUTE '{"secret": "root-data"}'`)
+	tk.MustExec("GRANT SUPER ON *.* TO uaroot")
+	tk.MustExec("GRANT SELECT ON mysql.user TO uaselectonmysqluser")
+	tk.MustExec("GRANT SELECT ON mysql.* TO uaselectonmysql")
+	tk.MustExec("GRANT CREATE USER ON *.* TO uacreateonly")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* TO uasystemholder")
+
+	authLocalhost := func(user string) {
+		tk.Session().Auth(&auth.UserIdentity{
+			Username: user,
+			Hostname: "localhost",
+		}, nil, nil, nil)
+	}
+
+	authLocalhost("uanobody")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows("uanobody"))
+
+	authLocalhost("uaroot")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows("uaroot"))
+
+	authLocalhost("uaselectonmysqluser")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
+	))
+
+	authLocalhost("uaselectonmysql")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
+	))
+
+	// CREATE USER without SYSTEM_USER: visible for self and all non-SYSTEM_USER accounts.
+	authLocalhost("uacreateonly")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"uacreateonly", "uanobody", "uaselectonmysql", "uaselectonmysqluser", "uavictim",
+	))
 }
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451

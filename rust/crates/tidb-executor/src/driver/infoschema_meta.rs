@@ -30,7 +30,7 @@
 use super::Catalog;
 use crate::column_default::ColumnDefault;
 use crate::{KvColumn, KvTable};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
 
 /// Go's schema name for the virtual database.
 pub const INFORMATION_SCHEMA: &str = "INFORMATION_SCHEMA";
@@ -101,19 +101,38 @@ impl InfoColumn {
             FieldTypeCode::LongBlob => 1 << 32,
             _ => self.size,
         });
-        // OCCUR_TIME is the one FSP-6 timestamp in the tables this tier
-        // serves. Every other current declaration has decimal zero.
+        // These are the FSP-6 timestamps in Go's registered table metadata.
         field_type.set_decimal(
-            if self.name == "OCCUR_TIME" && self.tp == FieldTypeCode::Timestamp {
+            if matches!(
+                self.name,
+                "OCCUR_TIME" | "START_TIME" | "WAITING_START_TIME"
+            ) && self.tp == FieldTypeCode::Timestamp
+            {
                 6
             } else {
                 0
             },
         );
         field_type.set_flags(self.flag);
+        if self.name == "STATE" && self.tp == FieldTypeCode::Enum {
+            field_type.set_elems(
+                [
+                    "Idle",
+                    "Running",
+                    "LockWaiting",
+                    "Committing",
+                    "RollingBack",
+                ]
+                .into_iter()
+                .map(GoString::from)
+                .collect::<Vec<_>>(),
+            );
+        }
         field_type
     }
 }
+
+include!("infoschema_workloadrepo.rs");
 
 /// Go `infoschema.tableSchemataCols`.
 /// Go `charsetCols` (`infoschema/tables.go:568`).
@@ -1734,6 +1753,106 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableMemoryUsageOpsHistoryCols`.
+const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "TIME",
+        tp: FieldTypeCode::Datetime,
+        size: 64,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "OPS",
+        tp: FieldTypeCode::Varchar,
+        size: 20,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEMORY_LIMIT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEMORY_CURRENT",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "PROCESSID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "MEM",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DISK",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: UNSIGNED_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "CLIENT",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DB",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "USER",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SQL_DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "SQL_TEXT",
+        tp: FieldTypeCode::Varchar,
+        size: 256,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
 /// Go `infoschema.tableDeadlocksCols`.
 const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
@@ -1848,6 +1967,38 @@ const USER_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
         name: "IS_GRANTABLE",
         tp: FieldTypeCode::Varchar,
         size: 3,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+];
+
+/// Go `infoschema.tableUserAttributesCols`.
+///
+/// The rows are read from the real `mysql.user` table by the session layer,
+/// then filtered using MySQL's account-visibility rules. `ATTRIBUTE` is the
+/// JSON `metadata` object unquoted by Go's `setDataForUserAttributes`.
+const USER_ATTRIBUTES_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "USER",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "HOST",
+        tp: FieldTypeCode::Varchar,
+        size: 255,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "ATTRIBUTE",
+        tp: FieldTypeCode::LongBlob,
+        size: UNSPECIFIED_LENGTH,
         flag: 0,
         deflt: None,
         comment: None,
@@ -2040,28 +2191,50 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
 /// than reporting nothing, and naming an unported one still refuses with
 /// 1146 -- the same honest shape `mysql` has.
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
-    ("CLUSTER_INFO", CLUSTER_INFO_COLUMNS),
-    ("COLUMNS", COLUMNS_COLUMNS),
-    ("COLUMN_PRIVILEGES", COLUMN_PRIVILEGES_COLUMNS),
     ("CHARACTER_SETS", CHARACTER_SETS_COLUMNS),
+    (
+        "CLIENT_ERRORS_SUMMARY_BY_HOST",
+        WORKLOAD_CLIENT_ERRORS_SUMMARY_BY_HOST_COLUMNS,
+    ),
+    (
+        "CLIENT_ERRORS_SUMMARY_BY_USER",
+        WORKLOAD_CLIENT_ERRORS_SUMMARY_BY_USER_COLUMNS,
+    ),
+    (
+        "CLIENT_ERRORS_SUMMARY_GLOBAL",
+        WORKLOAD_CLIENT_ERRORS_SUMMARY_GLOBAL_COLUMNS,
+    ),
+    ("CLUSTER_INFO", CLUSTER_INFO_COLUMNS),
     ("COLLATIONS", COLLATIONS_COLUMNS),
     (
         "COLLATION_CHARACTER_SET_APPLICABILITY",
         COLLATION_CHARACTER_SET_APPLICABILITY_COLUMNS,
     ),
+    ("COLUMNS", COLUMNS_COLUMNS),
+    ("COLUMN_PRIVILEGES", COLUMN_PRIVILEGES_COLUMNS),
+    ("DATA_LOCK_WAITS", WORKLOAD_DATA_LOCK_WAITS_COLUMNS),
     ("DEADLOCKS", DEADLOCKS_COLUMNS),
     ("KEY_COLUMN_USAGE", KEY_COLUMN_USAGE_COLUMNS),
+    ("MEMORY_USAGE", WORKLOAD_MEMORY_USAGE_COLUMNS),
+    ("MEMORY_USAGE_OPS_HISTORY", MEMORY_USAGE_OPS_HISTORY_COLUMNS),
+    ("PARTITIONS", PARTITIONS_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
     ("SCHEMATA", SCHEMATA_COLUMNS),
     ("SCHEMA_PRIVILEGES", SCHEMA_PRIVILEGES_COLUMNS),
     ("STATISTICS", STATISTICS_COLUMNS),
-    ("PARTITIONS", PARTITIONS_COLUMNS),
     ("TABLES", TABLES_COLUMNS),
     ("TABLE_CONSTRAINTS", TABLE_CONSTRAINTS_COLUMNS),
     ("TABLE_PRIVILEGES", TABLE_PRIVILEGES_COLUMNS),
+    ("TIDB_INDEX_USAGE", WORKLOAD_TIDB_INDEX_USAGE_COLUMNS),
     ("TIDB_SERVERS_INFO", TIDB_SERVERS_INFO_COLUMNS),
+    (
+        "TIDB_STATEMENTS_STATS",
+        WORKLOAD_TIDB_STATEMENTS_STATS_COLUMNS,
+    ),
+    ("TIDB_TRX", WORKLOAD_TIDB_TRX_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
+    ("USER_ATTRIBUTES", USER_ATTRIBUTES_COLUMNS),
     ("VIEWS", VIEWS_COLUMNS),
 ];
 

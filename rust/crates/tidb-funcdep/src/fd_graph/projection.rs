@@ -60,11 +60,11 @@ impl FdSet {
         }
         determinants.intersection_with(&equivalents);
         let mut replacements = HashMap::new();
-        for column in determinants.iter() {
+        for column in determinants.sorted_array() {
             let alternatives = self
-                .closure_of_equivalence(&ColSet::of([column]))
+                .closure_of_equivalence(&ColSet::new([column]))
                 .intersection(columns);
-            if let Some(alternative) = alternatives.iter().next() {
+            if let Some(alternative) = alternatives.sorted_array().into_iter().next() {
                 replacements.insert(column, alternative);
             }
         }
@@ -98,11 +98,12 @@ impl FdSet {
             if !edge.from.subset_of(columns) {
                 let removed = edge.from.difference(columns);
                 let mapped = removed
-                    .iter()
+                    .sorted_array()
+                    .into_iter()
                     .map(|column| replacements.get(&column).copied())
                     .collect::<Option<Vec<_>>>();
                 if let Some(mapped) = mapped {
-                    edge.from = edge.from.union(&ColSet::of(mapped)).difference(&removed);
+                    edge.from = edge.from.union(&ColSet::new(mapped)).difference(&removed);
                     substituted.push(edge);
                 }
                 continue;

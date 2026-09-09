@@ -37,7 +37,7 @@ fn region_evicted_after_task_build_rebuilds_ranges_before_any_rpc() {
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: None,
+            batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,

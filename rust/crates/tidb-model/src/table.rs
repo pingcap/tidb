@@ -468,6 +468,366 @@ impl_go_json_merge_object!(ViewInfo, destination, map, key, {
 
 impl_go_json_deserialize!(ViewInfo);
 
+/// Go `MaterializedViewLogTableNamePrefix`: prefixes the physical table name of
+/// an MV log.
+pub const MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX: &str = "$mlog$";
+/// Go `MaterializedViewLogDMLTypeColumnName`: the physical MV log DML type
+/// column name.
+pub const MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME: &str = "_MLOG$_DML_TYPE";
+/// Go `MaterializedViewLogOldNewColumnName`: the physical MV log old/new marker
+/// column name.
+pub const MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME: &str = "_MLOG$_OLD_NEW";
+
+/// Go `MViewInitBuildState`: records the initial-build state of a materialized
+/// view.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct MViewInitBuildState(
+    /// Persisted initial-build-state byte.
+    pub u8,
+);
+
+impl MViewInitBuildState {
+    /// Go `MViewInitBuildReady`: the initial MV build has completed.
+    pub const INIT_BUILD_READY: MViewInitBuildState = MViewInitBuildState(0);
+    /// Go `MViewInitBuildDeferred`: the initial MV build has not started.
+    pub const INIT_BUILD_DEFERRED: MViewInitBuildState = MViewInitBuildState(1);
+    /// Go `MViewInitBuildBuilding`: the initial MV build is in progress.
+    pub const INIT_BUILD_BUILDING: MViewInitBuildState = MViewInitBuildState(2);
+
+    /// Go `IsReady`: reports whether the initial MV build has completed.
+    #[must_use]
+    pub fn is_ready(&self) -> bool {
+        *self == Self::INIT_BUILD_READY
+    }
+
+    /// Go `AccessErrorMessage`: returns the error message for accessing an MV
+    /// that is not ready; the ready state has no access error.
+    #[must_use]
+    pub fn access_error_message(self, object_name: &str) -> String {
+        match self {
+            Self::INIT_BUILD_DEFERRED => format!(
+                "materialized view {object_name} is not ready: initial build has not completed"
+            ),
+            Self::INIT_BUILD_BUILDING => {
+                format!("materialized view {object_name} initial build is in progress")
+            }
+            _ => String::new(),
+        }
+    }
+}
+
+impl std::fmt::Display for MViewInitBuildState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let rendered = match *self {
+            Self::INIT_BUILD_READY => "ready".to_string(),
+            Self::INIT_BUILD_DEFERRED => "deferred".to_string(),
+            Self::INIT_BUILD_BUILDING => "building".to_string(),
+            other => format!("unknown({})", other.0),
+        };
+        formatter.write_str(&rendered)
+    }
+}
+
+/// Go `MaterializedViewBaseInfo`: stored in `TableInfo` for a base table that
+/// has materialized view(s) and/or a materialized view log.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct MaterializedViewBaseInfo {
+    /// The materialized view log table identifier.
+    #[serde(rename = "mlog_id", default)]
+    pub mlog_id: i64,
+    /// The materialized view table identifiers.
+    #[serde(rename = "mview_ids", default)]
+    pub mview_ids: GoValueSlice<i64>,
+}
+
+impl MaterializedViewBaseInfo {
+    /// Go `Clone`: returns a deep copy of the materialized view base metadata.
+    /// Like Go's `append([]int64(nil), ...)` copy, an empty persisted slice
+    /// clones to a nil slice.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            mlog_id: self.mlog_id,
+            mview_ids: if self.mview_ids.is_empty() {
+                GoValueSlice::default()
+            } else {
+                self.mview_ids.clone()
+            },
+        }
+    }
+}
+
+impl_go_json_merge_object!(MaterializedViewBaseInfo, destination, map, key, {
+    if go_json_field_matches(&key, "mlog_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.mlog_id))?;
+    } else if go_json_field_matches(&key, "mview_ids") {
+        map.next_value_seed(OptionValueSliceSeed(destination.mview_ids.raw_mut()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(MaterializedViewBaseInfo);
+
+/// Go `MaterializedViewInfo`: stored in `TableInfo` for a materialized view
+/// table.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct MaterializedViewInfo {
+    /// The base table identifiers feeding this materialized view.
+    #[serde(rename = "base_table_ids", default)]
+    pub base_table_ids: GoValueSlice<i64>,
+    /// The initial-build state (Go's `omitempty` skips the ready zero).
+    #[serde(
+        rename = "init_build_state",
+        default,
+        skip_serializing_if = "MViewInitBuildState::is_ready"
+    )]
+    pub init_build_state: MViewInitBuildState,
+    /// The defining SQL text of the materialized view.
+    #[serde(rename = "sql_content", default)]
+    pub sql_content: String,
+    /// The refresh method clause.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub refresh_method: String,
+    /// The refresh START WITH clause.
+    #[serde(
+        rename = "refresh_start_with",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub refresh_start_with: String,
+    /// The refresh NEXT clause.
+    #[serde(
+        rename = "refresh_next",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub refresh_next: String,
+    /// The warning-alert age threshold in seconds.
+    #[serde(
+        rename = "alert_warning_sec",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_zero_i64"
+    )]
+    pub alert_warning_sec: i64,
+    /// The overdue-alert age threshold in seconds.
+    #[serde(
+        rename = "alert_overdue_sec",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_zero_i64"
+    )]
+    pub alert_overdue_sec: i64,
+    /// Whether a refresh failure raises an alert.
+    #[serde(
+        rename = "alert_refresh_failed",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_false"
+    )]
+    pub alert_refresh_failed: bool,
+    /// The SQL mode captured when the definition was parsed.
+    #[serde(rename = "definition_sql_mode", default)]
+    pub definition_sql_mode: u64,
+    /// The division precision increment captured when the definition was
+    /// parsed.
+    #[serde(rename = "definition_div_precision_increment", default)]
+    pub definition_div_precision_increment: i64,
+    /// The time zone captured when the definition was parsed.
+    #[serde(rename = "definition_time_zone", default)]
+    pub definition_time_zone: crate::TimeZoneLocation,
+    /// The time zone governing refresh scheduling.
+    #[serde(rename = "refresh_schedule_time_zone", default)]
+    pub refresh_schedule_time_zone: crate::TimeZoneLocation,
+}
+
+impl MaterializedViewInfo {
+    /// Go `(*MaterializedViewInfo).GetInitBuildState` with Go's nil-receiver
+    /// contract: nil metadata is ready.
+    #[must_use]
+    pub fn get_init_build_state(info: Option<&Self>) -> MViewInitBuildState {
+        info.map_or(MViewInitBuildState::INIT_BUILD_READY, |value| {
+            value.init_build_state
+        })
+    }
+
+    /// Go `Clone`: returns a deep copy of the materialized view metadata.
+    /// Like Go's `append([]int64(nil), ...)` copy, an empty persisted slice
+    /// clones to a nil slice.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            base_table_ids: if self.base_table_ids.is_empty() {
+                GoValueSlice::default()
+            } else {
+                self.base_table_ids.clone()
+            },
+            init_build_state: self.init_build_state,
+            sql_content: self.sql_content.clone(),
+            refresh_method: self.refresh_method.clone(),
+            refresh_start_with: self.refresh_start_with.clone(),
+            refresh_next: self.refresh_next.clone(),
+            alert_warning_sec: self.alert_warning_sec,
+            alert_overdue_sec: self.alert_overdue_sec,
+            alert_refresh_failed: self.alert_refresh_failed,
+            definition_sql_mode: self.definition_sql_mode,
+            definition_div_precision_increment: self.definition_div_precision_increment,
+            definition_time_zone: self.definition_time_zone.clone(),
+            refresh_schedule_time_zone: self.refresh_schedule_time_zone.clone(),
+        }
+    }
+}
+
+impl_go_json_merge_object!(MaterializedViewInfo, destination, map, key, {
+    if go_json_field_matches(&key, "base_table_ids") {
+        map.next_value_seed(OptionValueSliceSeed(destination.base_table_ids.raw_mut()))?;
+    } else if go_json_field_matches(&key, "init_build_state") {
+        let mut raw = destination.init_build_state.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.init_build_state = MViewInitBuildState(raw);
+    } else if go_json_field_matches(&key, "sql_content") {
+        map.next_value_seed(NullNoopSeed(&mut destination.sql_content))?;
+    } else if go_json_field_matches(&key, "refresh_method") {
+        map.next_value_seed(NullNoopSeed(&mut destination.refresh_method))?;
+    } else if go_json_field_matches(&key, "refresh_start_with") {
+        map.next_value_seed(NullNoopSeed(&mut destination.refresh_start_with))?;
+    } else if go_json_field_matches(&key, "refresh_next") {
+        map.next_value_seed(NullNoopSeed(&mut destination.refresh_next))?;
+    } else if go_json_field_matches(&key, "alert_warning_sec") {
+        map.next_value_seed(NullNoopSeed(&mut destination.alert_warning_sec))?;
+    } else if go_json_field_matches(&key, "alert_overdue_sec") {
+        map.next_value_seed(NullNoopSeed(&mut destination.alert_overdue_sec))?;
+    } else if go_json_field_matches(&key, "alert_refresh_failed") {
+        map.next_value_seed(NullNoopSeed(&mut destination.alert_refresh_failed))?;
+    } else if go_json_field_matches(&key, "definition_sql_mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.definition_sql_mode))?;
+    } else if go_json_field_matches(&key, "definition_div_precision_increment") {
+        map.next_value_seed(NullNoopSeed(
+            &mut destination.definition_div_precision_increment,
+        ))?;
+    } else if go_json_field_matches(&key, "definition_time_zone") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.definition_time_zone))?;
+    } else if go_json_field_matches(&key, "refresh_schedule_time_zone") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.refresh_schedule_time_zone))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(MaterializedViewInfo);
+
+/// Go `MaterializedViewLogInfo`: stored in `TableInfo` for a materialized view
+/// log table.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct MaterializedViewLogInfo {
+    /// The base table identifier this log serves.
+    #[serde(rename = "base_table_id", default)]
+    pub base_table_id: i64,
+    /// The logged column names; empty means all columns.
+    #[serde(rename = "columns", default)]
+    pub columns: GoValueSlice<CiString>,
+    /// The purge method clause.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub purge_method: String,
+    /// The purge START WITH clause.
+    #[serde(
+        rename = "purge_start_with",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub purge_start_with: String,
+    /// The purge NEXT clause.
+    #[serde(
+        rename = "purge_next",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub purge_next: String,
+    /// The configured log-accumulation alert row threshold, when enabled.
+    #[serde(
+        rename = "log_accumulation_alert_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub log_accumulation_alert_rows: Option<u64>,
+    /// The SQL mode captured when the log definition was parsed.
+    #[serde(rename = "definition_sql_mode", default)]
+    pub definition_sql_mode: u64,
+    /// The time zone governing purge scheduling.
+    #[serde(rename = "purge_schedule_time_zone", default)]
+    pub purge_schedule_time_zone: crate::TimeZoneLocation,
+}
+
+impl MaterializedViewLogInfo {
+    /// Go `EffectiveLogAccumulationAlertRows` with Go's nil-receiver contract:
+    /// returns the configured alert threshold when enabled.
+    #[must_use]
+    pub fn effective_log_accumulation_alert_rows(info: Option<&Self>) -> Option<u64> {
+        let rows = info?.log_accumulation_alert_rows?;
+        if rows == 0 {
+            return None;
+        }
+        Some(rows)
+    }
+
+    /// Go `Clone`: returns a deep copy of the materialized view log metadata.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            base_table_id: self.base_table_id,
+            columns: if self.columns.is_empty() {
+                GoValueSlice::default()
+            } else {
+                self.columns.clone()
+            },
+            purge_method: self.purge_method.clone(),
+            purge_start_with: self.purge_start_with.clone(),
+            purge_next: self.purge_next.clone(),
+            log_accumulation_alert_rows: self.log_accumulation_alert_rows,
+            definition_sql_mode: self.definition_sql_mode,
+            purge_schedule_time_zone: self.purge_schedule_time_zone.clone(),
+        }
+    }
+}
+
+/// Go `MaterializedViewLogTableName`: returns the physical table name derived
+/// from a base table name, truncating the original name to Go's
+/// `mysql.MaxTableNameLength` budget.
+#[must_use]
+pub fn materialized_view_log_table_name(base_table_name: &CiString) -> CiString {
+    let mut runes: Vec<char> = base_table_name.original().chars().collect();
+    let max_len = tidb_mysql::consts::MaxTableNameLength
+        - MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX.chars().count();
+    runes.truncate(max_len);
+    CiString::new(format!(
+        "{}{}",
+        MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX,
+        runes.into_iter().collect::<String>()
+    ))
+}
+
+impl_go_json_merge_object!(MaterializedViewLogInfo, destination, map, key, {
+    if go_json_field_matches(&key, "base_table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.base_table_id))?;
+    } else if go_json_field_matches(&key, "columns") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.columns.raw_mut()))?;
+    } else if go_json_field_matches(&key, "purge_method") {
+        map.next_value_seed(NullNoopSeed(&mut destination.purge_method))?;
+    } else if go_json_field_matches(&key, "purge_start_with") {
+        map.next_value_seed(NullNoopSeed(&mut destination.purge_start_with))?;
+    } else if go_json_field_matches(&key, "purge_next") {
+        map.next_value_seed(NullNoopSeed(&mut destination.purge_next))?;
+    } else if go_json_field_matches(&key, "log_accumulation_alert_rows") {
+        map.next_value_seed(NullNoopSeed(&mut destination.log_accumulation_alert_rows))?;
+    } else if go_json_field_matches(&key, "definition_sql_mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.definition_sql_mode))?;
+    } else if go_json_field_matches(&key, "purge_schedule_time_zone") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.purge_schedule_time_zone))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(MaterializedViewLogInfo);
+
 /// Go `ConstraintInfo`: a table CHECK constraint.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct ConstraintInfo {

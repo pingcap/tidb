@@ -107,7 +107,7 @@ impl Encoder {
     }
 
     /// Source `EncodeKey` with the session time zone used for timestamps.
-    pub fn encode_key_in_timezone<TZ: TimeZone>(
+    pub fn encode_key_in_timezone<TZ: TimeZone + 'static>(
         self,
         timezone: &TZ,
         values: &[Datum],
@@ -182,149 +182,9 @@ impl Encoder {
         Ok(output)
     }
 
-    /// Encodes the complete source datum domain using Go `EncodeValue`.
-    pub fn encode_value(self, values: &[Datum]) -> Result<Vec<u8>, CodecError> {
-        self.encode_value_in_timezone(&Utc, values)
-    }
-
-    /// Source `EncodeValue` with the session time zone used for timestamps.
-    pub fn encode_value_in_timezone<TZ: TimeZone>(
-        self,
-        timezone: &TZ,
-        values: &[Datum],
-    ) -> Result<Vec<u8>, CodecError> {
-        let mut output = Vec::new();
-        for value in values {
-            match value {
-                Datum::Null => output.push(NIL_FLAG),
-                Datum::MinNotNull => output.push(BYTES_FLAG),
-                Datum::MaxValue => output.push(MAX_FLAG),
-                Datum::Int(value) => {
-                    output.push(VARINT_FLAG);
-                    encode_varint(&mut output, *value);
-                }
-                Datum::UInt(value) => {
-                    output.push(UVARINT_FLAG);
-                    encode_uvarint(&mut output, *value);
-                }
-                Datum::Decimal(value) => {
-                    output.push(DECIMAL_FLAG);
-                    encode_decimal(&mut output, value)?;
-                }
-                Datum::Real(value) | Datum::Float32(value) => {
-                    output.push(FLOAT_FLAG);
-                    encode_float(&mut output, *value);
-                }
-                Datum::String(value) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    crate::encode_compact_bytes(&mut output, value.bytes());
-                }
-                Datum::Bytes(value) => {
-                    output.push(COMPACT_BYTES_FLAG);
-                    crate::encode_compact_bytes(&mut output, value);
-                }
-                Datum::BinaryLiteral(value) | Datum::Bit(value) => {
-                    output.push(UVARINT_FLAG);
-                    encode_uvarint(&mut output, binary_literal_uint(value)?);
-                }
-                Datum::Duration(value) => {
-                    output.push(DURATION_FLAG);
-                    encode_int(&mut output, value.nanoseconds());
-                }
-                Datum::Enum(value, _) => {
-                    output.push(UVARINT_FLAG);
-                    encode_uvarint(&mut output, value.value());
-                }
-                Datum::Set(value, _) => {
-                    output.push(UVARINT_FLAG);
-                    encode_uvarint(&mut output, value.value());
-                }
-                Datum::Time(value) => {
-                    output.push(UINT_FLAG);
-                    crate::package::encode_mysql_time(timezone, *value, None, &mut output)?;
-                }
-                Datum::Json(value) => {
-                    output.push(JSON_FLAG);
-                    output.extend_from_slice(&value.encoded());
-                }
-                Datum::VectorFloat32(value) => {
-                    output.push(VECTOR_FLOAT32_FLAG);
-                    value.serialize_to(&mut output);
-                }
-                Datum::Raw(_) => return Err(CodecError::UnsupportedDatum("raw")),
-            }
-        }
-        Ok(output)
-    }
-
-    /// Source `HashCode`, using lossless value encodings without SQL coercion.
-    pub fn hash_code(self, output: &mut Vec<u8>, value: &Datum) {
-        match value {
-            Datum::Int(value) => {
-                output.push(VARINT_FLAG);
-                encode_varint(output, *value);
-            }
-            Datum::UInt(value) => {
-                output.push(UVARINT_FLAG);
-                encode_uvarint(output, *value);
-            }
-            Datum::Real(value) | Datum::Float32(value) => {
-                output.push(FLOAT_FLAG);
-                encode_float(output, *value);
-            }
-            Datum::String(value) => {
-                output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(output, value.bytes());
-            }
-            Datum::Bytes(value) => {
-                output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(output, value);
-            }
-            Datum::Time(value) => {
-                output.push(UINT_FLAG);
-                output.push(UINT_FLAG);
-                encode_uint(output, value.core_time().raw());
-            }
-            Datum::Duration(value) => {
-                output.push(DURATION_FLAG);
-                encode_int(output, value.nanoseconds());
-            }
-            Datum::Decimal(value) => {
-                output.push(DECIMAL_FLAG);
-                let text = value.storage_string().into_bytes();
-                output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(output, &text);
-            }
-            Datum::Enum(value, _) => {
-                output.push(UVARINT_FLAG);
-                encode_uvarint(output, value.value());
-            }
-            Datum::Set(value, _) => {
-                output.push(UVARINT_FLAG);
-                encode_uvarint(output, value.value());
-            }
-            Datum::BinaryLiteral(value) | Datum::Bit(value) => {
-                output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(output, value.as_bytes());
-            }
-            Datum::Json(value) => {
-                output.push(JSON_FLAG);
-                output.extend_from_slice(&value.encoded());
-            }
-            Datum::VectorFloat32(value) => {
-                output.push(VECTOR_FLOAT32_FLAG);
-                value.serialize_to(output);
-            }
-            Datum::Null => output.push(NIL_FLAG),
-            Datum::MinNotNull => output.push(BYTES_FLAG),
-            Datum::MaxValue => output.push(MAX_FLAG),
-            Datum::Raw(_) => {}
-        }
-    }
-
     fn string_key(self, value: &StringDatum) -> Vec<u8> {
         if self.use_new_collation {
-            value.collation().immutable_key(value.bytes())
+            value.collation().immutable_key(value.bytes()).into_owned()
         } else {
             value.bytes().to_vec()
         }
@@ -345,41 +205,183 @@ fn binary_literal_uint(literal: &tidb_datatype::BinaryLiteral) -> Result<u64, Co
 /// Servers opening a cluster whose persisted setting disables new collations
 /// must construct [`Encoder::new(false)`] instead.
 pub fn encode_key(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
-    Encoder::new(true).encode_key(values)
+    Encoder::new(tidb_datatype::new_collation_enabled()).encode_key(values)
 }
 
 /// Encodes keys with the source session time-zone contract.
-pub fn encode_key_in_timezone<TZ: TimeZone>(
+pub fn encode_key_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<Vec<u8>, CodecError> {
-    Encoder::new(true).encode_key_in_timezone(timezone, values)
+    Encoder::new(tidb_datatype::new_collation_enabled()).encode_key_in_timezone(timezone, values)
 }
 
 /// Encodes values through Go `EncodeValue`'s compact, non-order-preserving form.
 pub fn encode_value(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
-    Encoder::new(true).encode_value(values)
+    encode_value_in_timezone(&Utc, values)
 }
 
 /// Encodes values with the source session time-zone contract.
-pub fn encode_value_in_timezone<TZ: TimeZone>(
+pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<Vec<u8>, CodecError> {
-    Encoder::new(true).encode_value_in_timezone(timezone, values)
+    let mut output = Vec::new();
+    for value in values {
+        match value {
+            Datum::Null => output.push(NIL_FLAG),
+            Datum::MinNotNull => output.push(BYTES_FLAG),
+            Datum::MaxValue => output.push(MAX_FLAG),
+            Datum::Int(value) => {
+                output.push(VARINT_FLAG);
+                encode_varint(&mut output, *value);
+            }
+            Datum::UInt(value) => {
+                output.push(UVARINT_FLAG);
+                encode_uvarint(&mut output, *value);
+            }
+            Datum::Decimal(value) => {
+                output.push(DECIMAL_FLAG);
+                encode_decimal(&mut output, value)?;
+            }
+            Datum::Real(value) | Datum::Float32(value) => {
+                output.push(FLOAT_FLAG);
+                encode_float(&mut output, *value);
+            }
+            Datum::String(value) => {
+                output.push(COMPACT_BYTES_FLAG);
+                crate::encode_compact_bytes(&mut output, value.bytes());
+            }
+            Datum::Bytes(value) => {
+                output.push(COMPACT_BYTES_FLAG);
+                crate::encode_compact_bytes(&mut output, value);
+            }
+            Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+                output.push(UVARINT_FLAG);
+                encode_uvarint(&mut output, binary_literal_uint(value)?);
+            }
+            Datum::Duration(value) => {
+                output.push(DURATION_FLAG);
+                encode_int(&mut output, value.nanoseconds());
+            }
+            Datum::Enum(value, _) => {
+                output.push(UVARINT_FLAG);
+                encode_uvarint(&mut output, value.value());
+            }
+            Datum::Set(value, _) => {
+                output.push(UVARINT_FLAG);
+                encode_uvarint(&mut output, value.value());
+            }
+            Datum::Time(value) => {
+                output.push(UINT_FLAG);
+                crate::package::encode_mysql_time(timezone, *value, None, &mut output)?;
+            }
+            Datum::Json(value) => {
+                output.push(JSON_FLAG);
+                output.extend_from_slice(&value.encoded());
+            }
+            Datum::VectorFloat32(value) => {
+                output.push(VECTOR_FLOAT32_FLAG);
+                value.serialize_to(&mut output);
+            }
+            Datum::Raw(_) => return Err(CodecError::UnsupportedDatum("raw")),
+        }
+    }
+    Ok(output)
 }
 
 /// Returns the exact length of one `EncodeValue` datum.
 pub fn estimate_value_size(value: &Datum) -> Result<usize, CodecError> {
-    Encoder::new(true)
-        .encode_value(std::slice::from_ref(value))
-        .map(|v| v.len())
+    match value {
+        Datum::Int(value) => Ok(crate::value_size_of_signed_int(*value)),
+        Datum::UInt(value) => Ok(crate::value_size_of_unsigned_int(*value)),
+        Datum::Real(_) | Datum::Float32(_) | Datum::Time(_) | Datum::Duration(_) => Ok(9),
+        Datum::String(value) => {
+            Ok(crate::value_size_of_signed_int(value.bytes().len() as i64) + value.bytes().len())
+        }
+        Datum::Bytes(value) => {
+            Ok(crate::value_size_of_signed_int(value.len() as i64) + value.len())
+        }
+        Datum::Decimal(value) => {
+            let (precision, scale) = value.storage_shape();
+            Ok(1 + crate::decimal_encoded_len(value, precision, scale)?)
+        }
+        Datum::Enum(value, _) => Ok(crate::value_size_of_unsigned_int(value.value())),
+        Datum::Set(value, _) => Ok(crate::value_size_of_unsigned_int(value.value())),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(crate::value_size_of_unsigned_int(
+            binary_literal_uint(value)?,
+        )),
+        Datum::Json(value) => Ok(1 + value.encoded().len()),
+        Datum::VectorFloat32(value) => Ok(1 + value.serialized_size()),
+        Datum::Null | Datum::MinNotNull | Datum::MaxValue => Ok(1),
+        Datum::Raw(_) => Err(CodecError::UnsupportedDatum("raw")),
+    }
 }
 
 /// Encodes one datum through Go's lossless `HashCode`.
 pub fn hash_code(value: &Datum) -> Vec<u8> {
     let mut output = Vec::new();
-    Encoder::new(true).hash_code(&mut output, value);
+    match value {
+        Datum::Int(value) => {
+            output.push(VARINT_FLAG);
+            encode_varint(&mut output, *value);
+        }
+        Datum::UInt(value) => {
+            output.push(UVARINT_FLAG);
+            encode_uvarint(&mut output, *value);
+        }
+        Datum::Real(value) | Datum::Float32(value) => {
+            output.push(FLOAT_FLAG);
+            encode_float(&mut output, *value);
+        }
+        Datum::String(value) => {
+            output.push(COMPACT_BYTES_FLAG);
+            crate::encode_compact_bytes(&mut output, value.bytes());
+        }
+        Datum::Bytes(value) => {
+            output.push(COMPACT_BYTES_FLAG);
+            crate::encode_compact_bytes(&mut output, value);
+        }
+        Datum::Time(value) => {
+            output.push(UINT_FLAG);
+            output.push(UINT_FLAG);
+            encode_uint(&mut output, value.core_time().raw());
+        }
+        Datum::Duration(value) => {
+            output.push(DURATION_FLAG);
+            encode_int(&mut output, value.nanoseconds());
+        }
+        Datum::Decimal(value) => {
+            output.push(DECIMAL_FLAG);
+            let text = value.storage_string().into_bytes();
+            output.push(COMPACT_BYTES_FLAG);
+            crate::encode_compact_bytes(&mut output, &text);
+        }
+        Datum::Enum(value, _) => {
+            output.push(UVARINT_FLAG);
+            encode_uvarint(&mut output, value.value());
+        }
+        Datum::Set(value, _) => {
+            output.push(UVARINT_FLAG);
+            encode_uvarint(&mut output, value.value());
+        }
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            output.push(COMPACT_BYTES_FLAG);
+            crate::encode_compact_bytes(&mut output, value.as_bytes());
+        }
+        Datum::Json(value) => {
+            output.push(JSON_FLAG);
+            output.extend_from_slice(&value.encoded());
+        }
+        Datum::VectorFloat32(value) => {
+            output.push(VECTOR_FLOAT32_FLAG);
+            value.serialize_to(&mut output);
+        }
+        Datum::Null => output.push(NIL_FLAG),
+        Datum::MinNotNull => output.push(BYTES_FLAG),
+        Datum::MaxValue => output.push(MAX_FLAG),
+        Datum::Raw(_) => {}
+    }
     output
 }
 
@@ -443,33 +445,27 @@ pub fn decode_one(input: &[u8]) -> Result<(&[u8], Datum), CodecError> {
     }
 }
 
-/// Decodes Go `codec.DecodeRange` without index field metadata.
+/// Decodes Go `codec.DecodeRange`.
 ///
 /// Unlike [`decode_one`], `DecodeRange` reserves a final bare `BYTES_FLAG` as
 /// `MinNotNull` and a final `MAX_FLAG` (or its `PrefixNext` byte) as
 /// `MaxValue`. A non-final `BYTES_FLAG` still starts an ordinary encoded byte
 /// payload, so the two APIs must remain distinct.
-pub fn decode_range(
-    input: &[u8],
-    expected_values: usize,
-) -> Result<(Vec<Datum>, &[u8]), DecodeRangeError<'_>> {
-    decode_range_with(input, expected_values, |input, _| decode_one(input))
-}
-
-/// Decodes Go `codec.DecodeRange` with the index column types that restore
-/// temporal values and MySQL `FLOAT` after their key encodings erased that
-/// schema information.
 ///
-/// `field_types` describes ordinary encoded values only; a final range
-/// sentinel consumes no field type. `timezone` is observed only by non-zero
-/// timestamps, matching Go's `DecodeAsDateTime` contract.
-pub fn decode_range_typed<'a, TZ: TimeZone>(
+/// `field_types == None` is Go's nil `idxColumnTypes` path. Otherwise the
+/// index types restore temporal values and MySQL `FLOAT` after key encoding
+/// erased that schema information. `timezone` is observed only for non-zero
+/// timestamps.
+pub fn decode_range<'a>(
     input: &'a [u8],
     expected_values: usize,
-    field_types: &[FieldTypeCode],
-    timezone: Option<&TZ>,
+    field_types: Option<&[FieldTypeCode]>,
+    timezone: Option<&tidb_datatype::SessionTimeZone>,
 ) -> Result<(Vec<Datum>, &'a [u8]), DecodeRangeError<'a>> {
     decode_range_with(input, expected_values, |input, index| {
+        let Some(field_types) = field_types else {
+            return decode_one(input);
+        };
         let field_type = field_types.get(index).ok_or(CodecError::InvalidEncoding(
             "invalid length of index columns",
         ))?;
@@ -548,7 +544,7 @@ pub fn cut_one(input: &[u8]) -> Result<(&[u8], &[u8]), CodecError> {
 }
 
 /// Returns the encoded length of the first complete datum.
-pub fn peek_one_len(input: &[u8]) -> Result<usize, CodecError> {
+fn peek_one_len(input: &[u8]) -> Result<usize, CodecError> {
     let (&flag, payload) = input
         .split_first()
         .ok_or(CodecError::InvalidEncoding("empty key"))?;
@@ -561,14 +557,7 @@ pub fn peek_one_len(input: &[u8]) -> Result<usize, CodecError> {
             payload.len() - remain.len()
         }
         DECIMAL_FLAG => peek_decimal_len(payload)?,
-        VARINT_FLAG => {
-            let (remain, _) = decode_varint(payload)?;
-            payload.len() - remain.len()
-        }
-        UVARINT_FLAG => {
-            let (remain, _) = decode_uvarint(payload)?;
-            payload.len() - remain.len()
-        }
+        VARINT_FLAG | UVARINT_FLAG => peek_varint_len(payload)?,
         JSON_FLAG => crate::peek_json_len(payload)?,
         VECTOR_FLOAT32_FLAG => peek_vector_float32(payload)
             .map_err(|_| CodecError::InvalidEncoding("invalid vector float32"))?,
@@ -579,4 +568,16 @@ pub fn peek_one_len(input: &[u8]) -> Result<usize, CodecError> {
         return Err(CodecError::InsufficientBytes);
     }
     Ok(total)
+}
+
+fn peek_varint_len(input: &[u8]) -> Result<usize, CodecError> {
+    for (index, byte) in input.iter().copied().enumerate() {
+        if index == 10 || (index == 9 && byte > 1) {
+            return Err(CodecError::InvalidEncoding("varint larger than 64 bits"));
+        }
+        if byte < 0x80 {
+            return Ok(index + 1);
+        }
+    }
+    Ok(0)
 }

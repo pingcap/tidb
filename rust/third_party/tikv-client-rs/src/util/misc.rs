@@ -103,17 +103,38 @@ fn byte_unit(bytes: i64) -> (i64, &'static str) {
 pub fn bytes_to_string(num_bytes: i64) -> String {
     let gb = num_bytes as f64 / BYTE_SIZE_GB as f64;
     if gb > 1.0 {
-        return format!("{gb} GB");
+        return format!("{} GB", go_general_float(gb));
     }
     let mb = num_bytes as f64 / BYTE_SIZE_MB as f64;
     if mb > 1.0 {
-        return format!("{mb} MB");
+        return format!("{} MB", go_general_float(mb));
     }
     let kb = num_bytes as f64 / BYTE_SIZE_KB as f64;
     if kb > 1.0 {
-        return format!("{kb} KB");
+        return format!("{} KB", go_general_float(kb));
     }
     format!("{num_bytes} Bytes")
+}
+
+fn go_general_float(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == f64::INFINITY {
+        return "+Inf".to_owned();
+    }
+    if value == f64::NEG_INFINITY {
+        return "-Inf".to_owned();
+    }
+    let magnitude = value.abs();
+    if magnitude != 0.0 && !(1e-4..1e6).contains(&magnitude) {
+        let scientific = format!("{value:e}");
+        let (mantissa, exponent) = scientific.split_once('e').unwrap();
+        let exponent = exponent.parse::<i32>().unwrap();
+        format!("{mantissa}e{exponent:+03}")
+    } else {
+        value.to_string()
+    }
 }
 
 pub fn get_max_start_key<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
@@ -136,6 +157,8 @@ pub fn get_min_end_key<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -144,7 +167,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_test_compatible_parse_gc_time() {
+    fn source_go_util_misc_test_TestCompatibleParseGCTime() {
         let valid = [
             "20181218-19:53:37 +0800 CST",
             "20181218-19:53:37 +0800 MST",
@@ -190,10 +213,11 @@ mod tests {
         assert_eq!(format_bytes(1 << 20), "1024 KB");
         assert_eq!(format_bytes((1 << 20) + 1), "1.00 MB");
         assert_eq!(bytes_to_string(2 << 20), "2 MB");
+        assert_eq!(bytes_to_string(i64::MAX), "8.589934592e+09 GB");
     }
 
     #[test]
-    fn source_test_get_max_start_key() {
+    fn source_go_util_misc_test_TestGetMaxStartKey() {
         for (left, right, expected) in [
             (b"".as_slice(), b"".as_slice(), b"".as_slice()),
             (b"".as_slice(), b"a".as_slice(), b"a".as_slice()),
@@ -205,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn source_test_get_min_end_key() {
+    fn source_go_util_misc_test_TestGetMinEndKey() {
         for (left, right, expected) in [
             (b"".as_slice(), b"".as_slice(), b"".as_slice()),
             (b"a".as_slice(), b"".as_slice(), b"a".as_slice()),

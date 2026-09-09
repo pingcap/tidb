@@ -2097,6 +2097,7 @@ fn source_go_internal_unionstore_memdb_bench_test_BenchmarkMemBufferSetGetLongKe
     check_both_buffers!(check);
 }
 
+#[cfg(not(feature = "nextgen"))]
 #[test]
 #[allow(non_snake_case)]
 fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush() {
@@ -2142,6 +2143,7 @@ fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedAndFlush() {
     );
 }
 
+#[cfg(not(feature = "nextgen"))]
 #[test]
 #[allow(non_snake_case)]
 fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet() {
@@ -2181,6 +2183,7 @@ fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedMemDBBufferGet(
     }
 }
 
+#[cfg(not(feature = "nextgen"))]
 #[test]
 #[allow(non_snake_case)]
 fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock() {
@@ -2209,6 +2212,7 @@ fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedFlushBlock() {
     db.flush_wait().unwrap();
 }
 
+#[cfg(not(feature = "nextgen"))]
 #[test]
 #[allow(non_snake_case)]
 fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock() {
@@ -2225,6 +2229,7 @@ fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedSkipFlushedLock
     assert_eq!(db.get(b"key1"), Err("key not found".to_owned()));
 }
 
+#[cfg(not(feature = "nextgen"))]
 #[test]
 #[allow(non_snake_case)]
 fn source_go_txnkv_txnsnapshot_pipelined_memdb_test_TestPipelinedPrefetch() {

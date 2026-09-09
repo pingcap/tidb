@@ -12,7 +12,7 @@ mod consts_2;
 pub use consts_1::*;
 pub use consts_2::*;
 
-const ALL_CODES_LEN: usize = 1166;
+const ALL_CODES_LEN: usize = 1167;
 
 /// Concatenates the parts into one contiguous array, in the same
 /// source order, entirely at compile time.

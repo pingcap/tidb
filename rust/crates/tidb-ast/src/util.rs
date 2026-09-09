@@ -71,6 +71,7 @@ impl AdminStmt {
                         .statement()
                         .is_none_or(|statement| statement.is_read_only(check_global_vars))
             }
+            Self::Trace(trace) => trace.statement.is_read_only(check_global_vars),
             Self::Do(_)
             | Self::ShowGrants(_)
             | Self::ShowMasterStatus

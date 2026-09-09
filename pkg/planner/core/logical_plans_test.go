@@ -2261,6 +2261,41 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.Equal(t, uint(0), join.PreferJoinType)
 }
 
+func TestReadFromStorageHintMarksAlternativePlanSignal(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	sql := "select /*+ read_from_storage(tikv[t]) */ * from t"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.GetSCtx(), nodeW,
+		WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
+	require.NoError(t, err)
+	sctx := coretestsdk.MockContext()
+	defer domain.GetDomain(sctx).StatsHandle().Close()
+	builder, _ := NewPlanBuilder().Init(sctx, s.GetIS(), hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.GetIS())
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+	require.True(t, sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasStoreTypeHint)
+}
+
+func TestAlternativePlanMissingTiFlashPathSignal(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	stmt, err := s.GetParser().ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	sctx := coretestsdk.MockContext()
+	sctx.GetSessionVars().EnableAlternativeLogicalPlans = true
+	defer domain.GetDomain(sctx).StatsHandle().Close()
+	builder, _ := NewPlanBuilder().Init(sctx, s.GetIS(), hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.GetIS())
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+	require.True(t, sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanMissingTiFlashPath)
+}
+
 func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()

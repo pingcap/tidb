@@ -1155,7 +1155,7 @@ mod tests {
     }
 
     #[test]
-    fn source_v2_codec_rejects_api_v3_keyspace_identity() {
+    fn source_test_new_codec_v2_rejects_keyspace_identity() {
         let meta = keyspacepb::KeyspaceMeta {
             keyspace: Some(keyspacepb::keyspace_meta::Keyspace::KeyspaceIdentity(
                 crate::proto::apipb::KeyspaceIdentity {
@@ -2153,11 +2153,6 @@ mod tests {
     }
 
     #[test]
-    fn source_test_new_codec_v2_rejects_keyspace_identity() {
-        source_v2_codec_rejects_api_v3_keyspace_identity();
-    }
-
-    #[test]
     fn source_test_new_codec_v2_rejects_nil_meta() {
         // The native constructor requires a numeric ID, so a nil metadata
         // pointer is unrepresentable rather than silently becoming ID zero.
@@ -2345,7 +2340,6 @@ mod tests {
     fn source_test_get_keyspace_id() {
         let codec = ApiV2Codec::new(KeyMode::Raw, 0x010203).unwrap();
         assert_eq!(codec.keyspace_id(), 0x010203);
-        source_get_keyspace_id_rejects_non_enabled_and_v3_metadata();
     }
 
     #[test]

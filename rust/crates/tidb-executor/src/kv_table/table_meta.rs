@@ -542,15 +542,17 @@ pub struct KvIndex {
     /// Go `IndexInfo.Global`: a `GLOBAL` index of a PARTITIONED table, whose
     /// single entry set spans every partition instead of living inside one.
     ///
-    /// This tier does not maintain such an index differently -- it has one
-    /// physical entry set per table either way -- so the flag is carried for
-    /// the one decision Go makes with it that is visible on the wire:
+    /// Its keys live under the logical table id and each value carries the
+    /// physical partition id. The flag also drives Go's visible hint rule:
     /// `checkIndexLookUpPushDownSupported` (`planbuilder.go:1274`) refuses
     /// `INDEX_LOOKUP_PUSHDOWN` on a global index with 1815, because a
     /// coprocessor-local lookup cannot follow a handle out of its own region's
     /// partition. Always false on an unpartitioned table: Go's DDL records
     /// `GLOBAL` only where partitioning makes it mean something.
     pub global: bool,
+    /// Go `IndexInfo.GlobalIndexVersion`, selecting whether a non-distinct
+    /// global-index key also carries its partition id.
+    pub global_index_version: u8,
     /// Whether this entry IS the clustered record handle's PRIMARY key
     /// (Go keeps the IndexInfo in metadata but never maintains `_i` entries
     /// for it). Write paths skip it; the planner still reads its stats so

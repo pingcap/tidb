@@ -42,14 +42,40 @@ pub(crate) fn write_affected_rows_ok<O: ConnectionPacketOutput + ?Sized>(
     status: WireStatus,
     warnings: u16,
     protocol_41: bool,
+    info: &[u8],
+) -> Result<(), MysqlConnectionError> {
+    write_affected_rows_ok_with_info(
+        output,
+        sequence,
+        affected_rows,
+        last_insert_id,
+        status,
+        warnings,
+        protocol_41,
+        &[],
+    )
+}
+
+/// Writes an OK packet with the Go-compatible length-encoded info string.
+pub(crate) fn write_affected_rows_ok_with_info<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
+    sequence: u8,
+    affected_rows: u64,
+    last_insert_id: u64,
+    status: WireStatus,
+    warnings: u16,
+    protocol_41: bool,
+    info: &[u8],
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         affected_rows,
         last_insert_id,
         status_flags: status.bits(),
         warnings,
+        // Go `writeOKWith` appends `StmtCtx.GetMessage()` here whenever the
+        // statement set one; MySQL renders it after the row counts.
+        info: info.to_vec(),
         protocol_41,
-        ..OkPacket::default()
     });
     write_payload(output, sequence, &payload)
 }
@@ -99,11 +125,13 @@ pub(crate) fn write_eof_or_ok<O: ConnectionPacketOutput + ?Sized>(
     options: ResultSetOptions,
 ) -> Result<(), MysqlConnectionError> {
     let payload = tidb_protocol::encode_eof_packet(&tidb_protocol::EofPacket {
+        affected_rows: options.affected_rows,
+        last_insert_id: options.last_insert_id,
         warnings: options.warnings,
         status_flags: options.status_flags,
         deprecate_eof: options.deprecate_eof,
         protocol_41: options.protocol_41,
-        info: Vec::new(),
+        info: options.info,
     });
     write_packet_to(output, sequence, &payload)
 }
@@ -181,7 +209,24 @@ impl WireFraming {
         warnings: u16,
         encoder: ResultEncoder,
     ) -> ResultSetOptions {
+        self.result_set_with_output(status, warnings, 0, 0, Vec::new(), encoder)
+    }
+
+    /// Builds result-set framing while preserving the statement values that
+    /// Go's `writeEOF` forwards to its deprecated-EOF OK packet.
+    pub(crate) fn result_set_with_output(
+        self,
+        status: WireStatus,
+        warnings: u16,
+        affected_rows: u64,
+        last_insert_id: u64,
+        info: Vec<u8>,
+        encoder: ResultEncoder,
+    ) -> ResultSetOptions {
         ResultSetOptions {
+            affected_rows,
+            last_insert_id,
+            info,
             status_flags: status.bits(),
             warnings,
             deprecate_eof: self.deprecate_eof,
@@ -256,10 +301,19 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
     message: impl AsRef<[u8]>,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    // Go defers the counter update before writing, so a socket write failure
+    // still counts the ERR packet the server attempted to return.
+    output.record_client_error(code);
     let message = message.as_ref();
-    let extended = std::str::from_utf8(message)
-        .ok()
-        .and_then(tidb_config::config_tree::extended_error_message);
+    let extended = std::str::from_utf8(message).ok().map(|message| {
+        let mut error = tidb_error::mysql::SqlError {
+            code,
+            message: message.to_owned(),
+            state: "HY000",
+        };
+        tidb_errmsg::extend(Some(&mut error));
+        error.message
+    });
     let message = extended.as_deref().map(str::as_bytes).unwrap_or(message);
     let payload = encode_error_packet(&ErrorPacket::new(code, state, message, protocol_41));
     write_payload(output, sequence, &payload)
@@ -280,6 +334,29 @@ pub(crate) fn write_payload<O: ConnectionPacketOutput + ?Sized>(
 /// framing and negotiated compression cannot diverge by command type.
 pub(crate) trait ConnectionPacketOutput {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError>;
+
+    /// Records one client-visible ERR packet. Capture outputs keep the no-op
+    /// default; an authenticated connection attaches its user/host identity.
+    fn record_client_error(&self, _code: u16) {}
+
+    fn record_client_warning(&self, _code: u16) {}
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        None
+    }
+
+    fn set_compressed_sequence(&mut self, _sequence: u8) {}
+
+    fn write_packets(
+        &mut self,
+        mut sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        for payload in payloads {
+            sequence = self.write_packet(sequence, payload)?;
+        }
+        Ok(sequence)
+    }
 }
 
 impl ConnectionPacketOutput for ClientStream {
@@ -289,7 +366,6 @@ impl ConnectionPacketOutput for ClientStream {
         writer.flush()?;
         Ok(writer.sequence())
     }
-
 }
 
 impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
@@ -301,6 +377,25 @@ impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
         Ok(next_sequence)
     }
 
+    fn write_packets(
+        &mut self,
+        sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        self.set_sequence(sequence);
+        PacketIoWriter::write_packets(self, payloads)?;
+        let next_sequence = self.sequence();
+        self.flush()?;
+        Ok(next_sequence)
+    }
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        PacketIoWriter::compressed_sequence(self)
+    }
+
+    fn set_compressed_sequence(&mut self, sequence: u8) {
+        PacketIoWriter::set_compressed_sequence(self, sequence);
+    }
 }
 
 pub(crate) struct TcpResultSetSink<'a, W: Write> {
@@ -354,10 +449,12 @@ impl<W: Write> ResultSetSink for TcpResultSetSink<'_, W> {
         // counters. Preserve this response's logical sequence across bounded
         // flushes, just as the former connection-output adapter did.
         self.output.set_sequence(self.sequence);
-        self.output.buffer_packet(payload).map_err(|error| SinkWriteError {
-            message: error.to_string(),
-            bytes_escaped: true,
-        })?;
+        self.output
+            .buffer_packet(payload)
+            .map_err(|error| SinkWriteError {
+                message: error.to_string(),
+                bytes_escaped: true,
+            })?;
         self.sequence = self.output.sequence();
         self.pending_bytes += payload.len().saturating_add(4);
         if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
@@ -390,7 +487,11 @@ mod tests {
         use tidb_protocol::{CompressionAlgorithm, PacketIoReader, PacketIoWriter};
 
         let large = vec![b'x'; SINK_COALESCE_FLUSH_BYTES];
-        for algorithm in [CompressionAlgorithm::None, CompressionAlgorithm::Zlib, CompressionAlgorithm::Zstd] {
+        for algorithm in [
+            CompressionAlgorithm::None,
+            CompressionAlgorithm::Zlib,
+            CompressionAlgorithm::Zstd,
+        ] {
             let mut output = PacketIoWriter::new(Vec::new(), algorithm).unwrap();
             let mut sink = TcpResultSetSink::new(&mut output, 254);
             sink.write_payload(b"metadata").unwrap();
@@ -404,7 +505,8 @@ mod tests {
             assert_eq!(sink.next_sequence(), 2);
             assert_eq!(sink.packets_written(), 4);
             drop(sink);
-            let mut reader = PacketIoReader::new(Cursor::new(output.into_inner()), algorithm).unwrap();
+            let mut reader =
+                PacketIoReader::new(Cursor::new(output.into_inner()), algorithm).unwrap();
             reader.set_sequence(254);
             for expected in [b"metadata".as_slice(), large.as_slice(), b"", b"terminal"] {
                 assert_eq!(reader.read_packet().unwrap(), expected);
@@ -416,6 +518,7 @@ mod tests {
     #[derive(Default)]
     struct CapturingOutput {
         payload: Vec<u8>,
+        recorded_errors: std::sync::Mutex<Vec<u16>>,
     }
 
     impl ConnectionPacketOutput for CapturingOutput {
@@ -426,6 +529,10 @@ mod tests {
         ) -> Result<u8, MysqlConnectionError> {
             self.payload = payload.to_vec();
             Ok(sequence.wrapping_add(1))
+        }
+
+        fn record_client_error(&self, code: u16) {
+            self.recorded_errors.lock().unwrap().push(code);
         }
     }
 
@@ -446,6 +553,7 @@ mod tests {
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: "^Access denied$".to_owned(),
             suffix: "see the operator guide.".to_owned(),
+            ..Default::default()
         }];
         store_global_config(config);
 
@@ -461,5 +569,6 @@ mod tests {
 
         write_error(&mut output, 1, 1105, *b"HY000", [0xff, 0xfe], true).unwrap();
         assert_eq!(&output.payload[9..], &[0xff, 0xfe]);
+        assert_eq!(*output.recorded_errors.lock().unwrap(), [1045, 1045, 1105]);
     }
 }

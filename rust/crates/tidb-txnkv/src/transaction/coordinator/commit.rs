@@ -43,8 +43,8 @@ use super::super::state::{
 };
 use super::{
     classify_key_error, record_attempt, secondary_commit_call_budget, transaction_lock_ttl_ms,
-    OptimisticCoordinatorError, RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
-    MAX_COMMIT_TIMESTAMP_ATTEMPTS, TSO_LOGICAL_BITS,
+    OptimisticCoordinatorError, RealOptimisticTransaction, RecoveryPhase,
+    MAX_COMMIT_TIMESTAMP_ATTEMPTS, MAX_COMMIT_TS_DRIFT_MS, TSO_LOGICAL_BITS,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -121,15 +121,6 @@ where
                 ));
             }
         };
-        super::txn_trace(&format!(
-            "prewrite start_ts={} mutations={} batches={} async_commit={} one_pc={}",
-            self.start_ts,
-            mutations.len(),
-            queue.len(),
-            protocol.use_async_commit,
-            protocol.use_one_pc
-        ));
-        let prewrite_started = std::time::Instant::now();
 
         loop {
             // One concurrent round: every pending region batch's Prewrite is
@@ -172,7 +163,6 @@ where
                         .collect()
                 }
             };
-
 
             // Every admitted attempt went on the wire, so its keys may hold a
             // prewrite even if a sibling batch fails this round first. A
@@ -417,13 +407,6 @@ where
             .map(|mutation| mutation.key().to_vec())
             .collect::<Vec<_>>();
 
-        super::txn_trace(&format!(
-            "prewrite done in {}us one_pc_commit_ts={} min_commit_ts={}",
-            prewrite_started.elapsed().as_micros(),
-            protocol.one_pc_commit_ts,
-            min_commit_ts
-        ));
-
         // 1PC: TiKV already committed every key while answering the prewrite,
         // so publishing a Commit would be a second, contradictory decision.
         if protocol.use_one_pc {
@@ -492,8 +475,6 @@ where
             }));
         }
 
-        let classic_started = std::time::Instant::now();
-        super::txn_trace("classic 2pc: fetching commit timestamp");
         let commit_ts = match self.commit_timestamp(min_commit_ts, call) {
             Ok(timestamp) => timestamp,
             Err(error) => {
@@ -501,11 +482,6 @@ where
             }
         };
         receipt.commit_ts = commit_ts;
-        super::txn_trace(&format!(
-            "classic 2pc: commit_ts={} fetched in {}us",
-            commit_ts,
-            classic_started.elapsed().as_micros()
-        ));
 
         self.state
             .transition(CoordinatorState::PrimaryCommitting)
@@ -534,10 +510,6 @@ where
                 ));
             }
         };
-        super::txn_trace(&format!(
-            "classic 2pc: primary committed at {}us from phase start",
-            classic_started.elapsed().as_micros()
-        ));
         self.state
             .transition(CoordinatorState::PrimaryCommitted)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -563,19 +535,22 @@ where
         // `SecondaryLockCleanupFailureCounterCommit` because the committed
         // primary has already decided the transaction. A client that cannot
         // take ownership falls back to the awaited path below.
-        let secondary_failures =
-            if self.detach_commit_secondaries(&secondary_keys, &primary_key, receipt.commit_ts, false)
-            {
-                Vec::new()
-            } else {
-                self.commit_secondaries(
-                    &secondary_keys,
-                    &primary_key,
-                    receipt.commit_ts,
-                    false,
-                    &mut receipt,
-                )
-            };
+        let secondary_failures = if self.detach_commit_secondaries(
+            &secondary_keys,
+            &primary_key,
+            receipt.commit_ts,
+            false,
+        ) {
+            Vec::new()
+        } else {
+            self.commit_secondaries(
+                &secondary_keys,
+                &primary_key,
+                receipt.commit_ts,
+                false,
+                &mut receipt,
+            )
+        };
         self.state
             .transition(CoordinatorState::Committed)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;

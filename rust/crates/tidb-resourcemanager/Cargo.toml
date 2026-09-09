@@ -1,0 +1,28 @@
+[package]
+name = "tidb-resourcemanager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB local instance resource manager."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+failpoints = ["dep:fail", "fail/failpoints", "tidb-util/failpoints"]
+intest = ["tidb-util/intest"]
+
+[dependencies]
+crossbeam-channel = "0.5"
+fail = { version = "0.4", optional = true }
+getrandom.workspace = true
+prometheus = { version = "0.14", default-features = false }
+tidb-util = { path = "../tidb-util" }
+tracing = "0.1"
+
+[dev-dependencies]
+rand = "0.8.7"
+tidb-util = { path = "../tidb-util", features = ["intest"] }

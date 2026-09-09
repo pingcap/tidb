@@ -75,6 +75,12 @@ func TestEncoderNewCollationEnabled(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, disabledLower, exportedDisabledLower)
 
+	value, err := EncodeValue(time.Local, nil, lower)
+	require.NoError(t, err)
+	legacyValue, err := disabledEncoder.EncodeValue(time.Local, nil, lower)
+	require.NoError(t, err)
+	require.Equal(t, value, legacyValue)
+
 	enabledHash := enabledEncoder.HashCode(nil, lower)
 	disabledHash := disabledEncoder.HashCode(nil, lower)
 	require.Equal(t, enabledHash, disabledHash)

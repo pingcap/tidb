@@ -16,8 +16,8 @@
 
 use tidb_util::filter::Filter as ReplicationFilter;
 use tidb_util::table_filter::{
-    case_insensitive, parse, parse_column_filter, ColumnFilter, Filter, MySQLReplicationRules,
-    Table,
+    case_insensitive, parse, parse_column_filter, parse_column_filter_rules, ColumnFilter,
+    ColumnFilterRules, Filter, MySQLReplicationRules, Table,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -26,6 +26,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 fn parsed_filter_objects_can_cross_and_be_shared_between_workers() {
     assert_send_sync::<Box<dyn Filter>>();
     assert_send_sync::<Box<dyn ColumnFilter>>();
+    assert_send_sync::<ColumnFilterRules>();
 }
 
 #[test]
@@ -38,7 +39,13 @@ fn replication_rules_preserve_public_config_keys() {
     )
     .unwrap();
 
-    assert_eq!(rules.do_tables, vec![Table::new("sales", "orders")]);
+    assert_eq!(
+        rules.do_tables,
+        vec![Table {
+            schema: "sales".to_owned(),
+            name: "orders".to_owned(),
+        }]
+    );
     assert!(rules.do_dbs.is_empty());
     assert!(rules.ignore_tables.is_empty());
     assert_eq!(rules.ignore_dbs, vec!["archive"]);
@@ -62,6 +69,9 @@ fn case_insensitive_filters_use_go_simple_unicode_folding() {
     let columns = parse_column_filter(&["İ"]).unwrap();
     assert!(columns.match_column("i"));
 
+    let column_rules = parse_column_filter_rules(&["*"]).unwrap();
+    assert!(column_rules.match_column("i"));
+
     let mut rules = MySQLReplicationRules {
         do_dbs: vec!["İ".to_owned()],
         ..Default::default()
@@ -77,5 +87,23 @@ fn case_insensitive_filters_use_go_simple_unicode_folding() {
         }),
     )
     .unwrap();
-    assert!(filter.matches(&Table::new("i", "orders")));
+    assert!(filter.matches(&Table {
+        schema: "i".to_owned(),
+        name: "orders".to_owned(),
+    }));
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn filter_return_values_may_be_ignored_like_go() {
+    tidb_util::filter::is_system_schema("mysql");
+    let filter = ReplicationFilter::new(false, None).unwrap();
+    filter.apply_on(&[]);
+    filter.apply(&[]);
+    filter.matches(&Table {
+        schema: "mysql".to_owned(),
+        name: "orders".to_owned(),
+    });
+    let rules = parse_column_filter_rules(&["*"]).unwrap();
+    rules.match_column("orders");
 }

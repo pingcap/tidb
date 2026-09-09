@@ -89,7 +89,7 @@ pub struct Log {
     pub slow_query_file: String,
     /// Deprecated expensive-query threshold.
     #[serde(rename = "expensive-threshold")]
-    pub expensive_threshold: u32,
+    pub expensive_threshold: usize,
     /// General log filename.
     #[serde(rename = "general-log-file")]
     pub general_log_file: String,
@@ -107,6 +107,27 @@ pub struct Log {
     pub record_plan_in_slow_log: u32,
     /// Panic if a log write hangs this many seconds.
     #[serde(rename = "timeout")]
+    pub timeout: i64,
+}
+
+/// Runtime log configuration produced by Go `Log.ToLogConfig`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct RuntimeLogConfig {
+    /// Log level.
+    pub level: String,
+    /// Log encoding format.
+    pub format: String,
+    /// Slow-query log filename.
+    pub slow_query_file: String,
+    /// General log filename.
+    pub general_log_file: String,
+    /// File logger settings.
+    pub file: FileLogConfig,
+    /// Whether timestamps are disabled.
+    pub disable_timestamp: bool,
+    /// Whether verbose error stacks are disabled.
+    pub disable_error_verbose: bool,
+    /// Fatal log-write timeout in seconds.
     pub timeout: i64,
 }
 
@@ -157,6 +178,20 @@ impl Log {
             return self.disable_error_stack.to_bool();
         }
         !self.enable_error_stack.to_bool()
+    }
+
+    /// Go `Log.ToLogConfig`.
+    pub fn to_log_config(&self) -> RuntimeLogConfig {
+        RuntimeLogConfig {
+            level: self.level.clone(),
+            format: self.format.clone(),
+            slow_query_file: self.slow_query_file.clone(),
+            general_log_file: self.general_log_file.clone(),
+            file: self.file.clone(),
+            disable_timestamp: self.get_disable_timestamp(),
+            disable_error_verbose: self.get_disable_error_stack(),
+            timeout: self.timeout,
+        }
     }
 }
 
@@ -331,6 +366,13 @@ mod tests {
         assert!(l.get_disable_error_stack());
         // Both timestamp options unset -> disable-timestamp false.
         assert!(!l.get_disable_timestamp());
+        let runtime = l.to_log_config();
+        assert_eq!(runtime.level, "info");
+        assert_eq!(runtime.format, "text");
+        assert_eq!(runtime.slow_query_file, "tidb-slow.log");
+        assert!(!runtime.disable_timestamp);
+        assert!(runtime.disable_error_verbose);
+        assert_eq!(runtime.timeout, 0);
     }
 
     #[test]

@@ -103,7 +103,12 @@ pub(super) fn json_object(
         ));
     }
     let mut object = serde_json::Map::new();
-    for (pair, types) in vals.chunks_exact(2).zip(arg_types.chunks_exact(2)) {
+    for (pair, types) in vals
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(arg_types.as_chunks::<2>().0)
+    {
         let Some(key) = coerce_str(&pair[0])? else {
             return Err(EvalError::Json(JsonError::NullMemberName));
         };

@@ -164,6 +164,17 @@ impl Error for PreparedBindError {
     }
 }
 
+impl PreparedBindError {
+    /// The MySQL error number and SQLSTATE for this bind refusal.
+    #[must_use]
+    pub fn mysql_code(&self) -> (u16, [u8; 5]) {
+        match self {
+            Self::ParameterCount(_) => (8112, *b"HY000"),
+            Self::ReadOnly(error) => error.mysql_code(),
+        }
+    }
+}
+
 /// Why a SQL statement cannot become the first read-only table scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyScanError {
@@ -176,8 +187,8 @@ pub enum ReadOnlyScanError {
     /// A `WHERE` clause is present but is outside the bounded signed-`BIGINT`
     /// Selection grammar.
     UnsupportedPredicate(UnsupportedReadOnlyPredicate),
-    /// The resolved predicate violated the physical Selection contract.
-    PhysicalSelection(PhysicalSelectionError),
+    /// The resolved predicate did not contain one input column and one integer.
+    InvalidComparison(crate::signed_bigint_ranger::BigIntComparisonError),
     /// The query names a table other than the configured table.
     UnknownTable(String),
     /// The query names a column outside the configured table.
@@ -214,8 +225,8 @@ impl fmt::Display for ReadOnlyScanError {
                     "unsupported read-only WHERE predicate: {predicate:?}"
                 )
             }
-            Self::PhysicalSelection(error) => {
-                write!(formatter, "invalid physical Selection: {error}")
+            Self::InvalidComparison(error) => {
+                write!(formatter, "invalid signed-BIGINT comparison: {error}")
             }
             Self::UnknownTable(table) => write!(formatter, "unknown table: {table}"),
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
@@ -240,3 +251,106 @@ impl fmt::Display for ReadOnlyScanError {
 }
 
 impl Error for ReadOnlyScanError {}
+
+impl ReadOnlyScanError {
+    /// The MySQL error number and SQLSTATE the client is told, matching the
+    /// error Go raises for the equivalent refusal: unsupported shapes are
+    /// `plannererrors.ErrNotSupportedYet` (1235, 42000), an unknown table is
+    /// `ErrNoSuchTable` (1146, 42S02), an unknown column is `ErrBadField`
+    /// (1054, 42S22), a parse failure is `ErrParse` (1064, 42000), and the
+    /// internal-invariant refusals keep Go's fallback 1105/HY000. Transport
+    /// seams must read this pair instead of flattening the error through
+    /// `Display` into a generic unknown.
+    #[must_use]
+    pub fn mysql_code(&self) -> (u16, [u8; 5]) {
+        const NOT_SUPPORTED: (u16, [u8; 5]) = (1235, *b"42000");
+        const INTERNAL: (u16, [u8; 5]) = (1105, *b"HY000");
+        match self {
+            Self::Parse(_) => (1064, *b"42000"),
+            Self::Unsupported(_) | Self::UnsupportedPredicate(_) => NOT_SUPPORTED,
+            Self::UnknownTable(_) => (1146, *b"42S02"),
+            Self::UnknownColumn(_) => (1054, *b"42S22"),
+            Self::InvalidConfiguration(_)
+            | Self::InvalidComparison(_)
+            | Self::InvalidColumnIndex { .. }
+            | Self::PlannerRejected(_)
+            | Self::UnexpectedPlannerTask => INTERNAL,
+        }
+    }
+}
+
+impl PreparedPlanError {
+    /// The MySQL error number and SQLSTATE for this refusal: the wrapped
+    /// [`ReadOnlyScanError`]'s own pair, `ErrNotSupportedYet` for the
+    /// prepared-template grammar refusals, and the generic fallback for the
+    /// catalog lookup. See [`ReadOnlyScanError::mysql_code`].
+    #[must_use]
+    pub fn mysql_code(&self) -> (u16, [u8; 5]) {
+        match self {
+            Self::ReadOnly(error) => error.mysql_code(),
+            Self::PrimaryKeyComparison | Self::MarkerPosition(_) => (1235, *b"42000"),
+            Self::Catalog(_) => (1105, *b"HY000"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod mysql_code_tests {
+    use super::*;
+
+    /// Each refusal carries the errno and SQLSTATE Go raises for the
+    /// equivalent shape, so a transport seam never has to answer the
+    /// generic 1105 for a refusal Go names.
+    #[test]
+    fn refusal_codes_match_the_go_error_they_replace() {
+        let cases: Vec<(ReadOnlyScanError, u16, [u8; 5])> = vec![
+            (
+                ReadOnlyScanError::Unsupported(UnsupportedReadOnlyFeature::Window),
+                1235,
+                *b"42000",
+            ),
+            (
+                ReadOnlyScanError::UnsupportedPredicate(
+                    UnsupportedReadOnlyPredicate::BooleanOperator,
+                ),
+                1235,
+                *b"42000",
+            ),
+            (ReadOnlyScanError::UnknownTable("t".into()), 1146, *b"42S02"),
+            (
+                ReadOnlyScanError::UnknownColumn("c".into()),
+                1054,
+                *b"42S22",
+            ),
+            (
+                ReadOnlyScanError::Parse("bad syntax".into()),
+                1064,
+                *b"42000",
+            ),
+            (ReadOnlyScanError::UnexpectedPlannerTask, 1105, *b"HY000"),
+        ];
+        for (error, code, state) in cases {
+            assert_eq!(error.mysql_code(), (code, state), "{error:?}");
+        }
+    }
+
+    /// A wrapped plan refusal delegates to its inner error's pair, and the
+    /// prepared-template grammar refusals are `ErrNotSupportedYet` shapes.
+    #[test]
+    fn prepared_plan_refusals_wrap_their_inner_pair() {
+        let wrapped = PreparedPlanError::ReadOnly(ReadOnlyScanError::UnknownColumn("c".into()));
+        assert_eq!(wrapped.mysql_code(), (1054, *b"42S22"));
+        assert_eq!(
+            PreparedPlanError::PrimaryKeyComparison.mysql_code(),
+            (1235, *b"42000")
+        );
+        assert_eq!(
+            PreparedPlanError::MarkerPosition(2).mysql_code(),
+            (1235, *b"42000")
+        );
+        let lookup = PreparedPlanError::Catalog(
+            configured_catalog::ConfiguredTableLookupError::UnknownTable("t".into()),
+        );
+        assert_eq!(lookup.mysql_code(), (1105, *b"HY000"));
+    }
+}

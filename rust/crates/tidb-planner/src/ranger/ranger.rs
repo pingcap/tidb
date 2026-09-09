@@ -463,9 +463,9 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
     table_range: bool,
     col_len: i64,
     range_max_size: i64,
-    eval_constant: &super::points::ConstantEvaluator<'_>,
+    eval_expression: &super::points::ExpressionEvaluator<'_>,
 ) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
-    let mut builder = PointBuilder::new(eval_constant);
+    let mut builder = PointBuilder::new(eval_expression);
     let new_tp = new_field_type(tp);
     let mut range_points = get_full_range();
     for cond in access_conditions {
@@ -513,7 +513,7 @@ pub fn build_table_range<'a>(
         access_conditions,
         tp,
         range_max_size,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -522,7 +522,7 @@ pub fn build_table_range_in<'a>(
     access_conditions: &'a [Expression],
     tp: &FieldType,
     range_max_size: i64,
-    eval_constant: &super::points::ConstantEvaluator<'_>,
+    eval_expression: &super::points::ExpressionEvaluator<'_>,
 ) -> Result<ColumnRangeResult<'a>, PointBuilderError> {
     build_column_range_impl(
         access_conditions,
@@ -530,7 +530,7 @@ pub fn build_table_range_in<'a>(
         true,
         UNSPECIFIED_LENGTH,
         range_max_size,
-        eval_constant,
+        eval_expression,
     )
 }
 
@@ -547,7 +547,7 @@ pub fn build_column_range<'a, E: std::borrow::Borrow<Expression>>(
         tp,
         col_len,
         range_mem_quota,
-        &tidb_expr::constant::Constant::eval,
+        &crate::ranger::points::evaluate_static,
     )
 }
 
@@ -557,7 +557,7 @@ pub fn build_column_range_in<'a, E: std::borrow::Borrow<Expression>>(
     tp: &FieldType,
     col_len: i64,
     range_mem_quota: i64,
-    eval_constant: &super::points::ConstantEvaluator<'_>,
+    eval_expression: &super::points::ExpressionEvaluator<'_>,
 ) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
     if conds.is_empty() {
         return Ok(ColumnRangeResult {
@@ -566,7 +566,179 @@ pub fn build_column_range_in<'a, E: std::borrow::Borrow<Expression>>(
             remained_conds: &[],
         });
     }
-    build_column_range_impl(conds, tp, false, col_len, range_mem_quota, eval_constant)
+    build_column_range_impl(conds, tp, false, col_len, range_mem_quota, eval_expression)
+}
+
+/// Go `RangesToString` (`pkg/util/ranger/ranger.go`) rendered as a native
+/// Rust helper.  The statement-context argument in Go only supplies datum
+/// comparison policy; this port's typed [`Datum`] comparison has no mutable
+/// warning sink, so callers provide the range list and column names directly.
+///
+/// Each range is an OR arm, and each column in a composite range is an AND
+/// arm.  As in Go, exclusion flags apply only to the final column and all
+/// preceding columns must be point-equal.
+pub fn ranges_to_string(ranges: &[Range], col_names: &[&str]) -> Result<String, String> {
+    for range in ranges {
+        if range.low_val.len() != range.high_val.len() {
+            return Err("range length mismatch".to_owned());
+        }
+        if range.low_val.len() > col_names.len() {
+            return Err("column name length mismatch".to_owned());
+        }
+        if range.collators.len() < range.low_val.len() {
+            return Err("collator length mismatch".to_owned());
+        }
+    }
+
+    let mut arms = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        let mut columns = Vec::with_capacity(range.low_val.len());
+        for (index, (low, high)) in range.low_val.iter().zip(&range.high_val).enumerate() {
+            if index + 1 < range.low_val.len()
+                && low
+                    .compare(high, range.collators[index])
+                    .map_err(|error| format!("comparing values error: {error}"))?
+                    != std::cmp::Ordering::Equal
+            {
+                return Err("unexpected form of range".to_owned());
+            }
+            let low_exclude = range.low_exclude && index + 1 == range.low_val.len();
+            let high_exclude = range.high_exclude && index + 1 == range.low_val.len();
+            columns.push(format!(
+                "({})",
+                range_single_col_to_string(
+                    low,
+                    high,
+                    low_exclude,
+                    high_exclude,
+                    col_names[index],
+                    range.collators[index],
+                )?
+            ));
+        }
+        arms.push(format!("({})", columns.join(" and ")));
+    }
+
+    let result = arms.join(" or ");
+    if !result.is_empty() && !result.contains(" or ") && !result.contains(" and ") {
+        let trimmed = result.trim_matches('(').trim_matches(')');
+        if trimmed == "true" {
+            return Ok("true".to_owned());
+        }
+    }
+    Ok(result)
+}
+
+/// Go `RangeSingleColToString` rendered without the mutable statement
+/// context.  The returned text is valid SQL for the supported value kinds;
+/// Go's `ValueExpr.Restore` deliberately rejects ENUM/SET/BIT/JSON/RAW and
+/// range sentinels, so those same unsupported kinds return an error here.
+pub fn range_single_col_to_string(
+    low: &Datum,
+    high: &Datum,
+    low_exclude: bool,
+    high_exclude: bool,
+    col_name: &str,
+    collator: tidb_datatype::Collation,
+) -> Result<String, String> {
+    let low_special = matches!(low, Datum::Null | Datum::MinNotNull | Datum::MaxValue);
+    let high_special = matches!(high, Datum::Null | Datum::MinNotNull | Datum::MaxValue);
+    if low_special && high_special {
+        return Ok(match (low, high, low_exclude, high_exclude) {
+            (Datum::Null, Datum::Null, false, false) => format!("{col_name} is null"),
+            (Datum::Null, Datum::MaxValue, false, _) => "true".to_owned(),
+            (Datum::MinNotNull, Datum::MaxValue, _, _) => {
+                format!("{col_name} is not null")
+            }
+            _ => "false".to_owned(),
+        });
+    }
+
+    let comparison = low
+        .compare(high, collator)
+        .map_err(|error| error.to_string())?;
+    if comparison == std::cmp::Ordering::Equal
+        && !low_exclude
+        && !high_exclude
+        && !matches!(low, Datum::Null)
+    {
+        return Ok(format!("{col_name} = {}", restore_range_literal(low)?));
+    }
+
+    let mut parts = Vec::with_capacity(2);
+    match low {
+        Datum::Null => parts.push(format!("{col_name} is null")),
+        Datum::MinNotNull => {}
+        _ => parts.push(format!(
+            "{col_name} {} {}",
+            if low_exclude { ">" } else { ">=" },
+            restore_range_literal(low)?
+        )),
+    }
+    match high {
+        Datum::MaxValue => parts.push("true".to_owned()),
+        _ => parts.push(format!(
+            "{col_name} {} {}",
+            if high_exclude { "<" } else { "<=" },
+            restore_range_literal(high)?
+        )),
+    }
+    Ok(parts.join(if matches!(low, Datum::Null) {
+        " or "
+    } else if parts.len() == 1 {
+        ""
+    } else {
+        " and "
+    }))
+}
+
+fn restore_range_literal(value: &Datum) -> Result<String, String> {
+    match value {
+        Datum::Null => Ok("NULL".to_owned()),
+        Datum::Int(value) => Ok(value.to_string()),
+        Datum::UInt(value) => Ok(value.to_string()),
+        Datum::Decimal(value) => Ok(value.to_string()),
+        Datum::Real(value) => Ok(format_go_scientific(format!("{value:e}"))),
+        Datum::Float32(value) => Ok(format_go_scientific(format!("{:e}", *value as f32))),
+        Datum::String(value) => quote_range_bytes(value.bytes()),
+        Datum::Bytes(value) => quote_range_bytes(value),
+        Datum::BinaryLiteral(value) => Ok(value.to_bit_literal_string(true)),
+        Datum::Duration(value) => Ok(format!("'{value}'")),
+        Datum::Time(value) => Ok(format!("'{value}'")),
+        Datum::MinNotNull | Datum::MaxValue => {
+            Err("Not implemented: range sentinel cannot be restored".to_owned())
+        }
+        Datum::Enum(_, _)
+        | Datum::Bit(_)
+        | Datum::Set(_, _)
+        | Datum::Json(_)
+        | Datum::Raw(_)
+        | Datum::VectorFloat32(_) => Err("Not implemented".to_owned()),
+    }
+}
+
+fn quote_range_bytes(bytes: &[u8]) -> Result<String, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("invalid UTF-8 string literal: {error}"))?;
+    Ok(format!(
+        "'{}'",
+        text.replace('\\', "\\\\").replace('\'', "''")
+    ))
+}
+
+fn format_go_scientific(rendered: String) -> String {
+    match rendered.as_str() {
+        "NaN" => return "NaN".to_owned(),
+        "inf" => return "+Inf".to_owned(),
+        "-inf" => return "-Inf".to_owned(),
+        _ => {}
+    }
+    let Some((mantissa, exponent)) = rendered.split_once('e') else {
+        return rendered;
+    };
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    let sign = if exponent < 0 { '-' } else { '+' };
+    format!("{mantissa}e{sign}{:02}", exponent.abs())
 }
 
 #[cfg(test)]
@@ -600,6 +772,95 @@ mod tests {
         result.ranges.iter().map(Range::to_display_string).collect()
     }
 
+    #[test]
+    fn range_single_column_sql_rendering_matches_go() {
+        let binary = tidb_datatype::Collation::Binary;
+        assert_eq!(
+            range_single_col_to_string(&Datum::Int(7), &Datum::Int(7), false, false, "a", binary,)
+                .unwrap(),
+            "a = 7"
+        );
+        assert_eq!(
+            range_single_col_to_string(&Datum::Null, &Datum::Int(5), false, true, "a", binary,)
+                .unwrap(),
+            "a is null or a < 5"
+        );
+        assert_eq!(
+            range_single_col_to_string(
+                &Datum::MinNotNull,
+                &Datum::MaxValue,
+                false,
+                false,
+                "a",
+                binary,
+            )
+            .unwrap(),
+            "a is not null"
+        );
+        assert_eq!(
+            range_single_col_to_string(
+                &Datum::new_string("a\\b'c"),
+                &Datum::new_string("a\\b'c"),
+                false,
+                false,
+                "a",
+                binary,
+            )
+            .unwrap(),
+            "a = 'a\\\\b''c'"
+        );
+    }
+
+    #[test]
+    fn ranges_to_string_renders_composite_and_full_ranges() {
+        let binary = tidb_datatype::Collation::Binary;
+        let composite = Range {
+            low_val: vec![Datum::Int(1), Datum::Int(2)],
+            high_val: vec![Datum::Int(1), Datum::Int(5)],
+            collators: vec![binary, binary],
+            low_exclude: false,
+            high_exclude: true,
+        };
+        assert_eq!(
+            ranges_to_string(&[composite], &["a", "b"]).unwrap(),
+            "((a = 1) and (b >= 2 and b < 5))"
+        );
+
+        let full = Range {
+            low_val: vec![Datum::Null],
+            high_val: vec![Datum::MaxValue],
+            collators: vec![binary],
+            ..Range::default()
+        };
+        assert_eq!(ranges_to_string(&[full], &["a"]).unwrap(), "true");
+    }
+
+    #[test]
+    fn ranges_to_string_rejects_malformed_composite_ranges() {
+        let binary = tidb_datatype::Collation::Binary;
+        let mismatched = Range {
+            low_val: vec![Datum::Int(1)],
+            high_val: vec![],
+            collators: vec![binary],
+            ..Range::default()
+        };
+        assert_eq!(
+            ranges_to_string(&[mismatched], &["a"]).unwrap_err(),
+            "range length mismatch"
+        );
+
+        let unexpected = Range {
+            low_val: vec![Datum::Int(1), Datum::Int(2)],
+            high_val: vec![Datum::Int(3), Datum::Int(4)],
+            collators: vec![binary, binary],
+            ..Range::default()
+        };
+        assert_eq!(
+            ranges_to_string(&[unexpected], &["a", "b"]).unwrap_err(),
+            "unexpected form of range"
+        );
+    }
+
     /// `BuildTableRange` end to end: `a > 1 AND a < 5` over the int-handle
     /// PK — sentinels become concrete ints, nulls drop.
     #[test]
@@ -616,7 +877,8 @@ mod tests {
         assert!(result.remained_conds.is_empty());
 
         // No conditions on a COLUMN range answers the full range.
-        let empty = build_column_range::<Expression>(&[], &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
+        let empty =
+            build_column_range::<Expression>(&[], &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
         assert_eq!(shown(&empty), ["[NULL,+inf]"]);
 
         // `a != 3` over the table: two int-bounded ranges.

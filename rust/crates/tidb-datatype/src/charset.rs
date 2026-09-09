@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{OnceLock, RwLock};
 
+use tidb_mysql::to_lowercase as go_simple_lowercase;
+
 #[cfg(test)]
 pub(crate) static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -115,6 +117,9 @@ impl fmt::Display for CharsetName {
     }
 }
 
+/// The charset-name set exported by Go as `TiFlashSupportedCharsets`.
+pub const TIFLASH_SUPPORTED_CHARSETS: &[&str] = &["utf8", "utf8mb4", "ascii", "latin1", "binary"];
+
 /// A charset fully supported by TiDB's parser charset package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Charset {
@@ -186,20 +191,19 @@ impl Charset {
     }
 
     /// Returns the parser package's default collation.
-    pub const fn default_collation(self) -> Collation {
+    pub fn default_collation(self) -> Collation {
         match self {
             Self::Binary => Collation::Binary,
             Self::Ascii => Collation::AsciiBin,
             Self::Latin1 => Collation::Latin1Bin,
             Self::Utf8 => Collation::Utf8Bin,
             Self::Utf8Mb4 => Collation::Utf8Mb4Bin,
-            // TiDB forces the Unicode/legacy charsets to their `_bin`
-            // collation, but leaves the Chinese ones at the registry default
-            // in `pkg/parser/charset/charset.go` (`charsetInfos`). Captured:
-            // `CREATE TABLE g1(a VARCHAR(20) CHARSET gbk)` then
-            // `SELECT COLLATION(a) FROM g1` answers `gbk_chinese_ci`.
-            Self::Gbk => Collation::GbkChineseCi,
-            Self::Gb18030 => Collation::Gb18030ChineseCi,
+            Self::Gbk if crate::collation::new_collation_enabled() => Collation::GbkChineseCi,
+            Self::Gbk => Collation::GbkBin,
+            Self::Gb18030 if crate::collation::new_collation_enabled() => {
+                Collation::Gb18030ChineseCi
+            }
+            Self::Gb18030 => Collation::Gb18030Bin,
         }
     }
 }
@@ -544,20 +548,7 @@ impl Registry {
 
 fn registry() -> &'static RwLock<Registry> {
     static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        let mut registry = Registry::source();
-        // Go's `CharacterSetInfos` literal names the LEGACY defaults --
-        // `gbk_bin`, `gb18030_bin` -- and `collate.switchDefaultCollation` then
-        // rewrites them the moment the new-collation flag is read, which on a
-        // modern server is at startup and to `true`. Porting only the literal
-        // left this registry permanently in the pre-switch state, so
-        // `get_default_collation("gbk")` answered `gbk_bin` where a live server
-        // answers `gbk_chinese_ci`. Applying the switch here, from the same
-        // flag that `new_collation_enabled()` reads, means there is one
-        // answer instead of a literal and a switch that could disagree.
-        apply_new_collation_defaults(&mut registry, crate::collation::new_collation_enabled());
-        RwLock::new(registry)
-    })
+    REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
 }
 
 pub(crate) fn set_new_collation_defaults(enabled: bool) {
@@ -656,12 +647,12 @@ pub fn valid_charset_and_collation(charset: &str, collation: &str) -> bool {
     collation.is_empty()
         || info
             .collations
-            .contains_key(utf8_alias(&collation.to_ascii_lowercase()))
+            .contains_key(utf8_alias(&go_simple_lowercase(collation)))
 }
 
 /// Returns the legacy parser default; GBK and GB18030 are deliberately absent.
 pub fn get_default_collation_legacy(charset: &str) -> Result<String, CharsetError> {
-    let lower = charset.to_ascii_lowercase();
+    let lower = go_simple_lowercase(charset);
     match lower.as_str() {
         "utf8mb3" => get_default_collation("utf8"),
         "utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" => get_default_collation(&lower),
@@ -684,7 +675,7 @@ pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
     let canonical = if charset.eq_ignore_ascii_case("utf8mb3") {
         "utf8".to_owned()
     } else {
-        charset.to_ascii_lowercase()
+        go_simple_lowercase(charset)
     };
     let guard = registry().read().expect("charset registry lock poisoned");
     if let Some(info) = guard.supported.get(&canonical) {
@@ -723,7 +714,7 @@ pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> 
         .read()
         .expect("charset registry lock poisoned")
         .collations_by_name
-        .get(utf8_alias(&name.to_ascii_lowercase()))
+        .get(utf8_alias(&go_simple_lowercase(name)))
         .cloned()
         .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
 }
@@ -752,8 +743,23 @@ pub fn add_charset(charset: CharsetInfo) {
 pub fn remove_charset(name: &str) {
     let mut guard = registry().write().expect("charset registry lock poisoned");
     guard.supported.remove(name);
-    // Preserve the source implementation's name comparison exactly.
-    guard.supported_collations.retain(|row| row.name != name);
+    // Preserve both the source's name comparison and its range-over-original-
+    // length mutation behavior exactly.
+    let original_len = guard.supported_collations.len();
+    let mut bounds_panic = None;
+    for index in 0..original_len {
+        if index >= guard.supported_collations.len() {
+            bounds_panic = Some((index, guard.supported_collations.len()));
+            break;
+        }
+        if guard.supported_collations[index].name == name {
+            guard.supported_collations.remove(index);
+        }
+    }
+    drop(guard);
+    if let Some((index, len)) = bounds_panic {
+        panic!("runtime error: index out of range [{index}] with length {len}");
+    }
 }
 
 /// Adds a collation to every applicable registry view.
@@ -797,14 +803,8 @@ mod tests {
             assert_eq!(valid_charset_and_collation(charset, collation), expected);
         }
         assert_eq!(get_default_collation("utf8").unwrap(), "utf8_bin");
-        // A live server answers `gbk_chinese_ci`, not the `gbk_bin` named in
-        // Go's `CharacterSetInfos` literal: `switchDefaultCollation` has
-        // already rewritten it by the time any statement runs.
-        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_chinese_ci");
-        assert_eq!(
-            get_default_collation("gb18030").unwrap(),
-            "gb18030_chinese_ci"
-        );
+        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_bin");
+        assert_eq!(get_default_collation("gb18030").unwrap(), "gb18030_bin");
         assert_eq!(get_charset_info("utf8mb3").unwrap().name, "utf8");
         assert_eq!(
             get_collation_by_name("non_exist").unwrap_err().to_string(),

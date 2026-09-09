@@ -17,12 +17,18 @@
 pub enum VarErrorKind {
     /// Go `ErrUnknownSystemVar` (1193).
     UnknownSystemVariable(String),
+    /// Go `ErrVariableNoLongerSupported` (8136), used when a removed
+    /// variable is read through `@@name` rather than silently ignored by
+    /// the `SET` compatibility path.
+    RemovedSystemVariable { name: String, reason: String },
     /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
     ReadOnlyVariable(String),
     /// Go `ErrWrongTypeForVar` (1232).
     WrongTypeForVar(String),
     /// Go `ErrWrongValueForVar` (1231).
     WrongValueForVar(String, String),
+    /// A catalogued MySQL error returned unchanged by variable validation.
+    SqlError(tidb_error::mysql::SqlError),
     /// Go `ErrLocalVariable` (1228): `SET GLOBAL` named a SESSION-only
     /// variable.
     SessionOnlyVariable(String),

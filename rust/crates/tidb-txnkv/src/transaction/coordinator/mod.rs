@@ -55,7 +55,7 @@ use super::command_client::TransactionCommandClient;
 use super::mutation::{validate_plan, MutationSetError};
 use super::region_batches::{RegionKeyBatch, RegionMutationBatch};
 use super::state::{
-    CoordinatorState, OptimisticTransactionReceipt, SnapshotReadReceipt, TransactionAttemptPhase,
+    CoordinatorState, OptimisticTransactionReceipt, TransactionAttemptPhase,
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
 };
 
@@ -63,7 +63,7 @@ pub use opener::{
     PdLockTimestampSource, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
     StoreWriteLoader,
 };
-pub use snapshot_read::SnapshotGetResult;
+pub use snapshot_read::{SnapshotGetResult, SnapshotScanRegion};
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
 /// Go `config.DefaultConfig().TiKVClient.AsyncCommit.KeysLimit`.
@@ -205,7 +205,6 @@ pub struct RealOptimisticTransaction<C, L, T> {
     planned_mutation_count: usize,
     planned_aggregate_bytes: usize,
     state: CoordinatorState,
-    snapshot_reads: Vec<SnapshotReadReceipt>,
     opened_at: Instant,
     authority_id: u64,
     forward_backoff: RegionBackoffBudget,
@@ -230,6 +229,9 @@ pub struct RealOptimisticTransaction<C, L, T> {
     protocol: CommitProtocol,
     /// Resource group inherited by Prewrite and Commit request contexts.
     resource_group_name: Option<String>,
+    /// Go `SnapshotRuntimeStats` command RPC totals for point readers.
+    snapshot_get_rpc_count: u64,
+    snapshot_batch_get_rpc_count: u64,
     /// Transactions whose locks every later read from this snapshot may step
     /// over, and transactions whose committed value every later read must see
     /// through their lock.
@@ -360,7 +362,6 @@ where
             planned_mutation_count,
             planned_aggregate_bytes,
             state: CoordinatorState::New,
-            snapshot_reads: Vec::new(),
             opened_at,
             authority_id,
             forward_backoff: RegionBackoffBudget::campaign_default(),
@@ -371,8 +372,20 @@ where
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
+            snapshot_get_rpc_count: 0,
+            snapshot_batch_get_rpc_count: 0,
             resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
+    }
+
+    /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for `CmdGet` and
+    /// `CmdBatchGet` on this transaction snapshot.
+    #[must_use]
+    pub const fn snapshot_point_rpc_counts(&self) -> (u64, u64) {
+        (
+            self.snapshot_get_rpc_count,
+            self.snapshot_batch_get_rpc_count,
+        )
     }
 
     /// Permits this transaction to attempt async commit and/or 1PC.
@@ -380,9 +393,9 @@ where
         self.protocol = protocol;
     }
 
-/// Rejects a completed read whose timestamp GC has already passed.
-///
-/// Called only after TiKV has answered, mirroring client-go's placement of
+    /// Rejects a completed read whose timestamp GC has already passed.
+    ///
+    /// Called only after TiKV has answered, mirroring client-go's placement of
     /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
     /// pre-read check would be worthless: GC can advance while the RPC is in
     /// flight, so only a post-read check covers the data actually returned.
@@ -422,6 +435,8 @@ where
 
     /// Clones a routed request context and attaches this transaction's resource
     /// group without disturbing route, priority, penalty, or tracing fields.
+    /// Snapshot reads and writes must both use this: TiKV's resource control is
+    /// request-scoped, not mutation-scoped.
     pub(super) fn write_context(&self, context: &KvrpcContext) -> KvrpcContext {
         let mut context = context.clone();
         if let Some(resource_group_name) = self.resource_group_name.as_ref() {
@@ -570,6 +585,12 @@ pub(super) enum RecoveryPhase {
 }
 
 pub(super) fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
+    if let Some(shared_lock_lost) = error.shared_lock_lost.as_ref() {
+        return TransactionCause::SharedLockLost {
+            start_ts: shared_lock_lost.start_ts,
+            key: tikv_client::redact::key(&shared_lock_lost.key),
+        };
+    }
     if let Some(already_exists) = error.already_exist.as_ref() {
         return TransactionCause::AlreadyExists {
             key: already_exists.key.clone(),
@@ -694,7 +715,8 @@ mod tests {
     use super::*;
     use crate::region::{RegionBackoffKind, RegionTerminalError};
     use tidb_proto::{
-        KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed, KvrpcLockInfo, KvrpcWriteConflict,
+        kvrpcpb::SharedLockLost, KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed,
+        KvrpcLockInfo, KvrpcWriteConflict,
     };
 
     #[test]
@@ -755,6 +777,19 @@ mod tests {
         assert!(matches!(
             classify_key_error(&lock),
             TransactionCause::Lock { key, .. } if key == b"l"
+        ));
+
+        let shared_lock_lost = KvrpcKeyError {
+            shared_lock_lost: Some(SharedLockLost {
+                start_ts: 101,
+                key: b"key".to_vec(),
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&shared_lock_lost),
+            TransactionCause::SharedLockLost { start_ts, key }
+                if start_ts == 101 && key == "6B6579"
         ));
         assert!(matches!(
             classify_key_error(&KvrpcKeyError::default()),
@@ -881,23 +916,5 @@ mod tests {
             &mut RegionBackoffBudget::campaign_default(),
         );
         assert!(matches!(malformed, Err(TransactionCause::Region { .. })));
-    }
-}
-
-/// Diagnosis-only commit-path tracing (`TIDB_RS_TRACE` containing `txn`).
-/// One relaxed-flag check per call; silent when the variable is unset.
-pub(crate) fn txn_trace(msg: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static ENABLED: AtomicBool = AtomicBool::new(false);
-    static CHECKED: AtomicBool = AtomicBool::new(false);
-    if !CHECKED.load(Ordering::Relaxed) {
-        ENABLED.store(
-            std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("txn")),
-            Ordering::Relaxed,
-        );
-        CHECKED.store(true, Ordering::Relaxed);
-    }
-    if ENABLED.load(Ordering::Relaxed) {
-        eprintln!("[txn] {msg}");
     }
 }

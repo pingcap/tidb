@@ -465,10 +465,8 @@ pub fn peek_vector_float32(bytes: &[u8]) -> Result<usize, VectorError> {
 pub fn deserialize_vector_float32(bytes: &[u8]) -> Result<(VectorFloat32, &[u8]), VectorError> {
     let length = peek_vector_float32(bytes)?;
     let mut elements = Vec::with_capacity((length - 4) / 4);
-    for chunk in bytes[4..length].chunks_exact(4) {
-        elements.push(f32::from_bits(u32::from_le_bytes(
-            chunk.try_into().expect("fixed vector element"),
-        )));
+    for chunk in bytes[4..length].as_chunks::<4>().0 {
+        elements.push(f32::from_bits(u32::from_le_bytes(*chunk)));
     }
     Ok((VectorFloat32 { elements }, &bytes[length..]))
 }

@@ -158,6 +158,28 @@ fn signed_string_overflow_reaches_sql_and_implicit_int_consumers() {
     );
 }
 
+/// `VITESS_HASH` wraps its argument in Go's `WrapWithCastAsInt`.  A planner
+/// fold must not erase the cast's 8030 diagnostic just because the hash result
+/// itself is constant; the warning belongs to the statement that executes it.
+#[test]
+fn implicit_integer_cast_keeps_warning_after_plan_fold() {
+    let mut session = Session::new();
+    let expected_hash = tidb_util::vitess::hash_uint64((-2_i64) as u64).to_string();
+    assert_eq!(
+        row_text(session.run("SELECT VITESS_HASH('18446744073709551614')")),
+        [[expected_hash]],
+    );
+    assert_eq!(
+        warnings(&session),
+        [(
+            8030,
+            "Cast to signed converted positive out-of-range integer to its negative complement"
+                .to_owned(),
+        )],
+    );
+    assert_eq!(session.wire_warning_count(), 1);
+}
+
 /// The reported unit itself: two bad casts in one statement leave two
 /// warnings, not one and not zero -- the count is per evaluation, so a
 /// deduplicating sink would still read as "it warns".
@@ -372,4 +394,21 @@ fn a_negative_real_cast_to_unsigned_keeps_its_low_64_bits() {
             "{sql}"
         );
     }
+}
+
+/// `CAST(<positive real outside UNSIGNED BIGINT> AS UNSIGNED)` keeps Go's
+/// upper-bound value and emits its 1690 overflow warning.  The planner must
+/// leave this numeric cast for the statement context just as it does the
+/// negative-real cases above.
+#[test]
+fn a_positive_real_unsigned_overflow_warns_at_runtime() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SELECT CAST(1e30 AS UNSIGNED)"))[0][0],
+        "18446744073709551615"
+    );
+    assert_eq!(
+        warnings(&session),
+        [(1690, "constant 1e+30 overflows bigint".to_owned())]
+    );
 }

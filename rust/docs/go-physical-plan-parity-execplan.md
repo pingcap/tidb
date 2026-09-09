@@ -1,0 +1,3022 @@
+# Make Rust physical planning and execution match Go TiDB
+
+This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` current while work proceeds.
+
+Reference: `PLANS.md` at the repository root. Repository policy in `AGENTS.md`
+has precedence, including the requirement that a Go-to-Rust transcreation claim
+cover a complete Go package and all of its production, generated, platform,
+test, fixture, and build artifacts.
+
+## Purpose / Big Picture
+
+After this work, the Rust TiDB implementation will reuse the same kind of
+general physical plan Go stores in its prepared-plan cache, rebuild only the
+parameter-dependent pieces on a cache hit, and enumerate HashAgg and StreamAgg
+from one shared child plan. Cached aggregation will no longer contain a
+`SUM`-specific range rule, and HashAgg will no longer need a Rust-only
+16,384-row serial cutoff because its parallel scheduler will have a lightweight
+task handoff comparable to Go's goroutines. Resource-group identity will be
+resolved per statement rather than fixed at process construction. The Rust
+sort and coprocessor implementations will cover the complete corresponding Go
+package contracts, including parallel operation, spill, cancellation, type
+coverage, failpoints, and tests.
+
+The observable acceptance result is stronger than plan-shape similarity:
+prepared statements with point, range, index, join, index-merge, and DML child
+plans return correct results after parameters change; `EXPLAIN` shows the same
+reader and aggregation boundaries as Go; dynamic resource groups reach every
+KV request; parallel sort and coprocessor paths pass the complete package
+inventory; and the paired one-thread sysbench ratios remain at least 1.0 for
+both `oltp_read_only` and `oltp_read_write`.
+
+## Progress
+
+- [x] 2026-09-09: corrected two index-join cost INPUTS to match Go's static
+  enumeration. `constructIndexJoinStatic` fills `BasePhysicalJoin`'s
+  `OuterJoinKeys`/`InnerJoinKeys` and leaves `LeftJoinKeys`/`RightJoinKeys`
+  empty until `completePhysicalIndexJoin`, and the v2 cost reads
+  `len(p.RightJoinKeys)`/`len(p.LeftJoinKeys)`, so a static candidate's hash
+  table is priced with ZERO keys; the coster had passed the logical join's
+  key counts. `enumerateIndexJoinByOuterIdx` also sets
+  `avgInnerRowCnt = p.EqualCondOutCnt / buildRows`, and the dispatcher had
+  divided the join's FULL profile (already scaled by every other condition)
+  instead of the equal-condition output. Executor lib 1254 passed / 8 failed
+  with no additions. The remaining join-choice gap is the join-key NDV:
+  Go's check-seven `EqualCondOutCnt` is 3,045,479 (max key NDV ~3000) while
+  this port's is 30,074,400 (max 300) because the scaled `ColNDVs` differ;
+  `StatsInfo::Scale` needs a Go oracle for `ScaleNDV`/`RiskScaleNDVSkewRatio`
+  and the group-NDV path before the IndexHashJoin can win.
+
+- [x] 2026-09-09: ported the predicate-column statistics-loading model that
+  Go's lite initialization uses. `predicate_column_names` walks every query
+  block for columns compared against constants; `InitStats` maps them to each
+  source and marks an index loaded when its first column is loaded, so an
+  evicted column borrows a loaded same-version index's analyzed count exactly
+  as `EstimateColumnNDV` does. Condition ten's grouped history HashAgg now
+  estimates `297.03`, Go's captured value, and
+  `tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums` leaves the failure
+  set: executor 1253 passed / 8 failed with no additions. Red/green:
+  `planner_bridge::predicate_column_tests::filter_columns_load_and_join_keys_do_not`.
+  Receipt: `testport/receipts/planner_data_source_stats_per_source.md`.
+
+- [x] 2026-09-09: the DataSource-statistics rule now estimates `eq`/`in`
+  conditions through the LOADED histograms, matching Go's
+  `deriveStats4DataSource` -> `cardinality.Selectivity`. `HistColl` carries
+  the column histograms (Go `HistColl.Columns`), `ModifyCount` and
+  `PKIsHandle`; `InitStats` fills them from the catalog; the rule calls
+  `get_row_count_by_column_ranges` on the closed point ranges. The
+  `PKIsHandle` gate must ask whether the ESTIMATED column is the single
+  integer handle, not whether it is any key column: the loose form made every
+  point range on `customer.c_w_id` estimate one row and flipped condition
+  twelve to a root StreamAgg. Condition ten's `h_c_w_id = 1` now estimates
+  the histogram repeat (297.02 vs Go's captured 297.03; the last 0.01 is
+  Go's evicted-column NDV borrowing, queued). Red/green: new
+  `analyzed_filter_selectivity_tests::equality_uses_the_loaded_histogram_repeat`
+  fails with the histogram path disabled and passes with it; planner 1002
+  passed / 0 failed; executor 1252 passed / 9 failed, no additions. Receipt:
+  `testport/receipts/planner_data_source_stats_per_source.md`.
+
+- [x] 2026-09-09: closed two DataSource-selectivity gaps found while pinning
+  the plan-time subquery evaluation. `is_not_null_on_column` now unwraps
+  Go's `ast.UnaryNot` shape (`NOT (col IS NULL)`) as well as
+  `col IS NOT NULL`; the parsed NOT form had fallen through to the generic
+  0.8 fallback and charged a NOT NULL column 20% of its rows.
+  `single_table_predicate` now drops conjuncts that contain a subquery, so an
+  unqualified `k IN (SELECT k FROM inner_t)` no longer charges the SUBQUERY's
+  own source the 0.8 fallback (its HashAgg estimates 500 instead of 400).
+  Red/green: new `access_cost::tests::not_is_null_matches_is_not_null` fails
+  before and passes after; executor 1251 passed / 9 failed with no additions;
+  planner 0 failed. Receipt:
+  `testport/receipts/planner_data_source_stats_per_source.md`.
+
+- [x] 2026-09-09: evaluated uncorrelated subqueries at plan time through an
+  executor-installed hook, the way Go's `handleScalarSubquery` /
+  `handleExistSubquery` call `DoOptimize` + `EvalSubqueryFirstRow`
+  (`pkg/planner/core/expression_rewriter.go:1540`/`:1188`). The planner now
+  returns `EvaluateSeparately` for every uncorrelated scalar child, folds the
+  optimized child's first row into a `ScalarQueryCol#N` constant (or Go's
+  plain 1/0 for EXISTS), and the executor registers each optimized child as
+  its own `ScalarSubQuery` EXPLAIN root
+  (`pkg/planner/core/flat_plan.go:553`). Supporting parity fixes in the same
+  batch: `buildSelection` rewrites WHERE/HAVING conjuncts in written order,
+  which keeps the statement-wide plan-column allocator in Go's order; the
+  trailing `oldLen` projection allocates fresh output column ids like Go's
+  `AllocPlanColumnID` loop (`logical_plan_builder.go:4612`); the parallel
+  HashAgg emits groups in first-seen order instead of worker-map order; and a
+  table scan can answer `_tidb_commit_ts`. Executor suite 1251 passed / 9
+  failed (goal baseline 36); planner 1001 passed / 0 failed. Receipts:
+  `testport/receipts/scalar_subquery_plan_time_evaluation.md`,
+  `testport/receipts/executor_hash_agg_order.md`.
+
+- [x] 2026-08-28: rejected remote commit `e669a75c38`'s
+  `DriverError::Unsupported(reason) if reason.starts_with("a cached ")`
+  fallback. Go does not classify executor-builder errors by message prefix or
+  rerun a cached statement through a separate AST executor. Cache hits and
+  fresh plans both reach `executorBuilder.build`; unsupported physical nodes
+  must be implemented in that common builder. The merge records the remote
+  history while retaining this tree and therefore contains none of the
+  fallback.
+
+- [x] 2026-08-28: audited referenced commit `e2788410d8` against Go's common
+  INSERT builder/executor flow and removed it in full. Its
+  `fast_literal_shape` branch recognized `bulk_insert.lua` integer rows and
+  bypassed the ordinary expression preparation, assigned/default/generated
+  column walk, and row-level write path; it had no Go plan or executor
+  counterpart. The companion clustered-primary index-maintenance shortcut and
+  the benchmark claim based on that branch are also gone. A source regression
+  fails at the pushed checkpoint containing `e2788410d8` and passes after the
+  removal. The full executor suite improves from that checkpoint's 219 passed
+  / seven failed to 226 passed / one failed (including the new passing guard):
+  six INSERT, default, generated-column, and sequence regressions recover,
+  leaving only the unchanged common-handle `ADMIN CHECK` baseline failure.
+
+- [x] 2026-08-28: removed `collect_reader_conditions`, which flattened Go's
+  separate `IndexPlans` and `TablePlans` into one Rust post-lookup Selection.
+  IndexLookUp now lowers retained index-side and table-side Selection nodes in
+  child-to-parent execution order, and IndexMerge keeps its final table-plan
+  Selection order. Before the independent `e2788410d8` removal, this reader
+  batch had the exact pushed checkpoint's 219-pass, seven-failure result, so
+  it introduced no additional failures.
+
+- [x] 2026-08-28: removed cache-only `run_cached_select`. Ordinary SELECTs
+  now retain the physical tree returned by the shared planner and,
+  like cache-rebuilt SELECTs, enter one `physical_builder::execute_select`
+  path corresponding to Go's `ExecStmt.buildExecutor` ->
+  `executorBuilder.build`. Fresh and cache-safe planning share one physical
+  enumeration helper. The Rust-only `supports` cache whitelist and
+  `direct_reader_shape` gate are gone; builder failures now come from the
+  actual retained operator instead of a separate preflight policy. A
+  fail-before source regression proved
+  that ordinary execution did not call the common entrypoint, then passed
+  after the fold. A runtime regression proves identical rows and metadata for
+  fresh and rebound range plans. Broad execution exposed two real builder
+  gaps and fixed them at their roots: zero-column scans now preserve chunk
+  virtual rows for pushed `COUNT(*)`, schema-less TableDual children use their
+  correct empty schema, and a cop Selection is installed on the scan before a
+  retained Partial1 aggregate changes the source schema. Planner errors now
+  keep Go's unknown-database/unknown-table identity through physical planning
+  instead of collapsing to 1105. The aggregated executor suite is back to its
+  archived baseline (225 passed, 507 ignored, one unchanged common-handle
+  `ADMIN CHECK` failure).
+
+- [x] 2026-08-28: removed the remaining bounded table-scan, index-scan, and
+  table-reader plan facades. Datasource task selection, read-only lowering,
+  TiKV DAG construction, CopScan, and staged-row overlay now consume
+  `physical::PhysicalTableScan`, `PhysicalIndexScan`, and
+  `PhysicalTableReader` directly. Source row counts and index-choice costs
+  live in `BasePhysicalPlan`; the reader owns an actual
+  `PhysicalPlan::TableScan` child; and recursive cache cloning preserves the
+  resolved table/index execution metadata. Fail-before regressions showed the
+  old datasource APIs returning the disconnected `*Plan` types; both table
+  and index regressions now pass against the wired physical tree.
+
+- [x] 2026-08-28: removed the duplicate bounded `PhysicalSelectionPlan`.
+  The scripted TiKV read tier now carries the wired
+  `physical::PhysicalSelection` and its real expression conditions; DAG
+  lowering and staged-row overlay evaluation both consume that same tree.
+  The signed-BIGINT comparison shape remains only as ranger input and as a
+  non-stored adapter at bounded executor boundaries. The migrated difftest now
+  exercises `ExhaustPhysicalPlans4LogicalSelection` instead of directly
+  constructing metadata-only Selection facades.
+
+- [x] Removed the duplicate bounded `PhysicalTableDualPlan`. Empty-range
+  datasource tasks now carry the wired `physical::PhysicalTableDual`, so the
+  same operator owns plan identity, query-block offset, row count, explain,
+  cache cloning, and executor construction. This also fixes the facade's
+  incorrect `"Dual"` type name to Go's `plancodec.TypeDual` value,
+  `"TableDual"`; the migrated difftest now exercises the real logical-to-root
+  task path.
+
+- [x] Removed duplicate Projection, Limit, Sort, and TopN metadata facades.
+  Their tests now construct the wired `physical::PhysicalPlan` operators;
+  Limit redaction and Sort memory accounting moved onto those real operators,
+  and the wired TopN now retains Go's prefix-column/length fields.
+
+- [x] Removed disconnected physical metadata facades for ExchangeSender,
+  ExchangeReceiver, Shuffle, TableSample, Window, and UnionScan. None was a
+  variant of the wired `physical::PhysicalPlan`; their direct-construction
+  tests could pass without exercising planner enumeration, attachment, or
+  execution. Existing source receipts now record the missing operators as
+  explicit gaps instead of claiming facade coverage.
+
+- [x] 2026-08-27: user confirmed the performance-preserving implementation
+  order: build the shared plan and lightweight scheduler foundations before
+  removing Rust-specific performance rules.
+- [x] 2026-08-27: inspected Go's cache rebuild, aggregation enumeration,
+  HashAgg, transaction resource-group, batch RPC, and sort entry points and
+  compared them with the current Rust paths.
+- [x] 2026-08-27: froze initial 21-artifact sortexec and 25-artifact copr
+  inventories under `rust/docs/parity/`; missing MPP probe, metrics, range
+  diagnostics, and parallel worker receipts are explicit blockers.
+- [x] 2026-08-27: added recursive cache-rebuild tests for ordinary/reader
+  scans, point/batch-point, index merge, index-join inner range, and DML-select
+  owned trees. The production prepared-range hit also proves the cached
+  template is not mutated across executions.
+- [x] 2026-08-27: discovered and selected the existing cloneable
+  `tidb_planner::physical::PhysicalPlan` tree as the one representation to
+  promote; rejected creation of a second executor-local tree.
+- [ ] Complete the existing reusable Rust physical-plan tree's executor and
+  parameter-slot coverage. The logical and physical enums now contain only
+  typed operators, and cache-rebuild variants are present for every Go rebuild
+  node; direct executor construction is still incomplete for several typed
+  roots.
+- [x] 2026-08-27: ordinary SELECT planning now builds and costs one shared
+  logical/physical tree; executor construction lowers exact aggregation,
+  access, join, child-property, and Sort-enforcer receipts.
+- [x] 2026-08-27: implemented the recursive cached-plan rebuild visitor over
+  ordinary children and reader/index-merge/index-join/DML-owned subtrees.
+  Prepared SELECT cache entries retain the shared logical and complete
+  physical tree; point/range fast-plan types remain only for Go's separate
+  `TryFastPlan` route, not as the ordinary cache representation.
+- [x] 2026-08-27: HashAgg and StreamAgg alternatives now share one planned
+  child; deleted the whole-select double-planning path, `AggregationChoice`,
+  cost-only delivery wrappers, and speculative statistics checkpoints.
+- [x] 2026-08-27: deleted cached `SUM && estimated_rows > 1` selection and
+  retained the physical aggregation chosen at prepare time. On 2026-08-28 the
+  remaining table-scan row-estimate veto was also removed, so a retained
+  Partial1 physical node alone authorizes the pushdown attempt.
+- [x] 2026-08-27: moved HashAgg work to the persistent executor pool and
+  deleted `PIPELINE_MIN_INPUT_ROWS` plus its estimate plumbing.
+- [x] 2026-08-27: resource-group identity is statement-scoped and reaches
+  snapshot/open-transaction/coprocessor request creation, including statement
+  hint overrides and prepared execution.
+- [x] 2026-08-27: removed executor-side physical re-planning residue after
+  shared-plan wiring: local access/join/aggregation candidates, local logical
+  possible-property reconstruction, structural index-join selection, and
+  catalog-order index re-enumeration. Exact planner-selected Sort enforcers and
+  index ids are lowered instead.
+- [x] 2026-08-27: compared disputed plan shapes with targeted Go
+  `EXPLAIN FORMAT='brief'` oracles. The nonclustered-primary forced merge
+  lowers Go's two Sort enforcers; the TPCC grouped query follows Go's
+  HashAgg/IndexHashJoin shape rather than its old Rust-only StreamAgg test.
+- [x] 2026-08-27: removed the retired read-tier observability implementation:
+  unconditional per-query JSON stderr events, environment-controlled hot-path
+  tracing, duplicated physical-plan evidence, transport publication observers,
+  and the `Rc<RefCell>` transport-evidence graph. Request DAGs, ranges, retry,
+  cancellation, and response ownership remain the authoritative production
+  state.
+- [x] 2026-08-27: removed configured TopN/LIMIT completion-evidence APIs and
+  their diagnostic per-row counters. Behavioral tests now assert bounded heap
+  size, stable result order, exact upstream pulls, and once-only close directly.
+- [x] 2026-08-27: restored Go's prepared point-plan precedence. The binary
+  protocol had retained both the point plan and the general SELECT descriptor,
+  then always bound and executed the general descriptor first. Prepared
+  sysbench point-select consequently blocked before completing one operation.
+  The first successful execution now admits the point plan as a cache miss and
+  later executions rebuild its handle as cache hits, matching Go's
+  `generateNewPlan`/`TryFastPlan` followed by point-executor reuse.
+- [x] 2026-08-27: removed the general prepared-cache self-deadlock. Rust took
+  the catalog mutex before building `StmtContext`; context construction takes
+  its sequence snapshot through the same catalog and blocked recursively.
+  Context/cache-key state is now completed before the catalog guard, and a
+  cluster prepared-range regression completes through the shared physical
+  tree and ordinary timestamped snapshot.
+- [x] 2026-08-27: changed prepared-cache hits from deep-cloning and discarding
+  the complete physical tree to Go-compatible in-place recursive rebuild under
+  the cache mutex. Parameter/deferred markers remain on the retained tree,
+  execution receipts receive marker-free expression clones, and a failed
+  rebuild evicts the partially rebuilt entry before ordinary replanning.
+- [x] 2026-08-27: removed Rust-only successful snapshot-read receipts from the
+  transaction coordinator. Resolved/committed lock sets and failure/publication
+  state remain; ordinary point, batch, and scan reads no longer append and
+  clone a growing diagnostic vector that Go's `KVSnapshot` does not own.
+- [x] 2026-08-27: cached single-DataSource physical plans now instantiate from
+  their rebuilt access/aggregation/order receipt without re-running the
+  executor driver's outer-join simplifier, join reorderer, predicate-pushdown
+  planner, or `RowSource` statistics model. Planner-derived input/output row
+  counts are retained with the receipt. Cached join shapes keep their legacy
+  predicate-routing walk until the recursive physical join lowerer owns that
+  contract.
+- [x] 2026-08-27: prepared PointGet now executes the retained planner-built
+  plan on its first miss and every later cache hit. The executor-local prepared
+  point planner and its duplicate predicate/handle/row-decoder implementation
+  were deleted. Execute-time privilege checks, fresh mutable executor state,
+  and first-miss/later-hit `@@last_plan_from_cache` semantics remain.
+- [x] 2026-08-27: execute-bound parameter constants now expose their installed
+  datum to the shared AST ranger and statistics estimator, as Go's
+  `ParamMarker.GetUserVar` does. Stock prepared SUM therefore keeps the same
+  99-row estimate and root/cop StreamAgg tree as literal SQL instead of
+  selecting a full-range root HashAgg.
+- [x] 2026-08-27: HashAgg execution now receives Go's resolved statement-local
+  partial/final worker counts. The generic expression-sysvar view deliberately
+  excludes these session variables and previously made production execution
+  silently use the 5/5 defaults even while SQL reported 1/1.
+- [x] 2026-08-27: removed Rust's N*M HashAgg shuffle channels and final-result
+  message protocol. Partial tasks return their owned, already-partitioned maps;
+  after all partial receipts arrive, one persistent-pool merge task runs per
+  final bucket, preserving Go's partial-worker barrier and N-to-M partitioning.
+- [x] 2026-08-27: removed production-only HashAgg worker-id/mutex/dispatch
+  diagnostics and concurrency overrides; equivalent observations now compile
+  only in unit tests and drive no production allocation or synchronization.
+- [x] 2026-08-27: made Rust's 256 parallel-spill chunks lazy at the actual
+  spill transition, matching Go's `prepareForSpill`. Parallel DISTINCT now
+  constructs no spill-partition owner because Go's spill gate rejects
+  DISTINCT before execution.
+- [x] 2026-08-27: removed the parallel Sort row-copy round trip. Worker-local
+  runs now retain fetched chunks and merge only `(chunk, row)` cursors, as
+  Go's `[]chunk.Row` does; the copied `OwnedRow` vector and reconstructed
+  output chunks are gone from the unspilled path.
+- [x] 2026-08-27: fixed synchronous unordered coprocessor paging so one
+  logical task owns at most one ready-queue token. A continuation previously
+  enqueued the same task before and after its synchronous send, then panicked
+  when terminal close removed both entries. BatchCommands remains the
+  production-first path.
+- [x] 2026-08-27: made HashAgg partial-worker admission work-driven. The
+  configured partial/final concurrency and round-robin assignment are
+  unchanged, but a persistent-pool lane is submitted only when it receives a
+  chunk, and zero/one active partial lane no longer submits no-op final merges.
+- [x] 2026-08-27: retained the shared planner's reader-local direct-column
+  projection in the access receipt and lowered it to coprocessor
+  `output_offsets` for clean table scans. Ordinary and recursively rebuilt
+  prepared ranges now receive narrow remote rows without constructing a
+  duplicate root `ProjectionExec`; dirty/staged scans fail closed to the local
+  projection path.
+- [x] 2026-08-27: removed the Rust-only second completion-notifier loop from
+  direct coprocessor reads. One response-owned `CompletionRunLoop` now drives
+  every pending BatchCommands region, and unordered delivery scans the
+  completed attempts after each callback batch. Region rebuild, admission,
+  retry, cancellation, and bounded-window regressions pass.
+- [x] 2026-08-27: removed `CopScanSource`'s Rust-only node-lifetime request
+  history and served/refused/row counters. Production scans no longer format
+  every DAG, append it under a shared mutex, or update a shared atomic for
+  every response chunk; wire-shape tests observe the decoded fake-region
+  request instead.
+- [x] 2026-08-27: removed the table reader's Rust-only second small-chunk
+  threshold. `SelectResponseIter` already owns Go `readFromChunk`'s 80%
+  reuse/coalescing decision, so every completed exact-width response batch now
+  moves into the executor output instead of copying small range responses a
+  second time.
+- [x] 2026-08-27: routed each executor's current `RequiredRows` through the
+  coprocessor stream into `SelectResponseIter` and deleted Rust's hardcoded
+  32,768-row table / 1,024-row index decoder sizes. Index lookup now caps each
+  decoder pull at `MaxChunkSize` and loops to fill its growing handle task, as
+  Go's `SetRequiredRows`/`extractTaskHandles` does. The duplicate index-reader
+  80% and partial-aggregate 75% completion policies are gone; completed
+  decoder batches cross both boundaries unchanged.
+- [x] 2026-08-27: made the retained BatchCommands entry carry either Go's
+  synchronous response-channel completion or its asynchronous callback
+  completion. One-region ordinary cop reads now use the synchronous
+  `SendRequest` shape; the callback run loop remains only for the bounded
+  multi-region overlap path that still lacks Go's cop worker pool.
+- [x] 2026-08-27: moved every typed transaction BatchCommands entry from the
+  asynchronous callback completion to Go's synchronous `SendRequest`
+  response-channel completion. Multi-region batches still overlap because
+  their independently published pending requests are collected afterward.
+- [x] 2026-08-27: deleted the unused reusable-MaxTS transaction alternative.
+  Production already follows Go's statement-declared direct MaxTS snapshot;
+  the dead trait seam, real/mock implementations, and lower transaction
+  constructors had no callers and retained obsolete worker-era ownership.
+- [x] 2026-08-27: made direct and prepared MaxTS classification consume the
+  existing effective `SET_VAR(tidb_opt_fix_control=...)` authority. Fix 52592
+  can therefore disable PointGet before snapshot declaration exactly as it
+  does during physical planning; persistent, statement-local, invalid-first,
+  and prepared cases share one first-hint-wins rule.
+- [x] 2026-08-28: removed the executor-local YCSB-E `LIMIT 1` clustered-range
+  shortcut and the older duplicate PointGet plan/EXPLAIN builder. Go has no
+  direct range-seek policy for that shape, and Rust's shared planner already
+  owns PointGet/BatchPointGet and ordinary Limit/TableReader construction.
+  The retained SQL tests now exercise that single planner authority.
+- [x] 2026-08-28: removed the disconnected session-local prepared PointGet
+  cache state and cached-execution dispatch branch. `PreparedGeneral` now
+  solely owns the protocol plan-cache hit state, while `PreparedAst` retains
+  only Go's immutable parsed AST plus the planner-built PointGet/general
+  SELECT descriptors handed to that protocol cache.
+- [x] 2026-08-28: made the retained prepared PointGet plan own both its bound
+  execution and Go's `noSecondRead` timestamp policy. Binary EXECUTE no longer
+  rebuilds and discards the point-plan matcher before binding the cached plan;
+  secondary-unique double reads remain reusable but now refuse MaxTS exactly
+  as Go does. The two obsolete prepared read-shape classifiers were deleted.
+- [x] 2026-08-28: made binary PREPARE retain and route the one parsed AST it
+  already owns. The cluster protocol no longer reparses every DML and SELECT
+  after `Session::prepare_ast`, matching Go's single `PlanCacheStmt.PreparedAst`
+  authority and giving prepared DML lowering that same immutable input.
+- [x] 2026-08-28: replaced the per-EXECUTE prepared UPDATE matcher with one
+  retained `tryUpdatePointPlan`-style descriptor. Clustered-handle pins,
+  residual predicates, target offsets, and assignment programs are lowered at
+  PREPARE; EXECUTE only rebuilds values and fresh mutation state. The old fast
+  UPDATE dispatcher, structural matcher, and duplicate assignment evaluator
+  were deleted, and first-miss/later-hit reporting now matches Go.
+- [x] 2026-08-28: folded stock sysbench's explicit-column one-row INSERT into
+  the same retained DML plan authority. PREPARE now fixes its table identity,
+  marker layout, target columns, and field types; EXECUTE binds values and
+  constructs only fresh row/mutation state. The executor-local fast INSERT
+  privilege probe and per-execution AST/catalog matcher were deleted. The
+  retained path preserves secondary-index, auto-id, memory-accounting,
+  bad-NULL, duplicate-warning, and first-miss/later-hit semantics.
+- [x] 2026-08-28: retained stock sysbench's clustered point DELETE at PREPARE
+  time and made UPDATE/DELETE share one target, handle, residual-predicate,
+  schema-invalidation, and execute-time binding program. The second DELETE
+  execution now reports a plan-cache hit, while the mutation keeps ordinary
+  secondary-index, foreign-key, memory-accounting, and Go SELECT+DELETE
+  privilege behavior.
+- [x] 2026-08-28: removed the cached SELECT execution's second deep clone at
+  the cluster statement-retry boundary. The bound AST and physical receipt are
+  borrowed for every attempt, and `PreparedSelectExecution` is deliberately
+  non-`Clone` so this allocation cannot return unnoticed.
+- [x] 2026-08-28: made prepared SELECT cache hits rebuild before constructing
+  a planner `StmtContext`. Only a real miss takes the catalog-backed sequence
+  and decode-key snapshots needed by physical enumeration; a hit builds the
+  one runtime statement context Go resets for execution.
+- [x] 2026-08-28: moved execute-time marker values onto the SELECT retained
+  beside the cached physical tree. Hits mutate only marker datums and ranges;
+  the separately owned bound `SelectStmt` and lowering receipt were removed
+  from `PreparedSelectExecution`, and a generation lease keeps retry/concurrent
+  admission from mixing parameter sets.
+- [x] 2026-08-28: memoized the prepared-cache environment against the session
+  variable, pushdown-blacklist, transaction, and autocommit generations. A
+  cache hit now borrows the same typed environment Go reads from `SessionVars`
+  instead of cloning eight system-variable strings before every lookup.
+- [x] 2026-08-28: folded prepared-cache admission for SELECT limit, snapshot,
+  and read staleness into that same generation-keyed environment. Prepared
+  SELECT and PointGet reuse no longer repeat three owned system-variable
+  lookups on every hit; an inadmissible generation caches a typed refusal.
+- [x] 2026-08-28: cached general SELECT now recursively constructs executors
+  from the rebuilt `PhysicalPlan`, matching Go's `executorBuilder.build`
+  boundary. Table readers/scans, projection, selection, limit, sort, TopN,
+  root HashAgg/StreamAgg, HashJoin/MergeJoin, TableDual, and NominalSort no
+  longer re-enter the 39-KiB AST planning/lowering function. The obsolete
+  cached-decision entry point, its cached-single-leaf branches, duplicate
+  join reorder/predicate planning, retained logical tree, per-hit decision
+  extraction, and planner-row-count receipt fields are deleted. A focused
+  regression was observed failing before the constructor
+  switch and passing afterward; a broader cache-shape test covers range,
+  order, DISTINCT, scalar/grouped SUM, join, residual markers, and LIMIT.
+- [x] 2026-08-28: extended the cached physical constructor through Go's
+  `PhysicalIndexReader` and `PhysicalIndexLookUpReader` boundaries. Covering
+  and table-double-read paths lower the selected stable table/index IDs,
+  rebuilt index ranges, output schema, order, estimate, pushed limit, paging
+  size, and cop-side selections without re-running executor-local access-path
+  selection. A focused covering/double-read test was observed failing before
+  the constructors and passes for both the initial plan and cache-hit rebind.
+- [x] 2026-08-28: extended the cached physical constructor through Go's
+  `PhysicalUnionAll` and `PhysicalMaxOneRow` builder arms. The Union reuses the
+  existing streaming executor instead of the legacy row-fold path, while
+  MaxOneRow owns Go's two-row child window, NULL-on-empty result, and second-row
+  error. The focused regression first failed with the explicit unimplemented
+  UnionAll constructor and now passes both Union pulls and the 1242-class
+  MaxOneRow error.
+- [x] 2026-08-28: restored Go's index-merge task-conversion boundary. A
+  `CopTask` with index-merge partials now becomes a retained
+  `PhysicalIndexMergeReader` instead of failing unconditionally. The node owns
+  raw recursive partial trees plus Go's intersection, MV-index, pushed-limit,
+  by-item, and keep-order fields; flattened partial arrays were removed from
+  the reusable plan representation. Cache rebuild and reader-cost side effects
+  recurse through those raw trees. The focused conversion test was observed
+  failing at the old explicit refusal and passes with intersection/order and
+  the final table plan retained.
+- [x] 2026-08-28: connected retained `PhysicalIndexMergeReader` trees to the
+  production executor builder. Each raw table/index partial tree is built
+  recursively once, its exact integer/common-handle and by-item slots are
+  resolved from stable schema IDs, and the existing union/intersection worker
+  feeds the retained final table projection and table-side selections. Raw
+  `PhysicalIndexScan` is now a direct covering-scan constructor instead of an
+  unimplemented leaf. A focused secondary-index overlap test was observed
+  failing first at the explicit IndexMerge constructor refusal and now passes
+  with handle deduplication, residual table filtering, and final row lookup.
+  Partitioned IndexMerge remains explicit pending retention of Go's per-handle
+  physical-partition identity; it is not guessed or routed through an
+  executor-local alternative.
+- [x] 2026-08-28: completed retained heap-table scan projection for Go's
+  appended `_tidb_rowid`. A physical table scan may now prune every stored
+  column and emit only the integer record handle carried by the local cursor;
+  the regression first failed because the direct builder searched only the
+  table's stored columns, then passed without retaining a hidden payload
+  column or wrapping the scan in an executor-local projection.
+- [x] 2026-08-28: connected retained `PhysicalPointGet` and
+  `PhysicalBatchPointGet` nodes to the direct executor builder. Integer and
+  common handles use Go's direct record `Get` / record `BatchGet` split;
+  secondary unique keys use Go's two-read shape (index Get then record Get,
+  or one index BatchGet then one record BatchGet), with key deduplication and
+  retained keep-order/descending policy. The focused handle PointGet, handle
+  BatchPointGet, and unique BatchPointGet regressions were each observed
+  failing first at the explicit unimplemented constructor and now pass. A
+  common-handle/secondary-unique regression also prevents the unique key from
+  being misparsed as a clustered handle. Partitioned point plans remain an
+  explicit gap until the physical nodes retain Go's per-key physical table
+  identities; they are not guessed by the executor.
+- [x] 2026-08-28: removed the disconnected executor-local
+  `BatchPointGetExec` after the retained physical builder took ownership. The
+  dead wrapper had no production caller, omitted Go's unique-index, locking,
+  and snapshot branches, and retained a Rust-only physical-partition
+  permutation. Its unused per-handle partition source state and narrowing
+  tests are gone. Go's signed/unsigned/common-handle keep-order comparator now
+  lives directly in its only owner, the retained physical builder, so the
+  empty `batch_point_get` executor module is gone too.
+- [x] 2026-08-28: removed the remaining planning-time unique-index BatchGet
+  from `tryWhereIn2BatchPointGet`. Pinned Go records every converted
+  `IndexValue` on `BatchPointGetPlan` and performs index/record reads only in
+  executor construction and execution; Rust now retains the same complete
+  point ranges and lets the common physical builder resolve missing keys.
+  The decision regression now inspects `PhysicalBatchPointGet` rather than a
+  deleted executor-local `BatchPointLookup::into_handles` seam.
+- [x] 2026-08-28: changed the retained prepared unique-secondary PointGet
+  from an index range cursor to Go's direct index-key `Get` followed by the
+  record-key `Get`. The request-shape regression first observed one Get plus
+  one scan and now observes exactly two Gets and no scan. The adjacent second,
+  unreachable copy of the common-handle matcher was deleted.
+- [x] 2026-08-28: replaced both scalar and composite unique-index `IN`
+  fast-plan matchers' per-key `lookup_unique` loops with the shared unique
+  index BatchGet. The matcher now issues one index batch read and hands the
+  deduplicated handles to the existing record batch read, matching Go's two
+  batched request boundaries instead of performing N index Gets.
+- [x] 2026-08-28: preserved retained `PhysicalBatchPointGet` ordering metadata
+  in the compatibility access receipt. The focused regression first failed
+  because the bridge overwrote both `KeepOrder` and `Desc` with `false`; it
+  now passes for a retained descending unique-index batch point plan without
+  inventing executor-local ordering policy.
+- [x] 2026-08-28: replaced the shared UPDATE/DELETE batch-point reader's
+  per-handle record Gets with one record BatchGet, preserving handle order
+  and absent-row filtering. Its end-to-end request-boundary regression first
+  observed zero BatchGets and now observes exactly one. The same reader now
+  uses the statement's write decode context for point, range, batch, index,
+  and full-table arms instead of the legacy query-default row wrapper.
+- [x] 2026-08-28: deleted the disconnected logical and physical `Todo` plan
+  variants. No builder, rule, or task conversion produced either placeholder;
+  only tree tests constructed them. The closed enums now force every future
+  Go operator to add a typed variant and update every exhaustive planner,
+  cache-rebuild, task-attachment, and clone match at compile time. All 26
+  physical-tree tests and both schema tests pass; the full planner suite ran
+  792/794, with both remaining failures reproduced unchanged in the retained
+  `8366ff70bd` baseline worktree.
+- [x] 2026-08-28: deleted the disconnected public `point_get` seed module.
+  Its five partial metadata helpers had no repository caller outside their
+  own tests; live point execution already obtains partition, checksum, column,
+  row-decoder, and KV behavior from the retained physical builder,
+  `driver/access`, and `KvTable`.
+- [x] 2026-08-28: deleted the disconnected executor-local `plan_hints`,
+  `hints_set`, `qb_hint`, and `stmt_hints` seed cluster. Its public API was
+  closed over those four files and their unit tests; live hint collection,
+  binding, index-path validation, and physical planning are owned by
+  `tidb-session::binding`, `index_hints`, and the wired planner.
+- [x] 2026-08-28: deleted the isolated partial `ddl_copr` seed. No DDL
+  backfill path constructed its cop-context types, so its self-only tests
+  overstated runtime coverage; the existing add-index coprocessor receipt now
+  records the whole unwired context/fetch/conversion gap.
+- [x] 2026-08-28: deleted the closed partial `tblctx`/`tblsession`/
+  `write_stmt_bufs` seed cluster. Its mutation buffers and narrowed session
+  traits were used only by one another and self-contained mocks; live DML
+  continues through `driver/dml`, `KvTable`, transaction buffers, and
+  tablecodec.
+- [x] 2026-08-28: deleted the unreachable executor-local index lookup join,
+  hash-join, and merge-join implementations plus their self-only tests.
+  Neither the planner nor physical builder constructed those types; the live
+  index-lookup implementation is `join` plus `access_path::IndexJoinLookupExec`,
+  so duplicate variants are no longer exposed as apparent runtime coverage.
+- [x] 2026-08-28: deleted the unreachable executor-local generated-column
+  substitution rule. The wired planner owns `GcSubstituter` in its Go-order
+  rule list but currently has no implementation, which is now documented as
+  the actual parity gap instead of being obscured by self-only executor tests.
+- [x] 2026-08-28: deleted the unused executor-local `TableReaderExec` shell.
+  The live physical table-reader plan lowers through `TableScanExec` and
+  `remote_scan`; documentation no longer describes the disconnected shell as
+  a future storage integration point.
+- [x] 2026-08-28: deleted the self-only `memtable_reader` façade and its
+  unavailable-transport traits. No physical builder constructed it and no
+  PD HTTP or diagnostics RPC implementation backed it; cluster-table receipts
+  now record that full runtime gap directly.
+- [x] 2026-08-28: deleted the orphaned
+  `tests_memtable_cluster_source.rs` after comparing it with pinned Go's
+  `PhysicalMemTable` and `executorBuilder.buildMemTable`. Its invented
+  `ClusterConfigSource`/`LogStream` boundary bypassed both common planning and
+  executor construction, and the removed production façade made the test fail
+  to compile. The batch receipt now records all four source tests as explicit
+  common-builder gaps instead of calling mock-boundary behavior a port.
+- [x] 2026-08-28: removed the dead `fast_batch_partition_supported` policy.
+  The fast-plan entrypoint already rejects every partitioned table before the
+  helper ran, so it could only return true; Go has no corresponding second
+  gate. This leaves the still-real partitioned fast-plan gap visible at the
+  entrypoint instead of preserving an inert Rust-only policy beside it.
+- [x] 2026-08-28: compared Go's `PhysicalWindow` enumeration and
+  `executorBuilder.buildWindow`/`windowexec.Build` path with the live Rust
+  dispatcher. Removed two duplicated failing `TestWindowExecutorsBasic`
+  claims, fourteen empty ignored window-test placeholders, and the crate-level
+  `WindowExec` claim: Rust has no physical window variant or live window
+  executor, so those artifacts were not parity evidence. The missing operator
+  remains an explicit implementation gap rather than a test-shaped facade.
+- [x] 2026-08-28: corrected the live TopN documentation after reading pinned
+  Go `sortexec/topn.go` and `executorBuilder.buildTopN`: Go assigns
+  `ExecutorConcurrency` and activates worker concurrency on the spill path,
+  matching the wired Rust builder. The old "unparallel, in memory" label was
+  false even though the implementation itself already followed Go.
+- [x] 2026-08-28: deleted the self-only `mutation_checker` implementation.
+  Live DML never called its narrowed table/transaction traits, so enabling
+  `tidb_enable_mutation_checker` still has no Go-equivalent enforcement; the
+  system-variable catalogue now states that gap at the user-visible switch.
+- [x] 2026-08-28: deleted the disconnected executor-local
+  `analyze_col_sampling` driver. Live in-process and cluster `ANALYZE` both
+  use `analyze` plus `tidb-stats`; no analyze plan called the parallel
+  sampling implementation or its self-only tests.
+- [x] 2026-08-28: deleted the unconstructed `ddl_exec` façade. Session DDL
+  dispatch uses `ddl` and `tidb-exec::cluster_ddl`; recover/flashback remains
+  wholly unwired, and its gap receipt no longer credits a self-only precheck.
+- [x] 2026-08-28: deleted the self-only `ddl_algorithm` and
+  `ddl_running_jobs` one-file ports. Live ALTER lowering does not consult the
+  algorithm resolver and this tier has no DDL priority-queue scheduler, so
+  those gaps are no longer obscured by isolated unit-test implementations.
+- [x] 2026-08-28: deleted the undeclared `driver/common_handle_access.rs`
+  orphan. Rust never compiled that file; common-handle point and batch-point
+  planning is implemented by the live `driver/access` and `access_path`
+  paths.
+- [x] 2026-08-28: deleted the duplicate standalone `physical_apply` metadata
+  facade. Its only production claim—Apply does not implement Go's
+  `PhysicalJoin` interface—is represented directly by the wired
+  `PhysicalPlan::Apply` dispatch, and both the casetest and difftest now run
+  against that real operator instead of a second test-only type.
+- [x] 2026-08-28: added Go's `PhysicalProperty.NoCopPushDown` to the wired
+  property and propagated it through the same active operator families as Go:
+  joins, Sort enforcers, Limit/TopN, MaxOneRow, UnionAll, HashAgg, and
+  StreamAgg. The fail-before regression observed MaxOneRow discard both the
+  CTE status and root-only aggregation requirement; after the fix HashAgg and
+  ordinary StreamAgg enumerate only root candidates under that property.
+- [x] 2026-08-28: migrated the CTE-table, Lock, Show, MaxOneRow, and UnionAll
+  difftests to the wired physical tree and deleted their five standalone
+  metadata facades. The migration removed two false claims: Go's Lock codec
+  type is `SelectLock`, not `Lock`, and this TiFlash-less Rust tier does not
+  implement the facade's MPP UnionAll candidates. It also exposed and fixed
+  the wired TableDual/CTETable/Show leaves accepting an index-join runtime
+  property that Go rejects before plan creation.
+- [x] 2026-08-28: replaced the statement context's eager eight-entry
+  password-validation GLOBAL-variable map with Go's live
+  `SessionVars.GlobalVarsAccessor` shape. Ordinary SELECT and DML no longer
+  read, allocate, and clone password-policy strings they never evaluate.
+- [x] 2026-08-28: retained the session's parsed time zone in the
+  generation-keyed statement-variable snapshot. Prepared execution now clones
+  one typed `SessionTimeZone`, matching Go's typed `SessionVars.TimeZone`,
+  instead of re-reading `time_zone`, resolving `SYSTEM`, and parsing a named
+  zone at each statement-context construction.
+- [x] 2026-08-28: replaced the statement context's eagerly rendered
+  `TIDB_VERSION()` string with shared typed `VersionInfo`, and deleted the
+  planner `FromScope`'s eagerly computed identity-length field. Ordinary
+  statements no longer format the multi-line server identity; the builtin
+  formats it only when Go's expression build/evaluation boundaries require it.
+- [x] 2026-08-28: made both pessimistic point-lock classifiers consume the
+  retained prepared AST plus its parameter slice. The prepared-only wrapper
+  and its full-tree clone/bind pass were removed; writes and locking reads now
+  resolve marker values through the same point-key walker.
+- [x] 2026-08-28: retained the exact statement memory tracker and chunk policy
+  used by execution as the row/cursor result authority. Rust no longer creates
+  a second tracker after execution or reconstructs a prepared statement's
+  authority from session variables after `SET_VAR` restoration; the next
+  statement boundary releases only the session's reference, matching Go's
+  retained `SessionVars.StmtCtx` ownership.
+- [x] 2026-08-28: replaced Rust's string-backed autocommit checks with the
+  typed session status Go keeps as `ServerStatusAutocommit`. Session SET,
+  statement-overlay restore, inherited GLOBAL defaults, prepared-cache keys,
+  transaction admission, wire status, and process-list status now share that
+  one field; the obsolete always-autocommit process-state renderer is gone.
+- [x] 2026-08-28: made an empty statement-variable restore a true no-op.
+  Ordinary statements no longer advance the session-variable generation and
+  discard the prepared-cache environment when no `SET_VAR` overlay existed;
+  a real overlay or SET continues to invalidate the generation-keyed image.
+- [x] 2026-08-28: replaced the protocol hot path's owned sysvar reads with a
+  general borrowed `system_value` view and retained Go's typed
+  `SessionVars.MaxAllowedPacket`. Wait timeout and client/result charset reads
+  no longer clone backing strings; packet and builtin consumers no longer
+  look up and parse max packet size independently.
+- [x] 2026-08-28: retained Go's typed
+  `SessionVars.EnablePreparedPlanCache` across default construction, inherited
+  GLOBAL state, SET, and statement-scoped restore. Deleted the session-local
+  string lookup, and made PointGet, DML, and SELECT reuse consult the same
+  field. The previously missing PointGet disable gate is now enforced.
+- [x] 2026-09-08: ported Go `rank_topn_test.go`'s two-column case. Rust
+  `RankPrefix` held one child column, so `getPrefixKeys`/`slices.Equal`'s
+  every-entry comparison was reproducible only for one `TruncateKeyExprs`
+  entry. It now stores one `RankPrefixColumn` per entry, compares all of them
+  with each column's own `-1`/truncation rule, and
+  `topn::tests::rank_topn_compares_every_declared_prefix_column` fails before
+  (a first-column-only comparison emitted 5 rows instead of 3) and passes
+  after. The same batch restored the `tidb-executor` lib-test build, whose
+  three stale `list_columns_pruned_ids` call sites had lost the new
+  `StmtContext` argument.
+- [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
+  parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
+  workers are active; benchmark and the upstream failpoint-only
+  fault-injection matrix remain. RankTopN now retains and compares every
+  `TruncateKeyExprs` entry, so the `rank_topn_test.go` multi-column case is
+  ported. Parallel worker panic recovery and comparison-loop cancellation are
+  covered by focused receipts.
+- [x] 2026-09-08: re-verified the four dependency-closed `pkg/store/copr` leaf
+  owners against `origin/master` `f5cf8f6337`: the coprocessor cache, paging
+  EMA, key ranges, and cache counters are complete, and the two Go production
+  branches with no Go test — oversized range keys and a negative `Tp` — now
+  have focused Rust regressions. Receipt pins that are not objects in this
+  repository were re-derived (20 root artifacts, 11,288 lines, 52 test
+  declarations).
+- [x] 2026-09-08: wired Go's compile-time paging read-byte basis.
+  `pagingResponseReadBytes` selects `max(total, processed)` from
+  `clientgoconfig.NextGen`; Rust pinned `Classic`.
+  `ReadEngineGeneration::from_kernel_type()` now reads
+  `tidb_config::kerneltype::is_next_gen()` and
+  `DirectUnaryRuntimeConfig::default()` uses it. The focused test passes in
+  the default build, and under `--features tidb-config/nextgen` an inverted
+  assertion fails with `left: NextGeneration`, proving both arms.
+- [x] 2026-09-08: ported Go `tryPointGetPlan`'s `isTableDual` arm for an
+  out-of-range equality constant. Go's `getNameValuePairs` keeps the original
+  datum and sets `isTableDual` when `ConvertTo` reports `ErrOverflow`, so the
+  fast plan is a `TableDual`; Rust declined and scanned the table.
+  `point_get_value_overflowed` now distinguishes that event, and both the
+  prepared bind and the plain fast plan answer the empty set without a read.
+  `prepared_point_plan_answers_an_out_of_range_handle_without_reading` failed
+  at `bind` before the fix, and
+  `out_of_range_point_literal_plans_a_table_dual` now sees `TableDual`
+  instead of `TableFullScan`. Receipt:
+  `rust/testport/receipts/executor_point_get_overflow.md`.
+- [x] 2026-09-08: stopped admitting a unique PREFIX index to the point-get
+  conversion. Go's `canConvertPointGet` is
+  `path.Index.Unique && !path.Index.HasPrefixIndex()`
+  (`find_best_task.go:2204`); Rust checked only the first half, so
+  `SELECT a FROM u WHERE a = 'abcxyz'` on `UNIQUE KEY uidx (a(3))` built an
+  index `Point_Get` that the executor builder then refused with
+  `Unsupported`. The conversion now also requires no declared prefix length,
+  and the test that pins Go's IndexLookUp behavior passes.
+- [x] 2026-09-08: unknown-column errors now name the clause Go's `clauseMsg`
+  names. `EvalError::UnknownColumnInClause` carries it, the plan resolver
+  supplies it from `cur_clause`, and the sub-expression decorator forwards it;
+  `SELECT no_col FROM uc` reports `in 'field list'`,
+  `SELECT a FROM uc WHERE nc = 1` reports `in 'where clause'`, and an
+  `ORDER BY`-only name reports `in 'order clause'` because
+  `build_projection_with_order_by` builds the fields `resolve_order_by`
+  appended under the OrderBy clause. Receipt:
+  `rust/testport/receipts/executor_point_get_admission.md`.
+- [x] 2026-09-08: threaded the session's `div_precision_increment` into every
+  DAG request. `dag_request` already lowered the field and omitted it at the
+  default, but `cop_scan`'s `ConstructDAGReq` port left it at the default, so
+  `SET div_precision_increment = 5` still sent 4 to TiKV. The statement
+  context carries it now, and the read-only tier gained
+  `set_div_precision_increment`. Receipt:
+  `rust/testport/receipts/executor_internal_builder.md`.
+- [x] 2026-09-09: threaded the statement's `Priority` and `NotFillCache` into
+  every KV request. Go's `ResetContextOfStmt` copies `sc.Priority` from the
+  statement's own modifier and `sc.NotFillCache` from a SELECT's
+  `SQL_NO_CACHE`; `SetFromSessionVars` then sends both on `kv.Request`. The
+  Rust request builder already mapped them, but nothing populated the
+  `StmtContext`, so every request went out at `PriorityNormal` with the
+  storage cache enabled. `statement_context_for_stmt` now reads both off the
+  AST (SELECT, UPDATE, DELETE, INSERT, LOAD DATA, with `WITH` unwrapped) and
+  `cop_scan` copies them onto the `DistSqlContext`. Receipt:
+  `rust/testport/receipts/distsql_audit.md`.
+- [x] 2026-09-09: corrected the TPC-H q12 HashAgg `firstrow` expectation to
+  Go's structural rule. `InjectProjBelowAgg` gives the group item and its
+  carrier one fresh allocated id, so hard-coding `Column#2` pinned Rust's
+  allocation order rather than Go's behavior; Go's own recorded plans show
+  `group by:Column#100, ... funcs:firstrow(Column#100)`. Receipt:
+  `rust/testport/receipts/planner_inject_extra_projection.md`.
+- [x] 2026-09-09: restored the written label of an aggregate field inside a
+  derived table. `ProjectionField` now records whether the field's AST node is
+  a column reference before aggregate extraction rewrites it to a `#agg#N`
+  marker, and `result_columns` reads the physical root's captured output names
+  before falling back to the schema, so `SELECT * FROM (SELECT count(*) FROM
+  t) d` reports `count(*)` instead of `Column#1`. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept a left-outer-semi join's marker column through column
+  pruning. `MergeSchema` concatenated the children's schemas, so the marker
+  (owned only by the join) was dropped and the join ended with an empty
+  schema; it now rebuilds the schema like Go's `BuildLogicalJoinSchema` and
+  re-appends the marker. Six pre-existing semi-apply tests are repaired.
+  Receipt: `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: corrected the YEAR/BIT underflow assertion in
+  `column_type_flags`. The test pinned a constant `BIGINT value is out of
+  range` while its own captured TiDB session records `BIGINT UNSIGNED value is
+  out of range in '(<expr>)'`, which is what the evaluator already emits. The
+  test now pins each statement's exact Go message. Receipt:
+  `rust/testport/receipts/expression_overflow_column_name.md`.
+- [x] 2026-09-09: pushed a covering IndexReader's coprocessor Limit into the
+  local index cursor. Go's `PhysicalIndexReader.IndexPlan` carries
+  `Limit offset:o, count:c | cop[tikv]` above the `IndexRangeScan`, so the
+  region stops after `o + c` entries; the Rust builder turned that node into a
+  local `LimitExec` and read a full 1,024-entry batch first. The reader now
+  hands the cap to `IndexRangeSourceExec::accept_scan_limit`. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: repaired the ANALYZE test fixtures after the Go-correct
+  `adjusted_sample_rate(None, None) = 0.001` default. The fixtures analyze
+  tables that have rows but no `mysql.stats_meta` row, so the Bernoulli
+  collector kept no sample and every histogram was empty; they now request
+  full sampling explicitly, and the stale `None -> 1.0` assertion pins Go's
+  0.001 default instead. Receipt:
+  `rust/testport/receipts/executor_analyze_store_batch.md`.
+- [x] 2026-09-09: named a table scan from its ranges, not its access
+  conditions. Go's `PhysicalTableScan.IsFullScan` requires every range to be a
+  full range, so a partitioned common-handle scan whose predicate left
+  `[NULL,+inf]` is `TableFullScan`; the port rendered `TableRangeScan`. The
+  clustered-PRIMARY test also pinned the wrong rule: Go keeps a `PRIMARY`
+  index record for a clustered COMMON handle and omits it only for
+  `PKIsHandle`. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: completed two `physicalop` explain clauses: the scan
+  `keep order:<bool>, desc` suffix (Go appends `, desc` on a reverse walk) and
+  the IndexLookUp reader's `limit embedded(offset:o, count:c)` text (Go prints
+  only the embedded limit; the children are implied by the relation symbol).
+  Receipt: `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: made HAVING resolve against the SELECT LIST like Go. The
+  resolver appended any source column as a hidden field, so
+  `SELECT a FROM ht HAVING b > 0` returned rows instead of 1054. A qualified
+  name now needs a matching non-hidden select field, and the new typed
+  `PlanErrorKind::UnknownColumnInClause` carries the 1054 column/clause pair
+  across the planner boundary. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: corrected the column-default cast event for a DST-gap wall
+  clock. Go's `Time.Convert` reports `ErrTimestampInDSTTransition` and moves
+  the value; the test pinned `Truncated`. It now expects
+  `TimestampInDSTTransition` and cites `pkg/types/time.go:459-467`. Receipt:
+  `rust/testport/receipts/types_timestamp_dst_gap.md`.
+- [x] 2026-09-09: made the cop partial aggregation emit its group-by key
+  columns. Go's `BuildFinalModeAggregation` drops the redundant `firstrow()`
+  for a cop partial because "group by items are outputted by group by schema",
+  so the partial's schema is its aggregate columns followed by the group-by
+  columns. Rust emitted only `agg_funcs.len()` columns, so a computed
+  `COUNT(DISTINCT <expr>)` counted zero; the executor now retains and emits
+  the trailing key datums (hash and grouped-stream), and keeps the parallel
+  pipeline off that shape. Receipt:
+  `rust/testport/receipts/executor_cop_partial_group_keys.md`.
+- [x] 2026-09-09: optimized a shared CTE class BEFORE the logical rule list,
+  matching Go's lazy `LogicalCTE.DeriveStats`. A CTE used twice is
+  materialized and its class seeded lazily inside the first stats request;
+  Rust seeded it only after `logical_optimize`, so a rule that derived stats
+  first failed with `LogicalCTE.DeriveStats: seed physical plan is nil`.
+  Receipt: `rust/testport/receipts/executor_cte_class_optimization_order.md`.
+- [x] 2026-09-09: stopped the eager precompute from queueing pruned indexes
+  for async statistics loading. `InitStats` estimates selectivity and fills
+  the index path counts before `CollectPredicateColumnsPoint` prunes, so
+  `IndexStatsIsInvalid` queued all 13 covering indexes instead of the ten the
+  rule keeps. `SelectivityDefaults.trigger_load` now gates that side effect
+  and the precompute passes `false`; the pruning rule stays the demand
+  authority. Receipt:
+  `rust/testport/receipts/statistics_handle_handletest_audit.md`.
+- [x] 2026-09-09: trimmed the trailing projection when a HAVING scalar
+  subquery widens the plan. The lowered `Apply` adds its inner column without
+  appending a select field, so the field-count gate missed it and the
+  subquery value leaked as an extra result column. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: restored the table reader's cop projection, pushed Limit, and
+  `IS NULL` lowering that the Go-aligned execution refactor dropped. A
+  direct-column `Projection` now folds into the scan as
+  `DAGRequest.output_offsets`, a `Limit` offers `offset + count` to
+  `accept_scan_limit`, and `isnull(col)` / `not(isnull(col))` lower to
+  `ScanPredicate::IsNull`. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: lowered an uncorrelated scalar subquery instead of refusing
+  it. Go pre-evaluates it through `DoOptimize` + `ScalarSubQueryExpr`; that
+  evaluator is unported, so the subquery now takes the same MaxOneRow-guarded
+  left-outer Apply the correlated case uses, and the FROM-less dual gets its
+  empty schema first. The value is correct but recomputed per outer row.
+  Receipt: `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: ran the variance/stddev family in one phase. The cop split
+  left the final descriptor without an argument because neither `NeedCount`
+  nor `NeedValue` lists the family and the Rust partial state is not exposed
+  as partial-result columns. Receipt:
+  `rust/testport/receipts/expression_aggregation_audit.md`.
+- [x] 2026-09-09: converted a complete clustered common-handle equality to a
+  `Point_Get`. The table path required an integer handle, so a composite
+  primary key stayed a `TableRangeScan` even at a single point; the conversion
+  now admits a non-prefix unique common handle and scales the point stats by
+  `min(CountAfterAccess, 1)` like Go's `convertToPointGet`. Receipt:
+  `rust/testport/receipts/executor_point_get_admission.md`.
+- [x] 2026-09-09: threaded `div_precision_increment` into the planner's
+  expression resolver. `PlanScopeResolver` used the trait default of 4, so a
+  `/` built through `rewrite_scalar` minted its decimal scale from 4 and
+  `avg(a/b)` ignored the statement's increment. Receipt:
+  `rust/testport/receipts/executor_internal_builder.md`.
+- [x] 2026-09-09: forwarded the session's `ONLY_FULL_GROUP_BY` flag into the
+  planner. The bridge set only the experiment flag, so the builder's default
+  of `true` applied the check even when the mode omitted it. Receipt:
+  `rust/testport/receipts/planner_funcdep.md`.
+- [x] 2026-09-09: lowered a SELECT-list quantified comparison. The projection
+  path matched only a bare `Expr::Subquery`, so `select (c) > all (...) from t`
+  failed in the rewriter; it now lowers every subquery form through the same
+  handlers the filter path uses. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept the enforced Sort's by-item column typed. Go copies the
+  complete `prop.SortItems[i].Col` into `PhysicalSort.ByItems`, but this port's
+  `SortItem` carries only a `UniqueID`, so the executor compiled no
+  `keyCmpFunc` and failed with `Get unexpected expression` on every forced
+  merge join. `enforce_property` now resolves each item against the child
+  schema. Five executor tests were fixed with no additions. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`. A recorded
+  divergence remains: this port renders the table alias in column
+  `OrigName` where Go's `FieldName.String()` uses the real table name.
+- [x] 2026-09-09: restored Go's GROUP BY escape for HAVING. The previous
+  batch made an unqualified HAVING name resolve select-list first and 1054
+  otherwise, but Go clears `resolveFieldsFirst` when the name matches a
+  `GroupBy.Items` entry and then appends an auxiliary field from the source
+  plan, so `select count(*) from t group by a having a > 1` must work. The
+  resolver now takes the resolved GROUP BY expressions and appends the
+  hidden field on a match. A focused planner regression fails before and
+  passes after. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`. The executor
+  test that exercises this now clears the 1054 and fails only on the
+  unordered parallel-HashAgg row order (Go iterates a Go map there).
+- [x] 2026-09-09: made a cast to `BIT` return the byte carrier. `TypeBit`'s
+  eval type is `ETInt`, so the result stayed an integer, but Go stores a BIT
+  cell as bytes (`chunk.AppendDatum`'s `KindMysqlBit` arm over a var-length
+  column). A `UNION ALL` of `bit(15)` and `bit(20)` inserted the widening
+  cast and panicked with `fixed append requires a fixed column`;
+  `coerce_to_ret_type` now produces the zero-padded `Datum::Bit`. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: restored the join `left side:` clause and NULL-safe key
+  names. Go's `explainJoinLeftSide` appends `, left side:<child>` for every
+  non-inner join, and renders each equal condition's own name (`nulleq` for a
+  set-operator semi join). The Rust `join_info` printed neither, so
+  `INTERSECT`/`EXCEPT` explain chains lost the nested semi join and its
+  NULL-safe equality. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: completed the index-join `range: decided by [...]` contents.
+  Go's `indexJoinPathRangeInfo` prints `eq(innerIdxCol, outerKey)` pairs then
+  each `chosenAccess` condition; the Rust context carried only the outer key
+  columns, so a probe that narrowed the next key column lost both the pairs
+  and the bounds. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: matched Go's per-operator join condition-list format. A
+  merge join prints `left key:`/`right key:` and sorted unbracketed
+  conditions; a hash join brackets only `left cond`; an index join's
+  `equal cond` is sorted and comma-joined. The Rust used one bracketed,
+  unsorted shape for all. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: made `SpillStorage::open` create its own root directory.
+  Go's `disk.InitializeTempDir` only creates the GLOBAL configured temp
+  directory, but this port roots a storage under the standalone executor's
+  temp path or a server's endpoint/UID path; that path was never created, so
+  the first `DataInDiskByChunks` spill failed with `No such file or
+  directory`. This unblocked 16 spill tests across hash-agg, join, memory
+  quota, and merge-join-in-disk. Receipt:
+  `rust/testport/receipts/util_disk.md`.
+- [x] 2026-09-09: corrected two NULL-bound test expectations to Go's
+  `Conds2TableDual`/`IsConstNull` oracle. `score > NULL` collapses to a
+  `TableDual` (no index path), while `a BETWEEN NULL AND NULL` is one
+  `and(ge, le)` condition that `IsConstNull` misses, so the relation is read.
+  Both tests asserted the opposite; the Rust behavior already matched Go.
+  Receipt: `rust/testport/receipts/planner_empty_range.md`.
+- [x] 2026-09-09: made `FunctionBuilder::build_cast` pick Go's dedicated
+  `cast_*` signature instead of the generic `cast` name, which has no executor
+  arm; the aggregation-elimination DECIMAL widening produced such a node and
+  failed with `this scalar function is not yet ported`. Also made the
+  projection explain append its output column (`expr->Column#N`) like
+  `expression.ExplainExpressionList`. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: stopped a `unique_id == i64::MIN` placeholder column from
+  aborting EXPLAIN. `plan_trace` rendered a negative-`unique_id` column as
+  `ScalarQueryCol#-unique_id`; `-i64::MIN` overflowed and panicked. Go's
+  runtime negation wraps, so the arm uses `wrapping_neg()`. The placeholder's
+  origin is still unlocated and recorded as a separate follow-up. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: left a computed projection column's `OrigName` empty like Go's
+  `buildProjectionField`. The port wrote the alias into every projection output
+  column, so EXPLAIN rendered `plus(...)->revenue` and `revenue:desc` where Go
+  renders `Column#N`; the alias belongs to the `FieldName`. A direct column
+  keeps its own `OrigName`. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`. The exact-text
+  tests remain blocked on the plan-column-id ordering (`Column#12` vs Go's
+  `Column#1`).
+- [x] 2026-09-09: made the parallel probe/hash-agg test harnesses match Go.
+  `join_of`/`join_with_types` left `JoinExec::parallelism` at 1, so the
+  parallel probe gate never opened; the hash-agg `source` helpers produced one
+  chunk, and the pipeline admits one lane per chunk. Setting Go's default
+  concurrency (5) and chunking at 1024 rows fixed six existing regressions.
+  Receipt: `rust/testport/receipts/executor_join.md`.
+- [x] 2026-09-09: corrected the one-chunk DISTINCT HashAgg test. It asserted
+  `workers > 1` for a single four-row chunk, impossible under
+  one-lane-per-chunk and contradicted by the same file's one-chunk test
+  (`threads == 1`); Go's `fetchChildData` also hands a chunk to one worker.
+  The assertion is `workers >= 1` and the test proves the pipeline, not the
+  worker count. Receipt: `rust/testport/receipts/executor_join.md`.
+- [x] 2026-09-09: made the index reader keep a cop partial aggregate's INPUT
+  columns. `build_index_reader` derived the kept columns from the IndexLookUp's
+  OUTPUT schema, which for a cop aggregate is the aggregate's RESULT, so the
+  reader kept only the mapped group key and the aggregate's `sum(b)` argument
+  could not resolve. It now derives them from the aggregate's child (table
+  scan) schema. Two partition-table tests fixed. Receipt:
+  `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
+- [x] 2026-09-09: admitted the dedicated `cast_*` family to TiKV push-down
+  under Go's single `cast` name. Go builds every cast as `ast.Cast`, which
+  `scalarExprSupportedByTiKV` admits unconditionally
+  (`pkg/expression/infer_pushdown.go:246`); the dedicated-cast transcreation
+  names each target type, so `can_expr_push_down_tikv` answered "not
+  pushable" for `not(isnull(cast_decimal(col)))`. The derived NOT NULL filter
+  then stayed above the projection that defines the cast and failed executor
+  building with "a physical expression does not resolve in its child"; it now
+  lands inside the cop reader like Go. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: made the DataSource run `Conds2TableDual` before the
+  push-down split. Go records every simplified predicate in `AllConds`, checks
+  `Conds2TableDual` there, and only then splits with `PushDownExprs`
+  (`logical_datasource.go:185`); the Rust partitioned first, so a pushable
+  `gt(cast_double(col), NULL)` reached the scan and built a `[NULL,+inf]`
+  range instead of collapsing to an empty relation. That gap was hidden until
+  the `cast_*` admission above made the predicate pushable. Receipt:
+  `rust/testport/receipts/planner_empty_range.md`.
+- [x] 2026-09-09: named the right clause for an unresolved outer column in a
+  HAVING subquery. Go calls `resolveGbyExprs` only under
+  `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`), and that call sets
+  `b.curClause = groupByClause`; the unconditional call stamped `GroupBy` on a
+  query with no GROUP BY, so the subquery's `build_selection` downgraded it to
+  `where clause` instead of Go's `having clause`. `From<EvalError> for
+  PlanError` also wrapped the rewriter's unknown-column error as a generic
+  evaluation failure; it now keeps the typed
+  `PlanErrorKind::UnknownColumnInClause`. Two executor tests fixed. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: hid the names of columns an expression rewrite appends.
+  Go `rewriteExprNode` (`expression_rewriter.go:283`) renames every column past
+  the pre-rewrite schema length to `types.EmptyName`, so a later clause cannot
+  resolve a subquery's inner columns by name. The Rust kept them named, making
+  the IN-to-join rewrite's inner `u.a` collide with the outer `s.a` in
+  `SELECT a FROM s WHERE a IN (SELECT a FROM u)`. `hide_rewrite_columns` now
+  mirrors the Go defer in `build_selection` and
+  `build_projection_with_order_by`. The `subqueries` test clears its IN
+  assertions; the remaining uncorrelated `EXISTS` arm needs Go's separate
+  subquery evaluation. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept a base-table column's `OrigName` on the ORIGINAL table.
+  Go `buildDataSource` computes it from the pre-alias `FieldName`
+  (`logical_plan_builder.go:5259`) and `buildResultSetNode` renames only the
+  OUTPUT name to the alias (`:518-522`); the Rust used the alias for both, so
+  the forced-merge-join Sort enforcer rendered `test.l.k` where Go records
+  `test.ncl.k`. One executor test fixed. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: validated set-operation usage over every child query. Go's
+  preprocessor is a full `ast.Visitor`, so `checkSetOprSelectList`
+  (`preprocess.go:858`) fires for a malformed UNION inside a derived table or
+  any other subquery; the Rust recursed only into the outer `SetOprStmt` and
+  its `WITH` CTEs, accepting
+  `select 1 from (select a from t0 limit 1 union all select a from t0 limit 1) tmp`.
+  The `TestUnion2` arms Go compares with `r.Sort()` are compared as a set too.
+  `union2_matrix` fixed. Receipt:
+  `rust/testport/receipts/executor_set_opr_usage.md`.
+- [x] 2026-09-09: pinned the serial HashAgg path in the two executor tests that
+  assert a row order without an `ORDER BY`. Go's `unparallelExec` walks
+  `groupKeys` in first-seen order, while `parallelExec` reads a Go-map-backed
+  result map; the Rust default concurrency is 5, so `select_distinct` and
+  `aggregate_having_and_order_by` saw final-worker order. Both now use
+  `with_hashagg_concurrency(1, 1)`, which is Go's serial selection. Receipt:
+  `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: made the HashAgg cost read the session's final concurrency.
+  Go divides the HashAgg's CPU by `HashAggFinalConcurrency()`, the resolved
+  `tidb_hashagg_final_concurrency`; the Rust coster hard-coded 5, so a serial
+  session still picked HashAgg over the root StreamAgg Go chooses.
+  `Ver2Coster` reads `self.session.hashagg_final_concurrency`, and
+  `with_hashagg_concurrency` stamps it onto the optimizer cost environment.
+  One executor test fixed. Receipt:
+  `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: rendered a grouped aggregate's GROUP BY list in sorted order.
+  Go's `BasePhysicalAgg.explainInfo`
+  (`pkg/planner/core/operator/physicalop/base_physical_agg.go:865`) uses
+  `expression.SortedExplainExpressionList` for `GroupByItems` and keeps the
+  `AggFuncs` order; Rust printed group-by insertion order. The q3/q13 explain
+  tests also stopped pinning absolute `Column#N` ids from a Rust-authored
+  golden and now read the plan's own ids and pin Go's relationships (the
+  injected SUM argument is a fresh column separate from the aggregate output;
+  the count state precedes the group-key carrier). Two executor tests fixed.
+  Receipt: `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: aligned CASE and EXTRACT with Go's expression names. Go keys
+  the control builtin by `ast.Case` = `case`, so the Rust `case_when` name
+  broke `new_function` rebuilds (the aggregation-push-down projection crossing
+  refused), left the CASE fold handler dead, and printed the wrong name in
+  EXPLAIN; every literal is now `case`. Go also keeps
+  `EXTRACT(unit FROM value)` as `extract(unit, value)`, while Rust rewrote it
+  to `unit(value)`; the rewriter and chunk evaluator now build and evaluate
+  Go's two-argument call. Projection expressions render through Go's
+  `StringWithCtx` (bare string constants) while conditions keep
+  `ExplainInfo` (quoted). One executor test fixed. Receipt:
+  `rust/testport/receipts/expression_case_extract_names.md`.
+- [x] 2026-09-09: stopped the driver from re-deciding predicate push-down. A
+  physical `Selection` is what the planner LEFT above a reader; the builder's
+  `accept_scan_filter` fusion skipped `SelectionExec` (and its statement
+  memory accounting) for conditions the planner refused, such as `oct(a) > 0`.
+  The offer is now gated on `tidb_planner::pushdown::can_exprs_push_down_tikv`.
+  One executor test fixed. Receipt:
+  `rust/testport/receipts/executor_selection_pushdown_gate.md`.
+- [x] 2026-09-09: pinned the TPCC plan tests to Go's relationships instead of
+  the planner's column-id history. Three tests asserted absolute `Column#N`
+  ids from the recorded Go plans while the Rust `AllocPlanColumnID` sequence
+  allocates different ids for the same shapes (the eliminated district
+  aggregation, the two derived MAX aggregations, and the grouped Sort). They
+  now read the ids their own plan allocated and pin the projection, aggregate
+  and Sort relationships. Matching Go's allocator history remains an open gap.
+  Three executor tests fixed. Receipt:
+  `rust/testport/receipts/executor_tpcc_column_ids.md`.
+- [x] 2026-09-09: ported `LogicalJoin.simplifyOuterJoin`
+  (`pkg/planner/core/operator/logicalop/logical_join.go:306`), which
+  `PredicatePushDown` runs before attributing any condition. A WHERE
+  predicate that null-rejects the null-supplying side turns the outer join
+  inner, so the predicate is absorbed instead of left as a Selection above.
+  `predicate_push_down_local` now calls it with the shared
+  `is_null_rejected`/`push_down_not`/`expr_from_schema` receipts. The
+  `tpcc_condition_six` operator list now matches Go; that test still stops on
+  the analyzed MergeJoin-vs-IndexJoin choice, which is the separate
+  `skylinePruning` gap below. Receipt:
+  `rust/testport/receipts/planner_join_simplify_outer_join.md`.
+- [x] 2026-09-09: ported `DecorrelateSolver`'s uncorrelated and simple-apply
+  arms (`pkg/planner/core/rule_decorrelate.go`): an apply with no correlated
+  columns becomes its embedded join; an inner `Selection`'s conditions are
+  decorrelated and attached; an inner `MaxOneRow`/`Sort`/`Limit` is peeled.
+  The rule was wired in `rule.rs`, and `build_expression_subquery` now sets
+  Go's `FlagDecorrelate` family so the rule is reachable for subqueries whose
+  FROM has no join. Two executor tests fixed (`tpch_q16`,
+  `correlated_subqueries`); the left-outer-semi family stays `Apply` until the
+  pruning-projection alignment is ported. Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: ported `skylinePruning`'s prefer-range override
+  (`pkg/planner/core/find_best_task.go:1877`). Under unreliable statistics
+  (`tidb_opt_prefer_range_scan`, default ON) a full-scan path is dropped once
+  a range-scan path with an `=`/`IN` prefix survives, so the range path wins
+  even when it prices higher. The Rust candidate loop now computes
+  `index_path_is_preferred_range` before the loop and suppresses full-range
+  table paths for every property, with the preferred task replacing a chosen
+  full-range task. `access_path::tests::the_double_read_issues_one_batch_get_per_index_batch`
+  now plans `Projection -> IndexLookUpReader` and issues one batch get.
+  Receipt: `rust/testport/receipts/planner_prefer_range_scan.md`.
+- [x] 2026-09-09: stopped a semi apply's inner scan at the settling row. The
+  serial `NestedLoopApplyExec` handed `TryToMatchInners` one inner row per
+  call so one output chunk could be filled incrementally, but every
+  semi-family joiner in Go consumes the WHOLE remaining iterator and calls
+  `inners.ReachEnd()` on the row that settles the outer row. The lost stop
+  made each further matching inner row append the outer row (or its 0/1/NULL
+  flag) again, so `SELECT g, EXISTS(...)` fanned out over duplicate inner
+  matches and an `EXISTS` inside `SUM(CASE ...)` doubled the group. The apply
+  now advances past the remaining inner rows once `matched` is reported for
+  the semi family; inner/outer joiners keep the one-row loop because `matched`
+  does not settle their outer row. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: lowered a subquery inside an aggregate argument below the
+  aggregation. `build_aggregation` used `rewrite_scalar`, which refuses a
+  plan-carrying subquery, so `SUM((SELECT ...))` failed in the rewriter. Go's
+  `rewriteWithPreprocess` rewrites an aggregate argument like any other
+  expression, so each argument now runs through `lower_scalar_subqueries`,
+  hides the pre-lowering columns, and rebinds the column marker against the
+  refreshed child schema — the sequence the filter path already uses. The
+  Apply lands BELOW the aggregation, so the subquery runs per source row:
+  `grouped_correlated_subqueries` now passes (the two fixes together; the
+  executor half is the entry above). Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: dropped a projection whose outputs are all pruned.
+  `LogicalProjection.PruneColumns` guards only the `LogicalTableDual` escape
+  with `allPruned`; the deletion loop runs either way and `:139` then returns
+  the child. The Rust port skipped the loop when every output was unused, so a
+  join-reorder restore projection survived: condition eleven planned
+  `StreamAgg -> Projection[10,13,12,15,18,17] -> MergeJoin` where the Go
+  oracle has `StreamAgg -> MergeJoin`. The dual escape is now ported too.
+  Receipt: `rust/testport/receipts/planner_column_prune_and_index_cost.md`.
+- [x] 2026-09-09: priced a covering index's common handle once.
+  `PhysicalIndexScan.InitSchema` appends `CommonHandleCols` and adds a separate
+  handle column only when the schema lacks one; the port appended
+  `common_handle_cols` AND `handle_cols`, which are the same columns on a
+  common-handle table, so a narrow covering index range lost to the clustered
+  table range. With the duplicate slots removed the Go oracle's
+  `IndexRangeScan` wins. Receipt:
+  `rust/testport/receipts/planner_column_prune_and_index_cost.md`.
+- [x] 2026-09-09: ported `DecorrelateSolver`'s projection arm and both
+  aggregation arms. The projection arm substitutes the projection's outputs
+  into the join conditions, decorrelates both sides, and re-attaches the
+  projection above the optimized apply for a non-semi join. The aggregation
+  arms move an ungrouped pull-up-able aggregation above the apply (grouping by
+  the outer key, `firstrow()` carriers for every outer column), and otherwise
+  pull the correlated equalities out of the aggregation's child `Selection`
+  as join keys plus group-by keys. `correlated_avg_predicate_decorrelates_to_grouped_join`
+  and `tpch_q2_correlated_min_matches_recorded_hash_join_plan` now match the
+  Go `testkit` plans; no deterministic new failures. Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: rebuilt a cast inside `NewFunction` through the cast builder.
+  Go's `NewFunction` has `case ast.Cast: return BuildCastFunction(...)`; this
+  port names the dedicated signatures `cast_decimal`/`cast_char`/... and sent
+  every name to the builtin registry, which refuses them. Any substitution
+  that had to rebuild a cast (predicate push-down through a projection)
+  reported `hasFail`, so the predicate stayed above the projection. Receipt:
+  `rust/testport/receipts/expression_new_function_cast.md`.
+- [x] 2026-09-09: attached a projection's un-pushed predicates BELOW it.
+  `BaseLogicalPlan.PredicatePushDown` inserts the child's leftovers as a
+  `Selection` above the child; the port's `PassThrough` returned them upward,
+  so a substituted predicate was re-attached above the projection that no
+  longer outputs its columns. The projection and `LogicalUnionScan` now use
+  `AttachBelow` (the sequence keeps `PassThrough`, matching
+  `logical_sequence.go:60`). The aggregation pull-up arm also rebuilds the
+  aggregation's output schema from the outer columns plus the aggregation's
+  own schema instead of the stale stored apply schema. The correlated-sum
+  plan now matches the Go oracle through its shape and stops on the
+  `IndexHashJoin(Build)` costing choice. Receipt:
+  `rust/testport/receipts/planner_predicate_push_down.md`.
+- [x] 2026-09-09: identified the index-join inner probe reader by its retained
+  table. The inner-subtree `HashJoin` arm accepted a child as the probe side
+  when its subtree contained ANY reader, so an inner side with readers on both
+  branches failed with `an index-join inner HashJoin must contain one retained
+  lookup reader`. Go identifies the reader through `IndexJoinInfo`/the chosen
+  access path; the check now matches `join.inner_access_table_id`. TPCC
+  condition ten executes and the test reaches its later plan assertions.
+  Receipt: `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: kept a parallel aggregation's spill files until `Close` and
+  aligned the spill tests' oracle with Go. `HashAggExec` now owns the 256
+  `ParallelSpillPartitions` for the whole execution (`parallel_spilled`), and
+  `restore_partition` no longer closes its file, so Go's
+  `HashAggExec.Close -> dataInDisk.Close()` is the only place the files (and
+  their tracked bytes) go away. `test_get_correct_result` now compares Go's own
+  aggregate set (`FIRST_ROW, SUM, COUNT, AVG, MIN, MAX`); the previous
+  `GROUP_CONCAT` cell asserted an intra-group order the parallel pipeline never
+  promises (Go's `generateResult` sorts rows for exactly that reason), and the
+  reference run itself emitted worker order. The budget test drives a state
+  table several times the quota under Go's `LOG` overrun action, so a round's
+  overshoot cannot cancel it; `test_fall_back_action` keeps the CANCEL
+  boundary. `cargo test -p tidb-executor --lib -- --test-threads=1`: 1242
+  passed / 14 failed, no new failure. Receipt:
+  `rust/testport/receipts/executor_parallel_distinct_spill.md`.
+- [x] 2026-09-09: cast a CASE's THEN/ELSE branches to the merged control
+  type. `caseWhenFunctionClass.getFunction` hands the inferred type to
+  `newBaseBuiltinFuncWithFieldTypes`, which wraps every result argument; Rust
+  computed the type but never wrapped, so a decimal branch beside an integer
+  `ELSE 0` returned `INT:0` and the q14 projection printed `0`. The rewriter
+  now wraps every THEN and the trailing ELSE through `wrap_case_branch`,
+  using the full merged type for the decimal/datetime families (Go's
+  `BuildCastFunction`). `chunk_e("case when false then 1.5 else 0 end")` is
+  `DEC:0.0`; tidb-expr 1206 passed / 2 pre-existing failed, executor and
+  planner suites unchanged. Receipt:
+  `rust/testport/receipts/expression_case_extract_names.md`.
+- [x] 2026-09-09: folded each builtin as it is constructed in the live
+  statement context. The planner resolver deferred every value fold to the
+  single top-level fold in `rewrite_scalar_with_scope`, which descends only
+  through lazy short-circuit functions; a constant `DATE_ADD` under `LT`
+  under `AND` therefore survived to the plan as
+  `cast_datetime(date_add_month(...))`. Go's `NewFunction` folds each built
+  node in its `BuildContext`, so the resolver now does the same with
+  `self.warning_context`. q14's predicate is the literal
+  `1997-01-01 00:00:00.000000`; new regression
+  `a_constant_date_add_in_a_predicate_folds_before_push_down`. Receipt:
+  `rust/testport/receipts/planner_session_zone_constant_fold.md`.
+- [x] 2026-09-09: derived each data source's statistics from its OWN
+  conditions. The `InitStats` pre-pass applied the statement's whole `WHERE`
+  to every source and was therefore gated to single-source queries; a join's
+  sources fell back to a reduced estimator that charged a cross-table
+  equality (and the null-rejection filters derived from it) a flat 0.8
+  `SelectionFactor`. q14's filtered `lineitem` source estimated 192,003,719
+  instead of 3,831,625.78, which flipped the greedy join order and inserted
+  Go's absent schema-restore projection. The pass now splits the `WHERE` into
+  conjuncts and keeps only those resolving against each source
+  (`single_table_predicate`), and the Rust-only two-start greedy retry is
+  gone. `tpch_q14_matches_recorded_hash_join_plan` passes; executor 1244
+  passed / 13 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: displayed index-join inner plans with Go's probe count.
+  `propagateProbeParents` gives an index join's INNER child the join as a probe
+  parent, and `GetEstRowCountForDisplay` multiplies its `StatsInfo.RowCount` by
+  the OUTER child's row count. The Rust carried `probe_parents` ids but never
+  propagated or read them, so every inner subtree showed its per-probe
+  statistics. The explain renderer now threads a probe count down the tree and
+  scales only the inner child of an `IndexJoin`/`Apply`. Display-only;
+  executor 1245 passed / 13 failed, same set. Receipt:
+  `rust/testport/receipts/planner_probe_parent_display.md`.
+- [x] 2026-09-09: applied the residual-filter selectivity to an IndexJoin
+  probe Selection. Go's `constructDS2TableScanTask` computes the residual
+  selectivity from `chosenRemained` BEFORE the inner-only access conditions
+  are re-attached, sets the scan to `avgInnerRowCnt / selectivity`, and scales
+  the pushed-down Selection by that selectivity
+  (`find_best_task.go:3210`). Rust copied the scan's count onto the Selection,
+  so the stock probe read `1.25` where Go records `0.42`. The arm now
+  snapshots the filters before the append and uses the existing
+  `pseudo_range_filter_selectivity`/`analyzed_filter_selectivity`; the stock
+  level test passes. Executor 1247 passed / 12 failed. Receipt:
+  `rust/testport/receipts/planner_index_join_probe_residual_selectivity.md`.
+- [x] 2026-09-09: propagated a join equality's constant into the data-source
+  split. Go's `PropagateConstantForJoin` adds `a.x = 7` for
+  `a.x = b.x AND b.x = 7` before `DeriveStats`; the pre-push-down `InitStats`
+  split runs first, so the TPC-C NewOrder customer lookup estimated 10 rows
+  instead of Go's 1.17. `single_table_predicate` now synthesizes the one-level
+  constant equality. `tpcc_customer_warehouse_join_uses_two_point_gets`
+  passes; executor 1248 passed / 11 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: published a loaded index's NDV as its source's group NDV.
+  Go `initStats` ends with `ds.TableStats.GroupNDVs = getGroupNDVs(ds,
+  colGroups)` (`stats.go:491`): an index whose whole column list exactly
+  matches one of the pruner's asked groups (and whose stats are
+  essential-loaded) publishes its own NDV, and `StatsInfo.Scale` re-scales
+  it with the source's selectivity. Rust kept no group NDVs, so the
+  `orders x order_line` join estimated from `max(NDV(o_w_id)) = 300,000`
+  instead of the `idx_order`-shaped group NDV. `HistColl` now carries the
+  loaded indexes' `(column ids, NDV)`, `InitStats` populates them, and
+  `record_asked_groups` runs `getGroupNDVs` and re-scales the matched NDVs
+  onto the live plan profile. The equal-condition output rose from 30,074.4
+  to 300,744 (Go's real-ANALYZE probe: 304,547.92) and the per-outer-row
+  probe from 0.80 to 10.02 (Go: 10.15), so
+  `joins::tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves`
+  now picks `IndexHashJoin`; executor 1255 passed / 7 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: ordered an index join's explain fields like Go and admitted
+  its runtime probe over a pruned source. `PhysicalIndexJoin.ExplainInfoInternal`
+  prints `inner:` before `left side:`; the port printed them in the opposite
+  order, so `driver::tests::subqueries` failed on field order alone and now
+  passes. The runtime probe path admission resolved index columns by
+  `IndexColumn.Offset` (a TABLE position) against the source's pruned schema,
+  so TPC-C condition nine's `idx_h_w_id(h_w_id)` probe was refused; all three
+  users now resolve by name, the cop partial aggregate is the priced inner
+  candidate, and the executor runs it locally above the lookup leaf. Condition
+  nine now plans and executes Go's grouped IndexHashJoin shape; its analyzed
+  arm still pins the older constructed-inner statistics model. Executor 1256
+  passed / 6 failed. Receipts:
+  `rust/testport/receipts/planner_physical_index_join_explain.md`,
+  `rust/testport/receipts/planner_index_join_runtime_probe_paths.md`,
+  `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
+- [x] 2026-09-09: ported the ROWS slice of `pkg/executor/windows` and the
+  `pkg/planner/core` physical window. `LogicalPlan::Window` had no dispatcher
+  arm, so every window statement failed with `exhaustPhysicalPlans over
+  Window is not ported to the dispatcher`. The port now builds
+  `PhysicalWindow` over the `PartitionBy ++ OrderBy` child order, attaches it
+  at root, renders Go's `<funcs> over(...)` explain text, and executes it
+  with a `WindowExec` that partitions the buffered child and evaluates each
+  ROWS frame per row (reusing the aggregate accumulator for non-`row_number`
+  functions). `column_name_resolution` and
+  `issue52984_named_window_self_frame_runs_repeatedly` pass; executor 1258
+  passed / 4 failed. Receipt:
+  `rust/testport/receipts/executor_window_rows_frame.md`.
+- [x] 2026-09-09: estimated a prefix LIKE from the column histogram like Go.
+  `analyzed_filter_selectivity` charged every LIKE the generic 0.8
+  `SelectionFactor`, so a source whose predicate never reaches the
+  top-level `InitStats` split kept 80% of its rows. `correlated_sum_predicate`'s
+  `part` source estimated 160000 rows and its MergeJoin beat the index join.
+  The arm now recognizes `like(col, const[, escape])`, sums the rows of every
+  histogram bucket whose bounds start with a plain trailing-`%` prefix,
+  floors at one row, and falls back to Go's 0.1 string-match default.
+  Executor 1259 passed / 3 failed. Receipt:
+  `rust/testport/receipts/planner_cardinality.md`.
+- [x] 2026-09-09: re-pinned the IN-rewrite join family to a Go probe on the
+  test's own ANALYZED fixture. The `HashJoin` expectations came from the
+  correlate suite's pseudo-statistics fixture (7992-row dedup aggregate);
+  at the fixture's 500-row aggregate Go records `IndexJoin` (non-unique) and
+  `MergeJoin` (unique). Executor 1260 passed / 2 failed. Receipt:
+  `rust/testport/receipts/scalar_subquery_plan_time_evaluation.md`.
+- [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
+  dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
+  cache counters) are verified complete, and the MPP probe and range
+  diagnostics have owners. Go master's query-scoped per-store limiter is
+  enforced by the Rust direct-unary TiKV dispatch. The worker lifecycle,
+  region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
+  live-store test matrix remain partial.
+- [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
+  lib serialized: 1,260 passed / 2 failed; the 13 statistics-request transport
+  tests still flake in a full run and pass 16/16 in isolation).
+  Each needs a package-sized port, not a test tweak:
+  - `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`:
+    DONE (a prefix LIKE now estimates from the histogram / the 0.1
+    string-match default, see the 2026-09-09 entry). Receipt:
+    `rust/testport/receipts/planner_cardinality.md`.
+  - `aggregates::tpcc_condition_eleven_*` (analyzed arm): the analyzed
+    statistics collapse the grouped leaves' estimates from 8 to 1.0, which
+    flips two MergeJoins to the IndexJoin family. Measured with temporary
+    hooks: pseudo arm `child_rows=10 child_ndvs=[(13,8),(12,8)]`, analyzed
+    arm `child_rows=9000 child_ndvs=[(13,1),(12,1)]` for new_order (the
+    `no_w_id = 1` selectivity 0.1 scales every column NDV, including the
+    independent `no_d_id`). That collapse is GO'S OWN `StatsInfo.Scale`
+    behavior (`property/stats_info.go:69-86` ->
+    `cardinality.ScaleNDV` with `DefOptRiskScaleNDVSkewRatio = 1.0`), so
+    restoring a larger estimate would diverge from Go. Go still records two
+    MergeJoins at these estimates, which points at the UNPORTED
+    `compareCandidates`/`skylinePruning` access-path choice
+    (`find_best_task.go:731,866`) rather than the estimate: with the index
+    join's scan metrics dominated by the grouped probe, Go's skyline removes
+    the index-join candidates before cost comparison. Next step: port
+    `compareCandidates`'s metric-by-metric comparison.
+  - `aggregates::tpcc_condition_nine_rebuilds_*`: the plan shape and
+    execution now match (see the 2026-09-09 entry); the ANALYZED arm still
+    asserts the older Go inner-side statistics model (the constructed inner
+    kept each logical operator's own statistics, while the pinned Go's
+    `inheritStatsFromBottomTaskForIndexJoinInner` copies the bottom task's
+    runtime profile) and the district source's derived
+    `not(isnull(cast(d_ytd)))` selectivity, which the pre-push-down
+    `InitStats` pass cannot see.
+  - `subqueries::explaining_a_correlated_scalar_type_reads_no_storage`: DONE.
+    A pinned Go probe on the test's own fixture records `IndexJoin` for the
+    non-unique IN rewrite and `MergeJoin` for the unique one, so the stale
+    `HashJoin` assertions were re-pinned (receipt:
+    `rust/testport/receipts/scalar_subquery_plan_time_evaluation.md`).
+    Residual, not asserted: the port keeps a two-phase `StreamAgg` over the
+    unique key where Go eliminates `buildDistinct`'s first-row aggregation.
+  - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
+  - `subqueries::subqueries`: DONE (index-join explain field order, see the
+    2026-09-09 entry).
+  - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
+    DONE (ROWS frame + `row_number`, see the 2026-09-09 entry).
+  - `aggregates::tpcc_condition_six_*`: clears the predicate-placement
+    assertions (`simplifyOuterJoin` ported) and remains blocked only on the
+    `skylinePruning` choice when it re-enters the set.
+  - `aggregates::tpch_q14_matches_recorded_hash_join_plan`: DONE. CASE branch
+    casts, the live-context builtin fold, the `HistColl.StatsVer` planner
+    view, and the per-source data-source statistics together produce Go's
+    recorded tree. Receipts:
+    `rust/testport/receipts/expression_case_extract_names.md`,
+    `rust/testport/receipts/planner_session_zone_constant_fold.md`,
+    `rust/testport/receipts/statistics_handle_storage_audit.md`,
+    `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+  - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel
+    `dataInDisk` lives from `initForParallelExec` until `HashAggExec.Close`, so
+    every partition file stays on disk and charged until `Close`;
+    `ParallelSpillPartitions` is now owned by `HashAggExec` (`parallel_spilled`)
+    and `restore_partition` no longer closes its file. The second failure the
+    fix unmasked was the test's own oracle, not a port gap: Go's
+    `generateResult` runs `FIRST_ROW, SUM, COUNT, AVG, MIN, MAX` and sorts the
+    rows, because the parallel pipeline (spill or not) emits a group's values
+    in worker order, never input order. The test now uses Go's aggregate set
+    (AVG replacing GROUP_CONCAT). The budget test drives a state table several
+    times the quota and uses Go's `LOG` overrun action, so a round's overshoot
+    cannot cancel the statement; `test_fall_back_action` keeps the CANCEL
+    boundary. Both `hash_agg_spill_tests` cases pass; receipt
+    `testport/receipts/executor_parallel_distinct_spill.md`.
+  - `subqueries::evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join`
+    (q22): the injected projection and the anti-semi join are both present, but
+    the test's `rposition(HashAgg)` picks the scalar subquery's own aggregate
+    on the join's build side instead of the outer grouped aggregate, and the
+    next assertion needs Go's `ScalarSubQuery` EXPLAIN root, which the Rust
+    explain does not emit because the uncorrelated scalar subquery is planned
+    inline rather than evaluated separately. Both depend on the
+    separate-evaluation path (`DoOptimize` + `EvalSubqueryFirstRow`) that the
+    planner crate cannot reach; see the `expression_rewriter` module header.
+  - `aggregates::tpcc_condition_eleven_*`: the unanalyzed plan now matches the
+    Go `testkit` oracle exactly (two MergeJoins, three RangeScans, no
+    Projection) after the empty-projection and common-handle index-pricing
+    fixes above. The analyzed arm still picks
+    `IndexHashJoin(IndexJoin(...))` where Go keeps two MergeJoins, so it is the
+    same `skylinePruning`/`compareCandidates` gap as the cluster above, now
+    measured on the ANALYZED statistics path.
+- [ ] Run correctness, compatibility, performance, and Ready validation.
+
+## Surprises & Discoveries
+
+- Observation (2026-09-09): the three remaining join-choice failures all turn
+  on MergeJoin versus IndexJoin/IndexHashJoin under the synthetic
+  `scale_analyzed_tpcc_table` statistics, not on the cost FORMULAS. With a
+  temporary candidate-cost trace:
+  - `tpcc_check_seven`: MergeJoin 29,585,708 vs IndexJoin(hash) 45,275,950;
+    Go's captured analyzed plan chooses IndexHashJoin while its own
+    pre-analyze plan (which the same test asserts) chooses MergeJoin, so the
+    choice flips with the analyzed stats. A real-ANALYZE Go probe for the
+    `k IN (SELECT k FROM inner_t)` shape chose IndexJoin like this port, which
+    points at either (a) the synthetic helper's histogram/row-size shape or
+    (b) our possible-properties claiming the merge order without the sort
+    enforcer Go may add. `getPlanCostVer24PhysicalMergeJoin` and the Rust
+    `merge_join_cost` are line-for-line equivalent (child costs + filter +
+    group, times `tidb_opt_merge_join_cost_factor`, default 1.0).
+  - `correlated_sum_predicate_pulls_above_unique_outer_join` wants an
+    `IndexHashJoin(Build)` where this port builds a MergeJoin; same family.
+  A real-ANALYZE Go oracle for the same check-seven query (300k orders, 3M
+  order_line, clustered PKs, `explain format='cost_trace'`) settles the
+  direction: Go picks IndexHashJoin at 18,581,223 and its two scans print
+  `keep order:false`, while this port's MergeJoin children print
+  `keep order:true`. Both cost formulas are Go-identical
+  (`getPlanCostVer24PhysicalIndexJoin` and
+  `getPlanCostVer24PhysicalMergeJoin`), so the divergence is in the inputs:
+  this port's IndexJoin `probe_rows_one` for the dynamic range is 801.984
+  where Go's is 101.516 (3,007,443 rows / 30,000 outer keys), which inflates
+  the probe term to 139.6M and the whole IndexHashJoin to 45.3M. The inner
+  access path's per-outer-row row estimate is the thing to fix; the ordered
+  children follow from the MergeJoin candidate winning instead.
+  Resolved (2026-09-09): the per-outer-row probe was mis-derived because the
+  join estimated from a single-column NDV. With `getGroupNDVs` ported the
+  equal-condition output is 300,744 (Go 304,547.92) and the probe is 10.02
+  (Go 10.15), and `tpcc_check_seven` chooses `IndexHashJoin`.
+
+- Observation: commit `e2788410d8` was benchmark-shaped rather than
+  Go-shaped. It named `bulk_insert.lua` in production code, recognized only
+  all-integer VALUES lists on a narrow heap-table shape, and returned from a
+  private write loop after a batch duplicate proof. Go still constructs its
+  ordinary Insert executor and row pipeline for that statement shape. Exact
+  reversal restored the pre-commit INSERT sources, rather than preserving the
+  workaround behind a differently named admission gate.
+  Evidence: `git show e2788410d8`, `pkg/executor/builder.go::buildInsert`, and
+  `rust/crates/tidb-executor/tests/go_insert_execution_parity_source.rs`. The
+  full-suite A/B additionally shows that the workaround was the cause of six
+  correctness failures, not just a structural mismatch.
+
+- Observation: Go's `PhysicalIndexLookUpReader` retains two coprocessor DAG
+  lists, `IndexPlans` and `TablePlans`; `PhysicalIndexMergeReader` likewise
+  retains each partial plan plus a final table plan. Concatenating every
+  Selection condition into one Rust vector changed both placement and LIMIT
+  ordering. Recursive lowering now follows each retained tree independently,
+  so the physical planner remains the placement authority.
+  Evidence: `pkg/executor/builder.go::buildNoRangeIndexLookUpReader`,
+  `buildNoRangeIndexMergeReader`, and
+  `rust/crates/tidb-executor/src/driver/physical_builder.rs`.
+
+- Observation: the shared builtin pushdown catalog does not own comparison
+  signatures; the typed predicate encoder does. Once the duplicate Selection
+  plan was removed, executable Selection lowering therefore had to dispatch
+  from the real `Expression` tree to those two existing lowering owners. This
+  preserves one stored condition authority without pretending that builtin
+  calls and comparison predicates share an encoder today.
+
+- Observation: the duplicate Sort and TopN metadata facades concealed missing
+  fields on the wired operators. The real Sort did not account for owned order
+  items, and the real TopN discarded Go's prefix-index column and length.
+  A regression compiled unsuccessfully at pre-fix commit `0a37c83991` for
+  exactly those missing members; the same assertions pass on the wired types
+  after the migration.
+  Evidence: `physicalop/physical_sort.go::MemoryUsage`,
+  `physicalop/physical_topn.go::PhysicalTopN`, and
+  `rust/crates/tidb-planner/src/physical/mod.rs`.
+
+- Observation: Go caches a complete `base.Plan` and
+  `RebuildPlan4CachedPlan` recursively rebuilds mutable ranges without
+  re-running physical optimization. Rust currently caches a separate
+  `PreparedRangeSelectPlan` that admits only a two-parameter closed integer
+  primary-key `BETWEEN` and four root shapes.
+  Evidence: `pkg/planner/core/plan_cache.go::adjustCachedPlan`,
+  `pkg/planner/core/plan_cache_rebuild.go::rebuildRange`, and
+  `rust/crates/tidb-executor/src/driver/access.rs::build_prepared_range_select_plan`.
+
+- Observation: ordinary Rust aggregation previously planned the complete
+  SELECT independently for StreamAgg and HashAgg. The live path now builds one
+  logical aggregation and lets shared `find_best_task` enumerate and cost both
+  families over it; `build_aggregation` only lowers the selected state layout.
+  Evidence: `pkg/planner/core/operator/physicalop/base_physical_agg.go::ExhaustPhysicalPlans4LogicalAggregation`
+  and `rust/crates/tidb-executor/src/driver.rs` around `AggregationChoice::Auto`.
+
+- Observation: deleting the 16,384-row Rust cutoff before changing the worker
+  model would reintroduce the measured prepared-DISTINCT regression. Go's
+  partial/final workers are goroutines; Rust's current path wakes OS-backed
+  worker lanes. The scheduler change is therefore a prerequisite, not an
+  optional optimization.
+  Evidence: `rust/crates/tidb-executor/src/hash_agg/parallel.rs::PIPELINE_MIN_INPUT_ROWS`
+  and the paired measurements in `rust/docs/plan-cache-parity-execplan.md`.
+
+- Observation: the Rust transaction opener can carry an arbitrary resource
+  group, but the SQL node currently constructs it once with `"default"`.
+  Go reads `StmtCtx.ResourceGroupName` for each statement/snapshot.
+  Evidence: `rust/crates/tidb-server/src/cluster_session_node/transactions.rs::RealClusterTransactions::new`,
+  `pkg/session/txn.go`, and `pkg/executor/builder.go::InitSnapshotWithSessCtx`.
+
+- Observation: repository policy makes “full sort/coprocessor coverage” an
+  atomic package claim. A fast-path-only port may remain seed evidence but
+  cannot close the milestone.
+  Evidence: root `AGENTS.md`, non-negotiable item 6.
+
+- Observation: `rust/crates/tidb-planner/src/physical/mod.rs` owns a
+  cloneable closed `PhysicalPlan` enum with selection, projection, hash join,
+  sort, limit, table/index scans and readers, Apply, TopN, HashAgg, and
+  StreamAgg. The ordinary executor bridge and prepared cache now consume it;
+  explicit `Todo` variants still identify unsupported operators.
+  Evidence: `PhysicalPlan` at `physical/mod.rs` and
+  `tidb-executor/src/driver/planner_bridge.rs`.
+
+- Observation: once ordinary planning used `PhysicalPlan`, executor-side
+  “promise” reconstruction became actively dangerous: it could discard a
+  selected Sort, choose a different index with the same prefix, or promote an
+  unordered access receipt from catalog metadata. Lowering now treats a
+  present receipt as authoritative and uses legacy structural checks only for
+  SELECT shapes that the shared bridge explicitly declines.
+  Evidence: `driver/planner_bridge.rs`, `driver/merge_decision.rs`,
+  `driver/index_join_decision.rs`, and the targeted Go oracle tests recorded in
+  this plan.
+
+- Observation: the disconnected `physical_max_one_row` facade carried a
+  `no_cop_push_down` boolean that the wired `PhysicalProperty` did not. The
+  missing field was not isolated metadata: Go copies it through pass-through
+  operators and join child properties, then uses it to suppress coprocessor
+  HashAgg and StreamAgg candidates. Deleting the facade without first moving
+  that contract onto the wired property would have erased a real planner
+  behavior.
+  Evidence: `pkg/planner/property/physical_property.go::CloneEssentialFields`,
+  Go's `physical_{hash_agg,stream_agg,max_one_row,limit,topn,union_all}.go`,
+  `physical_merge_join.go`, and the Rust fail-before/pass-after
+  `max_one_row_and_hash_agg_preserve_the_no_cop_requirement` regression.
+
+- Observation: standalone metadata facades can disagree with both Go and the
+  wired Rust planner while their self-only tests remain green. The removed
+  Lock facade called its plan type `Lock` although Go's `plancodec.TypeLock`
+  value is `SelectLock`; the removed UnionAll facade claimed an MPP candidate
+  even though the active Rust planner deliberately has no TiFlash tier.
+  Migrating difftests to real `PhysicalPlan` construction makes such gaps
+  visible instead of preserving them as apparent coverage.
+  Evidence: `pkg/util/plancodec/id.go`,
+  `pkg/planner/core/operator/physicalop/physical_{lock,union_all}.go`, and the
+  wired planner/difftest regressions.
+
+- Observation: Rust's previous `parallelism > 1` sort path drained the entire
+  child into one partition and only distributed chunks after EOF. It could
+  sort runs concurrently but could not overlap fetch and sort or use the
+  parallel spill helper. The replacement uses bounded persistent-pool lanes,
+  Go's `maxChunkSize * 30` local batch boundary, worker-local K-way merge, and
+  coordinated spill rounds; the old `take_chunks` repartition API was deleted.
+  Evidence: `sort::tests::parallel_sort_workers_share_input_and_heap_merge_their_runs`
+  and `parallel_sort_spills_worker_rounds_and_final_batches`.
+
+- Observation: the bounded real-TiKV proof tier accumulated a second copy of
+  query state for observability: every request cloned plan shape/ranges into
+  `RealTiKvQueryPlanEvidence`, and direct coprocessor dispatch maintained an
+  `Rc<RefCell>` observer graph plus region-publication vectors even though the
+  production consumer had been retired. This was Rust-only work and could
+  execute once per physical request.
+  Evidence: removed owners in `tidb-exec/src/real_tikv_read.rs` and
+  `tidb-distsql/src/cop_paging/direct_unary_query_transport.rs`; the request
+  envelope, encoded DAG, request ranges, and scripted client boundaries remain
+  covered by focused tests.
+
+- Observation: configured TopN and LIMIT updated counters solely to expose
+  immutable completion evidence to tests. The counters did not drive ordering,
+  admission, LIMIT termination, or source close. Direct behavioral assertions
+  cover those contracts without production accounting.
+  Evidence: `tidb-exec/src/configured_topn.rs` and the configured TopN/ordered
+  query source tests.
+
+- Observation: the cluster binary-protocol path extracted both cached
+  descriptors from `PreparedAst`, but tested `cached_select.is_some()` before
+  the already-classified point shape. Because every point SELECT also owns a
+  general descriptor, the point plan was unreachable; the focused MaxTS test
+  and live prepared sysbench point-select both hung. Gating the general cache
+  with the point shape made the existing test complete in 0.02 seconds. A
+  second existing test then exposed and pinned Go's first-miss/later-hit
+  publication semantics.
+  Evidence: `cluster_session_node::execute_general` and
+  `point_get_max_ts::{a_prepared_point_get_takes_no_timestamp_either,
+  a_prepared_point_get_reuses_the_plan_with_each_executions_handle}`.
+
+- Observation: the generic prepared SELECT did not reach planning at all.
+  A one-second process sample showed the test thread blocked in
+  `Session::statement_context_ignoring -> sequence_snapshot -> Mutex::lock`
+  while `bind_cached_prepared_select` already held that catalog mutex. This
+  explains why prepared point-select (while it incorrectly chose the generic
+  descriptor) and then prepared sysbench range-select both waited forever.
+  Evidence: fail-before stack sample for
+  `a_prepared_range_executes_the_general_cached_plan` and its 0.02-second
+  pass after reordering context construction.
+
+- Observation: Rust's supposedly general prepared cache rebuilt a deep clone
+  of the complete `PhysicalPlan` on every hit and discarded that clone after
+  extracting an executor receipt. Go mutates the session-local cached physical
+  plan in `RebuildPlan4CachedPlan`. Retaining parameter markers while rebuilding
+  the cache-owned tree removes the extra allocation/walk without changing the
+  chosen operator shape.
+  Evidence: `physical_plan_cache::bind_expression`,
+  `PreparedSelectPlan::bind`, and the consecutive-parameter rebuild regression.
+
+- Observation: even after the retained physical tree was rebuilt in place,
+  the cluster boundary cloned `PreparedSelectExecution` before every attempt.
+  That recursively copied its bound `SelectStmt`, expressions, hints, and
+  receipt. Borrowing the same immutable execution across retries removes the
+  copy and makes the type non-`Clone`; the source regression failed before and
+  passes after. In isolation this cleanup did not move the simple-range median
+  beyond run noise (3,308.85 Rust versus 3,436.54 Go TPS, 0.963x), so it is a
+  parity cleanup rather than the remaining throughput root.
+
+- Observation: `bind_cached_prepared_select` built a complete planner
+  `StmtContext` before it knew whether the retained physical tree was a cache
+  hit, although `CachedSelectPlan::bind` consumes only parameter values. The
+  execution path then built a second context for the actual executor. Probing
+  and rebuilding the entry first makes context construction miss-only. The
+  paired simple-range Rust median rose from 3,308.85 to 3,374.98 TPS while the
+  paired Go median was 3,459.09 (0.976x), and the new profile contains only the
+  runtime context beneath `execute_cached_prepared_select`.
+
+- Observation: the cache-hit binder still cloned `PreparedAst`, walked every
+  marker, and owned the resulting `SelectStmt` separately from the cached
+  planner tree. Go mutates the marker values on its session-local cached tree
+  and builds the executor while that tree remains authoritative. Rust now
+  does the same under the per-entry mutex; consecutive range, ORDER, DISTINCT,
+  SUM, grouped-aggregate, join, and remote-scan parameter changes pass. The
+  simple-range median remained 3,318.80 Rust versus 3,404.35 Go TPS (0.975x),
+  confirming that this ownership cleanup is not the remaining RPC-dominated
+  throughput root.
+
+- Observation: after the retained tree and execution lease became single
+  authorities, `bind_cached_prepared_select` still reconstructed the cache
+  environment on every EXECUTE by owning `sql_mode`, time zone, charset,
+  collation, partition-prune mode, read engines, SELECT limit, and stats-cache
+  policy strings. Go keeps these as typed `SessionVars` fields and the cache
+  key reads them without rebuilding an owned object. Reusing one typed Rust
+  environment until any relevant generation changes moved the isolated
+  simple-range median to 3,388.68 Rust versus 3,447.17 Go TPS (0.983x). The
+  stock read-only median moved from 0.968x to 489.14/499.09 TPS (0.980x), and
+  read-write measured 312.01/307.26 TPS (1.015x); the isolated SUM shape was
+  3,449.56/3,543.16 TPS (0.974x), all with zero errors. A post-change SUM
+  profile confirms one pushed partial StreamAgg and one root final StreamAgg;
+  its remaining local overhead is statement-context memory/tracker setup and
+  teardown, not aggregation re-planning.
+
+- Observation: after the typed environment was cached, the SELECT and
+  PointGet binders still re-read SELECT limit, snapshot, and read-staleness
+  strings before consulting it. Go's reuse decision consumes the current
+  `SessionVars`/plan-cache key state rather than rebuilding an independent
+  string gate at each binder. Caching either the typed environment or a typed
+  refusal for the current variable/blacklist/transaction generation deletes
+  both copies. In one-cluster exact A/B testing, stock read-only medians were
+  503.18 TPS candidate, 502.73 TPS at exact baseline `8366ff70bd`, and 476.68
+  TPS Go; stock read-write medians were 246.08, 233.27, and 218.83 TPS. The
+  read-write samples were visibly noisy, but both candidate medians remained
+  above Go and every leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `cached_select_key_reuses_the_typed_session_environment`, environment reuse
+  and refusal tests, session/server checks, release build, and the alternating
+  candidate/baseline/Go benchmark receipt.
+
+- Observation: Rust eagerly read every `validate_password.*` GLOBAL variable
+  and built a `HashMap<String, String>` while constructing every query and DML
+  context. Go's `builtinValidatePasswordStrengthSig` instead retains
+  `SessionVarsPropReader` and consults `SessionVars.GlobalVarsAccessor` only
+  when that builtin evaluates. Besides unconditional work, the Rust snapshot
+  was observably stale when a peer changed a GLOBAL after context creation.
+  The replacement holds one shared live accessor. An exact one-cluster A/B
+  against `4bb1933dbc` measured stock read-only medians of 499.68 TPS
+  candidate, 499.52 baseline, and 471.12 Go; read-write medians were 253.04,
+  222.72, and 212.12 TPS. Read-write variance was high, so the semantic
+  fail-before/pass-after and deleted unconditional ownership—not that noisy
+  delta—are the acceptance evidence. Every benchmark leg reported zero SQL
+  errors.
+  Evidence: `statement_context_reads_global_sysvars_through_the_live_accessor`,
+  all 29 global-variable tests, the password-policy regression,
+  executor/session/server checks, release build, and the alternating exact
+  A/B receipt.
+
+- Observation: Rust's prepared path repeatedly resolved `time_zone` from its
+  string system variable while Go retains a parsed `*time.Location` on
+  `SessionVars`. The generation-keyed Rust statement-variable snapshot already
+  had the correct invalidation boundary, so it now owns the typed zone and all
+  consumers clone that value. Exact one-cluster A/B medians against
+  `6b16b316fe` were 508.21 versus 503.96 TPS for stock read-only, with Go at
+  474.78 TPS. Read-write medians were 268.95, 224.44, and 224.46 TPS, but those
+  samples were highly variable; the three paired read-only legs were each
+  positive and every benchmark leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `prepared_execution_reuses_the_typed_session_time_zone`, the timestamp
+  time-zone regression, session/server checks, release build, and the
+  alternating exact A/B receipt.
+
+- Observation: Rust formatted the complete `TIDB_VERSION()` identity while
+  building every statement context, then eagerly copied its rendered length
+  into every `FromScope`. Go keeps immutable process version fields and calls
+  `printer.GetTiDBInfo()` only from the `TIDB_VERSION()` function's build and
+  evaluation paths. Rust now shares typed `VersionInfo` through the context,
+  and its resolver asks for the rendered length only if that builtin is
+  present. Exact one-cluster A/B medians against `c7d68b9eab` were 501.40
+  versus 498.92 TPS for stock read-only, with Go at 470.74 TPS. Read-write
+  medians were 240.62, 219.57, and 210.91 TPS but remained highly variable;
+  every benchmark leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `statement_context_reuses_the_typed_tidb_identity`, the shared-identity
+  mutation test, both `TIDB_VERSION()` result/metadata regressions,
+  executor/session/server checks, release build, and the alternating exact
+  A/B receipt.
+
+- Observation: Rust's prepared pessimistic pre-lock path cloned and bound the
+  whole retained AST only because its locking-SELECT classifier accepted
+  literals but not parameter markers. The adjacent point-write classifier
+  already consumed marker values directly. Both arms now take the parameter
+  slice, and the prepared-only session wrapper is deleted. Exact one-cluster
+  A/B medians against `a37b4c3f4b` were 510.51 versus 503.93 TPS for stock
+  read-only, with Go at 472.51 TPS. Read-write medians were 245.96, 220.43,
+  and 213.89 TPS but retained the workload's high variance; every benchmark
+  leg reported zero SQL errors.
+  Evidence: fail-before/pass-after
+  `prepared_prelock_classification_borrows_the_retained_ast`, the marker versus
+  literal locking-key regression, executor/session/server checks, release
+  build, and the alternating exact A/B receipt.
+
+- Observation: Rust also retained one successful publication receipt per
+  snapshot point/batch/scan read. Go's `KVSnapshot` retains lock-resolution,
+  cache, request, and visibility state but no equivalent success-history
+  vector. That Rust-only state grew and cloned publication data on the read
+  path even though it drove no correctness decision.
+  Evidence: pinned client-go `txnkv/txnsnapshot/snapshot.go` and the removed
+  `SnapshotReadReceipt` ownership in `tidb-txnkv`.
+
+- Observation: rebuilding the cached Rust physical tree was not sufficient to
+  match Go's cache-hit execution boundary. Rust passed the rebuilt receipt back
+  through `run_select_traced_with_delivery_choice_inner`, which recomputed
+  outer-join simplification, join reorder, predicate distribution, and a second
+  executor-local statistics tree before mechanically lowering the selected
+  access. Go returns the rebuilt `base.Plan` directly to `executorBuilder.build`.
+  A test-only visit receipt failed before the change (one simplifier visit) and
+  now proves all four legacy passes remain unvisited for a cached one-leaf plan.
+  Evidence: `pkg/planner/core/plan_cache.go::adjustCachedPlan`,
+  `pkg/executor/adapter.go::buildExecutor`, and
+  `driver::tests::point_get::cached_physical_plan_does_not_rerun_legacy_row_estimation`.
+
+- Observation: Rust had two prepared PointGet implementations after the shared
+  planner was wired. PREPARE built and retained the general planner's
+  `PreparedPointGetPlan`, but the first EXECUTE ignored it and invoked an
+  executor-local planner that rejected every table with any secondary index.
+  Stock sysbench always creates `k_1`, so `SELECT c FROM sbtest1 WHERE id=?`
+  was refused on every execution and never admitted into the point cache.
+  Executing the retained plan on the first miss and marking it ready only
+  after success matches Go's one PointGet plan across miss and hits.
+  Evidence: removed
+  `try_prepared_common_handle_point_get_path`/`run_fast_prepared_point_get*`,
+  the exact stock-sysbench regression, and paired alternating measurements:
+  read-only improved from 0.798x to 0.855x; read-write from 0.882x to 0.897x.
+
+- Observation: the stock prepared SUM's planner expression carried both the
+  current value and its parameter-marker identity, but the executor AST ranger
+  passed that `Constant` through the plain-literal evaluator. That evaluator
+  correctly refuses parameter constants without an evaluation context, so
+  the statistics ranger dropped both BETWEEN bounds, estimated 8,000 logical
+  input rows and adjusted the physical scan to 10,000 rows. The shared cost
+  search then selected root HashAgg with no cop aggregation. Go evaluates the
+  same constant through `ParamMarker.GetUserVar`; using the already-installed
+  current datum restores the 99-row estimate and root/cop StreamAgg receipt.
+  Evidence: fail-before `(Some(Hash), None)` in
+  `prepared_sysbench_sum_retains_gos_stream_aggregation_receipt`, fail-before
+  selectivity `0.8` in
+  `execute_bound_markers_use_the_same_handle_selectivity_as_literals`, and
+  both passing after the general ranger correction.
+
+- Observation: SQL correctly exposed
+  `tidb_hashagg_partial_concurrency=1` and
+  `tidb_hashagg_final_concurrency=1`, but Rust still entered
+  `execute_parallel_pipeline`. `StmtContext::Columns::sysvar` is intentionally
+  limited to expression builtins and global password variables, so HashAgg's
+  executor-side lookup never observed session concurrency and fell back to
+  5/5. Carrying Go's resolved typed values in the statement context makes 1/1
+  select the serial executor and resolves `-1` through
+  `tidb_executor_concurrency` at the statement boundary.
+  Evidence: fail-before `Some((5, 5))` versus expected `None` in
+  `production_stmt_context_hashagg_concurrency_controls_admission`, its passing
+  result after typed plumbing, and the lifecycle assertion `(13, 7)`.
+
+- Observation: Go's final HashAgg workers wait for all partial workers before
+  consuming intermediate mappers. Rust's N*M bounded shuffle channels and a
+  second final-result channel therefore added synchronization and messages but
+  no overlap. Rust can preserve the same ownership and phase boundary by
+  returning each partial worker's vector of final-bucket maps and transposing
+  those vectors before final merge tasks. The focused DISTINCT median moved
+  from approximately 2,129 to 2,197 TPS while Go measured approximately 2,828
+  TPS in the same two alternating samples; this is a measurable cleanup, not
+  closure of the remaining gap.
+  Evidence: `pkg/executor/aggregate/aggregate.go` partial-worker waiter,
+  `hash_agg::parallel::tests` (11 passing tests), and the paired range-split
+  benchmark with zero errors.
+
+- Observation: after the channel cleanup, a 12-second production sample put
+  2,773 main-thread samples in `execute_parallel_pipeline`, including only
+  1,615 in the child-reading epoch. The largest Rust-only setup outside that
+  epoch was `ParallelSpillPartitions::new`, which allocated 256 capacity-bearing
+  `Chunk`s for every parallel statement. Go's spill helper allocates its outer
+  metadata at open but creates the 256 spill chunks only inside the partial
+  worker's `prepareForSpill`; DISTINCT never enters that method because Go
+  disables parallel spill for DISTINCT. Making the Rust chunks lazy moved the
+  focused DISTINCT median from 2,271 to 2,674 TPS while Go stayed at roughly
+  3,002 TPS.
+  Evidence: fail-before assertion that `spill.chunks` was nonempty in
+  `spill_partitions_allocate_chunks_only_when_spill_starts`, its pass after
+  lazy preparation, `parallel_hashagg_spills_partial_results_and_finishes`,
+  the 12-test HashAgg module pass, and the paired benchmark with zero errors.
+
+- Observation: Rust's unspilled parallel Sort copied every fetched row into
+  an independently owned one-row chunk during worker-local completion and
+  then copied it again into a reconstructed result chunk. Go retains the
+  fetched chunks and sorts/merges lightweight `chunk.Row` cursors. Retaining
+  Rust's existing `SortPartition` chunks through the local K-way merge removes
+  both copies and deletes `from_sorted_owned_rows`; the focused DISTINCT
+  median moved from 2,668 to 2,702 TPS while the paired Go median was 2,934,
+  improving the ratio from 0.886x to 0.921x.
+  Evidence: fail-before 4 reconstructed chunks versus Go-compatible 64 source
+  chunks in `parallel_sort_workers_share_input_and_heap_merge_their_runs`, its
+  pass after the change, the multi-batch cursor-merge regression, all 16 Sort
+  module tests, and the paired production benchmark with zero errors.
+
+- Observation: temporarily selecting the synchronous coprocessor send path
+  exposed a paging-continuation panic before the benchmark could prepare its
+  statement. The unordered pull loop retained one ready token while waiting
+  for a continuation, then synchronous dispatch appended a second token for
+  the same task. Terminal `Closed` removed both, invalidating the loop's
+  captured count. After enforcing one token per logical task, the diagnostic
+  completed with zero errors. Its Rust median was 2,644.03 TPS versus the
+  production BatchCommands median of 2,702.26 TPS, so disabling batching is
+  both non-parity and about 2.2% slower; BatchCommands is not the remaining
+  DISTINCT root cause.
+  Evidence: fail-before panic in
+  `synchronous_unordered_paging_keeps_one_ready_token_per_task`, its pass after
+  the ready-token guard, all five paging/close tests, and the alternating
+  synchronous diagnostic at 2,644.03/2,979.65 Rust/Go TPS.
+
+- Observation: after Sort retained source chunks, the current production
+  profile showed a one-chunk DISTINCT aggregation still submitting all five
+  configured partial lanes and five final merge tasks. Four partial lanes
+  received no input, and every final task merely adopted one map. Go creates
+  the same logical goroutines, but an idle goroutine is cheap; each Rust lane
+  occupied a persistent-pool task and paid queue/channel completion. Lazy lane
+  admission preserves configured parallelism for multi-chunk input without a
+  row threshold. The focused median moved to 2,803.22/2,773.79 TPS (1.011x).
+  A complete split measured simple 3,987.23/4,340.52 (0.919x), SUM
+  4,518.25/4,678.35 (0.966x), ORDER 3,543.73/3,611.00 (0.981x), and DISTINCT
+  2,811.49/2,825.26 (0.995x), with zero errors.
+  Evidence: fail-before five versus expected one worker in
+  `single_chunk_pipeline_submits_only_one_partial_worker`, its pass after lazy
+  admission, all 13 parallel HashAgg tests, the release build, and both paired
+  benchmark receipts.
+
+- Observation: Go's selected range plan put a direct-column
+  `PhysicalProjection` inside `TableReader`, while Rust's planner bridge
+  recorded only the reader and scan and rebuilt a root `ProjectionExec`.
+  Consequently Rust asked TiKV for every scan column and copied the selected
+  column locally. Retaining stable projection columns in the physical access
+  receipt and accepting them at the clean-storage boundary now emits
+  `DAGRequest.output_offsets = [1]` on both ordinary execution and a recursive
+  prepared-cache rebuild. The focused alternating benchmark remained
+  3,953.16/4,314.64 TPS (0.916x median, zero errors), so this was a concrete
+  plan/execution parity bug but not the whole remaining shared-scan cost.
+  Evidence: the fail-before `[None]` versus expected `[Some([1])]` assertion in
+  `a_clean_clustered_range_sends_the_cop_projection`, its pass after lowering,
+  the prepared rebuild and staged-row fallback regressions, the narrowed
+  `tidb-exec` source test, and the release benchmark receipt.
+
+- Observation: every Rust BatchCommands coprocessor attempt previously owned
+  a callback run loop, while the query response also registered a separate
+  `CompletionNotifier`. Publication therefore enqueued the real completion
+  callback, pushed a token through another mutex, and enqueued an empty
+  callback solely to wake the response. Client-go's synchronous
+  `sendBatchRequest` gives each entry a one-shot result channel and lets the
+  cop iterator own the wait; it has no corresponding second notifier. Sharing
+  one response-owned callback executor removes the duplicate queue, token,
+  mutex, and wake path while retaining BatchCommands and unordered region
+  completion. A region-error rebuild also exposed that completion progress
+  must be recorded even when recovery has already populated the ready queue.
+  The focused simple-range benchmark after the cleanup measured Rust
+  4,142.42 TPS and Go 4,584.00 TPS (0.904x median, zero errors), so the cleanup
+  is parity work but not closure of the remaining scan latency.
+  Evidence: fail-before source assertion in
+  `one_response_owned_run_loop_drives_every_pending_region`, the shared-loop
+  library regression, all six `unordered_` distsql tests, focused
+  admission/retry tests, and the release benchmark receipt.
+
+- Observation: `CopScanSource` retained a process-lifetime `Vec<String>` of
+  every DAG solely for a smoke binary and three tests. Every successful open
+  formatted the executor tree and appended it under one node-wide mutex, and
+  every decoded chunk incremented a shared atomic. Go's table readers own no
+  corresponding request history; its diagnostics are external metrics/runtime
+  statistics rather than test receipts in the scan object. Deleting this state
+  moved the fresh simple-range benchmark to Rust 4,063.71 TPS versus Go
+  4,314.51 TPS (0.942x median, zero errors), from the preceding 0.904x
+  checkpoint. Dedicated fake-region tests continue to decode and assert the
+  actual DAG at the transport boundary.
+  Evidence: fail-before/pass-after
+  `production_cop_scans_do_not_retain_test_receipts`, the COUNT DAG wire test,
+  both affected unistore SQL tests, smoke-binary check, release build, and the
+  paired benchmark receipt.
+
+- Observation: Rust implemented Go `readFromChunk`'s 80% intermediate-chunk
+  reuse rule in `SelectResponseIter`, but `RemoteRowCursor` then applied a
+  second 75% threshold before accepting the completed executor-facing batch.
+  A typical 100-row sysbench range result under a 1,024-row request therefore
+  copied every cell after the Go-equivalent response decoder had already
+  finished it. Deleting the duplicate gate made the ownership regression pass
+  and moved a fresh simple-range benchmark to Rust 4,072.57 TPS versus Go
+  4,256.84 TPS (0.957x median, zero errors), from the preceding 0.942x
+  checkpoint.
+  Evidence: fail-before/pass-after
+  `clean_remote_cursor_moves_a_small_completed_batch_into_the_output`, all
+  five `clean_remote_cursor_` tests, release build, and the paired benchmark
+  receipt.
+
+- Observation: response sizing still differed before the duplicate
+  table-reader threshold was reached. `CopRowStream` asked the decoder for a
+  fixed 32,768 rows for every table scan and 1,024 for every index scan, then
+  the index-handle cursor and partial-aggregate handoff independently applied
+  their own completion thresholds. Go instead passes the destination
+  executor's `Chunk.RequiredRows` into `selectResult.readFromChunk`; its index
+  worker alone caps each pull at `MaxChunkSize` and repeats pulls until its
+  larger lookup task is full. Making `SelectResponseIter` the sole completion
+  owner removes the fixed large allocation and all three Rust-only sizing
+  policies. The fresh full split measured Rust/Go medians of
+  4,090.00/4,319.74 TPS for simple range (0.947x), 4,513.58/4,634.60 for SUM
+  (0.974x), 3,633.73/3,593.61 for ORDER (1.011x), and
+  2,857.62/2,817.56 for DISTINCT (1.014x), with zero errors.
+  Evidence: fail-before/pass-after
+  `clean_remote_cursor_forwards_required_rows_to_the_go_chunk_decoder`,
+  `handle_batch_caps_decoder_demand_and_fills_the_lookup_task`, the remote and
+  handle cursor suites, release build, and the alternating full-split receipt.
+
+- Observation: ordinary Go `pkg/store/copr` workers call synchronous
+  `SendReqCtx`, and client-go's `batchCommandsEntry` delivers those responses
+  through its buffered `res` channel. Rust had hard-wired every BatchCommands
+  entry to `CompletionRequest`, even for a single-region cop read, so the
+  consumer drove an asynchronous callback queue that Go does not enter. The
+  batch scheduler and in-flight table now retain one enum with the same two
+  completion variants, and caller cancellation wakes the synchronous waiter
+  directly. A new profile proves the hot request uses
+  `SynchronousBatchPull::complete` (3,559 waiting samples) while
+  `CompletionRunLoop::execute_with_call` falls to one incidental sample.
+  Performance did not move: the alternating simple-range medians were Rust
+  4,133.96 TPS and Go 4,362.42 TPS (0.948x), essentially the preceding 0.947x.
+  This removes another parity mismatch and rules it out as the remaining
+  performance root cause.
+  Evidence: fail-before/pass-after
+  `one_region_cop_request_uses_go_synchronous_batch_completion`, direct
+  delivery and cancellation-wakeup tests, all 63 `direct_unary_` tests, the
+  release benchmark, and
+  `/private/tmp/tidb-rust-simple-parallel-syncbatch-fb2eceb2a9.sample.txt`.
+
+- Observation: the ordinary-cop correction did not cover transaction RPCs.
+  Go snapshot PointGet reaches client-go `RPCClient.SendRequest`, but Rust's
+  `publish_transaction_get` still constructed `CompletionPull` and drove a
+  private `CompletionRunLoop`; 2,390 of 2,617 sampled point-path frames waited
+  there. Stock alternating medians were Rust/Go 416.70/466.33 TPS (0.894x) for
+  read-only and 268.69/276.09 TPS (0.973x) for read-write. Making the generic
+  `TransactionBatchPending` carry `SynchronousBatchPull` fixes every typed
+  Get, BatchGet, Scan, lock, Prewrite, Commit, rollback, and heartbeat command
+  at one source boundary. The rebuilt read-only profile has all 2,584 sampled
+  point waits below `SynchronousBatchPull` and no callback loop below
+  `publish_transaction_get`; new medians are 443.15/454.04 TPS (0.976x) for
+  read-only and 263.09/274.27 TPS (0.959x) for read-write. The read-only root
+  mismatch is removed, while acceptance remains open below 1.0.
+  Evidence: fail-before/pass-after
+  `transaction_commands_use_client_go_synchronous_batch_completion`, the
+  transaction and completion unit suites, release build, stock alternating
+  benchmark, and
+  `/private/tmp/tidb-rust-oltp_read_only-txn-sync-44800c4f14.sample.txt`.
+
+- Observation: Rust's cached DML and SELECT binders checked
+  `tidb_enable_prepared_plan_cache` through an owned string sysvar lookup on
+  every execution, while cached PointGet did not check the switch at all.
+  Go maintains `SessionVars.EnablePreparedPlanCache` in the sysvar
+  `SetSession` hook and every cache path reads that field. The typed Rust field
+  removes the sampled lookup and also fixes the observable OFF-state PointGet
+  contract. Exact one-cluster A/B means against `acde91234d` were
+  512.67/514.26 TPS for stock read-only, with Go at 472.01 TPS; read-write was
+  278.21/243.19/219.70 TPS but retained the same strong run-order variance, so
+  no read-write increase is attributed to this change. All 18 legs reported
+  zero ignored errors.
+  Evidence: fail-before/pass-after
+  `disabling_the_cache_disables_retained_point_execution`, the typed-state and
+  existing disabled-range/cache-hit regressions, server test/release builds,
+  the alternating A/B receipt, and
+  `/private/tmp/tidb-rust-oltp_read_only-typed-prepared-cache.sample.txt`.
+
+## Decision Log
+
+- Decision: preserve paired sysbench parity throughout the migration rather
+  than delete current safeguards first.
+  Rationale: literal early deletion is known to make Rust slower and would
+  violate the original user goal. Temporary dual implementations are allowed,
+  but the old path must be retired before completion.
+  Date/Author: 2026-08-27, Codex with user confirmation.
+
+- Decision: promote the existing `tidb_planner::physical::PhysicalPlan` as the
+  sole cache-owned physical-plan tree plus fresh runtime executor
+  instantiation, not cached live executor objects and not a new executor-local
+  enum. The prepared cache serializes range/expression rebuild of that tree.
+  Rationale: executor cursors, chunks, memory trackers, cancellation handles,
+  and transaction snapshots are statement-local. Caching them would leak state
+  across executions. The cached tree may mutate parameter-derived planning
+  state, while runtime cursors and execution state are always rebuilt.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: represent parameters as typed slots in scan/range expressions and
+  rebuild them with a recursive visitor.
+  Rationale: this preserves Go's “rebuild ranges, do not optimize again”
+  contract while supporting table scans, index scans, readers, index joins,
+  point/batch point gets, index merge, and DML child plans uniformly.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: do not claim complete sort or coprocessor parity until the package
+  inventory receipts have no production, test, fixture, generated, platform,
+  or build artifact left unmapped.
+  Rationale: required by repository policy and necessary to avoid another
+  benchmark-only partial port.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: after ordinary shared-plan wiring, retain direct access/join code
+  only as mechanical executor construction or as an explicit unsupported-shape
+  fallback. Delete every layer that enumerates, costs, or substitutes a
+  physical alternative after a receipt exists.
+  Rationale: Go separates optimizer selection from executor building. Exact
+  receipt lowering preserves that boundary; local candidate recovery can make
+  EXPLAIN and execution disagree with the plan Go selected.
+
+- Decision: a prepared statement whose Go optimizer result is a point plan
+  must not be displaced by Rust's generic cached SELECT descriptor. Admit the
+  precompiled immutable point descriptor only after its first successful
+  execution so `@@last_plan_from_cache` remains false on the miss and true on
+  subsequent rebuilt-handle executions.
+  Rationale: this preserves both the hot point-executor route and Go's
+  externally visible cache state without adding a workload-specific bypass.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: construct all plan-cache session context and environment state
+  before acquiring the catalog guard passed into planner binding.
+  Rationale: Go's planning context and infoschema snapshot are separately
+  owned; Rust must preserve that ordering when both views share one catalog
+  mutex. Holding the guard while asking the session to snapshot sequences is
+  necessarily recursive.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: retain parameter and deferred-expression identity on the
+  cache-owned tree, materialize marker-free clones only when lowering a
+  statement execution, and evict the cache entry if in-place rebuild fails.
+  Rationale: later executions need the original binding source, executors must
+  not attempt session-parameter evaluation, and a failed recursive rebuild may
+  otherwise leave mixed old/new ranges in the retained tree.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: tests must observe executor and transport behavior at their public
+  boundaries instead of requiring a production-only evidence mirror.
+  Rationale: Go does not duplicate every plan/request into a test receipt, and
+  the mirror imposed allocation, cloning, callback, and per-row counter costs
+  on ordinary execution. Scripted transports and row sources can count calls
+  without changing production state.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: one coprocessor query response owns the callback executor shared
+  by its pending BatchCommands regions; do not retain a token notifier or
+  per-request executor beside it.
+  Rationale: the response is already the sole consumer and can scan its
+  bounded pending window after driving ready callbacks. A second notification
+  graph duplicates synchronization without adding ordering or correctness.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: represent client-go's `batchCommandsEntry.res` and `.cb` as two
+  variants of one Rust batch completion carried through the existing
+  scheduler, publication, stream, and in-flight table. Use the synchronous
+  variant for a one-region ordinary cop request and retain the asynchronous
+  variant only where Rust still needs a bounded multi-region overlap window.
+  Rationale: switching to raw unary RPC would bypass BatchCommands and be a
+  workaround. A completion variant preserves the source transport and retry
+  ownership while deleting the callback executor from the ordinary path.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: use the synchronous completion variant for every typed
+  transaction command, not only snapshot Get.
+  Rationale: client-go's synchronous `RPCClient.SendRequest` is the common
+  command boundary for reads and two-phase-commit RPCs. Retaining asynchronous
+  pending objects would preserve a Rust-only callback loop; multi-region
+  overlap instead comes from publishing every independent request before
+  collecting their synchronous completions.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: the PREPARE-time planner owns PointGet shape and access-path
+  selection. EXECUTE may bind current parameter values and instantiate fresh
+  runtime state, but it must not invoke a second executor-local point planner.
+  Rationale: Go uses the same planner-built PointGet on its first cache miss
+  and later hits. The duplicated Rust planner had narrower, workload-breaking
+  admission rules and made cache readiness depend on those unrelated rules.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: resolve HashAgg concurrency once from typed session state and
+  carry it in `StmtContext`; do not broaden the generic expression builtin
+  sysvar surface to make an executor policy lookup happen to work.
+  Rationale: Go's executor builder reads typed `SessionVars` fields, and the
+  builtin variable view has a separate, deliberately narrow compatibility
+  contract. Statement snapshots also keep both query and DML execution stable
+  if session variables change afterward.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: keep the persistent worker pool but transfer HashAgg maps through
+  task receipts instead of reconstructing Go's channel graph literally.
+  Rationale: Go's waiter establishes a full partial-to-final barrier, so owned
+  Rust receipts are the native equivalent and remove redundant synchronization
+  without a row-count policy, a workload rule, or a concurrency cutoff.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: compile HashAgg worker-thread observations and concurrency
+  overrides only for unit tests, and allocate spill partitions only after a
+  real spill request.
+  Rationale: neither state participates in Go's execution decision. Production
+  test receipts imposed mutex/atomic work, and eager spill chunks were a large
+  fixed cost even when the Go spill gate made spilling impossible. Behavioral
+  tests and fail-before/pass-after allocation coverage retain the evidence
+  without production mirrors.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: retain production BatchCommands-first coprocessor dispatch and
+  use the synchronous path only as its Go-compatible fallback.
+  Rationale: the synchronous A/B is slower and therefore rules out batching
+  as the remaining performance root. The fallback still must be correct, so
+  its duplicate ready-token panic is fixed independently rather than hidden
+  by production admission policy.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: submit a HashAgg lane on its first chunk and bypass final merge
+  submission when no second partial map exists.
+  Rationale: this removes idle scheduler work rather than selecting a serial
+  plan or introducing an input-size policy. Every configured lane still runs
+  once round-robin dispatch has useful work for it, and the existing spill,
+  error, cancellation, and multi-worker tests retain the Go lifecycle.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: lower only a planner-selected direct-column cop projection whose
+  stable columns exactly match the final root projection, and let the table
+  scan accept it only when remote rows need no dirty/staged merge.
+  Rationale: TiKV output offsets cannot represent computed expressions, while
+  dirty-row reconciliation may require handle/column data that a narrowed
+  remote response no longer carries. Exact matching removes only the
+  redundant executor layer and fails closed for every unsupported shape.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: production scan objects retain only state required to build or
+  execute requests; tests inspect encoded DAGs at a fake transport/region
+  boundary instead of adding node-wide counters or request histories.
+  Rationale: the removed receipt changed every production scan and grew
+  without bound, while the lower boundary already proves exact executors,
+  offsets, limits, direction, and aggregate arguments without perturbing the
+  live path.
+  Date/Author: 2026-08-27, Codex.
+
+- Decision: keep one response-size reuse policy at the Go-equivalent decoder
+  boundary, pass the executor's live `RequiredRows` demand to that boundary,
+  and move every completed exact-width batch through table, index-handle, and
+  partial-aggregate consumers unchanged. Index lookup caps each decoder pull
+  at `MaxChunkSize` and loops until its independently sized handle task is
+  full.
+  Rationale: `SelectResponseIter` has already decided whether to reuse or
+  coalesce its decoder-owned intermediate chunk. Fixed scan-family batch sizes
+  and second executor-local thresholds are not Go behavior; they either
+  over-allocate before decoding or turn an already completed response into
+  per-cell copy work. The index cap/loop belongs to Go's worker task boundary,
+  not to response decoding.
+  Date/Author: 2026-08-27, Codex.
+
+## Outcomes & Retrospective
+
+Work is in progress. After restoring point-plan precedence and removing the
+catalog-lock recursion, a one-sample root smoke measured Rust/Go ratios of
+1.095 for read-only and 0.827 for read-write. A decomposed read-write run then
+showed Rust already faster for the no-read write path, isolating the remaining
+gap to read work. After removing successful-read receipts and changing cached
+physical rebuild to in-place ownership, one immediate diagnostic sample moved
+the all-query ratio from 0.792 to 0.933 and the point-read ratio from 0.945 to
+1.014; the range control was noisy and these single samples are diagnostic,
+not acceptance evidence. A fresh three-sample alternating run before removing
+the duplicate first-execute point planner measured read-only Rust/Go medians
+of 360.43/451.39 TPS (0.798x) and read-write 249.66/283.15 TPS (0.882x).
+After the retained planner-built PointGet became the only point implementation,
+the same harness measured 403.71/472.00 TPS (0.855x) and 255.89/285.32 TPS
+(0.897x), all with zero SQL errors. This is a material root fix but not yet the
+1.0 acceptance result. The next fresh alternating range split isolated the
+stock SUM root mismatch: before the parameter-ranger fix Rust/Go SUM medians
+were 3,054.54/4,572.17 TPS (0.668x); afterward they were 4,467.34/4,359.14 TPS
+(1.025x), with zero errors. The same post-fix run measured simple range at
+4,149.08/4,342.42 (0.955x), ordered range at 3,210.28/3,533.63 (0.909x), and
+distinct ordered range at 2,129.20/2,758.29 (0.772x). DISTINCT/ORDER lowering
+is now the largest remaining read-only target. Typed session HashAgg
+concurrency then exposed the previous hidden 5/5 fallback: a real 1/1 run
+measured Rust/Go medians of 2,771.86/3,052.33 TPS (0.908x), confirming fixed
+parallel-lifecycle cost as the dominant DISTINCT regression. Removing the
+redundant N*M shuffle/result channel topology while retaining the configured
+5/5 worker shape measured 2,196.59/2,828.20 TPS (0.777x), approximately 3.2%
+above the preceding Rust median. A fresh profile then exposed 256 eagerly
+allocated spill chunks per parallel statement. After matching Go's lazy
+`prepareForSpill`, the focused DISTINCT median was 2,674.32/3,005.65 TPS
+(0.890x); a second complete split measured 2,668.43/3,011.55 TPS (0.886x).
+The latter run measured simple 4,185.53/4,590.04 (0.912x), SUM
+4,707.43/4,903.58 (0.960x), and ORDER 3,468.13/3,817.57 (0.908x), with zero
+errors. Removing the unspilled Sort row-copy/reconstruction path then measured
+focused DISTINCT medians of 2,702.26/2,933.89 TPS (0.921x), again with zero
+errors. DISTINCT's large regression is removed without a serial cutoff, but
+the acceptance gap remains open. A synchronous-coprocessor diagnostic then
+measured Rust/Go medians of 2,644.03/2,979.65 TPS (0.887x), zero errors, after
+fixing the fallback's duplicate ready-token panic. Because synchronous Rust
+was about 2.2% slower than the production batched Rust median, the diagnostic
+was reverted and BatchCommands-first dispatch remains production behavior.
+Making HashAgg lane submission work-driven then measured a focused DISTINCT
+median of 2,803.22/2,773.79 TPS (1.011x). The complete split measured DISTINCT
+at 2,811.49/2,825.26 TPS (0.995x), ORDER at 0.981x, SUM at 0.966x, and simple
+range at 0.919x, all with zero errors. The remaining range-read target is now
+the shared scan/request path rather than HashAgg's fixed scheduler lifecycle.
+Lowering the selected cop projection then produced narrow remote rows for the
+same simple-range query, but the fresh alternating medians were
+3,953.16/4,314.64 TPS (0.916x), also with zero errors. The remaining delta is
+therefore below the projection boundary, in request/response execution or
+decoding rather than planner shape alone. Sharing one completion loop then
+measured 4,142.42/4,584.00 TPS (0.904x). Removing the production scan receipt
+graph produced fresh medians of 4,063.71/4,314.51 TPS (0.942x), zero errors.
+Removing the duplicate table-reader chunk threshold then measured
+4,072.57/4,256.84 TPS (0.957x), zero errors. The remaining simple-range gap is
+now about 4.3%; request construction, response decoding, and query-worker
+wake/scheduling remain the active profile targets. Replacing the hardcoded
+32,768/1,024-row decoder sizes with live `RequiredRows`, deleting the duplicate
+index/partial completion rules, and restoring the index worker's
+`MaxChunkSize` cap/loop produced a fresh full split at simple 0.947x, SUM
+0.974x, ORDER 1.011x, and DISTINCT 1.014x. The simple sample stayed within the
+existing noise band, while the change removes a concrete large-allocation and
+policy-ownership mismatch without regressing the adjacent aggregate/sort
+paths.
+
+Switching typed transaction commands to the same synchronous response-channel
+completion used by client-go removed the private callback run loop from the
+dominant prepared PointGet path. The fresh stock read-only ratio moved from
+0.894x to 0.976x; read-write measured 0.959x in the same post-change run. This
+closes the measured transaction-completion root cause but not the plan's 1.0x
+acceptance threshold.
+
+## Context and Orientation
+
+The Go prepared cache retrieves `PlanCacheValue.Plan` in
+`pkg/planner/core/plan_cache.go`. On a hit, `adjustCachedPlan` calls
+`RebuildPlan4CachedPlan`, which walks physical nodes in
+`pkg/planner/core/plan_cache_rebuild.go`. It rebuilds ranges for table scans,
+index scans, table/index/index-lookup readers, index joins, point and batch
+point gets, index merge readers, and the select children of insert, update,
+and delete plans. It fails closed when range conversion changes a value or the
+statement disables cache reuse.
+
+Rust prepared statements are owned by
+`rust/crates/tidb-session/src/prepared_ast.rs` and dispatched through
+`rust/crates/tidb-server/src/cluster_session_node/mod.rs`. Ordinary SELECT
+planning builds `tidb_planner::physical::PhysicalPlan`; prepared cache entries
+retain that tree and recursively rebuild its parameter-dependent ranges.
+`tidb-executor/src/driver/planner_bridge.rs` converts the tree into stable
+receipts, and the executor driver instantiates fresh runtime state from them.
+
+In this plan, a “physical-plan tree” means a reusable value describing
+chosen operators, schemas, access paths, pushed predicates and aggregates,
+required ordering, estimates, and typed parameter slots. It contains no open
+storage cursor or executor runtime state. A prepared cache owns and serializes
+its tree while rebuild mutates only parameter-derived constants and ranges.
+“Instantiation” means turning that tree into fresh `Box<dyn Executor>` objects
+for one statement. “Rebuild” means binding current parameter values into typed
+slots and deriving ranges without changing access path, join order,
+aggregation family, or reader boundary.
+
+Hash aggregation lives in `rust/crates/tidb-executor/src/hash_agg.rs` and
+`rust/crates/tidb-executor/src/hash_agg/parallel.rs`. Go's counterpart is
+`pkg/executor/aggregate`. Sort ownership is split between
+`rust/crates/tidb-executor/src/sort.rs`, `sort_partition.rs`, and `topn.rs`;
+the complete Go source package is `pkg/executor/sortexec`. Coprocessor planning,
+dispatch, paging, retry, and decoding span `rust/crates/tidb-distsql`,
+`rust/crates/tidb-exec`, and `rust/crates/tidb-txnkv`; the complete Go package
+claim is `pkg/store/copr` plus its build and fixture inputs.
+
+The worktree already contains the preceding performance phase as uncommitted
+Rust changes. Preserve those changes. Do not reset, reformat unrelated files,
+or hand-edit generated artifacts.
+
+## Plan of Work
+
+Milestone 0 creates two inventory receipts under `rust/docs/parity/`: one for
+every tracked file in `pkg/executor/sortexec`, and one for every tracked file
+in `pkg/store/copr`. Each row records the Rust owner, disposition (implemented,
+not applicable with reason, or missing), and validation. This milestone also
+adds behavior-first failing tests to the nearest existing Rust prepared-cache,
+aggregation, resource-group, sort, and coprocessor suites. No new top-level Go
+test is needed.
+
+Milestone 1 completes and promotes the physical-plan module already present at
+`rust/crates/tidb-planner/src/physical/mod.rs`. Extend its closed enum to cover
+the executor nodes still represented by `Todo`, and add the parameterized
+range source that its table and index scan variants currently lack. A plan node
+owns output schema, estimated rows, delivered ordering, and children. Scan
+variants own the selected table/index identity, pushed predicates, projection,
+and a parameterized range expression. Point, batch point, reader, join,
+index-merge, aggregation, sort, TopN, projection, selection, limit, and DML-root
+variants are required before the old narrow cache is retired.
+
+Milestone 2 separates planning from executor instantiation. Existing planner
+helpers return a physical plan plus cost/delivery metadata; one lowering
+visitor creates runtime executors. Aggregation enumeration obtains the child
+logical/physical candidates once, applies the different required properties
+for StreamAgg and HashAgg, and costs both without rebuilding unrelated access
+and join decisions. The temporary direct-executor path remains available
+behind an internal comparison test until plans and results match, then is
+deleted.
+
+Milestone 3 stores the general physical plan in the prepared statement cache.
+A recursive rebuild visitor binds parameters and recomputes ranges for every
+Go-supported cache node. Rebuild mutates the cache-owned tree under its mutex;
+a typed refusal evicts that entry before ordinary replanning so a partial
+rebuild is never reused. The execution route instantiates statement-local
+state, records metadata-lock tables, and preserves all session invalidation
+gates. Delete `PreparedRangeSelectPlan`,
+`PreparedRangeSelectRoot`, and their server/session special route after the
+general tests pass.
+
+Milestone 4 generalizes aggregate splitting. Partial/final aggregate
+descriptors are derived from aggregate kind, distinct arguments, grouping
+keys, ordering, target task, and storage capability, following Go's
+`BuildFinalModeAggregation` and pushdown checks. Cached plans retain the chosen
+partial/final boundary just like any other physical node. Delete
+`pushes_partial_aggregate` and every row-count-based SUM special case.
+
+Milestone 5 changes parallel aggregation scheduling. Persistent executor task
+workers receive bounded work through a non-blocking queue and remain alive
+across statements, with cancellation, memory accounting, panic propagation,
+and deterministic merge receipts. Demonstrate that a 100-row aggregation no
+longer pays OS wakeup-scale fixed cost, then delete
+`PIPELINE_MIN_INPUT_ROWS` and make eligibility match Go's supported-function
+and concurrency rules. Preserve serial fallback only where Go sets
+`IsUnparallelExec` or where exact Rust numeric semantics cannot be merged; any
+such remaining refusal must be recorded as a parity gap rather than hidden.
+
+Milestone 6 makes resource groups statement-scoped. Add the resolved group to
+the Rust statement context and pass it into transaction/snapshot acquisition,
+coprocessor request builders, retries, lock resolution, pessimistic locking,
+prewrite, commit, and cleanup. Hints or session changes affect the next
+statement without rebuilding process capabilities. Internal clients remain
+independently configurable.
+
+Milestone 7 completes the sort and coprocessor inventories. For sort, port the
+complete parallel fetcher/worker/result lifecycle, external spill and heap
+merge, TopN spill, memory/disk accounting, kill checks, failpoint behavior,
+and all supported comparison types. For coprocessor, close every inventory row
+across task building, region splitting, ordered/unordered response delivery,
+paging, store batching, retry/backoff, lock handling, runtime statistics,
+resource control, all request/response encodings, and tests. A row marked not
+applicable must explain the native Rust substitute and prove the same external
+contract.
+
+Milestone 8 removes migration scaffolding, runs the complete package and
+workspace gates, performs paired alternating benchmarks against the Go server,
+and updates both inventory receipts and this retrospective.
+
+## Concrete Steps
+
+Run all commands from `/Users/qiliu/projects/tidb` unless a step says otherwise.
+
+Inventory the complete Go packages and current Rust owners:
+
+    git ls-files pkg/executor/sortexec > /private/tmp/tidb-sortexec-files.txt
+    git ls-files pkg/store/copr > /private/tmp/tidb-copr-files.txt
+    rg --files rust/crates/tidb-executor rust/crates/tidb-distsql rust/crates/tidb-exec rust/crates/tidb-txnkv | sort
+
+Inspect the local-change prerequisites before every build phase:
+
+    git status --short
+    git diff --name-status
+    git diff --name-status --cached
+    git ls-files --others --exclude-standard
+    git diff -U0 -- '*.go'
+    git diff -U0 --cached -- '*.go'
+
+The present change set touches Rust only, so `make bazel_prepare` is not
+required unless later work changes a Go source/import, Go module, Bazel file,
+generated input, or adds a top-level Go test.
+
+Use WIP validation after each small Rust edit:
+
+    cd rust
+    cargo test -p tidb-executor <targeted_test_name> --lib
+    cargo test -p tidb-session <targeted_test_name> --lib
+    cargo test -p tidb-txnkv <targeted_test_name>
+    cargo check -p tidb-executor -p tidb-session -p tidb-server -p tidb-exec -p tidb-distsql -p tidb-txnkv
+
+Before running a Rust package test, apply the failpoint decision workflow in
+`.agents/skills/tidb-failpoint-test-runner`. Do not run a broad suite merely to
+discover whether failpoints are needed.
+
+At completion, run the Ready profile and report exact results:
+
+    cd rust
+    cargo nextest run --workspace
+    cargo test -p difftest-result-tests --test integration_diff
+    cargo test -p tidb-executor --lib
+    cargo test -p tidb-session --lib
+    cargo test -p tidb-txnkv
+    cd ..
+    make lint
+    git diff --check
+
+Run paired benchmarks only on isolated disposable databases, alternating Go
+and Rust within every pair. Use the same TiKV/PD cluster, table cardinality,
+thread count, prepared-statement mode, duration, and version depth. Reject a
+pair when machine-wide throughput changes between legs. Acceptance is a
+read-only median ratio at least 1.0 and a clean equal-depth read-write ratio at
+least 1.0, with zero SQL errors.
+
+## Validation and Acceptance
+
+Every bug-fix milestone needs a fail-before/pass-after receipt. Plan-cache
+tests must execute the same prepared statement with different parameter types
+and values, assert `@@last_plan_from_cache`, compare answers with an uncached
+execution, and exercise DDL/session invalidation. Join and index tests must
+assert that access path and join order do not change on cache hits while ranges
+do.
+
+Aggregation tests must compare Rust and Go `EXPLAIN` operator families and
+task boundaries for one-row and multi-row SUM, COUNT, AVG, MIN/MAX, grouped,
+distinct, and ordered aggregate cases. No test may assert an implementation
+special case that Go does not expose.
+
+Scheduler tests must prove that more than one worker executes when Go would
+parallelize, that concurrency 1/1 remains serial, cancellation terminates all
+workers, panic/error propagation is deterministic, memory limits still cancel
+or spill, and results equal the serial path bit-for-bit where SQL semantics
+require it. A microbenchmark must show that 100-row execution no longer needs
+the removed cutoff to beat the serial path's fixed cost.
+
+Resource-group tests must change the group between consecutive statements and
+capture the protobuf context for point get, scan, coprocessor, lock resolution,
+pessimistic lock, prewrite, and commit. The second statement must carry only
+the second group. Retry attempts must preserve the initiating statement's
+group even if the session changes concurrently.
+
+Sort and coprocessor completion requires every inventory row to be resolved,
+all original Go behavioral fixtures or their native Rust equivalents to pass,
+and no package-level claim while missing rows remain.
+
+The final difftest corpus must introduce zero new divergences. Known baseline
+failures must be listed by exact test name and compared with the pre-change
+receipt; failure counts alone are insufficient.
+
+## Idempotence and Recovery
+
+Inventory generation and tests are safe to rerun. Physical plans are additive
+until the migration tests establish equivalence; keep the old direct executor
+builder callable internally during that period. If a new plan variant is not
+yet lowerable, return a typed refusal to the old planner rather than executing
+an incomplete plan. Do not silently fall back after a cache hit has begun,
+because statement snapshot and side-effect boundaries may already have moved.
+
+Do not use `git reset`, `git checkout --`, or broad deletion commands. The
+worktree contains the preceding performance work. If an experiment is
+rejected, remove only its exact newly added symbols/files with `apply_patch`
+and record the rejection here.
+
+Benchmark clusters and databases must use task-specific names. Stop processes,
+drop only those exact databases, and remove only the exact disposable TiUP
+directory after validation.
+
+## Artifacts and Notes
+
+The preceding phase's measurements and profiles are in
+`rust/docs/plan-cache-parity-execplan.md`. This plan owns all work after the
+user requested full parity for the five documented gaps.
+
+Expected permanent receipts are:
+
+    rust/docs/parity/sortexec-package-inventory.md
+    rust/docs/parity/copr-package-inventory.md
+
+Add concise command results and benchmark pair tables here as milestones
+complete. Do not paste full logs.
+
+## Interfaces and Dependencies
+
+The existing `tidb_planner::physical::PhysicalPlan` module should expose a
+serialized cached-plan rebuild and statement-local instantiation boundary
+similar to:
+
+    pub(crate) trait RebuildCachedPlan {
+        fn rebuild_in_place(&mut self, parameters: &[Datum], context: &RebuildContext)
+            -> Result<(), CacheRefusal>;
+    }
+
+    pub(crate) trait InstantiatePhysicalPlan {
+        fn instantiate(&self, context: &mut ExecutionContext)
+            -> Result<Box<dyn Executor>, DriverError>;
+    }
+
+Exact names may change to match package conventions, but the separation among
+cache-owned planning state, bound parameter values, and statement-local
+executor state is mandatory.
+
+The scheduler must use existing repository dependencies where possible. Do not
+add a new runtime or queue crate without first proving that the existing
+worker-pool/channel facilities cannot provide bounded, cancellation-aware,
+panic-safe task execution.
+
+Progress receipt (2026-08-28, typed statement-memory policy): Go
+`ResetContextOfStmt` reads `SessionVars.MemQuotaQuery`, `InitChunkSize`, and
+`MaxChunkSize` as typed fields and reads `vardef.OOMAction` /
+`EnableTmpStorageOnOOM` through process-wide typed state. Rust instead
+performed five registry lookups and conversions again while retaining each row
+result, after it had already read the same policy for the statement context.
+`StatementVarSnapshot` now owns the three session fields, and the published
+`ResolvedGlobals` image owns the two typed global fields. Both statement
+execution and result retention use those products; no statement path reparses
+the global memory policy. The regression test was observed failing before the
+implementation and passing afterward. The targeted memory-policy group passes
+11/11, and a release `tidb-server` build succeeds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`171f5b2a30` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 512.39 candidate, 512.08 baseline, and 474.96 Go. Read-write median TPS
+was 259.65 candidate, 221.33 baseline, and 219.46 Go; the read-write samples
+remain noisy, so that increase is not attributed to this change. All 18 legs
+reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session result_materialization_reuses_the_typed_statement_policy --lib
+    cargo test -q -p tidb-session tests_mem_quota:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, retained result authority): Go row and cursor
+results retain the memory tracker already installed on `SessionVars.StmtCtx`.
+Rust instead built a second statement tracker in
+`result_materialization_authority` after the executor returned, and the server
+prepared path could do so after restoring a `SET_VAR` overlay. The session now
+retains one `ResultMaterializationAuthority` at context construction; execution
+and result materialization share its exact tracker, and direct PointGet paths
+create one authority lazily because they deliberately do not build a complete
+statement context. The tracker-identity source regression was observed failing
+before the implementation. Identity, prepared-server post-restoration, and the
+complete memory-quota group pass afterward (12/12), and the release server
+build succeeds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`6440f1572e` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 510.80 candidate, 509.01 baseline, and 475.38 Go. Read-write median TPS
+was 254.15 candidate, 239.10 baseline, and 213.85 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session result_materialization_reuses_the_typed_statement_policy --lib
+    cargo test -q -p tidb-session prepared_server_result_retains_the_executing_statement_authority --lib
+    cargo test -q -p tidb-session result_materialization_retains_the_statement_context_tracker --lib
+    cargo test -q -p tidb-session tests_mem_quota:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, typed autocommit status): Go
+`SessionVars.IsAutocommit` reads `ServerStatusAutocommit`, maintained by the
+autocommit sysvar's typed `SetSession` hook. Rust instead resolved the registry,
+cloned the stored string, and compared it on transaction, prepared-cache, and
+wire-status hot paths; its process-state renderer also advertised autocommit
+unconditionally. `SessionVars` now keeps the same typed fact in lockstep with
+ordinary SET, statement-scoped restoration, and inherited GLOBAL state. The
+source regression was observed failing before the implementation. The typed
+state regression and all 11 transaction-module tests pass afterward, and the
+release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`e7b3815802` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 511.63 candidate, 513.18 baseline, and 477.23 Go. Read-write median TPS
+was 243.67 candidate, 221.81 baseline, and 212.76 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session session_autocommit_uses_go_typed_status --lib
+    cargo test -q -p tidb-session process_status_uses_the_typed_autocommit_and_transaction_bits --lib
+    cargo test -q -p tidb-session autocommit_off_puts_a_statement_in_a_transaction --lib
+    cargo test -q -p tidb-session tests_core::transactions:: --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, stable prepared-environment generation): Go
+restores `StmtCtx.SetVarHintRestore` by ranging over the map; a nil/empty map
+performs no sysvar writes and invalidates no typed session state. Rust called
+`restore_system` after every statement and advanced `SessionVars.generation`
+unconditionally, so the prepared-plan environment cache rebuilt its session
+image on every execute despite no variable mutation. Empty restore now returns
+without mutation. The generation regression was observed failing 0-versus-1
+before the implementation and passing afterward; the higher-level regression
+also proves an ordinary statement preserves the exact environment `Arc`, while
+a real SET still replaces it. The release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`b6644bfdba` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 514.86 candidate, 512.59 baseline, and 474.77 Go. Read-write median TPS
+was 265.52 candidate, 244.34 baseline, and 215.88 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session empty_statement_restore_preserves_the_session_generation --lib
+    cargo test -q -p tidb-session unchanged_session_reuses_the_prepared_plan_cache_environment --lib
+    cargo build -q -p tidb-server --bin tidb-server --release
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, single cached historical-read admission): Go's
+`GetPlanFromPlanCache` preprocesses and admits a prepared plan before returning
+the execution plan; physical execution does not repeat string-backed snapshot
+and staleness checks. Rust's cached point-get and SELECT binders already used
+the shared prepared-plan environment admission, but their executors checked
+the two sysvars again, and cached DML had no equivalent bind-time gate. Cached
+DML now passes through the same environment admission, and all three cached
+executors trust that admission. The ordinary statement guard remains in place
+because this tier cannot answer historical reads without MVCC history. The DML
+admission regression and the cached-executor source regression were both
+observed failing before the implementation and passing afterward; the
+ordinary historical-read regression also passes. The release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`65e08aeeb7` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 512.79 candidate, 512.48 baseline, and 475.14 Go. Read-write median TPS
+was 258.72 candidate, 230.62 baseline, and 216.26 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session cached_dml_binding_refuses_a_pinned_historical_read --lib
+    cargo test -q -p tidb-session a_pinned_historical_read_is_refused_rather_than_answered_from_the_present --lib
+    cargo test -q -p tidb-server --test all cached_execution_trusts_the_shared_historical_read_admission
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, typed session SQL mode): Go maintains
+`SessionVars.SQLMode` as a bitset in the sql_mode sysvar's `SetSession` hook;
+its parser, statement context, prepared point decoder, and prepared-plan cache
+key all read that one authority. Rust kept only the normalized string, plus a
+separate generation-keyed scanner cache, and repeatedly split or uppercased the
+string for other consumers. `SessionVars` now maintains the existing
+Go-compatible `tidb_mysql::SqlMode` bitset across default construction,
+inherited GLOBAL state, ordinary SET, and statement-scoped restore. Parser and
+executor consumers project directly from it, the redundant scanner cache and
+string parsing are gone, and the obsolete ignored `TestSQLModeVar` parity-gap
+stub is removed. The source regression was observed failing before the typed
+field existed and passing afterward. The typed-state test also covers Go's
+case normalization, invalid-mode refusal without state drift, composite mode,
+restore, and inherited GLOBAL behavior. Targeted scanner, prepared-cache key,
+and environment-reuse tests pass; `tidb-vardef` passes 43/43 runnable tests;
+the complete `tidb-mysql` generated-source oracle passes 18/18 with the pinned
+Go 1.26.0 toolchain; and the release server builds. The complete SQL-mode
+scanner module remains 13/14 because the unchanged indexed-LIKE range test
+also fails at baseline `8366ff70bd`; equality, stored bytes, and the same LIKE
+semantics without that indexed range all pass, so this pre-existing planner
+defect is outside this typed-state change.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`f87395b719` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 508.97 candidate, 509.11 baseline, and 475.64 Go. Read-write median TPS
+was 245.41 candidate, 238.46 baseline, and 212.22 Go; those samples remain
+latency-noisy, so no read-write increase is attributed to this change. All 18
+legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session session_sql_mode_uses_go_typed_state --lib
+    cargo test -q -p tidb-session sql_mode_consumers_use_go_typed_session_state --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::the_ansi_composite_carries_its_scanner_flags_through --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::no_backslash_escapes_changes_like_default_escape_only_when_enabled --lib
+    cargo test -q -p tidb-session tests_sql_mode_scanner::no_unsigned_subtraction_changes_the_result_domain_and_value --lib
+    cargo test -q -p tidb-session unchanged_session_reuses_the_prepared_plan_cache_environment --lib
+    cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
+    cargo test -q -p tidb-vardef
+    env GOTOOLCHAIN=go1.26.0 cargo test -q -p tidb-mysql
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, lazy active-role rendering): Go keeps
+`SessionVars.ActiveRoles` as role identities and `builtinCurrentRoleSig`
+formats and sorts them only when `CURRENT_ROLE()` is evaluated. Rust instead
+rendered the role list while building every query and DML statement context;
+an authenticated session with no active role allocated `"NONE"` even when the
+statement never referenced the builtin. The session now owns one copy-on-write
+`Arc<Vec<Account>>`, statement contexts clone only that shared typed authority,
+and `Columns::current_role` renders it lazily. The old `current_role_text`
+implementation and `with_current_role` rendered-string seam are deleted. The
+source regression was observed failing before the implementation and passing
+afterward. All 14 role/grant module tests and the expression builtin test pass,
+including SET ROLE forms, default activation, transitive privilege checks,
+revoke/drop cleanup, SHOW GRANTS, and sorted output; the release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`f1c247b63e` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 511.50 candidate, 511.59 baseline, and 472.75 Go. Read-write median TPS
+was 260.94 candidate, 224.89 baseline, and 217.55 Go; those samples retain the
+same first-leg latency outlier, so no read-write increase is attributed to the
+change. All 18 legs reported zero ignored errors. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session current_role_is_rendered_only_when_the_builtin_reads_it --lib
+    cargo test -q -p tidb-session tests_grants::roles:: --lib
+    cargo test -q -p tidb-expr test_current_role --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, lazy statement clock): Go's
+`getStmtTimestamp` reads `@@timestamp`, takes the wall clock, resolves the zone
+offset, and stores `StmtNowTsCacheKey` only when a temporal expression asks for
+the statement instant. Rust performed all four operations while constructing
+every SELECT and DML context. The generation-keyed statement-variable image
+now retains the optional parsed timestamp, and `StmtContext` owns a shared
+`OnceLock` that computes the exact existing clock tuple on its first `now()`
+read. Cloned parallel-worker contexts share that cell, while callers that
+already own a fixed instant keep the explicit `with_clock` path. The source
+regression was observed failing before the implementation and passing
+afterward; the behavior regression proves the cell is initially empty,
+preserves the captured 654320955ns fraction, and initializes once across
+clones. Existing pinned/wall-clock `NOW` and `SYSDATE` tests, the zoned temporal
+comparison regression, and all 34 timestamp-dependent column-default tests
+pass; the release server builds.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`334827e7d1` and the same Go server over one TiKV/PD cluster. Read-only median
+TPS was 518.12 candidate, 518.11 baseline, and 470.35 Go. Read-write median TPS
+was 269.38 candidate, 230.76 baseline, and 217.57 Go; those samples retain the
+same warm first-candidate pattern, so no read-write increase is attributed to
+the change. All 18 legs reported zero ignored errors. Exact validation
+commands:
+
+    cd rust
+    cargo test -q -p tidb-executor lazy_statement_clock_initializes_once_across_clones --lib
+    cargo test -q -p tidb-session statement_clock_is_initialized_only_when_an_expression_reads_it --lib
+    cargo test -q -p tidb-session sysdate_is_now_uses_the_statement_clock --lib
+    cargo test -q -p tidb-session sysdate_reads_the_wall_clock_and_not_the_statement_timestamp --lib
+    cargo test -q -p tidb-session a_duration_beside_a_temporal_literal_lands_on_the_statement_date --lib
+    cargo test -q -p tidb-session tests_column_defaults:: --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, borrowed protocol sysvars): Go's per-command
+wait-timeout and charset reads copy string headers from `SessionVars.systems`,
+and its packet reader reads the typed `SessionVars.MaxAllowedPacket` field.
+Rust instead resolved the registry, cloned owned strings, and reparsed max
+packet size in both the wire and statement-context paths. `SessionVars` now
+offers a general `Cow`-backed value view that borrows session overrides and
+static defaults, while its max-packet field follows Go's `SetSession` hook
+across construction, inherited GLOBAL state, direct startup seeding, and
+statement restoration. The wire trait carries borrowed values, and both
+cluster and pipeline adapters have deleted their duplicate max-packet lookup.
+The source regression was observed failing before the implementation and
+passing afterward. Max-packet, SET NAMES/collation, server-library compile,
+and release-build checks pass.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`29f4c1b2ad` and the same Go server over one TiKV/PD cluster. Read-only mean
+TPS was 519.61 candidate, 508.66 baseline, and 473.71 Go; all three paired
+candidate legs were positive. Read-write mean TPS was 274.72 candidate,
+239.07 baseline, and 219.48 Go, but the candidate samples decayed from 330.58
+to 219.06 with run order, so no read-write increase is attributed to this
+change. All 18 legs reported zero ignored errors. The post-change profile at
+`/private/tmp/tidb-rust-oltp_read_only-borrowed-protocol-vars.sample.txt`
+contains no `get_system` or allocator descendants below wait timeout,
+result/input charset, or max packet reads; only the expected borrowed registry
+probes remain. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session protocol_hot_path_reads_retained_session_state --lib
+    cargo test -q -p tidb-session max_allowed_packet --lib
+    cargo test -q -p tidb-session set_names_reaches_literal_and_folded_expression_collations --lib
+    cargo test -q -p tidb-server --lib --no-run
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    PROFILE_ONLY=1 PROFILE_TAG=borrowed-protocol-vars EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, typed prepared-cache switch): Go keeps
+`SessionVars.EnablePreparedPlanCache` as a bool maintained by the
+`tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook. Rust instead
+looked up and cloned the normalized string during every cached DML/SELECT bind,
+and the retained PointGet reuse gate did not consult the setting at all.
+`SessionVars` now owns the typed bool across defaults, inherited GLOBAL state,
+ordinary SET, and statement-scoped restore. The old session string-lookup
+helper is deleted, and PointGet, DML, and SELECT all read the typed authority.
+The PointGet regression was observed failing before the implementation and
+passing afterward. Typed-state, disabled range, normal cache-hit, server test
+compile, and release-build checks pass.
+
+The interleaved one-thread sysbench run compared the exact candidate with
+`acde91234d` and the same Go server over one TiKV/PD cluster. Read-only mean
+TPS was 512.67 candidate, 514.26 baseline, and 472.01 Go, a -0.31% candidate
+delta within run noise. Read-write mean TPS was 278.21 candidate, 243.19
+baseline, and 219.70 Go; the candidate again decayed strongly with run order,
+so no read-write increase is attributed to this change. All 18 legs reported
+zero ignored errors. The post-change profile at
+`/private/tmp/tidb-rust-oltp_read_only-typed-prepared-cache.sample.txt`
+contains no `prepared_plan_cache_enabled`,
+`TIDB_ENABLE_PREP_PLAN_CACHE`, or `get_system` sample on the cached execution
+path. Exact validation commands:
+
+    cd rust
+    cargo test -q -p tidb-session disabling_the_cache_disables_retained_point_execution --lib
+    cargo test -q -p tidb-session prepared_plan_cache_switch_uses_go_typed_state --lib
+    cargo test -q -p tidb-session disabling_the_cache_disables_retained_range_execution --lib
+    cargo test -q -p tidb-session the_second_execute_of_a_cacheable_statement_reports_a_hit --lib
+    cargo test -q -p tidb-server --lib --no-run
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    PROFILE_ONLY=1 PROFILE_TAG=typed-prepared-cache EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, direct cached physical executor construction):
+Go's prepared-plan hit runs `RebuildPlan4CachedPlan` and hands the retained
+physical root directly to `executorBuilder.build`. Rust rebuilt the same
+physical tree but then converted it to an `AggregationDecision` and entered
+the complete AST planner/lowerer again. The new recursive constructor consumes
+stable table IDs and physical schemas, materializes current parameter values
+only in cloned executor expressions, and keeps markers on the retained tree
+for the next rebuild. It lowers table readers/scans, projections, selections,
+limits, sort/TopN, root HashAgg/StreamAgg, HashJoin/MergeJoin, TableDual, and
+NominalSort. The cached-decision bridge and its cached-only legacy planning
+branches are deleted. The cache no longer retains the logical tree or derives
+an executor receipt on every bind, and row-count fields that existed only to
+feed that receipt are gone.
+
+The focused regression first failed because one legacy AST planner visit was
+still observed and then passed with zero visits. The broad prepared-shape
+regression subsequently exposed two representation gaps: planner aggregate
+names use canonical `FIRSTROW`, and a cloned executor constant must detach its
+parameter/deferred marker after reading the rebuilt value. Both are fixed and
+the regression now passes for range/order, DISTINCT, scalar and grouped SUM,
+HashJoin, residual marker rebinding, and parameterized LIMIT. A second
+fail-before/pass-after regression covers both a covering IndexReader and an
+IndexLookUp double read across the initial plan and cache-hit rebind. A third
+fail-before/pass-after regression covers recursive UnionAll construction and
+MaxOneRow's second-row error. Index merge, Apply, Window, Lock, and DML SELECT
+children remain explicit constructor gaps; no fallback to the AST planner was
+added.
+
+The corrected interleaved one-thread sysbench comparison used distinct SHA-1
+artifacts for this candidate (`4a87d7bf...`) and the immediate pre-builder
+baseline (`81465432...`) over one TiKV/PD cluster. Read-only mean TPS was
+531.42 candidate, 519.22 baseline, and 470.65 Go: +2.35% over the Rust
+baseline and 1.129x Go. All three candidate read-only legs exceeded their
+paired baseline legs. Read-write mean TPS was 294.24 candidate, 252.03
+baseline, and 222.83 Go (1.320x Go), but candidate legs decayed from 338.09
+to 250.94 with run order, so the exact read-write increase is not attributed
+to this change. All 18 legs reported zero ignored errors. The corrected
+profile at
+`/private/tmp/tidb-rust-oltp_read_only-direct-physical-corrected.sample.txt`
+contains `physical_builder::run_cached_select` and no
+`run_select_with_cached_decision` or
+`run_select_traced_with_delivery_choice_inner` descendant below prepared
+SELECT execution.
+Exact WIP validation commands:
+
+    cd rust
+    cargo test -q -p tidb-executor cached_physical_plan_does_not_rerun_legacy_row_estimation --lib
+    cargo test -q -p tidb-executor prepared_select_plan_reuses_shape_and_rebinds_parameters --lib
+    cargo test -q -p tidb-executor cached_physical_index_readers_build_without_legacy_planner --lib
+    cargo test -q -p tidb-executor cached_physical_union_and_max_one_row_build_directly --lib
+    cargo build -q --release -p tidb-server --bin tidb-server
+    cd ..
+    git diff --check
+    OFF=44000 EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+    OFF=45000 PROFILE_ONLY=1 PROFILE_TAG=direct-physical-corrected PROFILE_WORKLOAD=oltp_read_only EXTRA_ARGS=--rand-type=uniform bash /private/tmp/tidb-alt-sysbench-20260827.sh
+
+Progress receipt (2026-08-28, wired bounded Selection): the bounded scripted
+read tier stored signed-BIGINT comparisons in a second
+`PhysicalSelectionPlan`, independently of the wired
+`physical::PhysicalSelection` used by the general planner and executor. The
+facade, its metadata-only constructors, and its artificial explain/pushdown
+contracts are deleted. `ReadOnlyScanPlan` now builds typed scalar expressions
+on the wired operator; TiKV DAG lowering dispatches those expressions to the
+existing builtin or predicate encoders, and staged-row evaluation recovers a
+bounded comparison only at that executor boundary. The logical-to-physical
+difftest now calls `ExhaustPhysicalPlans4LogicalSelection`.
+
+The regression in `/private/tmp/tidb-df85-selection-baseline` first failed to
+type-check because `ReadOnlyScanPlan::selection()` returned the facade and now
+passes with `&physical::PhysicalSelection`. This slice also repaired the
+`IndexTask`/`ScanReadTask` test equality compile regression exposed by the
+exact `df85dad86b` baseline after `PhysicalTableDualPlan` was removed. Exact
+WIP validation commands:
+
+    cd rust
+    cargo test -q -p tidb-planner bounded_read_uses_the_wired_physical_selection
+    cargo test -q -p tidb-planner --test all read_only_bigint_selection_source
+    cargo test -q -p tidb-planner --test all read_only_clustered_pk_range_source
+    cargo test -q -p tidb-planner --test all physical_bigint_selection_source
+    cargo test -q -p tidb-planner --test all read_only_scan_source
+    cargo test -q -p tidb-planner --test all cardinality_live_index_choice_source::source_datasource_index_task_rejects_unimplemented_go_path_forms
+    cargo test -q -p tidb-planner --test all tikv_table_read_task_runtime_source::unified_scan_task_preserves_existing_index_only_behavior
+    cargo test -q -p tidb-exec --test all tikv_selection_dag_lowering_source
+    cargo test -q -p tidb-exec a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics
+    cargo test -q -p difftest-planner-tests --test all
+    cargo check -q -p tidb-planner -p tidb-exec
+    cd ..
+    git diff --check
+
+Progress receipt (2026-08-28, false test-parity inventory removal): comparison
+with the pinned Go sources showed that Rust's ignored empty functions carried
+names and prose for real Go tests but executed no setup, assertion, planner, or
+executor behavior. Removed 1,399 such `#[test]` declarations from
+`tidb-executor`, including whole files when they contained no runnable or
+non-empty test. Mixed files retained every executable test. Removed their
+module registrations and the stale `pkg/executor.part1`–`part24`,
+`pkg/executor/internal`, `pkg/ddl.part8`, and `pkg/ddl.part9` testport claims;
+those partial-package receipts cannot establish the repository's required
+atomic Go-package parity. Missing Go behavior remains missing rather than
+being counted as a skipped Rust test. The audit leaves zero ignored tests with
+an empty body in `tidb-executor`; 59 ignored tests with non-empty bodies remain
+for separate behavioral comparison.
+
+The same pass removed stale comments that pointed at deleted gap modules and
+kept the explicit missing-capability statements beside the runnable subset.
+No production DDL behavior was changed. Exact WIP validation commands:
+
+    cd rust
+    cargo check -p tidb-executor --tests --message-format short
+    cd ..
+    jq empty rust/testport/MANIFEST.json
+    make lint
+    git diff --check
+
+Plan revision note (2026-08-27): created after the user confirmed the
+performance-preserving route to full Go parity across plan cache, aggregation,
+parallel execution, resource groups, sort, and coprocessor packages.
+
+Package receipt (2026-09-01, complete pinned `pkg/planner/funcdep`): Rust now
+derives functional dependencies bottom-up for DataSource, Selection,
+Projection, Join/Apply (including outer-join conditional edges), Aggregation,
+UnionAll, Expand, and pass-through logical operators. The `tidb-funcdep` graph
+gained every public source operation and metadata propagation path used by the
+pinned package.
+
+The complete six-artifact package inventory is recorded in
+`rust/testport/receipts/planner_funcdep.md`. Extraction preserves Go's
+statement-wide id allocation, the `tidb_enable_new_only_full_group_by_check`
+gate, and latest-index behavior for read-committed and locking reads. Parsed
+SQL tests cover the projection/aggregation, UnionAll, Join, and Apply source
+families. Logical-tree regressions cover DataSource keys, inner and outer
+joins, correlated Apply, NULL-rejected outer Apply, expression-id gating, and
+latest-index failure. Exact Ready validation commands:
+
+    GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/planner/funcdep
+    cd rust
+    cargo fmt --all -- --check
+    cargo test --locked -p tidb-funcdep -- --nocapture
+    cargo test --locked -p tidb-planner logical::functional_dependencies::tests:: -- --nocapture
+    cargo test --locked -p tidb-planner extract_fd_source -- --nocapture
+    cargo check --locked -p tidb-funcdep -p tidb-planner -p tidb-executor
+    cd ..
+    make lint
+    git diff --check

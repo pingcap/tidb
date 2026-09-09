@@ -1,0 +1,15 @@
+[package]
+name = "tidb-ddl-logutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl/logutil category and sampling loggers."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-log = { path = "../tidb-log" }
+tidb-util = { path = "../tidb-util" }

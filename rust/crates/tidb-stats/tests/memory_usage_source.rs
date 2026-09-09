@@ -58,3 +58,22 @@ fn source_memory_usage_defaults_to_zero() {
     assert_eq!(IndexMemUsage::default().tracking_mem_usage(), 0);
     assert_eq!(IndexMemUsage::default().total_memory_usage(), 0);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_memory_usage_returns_can_be_ignored() {
+    let column = ColumnMemUsage::default();
+    column.total_memory_usage();
+    column.item_id();
+    column.tracking_mem_usage();
+    column.hist_mem_usage();
+    column.topn_mem_usage();
+    column.cms_mem_usage();
+    let index = IndexMemUsage::default();
+    index.total_memory_usage();
+    index.item_id();
+    index.tracking_mem_usage();
+    index.hist_mem_usage();
+    index.topn_mem_usage();
+    index.cms_mem_usage();
+}

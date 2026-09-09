@@ -12,36 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalProjection metadata.
+//! Vectors for the wired PhysicalProjection operator.
 //!
 //! The Go anchor is `TestPushDownProjectionForMPP` at
 //! `pkg/planner/core/casetest/mpp/mpp_test.go:710`.
 
-use tidb_planner::physical_projection::PhysicalProjectionPlan;
+use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 
 #[test]
-fn mpp_projection_explain_preserves_expression_list_and_stream_count() {
-    let plan = PhysicalProjectionPlan::init("test.t.a, plus(test.t.b, 1)", 4, 8);
-    assert_eq!(plan.plan_type(), "Projection");
+fn projection_identity_and_stream_count_live_on_the_physical_tree() {
+    let mut base = BasePhysicalPlan::with_id(1, "Projection", 4);
+    base.tiflash_fine_grained_shuffle_stream_count = 8;
+    let plan = PhysicalPlan::Projection(PhysicalProjection {
+        base,
+        ..PhysicalProjection::default()
+    });
+    assert_eq!(plan.tp(), "Projection");
     assert_eq!(plan.query_block_offset(), 4);
+    assert_eq!(plan.base().tiflash_fine_grained_shuffle_stream_count, 8);
     assert_eq!(
-        plan.explain_info(),
-        "test.t.a, plus(test.t.b, 1), stream_count: 8"
-    );
-}
-
-#[test]
-fn non_mpp_projection_explain_has_no_stream_suffix() {
-    assert_eq!(
-        PhysicalProjectionPlan::init("test.t.a", 0, 0).explain_info(),
-        "test.t.a"
-    );
-}
-
-#[test]
-fn empty_expression_list_keeps_positive_stream_separator() {
-    assert_eq!(
-        PhysicalProjectionPlan::init("", 0, 1).explain_info(),
-        ", stream_count: 1"
+        plan.clone_plan()
+            .base()
+            .tiflash_fine_grained_shuffle_stream_count,
+        8
     );
 }

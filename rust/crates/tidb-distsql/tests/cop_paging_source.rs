@@ -21,8 +21,8 @@ use tidb_distsql::cop_paging::decode_tikv_unary_response;
 use tidb_distsql::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingState,
-    ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange,
-    ResponseChannelEvent,
+    DirectUnaryRuntimeConfig, ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology,
+    RequestKeyRange, ResponseChannelEvent,
 };
 use tidb_proto::{
     CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
@@ -149,6 +149,25 @@ fn response_read_bytes_matches_classic_and_next_generation_tables() {
             next_generation
         );
     }
+}
+
+#[test]
+fn paging_generation_defaults_to_the_source_kernel_type() {
+    // Go `pagingResponseReadBytes` reads the compile-time
+    // `clientgoconfig.NextGen` const (`config/nextgen_on.go` /
+    // `nextgen_off.go`). The production transport default must follow
+    // `tidb_config::kerneltype::is_next_gen()` rather than hardcoding the
+    // classic basis.
+    let expected = if tidb_config::kerneltype::is_next_gen() {
+        ReadEngineGeneration::NextGeneration
+    } else {
+        ReadEngineGeneration::Classic
+    };
+    assert_eq!(ReadEngineGeneration::from_kernel_type(), expected);
+    assert_eq!(
+        DirectUnaryRuntimeConfig::default().read_engine_generation,
+        expected
+    );
 }
 
 #[test]

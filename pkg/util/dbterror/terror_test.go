@@ -16,7 +16,13 @@ package dbterror
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -92,4 +98,36 @@ func TestErrorRedact(t *testing.T) {
 		err = class.NewStd(errno.ErrWriteConflict).GenWithStackByArgs(noSensitiveValue, noSensitiveValue, noSensitiveValue, sensitiveData)
 		checkErrMsg(t, isMarker, err, errno.MySQLErrName[errno.ErrWriteConflict].Raw, noSensitiveValue, noSensitiveValue, noSensitiveValue, questionMark)
 	}
+}
+
+func TestDDLPrototypeCatalogMatchesGoMaster(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	ddlFile := filepath.Join(filepath.Dir(testFile), "ddl_terror.go")
+	file, err := parser.ParseFile(token.NewFileSet(), ddlFile, nil, 0)
+	require.NoError(t, err)
+
+	var names []string
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			valueSpec := spec.(*ast.ValueSpec)
+			for _, name := range valueSpec.Names {
+				if strings.HasPrefix(name.Name, "Err") {
+					names = append(names, name.Name)
+				}
+			}
+		}
+	}
+
+	require.Len(t, names, 230)
+	require.Contains(t, names, "ErrTiFlashColumnarStorageCheckFailed")
+	require.Contains(t, names, "ErrTiFlashColumnarStorageNotEnabled")
+	require.Equal(t, ErrUnsupportedTiFlashOperationForSysOrMemTable.Code(), ErrTiFlashColumnarStorageCheckFailed.Code())
+	require.Equal(t, ErrUnsupportedTiFlashOperationForSysOrMemTable.Code(), ErrTiFlashColumnarStorageNotEnabled.Code())
+	require.Contains(t, ErrTiFlashColumnarStorageCheckFailed.FastGenByArgs("cluster-a").Error(), "cluster-a")
+	require.Contains(t, ErrTiFlashColumnarStorageNotEnabled.FastGenByArgs("cluster-b", "OFF").Error(), "cluster-b")
 }

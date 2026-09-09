@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Executable translations of all `pkg/util/sqlescape` benchmarks.
+//! `pkg/util/sqlescape` benchmarks.
 
 #![allow(non_snake_case)]
 

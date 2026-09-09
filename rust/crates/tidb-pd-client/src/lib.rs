@@ -22,9 +22,10 @@ pub use client::{
 pub use engine::{is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response};
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
-    EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatchStats, EtcdWatcher,
-    DDL_GLOBAL_SCHEMA_VERSION_KEY, ETCD_PUT_PATH, ETCD_RANGE_PATH, ETCD_WATCH_PATH,
-    PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
+    EtcdClient, EtcdCreateOrGet, EtcdError, EtcdKeyValue, EtcdLeaseSession, EtcdWatchEvent,
+    EtcdWatchResponse, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, ETCD_PUT_PATH,
+    ETCD_RANGE_PATH, ETCD_WATCH_PATH, KEY_OP_DEFAULT_RETRY_CNT, KEY_OP_DEFAULT_TIMEOUT,
+    KEY_OP_RETRY_INTERVAL, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
 };
 pub use model::{
     PdBucketStats, PdBuckets, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,

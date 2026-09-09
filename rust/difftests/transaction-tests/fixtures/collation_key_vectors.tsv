@@ -1,0 +1,84 @@
+binary	00	
+binary	01	61
+binary	02	41
+binary	03	6120
+binary	04	612020
+binary	05	6109
+binary	06	616263
+binary	07	414243
+binary	08	e4b8ade69687
+binary	09	61e4b8ad
+binary	10	c39f
+binary	11	efac80
+utf8mb4_bin	00	
+utf8mb4_bin	01	61
+utf8mb4_bin	02	41
+utf8mb4_bin	03	61
+utf8mb4_bin	04	61
+utf8mb4_bin	05	6109
+utf8mb4_bin	06	616263
+utf8mb4_bin	07	414243
+utf8mb4_bin	08	e4b8ade69687
+utf8mb4_bin	09	61e4b8ad
+utf8mb4_bin	10	c39f
+utf8mb4_bin	11	efac80
+ascii_bin	00	
+ascii_bin	01	61
+ascii_bin	02	41
+ascii_bin	03	61
+ascii_bin	04	61
+ascii_bin	05	6109
+ascii_bin	06	616263
+ascii_bin	07	414243
+ascii_bin	08	e4b8ade69687
+ascii_bin	09	61e4b8ad
+ascii_bin	10	c39f
+ascii_bin	11	efac80
+latin1_bin	00	
+latin1_bin	01	61
+latin1_bin	02	41
+latin1_bin	03	61
+latin1_bin	04	61
+latin1_bin	05	6109
+latin1_bin	06	616263
+latin1_bin	07	414243
+latin1_bin	08	e4b8ade69687
+latin1_bin	09	61e4b8ad
+latin1_bin	10	c39f
+latin1_bin	11	efac80
+utf8mb4_general_ci	00	
+utf8mb4_general_ci	01	0041
+utf8mb4_general_ci	02	0041
+utf8mb4_general_ci	03	0041
+utf8mb4_general_ci	04	0041
+utf8mb4_general_ci	05	00410009
+utf8mb4_general_ci	06	004100420043
+utf8mb4_general_ci	07	004100420043
+utf8mb4_general_ci	08	4e2d6587
+utf8mb4_general_ci	09	00414e2d
+utf8mb4_general_ci	10	0053
+utf8mb4_general_ci	11	fb00
+utf8mb4_unicode_ci	00	
+utf8mb4_unicode_ci	01	0e33
+utf8mb4_unicode_ci	02	0e33
+utf8mb4_unicode_ci	03	0e33
+utf8mb4_unicode_ci	04	0e33
+utf8mb4_unicode_ci	05	0e330201
+utf8mb4_unicode_ci	06	0e330e4a0e60
+utf8mb4_unicode_ci	07	0e330e4a0e60
+utf8mb4_unicode_ci	08	fb40ce2dfb40e587
+utf8mb4_unicode_ci	09	0e33fb40ce2d
+utf8mb4_unicode_ci	10	0fea0fea
+utf8mb4_unicode_ci	11	0eb90eb9
+utf8mb4_0900_bin	00	
+utf8mb4_0900_bin	01	61
+utf8mb4_0900_bin	02	41
+utf8mb4_0900_bin	03	6120
+utf8mb4_0900_bin	04	612020
+utf8mb4_0900_bin	05	6109
+utf8mb4_0900_bin	06	616263
+utf8mb4_0900_bin	07	414243
+utf8mb4_0900_bin	08	e4b8ade69687
+utf8mb4_0900_bin	09	61e4b8ad
+utf8mb4_0900_bin	10	c39f
+utf8mb4_0900_bin	11	efac80

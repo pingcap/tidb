@@ -134,9 +134,15 @@ fn count_over_primary() -> PushdownPartialAggregate {
     let mut output_type = FieldType::new(FieldTypeCode::LongLong);
     output_type.set_flen(21);
     output_type.set_decimal(0);
-    PushdownPartialAggregate::Count {
-        input_offset: Some(0),
-        output_type,
+    let mut input = tidb_expr::column::Column::new(1, output_type.clone());
+    input.index = 0;
+    PushdownPartialAggregate::Global {
+        functions: vec![tidb_executor::remote_scan::PushdownAggregateFunction {
+            kind: tidb_executor::remote_scan::PushdownAggregateKind::Count,
+            input: Some(tidb_expr::expression::Expression::Column(input)),
+            output_type,
+        }],
+        streamed: false,
     }
 }
 
@@ -216,6 +222,7 @@ fn a_stored_primary_index_yields_the_same_ids() {
         prefix_lengths: vec![UNSPECIFIED_LENGTH],
         visible: true,
         global: false,
+        global_index_version: 0,
         clustered_primary: true,
     }, true);
 

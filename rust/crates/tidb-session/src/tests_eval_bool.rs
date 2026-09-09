@@ -50,10 +50,12 @@ use crate::*;
 /// The ids a query returns, sorted, so an assertion does not depend on scan
 /// order.
 fn ids(session: &mut Session, sql: &str) -> Vec<String> {
-    let mut rows: Vec<String> = row_text(session.run(sql))
-        .into_iter()
-        .map(|row| row.join("|"))
-        .collect();
+    let mut rows: Vec<String> = row_text(Ok(session
+        .run(sql)
+        .unwrap_or_else(|error| panic!("{sql} failed: {error:?}"))))
+    .into_iter()
+    .map(|row| row.join("|"))
+    .collect();
     rows.sort();
     rows
 }
@@ -240,6 +242,21 @@ fn eval_bool_matches_tidb_per_eval_type() {
     for case in CASES {
         assert_eq!(ids(&mut session, case.sql), case.tidb, "{}", case.sql);
     }
+}
+
+/// `istrue_with_null` is the planner's keep-NULL wrapper for a predicate.
+/// `NOT` must invert numeric-prefix truthiness without turning a NULL source
+/// into either boolean value.
+#[test]
+fn not_string_column_preserves_truthiness_and_null() {
+    let mut session = fixture();
+    assert_eq!(
+        ids(
+            &mut session,
+            "SELECT id, NOT v FROM s1 WHERE id IN (1,2,14)",
+        ),
+        ["14|NULL", "1|0", "2|1"]
+    );
 }
 
 /// A BIT column in a boolean context is converted from its binary literal to

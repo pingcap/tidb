@@ -62,6 +62,12 @@ pub trait PdCapability: Clone {
     /// The current GC safe point — the floor below which no read may start.
     fn gc_safe_point(&self) -> Result<u64, String>;
 
+    /// TiKV client addresses currently reported as usable by the store
+    /// directory. `DATA_LOCK_WAITS` asks every one independently.
+    fn store_addresses(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
     /// PD's client address, which is also where it serves its HTTP API.
     ///
     /// Placement rules live behind that HTTP API and nowhere else: Go reaches
@@ -93,6 +99,12 @@ impl PdCapability for PdClient {
     fn gc_safe_point(&self) -> Result<u64, String> {
         self.get_gc_state(None)
             .map(|state| state.gc_safe_point)
+            .map_err(|error| error.to_string())
+    }
+
+    fn store_addresses(&self) -> Result<Vec<String>, String> {
+        self.all_stores()
+            .map(|stores| stores.into_iter().map(|store| store.address).collect())
             .map_err(|error| error.to_string())
     }
 }

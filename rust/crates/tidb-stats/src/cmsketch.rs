@@ -222,7 +222,6 @@ impl CmsSketch {
     /// `new` follows Go's constructor contract: zero-sized geometries and a
     /// width of one can be allocated, although operations that divide or take
     /// a remainder by the width retain the source's caller preconditions.
-    #[must_use]
     pub fn new(depth: u32, width: u32) -> Self {
         Self::try_new(depth, width).expect("invalid CMSketch dimensions")
     }
@@ -276,7 +275,6 @@ impl CmsSketch {
     }
 
     /// Returns the source's approximate memory size for the counter arena.
-    #[must_use]
     pub fn memory_usage(&self) -> u64 {
         (self.depth as u64)
             .saturating_mul(self.width as u64)
@@ -349,7 +347,6 @@ impl CmsSketch {
     }
 
     /// Queries an encoded value through the source count/noise boundary.
-    #[must_use]
     pub fn query_bytes(&self, bytes: &[u8]) -> u64 {
         self.query_bytes_with_failpoint(bytes, None)
     }
@@ -406,7 +403,6 @@ impl CmsSketch {
     /// Queries TopN first and falls back to the sketch when no TopN entry
     /// matches.  This is the byte-level replacement for Go's `QueryValue`
     /// after the caller has performed Datum encoding.
-    #[must_use]
     pub fn query_with_topn(&self, topn: Option<&TopN>, bytes: &[u8]) -> u64 {
         topn.and_then(|topn| topn.query_bytes(bytes))
             .unwrap_or_else(|| self.query_bytes(bytes))
@@ -735,14 +731,12 @@ impl TopN {
 
     /// Number of entries (the source calls this `Num` because Histogram owns
     /// the conventional `Len` name).
-    #[must_use]
     pub fn num(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns a source-shaped debug representation without requiring Datum
     /// decoding at this boundary.
-    #[must_use]
     pub fn display_string(&self) -> String {
         let entries = self
             .resolved_entries()
@@ -804,13 +798,11 @@ impl TopN {
     }
 
     /// Returns the half-open interval count for encoded bytes `[left, right)`.
-    #[must_use]
     pub fn between_count(&self, left: &[u8], right: &[u8]) -> u64 {
         topn_between_count(Some(self), left, right)
     }
 
     /// Returns the first index whose encoded value is not less than `encoded`.
-    #[must_use]
     pub fn lower_bound(&self, encoded: &[u8]) -> usize {
         self.lower_bound_with_match(encoded).0
     }
@@ -828,19 +820,16 @@ impl TopN {
         }
         (
             left,
-            left < self.entries.len()
-                && self.with_resolved_bytes(left, |bytes| bytes == encoded),
+            left < self.entries.len() && self.with_resolved_bytes(left, |bytes| bytes == encoded),
         )
     }
 
     /// Returns the sum of all TopN counts.
-    #[must_use]
     pub fn total_count(&self) -> u64 {
         topn_total_count(Some(self))
     }
 
     /// Returns the smallest TopN count, or zero for an empty list.
-    #[must_use]
     pub fn min_count(&self) -> u64 {
         topn_min_count(Some(self))
     }
@@ -890,7 +879,6 @@ impl TopN {
     }
 
     /// Returns the source's approximate TopN memory footprint.
-    #[must_use]
     pub fn memory_usage(&self) -> u64 {
         32_u64.saturating_add(
             self.entries
@@ -914,7 +902,6 @@ impl TopN {
 
     /// Equality follows Go's TopN contract: two empty lists compare equal,
     /// otherwise both encoded order and counts must match.
-    #[must_use]
     pub fn equal(&self, other: Option<&TopN>) -> bool {
         let Some(other) = other else {
             return self.entries.is_empty();
@@ -962,9 +949,7 @@ impl TopN {
     /// for ownership-returning callers such as `entry_bytes` and cloning.
     fn with_resolved_bytes<R>(&self, index: usize, f: impl FnOnce(&[u8]) -> R) -> R {
         if let Some(shared) = self.shared_encoded[index].as_ref() {
-            let bytes = shared
-                .read()
-                .expect("shared TopN bytes lock poisoned");
+            let bytes = shared.read().expect("shared TopN bytes lock poisoned");
             f(&bytes)
         } else {
             f(&self.entries[index].encoded)
@@ -1033,14 +1018,12 @@ pub fn find_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
 
 /// Go `(*TopN).LowerBound`, retaining both the insertion index and match bit.
 /// A nil receiver returns `(0, false)`.
-#[must_use]
 pub fn topn_lower_bound(topn: Option<&TopN>, encoded: &[u8]) -> (usize, bool) {
     topn.map_or((0, false), |topn| topn.lower_bound_with_match(encoded))
 }
 
 /// Go `(*TopN).BetweenCount` for the half-open interval `[left, right)`,
 /// including nil receivers and unsigned wrapping addition.
-#[must_use]
 pub fn topn_between_count(topn: Option<&TopN>, left: &[u8], right: &[u8]) -> u64 {
     let Some(topn) = topn else {
         return 0;
@@ -1056,7 +1039,6 @@ pub fn topn_between_count(topn: Option<&TopN>, left: &[u8], right: &[u8]) -> u64
 
 /// Go `(*TopN).TotalCount`, including nil and empty receivers. The first
 /// nonempty call initializes the source-compatible once-cache.
-#[must_use]
 pub fn topn_total_count(topn: Option<&TopN>) -> u64 {
     let Some(topn) = topn else {
         return 0;
@@ -1069,7 +1051,6 @@ pub fn topn_total_count(topn: Option<&TopN>) -> u64 {
 
 /// Go `(*TopN).MinCount`, including nil and empty receivers. The first
 /// nonempty call shares the same once-cache as [`topn_total_count`].
-#[must_use]
 pub fn topn_min_count(topn: Option<&TopN>) -> u64 {
     let Some(topn) = topn else {
         return 0;
@@ -1081,7 +1062,6 @@ pub fn topn_min_count(topn: Option<&TopN>) -> u64 {
 }
 
 /// Go `(*TopN).String`, including the nil receiver result.
-#[must_use]
 pub fn topn_display_string(topn: Option<&TopN>) -> String {
     topn.map_or_else(|| "EmptyTopN".to_owned(), TopN::display_string)
 }
@@ -1115,7 +1095,7 @@ pub fn query_value_with_encoder<E>(
 }
 
 /// Native typed Go `QueryValue` using the requested session time zone.
-pub fn query_value<TZ: chrono::TimeZone>(
+pub fn query_value<TZ: chrono::TimeZone + 'static>(
     cms: Option<&CmsSketch>,
     topn: Option<&TopN>,
     value: &Datum,
@@ -1127,7 +1107,6 @@ pub fn query_value<TZ: chrono::TimeZone>(
 }
 
 /// Orders TopN metadata by count descending and encoded bytes ascending.
-#[must_use]
 pub fn topn_meta_compare(left: &TopNEntry, right: &TopNEntry) -> Ordering {
     right
         .count
@@ -1141,7 +1120,6 @@ pub fn sort_topn_meta(entries: &mut [TopNEntry]) {
 }
 
 /// Splits ranked metadata into a byte-sorted TopN and ranked remainder.
-#[must_use]
 pub fn get_merged_topn_from_sorted_slice(
     mut sorted: Vec<TopNEntry>,
     n: u32,
@@ -1161,7 +1139,6 @@ pub fn get_merged_topn_from_sorted_slice(
 }
 
 /// Returns true when every input TopN is empty (including a missing TopN).
-#[must_use]
 pub fn check_empty_topns(topns: &[Option<&TopN>]) -> bool {
     topns
         .iter()
@@ -1169,7 +1146,6 @@ pub fn check_empty_topns(topns: &[Option<&TopN>]) -> bool {
 }
 
 /// Merges equal encoded values from multiple TopN lists and keeps the top `n`.
-#[must_use]
 pub fn merge_topn(topns: &[Option<&TopN>], n: u32) -> (Option<TopN>, Vec<TopNEntry>) {
     if check_empty_topns(topns) {
         return (None, Vec::new());
@@ -1508,7 +1484,6 @@ fn sketch_from_rows(
 /// allocated empty value, and uses Go 1.25.10 `slices.SortFunc` ordering.
 /// The first row fixes width; shorter rows zero-fill, a longer row panics, and
 /// total count is reset to the sum of each row in turn.
-#[must_use]
 pub fn cmsketch_and_topn_from_proto(
     proto: Option<&CmsSketchProto>,
 ) -> (Option<CmsSketch>, Option<TopN>) {

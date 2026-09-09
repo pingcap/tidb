@@ -18,7 +18,7 @@ use std::io;
 
 use tidb_ast::{BinaryOp, Op, RestoreCtx, RestoreFlags, UnaryOp};
 
-const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
+const SOURCE_ROWS: [(Op, &str, &str, bool); 31] = [
     (Op::LogicAnd, "and", "AND", true),
     (Op::LeftShift, "leftshift", "<<", false),
     (Op::RightShift, "rightshift", ">>", false),
@@ -50,12 +50,12 @@ const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
     (Op::IsNull, "isnull", "IS NULL", true),
     (Op::IsTruth, "istrue", "IS TRUE", true),
     (Op::IsFalsity, "isfalse", "IS FALSE", true),
-    (Op::Binary, "binary", "BINARY", true),
 ];
 
 #[test]
 fn every_source_value_name_literal_and_keyword_bit_is_exact() {
-    assert_eq!(Op::ALL, SOURCE_ROWS.map(|row| row.0));
+    assert_eq!(Op::ALL.len(), 31);
+    assert_eq!(Op::ALL.as_slice(), SOURCE_ROWS.map(|row| row.0).as_slice());
 
     for (index, (op, name, literal, is_keyword)) in SOURCE_ROWS.into_iter().enumerate() {
         assert_eq!(usize::from(op.value()), index + 1);
@@ -99,10 +99,7 @@ impl io::Write for ErrorWriter {
 #[test]
 fn format_reports_writer_errors() {
     assert_eq!(
-        Op::LogicAnd
-            .format(&mut ErrorWriter)
-            .unwrap_err()
-            .kind(),
+        Op::LogicAnd.format(&mut ErrorWriter).unwrap_err().kind(),
         io::ErrorKind::Other
     );
 }
@@ -192,4 +189,17 @@ fn expression_operator_adapters_delegate_to_the_opcode_authority() {
     }
 
     assert_eq!(UnaryOp::NotKeyword.canonical_literal(), "NOT ");
+}
+
+// Go permits callers to discard all operator helper results. Keep the Rust
+// owner from adding a diagnostic-only contract at this package boundary.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let op = Op::Plus;
+
+    op.value();
+    op.name();
+    op.literal();
+    op.is_keyword();
 }

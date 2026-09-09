@@ -209,6 +209,18 @@ fn test_parse_hint() {
         ],
     );
     assert_hints(
+        "HYPO_INDEX(@qb1 t, idx, c1, c2) SWAP_JOIN_INPUTS(t1) NO_SWAP_JOIN_INPUTS(t2) INDEX_JOIN(t3) INDEX_HASH_JOIN(t4) INDEX_MERGE_JOIN(t5)",
+        false,
+        &[
+            "HYPO_INDEX|tables|qb1|t,idx,c1,c2",
+            "SWAP_JOIN_INPUTS|tables||t1",
+            "NO_SWAP_JOIN_INPUTS|tables||t2",
+            "INDEX_JOIN|tables||t3",
+            "INDEX_HASH_JOIN|tables||t4",
+            "INDEX_MERGE_JOIN|tables||t5",
+        ],
+    );
+    assert_hints(
         "USE_INDEX_MERGE(@qb1 tbl1 x, y, z) IGNORE_INDEX(tbl2@qb2) USE_INDEX(tbl3 PRIMARY) FORCE_INDEX(tbl4@qb3 c1) INDEX_LOOKUP_PUSHDOWN(tbl5@qb6 c3)",
         false,
         &[
@@ -266,6 +278,14 @@ fn test_parse_hint() {
         ],
     );
     assert_hints(
+        "READ_FROM_STORAGE(TIKV[a], UNKNOWN[b])",
+        false,
+        &["READ_FROM_STORAGE|storage||TIKV[a]"],
+    );
+    for input in ["NO_DECORRELATE", "SEMI_JOIN_REWRITE", "USE_PLAN_CACHE"] {
+        assert_errors(input, &["Optimizer hint syntax error at line 1 "]);
+    }
+    assert_hints(
         "WRITE_SLOW_LOG, WRITE_SLOW_LOG",
         false,
         &["WRITE_SLOW_LOG|nullary|", "WRITE_SLOW_LOG|nullary|"],
@@ -319,6 +339,23 @@ fn test_parse_hint() {
         &["LEADING|leading||(a,b),(c,d)"],
     );
     assert_hints("LEADING(x,(y,z),w)", false, &["LEADING|leading||x,(y,z),w"]);
+}
+
+#[test]
+fn test_max_optimizer_hint_parentheses_depth() {
+    let input = format!(
+        "/*+LEADING({}t{})*/",
+        "(".repeat(10_001),
+        ")".repeat(10_001)
+    );
+    let result = parse_hint(&input, false, 1);
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("parentheses nesting depth exceeds maximum 10000")),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

@@ -40,6 +40,17 @@ func TestContext(t *testing.T) {
 	assert.Nil(t, v)
 }
 
+func TestGetDistSQLCtxQueryCopStoreLimiter(t *testing.T) {
+	ctx := NewContext()
+	ctx.GetSessionVars().QueryCopStoreLimit = 3
+	dctx := ctx.GetDistSQLCtx()
+	assert.NotNil(t, dctx.QueryCopStoreLimiter)
+	assert.Equal(t, 3, dctx.QueryCopStoreLimiter.Capacity())
+
+	ctx.GetSessionVars().QueryCopStoreLimit = 0
+	assert.Nil(t, ctx.GetDistSQLCtx().QueryCopStoreLimiter)
+}
+
 func BenchmarkNewContext(b *testing.B) {
 	b.ReportAllocs()
 	for range b.N {

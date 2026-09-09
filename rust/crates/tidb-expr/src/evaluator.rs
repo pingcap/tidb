@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
+use tidb_datatype::Datum;
 
 use crate::context::{Columns, EvalError};
 use crate::expression::Expression;
@@ -66,6 +67,166 @@ pub fn vectorizable(expressions: &[Expression]) -> bool {
     }
 
     !((nextval > 0 && (lastval > 0 || setval > 0)) || nextval > 1)
+}
+
+/// Go `expression.VecEvalBool`/`VectorizedFilterConsiderNull`.
+///
+/// The returned mask is indexed by the physical rows of `input`, just like
+/// Go's `selected` slice. The caller-supplied `selected` and `nulls` vectors
+/// are output buffers (their previous contents are discarded); the input
+/// chunk's selection vector is the only pre-existing selection. `nulls`
+/// records which surviving filter evaluations were SQL NULL, while NULL
+/// itself never remains selected.
+///
+/// The expression model does not yet expose Go's typed `VecEval*` trait. The
+/// vector evaluator nevertheless preserves the important vectorized contract:
+/// filters run filter-major, rejected rows are removed before the next filter,
+/// and direct column/constant expressions are materialized column-wise. A
+/// scalar-function node uses its row evaluator as the explicit fallback,
+/// without evaluating rows that an earlier filter already rejected.
+pub fn vectorized_filter_consider_null<C: Columns>(
+    ctx: &C,
+    vec_enabled: bool,
+    filters: &[Expression],
+    input: &Chunk,
+    mut selected: Vec<bool>,
+    mut nulls: Vec<bool>,
+) -> Result<(Vec<bool>, Vec<bool>), EvalError> {
+    // `Chunk::num_rows` is selection-aware in Rust. Go's VecEvalBool instead
+    // clears the input selection while evaluating and returns a mask sized to
+    // all physical rows, then reapplies the original selection. Derive that
+    // physical width without mutating the caller's chunk.
+    let original_sel = input.sel().map(ToOwned::to_owned);
+    let physical_rows = if original_sel.is_some() {
+        let mut unselected = input.clone();
+        unselected.set_sel(None);
+        unselected.num_rows()
+    } else {
+        input.num_rows()
+    };
+    selected.clear();
+    selected.resize(physical_rows, true);
+    nulls.clear();
+    nulls.resize(physical_rows, false);
+    if let Some(sel) = &original_sel {
+        let mut in_selection = vec![false; physical_rows];
+        for &physical in sel {
+            if physical < physical_rows {
+                in_selection[physical] = true;
+            }
+        }
+        for (physical, selected) in selected.iter_mut().enumerate() {
+            *selected = in_selection[physical];
+        }
+    }
+    if filters.is_empty() {
+        return Ok((selected, nulls));
+    }
+
+    // Go falls back to rowBasedFilter when vectorization is disabled or any
+    // filter is not vectorizable. Keep the same filter-major order and
+    // three-valued truth handling in that branch.
+    if !vec_enabled || !vectorizable(filters) {
+        let mut unselected = input.clone();
+        unselected.set_sel(None);
+        for filter in filters {
+            for row_index in 0..physical_rows {
+                if !selected[row_index] {
+                    continue;
+                }
+                let value = filter.eval(ctx, unselected.get_row(row_index))?;
+                let truth = crate::truthy_of(&value)?;
+                if truth.is_none() {
+                    nulls[row_index] = true;
+                }
+                selected[row_index] = truth == Some(true);
+            }
+        }
+        return Ok((selected, nulls));
+    }
+
+    // Preserve the physical row mapping while shrinking the working chunk's
+    // selection before each filter. This is the same operation Go performs by
+    // installing `input.Sel()` and letting each VecEval method inspect only
+    // the currently live rows.
+    for filter in filters {
+        let active: Vec<(usize, usize)> = selected
+            .iter()
+            .enumerate()
+            .filter_map(|(physical, is_selected)| (*is_selected).then_some((physical, physical)))
+            .collect();
+        if active.is_empty() {
+            break;
+        }
+        let mut working = input.clone();
+        working.set_sel(Some(active.iter().map(|(_, physical)| *physical).collect()));
+        let values = eval_vectorized_expression(ctx, filter, &working)?;
+        debug_assert_eq!(values.len(), active.len());
+        for ((physical, _), value) in active.into_iter().zip(values) {
+            let truth = crate::truthy_of(&value)?;
+            if truth.is_none() {
+                nulls[physical] = true;
+            }
+            selected[physical] = truth == Some(true);
+        }
+    }
+    Ok((selected, nulls))
+}
+
+/// Convenience form matching Go `VectorizedFilter` when the caller does not
+/// need the per-row NULL mask.
+pub fn vectorized_filter<C: Columns>(
+    ctx: &C,
+    vec_enabled: bool,
+    filters: &[Expression],
+    input: &Chunk,
+    selected: Vec<bool>,
+) -> Result<Vec<bool>, EvalError> {
+    vectorized_filter_consider_null(ctx, vec_enabled, filters, input, selected, Vec::new())
+        .map(|(selected, _)| selected)
+}
+
+/// Evaluates one expression over the working selection. Bare columns and
+/// constants avoid rebuilding a scalar-function argument tree; functions keep
+/// the scalar evaluator as the documented fallback until typed VecEval kernels
+/// are added to `tidb-expr`.
+fn eval_vectorized_expression<C: Columns>(
+    ctx: &C,
+    expression: &Expression,
+    input: &Chunk,
+) -> Result<Vec<Datum>, EvalError> {
+    match expression {
+        Expression::Column(column) => {
+            let field_type = column
+                .get_static_type()
+                .ok_or(EvalError::Unsupported("column has no field type"))?;
+            let column_index = usize::try_from(column.index)
+                .map_err(|_| EvalError::Unsupported("column has no resolved index"))?;
+            Ok((0..input.num_rows())
+                .map(|row| input.get_row(row).get_datum(column_index, field_type))
+                .collect())
+        }
+        // A deferred constant (the clock family) re-evaluates per row against
+        // the statement clock, matching Go's `Constant.Eval` over
+        // `DeferredExpr`; a plain constant repeats its build-time value.
+        Expression::Constant(constant) => {
+            if constant.deferred_expr.is_none() {
+                Ok(std::iter::repeat_with(|| constant.eval())
+                    .take(input.num_rows())
+                    .collect::<Result<Vec<_>, _>>()?)
+            } else {
+                (0..input.num_rows())
+                    .map(|row| expression.eval(ctx, input.get_row(row)))
+                    .collect()
+            }
+        }
+        Expression::CorrelatedColumn(column) => Ok(std::iter::repeat_with(|| Ok(column.eval()))
+            .take(input.num_rows())
+            .collect::<Result<Vec<_>, EvalError>>()?),
+        Expression::ScalarFunction(_) => (0..input.num_rows())
+            .map(|row| expression.eval(ctx, input.get_row(row)))
+            .collect(),
+    }
 }
 
 /// A failure from [`EvaluatorSuite::run`].
@@ -179,22 +340,7 @@ impl EvaluatorSuite {
         output: &mut Chunk,
     ) -> Result<(), EvaluatorError> {
         let rows = input.num_rows();
-        // TPC-H q17/q19's revenue expression — `mul(col, minus(const, col))`
-        // over DECIMAL input columns — is the single hottest per-row
-        // computation in the suite. The generic path rebuilds two `Decimal`s
-        // (heap storage) and walks signature dispatch for every row; the
-        // specialized form multiplies i128 coefficients in place.
         let program = &self.program;
-        if program.calculated.len() == 1
-            && decimal_mul_minus_const_column(
-                &program.calculated[0],
-                program.calculated_output_indexes[0],
-                input,
-                output,
-            )?
-        {
-            return Ok(());
-        }
         if program.vectorizable {
             for (output_index, expression) in program
                 .calculated_output_indexes
@@ -242,147 +388,13 @@ impl EvaluatorSuite {
     }
 }
 
-/// Recognizes `mul(col_a, minus(const_one, col_b))` over two DECIMAL input
-/// columns — TPC-H q17/q19's `l_extendedprice * (1 - l_discount)` — and
-/// evaluates it for the whole chunk with i128 coefficient arithmetic.
-/// Returns `Ok(None)` when the expression does not match the shape; the
-/// caller falls back to per-row evaluation.
-fn decimal_mul_minus_const_column(
-    expression: &Expression,
-    output_index: usize,
-    input: &mut Chunk,
-    output: &mut Chunk,
-) -> Result<bool, EvaluatorError> {
-    use tidb_datatype::{Decimal, FieldTypeCode};
-
-    let Expression::ScalarFunction(mul) = expression else {
-        return Ok(false);
-    };
-    if !mul.func_name.lowercase().eq_ignore_ascii_case("mul") || mul.args.len() != 2 {
-        return Ok(false);
-    }
-    // The two operands in either order: a DECIMAL column, and
-    // `minus(<const 1>, <DECIMAL column>)`.
-    let (column_side, minus_side) = (&mul.args[0], &mul.args[1]);
-    let resolve_pair = |a: &Expression, b: &Expression| -> Option<(usize, usize, i64)> {
-        let Expression::Column(a_col) = a else {
-            return None;
-        };
-        let a_index = usize::try_from(a_col.index).ok()?;
-        let a_decimal = a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
-        if !a_decimal {
-            return None;
-        }
-        let Expression::ScalarFunction(minus) = b else {
-            return None;
-        };
-        if !minus.func_name.lowercase().eq_ignore_ascii_case("minus") || minus.args.len() != 2 {
-            return None;
-        }
-        let one = match &minus.args[0] {
-            Expression::Constant(constant) => match constant.literal_value() {
-                Some(tidb_datatype::Datum::Int(value)) if *value == 1 => *value,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let Expression::Column(b_col) = &minus.args[1] else {
-            return None;
-        };
-        let b_index = usize::try_from(b_col.index).ok()?;
-        let b_decimal = b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
-        if !b_decimal {
-            return None;
-        }
-        Some((a_index, b_index, one))
-    };
-    let Some((a_index, b_index, _one)) =
-        resolve_pair(column_side, minus_side).or_else(|| resolve_pair(minus_side, column_side))
-    else {
-        return Ok(false);
-    };
-    if std::env::var("TIDB_DEBUG_FP").is_ok() {
-        eprintln!("[fp] shape matched a={a_index} b={b_index}");
-    }
-
-    // Read both columns as i128 coefficients with their scales. A NULL or an
-    // out-of-i128 value on either side falls back to the generic path.
-    let rows = input.num_rows();
-    let mut coefficients = Vec::with_capacity(rows);
-    let mut scale: Option<u32> = None;
-    for row_index in 0..rows {
-        let row = input.get_row(row_index);
-        // A child chunk whose columns hold fewer rows than the chunk reports
-        // (virtual or constant columns materialized lazily) cannot serve the
-        // typed read; fall back to the generic evaluator.
-        let a_col = input.column(a_index);
-        let b_col = input.column(b_index);
-        if a_col.rows() <= row_index || b_col.rows() <= row_index {
-            return Ok(false);
-        }
-        if row.is_null(a_index) || row.is_null(b_index) {
-            return Ok(false);
-        }
-        let Some((ca, sa)) = input.column(a_index).get_my_decimal_i128_scaled(row_index) else {
-            return Ok(false);
-        };
-        let Some((cb, sb)) = input.column(b_index).get_my_decimal_i128_scaled(row_index) else {
-            return Ok(false);
-        };
-        // (1 - discount): rescale the constant 1 into b's scale, then subtract.
-        let one_scaled = match 10i128.checked_pow(sb) {
-            Some(power) => power,
-            None => return Ok(false),
-        };
-        let numerator = one_scaled - cb;
-        // Multiply: coefficient product, scale sum.
-        let Some(product) = ca.checked_mul(numerator) else {
-            return Ok(false);
-        };
-        coefficients.push(product);
-        let combined = sa + sb;
-        match scale {
-            None => scale = Some(combined),
-            Some(existing) if existing != combined => return Ok(false),
-            _ => {}
-        }
-    }
-
-    let Some(result_scale) = scale else {
-        return Ok(false);
-    };
-    if std::env::var("TIDB_DEBUG_FP").is_ok() {
-        eprintln!(
-            "[fp] collecting done, rows={} scale={}",
-            coefficients.len(),
-            result_scale
-        );
-    }
-    for coefficient in coefficients {
-        // The result type's scale may differ from the natural one; building
-        // the Decimal at the natural scale lets the projection's cast (if
-        // any) settle the final form exactly as the generic path does.
-        let decimal = Decimal::from_scaled_i128(coefficient, result_scale);
-        match decimal.to_my_decimal() {
-            Ok(my_decimal) => output.append_my_decimal(output_index, &my_decimal),
-            // An unrepresentable value falls back to NULL exactly like the
-            // generic path's error-to-NULL handling for out-of-range results.
-            Err(_) => output.append_datum(output_index, &tidb_datatype::Datum::Null),
-        }
-    }
-    if std::env::var("TIDB_DEBUG_FP").is_ok() {
-        eprintln!("[fp] appended all cells");
-    }
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
 
     use super::*;
     use tidb_ast::CiString;
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, Decimal, FieldType, FieldTypeCode};
 
     use crate::column::Column;
     use crate::constant::{Constant, ParamMarker};
@@ -399,6 +411,12 @@ mod tests {
 
     fn input_column(index: i64) -> Expression {
         let mut column = Column::new(index + 1, long());
+        column.index = index;
+        Expression::Column(column)
+    }
+
+    fn decimal_column(index: i64, field_type: &FieldType) -> Expression {
+        let mut column = Column::new(index + 1, field_type.clone());
         column.index = index;
         Expression::Column(column)
     }
@@ -634,6 +652,45 @@ mod tests {
     }
 
     #[test]
+    fn vectorized_filter_preserves_selection_and_null_mask() {
+        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 5);
+        for value in [0, 1, 2, 3] {
+            input.append_int64(0, value);
+        }
+        input.append_null(0);
+        // Go's VectorizedFilter returns a physical-row mask while the input
+        // selection points at only the rows to evaluate. The NULL physical
+        // row is deliberately in the middle of this selection.
+        input.set_sel(Some(vec![3, 2, 1]));
+        let filter = scalar("gt", vec![input_column(0), int_const(1)]);
+        let (selected, nulls) = vectorized_filter_consider_null(
+            &NoColumns,
+            true,
+            &[filter],
+            &input,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(selected, vec![false, false, true, true, false]);
+        assert_eq!(nulls, vec![false, false, false, false, false]);
+
+        input.set_sel(Some(vec![3, 4, 1]));
+        let filter = scalar("gt", vec![input_column(0), int_const(1)]);
+        let (selected, nulls) = vectorized_filter_consider_null(
+            &NoColumns,
+            true,
+            &[filter],
+            &input,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(selected, vec![false, false, false, true, false]);
+        assert_eq!(nulls, vec![false, false, false, false, true]);
+    }
+
+    #[test]
     fn calculated_columns_finish_before_direct_owners_move() {
         let mut input = Chunk::new_with_capacity(&[long(), long()], 2);
         input.append_int64(0, 10);
@@ -705,5 +762,46 @@ mod tests {
         assert_eq!(output.get_row(0).get_int64(0), 9);
         assert!(input_before.same_identity(&input.column_handle(0)));
         assert!(!input_before.same_identity(&output.column_handle(0)));
+    }
+
+    #[test]
+    fn decimal_revenue_expression_uses_the_general_expression_evaluator() {
+        let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal.set_flen(15);
+        decimal.set_decimal(2);
+        let one = Expression::Constant(Constant::new(Datum::Int(1), long()));
+        let discount = decimal_column(1, &decimal);
+        let discounted_fraction = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("minus"),
+            decimal.clone(),
+            vec![one, discount],
+        ));
+        let revenue = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("mul"),
+            decimal.clone(),
+            vec![decimal_column(0, &decimal), discounted_fraction],
+        ));
+        let suite = EvaluatorSuite::new(vec![revenue], false);
+
+        let mut input = Chunk::new_with_capacity(&[decimal.clone(), decimal.clone()], 3);
+        for (price, discount) in [("100.00", "0.10"), ("12.50", "0.20")] {
+            input.append_datum(0, &Datum::Decimal(Decimal::from_literal(price)));
+            input.append_datum(1, &Datum::Decimal(Decimal::from_literal(discount)));
+        }
+        input.append_null(0);
+        input.append_datum(1, &Datum::Decimal(Decimal::from_literal("0.15")));
+        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&decimal), 3);
+
+        suite.run(&NoColumns, &mut input, &mut output).unwrap();
+
+        assert_eq!(
+            output.get_row(0).get_datum(0, &decimal),
+            Datum::Decimal(Decimal::from_literal("90.00"))
+        );
+        assert_eq!(
+            output.get_row(1).get_datum(0, &decimal),
+            Datum::Decimal(Decimal::from_literal("10.00"))
+        );
+        assert!(output.get_row(2).is_null(0));
     }
 }

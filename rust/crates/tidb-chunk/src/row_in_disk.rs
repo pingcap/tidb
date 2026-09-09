@@ -40,9 +40,10 @@
 
 use std::io;
 
-use tidb_util::disk::{self, SpillStorage};
+use tidb_util::disk;
 use tidb_util::layered_io::{ReadAt, ReadAtResult};
 use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS;
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;
@@ -239,6 +240,7 @@ impl DataInDiskByRows {
 
     /// Go `initDiskFile`.
     fn init_disk_file(&mut self) -> io::Result<()> {
+        disk::check_and_init_temp_dir()?;
         let label = self.disk_tracker.label();
         self.data_file.init_with_file_name(
             &self.storage,
@@ -591,7 +593,7 @@ mod tests {
 
     use crate::test_temp_storage::isolated_storage;
     use std::sync::Arc;
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage};
 
     /// Go generator case `mixed`.
     fn mixed_case() -> (Vec<FieldType>, Vec<Chunk>) {

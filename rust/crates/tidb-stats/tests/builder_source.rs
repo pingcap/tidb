@@ -31,6 +31,18 @@ use tidb_stats::builder::{
 };
 use tidb_util::memory::{Tracker, TRACK_MEM_WHEN_EXCEEDS};
 
+#[deny(unused_must_use)]
+#[test]
+fn go_builder_returns_may_be_ignored_like_go() {
+    tidb_stats::sorted_builder::SortedHistogramBuilder::new(1, 1, 2);
+
+    let sorted = tidb_stats::sorted_builder::SortedHistogramBuilder::new(1, 1, 2);
+    sorted.histogram();
+
+    SequentialRangeChecker::from_ranges(&[]);
+    build_column(1, &SampleCollector::default(), 0);
+}
+
 /// An integer sample, encoded the way an order-preserving key encoder would:
 /// sign-flipped big-endian, so byte order is numeric order.
 fn int_of(value: &Datum) -> i64 {

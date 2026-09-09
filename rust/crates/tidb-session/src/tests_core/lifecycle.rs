@@ -70,10 +70,10 @@ fn server_spill_authority_reaches_every_statement_context() {
         std::process::id()
     ));
     let storage = Arc::new(
-        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+        tidb_util::spill_storage::SpillStorage::open(tidb_util::spill_storage::SpillStorageSpec {
             path: path.clone(),
             quota_bytes: -1,
-            encryption: tidb_util::disk::SpillEncryptionMethod::Aes128Ctr,
+            encryption: tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr,
         })
         .unwrap(),
     );
@@ -88,13 +88,34 @@ fn server_spill_authority_reaches_every_statement_context() {
         assert_eq!(inherited.path(), path);
         assert_eq!(
             inherited.encryption(),
-            tidb_util::disk::SpillEncryptionMethod::Aes128Ctr
+            tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr
         );
     }
 
     drop(session);
     drop(storage);
     std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn long_data_uses_live_query_quota_and_releases_session_bytes() {
+    let mut session = Session::new();
+    session.set_connection_id(42);
+    session.run("SET @@tidb_mem_quota_query = 1024").unwrap();
+
+    assert!(session.try_consume_long_data(600));
+    assert_eq!(session.session_memory_bytes_consumed(), 600);
+    assert!(
+        !session.try_consume_long_data(424),
+        "reaching the quota is refused"
+    );
+    assert_eq!(session.session_memory_bytes_consumed(), 600);
+
+    session.release_long_data(600);
+    assert_eq!(session.session_memory_bytes_consumed(), 0);
+    assert!(session.try_consume_long_data(1023));
+    session.release_long_data(1023);
+    assert_eq!(session.session_memory_bytes_consumed(), 0);
 }
 
 #[test]
@@ -185,6 +206,8 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
     let mut session = Session::new();
     for (name, value) in [
         ("tidb_executor_concurrency", "13"),
+        ("tidb_hashagg_partial_concurrency", "-1"),
+        ("tidb_hashagg_final_concurrency", "7"),
         ("tidb_hash_join_concurrency", "-1"),
         ("tidb_projection_concurrency", "-1"),
         ("tidb_index_lookup_join_concurrency", "7"),
@@ -199,11 +222,12 @@ fn optimizer_cost_variables_reach_the_statement_snapshot() {
 
     let ctx = session.statement_context(false);
     let env = ctx.optimizer_cost_env();
-    assert_eq!(ctx.hash_join_concurrency(), 13.0);
+    assert_eq!(env.session.hash_join_concurrency, 13.0);
     assert_eq!(env.session.projection_concurrency, 13.0);
     assert_eq!(env.session.index_lookup_join_concurrency, 7.0);
     assert_eq!(env.session.distsql_scan_concurrency, 19.0);
     assert_eq!(env.session.index_join_batch_size, 123.0);
+    assert_eq!(ctx.hashagg_concurrency(), (13, 7));
     assert_eq!(env.cost_factors.hash_join, 2.5);
     assert_eq!(env.cost_factors.merge_join, 0.5);
     assert_eq!(env.cost_factors.sort, 3.25);
@@ -225,6 +249,31 @@ fn advanced_join_reorder_switch_reaches_every_statement_context() {
         .run("SET @@tidb_opt_enable_advanced_join_reorder = ON")
         .unwrap();
     assert!(session.statement_context(false).advanced_join_reorder());
+}
+
+#[test]
+fn either_plan_replayer_capture_switch_enables_statement_statistics_capture() {
+    let mut session = Session::new();
+    assert!(session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
+
+    session
+        .run("SET @@tidb_enable_plan_replayer_capture = OFF")
+        .unwrap();
+    assert!(!session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
+
+    session
+        .run("SET GLOBAL tidb_enable_historical_stats = ON")
+        .unwrap();
+    session
+        .run("SET @@tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap();
+    assert!(session
+        .statement_context(false)
+        .plan_replayer_capture_enabled());
 }
 
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.

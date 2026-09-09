@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `FROM` and `JOIN`: the half of the SELECT spine batch 6a left as a `Todo`
-//! arm.
+//! `FROM` and `JOIN`: the half of the SELECT spine batch 6a completed as typed
+//! logical operators.
 //!
 //! Go sources, by symbol:
 //!
@@ -73,14 +73,9 @@
 //!
 //! # Boundaries, by exact Go symbol
 //!
-//! * `hint.PlanHints` / `hint.HintedTable`'s query-block matching.
-//!   [`JoinHints`] is the narrowing: a table alias to the
-//!   [`join_hint_flags`] bits hinted for it. Go additionally matches on the
-//!   hint's `SelectOffset`, so a hint written in one query block cannot reach
-//!   another; there is no `QBHintHandler` in this workspace to supply those
-//!   offsets, so [`JoinHints`] matches on the alias alone. That is WIDER than
-//!   Go, and is why [`extract_table_alias`] still reproduces Go's
-//!   conflicting-name rejection exactly — it is the only narrowing left.
+//! * `hint.PlanHints` / `hint.HintedTable`'s query-block matching is retained
+//!   for the SELECT builder's preorder offsets and `sel_N` names. View-path
+//!   hint resolution remains owned by `BuildDataSourceFromView`, as in Go.
 //! * `coreusage.ExtractCorColumnsBySchema4LogicalPlan`. Present, as
 //!   [`crate::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan`];
 //!   used unchanged.
@@ -137,7 +132,9 @@
 //!   The depth counter's only other reader is the `ErrViewNoExplain`
 //!   privilege arm, itself a boundary above.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tidb_ast::{Join, JoinNode, JoinType, QueryStmt};
 use tidb_datatype::{
@@ -227,8 +224,7 @@ pub mod join_hint_flags {
     pub const RIGHT_AS_HJ_PROBE: u32 = 1 << 24;
 }
 
-/// Go `hint.HintedTable`, narrowed to the identity
-/// [`extract_table_alias`] produces and [`JoinHints`] matches on.
+/// Go `hint.HintedTable` identity used by join hints.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HintedTable {
     /// Go `HintedTable.DBName.L`, empty when the plan's names carry none.
@@ -237,21 +233,101 @@ pub struct HintedTable {
     pub table_name: String,
 }
 
-/// Go `hint.PlanHints`' join half, narrowed; see this module's boundaries for
-/// the query-block matching that is NOT reproduced.
+/// Go `hint.PlanHints`' join half for the current query block.
 #[derive(Clone, Debug, Default)]
 pub struct JoinHints {
     /// Table alias (lowercase, `db.table` when the hint is qualified and
     /// `table` otherwise) to the [`join_hint_flags`] bits hinted for it.
     pub tables: BTreeMap<String, u32>,
+    /// Go `PlanHints.LeadingList`, retaining the nested AST order.
+    pub leading: Option<Vec<tidb_ast::LeadingElement>>,
+    pub(crate) canonical: Option<Rc<RefCell<tidb_hint::PlanHints>>>,
+    pub(crate) select_offset: i32,
 }
 
 impl JoinHints {
+    /// Adapts the canonical Go `PlanHints` join fields to the preference bits
+    /// consumed by `LogicalJoin`.
+    #[must_use]
+    pub fn from_plan_hints(
+        canonical: Rc<RefCell<tidb_hint::PlanHints>>,
+        select_offset: i32,
+    ) -> Self {
+        let plan = canonical.borrow();
+        let mut hints = Self::default();
+        for (tables, flag) in [
+            (&plan.index_join.inlj_tables, join_hint_flags::INLJ),
+            (&plan.index_join.inlhj_tables, join_hint_flags::INLHJ),
+            (&plan.index_join.inlmj_tables, join_hint_flags::INLMJ),
+            (&plan.hash_join, join_hint_flags::HASH_JOIN),
+            (&plan.hash_join_build, join_hint_flags::HJ_BUILD),
+            (&plan.hash_join_probe, join_hint_flags::HJ_PROBE),
+            (&plan.no_hash_join, join_hint_flags::NO_HASH_JOIN),
+            (&plan.sort_merge_join, join_hint_flags::MERGE_JOIN),
+            (&plan.no_merge_join, join_hint_flags::NO_MERGE_JOIN),
+            (
+                &plan.no_index_join.inlj_tables,
+                join_hint_flags::NO_INDEX_JOIN,
+            ),
+            (
+                &plan.no_index_join.inlhj_tables,
+                join_hint_flags::NO_INDEX_HASH_JOIN,
+            ),
+            (
+                &plan.no_index_join.inlmj_tables,
+                join_hint_flags::NO_INDEX_MERGE_JOIN,
+            ),
+            (&plan.broadcast_join, join_hint_flags::BC_JOIN),
+            (&plan.shuffle_join, join_hint_flags::SHUFFLE_JOIN),
+        ] {
+            for table in tables
+                .iter()
+                .filter(|table| table.select_offset == select_offset)
+            {
+                hints.hint_table(&table.database_name, &table.table_name, flag);
+            }
+        }
+        hints.leading = plan.leading_list.clone();
+        drop(plan);
+        hints.canonical = Some(canonical);
+        hints.select_offset = select_offset;
+        hints
+    }
+
     /// Go `PlanHints.IfPreferXxx(alias)` for whichever bit `flag` is: the
     /// alias carries the hint, matched qualified-first then bare.
     #[must_use]
     pub fn prefers(&self, alias: Option<&HintedTable>, flag: u32) -> bool {
         let Some(alias) = alias else { return false };
+        if let Some(canonical) = &self.canonical {
+            let table = tidb_hint::HintedTable {
+                database_name: alias.db_name.clone(),
+                table_name: alias.table_name.clone(),
+                select_offset: self.select_offset,
+                ..tidb_hint::HintedTable::default()
+            };
+            let tables = [Some(&table)];
+            let mut canonical = canonical.borrow_mut();
+            return match flag {
+                join_hint_flags::INLJ => canonical.prefer_index_join(&tables),
+                join_hint_flags::INLHJ => canonical.prefer_index_hash_join(&tables),
+                join_hint_flags::INLMJ => canonical.prefer_index_merge_join(&tables),
+                join_hint_flags::HJ_BUILD => canonical.prefer_hash_join_build(&tables),
+                join_hint_flags::HJ_PROBE => canonical.prefer_hash_join_probe(&tables),
+                join_hint_flags::HASH_JOIN => canonical.prefer_hash_join(&tables),
+                join_hint_flags::NO_HASH_JOIN => canonical.prefer_no_hash_join(&tables),
+                join_hint_flags::MERGE_JOIN => canonical.prefer_merge_join(&tables),
+                join_hint_flags::NO_MERGE_JOIN => canonical.prefer_no_merge_join(&tables),
+                join_hint_flags::NO_INDEX_JOIN => canonical.prefer_no_index_join(&tables),
+                join_hint_flags::NO_INDEX_HASH_JOIN => canonical.prefer_no_index_hash_join(&tables),
+                join_hint_flags::NO_INDEX_MERGE_JOIN => {
+                    canonical.prefer_no_index_merge_join(&tables)
+                }
+                join_hint_flags::BC_JOIN => canonical.prefer_broadcast_join(&tables),
+                join_hint_flags::SHUFFLE_JOIN => canonical.prefer_shuffle_join(&tables),
+                _ => false,
+            };
+        }
         let qualified = format!("{}.{}", alias.db_name, alias.table_name);
         let bits = self
             .tables
@@ -265,9 +341,13 @@ impl JoinHints {
     /// Records `flags` for an (optionally qualified) table alias.
     pub fn hint_table(&mut self, db_name: &str, table_name: &str, flags: u32) {
         let key = if db_name.is_empty() {
-            table_name.to_lowercase()
+            tidb_mysql::to_lowercase(table_name)
         } else {
-            format!("{}.{}", db_name.to_lowercase(), table_name.to_lowercase())
+            format!(
+                "{}.{}",
+                tidb_mysql::to_lowercase(db_name),
+                tidb_mysql::to_lowercase(table_name)
+            )
         };
         *self.tables.entry(key).or_insert(0) |= flags;
     }
@@ -318,7 +398,7 @@ pub fn extract_table_alias(names: &[FieldName]) -> Option<HintedTable> {
 /// children have moved by then, so the names arrive as parameters.
 pub fn set_preferred_join_type_and_order(
     join: &mut LogicalJoin,
-    hints: &JoinHints,
+    hints: &Rc<JoinHints>,
     left_names: &[FieldName],
     right_names: &[FieldName],
 ) {
@@ -367,20 +447,55 @@ pub fn set_preferred_join_type_and_order(
             join.right_prefer_join_type |= hinted;
         }
     }
+    if let Some(leading) = &hints.leading {
+        let mut tables = Vec::new();
+        collect_leading_tables(leading, &mut tables);
+        join.prefer_join_order = [lhs.as_ref(), rhs.as_ref()].iter().all(|alias| {
+            alias.is_some_and(|alias| {
+                tables.iter().any(|table| {
+                    table.name.eq_ignore_ascii_case(&alias.table_name)
+                        && table
+                            .db_name
+                            .as_deref()
+                            .is_none_or(|db| db == "*" || db.eq_ignore_ascii_case(&alias.db_name))
+                })
+            })
+        });
+        if join.prefer_join_order {
+            if let Some(canonical) = &hints.canonical {
+                let aliases = [lhs.as_ref(), rhs.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .map(|alias| tidb_hint::HintedTable {
+                        database_name: alias.db_name.clone(),
+                        table_name: alias.table_name.clone(),
+                        select_offset: hints.select_offset,
+                        ..tidb_hint::HintedTable::default()
+                    })
+                    .collect::<Vec<_>>();
+                let candidates = aliases.iter().map(Some).collect::<Vec<_>>();
+                let mut canonical = canonical.borrow_mut();
+                tidb_hint::PlanHints::match_table_names(
+                    &candidates,
+                    &mut canonical.leading_join_order,
+                );
+            }
+        }
+    }
+    if join.prefer_join_type != 0 || join.prefer_join_order {
+        join.hint_info = Some(Rc::clone(hints));
+    }
 }
 
-/// Go `setPreferredStoreType(ds, hintInfo)` (`:586`), over
-/// [`SourceTable::prefer_store_type`].
-///
-/// Go resolves `READ_FROM_STORAGE` against `ds.AllPossibleAccessPaths` and
-/// warns when no path of the hinted store type exists. 6a leaves that path
-/// list EMPTY on purpose (`buildDataSource`'s `getPossibleAccessPaths`
-/// boundary), so there is nothing here to check the hint against and the
-/// already-resolved value on the catalogue seam is what stands: the seam's
-/// implementor knows its own replicas. The warning arms are the boundary.
-pub fn set_preferred_store_type(plan: &mut LogicalPlan, prefer_store_type: i32) {
-    if let LogicalPlan::DataSource(ds) = plan {
-        ds.prefer_store_type = prefer_store_type;
+fn collect_leading_tables<'a>(
+    elements: &'a [tidb_ast::LeadingElement],
+    tables: &mut Vec<&'a tidb_ast::HintTable>,
+) {
+    for element in elements {
+        match element {
+            tidb_ast::LeadingElement::Table(table) => tables.push(table),
+            tidb_ast::LeadingElement::Group(group) => collect_leading_tables(group, tables),
+        }
     }
 }
 
@@ -517,17 +632,30 @@ pub fn is_table_alias_duplicate(
     // alias to collide. A nested `*ast.Join` is walked by the caller.
     let (key, display) = match node {
         JoinNode::Table(table_ref) => match table_ref.alias.as_deref() {
-            Some(alias) if !alias.is_empty() => ((String::new(), alias.to_lowercase()), alias),
+            Some(alias) if !alias.is_empty() => {
+                ((String::new(), tidb_mysql::to_lowercase(alias)), alias)
+            }
             _ => match table_ref.name.as_slice() {
                 // `newQualifiedTableAliasKey(Schema, Name)` when the reference
                 // is schema-qualified, `newTableAliasKey(Name)` otherwise.
-                [db, table] => ((db.to_lowercase(), table.to_lowercase()), table.as_str()),
-                [table] => ((String::new(), table.to_lowercase()), table.as_str()),
+                [db, table] => (
+                    (
+                        tidb_mysql::to_lowercase(db),
+                        tidb_mysql::to_lowercase(table),
+                    ),
+                    table.as_str(),
+                ),
+                [table] => (
+                    (String::new(), tidb_mysql::to_lowercase(table)),
+                    table.as_str(),
+                ),
                 _ => return Ok(()),
             },
         },
         JoinNode::Derived { alias, .. } => match alias.as_deref() {
-            Some(alias) if !alias.is_empty() => ((String::new(), alias.to_lowercase()), alias),
+            Some(alias) if !alias.is_empty() => {
+                ((String::new(), tidb_mysql::to_lowercase(alias)), alias)
+            }
             // Go's `tabName.L == ""` with a non-`TableName` source leaves the
             // key empty and `len(tabName.L) != 0` false, so nothing is
             // recorded and nothing can collide.
@@ -610,9 +738,6 @@ impl ViewBuildGuard {
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildTableRefs(ctx, from)` (`:420`).
     ///
-    /// The deferred `cte.recursiveRef = false` loop is a no-op narrowing; see
-    /// this module's narrowings.
-    ///
     /// # Errors
     ///
     /// Whatever the `FROM` clause's own build returns.
@@ -620,7 +745,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(join) = from else {
             return Ok(self.build_table_dual());
         };
-        self.build_join(join)
+        let result = self.build_join(join);
+        // Go resets this per query block. Multiple recursive SELECT blocks
+        // may each reference the CTE once; a second reference in one block
+        // is still rejected before this deferred reset runs.
+        for cte in &mut self.outer_ctes {
+            cte.recursive_ref = false;
+        }
+        result
     }
 
     /// Go `buildResultSetNode`'s `*ast.TableSource` arm over a derived table
@@ -654,6 +786,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let adopted = (self.lateral_outer_count > 0 && lateral)
             .then(|| std::mem::take(&mut self.lateral_outer_count));
 
+        let modified_ctes = self.prepare_cte_check_for_subquery();
         let built = match subquery {
             QueryStmt::Select(select) => {
                 // `:482` "b.optFlag |= rule.FlagConstantPropagation".
@@ -667,6 +800,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 self.build_set_opr(set_opr)
             }
         };
+        self.reset_cte_check_for_subquery(&modified_ctes);
 
         if let Some((saved_schemas, saved_names, saved_count)) = hidden {
             self.outer_schemas.extend(saved_schemas);
@@ -785,7 +919,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.outer_names.pop();
             self.lateral_outer_count -= 1;
         }
-        let right_plan = right_built?;
+        let mut right_plan = right_built?;
 
         // `:806` The apply decision, which is deliberately TIGHTER than the
         // push decision: only an immediately-LATERAL right operand, or a right
@@ -795,7 +929,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Some((schema, _)) => schema.clone(),
                 None => left_plan.schema().cloned().unwrap_or_default(),
             };
-            let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&right_plan, &outer_schema);
+            let cor_cols =
+                extract_cor_columns_by_schema_4_logical_plan(&mut right_plan, &outer_schema);
             if is_immediate_lateral_table_source(right_node) || !cor_cols.is_empty() {
                 return self.build_lateral_join(left_plan, right_plan, join_node);
             }
@@ -902,17 +1037,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )?;
         } else if let Some(on) = join_node.on.as_ref() {
             self.cur_clause = ClauseCode::On;
-            let (schema, names) = (
-                join_plan.base.base.schema().cloned().unwrap_or_default(),
-                join_plan.base.base.output_names().to_vec(),
-            );
             // boundary: Go's `b.rewrite(...)` may REPLACE the plan with an
             // apply when the ON clause holds a subquery, and rejects that with
             // "ON condition doesn't support subqueries yet" (`:923`).
             // [`PlanBuilder::rewrite_scalar`] is the subquery-free rewrite, so
             // a subquery surfaces as an unresolved-column error instead.
-            let on_expr =
-                self.rewrite_scalar(&Self::clause_scratch(on), &schema, &names, &BTreeMap::new())?;
+            let on_plan = LogicalPlan::Join(join_plan.clone());
+            let on_expr = self.rewrite_scalar_with_plan(
+                &Self::clause_scratch(on),
+                &on_plan,
+                &BTreeMap::new(),
+            )?;
             let on_condition = into_cnf_items(on_expr);
             // `:930` "Keep these expressions as a LogicalSelection upon the
             // inner join, in order to apply possible decorrelate
@@ -934,16 +1069,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)` (`:956`):
-    /// a `LATERAL` derived table is a `LogicalApply` with `InnerJoin`.
+    /// a `LATERAL` derived table is a `LogicalApply` with `InnerJoin` or
+    /// `LeftOuterJoin`.
     ///
     /// # Errors
     ///
-    /// `ErrInvalidLateralJoin` for `NATURAL`, `USING`, `LEFT JOIN` or
-    /// `RIGHT JOIN` beside `LATERAL`, or the `ON` clause's own error.
+    /// `ErrInvalidLateralJoin` for `NATURAL`, `USING`, or `RIGHT JOIN` beside
+    /// `LATERAL`, or the `ON` clause's own error.
     pub fn build_lateral_join(
         &mut self,
         left_plan: LogicalPlan,
-        right_plan: LogicalPlan,
+        mut right_plan: LogicalPlan,
         join_node: &Join,
     ) -> Result<LogicalPlan, PlanError> {
         // `:961` "NATURAL JOIN and USING clauses are not supported with
@@ -958,11 +1094,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 "Invalid LATERAL join: USING clause is not supported with LATERAL",
             ));
         }
-        match join_node.tp {
+        let join_type = match join_node.tp {
             JoinType::Left => {
-                return Err(PlanError::internal(
-                    "Invalid LATERAL join: LEFT JOIN is not supported with LATERAL",
-                ))
+                self.opt_flag |= flags::ELIMINATE_OUTER_JOIN | flags::OUTER_JOIN_TO_SEMI_JOIN;
+                LogicalJoinType::LeftOuter
             }
             JoinType::Right => {
                 return Err(PlanError::internal(
@@ -970,14 +1105,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ))
             }
             // Comma syntax and an explicit `INNER JOIN` are the same node.
-            JoinType::Cross => {}
-        }
+            JoinType::Cross => LogicalJoinType::Inner,
+        };
 
         let outer_schema = match find_join_full_schema(&left_plan) {
             Some((schema, _)) => schema.clone(),
             None => left_plan.schema().cloned().unwrap_or_default(),
         };
-        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&right_plan, &outer_schema);
+        let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut right_plan, &outer_schema);
 
         self.opt_flag |= flags::PREDICATE_PUSH_DOWN
             | flags::BUILD_KEY_INFO
@@ -991,7 +1126,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let right_full = find_join_full_schema(&right_plan)
             .map(|(schema, names)| (schema.clone(), names.to_vec()));
 
-        let mut apply = LogicalApply::new(self.base(LogicalApply::TYPE), LogicalJoinType::Inner);
+        let mut apply = LogicalApply::new(self.base(LogicalApply::TYPE), join_type);
         apply.cor_cols = cor_cols;
         // "Allow decorrelation; optimizer will decide if safe."
         apply.no_decorrelate = false;
@@ -999,7 +1134,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         apply.is_lateral = true;
         apply.join.base.set_children(vec![left_plan, right_plan]);
 
-        let schema = merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default();
+        let mut schema = merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default();
+        if join_type == LogicalJoinType::LeftOuter {
+            let schema_len = schema.len();
+            reset_not_null_flag(&mut schema, left_schema.len(), schema_len);
+        }
         apply.join.base.base.set_schema(Some(schema));
         // `:1017` The names are CLONED and the `DBName` is deliberately NOT
         // overridden: a real table inside the right subtree must keep its own
@@ -1010,14 +1149,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:1029` The same `FullSchema`/`FullNames` merge `buildJoin` does.
         // There is no RIGHT-join swap because `LATERAL` refuses `RIGHT JOIN`
-        // above, and no `ResetNotNullFlag` because `InnerJoin` loses no
-        // nullability.
+        // above. LEFT JOIN null-extends the inner side, so its FullSchema
+        // columns lose NOT NULL just like the visible schema above.
         let (l_full_schema, l_full_names) =
             left_full.unwrap_or_else(|| (left_schema.clone(), left_names.clone()));
         let (r_full_schema, r_full_names) =
             right_full.unwrap_or_else(|| (right_schema.clone(), right_names.clone()));
-        apply.join.full_schema =
-            Some(merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default());
+        let mut full_schema =
+            merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default();
+        if join_type == LogicalJoinType::LeftOuter {
+            let full_len = full_schema.len();
+            reset_not_null_flag(&mut full_schema, l_full_schema.len(), full_len);
+        }
+        apply.join.full_schema = Some(full_schema);
         apply.join.full_names = l_full_names
             .iter()
             .chain(r_full_names.iter())
@@ -1029,10 +1173,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         if let Some(on) = join_node.on.as_ref() {
             self.cur_clause = ClauseCode::On;
-            let schema = apply.join.base.base.schema().cloned().unwrap_or_default();
-            let names = apply.join.base.base.output_names().to_vec();
-            let on_expr =
-                self.rewrite_scalar(&Self::clause_scratch(on), &schema, &names, &BTreeMap::new())?;
+            let on_plan = LogicalPlan::Apply(apply.clone());
+            let on_expr = self.rewrite_scalar_with_plan(
+                &Self::clause_scratch(on),
+                &on_plan,
+                &BTreeMap::new(),
+            )?;
             let builder = RealFunctionBuilder::new(self.ctx);
             let opts = SubstituteOptions::new(&builder);
             apply.join.attach_on_conds(
@@ -1070,7 +1216,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut filter: BTreeMap<String, bool> = join
             .using
             .iter()
-            .map(|column| (column.to_lowercase(), true))
+            .map(|column| (tidb_mysql::to_lowercase(column), true))
             .collect();
         self.coalesce_common_columns(p, left, right, join.tp, Some(&mut filter))
     }
@@ -1353,6 +1499,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
             let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
             column.id = source_column.id;
+            // The result-field adapter falls back to a physical column's
+            // original name for `SELECT *`. Virtual tables have no stored
+            // table descriptor at executor-build time, so preserve the
+            // declared name on the scan column just as Go's `buildMemTable`
+            // does through its `ColumnInfo`.
+            column.orig_name.clone_from(&source_column.name);
             if table.pk_is_handle && source_column.ret_type.has_flag(FieldTypeFlags::PRI_KEY) {
                 handle_cols = Some(self.plan_handle_cols(std::slice::from_ref(&column), true));
             }
@@ -1407,7 +1559,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         db_name: &str,
         table_name: &str,
     ) -> Result<ViewBuildGuard, PlanError> {
-        let key: super::SchemaTableKey = (db_name.to_lowercase(), table_name.to_lowercase());
+        let key: super::SchemaTableKey = (
+            tidb_mysql::to_lowercase(db_name),
+            tidb_mysql::to_lowercase(table_name),
+        );
         // "If this view has already been on the building stack, it means this
         // view contains a recursive definition."
         if self.building_view_stack.contains(&key) {
@@ -1422,11 +1577,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `BuildDataSourceFromView(ctx, dbName, tableInfo, qbNameMap4View,
     /// viewHints)` (`:5509`).
     ///
-    /// Ported: the recursion guard, the view body's parse and build, the
-    /// CTE save/restore around it, the column-count check, and the projection
-    /// over the result. The two hint maps are the boundary — there is no
-    /// `QBHintHandler` to convert a view hint into a normal one — as are every
-    /// `visitInfo` and privilege line; see this module's boundaries.
+    /// Ported: the recursion guard, view-hint query-block conversion, the view
+    /// body's parse and build, the CTE save/restore around it, the column-count
+    /// check, and the projection over the result. Privilege collection remains
+    /// on the session/catalog boundary rather than this metadata-only builder.
     ///
     /// # Errors
     ///
@@ -1436,27 +1590,47 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &mut self,
         view: &SourceView,
     ) -> Result<LogicalPlan, PlanError> {
-        let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
-        let built = self.build_view_body(view);
-        guard.release(self);
-        built
+        self.build_data_source_from_view_with_hints(
+            view,
+            None,
+            tidb_hint::ViewHintContext::default(),
+        )
     }
 
-    fn build_view_body(&mut self, view: &SourceView) -> Result<LogicalPlan, PlanError> {
-        let statement = tidb_parser::parse(&view.select_sql)
+    pub(crate) fn build_data_source_from_view_with_hints(
+        &mut self,
+        view: &SourceView,
+        alias: Option<&str>,
+        inherited_hints: tidb_hint::ViewHintContext,
+    ) -> Result<LogicalPlan, PlanError> {
+        let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
+        let built = self.build_view_body(view, inherited_hints);
+        guard.release(self);
+        let mut plan = built?;
+        if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
+            let mut names = plan.output_names().to_vec();
+            for name in &mut names {
+                if !name.hidden {
+                    name.names.table = IdentifierMetadata::new(alias);
+                }
+            }
+            plan.base_mut().base.set_output_names(names);
+        }
+        Ok(plan)
+    }
+
+    fn build_view_body(
+        &mut self,
+        view: &SourceView,
+        inherited_hints: tidb_hint::ViewHintContext,
+    ) -> Result<LogicalPlan, PlanError> {
+        let mut statement = tidb_parser::parse(&view.select_sql)
             .map_err(|error| PlanError::internal(format!("{error:?}")))?;
+        let (view_hint_handler, view_hint_state) =
+            tidb_hint::QBHintHandler::for_view_body(&mut statement, inherited_hints);
         let tidb_ast::Stmt::Query(query) = statement else {
             return Err(PlanError::internal(format!(
                 "View '{}.{}' body is not a query",
-                view.db_name, view.view_name
-            )));
-        };
-        let QueryStmt::Select(select) = query.as_ref() else {
-            // A view body is a SELECT or a set operation; the latter is
-            // `buildSetOpr`, batch 6d.
-            return Err(PlanError::internal(format!(
-                "View '{}.{}' body is not a plain SELECT; buildSetOpr \
-                 (logical_plan_builder.go:2149) is a later batch",
                 view.db_name, view.view_name
             )));
         };
@@ -1465,10 +1639,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // save the CTEs after the views are established."
         let saved_ctes = std::mem::take(&mut self.outer_ctes);
         let saved_building_cte = std::mem::replace(&mut self.building_cte, false);
-        let built = self.build_select(select);
+        let outer_hint_handler = self.qb_hint_handler.replace(view_hint_handler);
+        let outer_hint_state = self.qb_hint_state.replace(view_hint_state);
+        let built = match query.as_ref() {
+            QueryStmt::Select(select) => self.build_select(select).map(|(plan, _)| plan),
+            QueryStmt::SetOpr(set_operation) => self.build_set_opr(set_operation),
+        };
+        self.flush_hint_build_warnings();
+        self.qb_hint_handler = outer_hint_handler;
+        self.qb_hint_state = outer_hint_state;
         self.outer_ctes = saved_ctes;
         self.building_cte = saved_building_cte;
-        let (plan, _) = built?;
+        let plan = built?;
 
         let (schema, names) = snapshot_schema_and_names(&plan);
         if view.columns.len() != schema.columns.len() {

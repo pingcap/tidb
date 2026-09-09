@@ -90,10 +90,9 @@ pub struct BootstrapEnvironment {
     /// Go's seed rows get theirs from the `INSERT` that writes them; this one
     /// is stated so a bootstrap plan stays a pure function of its inputs.
     pub current_timestamp: Time,
-    /// Go `Mutator.GetDDLTableVersion` as it stands *before* any TiDB has
-    /// created its DDL tables — this bootstrap creates none of them, so the
-    /// row states what the meta key says rather than what Go's own bootstrap
-    /// would have left behind.
+    /// Go `Mutator.GetDDLTableVersion` before `InitDDLTables` advances it.
+    /// The bootstrap planner creates every newer version group and records the
+    /// resulting version in both metadata and `mysql.tidb`, as Go does.
     pub ddl_table_version: i64,
 }
 
@@ -344,6 +343,7 @@ const GRANTED_PRIVILEGE_COLUMNS: &[&str] = &[
     "execute_priv",
     "create_view_priv",
     "show_view_priv",
+    "operate_view_priv",
     "create_routine_priv",
     "alter_routine_priv",
     "index_priv",
@@ -421,7 +421,23 @@ fn encode(error: RowEncodeError) -> BootstrapError {
 /// construction in range.
 #[must_use]
 pub fn utc_now_timestamp() -> Time {
-    let now = chrono::Utc::now();
+    calendar_time(chrono::Utc::now(), TimeType::Timestamp, 0)
+}
+
+/// The local wall clock as the `DATETIME(6)` used by historical statistics.
+///
+/// Go's payload writer formats `time.Now()` and its metadata writer evaluates
+/// `NOW(6)` in the internal system session's `SYSTEM` location.
+#[must_use]
+pub fn local_now_datetime6() -> Time {
+    calendar_time(chrono::Local::now(), TimeType::DateTime, 6)
+}
+
+fn calendar_time<Tz: chrono::TimeZone>(
+    now: chrono::DateTime<Tz>,
+    time_type: TimeType,
+    fsp: u8,
+) -> Time {
     Time::from_date_checked(
         now.year(),
         i32::try_from(now.month()).expect("a month fits in i32"),
@@ -429,9 +445,38 @@ pub fn utc_now_timestamp() -> Time {
         i32::try_from(now.hour()).expect("an hour fits in i32"),
         i32::try_from(now.minute()).expect("a minute fits in i32"),
         i32::try_from(now.second()).expect("a second fits in i32"),
-        0,
-        TimeType::Timestamp,
-        0,
+        if fsp == 0 {
+            0
+        } else {
+            i32::try_from(now.nanosecond() / 1_000).expect("microseconds fit in i32")
+        },
+        time_type,
+        i64::from(fsp),
     )
-    .expect("the current UTC calendar date is a valid timestamp")
+    .expect("the current wall-clock calendar date is a valid timestamp")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn historical_timestamp_retains_six_fractional_digits() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-30T12:34:56.654321Z")
+            .expect("fixed RFC3339 timestamp")
+            .with_timezone(&chrono::Utc);
+        let timestamp = calendar_time(now, TimeType::DateTime, 6);
+        assert_eq!(timestamp.core_time().microsecond(), 654_321);
+        assert_eq!(timestamp.fsp(), 6);
+
+        let second_precision = calendar_time(
+            chrono::DateTime::parse_from_rfc3339("2026-08-30T12:34:56.654321Z")
+                .expect("fixed RFC3339 timestamp")
+                .with_timezone(&chrono::Utc),
+            TimeType::Timestamp,
+            0,
+        );
+        assert_eq!(second_precision.core_time().microsecond(), 0);
+        assert_eq!(second_precision.fsp(), 0);
+    }
 }

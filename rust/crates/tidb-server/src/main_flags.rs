@@ -254,7 +254,7 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     }
     if let Some(port) = &flags.port {
         cfg.port = port
-            .parse::<u32>()
+            .parse::<usize>()
             .map_err(|_| format!("invalid port {port}"))?;
     }
     if let Some(cors) = &flags.cors {
@@ -275,7 +275,7 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
         cfg.lease = lease.clone();
     }
     if let Some(limit) = flags.token_limit {
-        cfg.token_limit = u32::try_from(limit).unwrap_or(0);
+        cfg.token_limit = usize::try_from(limit).unwrap_or(0);
     }
     if let Some(repair) = flags.repair_mode {
         cfg.repair_mode = repair;
@@ -318,14 +318,14 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     }
     if let Some(port) = &flags.status_port {
         cfg.status.status_port = port
-            .parse::<u32>()
+            .parse::<usize>()
             .map_err(|_| format!("invalid status port {port}"))?;
     }
     if let Some(addr) = &flags.metrics_addr {
         cfg.status.metrics_addr = addr.clone();
     }
     if let Some(interval) = flags.metrics_interval {
-        cfg.status.metrics_interval = u32::try_from(interval).unwrap_or(0);
+        cfg.status.metrics_interval = usize::try_from(interval).unwrap_or(0);
     }
 
     // PROXY protocol
@@ -333,7 +333,7 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
         cfg.proxy_protocol.networks = networks.clone();
     }
     if let Some(timeout) = flags.proxy_protocol_header_timeout {
-        cfg.proxy_protocol.header_timeout = u32::try_from(timeout).unwrap_or(0);
+        cfg.proxy_protocol.header_timeout = usize::try_from(timeout).unwrap_or(0);
     }
     if let Some(fallbackable) = flags.proxy_protocol_fallbackable {
         cfg.proxy_protocol.fallbackable = fallbackable;
@@ -370,10 +370,10 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
         cfg.standby.standby_mode = standby;
     }
     if let Some(timeout) = flags.activation_timeout {
-        cfg.standby.activation_timeout = u32::try_from(timeout).unwrap_or(0);
+        cfg.standby.activation_timeout = usize::try_from(timeout).unwrap_or(0);
     }
     if let Some(idle) = flags.max_idle_seconds {
-        cfg.standby.max_idle_seconds = u32::try_from(idle).unwrap_or(0);
+        cfg.standby.max_idle_seconds = usize::try_from(idle).unwrap_or(0);
     }
     if let Some(activate) = flags.keyspace_activate {
         cfg.keyspace_activate_mode = activate;

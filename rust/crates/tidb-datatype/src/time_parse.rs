@@ -18,8 +18,8 @@ use chrono::{FixedOffset, TimeZone};
 
 use crate::{
     check_fsp, core_time_from_datetime, get_frac_index, get_timezone, parse_frac, Converted,
-    CoreTime, FieldTypeCode, ScalarConversionError, ScalarConversionEvent, Time, TimeError,
-    TimeType, TimestampInterval,
+    CoreTime, FieldTypeCode, ScalarConversionError, ScalarConversionEvent, Time,
+    TimeConversionError, TimeError, TimeType, TimestampInterval,
 };
 
 /// Result metadata emitted while parsing a temporal literal.
@@ -29,6 +29,9 @@ pub struct ParsedTime {
     pub time: Time,
     /// Whether TiDB would append a truncation warning.
     pub truncated: bool,
+    /// Whether a TIMESTAMP wall clock fell in a DST gap and was adjusted to
+    /// Go's closest valid transition boundary.
+    pub dst_adjusted: bool,
 }
 
 /// Parsed `INTERVAL` value before it is applied to a date or duration.
@@ -565,13 +568,45 @@ pub fn parse_time<TZ: TimeZone>(
         return Ok(ParsedTime {
             time: Time::new(CoreTime::default(), kind, 0)?,
             truncated: false,
+            dst_adjusted: false,
         });
     }
     let fsp = check_fsp(fsp).map_err(TimeError::InvalidFsp)?;
-    let (core, truncated) = parse_datetime_core(input, fsp, is_float, timezone)?;
-    let time = Time::new(core, kind, fsp)?;
-    time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
-    Ok(ParsedTime { time, truncated })
+    let (core, truncated) = parse_datetime_core(
+        input,
+        fsp,
+        is_float,
+        allow_zero_in_date,
+        allow_invalid_date,
+        timezone,
+    )?;
+    let mut time = Time::new(core, kind, fsp)?;
+    let mut dst_adjusted = false;
+    match time.validate(allow_zero_in_date, allow_invalid_date, timezone) {
+        Ok(()) => {}
+        Err(TimeError::Conversion(TimeConversionError::NonexistentLocalTime))
+            if kind == TimeType::Timestamp =>
+        {
+            // Go's parseTime keeps the parsed value beside
+            // ErrTimestampInDSTTransition. `AdjustedGoTime` moves a gap to
+            // the first valid wall-clock instant after the transition; carry
+            // that value and an explicit bit so expression/write callers can
+            // apply the source warning policy without losing the value.
+            let adjusted = time
+                .core_time()
+                .adjusted_datetime(timezone)
+                .map_err(TimeError::Conversion)?;
+            time.set_core_time(core_time_from_datetime(adjusted));
+            time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+            dst_adjusted = true;
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(ParsedTime {
+        time,
+        truncated,
+        dst_adjusted,
+    })
 }
 
 /// Parses a DATETIME using the fractional precision present in the literal.
@@ -596,6 +631,8 @@ fn parse_datetime_core<TZ: TimeZone>(
     input: &str,
     fsp: i64,
     is_float: bool,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<(CoreTime, bool), TimeError> {
     let (mut parts, mut fraction, mut timezone_suffix, mut truncated) = split_datetime(input);
@@ -627,8 +664,15 @@ fn parse_datetime_core<TZ: TimeZone>(
             let number = parts[0]
                 .parse::<i64>()
                 .map_err(|_| TimeError::InvalidDate)?;
-            let numeric =
-                parse_time_from_num(number, TimeType::DateTime, fsp, true, false, timezone)?;
+            let numeric = parse_time_from_num(
+                number,
+                TimeType::DateTime,
+                fsp,
+                allow_zero_in_date,
+                allow_invalid_date,
+                true,
+                timezone,
+            )?;
             let core = numeric.time.core_time();
             fields = [
                 core.year(),
@@ -838,12 +882,16 @@ const fn adjust_two_digit_year(year: i32) -> i32 {
 }
 
 /// Parses TiDB's numeric datetime representation.
+///
+/// `ignore_zero_date_err` is Go `FlagIgnoreZeroDateErr`; the default statement
+/// context sets it, while strict/DDL contexts clear it under `NO_ZERO_DATE`.
 pub fn parse_time_from_num<TZ: TimeZone>(
     number: i64,
     kind: TimeType,
     fsp: i64,
     allow_zero_in_date: bool,
     allow_invalid_date: bool,
+    ignore_zero_date_err: bool,
     timezone: &TZ,
 ) -> Result<ParsedTime, TimeError> {
     parse_time_from_num_with_error(
@@ -852,6 +900,7 @@ pub fn parse_time_from_num<TZ: TimeZone>(
         fsp,
         allow_zero_in_date,
         allow_invalid_date,
+        ignore_zero_date_err,
         timezone,
     )
     .into_result()
@@ -863,15 +912,20 @@ fn parse_time_from_num_with_error<TZ: TimeZone>(
     fsp: i64,
     allow_zero_in_date: bool,
     allow_invalid_date: bool,
+    ignore_zero_date_err: bool,
     timezone: &TZ,
 ) -> TemporalOutcome<ParsedTime> {
     let fallback = ParsedTime {
         time: Time::new(CoreTime::default(), kind, 0)
             .expect("zero target time is a valid MySQL error-side value"),
         truncated: false,
+        dst_adjusted: false,
     };
     let result = (|| {
         if number == 0 {
+            if !ignore_zero_date_err {
+                return Err(TimeError::ZeroDate);
+            }
             return Ok(fallback);
         }
         let (normalized, _) = normalize_numeric_datetime(number)?;
@@ -879,10 +933,27 @@ fn parse_time_from_num_with_error<TZ: TimeZone>(
         let time = Time::from_date_checked(
             fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], 0, kind, fsp,
         )?;
-        time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+        let mut time = time;
+        let mut dst_adjusted = false;
+        match time.validate(allow_zero_in_date, allow_invalid_date, timezone) {
+            Ok(()) => {}
+            Err(TimeError::Conversion(TimeConversionError::NonexistentLocalTime))
+                if kind == TimeType::Timestamp =>
+            {
+                let adjusted = time
+                    .core_time()
+                    .adjusted_datetime(timezone)
+                    .map_err(TimeError::Conversion)?;
+                time.set_core_time(core_time_from_datetime(adjusted));
+                time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+                dst_adjusted = true;
+            }
+            Err(error) => return Err(error),
+        }
         Ok(ParsedTime {
             time,
             truncated: false,
+            dst_adjusted,
         })
     })();
     TemporalOutcome::from_result(result, fallback)
@@ -1111,6 +1182,40 @@ mod tests {
                 "parse_time({input}, {timezone})"
             );
         }
+    }
+
+    /// Go `parseTime` returns the adjusted TIMESTAMP value beside
+    /// `ErrTimestampInDSTTransition` when the input wall clock is in a spring
+    /// forward gap. The parser exposes the same value and an explicit marker
+    /// so expression/write callers can apply the source warning policy.
+    #[test]
+    fn timestamp_string_in_dst_gap_is_adjusted_with_marker() {
+        let parsed = parse_time(
+            "2018-03-11 02:00:16",
+            TimeType::Timestamp,
+            0,
+            false,
+            true,
+            false,
+            &chrono_tz::America::Los_Angeles,
+        )
+        .expect("Go keeps the adjusted timestamp beside the transition warning");
+        assert_eq!(parsed.time.to_string(), "2018-03-11 03:00:00");
+        assert!(!parsed.truncated);
+        assert!(parsed.dst_adjusted);
+
+        let packed = parse_time_from_num(
+            20180311020016,
+            TimeType::Timestamp,
+            0,
+            false,
+            true,
+            true,
+            &chrono_tz::America::Los_Angeles,
+        )
+        .expect("packed TIMESTAMP follows Go's DST adjustment path");
+        assert_eq!(packed.time.to_string(), "2018-03-11 03:00:00");
+        assert!(packed.dst_adjusted);
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestParseDateFormat`.
@@ -1838,8 +1943,15 @@ mod tests {
                 (TimeType::Timestamp, timestamp, "0000-00-00 00:00:00"),
                 (TimeType::Date, date, "0000-00-00"),
             ] {
-                let outcome =
-                    parse_time_from_num_with_error(input, kind, 0, false, false, &chrono_tz::UTC);
+                let outcome = parse_time_from_num_with_error(
+                    input,
+                    kind,
+                    0,
+                    false,
+                    false,
+                    true,
+                    &chrono_tz::UTC,
+                );
                 assert_eq!(
                     outcome.error.is_some(),
                     expected.is_none(),
@@ -1852,6 +1964,22 @@ mod tests {
                     "{input} {kind:?}"
                 );
             }
+        }
+    }
+
+    /// Go `pkg/types/time.go::ParseTimeFromNum` refuses an all-zero number
+    /// when `FlagIgnoreZeroDateErr` is clear, but keeps the zero value beside
+    /// that error. Expression callers pass the default flag and retain the
+    /// historical zero result.
+    #[test]
+    fn parse_time_from_num_zero_honors_zero_date_error_flag() {
+        for kind in [TimeType::Date, TimeType::DateTime, TimeType::Timestamp] {
+            let refused = parse_time_from_num(0, kind, 0, true, false, false, &chrono_tz::UTC);
+            assert_eq!(refused, Err(TimeError::ZeroDate), "{kind:?}");
+
+            let accepted = parse_time_from_num(0, kind, 0, true, false, true, &chrono_tz::UTC)
+                .expect("default statement flags ignore all-zero numeric dates");
+            assert!(accepted.time.is_zero(), "{kind:?}");
         }
     }
 
@@ -1898,6 +2026,33 @@ mod tests {
                 "{input}"
             );
         }
+    }
+
+    #[test]
+    fn float_string_numeric_path_preserves_allow_invalid_date() {
+        // Go's ParseTimeFromFloatString routes its numeric branch through
+        // ParseTimeFromNum, whose Check(ctx) honors ALLOW_INVALID_DATES.
+        assert!(parse_time(
+            "20200231",
+            TimeType::DateTime,
+            0,
+            true,
+            true,
+            false,
+            &chrono_tz::UTC,
+        )
+        .is_err());
+        let relaxed = parse_time(
+            "20200231",
+            TimeType::DateTime,
+            0,
+            true,
+            true,
+            true,
+            &chrono_tz::UTC,
+        )
+        .unwrap();
+        assert_eq!(relaxed.time.to_string(), "2020-02-31 00:00:00");
     }
 
     #[test]

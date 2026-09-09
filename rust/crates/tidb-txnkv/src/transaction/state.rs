@@ -37,6 +37,14 @@ pub enum TransactionCause {
         /// TiKV conflict diagnostic.
         detail: String,
     },
+    /// TiKV confirmed that shared-lock ownership was lost during an upgrade.
+    /// The key is rendered under the source redaction policy at classification.
+    SharedLockLost {
+        /// Transaction start timestamp.
+        start_ts: u64,
+        /// Redacted encoded key text used by the source error message.
+        key: String,
+    },
     /// A lock prevented a determinate mutation result.
     Lock {
         /// Exact encoded locked key.
@@ -87,6 +95,10 @@ impl std::fmt::Display for TransactionCause {
             | Self::Transport { detail }
             | Self::Timestamp { detail }
             | Self::InvalidResponse { detail } => formatter.write_str(detail),
+            Self::SharedLockLost { start_ts, key } => write!(
+                formatter,
+                "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS={start_ts}, key={key}"
+            ),
         }
     }
 }
@@ -119,17 +131,6 @@ pub struct CleanupBatchFailure {
     pub publication: Option<TransactionBatchPublication>,
     /// Typed cleanup failure.
     pub cause: TransactionCause,
-}
-
-/// One real snapshot Get publication retained by a zero-write completion.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SnapshotReadReceipt {
-    /// Encoded key read at the transaction start timestamp.
-    pub key: Vec<u8>,
-    /// Exact region epoch used for the successful Get.
-    pub region: RegionVerId,
-    /// Physical BatchCommands publication.
-    pub publication: TransactionBatchPublication,
 }
 
 /// Transaction command represented by one causal physical attempt receipt.
@@ -363,8 +364,6 @@ pub struct ReadOnlyTransaction {
     pub start_ts: u64,
     /// No Prewrite, Commit, or BatchRollback was published.
     pub state: OptimisticTransactionState,
-    /// Every real snapshot Get performed before the zero-write finish.
-    pub snapshot_reads: Vec<SnapshotReadReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

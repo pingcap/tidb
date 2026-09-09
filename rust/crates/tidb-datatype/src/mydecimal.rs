@@ -135,6 +135,9 @@ pub enum RoundMode {
 pub enum DecimalError {
     /// Go `ErrTruncated`: the value did not fit and digits were dropped.
     Truncated,
+    /// Go `ErrTruncatedWrongVal("DECIMAL", ...)`: no numeric digit was
+    /// present after optional whitespace and sign handling.
+    TruncatedWrongValue,
     /// Go `ErrOverflow`: the value did not fit at all.
     Overflow,
     /// Go `ErrBadNumber`: the text was not a well-formed number.
@@ -290,7 +293,7 @@ fn str_to_int(str: &[u8]) -> (i64, Option<DecimalError>) {
     const UINT_CUT_OFF: u64 = MAX_UINT / 10 + 1;
     const INT_CUT_OFF: u64 = (i64::MAX as u64) + 1;
 
-    let trimmed = trim_ascii_space(str);
+    let trimmed = trim_go_space(str);
     if trimmed.is_empty() {
         return (0, Some(DecimalError::Truncated));
     }
@@ -342,18 +345,65 @@ fn str_to_int(str: &[u8]) -> (i64, Option<DecimalError>) {
     (r as i64, err)
 }
 
-/// Go `strings.TrimSpace` restricted to the ASCII spaces `isSpace` accepts,
-/// which is all `FromString` can see before the digits are validated.
-fn trim_ascii_space(str: &[u8]) -> &[u8] {
+/// Go `strings.TrimSpace` over a raw byte string.
+///
+/// Valid UTF-8 whitespace is decoded as a Unicode scalar, while invalid bytes
+/// remain significant just as they do when Go ranges over a string containing
+/// malformed UTF-8. This keeps the parser byte-oriented without dropping
+/// Unicode whitespace that Go accepts.
+fn trim_go_space(bytes: &[u8]) -> &[u8] {
     let mut start = 0;
-    while start < str.len() && str[start].is_ascii_whitespace() {
-        start += 1;
+    let mut end = bytes.len();
+
+    while start < end {
+        let Some(width) = utf8_char_width(bytes[start]) else {
+            break;
+        };
+        if start + width > end {
+            break;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes[start..start + width]) else {
+            break;
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        if chars.next().is_some() || !ch.is_whitespace() {
+            break;
+        }
+        start += width;
     }
-    let mut end = str.len();
-    while end > start && str[end - 1].is_ascii_whitespace() {
-        end -= 1;
+
+    while end > start {
+        let mut char_start = end - 1;
+        while char_start > start && (bytes[char_start] & 0xc0) == 0x80 {
+            char_start -= 1;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes[char_start..end]) else {
+            break;
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        if chars.next().is_some() || !ch.is_whitespace() {
+            break;
+        }
+        end = char_start;
     }
-    &str[start..end]
+
+    &bytes[start..end]
+}
+
+fn utf8_char_width(first: u8) -> Option<usize> {
+    match first {
+        0x00..=0x7f => Some(1),
+        0xc2..=0xdf => Some(2),
+        0xe0..=0xef => Some(3),
+        0xf0..=0xf4 => Some(4),
+        _ => None,
+    }
 }
 
 impl MyDecimal {
@@ -569,8 +619,6 @@ impl MyDecimal {
         let words_frac = digits_to_words(i32::from(d.digits_frac));
         let words_int = digits_to_words(i32::from(d.digits_int));
         let round_digit = round_mode as i32;
-        /* TODO - fix this code as it won't work for CEILING mode */
-
         if words_int + words_frac_to > buf_len {
             words_frac_to = buf_len - words_int;
             frac = words_frac_to * DIGITS_PER_WORD;
@@ -640,14 +688,30 @@ impl MyDecimal {
                 return None;
             }
         } else {
-            /* TODO - fix this code as it won't work for CEILING mode */
             let pos = (words_frac_to * DIGITS_PER_WORD - frac - 1) as usize;
-            let mut shifted_number = self.word_buf[to_idx as usize] / POWERS10[pos];
+            let word = self.word_buf[to_idx as usize];
+            let scale = POWERS10[pos];
+            let mut shifted_number = word / scale;
             let dig_after_scale = shifted_number % 10;
-            if dig_after_scale > round_digit || (round_digit == 5 && dig_after_scale == 5) {
+            // The source branch compares only the first discarded digit for
+            // half-up rounding.  Ceiling mode is different: its historical
+            // Go contract rounds a discarded non-zero magnitude away from
+            // zero, so `1.0001` at scale 3 must become `1.001` even though
+            // the first discarded digit is zero.  Inspect the complete
+            // remainder for that mode, while retaining Go's half-up rule for
+            // every other caller.
+            let discarded_nonzero = word % (scale * 10) != 0;
+            let do_inc = match round_mode {
+                RoundMode::Ceiling => discarded_nonzero,
+                RoundMode::HalfUp => {
+                    dig_after_scale > round_digit || (round_digit == 5 && dig_after_scale == 5)
+                }
+                RoundMode::Truncate => false,
+            };
+            if do_inc {
                 shifted_number += 10;
             }
-            self.word_buf[to_idx as usize] = POWERS10[pos] * (shifted_number - dig_after_scale);
+            self.word_buf[to_idx as usize] = scale * (shifted_number - dig_after_scale);
         }
         /*
            In case we're rounding e.g. 1.5e9 to 2.0e9, the decimal words inside
@@ -895,8 +959,8 @@ impl MyDecimal {
     /// reports truncation or overflow.
     ///
     /// Go's `ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)` for empty or
-    /// digit-less input becomes [`DecimalError::BadNumber`]; the wrapped
-    /// warning text belongs to the statement-context tier, not here.
+    /// digit-less input becomes [`DecimalError::TruncatedWrongValue`]; the
+    /// wrapped warning text belongs to the statement-context tier, not here.
     pub fn from_string(str: &[u8]) -> (MyDecimal, Option<DecimalError>) {
         let mut d = MyDecimal::default();
         let err = d.set_from_string(str);
@@ -914,7 +978,7 @@ impl MyDecimal {
         }
         if str.is_empty() {
             *self = MyDecimal::default();
-            return Some(DecimalError::BadNumber);
+            return Some(DecimalError::TruncatedWrongValue);
         }
         match str[0] {
             b'-' => {
@@ -944,7 +1008,7 @@ impl MyDecimal {
         }
         if digits_int + digits_frac == 0 {
             *self = MyDecimal::default();
-            return Some(DecimalError::BadNumber);
+            return Some(DecimalError::TruncatedWrongValue);
         }
         let words_int_raw = digits_to_words(digits_int);
         let words_frac_raw = digits_to_words(digits_frac);
@@ -1029,7 +1093,7 @@ impl MyDecimal {
                         err = Some(shift_err);
                     }
                 }
-            } else if !trim_ascii_space(&str[end_idx..]).is_empty() {
+            } else if !trim_go_space(&str[end_idx..]).is_empty() {
                 err = Some(DecimalError::Truncated);
             }
         }
@@ -1292,7 +1356,11 @@ impl MyDecimal {
                 carry = 1;
             }
         }
-        if (carry > 0) == from1.negative { 1 } else { -1 }
+        if (carry > 0) == from1.negative {
+            1
+        } else {
+            -1
+        }
     }
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
@@ -1333,7 +1401,9 @@ impl MyDecimal {
         self.result_frac
     }
 
-    #[cfg(test)]
+    /// Pins `resultFrac` for a boundary-clamped cell: Go producers stamp it
+    /// from the target/visible scale (never above `digitsFrac`), while
+    /// `FromString` stamps `digitsFrac` itself.
     pub(crate) fn set_result_frac(&mut self, result_frac: i8) {
         debug_assert!(result_frac >= 0 && result_frac <= self.digits_frac);
         self.result_frac = result_frac;
@@ -1481,7 +1551,7 @@ impl MyDecimal {
     /// decimal string. This is the hot `chunk.Row::datum_with_buffer` path:
     /// Go already has the base-1e9 words, so rebuilding a string only to parse
     /// it back loses the representation's main advantage.
-    pub(crate) fn to_decimal_parts(&self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
+    pub(crate) fn to_decimal_parts(self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
         let (word_start_idx, digits_int) = self.remove_leading_zeros();
         let integer_len = digits_int.max(1) as usize;
         let fraction_len = i32::from(self.digits_frac).max(0) as usize;
@@ -1582,8 +1652,8 @@ impl MyDecimal {
             return None;
         }
         let mut magnitude = 0_i128;
-        for chunk in bytes[4..4 + used_words * 4].chunks_exact(4) {
-            let word = i32::from_ne_bytes(chunk.try_into().expect("four-byte decimal word"));
+        for chunk in bytes[4..4 + used_words * 4].as_chunks::<4>().0 {
+            let word = i32::from_ne_bytes(*chunk);
             if !(0..WORD_BASE as i32).contains(&word) {
                 return None;
             }
@@ -1591,8 +1661,8 @@ impl MyDecimal {
                 .checked_mul(i128::from(WORD_BASE))?
                 .checked_add(i128::from(word))?;
         }
-        let fraction_padding = fraction_words * DIGITS_PER_WORD as usize
-            - usize::try_from(digits_frac).ok()?;
+        let fraction_padding =
+            fraction_words * DIGITS_PER_WORD as usize - usize::try_from(digits_frac).ok()?;
         if fraction_padding > 0 {
             magnitude /= i128::from(POWERS10[fraction_padding]);
         }
@@ -1612,8 +1682,13 @@ impl MyDecimal {
         bytes[1] = self.digits_frac as u8;
         bytes[2] = self.result_frac as u8;
         bytes[3] = u8::from(self.negative);
-        for (chunk, w) in bytes[4..].chunks_exact_mut(4).zip(&self.word_buf) {
-            chunk.copy_from_slice(&w.to_ne_bytes());
+        for (chunk, w) in bytes[4..]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(&self.word_buf)
+        {
+            *chunk = w.to_ne_bytes();
         }
         bytes
     }
@@ -1645,8 +1720,8 @@ impl MyDecimal {
             negative: bytes[3] == 1,
             word_buf: [0; MAX_WORD_BUF_LEN],
         };
-        for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].chunks_exact(4)) {
-            *w = i32::from_ne_bytes(chunk.try_into().expect("4-byte word"));
+        for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].as_chunks::<4>().0) {
+            *w = i32::from_ne_bytes(*chunk);
         }
         if d.word_buf[..used_words as usize]
             .iter()
@@ -1655,6 +1730,24 @@ impl MyDecimal {
             return Err("MyDecimal word is outside base-1e9 storage");
         }
         Ok(d)
+    }
+
+    /// Rebuilds the exact field values produced by Go's unchecked
+    /// `unsafe.Pointer` deserialization.
+    #[must_use]
+    pub fn from_raw_bytes_like_go(bytes: [u8; MYDECIMAL_STRUCT_SIZE]) -> MyDecimal {
+        let mut word_buf = [0; MAX_WORD_BUF_LEN];
+        for (index, word) in word_buf.iter_mut().enumerate() {
+            let start = 4 + index * 4;
+            *word = i32::from_ne_bytes(bytes[start..start + 4].try_into().expect("4-byte word"));
+        }
+        MyDecimal {
+            digits_int: bytes[0] as i8,
+            digits_frac: bytes[1] as i8,
+            result_frac: bytes[2] as i8,
+            negative: bytes[3] & 1 != 0,
+            word_buf,
+        }
     }
 }
 
@@ -1770,9 +1863,30 @@ mod tests {
                 34,
                 false,
             ),
-            ("abc", "0", Some(DecimalError::BadNumber), 0, 0, false),
-            ("", "0", Some(DecimalError::BadNumber), 0, 0, false),
-            ("   ", "0", Some(DecimalError::BadNumber), 0, 0, false),
+            (
+                "abc",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
+            (
+                "",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
+            (
+                "   ",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
             ("1x", "1", Some(DecimalError::Truncated), 1, 0, false),
             ("1.2.3", "1.2", Some(DecimalError::Truncated), 1, 1, false),
             ("1e", "1", Some(DecimalError::Truncated), 1, 0, false),
@@ -1821,6 +1935,38 @@ mod tests {
             assert_eq!(d.negative, *negative, "negative for {input:?}");
             assert_eq!(d.result_frac, d.digits_frac, "result_frac for {input:?}");
         }
+    }
+
+    /// Go distinguishes a no-digit `ErrTruncatedWrongVal("DECIMAL", ...)`
+    /// from the `ErrBadNumber` returned by an exponent that cannot be parsed.
+    #[test]
+    fn from_string_preserves_no_digit_error_identity() {
+        for input in [
+            b"abc".as_slice(),
+            b"".as_slice(),
+            b"-".as_slice(),
+            b".".as_slice(),
+        ] {
+            let (value, error) = MyDecimal::from_string(input);
+            assert_eq!(value.to_string_bytes(), b"0");
+            assert_eq!(error, Some(DecimalError::TruncatedWrongValue));
+        }
+
+        let (_, error) = MyDecimal::from_string(b"1e18446744073709551620");
+        assert_eq!(error, Some(DecimalError::BadNumber));
+    }
+
+    /// Go's `strings.TrimSpace` removes Unicode whitespace around the
+    /// exponent and trailing suffix, while the input remains a byte string.
+    #[test]
+    fn from_string_trims_unicode_whitespace_like_go() {
+        let (trailing, trailing_error) = MyDecimal::from_string("1\u{00a0}".as_bytes());
+        assert_eq!(trailing.to_string_bytes(), b"1");
+        assert_eq!(trailing_error, None);
+
+        let (exponent, exponent_error) = MyDecimal::from_string("1e\u{00a0}5".as_bytes());
+        assert_eq!(exponent.to_string_bytes(), b"100000");
+        assert_eq!(exponent_error, None);
     }
 
     /// Exact source rows from `pkg/types/mydecimal_test.go::TestRemoveTrailingZeros`.

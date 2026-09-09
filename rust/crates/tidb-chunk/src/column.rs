@@ -131,6 +131,17 @@ impl Column {
             + of(self.elem_buf.as_ref().map_or(0, Vec::capacity))
     }
 
+    /// Go `Chunk.UsedMemoryUsage`'s per-column term, using lengths rather than
+    /// capacities so retained reusable allocation is excluded.
+    pub(crate) fn used_memory_usage(&self) -> i64 {
+        let of = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        GO_COLUMN_PAYLOAD_BYTES
+            + of(self.null_bitmap.len())
+            + of(self.offsets.len() * 8)
+            + of(self.data.len())
+            + of(self.elem_buf.as_ref().map_or(0, Vec::len))
+    }
+
     /// Go `newFixedLenColumn`: a fixed-length column whose elements are
     /// `elem_len` bytes, with initial data capacity for `capacity` rows.
     #[must_use]
@@ -147,7 +158,6 @@ impl Column {
 
     /// Go `NewColumn`: a column sized for `field_type`, with initial capacity
     /// for `capacity` rows.
-    #[must_use]
     pub fn new_column(field_type: &FieldType, capacity: usize) -> Self {
         match get_fixed_len(field_type) {
             VAR_ELEM_LEN => Column::new_var_len(capacity),
@@ -171,7 +181,6 @@ impl Column {
 
     /// Go `NewEmptyColumn`: a column typed for `field_type` but with no
     /// preallocated data/bitmap capacity.
-    #[must_use]
     pub fn new_empty_column(field_type: &FieldType) -> Self {
         match get_fixed_len(field_type) {
             VAR_ELEM_LEN => Column {
@@ -205,7 +214,6 @@ impl Column {
     }
 
     /// Go `IsFixed`: whether elements have a fixed length (i.e. `elemBuf != nil`).
-    #[must_use]
     pub fn is_fixed(&self) -> bool {
         self.elem_buf.is_some()
     }
@@ -220,19 +228,16 @@ impl Column {
     }
 
     /// Go `GetNullBitmapCap`.
-    #[must_use]
     pub fn null_bitmap_capacity(&self) -> usize {
         self.null_bitmap.capacity()
     }
 
     /// Go `GetOffsetCap`.
-    #[must_use]
     pub fn offset_capacity(&self) -> usize {
         self.offsets.capacity()
     }
 
     /// Go `GetDataCap`.
-    #[must_use]
     pub fn data_capacity(&self) -> usize {
         self.data.capacity()
     }
@@ -248,13 +253,11 @@ impl Column {
     }
 
     /// Go `Rows`: the number of rows currently stored.
-    #[must_use]
     pub fn rows(&self) -> usize {
         self.length
     }
 
     /// Go `IsNull`: whether row `row_idx` is null.
-    #[must_use]
     pub fn is_null(&self, row_idx: usize) -> bool {
         let null_byte = self.null_bitmap[row_idx / 8];
         null_byte & (1 << (row_idx & 7)) == 0
@@ -282,19 +285,16 @@ impl Column {
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForNullBitMap`.
-    #[must_use]
     pub fn null_bitmap_len_delta_for_append_cell_n_times(&self, times: usize) -> usize {
         ((self.length + times + 7) >> 3).saturating_sub(self.null_bitmap.len())
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForFixedElem`.
-    #[must_use]
     pub fn fixed_len_delta_for_append_cell_n_times(src: &Column, times: usize) -> usize {
         src.elem_buffer_len().saturating_mul(times)
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForVarElem`.
-    #[must_use]
     pub fn var_len_delta_for_append_cell_n_times(src: &Column, row: usize, times: usize) -> usize {
         let cell_len = usize::try_from(src.offsets[row + 1] - src.offsets[row])
             .expect("column offsets are non-decreasing");
@@ -433,7 +433,6 @@ impl Column {
     /// # Panics
     /// Panics if the stored bytes are not a valid `MyDecimal`; every value
     /// written by [`Column::append_my_decimal`] round-trips.
-    #[must_use]
     pub fn get_my_decimal(&self, row_id: usize) -> MyDecimal {
         let bytes: [u8; MYDECIMAL_STRUCT_SIZE] = self.fixed_elem::<MYDECIMAL_STRUCT_SIZE>(row_id);
         MyDecimal::from_raw_bytes(bytes).expect("chunk decimal cell holds a valid MyDecimal")
@@ -462,7 +461,6 @@ impl Column {
     /// # Panics
     /// Panics if the stored bits are not a valid packed `types.Time`; every
     /// value written by [`Column::append_time`] round-trips.
-    #[must_use]
     pub fn get_time(&self, row_id: usize) -> Time {
         Time::from_go_raw(u64::from_ne_bytes(self.fixed_elem::<8>(row_id)))
             .expect("chunk Time cell holds a valid packed types.Time")
@@ -472,7 +470,6 @@ impl Column {
     /// stamped on as the fractional-second precision (the column itself does
     /// not store fsp).
     ///
-    #[must_use]
     pub fn get_duration(&self, row_id: usize, fill_fsp: i64) -> MySqlDuration {
         MySqlDuration::from_raw_parts(self.get_int64(row_id), fill_fsp)
     }
@@ -521,14 +518,12 @@ impl Column {
     }
 
     /// Go `GetEnum`.
-    #[must_use]
     pub fn get_enum(&self, row_id: usize) -> MysqlEnum {
         let (name, value) = self.get_name_value(row_id);
         MysqlEnum::new(name, value)
     }
 
     /// Go `GetSet`.
-    #[must_use]
     pub fn get_set(&self, row_id: usize) -> MysqlSet {
         let (name, value) = self.get_name_value(row_id);
         MysqlSet::new(name, value)
@@ -616,10 +611,15 @@ impl Column {
     ///
     /// TiDB strings are arbitrary byte sequences. The returned guard behaves
     /// like a byte slice while keeping shared storage stable for its borrow.
-    #[must_use]
     pub fn get_bytes(&self, row_id: usize) -> ColumnBytes<'_> {
-        let start = self.offsets[row_id] as usize;
-        let end = self.offsets[row_id + 1] as usize;
+        // Go's zero-value variable column represents an empty cell with an
+        // empty data slice. Treat an uninitialized offsets vector the same
+        // way so a reused zero-row column cannot panic while reading row 0.
+        let (start, end) = if self.offsets.is_empty() {
+            (0, 0)
+        } else {
+            (self.offsets[row_id] as usize, self.offsets[row_id + 1] as usize)
+        };
         ColumnBytes {
             storage: ColumnBytesStorage::Borrowed(self.data.read()),
             start,
@@ -629,14 +629,12 @@ impl Column {
 
     /// Go `Column.GetString`, represented with [`GoString`] so arbitrary Go
     /// string bytes are not rejected as invalid UTF-8.
-    #[must_use]
     pub fn get_string(&self, row_id: usize) -> GoString {
         GoString::from_bytes(self.get_bytes(row_id).as_ref().to_vec())
     }
 
     /// Go `GetJSON`: the cell's first byte is the JSON type code and the rest
     /// is the value, which is exactly what a `BinaryJSON` carries.
-    #[must_use]
     pub fn get_json(&self, row_id: usize) -> tidb_datatype::BinaryJSON {
         let cell = self.get_bytes(row_id);
         let (type_code, value) = cell
@@ -648,7 +646,6 @@ impl Column {
     /// Go `GetVectorFloat32`: deserialize one vector cell. A malformed cell
     /// panics, matching Go's `panic(err)` path. A valid leading vector is
     /// accepted even when the cell has a suffix, matching the source decoder.
-    #[must_use]
     pub fn get_vector_float32(&self, row_id: usize) -> VectorFloat32 {
         let cell = self.get_bytes(row_id);
         let (value, _) = deserialize_vector_float32(cell.as_ref())
@@ -657,7 +654,6 @@ impl Column {
     }
 
     /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
-    #[must_use]
     pub fn get_raw(&self, row_id: usize) -> ColumnBytes<'_> {
         if self.is_fixed() {
             let elem_len = self.elem_buffer_len();
@@ -673,7 +669,6 @@ impl Column {
     }
 
     /// Go `GetRawLength`.
-    #[must_use]
     pub fn raw_len(&self, row_id: usize) -> usize {
         if self.is_fixed() {
             self.elem_buffer_len()
@@ -692,25 +687,21 @@ impl Column {
     }
 
     /// Go `GetInt64`.
-    #[must_use]
     pub fn get_int64(&self, row_id: usize) -> i64 {
         i64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
     /// Go `GetUint64`.
-    #[must_use]
     pub fn get_uint64(&self, row_id: usize) -> u64 {
         u64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
     /// Go `GetFloat32`.
-    #[must_use]
     pub fn get_float32(&self, row_id: usize) -> f32 {
         f32::from_ne_bytes(self.fixed_elem::<4>(row_id))
     }
 
     /// Go `GetFloat64`.
-    #[must_use]
     pub fn get_float64(&self, row_id: usize) -> f64 {
         f64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
@@ -1006,7 +997,6 @@ impl Column {
     }
 
     /// Go `CopyConstruct` (the `dst == nil` branch): a deep copy.
-    #[must_use]
     pub fn copy_construct(&self) -> Column {
         Column {
             length: self.length,
@@ -1041,7 +1031,6 @@ impl Column {
 
     /// Go `CopyReconstruct`: deep-copy only the selected rows, reusing `dst`
     /// storage when supplied. `None` selection is the ordinary deep-copy path.
-    #[must_use]
     pub fn copy_reconstruct(&self, sel: Option<&[usize]>, dst: Option<Column>) -> Column {
         let Some(sel) = sel else {
             return self.copy_construct_into(dst);
@@ -1212,7 +1201,6 @@ impl Column {
     }
 
     /// Go `ContainsVeryLargeElement`.
-    #[must_use]
     pub fn contains_very_large_element(&self) -> bool {
         if self.length == 0 || self.is_fixed() {
             return false;

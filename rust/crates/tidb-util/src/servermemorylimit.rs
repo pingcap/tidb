@@ -12,31 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/servermemorylimit`: the server-level memory-limit
-//! controller that kills the top-1 memory consumer and remembers each kill.
-//!
-//! Narrowings (each named against the Go source):
-//! - `Handle.Run`'s 100ms ticker goroutine, its `exitCh`, and the per-tick
-//!   `memory.HandleGlobalMemArbitratorRuntime()` call become the explicit
-//!   [`kill_sess_if_needed`] step driven with passed-in state.
-//! - Ambient reads (`memory.ReadMemStats().HeapInuse`,
-//!   `memory.ServerMemoryLimit`, `memory.ServerMemoryLimitSessMinSize`,
-//!   `memory.UsingGlobalMemArbitration`) are narrowed to the
-//!   [`MemStateSnapshot`] input, and the `memory.MemUsageTop1Tracker`
-//!   package global becomes the caller-owned [`Top1TrackerSlot`].
-//! - The `failpoint.Inject("issue42662_2", ...)` hook is dropped.
-//! - `runtime.GC()` after a confirmed kill is a Go-runtime facility and is
-//!   dropped (the log line it precedes is kept).
-//! - Ambient `time.Now`/`time.Since` become the passed-in `now` timestamp.
-//! - `sessmgr.Manager`/`sessmgr.ProcessInfo` are the shared narrow seam
-//!   [`SessionManager`]/[`ProcessInfo`] defined in
-//!   `crate::memoryusagealarm`; `ProcessInfo.ToRow` is transcribed here as
-//!   [`process_info_to_row`] with named gaps (`mysql.Command2Str`,
-//!   `serverStatus2Str`, `StmtCtx` arbitration columns, and
-//!   `ppcpuusage.CPUUsages` are not modeled by the snapshot).
+//! Server-level memory-limit controller and its last-50 operation history.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
@@ -61,63 +41,12 @@ pub static IS_KILLING: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_MEMORY_OPS_HISTORY_MANAGER: MemoryOpsHistoryManager =
     MemoryOpsHistoryManager::new();
 
-/// Ambient memory state consumed by one check, Go's package-global reads
-/// narrowed to snapshot inputs (see the module narrowings).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MemStateSnapshot {
-    /// Go `memory.ReadMemStats().HeapInuse`.
-    pub heap_inuse: u64,
-    /// Go `memory.ServerMemoryLimitSessMinSize.Load()`.
-    pub sess_min_size: u64,
-    /// Go `memory.UsingGlobalMemArbitration()`.
-    pub using_global_mem_arbitration: bool,
-}
-
-/// Stand-in for the Go `memory.MemUsageTop1Tracker` atomic pointer, owned by
-/// whoever wires the controller (module narrowing).
-#[derive(Default)]
-pub struct Top1TrackerSlot {
-    slot: Mutex<Option<Arc<Tracker>>>,
-}
-
-impl Top1TrackerSlot {
-    /// An empty slot.
-    pub const fn new() -> Top1TrackerSlot {
-        Top1TrackerSlot {
-            slot: Mutex::new(None),
-        }
-    }
-
-    /// Go `atomic.Pointer.Load`.
-    pub fn load(&self) -> Option<Arc<Tracker>> {
-        self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    /// Go `atomic.Pointer.Store`.
-    pub fn store(&self, tracker: Option<Arc<Tracker>>) {
-        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = tracker;
-    }
-
-    /// Go `atomic.Pointer.CompareAndSwap(old, new)` with pointer identity.
-    pub fn compare_and_swap(&self, old: Option<&Arc<Tracker>>, new: Option<Arc<Tracker>>) -> bool {
-        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
-        let matches = match (&*slot, old) {
-            (Some(cur), Some(old)) => Arc::ptr_eq(cur, old),
-            (None, None) => true,
-            _ => false,
-        };
-        if matches {
-            *slot = new;
-        }
-        matches
-    }
-}
-
 /// Go `sessionToBeKilled`: the cross-tick state of one in-flight kill.
 #[derive(Default)]
-pub struct SessionToBeKilled {
+struct SessionToBeKilled {
     is_killing: bool,
     sql_start_time: Option<DateTime<Utc>>,
+    sql_start_instant: Option<Instant>,
     session_id: u64,
     session_tracker: Option<Arc<Tracker>>,
 
@@ -126,19 +55,58 @@ pub struct SessionToBeKilled {
 }
 
 impl SessionToBeKilled {
-    /// Fresh (Go zero-value) state.
-    pub fn new() -> SessionToBeKilled {
-        SessionToBeKilled::default()
-    }
-
     /// Go `sessionToBeKilled.reset`.
     fn reset(&mut self) {
         self.is_killing = false;
         self.sql_start_time = None;
+        self.sql_start_instant = None;
         self.session_id = 0;
         self.session_tracker = None;
         self.kill_start_time = None;
         self.last_log_time = None;
+    }
+}
+
+/// Handler for the server memory limit.
+pub struct Handle {
+    exit: mpsc::Receiver<()>,
+    session_manager: Option<Arc<dyn SessionManager>>,
+}
+
+/// Builds a new server memory limit handler.
+pub fn new_server_memory_limit_handle(exit: mpsc::Receiver<()>) -> Handle {
+    Handle {
+        exit,
+        session_manager: None,
+    }
+}
+
+impl Handle {
+    /// Sets the manager used to fetch all active sessions.
+    pub fn set_session_manager(&mut self, manager: Arc<dyn SessionManager>) -> &mut Self {
+        self.session_manager = Some(manager);
+        self
+    }
+
+    /// Runs the server memory checker until the server exit signal is set.
+    pub fn run(self) {
+        let manager = self
+            .session_manager
+            .expect("session manager must be set before Handle::run");
+        let mut session_to_be_killed = SessionToBeKilled::default();
+        loop {
+            match self.exit.recv_timeout(Duration::from_millis(100)) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    crate::memory::handle_global_mem_arbitrator_runtime();
+                    kill_sess_if_needed(
+                        &mut session_to_be_killed,
+                        crate::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst),
+                        manager.as_ref(),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -150,30 +118,23 @@ fn truncate_chars(s: &str, n: usize) -> &str {
     }
 }
 
-/// Go `killSessIfNeeded`, one `Handle.Run` tick's worth of work.
-///
-/// `bt` is `memory.ServerMemoryLimit.Load()` in the source; `top1` stands in
-/// for the `memory.MemUsageTop1Tracker` global and `mem` for the ambient
-/// runtime readings (module narrowings).
-pub fn kill_sess_if_needed(
-    s: &mut SessionToBeKilled,
-    bt: u64,
-    sm: &dyn SessionManager,
-    mem: &MemStateSnapshot,
-    top1: &Top1TrackerSlot,
-    now: DateTime<Utc>,
-) {
+fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManager) {
+    let now = Utc::now();
     if s.is_killing {
         'check: {
             if let Some(info) = sm.get_process_info(s.session_id) {
-                if Some(info.time) == s.sql_start_time {
+                let same_statement = match (info.started_instant, s.sql_start_instant) {
+                    (Some(current), Some(started)) => current == started,
+                    _ => Some(info.time) == s.sql_start_time,
+                };
+                if same_statement {
                     let last_log = s
                         .last_log_time
-                        .unwrap_or(super::memoryusagealarm::ZERO_TIME);
+                        .unwrap_or_else(super::memoryusagealarm::zero_time);
                     if now - last_log > chrono::Duration::seconds(5) {
                         let kill_start = s
                             .kill_start_time
-                            .unwrap_or(super::memoryusagealarm::ZERO_TIME);
+                            .unwrap_or_else(super::memoryusagealarm::zero_time);
                         let seconds = (now - kill_start).num_seconds();
                         bg_logger().warn(
                             &format!(
@@ -229,9 +190,7 @@ pub fn kill_sess_if_needed(
         // faithful.
         s.reset();
         IS_KILLING.store(false, Ordering::SeqCst);
-        top1.compare_and_swap(s.session_tracker.as_ref(), None);
-        // boundary: Go calls `runtime.GC()` here to reclaim the freed
-        // memory; there is no Rust equivalent.
+        crate::memory::MEM_USAGE_TOP1_TRACKER.compare_and_swap(s.session_tracker.as_ref(), None);
         bg_logger().warn(
             "global memory controller killed the top1 memory consumer successfully",
             &[],
@@ -242,18 +201,29 @@ pub fn kill_sess_if_needed(
         return;
     }
 
-    // boundary: Go `failpoint.Inject("issue42662_2", ...)` dropped.
-    if mem.heap_inuse > MEMORY_MAX_USED.load(Ordering::SeqCst) {
-        MEMORY_MAX_USED.store(mem.heap_inuse, Ordering::SeqCst);
+    #[allow(unused_mut)]
+    let mut bt = bt;
+    #[cfg(feature = "failpoints")]
+    let _ = fail::eval("issue42662_2", |value| {
+        if value.as_deref() == Some("true") {
+            bt = 1;
+        }
+    });
+
+    let instance_stats = crate::memory::read_mem_stats();
+    let heap_inuse = u64::try_from(instance_stats.heap_inuse).unwrap_or(0);
+    if heap_inuse > MEMORY_MAX_USED.load(Ordering::SeqCst) {
+        MEMORY_MAX_USED.store(heap_inuse, Ordering::SeqCst);
     }
 
-    if mem.using_global_mem_arbitration {
+    if crate::memory::using_global_mem_arbitration() {
         return;
     }
 
-    let limit_sess_min_size = mem.sess_min_size;
-    if mem.heap_inuse > bt {
-        let mut t = top1.load();
+    let limit_sess_min_size =
+        crate::memory::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.load(Ordering::SeqCst);
+    if heap_inuse > bt {
+        let mut t = crate::memory::MEM_USAGE_TOP1_TRACKER.load();
         if let Some(tracker) = t.clone() {
             let session_id = tracker.session_id();
             let mem_usage = tracker.bytes_consumed();
@@ -261,7 +231,7 @@ pub fn kill_sess_if_needed(
             // tidb_server_memory_limit_sess_min_size, we do not need to kill
             // it.
             if (mem_usage as u64) < limit_sess_min_size {
-                top1.compare_and_swap(Some(&tracker), None);
+                crate::memory::MEM_USAGE_TOP1_TRACKER.compare_and_swap(Some(&tracker), None);
                 t = None;
             } else if let Some(info) = sm.get_process_info(session_id) {
                 bg_logger().warn(
@@ -274,7 +244,7 @@ pub fn kill_sess_if_needed(
                             Value::Str(truncate_chars(&info.info, 100).to_owned()),
                         ),
                         Field::new("tidb_server_memory_limit", Value::U64(bt)),
-                        Field::new("heap inuse", Value::U64(mem.heap_inuse)),
+                        Field::new("heap inuse", Value::U64(heap_inuse)),
                         Field::new(
                             "sql memory usage",
                             Value::I64(info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
@@ -283,6 +253,7 @@ pub fn kill_sess_if_needed(
                 );
                 s.session_id = session_id;
                 s.sql_start_time = Some(info.time);
+                s.sql_start_instant = info.started_instant;
                 s.is_killing = true;
                 s.session_tracker = Some(Arc::clone(&tracker));
                 tracker
@@ -293,7 +264,7 @@ pub fn kill_sess_if_needed(
                 SESSION_KILL_TOTAL.fetch_add(1, Ordering::SeqCst);
                 *SESSION_KILL_LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some(kill_time);
                 IS_KILLING.store(true, Ordering::SeqCst);
-                GLOBAL_MEMORY_OPS_HISTORY_MANAGER.record_one(&info, kill_time, bt, mem.heap_inuse);
+                GLOBAL_MEMORY_OPS_HISTORY_MANAGER.record_one(&info, kill_time, bt, heap_inuse);
                 s.last_log_time = Some(now);
                 s.kill_start_time = Some(now);
             }
@@ -326,13 +297,18 @@ struct MemoryOpsHistory {
     kill_time: DateTime<Utc>,
     memory_limit: u64,
     memory_current: u64,
-    /// id,user,host,db,command,time,state,info,digest,mem,... in Go
-    /// `ProcessInfo.ToRow` order.
-    process_info_datum: Vec<Datum>,
+    process_id: Datum,
+    mem: Datum,
+    disk: Datum,
+    client: Datum,
+    db: Datum,
+    user: Datum,
+    sql_digest: Datum,
+    sql_text: Datum,
 }
 
 struct MemoryOpsState {
-    infos: Vec<Option<MemoryOpsHistory>>,
+    infos: [Option<MemoryOpsHistory>; HISTORY_CAP],
     offsets: usize,
 }
 
@@ -342,19 +318,16 @@ pub struct MemoryOpsHistoryManager {
 }
 
 impl MemoryOpsHistoryManager {
-    /// An empty manager; Go's package `init()` sizing happens lazily on
-    /// first use.
-    pub const fn new() -> MemoryOpsHistoryManager {
+    const fn new() -> MemoryOpsHistoryManager {
         MemoryOpsHistoryManager {
             state: Mutex::new(MemoryOpsState {
-                infos: Vec::new(),
+                infos: [const { None }; HISTORY_CAP],
                 offsets: 0,
             }),
         }
     }
 
-    /// Go `memoryOpsHistoryManager.recordOne`.
-    pub fn record_one(
+    fn record_one(
         &self,
         info: &ProcessInfo,
         kill_time: DateTime<Utc>,
@@ -362,15 +335,33 @@ impl MemoryOpsHistoryManager {
         memory_current: u64,
     ) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.infos.is_empty() {
-            // Go `init()`: `m.infos = make([]memoryOpsHistory, 50)`.
-            state.infos.resize_with(HISTORY_CAP, || None);
-        }
         let op = MemoryOpsHistory {
             kill_time,
             memory_limit,
             memory_current,
-            process_info_datum: process_info_to_row(info, kill_time),
+            process_id: Datum::new_uint(info.id),
+            mem: Datum::new_int(info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
+            disk: Datum::new_int(info.disk_tracker.as_ref().map_or(0, |t| t.bytes_consumed())),
+            client: Datum::new_string(
+                if info.port.is_empty() {
+                    info.host.clone()
+                } else {
+                    join_host_port(&info.host, &info.port)
+                }
+                .into_bytes(),
+            ),
+            db: if info.db.is_empty() {
+                Datum::Null
+            } else {
+                Datum::new_string(info.db.as_bytes())
+            },
+            user: Datum::new_string(info.user.as_bytes()),
+            sql_digest: Datum::new_string(info.digest.as_bytes()),
+            sql_text: if info.info.is_empty() {
+                Datum::Null
+            } else {
+                Datum::new_string(info.info.as_bytes())
+            },
         };
         // Go takes a value copy of the SQL-text datum before applying the
         // `%.256v` truncation, so the truncation never reaches the stored
@@ -389,10 +380,7 @@ impl MemoryOpsHistoryManager {
     /// MEMORY_CURRENT, PROCESSID, MEM, DISK, CLIENT, DB, USER, SQL_DIGEST,
     /// SQL_TEXT.
     pub fn get_rows(&self) -> Vec<Vec<Datum>> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.infos.is_empty() {
-            state.infos.resize_with(HISTORY_CAP, || None);
-        }
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let mut rows = Vec::with_capacity(state.infos.len());
         for i in 0..state.infos.len() {
             let pos = (state.offsets + i) % state.infos.len();
@@ -411,14 +399,14 @@ impl MemoryOpsHistoryManager {
                 Datum::new_string("SessionKill"),     // OPS
                 Datum::new_uint(info.memory_limit),   // MEMORY_LIMIT
                 Datum::new_uint(info.memory_current), // MEMORY_CURRENT
-                info.process_info_datum[0].clone(),   // PROCESSID
-                info.process_info_datum[9].clone(),   // MEM
-                info.process_info_datum[13].clone(),  // DISK
-                info.process_info_datum[2].clone(),   // CLIENT
-                info.process_info_datum[3].clone(),   // DB
-                info.process_info_datum[1].clone(),   // USER
-                info.process_info_datum[8].clone(),   // SQL_DIGEST
-                info.process_info_datum[7].clone(),   // SQL_TEXT
+                info.process_id.clone(),              // PROCESSID
+                info.mem.clone(),                     // MEM
+                info.disk.clone(),                    // DISK
+                info.client.clone(),                  // CLIENT
+                info.db.clone(),                      // DB
+                info.user.clone(),                    // USER
+                info.sql_digest.clone(),              // SQL_DIGEST
+                info.sql_text.clone(),                // SQL_TEXT
             ]);
         }
         rows
@@ -427,12 +415,6 @@ impl MemoryOpsHistoryManager {
     #[cfg(test)]
     fn offsets(&self) -> usize {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).offsets
-    }
-}
-
-impl Default for MemoryOpsHistoryManager {
-    fn default() -> Self {
-        MemoryOpsHistoryManager::new()
     }
 }
 
@@ -445,72 +427,18 @@ fn join_host_port(host: &str, port: &str) -> String {
     }
 }
 
-/// Go `ProcessInfo.ToRow(tz)` (via `ToRowForShow(true)`) over the narrowed
-/// snapshot, in the source's 20-column order so the history indices match.
-///
-/// boundary: command (`mysql.Command2Str`), state (`serverStatus2Str`), the
-/// `StmtCtx` memory-arbitration columns, and `ppcpuusage.CPUUsages` are not
-/// modeled by the snapshot; command/state land as NULL and the CPU times as
-/// zero.
-fn process_info_to_row(info: &ProcessInfo, now: DateTime<Utc>) -> Vec<Datum> {
-    let info_datum = if info.info.is_empty() {
-        Datum::Null
-    } else {
-        Datum::new_string(info.info.as_bytes())
-    };
-    let elapsed = (now - info.time).num_seconds().max(0) as u64;
-    let db = if info.db.is_empty() {
-        Datum::Null
-    } else {
-        Datum::new_string(info.db.as_bytes())
-    };
-    let host = if info.port.is_empty() {
-        info.host.clone()
-    } else {
-        join_host_port(&info.host, &info.port)
-    };
-    let bytes_consumed = info.mem_tracker.as_ref().map_or(0, |t| t.bytes_consumed());
-    let disk_consumed = info.disk_tracker.as_ref().map_or(0, |t| t.bytes_consumed());
-    let txn_start = if info.cur_txn_start_ts > 0 {
-        // Go `oracle.GetTimeFromTS`: physical milliseconds in the high bits.
-        let physical_ms = (info.cur_txn_start_ts >> 18) as i64;
-        let physical = DateTime::<Utc>::from_timestamp_millis(physical_ms)
-            .unwrap_or(super::memoryusagealarm::ZERO_TIME);
-        format!(
-            "{}({})",
-            physical.format("%m-%d %H:%M:%S%.3f"),
-            info.cur_txn_start_ts
-        )
-    } else {
-        String::new()
-    };
-    vec![
-        Datum::new_uint(info.id),                               // 0 id
-        Datum::new_string(info.user.as_bytes()),                // 1 user
-        Datum::new_string(host.as_bytes()),                     // 2 host
-        db,                                                     // 3 db
-        Datum::Null,                                            // 4 command (boundary)
-        Datum::new_uint(elapsed),                               // 5 time
-        Datum::Null,                                            // 6 state (boundary)
-        info_datum,                                             // 7 info
-        Datum::new_string(info.digest.as_bytes()),              // 8 digest
-        Datum::new_int(bytes_consumed),                         // 9 mem
-        Datum::Null,                                            // 10 mem arbitration (boundary)
-        Datum::Null,                             // 11 wait arbitrate start (boundary)
-        Datum::Null,                             // 12 wait arbitrate bytes (boundary)
-        Datum::new_int(disk_consumed),           // 13 disk
-        Datum::new_string(txn_start.as_bytes()), // 14 txn start
-        Datum::new_string(info.resource_group_name.as_bytes()), // 15 resource group
-        Datum::new_string(info.session_alias.as_bytes()), // 16 session alias
-        Datum::new_uint(info.affected_rows),     // 17 affected rows
-        Datum::new_int(0),                       // 18 tidb cpu (boundary)
-        Datum::new_int(0),                       // 19 tikv cpu (boundary)
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Go permits callers to discard this constructor result; Rust must not add
+    // a `must_use` diagnostic at the transcreation boundary.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let (_sender, receiver) = mpsc::channel();
+        new_server_memory_limit_handle(receiver);
+    }
 
     fn datum_str(d: &Datum) -> String {
         match d {

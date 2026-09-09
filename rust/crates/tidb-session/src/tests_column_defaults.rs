@@ -188,6 +188,16 @@ fn invalid_on_update_clauses_keep_tidbs_error_boundary() {
     }
 
     session
+        .run("CREATE TABLE alter_bad_on_update (v INT)")
+        .unwrap();
+    for sql in [
+        "ALTER TABLE alter_bad_on_update MODIFY v INT ON UPDATE CURRENT_TIMESTAMP",
+        "ALTER TABLE alter_bad_on_update ADD COLUMN added TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP",
+    ] {
+        assert_eq!(code(&mut session, sql), Some(1294), "{sql}");
+    }
+
+    session
         .run(
             "CREATE TABLE valid_on_update_fsp (\
              id INT PRIMARY KEY, v INT, \

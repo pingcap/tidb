@@ -239,7 +239,7 @@ fn entry(body: &[u8], forwarded_host: Option<&str>) -> (BatchCommandEntry, Batch
     let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
     let entry = BatchCommandEntry::new(
         OpaqueBatchCommand::new(BatchCommandTag::Empty, body),
-        completion.into(),
+        completion,
     );
     let entry = match forwarded_host {
         Some(host) => entry.with_forwarded_host(host),
@@ -687,7 +687,7 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
 }
 
 #[test]
-fn pending_exposes_publication_before_withheld_response_headers_complete() {
+fn coprocessor_publication_observation_does_not_wait_for_stream_headers() {
     let (headers_started, headers_wait) = mpsc::channel();
     let release_headers = Arc::new(AtomicBool::new(false));
     let server = TestServer::start(StreamingTikv {

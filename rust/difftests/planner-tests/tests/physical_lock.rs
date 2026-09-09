@@ -12,35 +12,61 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed vectors for PhysicalLock planning.
+//! Vectors for the wired PhysicalLock planner.
 //!
 //! The Go anchor is `TestIssue52592ForNextGen` at
 //! `pkg/planner/core/tests/pointget/point_get_plan_test.go:407`.
 
-use tidb_planner::physical_lock::{exhaust_physical_lock, LockExhaustion, PhysicalLockPlan};
+use tidb_planner::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
+use tidb_planner::physical::{exhaust_physical_plans_4_logical_lock, PhysicalPlan};
+use tidb_planner::physical_property::{PhysicalProperty, TaskType};
+use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]
 fn mpp_lock_is_rejected_before_plan_creation() {
-    assert_eq!(
-        exhaust_physical_lock(true, "for update", 0),
-        LockExhaustion::UnsupportedFlash
+    let allocator = PlanIdAllocator::new();
+    let lock = LogicalLock::new(
+        BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 4),
+        SelectLockType::ForUpdate,
     );
+    let prop = PhysicalProperty {
+        task_tp: TaskType::Mpp,
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_lock(&lock, &prop, &allocator, 1.0).is_empty());
 }
 
 #[test]
 fn point_get_lock_explain_info_preserves_source_text() {
-    let LockExhaustion::Planned(plan) = exhaust_physical_lock(false, "for update", 0) else {
-        unreachable!();
+    let allocator = PlanIdAllocator::new();
+    let lock = LogicalLock::new(
+        BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 4),
+        SelectLockType::ForUpdate,
+    );
+    let plans =
+        exhaust_physical_plans_4_logical_lock(&lock, &PhysicalProperty::default(), &allocator, 1.0);
+    let PhysicalPlan::Lock(plan) = &plans[0] else {
+        panic!("a wired PhysicalLock, got {:?}", plans[0]);
     };
-    assert_eq!(plan.plan_type(), "Lock");
-    assert_eq!(plan.query_block_offset(), 0);
+    assert_eq!(plan.base.base.tp(), "SelectLock");
+    assert_eq!(plan.base.base.query_block_offset(), 0);
     assert_eq!(plan.explain_info(), "for update 0");
 }
 
 #[test]
-fn nonzero_wait_seconds_and_opaque_lock_text_are_lossless() {
-    let plan = PhysicalLockPlan::init("lock in share mode", 42);
-    assert_eq!(plan.lock_type(), "lock in share mode");
-    assert_eq!(plan.wait_sec(), 42);
-    assert_eq!(plan.explain_info(), "lock in share mode 42");
+fn nonzero_wait_seconds_and_lock_type_are_lossless() {
+    let allocator = PlanIdAllocator::new();
+    let mut lock = LogicalLock::new(
+        BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0),
+        SelectLockType::ForShare,
+    );
+    lock.wait_sec = 42;
+    let plans =
+        exhaust_physical_plans_4_logical_lock(&lock, &PhysicalProperty::default(), &allocator, 1.0);
+    let PhysicalPlan::Lock(plan) = &plans[0] else {
+        panic!("a wired PhysicalLock, got {:?}", plans[0]);
+    };
+    assert_eq!(plan.lock_type, SelectLockType::ForShare);
+    assert_eq!(plan.wait_sec, 42);
+    assert_eq!(plan.explain_info(), "for share 42");
 }

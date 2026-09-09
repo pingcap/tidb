@@ -30,11 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .include_file("mod.rs")
         .out_dir(staging.path())
         .file_descriptor_set_path(staging.path().join(DESCRIPTOR_FILE))
-        .compile_with_config(
-            prost,
-            &protos,
-            &["proto/include".into(), "proto".into()],
-        )?;
+        .compile_with_config(prost, &protos, &["proto/include".into(), "proto".into()])?;
 
     install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
     Ok(())

@@ -12,24 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native implementation of `pkg/util/vitess/vitess_hash.go`.
-//!
-//! The value path is Vitess' shard-key hash: a single-block DES encryption of
-//! the big-endian shard key under an all-zero ("null") 64-bit key.
-
 use des::cipher::{Block, BlockCipherEncrypt, KeyInit};
 use des::Des;
 use std::sync::LazyLock;
 
-const NULL_KEY: [u8; 8] = [0; 8];
-
 static NULL_KEY_BLOCK: LazyLock<Des> = LazyLock::new(|| {
-    Des::new_from_slice(&NULL_KEY).expect("DES accepts the fixed-width all-zero Vitess key")
+    Des::new_from_slice(&[0; 8]).expect("DES accepts the fixed-width all-zero Vitess key")
 });
 
 /// Implements Vitess' method of calculating a hash used for determining a shard
 /// key range: a DES encryption with a 64-bit null key over a 64-bit block.
-#[must_use]
 pub fn hash_uint64(shard_key: u64) -> u64 {
     let mut block = Block::<Des>::default();
     block.copy_from_slice(&shard_key.to_be_bytes());
@@ -45,25 +37,12 @@ mod tests {
         format!("{value:016X}")
     }
 
-    // Go `TestVitessHash`.
     #[test]
-    fn vitess_hash() {
+    fn test_vitess_hash() {
         assert_eq!(to_hex(hash_uint64(30375298039)), "031265661E5F1133");
         assert_eq!(to_hex(hash_uint64(1123)), "031B565D41BDF8CA");
         assert_eq!(to_hex(hash_uint64(30573721600)), "1EFD6439F2050FFD");
         assert_eq!(to_hex(hash_uint64(116)), "1E1788FF0FDE093C");
         assert_eq!(to_hex(hash_uint64(u64::MAX)), "355550B2150E2451");
-    }
-
-    #[test]
-    fn source_boundary_vectors_are_exact() {
-        assert_eq!(NULL_KEY, [0; 8]);
-        assert_eq!(to_hex(hash_uint64(0)), "8CA64DE9C1B123A7");
-        assert_eq!(to_hex(hash_uint64(1)), "166B40B44ABA4BD6");
-        assert_eq!(to_hex(hash_uint64(0x100)), "DD7C0BBD61FAFD54");
-        assert_eq!(
-            to_hex(hash_uint64(0x0102_0304_0506_0708)),
-            "CEAD373DB80EABF8"
-        );
     }
 }

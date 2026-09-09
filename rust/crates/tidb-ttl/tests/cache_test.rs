@@ -27,11 +27,6 @@
 //! Skipped, with exactly what each would need:
 //! - `TestTableEvalTTLExpireTime` is ported only in the half that does not need
 //!   a live session; the boundary is named on the test itself.
-//! - `TestInsertIntoTTLTask` — asserts the round trip of
-//!   `codec.EncodeKey`-encoded scan ranges through `mysql.tidb_ttl_task`. The
-//!   encoding is now reachable (`tidb-codec` is a dependency); the round trip
-//!   still needs a live store, and `InsertIntoTTLTask` itself is still
-//!   unported.
 //! - `TestTTLStatusCache` and `TestInfoSchemaCache` — both build a mock server
 //!   (`server.CreateMockServer`/`CreateMockConn`), run DDL and DML, and assert
 //!   the caches pick the changes up. They need a live TiDB plus the real
@@ -47,7 +42,7 @@ use std::time::Duration;
 
 use chrono::TimeZone as _;
 
-use tidb_datatype::{CoreTime, Datum, FieldType, FieldTypeCode, Time, TimeType};
+use tidb_datatype::{CoreTime, Datum, FieldType, FieldTypeCode, SessionTimeZone, Time, TimeType};
 use tidb_model::table::TTLInfo;
 use tidb_model::{ColumnInfo, GoShared, TableInfo};
 
@@ -67,14 +62,58 @@ use tidb_ttl::cache::table::{
     PhysicalTable, RegionCache, ScanRange,
 };
 use tidb_ttl::cache::task::{
-    peek_waiting_ttl_task, row_to_ttl_task, select_from_ttl_task_with_id,
-    select_from_ttl_task_with_job_id, SqlArg, TaskStatus, SELECT_FROM_TTL_TASK,
+    insert_into_ttl_task, peek_waiting_ttl_task, row_to_ttl_task, select_from_ttl_task_with_id,
+    select_from_ttl_task_with_job_id, SqlArg, TTLTaskState, TaskStatus, SELECT_FROM_TTL_TASK,
 };
 use tidb_ttl::cache::ttlstatus::{
     row_to_table_status, select_from_ttl_table_status_with_id, JobStatus,
 };
 use tidb_ttl::session::{ResultRow, TtlSession};
 use tidb_txnkv::Key;
+
+#[deny(unused_must_use)]
+#[test]
+fn go_cache_returns_may_be_ignored_like_go() {
+    let interval = Duration::from_secs(1);
+
+    BaseCache::new(interval);
+    let base = BaseCache::new(interval);
+    base.should_update();
+    base.get_interval();
+
+    tidb_ttl::cache::infoschema::InfoSchemaCache::new(interval);
+    let info_schema = tidb_ttl::cache::infoschema::InfoSchemaCache::new(interval);
+    info_schema.should_update();
+    info_schema.get_interval();
+
+    tidb_ttl::cache::table::new_full_range();
+    tidb_ttl::cache::table::new_datum_range(Datum::Int(1), Datum::Int(2));
+    tidb_ttl::cache::table::null_datum();
+    let table = ttl_table(1, signed(FieldTypeCode::Long));
+    table.name();
+    table.name_original();
+    table.full_name();
+    tidb_ttl::cache::table::unsigned_edge(&Datum::Int(1));
+    tidb_ttl::cache::table::get_next_int_handle(&[], &[]);
+    tidb_ttl::cache::table::get_next_int_datum_from_common_handle(&[], &[], false);
+    tidb_ttl::cache::table::get_next_bytes_handle_datum(&[], &[]);
+    tidb_ttl::cache::table::get_ascii_prefix_datum_from_bytes(&[]);
+    TimeUnitType::Day.as_str();
+    tidb_ttl::cache::table::set_mock_expire_time(
+        &MockExpireTimeKey::<chrono::Utc>::default(),
+        chrono::Utc::now(),
+    );
+
+    tidb_ttl::cache::task::select_from_ttl_task_with_job_id("job");
+    tidb_ttl::cache::task::select_from_ttl_task_with_id("job", 1);
+    tidb_ttl::cache::task::peek_waiting_ttl_task("2026-01-01 00:00:00");
+
+    tidb_ttl::cache::ttlstatus::select_from_ttl_table_status_with_id(1);
+    tidb_ttl::cache::ttlstatus::TableStatusCache::new(interval);
+    let table_status = tidb_ttl::cache::ttlstatus::TableStatusCache::new(interval);
+    table_status.should_update();
+    table_status.get_interval();
+}
 
 // -------------------------------------------------------------------------
 // base_test.go
@@ -1352,9 +1391,7 @@ impl ResultRow for MockRow {
 /// Go `TestRowToTTLTask`'s decoding half.
 ///
 /// Go inserts a row through a live session and reads it back; the decoder is
-/// what `task.go` owns, so the row is supplied directly. The `scan_range_*`
-/// columns stay memcomparable-encoded here (see the module boundary), so the
-/// assertion is on the raw bytes Go would then decode.
+/// what `task.go` owns, so the row is supplied directly.
 #[test]
 fn test_row_to_ttl_task() {
     let now = datetime("2026-01-01 00:00:00");
@@ -1387,7 +1424,8 @@ fn test_row_to_ttl_task() {
     assert_eq!(task.created_time, Some(now));
     assert_eq!(task.status, TaskStatus::default());
 
-    // Go's second assertion: the ranges are updated to encoded `1` and `2`.
+    // Go's second assertion: the ranges are updated to encoded `1` and `2`,
+    // then decoded back into their original datums.
     let range_start = encode_key(&[Datum::new_int(1)]).expect("an int datum is always encodable");
     let range_end = encode_key(&[Datum::new_int(2)]).expect("an int datum is always encodable");
     let row = MockRow {
@@ -1409,12 +1447,18 @@ fn test_row_to_ttl_task() {
         ],
     };
     let task = row_to_ttl_task(&row).unwrap();
-    assert_eq!(task.scan_range_start, Some(range_start));
-    assert_eq!(task.scan_range_end, Some(range_end));
+    assert_eq!(task.scan_range_start, Some(vec![Datum::new_int(1)]));
+    assert_eq!(task.scan_range_end, Some(vec![Datum::new_int(2)]));
     assert_eq!(task.owner_id, "owner");
     assert_eq!(task.owner_addr, "addr");
     assert_eq!(task.status, TaskStatus(TaskStatus::WAITING.to_owned()));
-    assert_eq!(task.state.as_deref(), Some("{\"total_rows\":3}"));
+    assert_eq!(
+        task.state,
+        Some(TTLTaskState {
+            total_rows: 3,
+            ..TTLTaskState::default()
+        })
+    );
 
     // A non-NULL but empty range column stays unset, as Go's comment notes.
     let row = MockRow {
@@ -1438,6 +1482,31 @@ fn test_row_to_ttl_task() {
     assert!(task.scan_range_start.is_none());
     assert!(task.scan_range_end.is_none());
     assert_eq!(task.status, TaskStatus(TaskStatus::RUNNING.to_owned()));
+}
+
+/// Go's `json.Unmarshal` rejects malformed task state instead of preserving
+/// the raw column text.
+#[test]
+fn test_row_to_ttl_task_rejects_invalid_state_json() {
+    let now = datetime("2026-01-01 00:00:00");
+    let row = MockRow {
+        cells: vec![
+            Some(Cell::Text("j".to_owned())),
+            Some(Cell::Int(1)),
+            Some(Cell::Int(1)),
+            None,
+            None,
+            Some(Cell::Datetime(now)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Cell::Text("{not-json".to_owned())),
+            Some(Cell::Datetime(now)),
+        ],
+    };
+    assert!(row_to_ttl_task(&row).is_err());
 }
 
 /// `RowToTableStatus`'s per-column extraction, the part of
@@ -1500,6 +1569,34 @@ fn test_ttl_task_statements() {
 
     assert!(SELECT_FROM_TTL_TASK.starts_with("SELECT LOW_PRIORITY\n\tjob_id,"));
     assert!(SELECT_FROM_TTL_TASK.ends_with("\tcreated_time FROM mysql.tidb_ttl_task"));
+
+    let now = datetime("2026-01-01 00:00:00");
+    let range_start = [Datum::new_int(1)];
+    let range_end = [Datum::new_int(2)];
+    let (sql, args) = insert_into_ttl_task(
+        &SessionTimeZone::utc(),
+        "test-job",
+        1,
+        7,
+        &range_start,
+        &range_end,
+        now,
+        now,
+    )
+    .unwrap();
+    assert_eq!(sql, tidb_ttl::cache::task::INSERT_INTO_TTL_TASK);
+    assert_eq!(
+        args,
+        vec![
+            SqlArg::Str("test-job".to_owned()),
+            SqlArg::Int(1),
+            SqlArg::Int(7),
+            SqlArg::Bytes(encode_key(&range_start).unwrap()),
+            SqlArg::Bytes(encode_key(&range_end).unwrap()),
+            SqlArg::Time(now),
+            SqlArg::Time(now),
+        ]
+    );
 
     let (sql, args) = select_from_ttl_table_status_with_id(9);
     assert!(sql.ends_with(" WHERE table_id = %?"));
@@ -1648,10 +1745,18 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
     type Row = NoRow;
     type Store = ();
     type InfoSchema = ();
+    type SqlExecutor = ();
+    type SessionVars = ();
 
     fn get_store(&self) {}
     fn get_latest_info_schema(&self) {}
     fn get_txn_info_schema(&self) {}
+    fn get_sql_executor(&self) -> &Self::SqlExecutor {
+        &()
+    }
+    fn get_session_vars(&self) -> &Self::SessionVars {
+        &()
+    }
 
     fn execute_internal(
         &self,

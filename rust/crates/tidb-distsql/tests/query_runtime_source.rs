@@ -15,14 +15,12 @@
 #![allow(missing_docs)]
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_codec::encode_value_in_timezone;
-use tidb_datatype::{
-    parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType,
-};
+use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
@@ -82,6 +80,7 @@ impl QueryTransport for ScriptedTransport {
 struct TrackingResponse {
     subsets: VecDeque<QueryResultSubset>,
     closed: Arc<AtomicBool>,
+    limiter_wait: tidb_distsql::LimiterWaitStats,
 }
 
 impl QueryResponse for TrackingResponse {
@@ -92,6 +91,10 @@ impl QueryResponse for TrackingResponse {
     fn close(&mut self) {
         self.closed.store(true, Ordering::SeqCst);
         self.subsets.clear();
+    }
+
+    fn limiter_wait_stats(&self) -> tidb_distsql::LimiterWaitStats {
+        self.limiter_wait
     }
 }
 
@@ -318,6 +321,7 @@ fn query_result_has_one_close_owner() {
             runtime: None,
         }]),
         closed: Arc::clone(&closed),
+        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -350,14 +354,14 @@ fn select_client_options_deliver_typed_transaction_events() {
             _request: &TransportRequest,
             _dispatch: &QueryDispatch,
         ) -> Result<Option<Self::Response>, String> {
-            self.callback.as_ref().expect("send event callback")(
-                wrap_cop_meet_lock(Some(CopMeetLock {
-                    lock_info: Some(KvrpcLockInfo {
+            self.callback.as_ref().expect("send event callback")(wrap_cop_meet_lock(Some(
+                Arc::new(CopMeetLock {
+                    lock_info: Some(Arc::new(KvrpcLockInfo {
                         key: b"locked".to_vec(),
                         ..KvrpcLockInfo::default()
-                    }),
-                })),
-            );
+                    })),
+                }),
+            )));
             Ok(self.response.take())
         }
     }
@@ -396,7 +400,10 @@ fn select_client_options_deliver_typed_transaction_events() {
         "send-scoped callback must be cleared"
     );
     assert_eq!(
-        observed.lock().expect("lock callback observation").as_slice(),
+        observed
+            .lock()
+            .expect("lock callback observation")
+            .as_slice(),
         [b"locked".to_vec()]
     );
 }
@@ -416,6 +423,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
             },
         ]),
         closed: Arc::clone(&closed),
+        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -430,6 +438,33 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
     let mut iter = result.into_select_iter(Vec::new());
     assert!(iter.next_row().unwrap().is_none());
     assert!(closed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn select_conversion_transfers_limiter_wait_stats_to_the_result_iterator() {
+    let response = TrackingResponse {
+        subsets: VecDeque::from([QueryResultSubset {
+            data: Vec::new(),
+            runtime: None,
+        }]),
+        closed: Arc::new(AtomicBool::new(false)),
+        limiter_wait: tidb_distsql::LimiterWaitStats {
+            total_ns: 17,
+            max_ns: 11,
+        },
+    };
+    let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
+    let result = runtime
+        .select(
+            &request(StoreType::TiKv),
+            input(),
+            QueryResultContext::new(field_types(2), WarningCollector::new()),
+        )
+        .expect("select response");
+
+    let iter = result.into_select_iter(Vec::new());
+    assert_eq!(iter.runtime_stats().limiter_wait.total_ns, 17);
+    assert_eq!(iter.runtime_stats().limiter_wait.max_ns, 11);
 }
 
 #[test]

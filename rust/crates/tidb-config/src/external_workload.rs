@@ -16,6 +16,7 @@
 //! external workload coordination config.
 
 use serde::{Deserialize, Serialize};
+use tidb_hack::go_to_lower;
 
 /// External workload role (Go `ExternalWorkloadRole`, a string type).
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -32,7 +33,7 @@ pub const ROLE_AUTO_ANALYZE_WORKER: &str = "auto-analyze";
 
 impl ExternalWorkloadRole {
     fn normalized(&self) -> ExternalWorkloadRole {
-        ExternalWorkloadRole(self.0.trim().to_lowercase())
+        ExternalWorkloadRole(go_to_lower(self.0.trim()))
     }
     fn valid(&self) -> bool {
         matches!(

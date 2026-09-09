@@ -32,18 +32,21 @@
 
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
-use tidb_expr::expr_util::normal_form::split_cnf_items;
-use tidb_expr::expr_util::substitute::SubstituteOptions;
-use tidb_expr::expression::Expression;
+use tidb_expr::constant::Constant;
+use tidb_expr::expr_util::normal_form::{expr_from_schema, split_cnf_items};
+use tidb_expr::expr_util::predicates::{contains, is_mutable_effects_expr};
+use tidb_expr::expr_util::substitute::{column_substitute, SubstituteOptions};
+use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
-use tidb_expr::simple_expr::extract_columns;
+use tidb_expr::simple_expr::{compose_cnf_condition, extract_columns};
 
 use crate::base_arms;
-use crate::find_best_task::LogicalJoinType;
 use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
+use crate::expression_rewriter::ColumnIdAllocator;
+use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
 use crate::stats_info::StatsInfo;
 
@@ -53,9 +56,10 @@ use super::rule::{
 };
 use super::schema_producer;
 use super::{
-    BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalSort,
-    LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
+    BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalProjection,
+    LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
+use tidb_hack::go_to_lower;
 
 /// The schema an operator effectively exposes, materialized.
 ///
@@ -69,6 +73,717 @@ fn effective_schema(node: &LogicalPlan) -> Schema {
 /// The schemas of `node`'s children, in child order.
 fn child_schemas(node: &LogicalPlan) -> Vec<Schema> {
     node.children().iter().map(effective_schema).collect()
+}
+
+/// Go `BuildLogicalJoinSchema` (`logical_join.go:2229`), the body of
+/// `LogicalJoin.MergeSchema`: a semi join outputs the left child's schema,
+/// while a left-outer-semi join appends the marker column the join already
+/// carries as its last output.
+fn build_logical_join_schema(
+    join_type: LogicalJoinType,
+    children: &[Schema],
+    own: Option<&Schema>,
+) -> Schema {
+    let left = children.first().cloned().unwrap_or_default();
+    match join_type {
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => left,
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
+            let mut schema = left;
+            if let Some(last) = own.and_then(|schema| schema.columns.last()).cloned() {
+                schema.append([last]);
+            }
+            schema
+        }
+        _ => {
+            let mut merged = Vec::new();
+            for schema in children {
+                merged.extend(schema.columns.iter().cloned());
+            }
+            Schema::new(merged)
+        }
+    }
+}
+
+/// The schema a child can resolve for column pruning.  A coalesced
+/// `USING`/`NATURAL` join exposes its redundant qualified columns through
+/// `FullSchema`; transparent selections preserve that capability, while a
+/// projection is a derived-table boundary and must stay on its visible
+/// schema.
+fn used_column_schema(node: &LogicalPlan) -> Schema {
+    match node {
+        LogicalPlan::Join(join) => join
+            .full_schema
+            .clone()
+            .unwrap_or_else(|| effective_schema(node)),
+        LogicalPlan::Apply(apply) => apply
+            .join
+            .full_schema
+            .clone()
+            .unwrap_or_else(|| effective_schema(node)),
+        LogicalPlan::Selection(selection) => selection
+            .base
+            .children()
+            .first()
+            .map_or_else(|| effective_schema(node), used_column_schema),
+        LogicalPlan::Limit(_)
+        | LogicalPlan::TopN(_)
+        | LogicalPlan::Sort(_)
+        | LogicalPlan::MaxOneRow(_) => node
+            .children()
+            .first()
+            .map_or_else(|| effective_schema(node), used_column_schema),
+        _ => effective_schema(node),
+    }
+}
+
+/// Go `getAllJoinLeaf`: DataSource, Aggregation, and Projection each start a
+/// new leaf schema; every other operator contributes the leaves of its children.
+fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
+    match node {
+        LogicalPlan::DataSource(_) | LogicalPlan::Aggregation(_) | LogicalPlan::Projection(_) => {
+            vec![effective_schema(node)]
+        }
+        _ => node
+            .children()
+            .iter()
+            .flat_map(all_join_leaf_schemas)
+            .collect(),
+    }
+}
+
+/// Histogram-backed `Selectivity` for the equality shapes whose complete
+/// inputs already live in [`StatsInfo`]. Go's `Selectivity` estimates a
+/// column/constant equality through the loaded histogram (bucket `Repeat` /
+/// bucket NDV / uniform fallback), and an IN list as the sum of its point
+/// estimates. When the collection carries the loaded histograms this port now
+/// takes the same route; without them it falls back to one value out of the
+/// column NDV. Returning `None` keeps genuinely pseudo tables on
+/// `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
+/// 1/1000 equality rate.
+pub(crate) fn analyzed_filter_selectivity(
+    table_stats: &StatsInfo,
+    conditions: &[Expression],
+) -> Option<f64> {
+    if table_stats.col_ndvs().is_empty() {
+        return None;
+    }
+    if table_stats.row_count() == 0.0 || conditions.is_empty() {
+        return Some(1.0);
+    }
+
+    let mut selectivity_total = 1.0_f64;
+    let mut recognized = false;
+    for condition in conditions {
+        let Expression::ScalarFunction(function) = condition else {
+            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
+            continue;
+        };
+        let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
+            ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
+                (column, vec![value.value.clone()])
+            }
+            ("eq" | "nulleq", [Expression::Constant(value), Expression::Column(column)]) => {
+                (column, vec![value.value.clone()])
+            }
+            ("in", [Expression::Column(column), values @ ..])
+                if !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| matches!(value, Expression::Constant(_))) =>
+            {
+                (
+                    column,
+                    values
+                        .iter()
+                        .filter_map(|value| match value {
+                            Expression::Constant(constant) => Some(constant.value.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
+            // Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a
+            // single-column LIKE estimates from the column's sampled values.
+            // Without a usable histogram sample Go falls back to
+            // `GetStrMatchDefaultSelectivity` (0.1), NOT the generic 0.8
+            // `SelectionFactor`; the latter kept a `p_name LIKE 'green%'`
+            // source at 80% of its rows and flipped a downstream join.
+            ("like", [Expression::Column(column), Expression::Constant(pattern), rest @ ..])
+                if rest
+                    .iter()
+                    .all(|argument| matches!(argument, Expression::Constant(_))) =>
+            {
+                let selectivity = histogram_prefix_selectivity(table_stats, column, &pattern.value)
+                    .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
+                selectivity_total *= selectivity;
+                recognized = true;
+                continue;
+            }
+            _ => {
+                selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
+                continue;
+            }
+        };
+        if let Some(histogram_selectivity) =
+            histogram_point_selectivity(table_stats, column, &values)
+        {
+            selectivity_total *= histogram_selectivity;
+            recognized = true;
+            continue;
+        }
+        let ndv = table_stats.col_ndv(column.unique_id);
+        if ndv > 0.0 {
+            selectivity_total *= (values.len() as f64 / ndv).min(1.0);
+            recognized = true;
+        } else {
+            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
+        }
+    }
+    if recognized {
+        Some(selectivity_total.max(1.0 / table_stats.row_count().max(1.0)))
+    } else {
+        Some(selectivity_total)
+    }
+}
+
+/// Go `GetStrMatchDefaultSelectivity`: the fallback used when a LIKE has no
+/// usable histogram sample.
+const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
+
+/// A `prefix%` LIKE estimated from the column histogram's bucket bounds: sum
+/// the rows of every bucket whose lower or upper bound starts with the
+/// prefix, over the realtime row count. `None` when the pattern is not a
+/// plain trailing-`%` prefix or the collection carries no histogram.
+fn histogram_prefix_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    pattern: &tidb_datatype::Datum,
+) -> Option<f64> {
+    let pattern = match pattern {
+        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        tidb_datatype::Datum::String(string) => {
+            String::from_utf8_lossy(string.bytes()).into_owned()
+        }
+        _ => return None,
+    };
+    let prefix = pattern.strip_suffix('%')?;
+    if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
+        return None;
+    }
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.histogram.buckets.is_empty() {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let starts_with = |value: &tidb_datatype::Datum| match value {
+        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).starts_with(prefix),
+        tidb_datatype::Datum::String(string) => {
+            String::from_utf8_lossy(string.bytes()).starts_with(prefix)
+        }
+        _ => false,
+    };
+    let mut matched = 0.0_f64;
+    let mut previous = 0.0_f64;
+    for bucket in &column_stats.histogram.buckets {
+        let rows = (bucket.count as f64 - previous).max(0.0);
+        previous = bucket.count as f64;
+        if starts_with(&bucket.lower_bound) || starts_with(&bucket.upper_bound) {
+            matched += rows;
+        }
+    }
+    Some((matched / realtime as f64).max(1.0 / realtime as f64))
+}
+
+/// Go `cardinality.Selectivity`'s equality arm over the loaded histogram:
+/// `getRowCountByColumnRanges` on the closed point ranges of `values`,
+/// divided by the source's row count.
+///
+/// `None` when the collection carries no histogram for this column, which is
+/// every profile built without a catalog and every pseudo collection; the
+/// caller then keeps the NDV approximation.
+fn histogram_point_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    values: &[tidb_datatype::Datum],
+) -> Option<f64> {
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.histogram.is_empty() || values.is_empty() {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let ranges = values
+        .iter()
+        .cloned()
+        .map(crate::cardinality::row_count_estimator::ColumnRange::point)
+        .collect::<Vec<_>>();
+    // Go's `Selectivity` passes `pkIsHandle=true` only when the ESTIMATED
+    // column is the single integer handle (`colStats.IsHandle`); a common
+    // handle's key columns are ordinary columns here, and a heap table's
+    // synthetic `_tidb_rowid` is not one of its stored columns at all.
+    let column_is_handle = hist_coll.pk_is_handle()
+        && hist_coll
+            .column(column.unique_id)
+            .is_some_and(|row_size| row_size.is_handle);
+    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        Some(column_stats.as_ref()),
+        &ranges,
+        tidb_datatype::Collation::Binary,
+        realtime,
+        hist_coll.modify_count(),
+        column_is_handle,
+        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+    );
+    Some((estimate.est / table_stats.row_count()).min(1.0))
+}
+
+fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u64 {
+    conditions
+        .iter()
+        .enumerate()
+        .fold(0_u64, |mask, (offset, condition)| {
+            if contains(access, condition) {
+                mask | (1_u64 << offset)
+            } else {
+                mask
+            }
+        })
+}
+
+/// Go `LogicalJoin.getProj`: make a child projection that initially exposes
+/// the child's complete schema through identity expressions.
+pub(crate) fn ensure_join_projection(
+    ctx: &RuleContext<'_>,
+    child: &mut LogicalPlan,
+) -> Result<(), PlanError> {
+    if matches!(child, LogicalPlan::Projection(_)) {
+        return Ok(());
+    }
+    let schema = child
+        .schema()
+        .cloned()
+        .ok_or_else(|| PlanError::internal("LogicalJoin.getProj: child has no schema"))?;
+    let expressions = schema
+        .columns
+        .iter()
+        .cloned()
+        .map(Expression::Column)
+        .collect();
+    let output_names = child.output_names().to_vec();
+    let query_block_offset = child.base().base.query_block_offset();
+    let owned = std::mem::replace(child, LogicalPlan::TableDual(LogicalTableDual::default()));
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::new(ctx.allocator, "Projection", query_block_offset),
+        expressions,
+    );
+    projection.base.base.set_schema(Some(schema));
+    projection.base.base.set_output_names(output_names);
+    projection.base.set_children(vec![owned]);
+    *child = LogicalPlan::Projection(projection);
+    Ok(())
+}
+
+/// Go `LogicalProjection.AppendExpr`, used only by `updateEQCond`.
+pub(crate) fn append_join_projection_expr(
+    ctx: &RuleContext<'_>,
+    child: &mut LogicalPlan,
+    expression: Expression,
+) -> Result<Column, PlanError> {
+    if let Expression::Column(column) = expression {
+        return Ok(column);
+    }
+    let LogicalPlan::Projection(projection) = child else {
+        return Err(PlanError::internal(
+            "LogicalProjection.AppendExpr: join child is not a projection",
+        ));
+    };
+    let schema = projection
+        .base
+        .base
+        .schema()
+        .cloned()
+        .ok_or_else(|| PlanError::internal("LogicalProjection.AppendExpr: missing schema"))?;
+    let expression = column_substitute(
+        &expression,
+        &schema,
+        &projection.exprs,
+        &SubstituteOptions::new(ctx.builder),
+    );
+    let ret_type = expression.static_type().cloned().ok_or_else(|| {
+        PlanError::internal("LogicalProjection.AppendExpr: expression has no static type")
+    })?;
+    let column = Column::new(ctx.column_allocator.alloc(), ret_type);
+    projection.exprs.push(expression);
+    let mut schema = schema;
+    schema.columns.push(column.clone());
+    projection.base.base.set_schema(Some(schema));
+    Ok(column)
+}
+
+/// Go `logicalop.InjectExpr`: make sure `plan` is a projection and append a
+/// non-column expression in the child's expression space.
+pub(crate) fn inject_join_expression(
+    ctx: &RuleContext<'_>,
+    mut plan: LogicalPlan,
+    expression: Expression,
+) -> Result<(LogicalPlan, Column), PlanError> {
+    if let Expression::Column(column) = expression {
+        return Ok((plan, column));
+    }
+    ensure_join_projection(ctx, &mut plan)?;
+    let column = append_join_projection_expr(ctx, &mut plan, expression)?;
+    Ok((plan, column))
+}
+
+fn build_join_equality(
+    ctx: &RuleContext<'_>,
+    left: Column,
+    right: Column,
+) -> Result<ScalarFunction, PlanError> {
+    let expression = ctx
+        .builder
+        .new_function(
+            "eq",
+            Some(tidb_expr::expr_util::builder::tiny_int_type()),
+            vec![Expression::Column(left), Expression::Column(right)],
+        )
+        .map_err(|error| PlanError::internal(error.to_string()))?;
+    let Expression::ScalarFunction(function) = expression else {
+        return Err(PlanError::internal(
+            "LogicalJoin.updateEQCond: equality is not a scalar function",
+        ));
+    };
+    Ok(function)
+}
+
+/// Go `LogicalJoin.updateEQCond`'s normal-equality half.
+///
+/// Predicate pushdown can leave `expr(left) = expr(right)` in
+/// `OtherConditions`. Physical joins require `column = column`, so Go moves
+/// those conditions into `EqualConditions`, materializing either expression
+/// under a child projection when necessary. This is also the prerequisite for
+/// `JoinKeyTypeCastRewriter`: its input is the pair of DOUBLE projection
+/// columns created here, never a bare INT/VARCHAR comparison.
+fn update_join_equal_conditions(
+    ctx: &RuleContext<'_>,
+    join: &mut super::LogicalJoin,
+) -> Result<(), PlanError> {
+    let [left_schema, right_schema] = child_schemas(&LogicalPlan::Join(join.clone()))
+        .try_into()
+        .map_err(|_| PlanError::internal("LogicalJoin.updateEQCond needs two children"))?;
+
+    let mut extracted = Vec::new();
+    let mut remove = vec![false; join.other_conditions.len()];
+    for index in (0..join.other_conditions.len()).rev() {
+        let condition = &join.other_conditions[index];
+        let Expression::ScalarFunction(function) = condition else {
+            continue;
+        };
+        if function.func_name.lowercase() != "eq" || super::join::is_eq_cond_from_in(condition) {
+            continue;
+        }
+        let [left, right] = function.args.as_slice() else {
+            continue;
+        };
+        let pair = if expr_from_schema(left, &left_schema) && expr_from_schema(right, &right_schema)
+        {
+            Some((left.clone(), right.clone()))
+        } else if expr_from_schema(left, &right_schema) && expr_from_schema(right, &left_schema) {
+            Some((right.clone(), left.clone()))
+        } else {
+            None
+        };
+        if let Some(pair) = pair {
+            remove[index] = true;
+            extracted.push(pair);
+        }
+    }
+    if extracted.is_empty() {
+        return Ok(());
+    }
+    join.other_conditions = std::mem::take(&mut join.other_conditions)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, condition)| (!remove[index]).then_some(condition))
+        .collect();
+
+    let mut left_projection = extracted
+        .iter()
+        .any(|(left, _)| !matches!(left, Expression::Column(_)));
+    let mut right_projection = extracted
+        .iter()
+        .any(|(_, right)| !matches!(right, Expression::Column(_)));
+    if left_projection {
+        ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+    }
+    if right_projection {
+        ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+    }
+
+    for (left_expression, right_expression) in extracted {
+        let keep_as_other =
+            is_mutable_effects_expr(&left_expression) || is_mutable_effects_expr(&right_expression);
+        let mut left_key = if left_projection {
+            append_join_projection_expr(ctx, &mut join.base.children_mut()[0], left_expression)?
+        } else {
+            let Expression::Column(column) = left_expression else {
+                unreachable!("projection need was computed from every extracted key")
+            };
+            column
+        };
+        let mut right_key = if right_projection {
+            append_join_projection_expr(ctx, &mut join.base.children_mut()[1], right_expression)?
+        } else {
+            let Expression::Column(column) = right_expression else {
+                unreachable!("projection need was computed from every extracted key")
+            };
+            column
+        };
+
+        let mut equality = build_join_equality(ctx, left_key.clone(), right_key.clone())?;
+        if !matches!(equality.args.first(), Some(Expression::Column(_))) {
+            if !left_projection {
+                ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+                left_projection = true;
+            }
+            left_key = append_join_projection_expr(
+                ctx,
+                &mut join.base.children_mut()[0],
+                equality.args[0].clone(),
+            )?;
+        } else if let Expression::Column(column) = &equality.args[0] {
+            left_key = column.clone();
+        }
+        if !matches!(equality.args.get(1), Some(Expression::Column(_))) {
+            if !right_projection {
+                ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+                right_projection = true;
+            }
+            right_key = append_join_projection_expr(
+                ctx,
+                &mut join.base.children_mut()[1],
+                equality.args[1].clone(),
+            )?;
+        } else if let Expression::Column(column) = &equality.args[1] {
+            right_key = column.clone();
+        }
+        if !matches!(
+            equality.args.as_slice(),
+            [Expression::Column(_), Expression::Column(_)]
+        ) {
+            equality = build_join_equality(ctx, left_key, right_key)?;
+        }
+        if keep_as_other {
+            join.other_conditions
+                .push(Expression::ScalarFunction(equality));
+        } else {
+            join.equal_conditions.push(equality);
+        }
+    }
+    Ok(())
+}
+
+fn update_join_equal_conditions_in_plan(
+    ctx: &RuleContext<'_>,
+    plan: &mut LogicalPlan,
+) -> Result<bool, PlanError> {
+    match plan {
+        LogicalPlan::Join(join) => {
+            let mut updated = join.clone();
+            update_join_equal_conditions(ctx, &mut updated)?;
+            *join = updated;
+            Ok(true)
+        }
+        LogicalPlan::Apply(apply) => {
+            let mut updated = apply.join.clone();
+            update_join_equal_conditions(ctx, &mut updated)?;
+            apply.join = updated;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Go `cardinality.Selectivity` over the pseudo column/index histograms that
+/// `statistics.PseudoTable` creates. This is intentionally distinct from
+/// `pseudoSelectivity`: that coarse fallback is used only when the histogram
+/// collection has no columns/indexes (or more than 63 predicates). A normal
+/// unanalyzed table still builds ranges, so `k >= 1 AND k <= 3` is one
+/// bounded range (`1/pseudoBetweenRate`), not two unrelated `1/3` guesses.
+pub(crate) fn pseudo_range_filter_selectivity(
+    source: &super::data_source::DataSource,
+    table_stats: &StatsInfo,
+    conditions: &[Expression],
+    schema: &Schema,
+    range_max_size: i64,
+    selectivity_factor: f64,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+) -> Option<f64> {
+    if conditions.is_empty() || table_stats.row_count() == 0.0 {
+        return Some(1.0);
+    }
+    if conditions.len() > 63 {
+        return None;
+    }
+
+    use crate::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
+    let rows = table_stats.row_count();
+    let mut nodes = Vec::new();
+    for column in &schema.columns {
+        let field_type = column.ret_type.as_ref()?;
+        let (access, _) =
+            crate::ranger::detacher::detach_conds_for_column(conditions, column, true);
+        if access.is_empty() {
+            continue;
+        }
+        let range_result = crate::ranger::ranger::build_column_range(
+            &access,
+            field_type,
+            crate::ranger::checker::UNSPECIFIED_LENGTH,
+            range_max_size,
+        )
+        .ok()?;
+        if !range_result.remained_conds.is_empty() {
+            if let Some(handler) = range_fallback_handler {
+                handler.record_range_fallback(range_max_size);
+            }
+        }
+        let mask = covered_condition_mask(conditions, &range_result.access_conds);
+        if mask == 0 {
+            continue;
+        }
+        // Go `Selectivity` marks the handle column `PkType` and estimates it
+        // with `GetRowCountByColumnRanges(..., pkIsHandle=true)`
+        // (`planner/cardinality/selectivity.go:123`,
+        // `row_count_column.go:47`): a pseudo point range on an integer
+        // handle is ONE row, not `RealtimeCount / pseudoEqualRate`. The
+        // generic column estimate made a fixed primary-key lookup cost ten
+        // rows, which in turn reordered the join group away from Go's plan.
+        let is_int_handle = source.handle_is_int
+            && source
+                .handle_cols
+                .iter()
+                .any(|handle| handle.unique_id == column.unique_id);
+        let count = if is_int_handle {
+            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                &range_result.ranges,
+                rows,
+                field_type.is_unsigned(),
+            )
+        } else {
+            crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows)
+        };
+        let kind = if is_int_handle
+            || source
+                .handle_cols
+                .iter()
+                .any(|handle| handle.unique_id == column.unique_id)
+        {
+            StatsNodeType::PrimaryKey
+        } else {
+            StatsNodeType::Column
+        };
+        nodes.push(StatsNode {
+            selectivity: count / rows,
+            ..StatsNode::new(kind, column.unique_id, mask as i64, 1)
+        });
+    }
+
+    for index in source
+        .indexes
+        .iter()
+        .filter(|index| index.is_public && !index.is_multi_valued && !index.is_columnar)
+    {
+        let resolved = index
+            .columns
+            .iter()
+            .map_while(|index_column| {
+                source
+                    .schema_column_for_index_column(index_column)
+                    .cloned()
+                    .map(|column| (column, index_column.length))
+            })
+            .collect::<Vec<_>>();
+        if resolved.is_empty() {
+            continue;
+        }
+        let index_columns = resolved
+            .iter()
+            .map(|(column, _)| column.clone())
+            .collect::<Vec<_>>();
+        let lengths = resolved
+            .iter()
+            .map(|(_, length)| *length)
+            .collect::<Vec<_>>();
+        let detached = match range_fallback_handler {
+            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler(
+                conditions,
+                &index_columns,
+                &lengths,
+                range_max_size,
+                handler,
+            ),
+            None => crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                conditions,
+                &index_columns,
+                &lengths,
+                range_max_size,
+            ),
+        }
+        .ok()?;
+        let mask = if detached.is_dnf_cond && !detached.access_conds.is_empty() {
+            1
+        } else {
+            covered_condition_mask(conditions, &detached.access_conds)
+        };
+        if mask == 0 {
+            continue;
+        }
+        let unique_columns =
+            (index.unique && resolved.len() == index.columns.len()).then_some(index.columns.len());
+        let count = crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+            &detached.ranges,
+            rows,
+            unique_columns,
+        );
+        nodes.push(StatsNode {
+            selectivity: count / rows,
+            partial_cover: detached.is_dnf_cond && !detached.remained_conds.is_empty(),
+            min_access_conditions_for_dnf: i32::try_from(detached.min_access_conds_for_dnf_cond)
+                .unwrap_or(i32::MAX),
+            ..StatsNode::new(
+                StatsNodeType::Index,
+                index.id,
+                mask as i64,
+                index.columns.len(),
+            )
+        });
+    }
+
+    // Share Go's full/partial DNF and minimum-access tie breaks with the
+    // executor's statistics path.
+    let mut remaining = (1_u64 << conditions.len()) - 1;
+    let mut selectivity = 1.0_f64;
+    for node in get_usable_sets_by_greedy(&mut nodes) {
+        remaining &= !(node.mask as u64);
+        selectivity *= node.selectivity;
+        if node.partial_cover {
+            selectivity *= selectivity_factor;
+        }
+    }
+    if remaining != 0 {
+        // Go applies the minimum default ONCE to all still-uncovered CNF
+        // items, rather than multiplying 0.8 once per item.
+        selectivity *= selectivity_factor;
+    }
+    Some(selectivity.max(1.0 / rows.max(1.0)))
 }
 
 /// Replaces `node`'s OWN schema, when it has one.
@@ -97,6 +812,13 @@ enum PendingPredicates {
     /// take: the child's leftover keeps travelling upward, joined with what
     /// this node could not push.
     PassThrough(Vec<Expression>),
+    /// Go `BaseLogicalPlan.PredicatePushDown`'s tail
+    /// (`base_logical_plan.go:128`): the child's leftovers are attached as a
+    /// `Selection` ABOVE the child (`AddSelection(p.self, newChild, rest, 0)`)
+    /// and only the node's OWN leftovers travel upward. A projection's
+    /// substituted predicates reference columns of its CHILD, so keeping them
+    /// above the projection would leave those columns unavailable.
+    AttachBelow(Vec<Expression>),
     /// `LogicalSelection.PredicatePushDown`'s own tail
     /// (`logical_selection.go:96`), which either absorbs the leftover into its
     /// own conditions, collapses to a `LogicalTableDual`, or disappears.
@@ -121,6 +843,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
     ) -> Descend<Self::Down, Self::Up> {
         let child_count = node.children().len();
         let schemas = child_schemas(node);
+        let all_join_leaf = all_join_leaf_schemas(node);
         let own_schema = effective_schema(node);
         let names = node.base().base.output_names().to_vec();
         let query_block_offset = node.base().base.query_block_offset();
@@ -128,7 +851,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             // Go `LogicalSelection.PredicatePushDown` (`logical_selection.go:96`).
             LogicalPlan::Selection(op) => {
                 let conditions = std::mem::take(&mut op.conditions);
-                op.conditions = apply_predicate_simplification(self.ctx, conditions);
+                op.conditions = apply_predicate_simplification(self.ctx, conditions, false, None);
                 let (can_push, cannot_push) =
                     super::LogicalSelection::split_set_get_var_func(&op.conditions);
                 self.stash.push(PendingPredicates::Selection(cannot_push));
@@ -141,18 +864,98 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let opts = SubstituteOptions::new(self.ctx.builder);
                 let (can_push, cannot_push) =
                     op.break_down_predicates(&predicates, &own_schema, &opts);
-                self.stash.push(PendingPredicates::PassThrough(cannot_push));
+                self.stash.push(PendingPredicates::AttachBelow(cannot_push));
                 Descend::Children(vec![can_push])
             }
             // Go `LogicalJoin.PredicatePushDown` (`logical_join.go:171`).
             LogicalPlan::Join(op) => {
                 let opts = SubstituteOptions::new(self.ctx.builder);
+                let left_schema = schemas.first().unwrap_or(&own_schema);
+                let right_schema = schemas.get(1).unwrap_or(&own_schema);
                 let split = op.predicate_push_down_local(
                     predicates,
-                    schemas.first().unwrap_or(&own_schema),
-                    schemas.get(1).unwrap_or(&own_schema),
+                    left_schema,
+                    right_schema,
+                    &all_join_leaf,
                     &opts,
-                    |conds| apply_predicate_simplification(self.ctx, conds),
+                    |conds, propagate_constant, valid| {
+                        super::rule::apply_predicate_simplification_for_join(
+                            self.ctx,
+                            conds,
+                            left_schema,
+                            right_schema,
+                            propagate_constant,
+                            valid,
+                        )
+                    },
+                    |join_conditions,
+                     filter_conditions,
+                     outer_schema,
+                     inner_schema,
+                     null_sensitive,
+                     valid| {
+                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                            self.ctx,
+                            join_conditions,
+                            filter_conditions,
+                            outer_schema,
+                            inner_schema,
+                            null_sensitive,
+                            valid,
+                        )
+                    },
+                );
+                if let Some(conds) = &split.dual_conditions {
+                    if let Some(dual) =
+                        conds_to_table_dual(self.ctx, conds, Some(&own_schema), query_block_offset)
+                    {
+                        *node = dual;
+                        return Descend::Stop(Vec::new());
+                    }
+                }
+                self.stash.push(PendingPredicates::AddSelection(split.ret));
+                Descend::Children(vec![split.left_cond, split.right_cond])
+            }
+            // Go method promotion: `LogicalApply` embeds `LogicalJoin`, so
+            // `LogicalJoin.PredicatePushDown` wins over the embedded
+            // `BaseLogicalPlan` method even though logical_apply.go does not
+            // spell out another override.
+            LogicalPlan::Apply(op) => {
+                let opts = SubstituteOptions::new(self.ctx.builder);
+                let left_schema = schemas.first().unwrap_or(&own_schema);
+                let right_schema = schemas.get(1).unwrap_or(&own_schema);
+                let split = op.join.predicate_push_down_local(
+                    predicates,
+                    left_schema,
+                    right_schema,
+                    &all_join_leaf,
+                    &opts,
+                    |conds, propagate_constant, valid| {
+                        super::rule::apply_predicate_simplification_for_join(
+                            self.ctx,
+                            conds,
+                            left_schema,
+                            right_schema,
+                            propagate_constant,
+                            valid,
+                        )
+                    },
+                    |join_conditions,
+                     filter_conditions,
+                     outer_schema,
+                     inner_schema,
+                     null_sensitive,
+                     valid| {
+                        super::rule_predicate_simplification::propagate_constant_for_outer_join(
+                            self.ctx,
+                            join_conditions,
+                            filter_conditions,
+                            outer_schema,
+                            inner_schema,
+                            null_sensitive,
+                            valid,
+                        )
+                    },
                 );
                 if let Some(conds) = &split.dual_conditions {
                     if let Some(dual) =
@@ -185,7 +988,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let split = LogicalUnionScan::predicate_push_down(&predicates);
                 op.conditions = predicates;
                 self.stash
-                    .push(PendingPredicates::PassThrough(split.with_virtual_column));
+                    .push(PendingPredicates::AttachBelow(split.with_virtual_column));
                 Descend::Children(vec![split.without_virtual_column])
             }
             // Go `LogicalUnionAll.PredicatePushDown`
@@ -231,19 +1034,34 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 }
                 Descend::Children(downs)
             }
-            // Go `DataSource.PredicatePushDown` (`logical_datasource.go:135`).
+            // Go `DataSource.PredicatePushDown` (`logical_datasource.go:185`).
             //
-            // NARROWING: Go splits `predicates` with
-            // `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`,
-            // which consults the store's function whitelist and the session's
-            // expression-pushdown blacklist. Neither is reachable from here, so
-            // NOTHING is claimed as pushable: every predicate is recorded in
-            // `AllConds` (which is what column pruning reads) and handed back to
-            // the parent, so the filter is still applied — one level up rather
-            // than in the coprocessor. That direction is safe; the opposite
-            // would drop a filter the store cannot evaluate.
+            // Go first simplifies the predicates, records ALL of them in
+            // `AllConds`, and checks `Conds2TableDual` over that list BEFORE
+            // splitting with
+            // `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`.
+            // The dual check has to come first: a constant-NULL comparison such
+            // as `gt(cast(col), NULL)` is pushable, so checking only the
+            // leftover would let it reach the scan instead of collapsing the
+            // source to an empty `TableDual`.
+            //
+            // The TiKV expression whitelist is the dependency-closed half of
+            // that split; session blacklist entries are applied later by the
+            // live executor when it negotiates the scan. Keep unsupported
+            // expressions above the source and let supported expressions grow
+            // the DataSource ranges and statistics used by physical planning.
             LogicalPlan::DataSource(op) => {
-                Descend::Stop(op.predicate_push_down_local(Vec::new(), predicates))
+                let predicates = apply_predicate_simplification(self.ctx, predicates, true, None);
+                if let Some(dual) = conds_to_table_dual(
+                    self.ctx,
+                    &predicates,
+                    Some(&own_schema),
+                    query_block_offset,
+                ) {
+                    *node = dual;
+                    return Descend::Stop(Vec::new());
+                }
+                Descend::Stop(op.predicate_push_down_local(predicates))
             }
             // Go `LogicalTableDual.PredicatePushDown`
             // (`logical_table_dual.go:73`).
@@ -259,33 +1077,50 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             LogicalPlan::Show(op) => {
                 Descend::Stop(op.predicate_push_down(&own_schema, &names, predicates))
             }
-            // Go `LogicalCTE.PredicatePushDown` (`logical_cte.go:96`).
-            //
-            // NARROWING: the pushable half is RECORDED on the CTE class in Go
-            // and re-optimized with the seed plan, which is its own phase. The
-            // decision itself is ported on the operator
-            // ([`super::LogicalCTE::predicate_push_down`]); what is not done
-            // here is the recording, so every predicate stays above the CTE.
+            // Go `LogicalCTE.PredicatePushDown` (`logical_cte.go:96`). The
+            // predicates still remain above this reference, while a resolved
+            // CNF copy is accumulated on the shared class so its seed can be
+            // optimized once against the DNF of every consumer.
             LogicalPlan::CTE(op) => {
-                let _decision = op.predicate_push_down(&predicates);
+                use super::cte::CtePredicatePushDown;
+
+                let decision = op.predicate_push_down(&predicates);
+                if let Some(class) = &op.cte {
+                    let mut class = class.borrow_mut();
+                    let recorded = match decision {
+                        CtePredicatePushDown::Unsupported => None,
+                        CtePredicatePushDown::RecordAlwaysTrue => {
+                            Some(Expression::Constant(Constant::new_one()))
+                        }
+                        CtePredicatePushDown::Record(predicates) => compose_cnf_condition(
+                            predicates
+                                .into_iter()
+                                .map(|predicate| {
+                                    super::rule_util::resolve_expr_and_replace(
+                                        &predicate,
+                                        &class.column_map,
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    };
+                    if let Some(recorded) = recorded {
+                        class.push_down_predicates.push(recorded);
+                    }
+                }
                 Descend::Stop(predicates)
             }
             // Go's base body: everything goes to `children[0]`, nothing comes
-            // back up. `LogicalApply` is here rather than with `LogicalJoin`
-            // because Go's override needs the decorrelation analysis that is a
-            // later batch; the base body is the SAFE half of it, since it only
-            // fails to push, never pushes wrongly.
+            // back up.
             base_arms![
                 Sort,
                 TopN,
-                Apply,
                 Lock,
                 CTETable,
                 TiKVSingleGather,
                 TableScan,
                 IndexScan,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 self.stash.push(PendingPredicates::AddSelection(Vec::new()));
                 if child_count == 0 {
@@ -319,12 +1154,35 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     })
                     .collect();
                 node.set_children(rebuilt);
+                match update_join_equal_conditions_in_plan(self.ctx, &mut node) {
+                    Ok(true) => {
+                        // Go calls `BuildKeyInfoPortal(p)` immediately after
+                        // `updateEQCond`; the inserted projections changed the
+                        // schemas and key identities this join consumes.
+                        node =
+                            build_key_info_portal_with_allocator(node, self.ctx.column_allocator);
+                    }
+                    Ok(false) => {}
+                    Err(error) => self.failure.record(error),
+                }
                 (node, ret)
             }
             PendingPredicates::PassThrough(mut extra) => {
                 let mut up: Vec<Expression> = child_ups.into_iter().flatten().collect();
                 up.append(&mut extra);
                 (node, up)
+            }
+            PendingPredicates::AttachBelow(mut extra) => {
+                let children = node.base_mut().take_children();
+                let rebuilt = children
+                    .into_iter()
+                    .zip(child_ups)
+                    .map(|(child, leftover)| {
+                        add_selection(self.ctx, child, leftover, query_block_offset)
+                    })
+                    .collect();
+                node.set_children(rebuilt);
+                (node, extra)
             }
             PendingPredicates::Selection(cannot_push) => {
                 let mut ret: Vec<Expression> = child_ups.into_iter().flatten().collect();
@@ -340,7 +1198,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                     node.dismantle();
                     return (child, Vec::new());
                 }
-                let simplified = apply_predicate_simplification(self.ctx, ret);
+                let simplified = apply_predicate_simplification(self.ctx, ret, true, None);
                 if let Some(dual) = conds_to_table_dual(
                     self.ctx,
                     &simplified,
@@ -400,10 +1258,12 @@ enum PendingColumns {
     /// child plus the columns snapshotted on the way down — the parent's set
     /// for a TopN, this window's own result columns for a window.
     RebuildWithOwnColumns(Vec<Column>),
+    /// `LogicalUnionAll`: add Go's identity projection above a child that
+    /// retained condition-only columns after the union schema was pruned.
+    RepairUnionChildren(bool),
 }
 
 struct PruneColumns<'a, 'ctx> {
-    #[allow(dead_code)]
     ctx: &'a RuleContext<'ctx>,
     failure: RewriteFailure,
     stash: Vec<PendingColumns>,
@@ -420,6 +1280,8 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
         parent_used_cols: Vec<Column>,
     ) -> Descend<Self::Down, Self::Up> {
         let child_count = node.children().len();
+        let child_is_table_dual =
+            matches!(node.children().first(), Some(LogicalPlan::TableDual(_)));
         let schemas = child_schemas(node);
         let mut own_schema = effective_schema(node);
         let empty = Schema::default();
@@ -431,6 +1293,26 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             }
             // Go `LogicalProjection.PruneColumns` (`logical_projection.go:105`).
             LogicalPlan::Projection(op) => {
+                // Go's `LogicalTableDual` escape: an all-pruned projection
+                // over a dual is KEPT and reset to a single zero column,
+                // because the dual owns no output columns of its own. Go
+                // returns `p, nil` there, so the dual is not pruned either.
+                if !op.exprs.is_empty()
+                    && child_is_table_dual
+                    && op.all_outputs_pruned(&parent_used_cols, &own_schema)
+                {
+                    let zero = Expression::Constant(Constant::new_zero());
+                    let ret_type = zero.static_type().cloned().unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
+                    });
+                    op.exprs.truncate(1);
+                    op.exprs[0] = zero;
+                    let column = Column::new(self.ctx.column_allocator.alloc(), ret_type);
+                    own_schema.columns.truncate(1);
+                    own_schema.columns[0] = column;
+                    set_own_schema(node, own_schema);
+                    return Descend::Stop(());
+                }
                 let (child_used, emptied) =
                     op.prune_columns_local(&parent_used_cols, &mut own_schema);
                 set_own_schema(node, own_schema);
@@ -443,10 +1325,16 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             }
             // Go `LogicalJoin.PruneColumns` (`logical_join.go:339`).
             LogicalPlan::Join(op) => {
+                let used_schemas = op
+                    .base
+                    .children()
+                    .iter()
+                    .map(used_column_schema)
+                    .collect::<Vec<_>>();
                 let (left, right) = op.extract_used_cols(
                     &parent_used_cols,
-                    schemas.first().unwrap_or(&empty),
-                    schemas.get(1).unwrap_or(&empty),
+                    used_schemas.first().unwrap_or(&empty),
+                    used_schemas.get(1).unwrap_or(&empty),
                 );
                 self.stash
                     .push(PendingColumns::MergeSchema(parent_used_cols));
@@ -518,19 +1406,13 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 self.stash.push(PendingColumns::Nothing);
                 Descend::Children(vec![op.prune_columns_local(&parent_used_cols)])
             }
-            // Go `LogicalUnionAll.PruneColumns` (`logical_union_all.go:113`).
-            //
-            // NARROWING: Go inserts a `LogicalProjection` above a branch that
-            // stayed WIDER than the union (see
-            // [`LogicalUnionAll::child_needs_pruning_projection`]); building
-            // that projection needs a plan-column allocator per branch column
-            // and is left to the batch that owns projection construction. The
-            // per-branch set and the union's own schema pruning are done.
+            // Go `LogicalUnionAll.PruneColumns` (`logical_union_all.go:59`).
             LogicalPlan::UnionAll(_) | LogicalPlan::PartitionUnionAll(_) => {
                 let pruning =
                     LogicalUnionAll::prune_columns_local(&parent_used_cols, &mut own_schema);
                 set_own_schema(node, own_schema);
-                self.stash.push(PendingColumns::Nothing);
+                self.stash
+                    .push(PendingColumns::RepairUnionChildren(pruning.has_been_used));
                 Descend::Children(vec![pruning.child_used_cols; child_count])
             }
             // Go `LogicalMemTable.PruneColumns` (`logical_mem_table.go:80`).
@@ -584,7 +1466,6 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 IndexScan,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 if child_count == 0 {
                     return Descend::Stop(());
@@ -620,18 +1501,58 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (child, ())
             }
             PendingColumns::MergeSchema(parent_used_cols) => {
-                // Go `p.MergeSchema()` then `p.InlineProjection(parentUsedCols)`.
-                let mut merged = Vec::new();
-                for schema in &schemas {
-                    merged.extend(schema.columns.iter().cloned());
+                // Go `p.MergeSchema()` (`BuildLogicalJoinSchema`) then
+                // `p.InlineProjection(parentUsedCols)`. A left-outer-semi join
+                // re-appends its marker column before inlining
+                // (`logical_join.go:339`), which is what keeps the appended
+                // boolean alive after pruning.
+                let own_schema = node.base().base.schema().cloned();
+                let mut parent_used_cols = parent_used_cols;
+                let mut schema = match &node {
+                    LogicalPlan::Join(op) => {
+                        build_logical_join_schema(op.join_type, &schemas, own_schema.as_ref())
+                    }
+                    LogicalPlan::Apply(op) => {
+                        build_logical_join_schema(op.join.join_type, &schemas, own_schema.as_ref())
+                    }
+                    _ => {
+                        let mut merged = Vec::new();
+                        for schema in &schemas {
+                            merged.extend(schema.columns.iter().cloned());
+                        }
+                        Schema::new(merged)
+                    }
+                };
+                if matches!(
+                    &node,
+                    LogicalPlan::Join(op)
+                        if matches!(
+                            op.join_type,
+                            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+                        )
+                ) || matches!(
+                    &node,
+                    LogicalPlan::Apply(op)
+                        if matches!(
+                            op.join.join_type,
+                            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+                        )
+                ) {
+                    if let Some(last) = schema.columns.last().cloned() {
+                        parent_used_cols.push(last);
+                    }
                 }
-                let mut schema = Schema::new(merged);
                 schema_producer::inline_projection(&mut schema, &parent_used_cols);
                 set_own_schema(&mut node, schema);
                 (node, ())
             }
             PendingColumns::RebuildFromChild(parent_used_cols) => {
-                let child_schema = schemas.first().cloned().unwrap_or_default();
+                // Go `LogicalLimit.PruneColumns` indexes `p.Children()[0]`
+                // (`logical_limit.go:87`); a childless node panics there.
+                let child_schema = schemas
+                    .first()
+                    .cloned()
+                    .expect("column pruning requires the child schema");
                 if let LogicalPlan::Limit(op) = &mut node {
                     op.prune_columns_local(&parent_used_cols, &child_schema);
                 } else {
@@ -642,7 +1563,11 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (node, ())
             }
             PendingColumns::RebuildWithOwnColumns(snapshot) => {
-                let child_schema = schemas.first().cloned().unwrap_or_default();
+                // Same Go `Children()[0]` boundary as `RebuildFromChild`.
+                let child_schema = schemas
+                    .first()
+                    .cloned()
+                    .expect("column pruning requires the child schema");
                 let rebuilt = match &mut node {
                     LogicalPlan::TopN(op) => {
                         Some(op.rebuild_schema_after_pruning(&snapshot, &child_schema))
@@ -659,6 +1584,48 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 if let Some(schema) = rebuilt {
                     set_own_schema(&mut node, schema);
                 }
+                (node, ())
+            }
+            PendingColumns::RepairUnionChildren(has_been_used) => {
+                if !has_been_used {
+                    return (node, ());
+                }
+                let Some(schema) = node.schema().cloned() else {
+                    return (node, ());
+                };
+                let query_block_offset = node.base().base.query_block_offset();
+                let children = node.base_mut().take_children();
+                let children = children
+                    .into_iter()
+                    .map(|child| {
+                        if !LogicalUnionAll::child_needs_pruning_projection(
+                            schema.columns.len(),
+                            child
+                                .schema()
+                                .map_or(0, |child_schema| child_schema.columns.len()),
+                        ) {
+                            return child;
+                        }
+                        let expressions = schema
+                            .columns
+                            .iter()
+                            .cloned()
+                            .map(Expression::Column)
+                            .collect();
+                        let mut projection = LogicalProjection::new(
+                            BaseLogicalPlan::new(
+                                self.ctx.allocator,
+                                LogicalProjection::TYPE,
+                                query_block_offset,
+                            ),
+                            expressions,
+                        );
+                        projection.base.base.set_schema(Some(schema.clone()));
+                        projection.base.set_children(vec![child]);
+                        LogicalPlan::Projection(projection)
+                    })
+                    .collect();
+                node.set_children(children);
                 (node, ())
             }
         }
@@ -706,6 +1673,7 @@ enum PendingTopN {
 
 struct PushDownTopN<'a> {
     stash: Vec<PendingTopN>,
+    allocator: &'a crate::plan_base::PlanIdAllocator,
     /// Go `SCtx().GetExprCtx()`: the builder the projection arm substitutes
     /// and constant-folds by-items through.
     builder: &'a dyn tidb_expr::expr_util::builder::FunctionBuilder,
@@ -739,8 +1707,12 @@ impl OwnedRewrite for PushDownTopN<'_> {
                         if incoming.is_limit() {
                             incoming.by_items = op.by_items.clone();
                         }
-                        self.stash.push(PendingTopN::ReplaceWithChild(Some(incoming)));
-                        Descend::Children(vec![])
+                        // Go returns `ls.Children()[0].PushDownTopN(topN)`:
+                        // the Sort disappears and the TopN keeps travelling
+                        // through the child instead of being reattached to an
+                        // untouched subtree.
+                        self.stash.push(PendingTopN::ReplaceWithChild(None));
+                        Descend::Children(vec![Some(incoming)])
                     }
                 }
             }
@@ -749,7 +1721,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // incoming TopN from above re-attaches here. The limit operator
             // itself never survives.
             LogicalPlan::Limit(op) => {
-                let converted = op.convert_to_topn();
+                let converted = op.convert_to_topn(self.allocator);
                 // Go returns the CONVERTED-and-pushed CHILD in every case —
                 // the limit operator itself never survives.
                 self.stash.push(PendingTopN::ReplaceWithChild(topn));
@@ -760,7 +1732,8 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // original stays above.
             LogicalPlan::UnionAll(_) | LogicalPlan::PartitionUnionAll(_) => match topn {
                 Some(topn) => {
-                    let per_child = LogicalUnionAll::push_down_topn_for_child(&topn);
+                    let per_child =
+                        LogicalUnionAll::push_down_topn_for_child(&topn, self.allocator);
                     self.stash.push(PendingTopN::Reattach(topn));
                     Descend::Children(vec![Some(Box::new(per_child)); child_count])
                 }
@@ -821,11 +1794,23 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     self.stash.push(PendingTopN::Nothing);
                     return Descend::Children(vec![None; child_count.max(1)]);
                 };
-                if op.exprs.iter().any(tidb_expr::evaluator::has_get_set_var_func) {
+                if op
+                    .exprs
+                    .iter()
+                    .any(tidb_expr::evaluator::has_get_set_var_func)
+                {
                     self.stash.push(PendingTopN::Reattach(incoming));
                     return Descend::Children(vec![None; child_count]);
                 }
-                let own_schema = op.base.base.schema().cloned().unwrap_or_default();
+                // Go passes the projection's OWN `p.Schema()` to
+                // `ColumnSubstitute` (`logical_projection.go:196`); a nil
+                // schema would deref there.
+                let own_schema = op
+                    .base
+                    .base
+                    .schema()
+                    .cloned()
+                    .expect("TopN push-down needs the projection's own schema");
                 let opts = SubstituteOptions::new(self.builder);
                 let mut substituted_items = Vec::with_capacity(incoming.by_items.len());
                 for item in &incoming.by_items {
@@ -849,7 +1834,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 // A column with ID 0 that only THIS projection produces cannot
                 // enter the child; keep the TopN above.
-                let child_schema = op.base.children().first().and_then(super::LogicalPlan::schema);
+                // Go indexes `p.Children()[0].Schema()` before `Contains`
+                // (`logical_projection.go:207`).
+                let child_schema = op.base.children()[0].schema();
                 let blocked_by_projection = substituted_items.iter().any(|expr| {
                     extract_columns(expr).iter().any(|col| {
                         col.id == 0
@@ -863,15 +1850,17 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 // Drop meaningless constant sort items.
                 let mut pushed = *incoming;
-                let kept: Vec<bool> = substituted_items
-                    .iter()
-                    .map(|expr| !matches!(expr, Expression::Constant(_)))
-                    .collect();
                 pushed.by_items = pushed
                     .by_items
                     .into_iter()
-                    .zip(kept)
-                    .filter_map(|(item, keep)| keep.then_some(item))
+                    .zip(substituted_items)
+                    .filter_map(|(mut item, substituted)| {
+                        if matches!(substituted, Expression::Constant(_)) {
+                            return None;
+                        }
+                        item.expr = substituted;
+                        Some(item)
+                    })
                     .collect();
                 self.stash.push(PendingTopN::Nothing);
                 Descend::Children(vec![Some(Box::new(pushed)); child_count])
@@ -888,9 +1877,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     | LogicalJoinType::LeftOuterSemi
                     | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
                     LogicalJoinType::RightOuter => Some(1usize),
-                    LogicalJoinType::Inner
-                    | LogicalJoinType::Semi
-                    | LogicalJoinType::AntiSemi => None,
+                    LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
+                        None
+                    }
                 };
                 let Some(outer_idx) = outer_idx else {
                     self.stash.push(match topn {
@@ -914,7 +1903,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 // cannot enter that child and just re-attaches above.
                 let by_item_cols_fit_child = child_schema.as_ref().is_some_and(|schema| {
                     topn.by_items.iter().all(|item| {
-                        extract_columns(&item.expr).iter().all(|col| schema.contains(col))
+                        extract_columns(&item.expr)
+                            .iter()
+                            .all(|col| schema.contains(col))
                     })
                 });
                 if !by_item_cols_fit_child {
@@ -926,16 +1917,14 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 let inner_idx = 1 - outer_idx;
                 let (left_keys, right_keys, _is_null_eq, has_null_eq) = op.get_join_keys();
-                let inner_keys = if outer_idx == 0 { right_keys } else { left_keys };
-                #[allow(clippy::diverging_sub_expression)]
-                eprintln!(
-                    "DBG join outer={outer_idx} inner={inner_idx} keys_l={:?} keys_r={:?} uniq={:?} child_schema={:?}",
-                    inner_keys.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
-                    children.get(outer_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.pk_or_uk.len()),
-                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| sc.is_unique(true, &inner_keys)),
-                    children.get(inner_idx).and_then(super::LogicalPlan::schema).map(|sc| (sc.pk_or_uk.len(), sc.nullable_uk.len()))
-                );
-                let inner_unique = children.get(inner_idx).and_then(super::LogicalPlan::schema)
+                let inner_keys = if outer_idx == 0 {
+                    right_keys
+                } else {
+                    left_keys
+                };
+                let inner_unique = children
+                    .get(inner_idx)
+                    .and_then(super::LogicalPlan::schema)
                     .is_some_and(|schema| {
                         schema.is_unique(true, &inner_keys)
                             || (!has_null_eq && schema.is_unique(false, &inner_keys))
@@ -948,13 +1937,14 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 let mut pushed = topn.clone();
                 pushed.count = count;
                 pushed.offset = offset;
-                self.stash.push(if inner_unique && topn.by_items.is_empty() {
-                    PendingTopN::Nothing
-                } else if inner_unique {
-                    PendingTopN::ReattachAsSort(topn.by_items.clone())
-                } else {
-                    PendingTopN::Reattach(Box::new(topn))
-                });
+                self.stash
+                    .push(if inner_unique && topn.by_items.is_empty() {
+                        PendingTopN::Nothing
+                    } else if inner_unique {
+                        PendingTopN::ReattachAsSort(topn.by_items.clone())
+                    } else {
+                        PendingTopN::Reattach(Box::new(topn))
+                    });
                 if child_count == 0 {
                     return Descend::Stop(());
                 }
@@ -982,7 +1972,6 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 TableDual,
                 Show,
                 ShowDDLJobs,
-                Todo,
             ] => {
                 self.stash
                     .push(topn.map_or(PendingTopN::Nothing, PendingTopN::Reattach));
@@ -993,15 +1982,23 @@ impl OwnedRewrite for PushDownTopN<'_> {
         }
     }
 
-    fn ascend(&mut self, mut node: LogicalPlan, _child_ups: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
+    fn ascend(
+        &mut self,
+        mut node: LogicalPlan,
+        _child_ups: Vec<Self::Up>,
+    ) -> (LogicalPlan, Self::Up) {
         match self.stash.pop() {
-            Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node), ()),
+            Some(PendingTopN::Reattach(topn)) => (topn.attach_child(node, self.allocator), ()),
             Some(PendingTopN::ReattachAsSort(by_items)) => {
                 // "Add a sort if the topN has order by items."
-                let mut sort = LogicalSort {
-                    base: BaseLogicalPlan::default(),
+                let mut sort = LogicalSort::new(
+                    BaseLogicalPlan::new(
+                        self.allocator,
+                        LogicalSort::TYPE,
+                        node.query_block_offset(),
+                    ),
                     by_items,
-                };
+                );
                 sort.base.set_children(vec![node]);
                 (LogicalPlan::Sort(sort), ())
             }
@@ -1011,7 +2008,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 let mut children = node.base_mut().take_children();
                 let child = children.pop().unwrap_or(node);
                 match topn {
-                    Some(topn) => (topn.attach_child(child), ()),
+                    Some(topn) => (topn.attach_child(child, self.allocator), ()),
                     None => (child, ()),
                 }
             }
@@ -1024,7 +2021,8 @@ impl OwnedRewrite for PushDownTopN<'_> {
 #[cfg(test)]
 #[must_use]
 pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
-    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, plan, topn)
+    let allocator = crate::plan_base::PlanIdAllocator::new();
+    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, &allocator, plan, topn)
 }
 
 /// Go `base.LogicalPlan.PushDownTopN(topN)` over a whole tree, Go rule #21's
@@ -1032,11 +2030,13 @@ pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> Lo
 #[must_use]
 pub fn push_down_topn_with_builder(
     builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    allocator: &crate::plan_base::PlanIdAllocator,
     plan: LogicalPlan,
     topn: Option<LogicalTopN>,
 ) -> LogicalPlan {
     let mut rewrite = PushDownTopN {
         stash: Vec::new(),
+        allocator,
         builder,
     };
     let (plan, ()) = fold_owned(&mut rewrite, plan, topn.map(Box::new));
@@ -1047,9 +2047,15 @@ pub fn push_down_topn_with_builder(
 // Key info — Go rule #3, `rule.BuildKeySolver`
 // ***************************************************************************
 
-struct BuildKeyInfo;
+struct BuildKeyInfo<'a> {
+    /// Go `LogicalProjection.buildSchemaByExprs` allocates a fresh plan
+    /// column for every computed expression while deriving key metadata.
+    /// The identity is only a temporary matching placeholder, but the
+    /// allocation is statement-visible and must advance Go's column stream.
+    column_allocator: Option<&'a ColumnIdAllocator>,
+}
 
-impl OwnedRewrite for BuildKeyInfo {
+impl OwnedRewrite for BuildKeyInfo<'_> {
     type Down = ();
     type Up = ();
 
@@ -1061,6 +2067,15 @@ impl OwnedRewrite for BuildKeyInfo {
         let child_schemas = child_schemas(&node);
         let mut self_schema = effective_schema(&node);
         node.build_key_info(&mut self_schema, &child_schemas);
+        if let (Some(allocator), LogicalPlan::Projection(projection)) =
+            (self.column_allocator, &node)
+        {
+            for expression in &projection.exprs {
+                if !matches!(expression, Expression::Column(_)) {
+                    allocator.alloc();
+                }
+            }
+        }
         set_own_schema(&mut node, self_schema);
         (node, ())
     }
@@ -1074,7 +2089,32 @@ impl OwnedRewrite for BuildKeyInfo {
 /// is not modelled.
 #[must_use]
 pub fn build_key_info_portal(plan: LogicalPlan) -> LogicalPlan {
-    let (plan, ()) = fold_owned(&mut BuildKeyInfo, plan, ());
+    let (plan, ()) = fold_owned(
+        &mut BuildKeyInfo {
+            column_allocator: None,
+        },
+        plan,
+        (),
+    );
+    plan
+}
+
+/// Go `BuildKeyInfoPortal` with the statement's `AllocPlanColumnID` stream.
+///
+/// Production optimizer calls use this form so `buildSchemaByExprs`'s
+/// temporary computed-column allocations remain visible to later rules.
+#[must_use]
+pub fn build_key_info_portal_with_allocator(
+    plan: LogicalPlan,
+    column_allocator: &ColumnIdAllocator,
+) -> LogicalPlan {
+    let (plan, ()) = fold_owned(
+        &mut BuildKeyInfo {
+            column_allocator: Some(column_allocator),
+        },
+        plan,
+        (),
+    );
     plan
 }
 
@@ -1116,12 +2156,15 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 /// * `SessionVars.TiDBOptJoinReorderThreshold` arrives as a parameter;
 ///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
-struct DeriveStatsFold {
+struct DeriveStatsFold<'a> {
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
     /// `cardinality.EstimateFullJoinRowCount`.
     join_reorder_threshold: i32,
+    range_max_size: i64,
+    selectivity_factor: f64,
+    range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
 }
 
 /// What one `ascend` arm decided.
@@ -1168,7 +2211,7 @@ fn join_key_estimate(keys: &[tidb_expr::column::Column], profile: &StatsInfo) ->
     }
 }
 
-impl OwnedRewrite for DeriveStatsFold {
+impl OwnedRewrite for DeriveStatsFold<'_> {
     /// Go's `cumColGroups`, one copy per child.
     type Down = Vec<Vec<tidb_expr::column::Column>>;
     /// Go's `(*property.StatsInfo, bool)` return, plus the node's
@@ -1238,45 +2281,58 @@ impl OwnedRewrite for DeriveStatsFold {
                      Go's initStats attaches at least the pseudo table first",
                 ))),
                 Some(table_stats) => {
-                    // Go `deriveStats4DataSource`: `ds.stats =
-                    // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`. With
-                    // no histograms loaded, `Selectivity` takes the
-                    // `pseudoSelectivity` path unconditionally
-                    // (`selectivity.go:69`), which is this tier's only slice.
-                    // The expression columns resolve POSITIONALLY through the
-                    // operator's schema into its column metas, Go's
-                    // schema-to-TblCols alignment.
-                    let schema_ids: Vec<i64> = self_schema
-                        .columns
-                        .iter()
-                        .map(|col| col.unique_id)
-                        .collect();
-                    let resolve = |unique_id: i64| {
-                        let position = schema_ids.iter().position(|id| *id == unique_id)?;
-                        let column = op.columns.get(position)?;
-                        Some(crate::cardinality::pseudo::PseudoColumn {
-                            lower_name: column.name.to_lowercase(),
-                            // boundary: `mysql.HasUniKeyFlag(col.Info.GetFlag())`
-                            // — neither catalog column type carries a
-                            // unique-key flag yet, so the unique shortcut
-                            // never fires from a column. Estimates stay
-                            // HIGHER, the conservative direction.
-                            unique_key_flag: false,
-                        })
-                    };
-                    let stats = crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
-                        &table_stats,
-                        &op.pushed_down_conds,
-                        &resolve,
-                        // boundary: the operator does not yet carry its index
-                        // metas, so `pseudoSelectivity`'s composite-index
-                        // branch never fires; higher estimates, conservative.
-                        &[],
-                        crate::cost_factors::SELECTION_FACTOR,
-                        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
-                    );
-                    op.base.base.set_stats(Some(stats.clone()));
-                    StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    if let Some(stats) = op.base.base.stats_info().cloned() {
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    } else {
+                        // Go `deriveStats4DataSource`: `ds.stats =
+                        // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`.
+                        let schema_ids: Vec<i64> = self_schema
+                            .columns
+                            .iter()
+                            .map(|col| col.unique_id)
+                            .collect();
+                        let resolve = |unique_id: i64| {
+                            let position = schema_ids.iter().position(|id| *id == unique_id)?;
+                            let column = op.columns.get(position)?;
+                            Some(crate::cardinality::pseudo::PseudoColumn {
+                                lower_name: go_to_lower(&column.name),
+                                unique_key_flag: false,
+                            })
+                        };
+                        let range_selectivity = if op.table_scan_penalty.pseudo_stats {
+                            pseudo_range_filter_selectivity(
+                                op,
+                                &table_stats,
+                                &op.pushed_down_conds,
+                                &self_schema,
+                                self.range_max_size,
+                                self.selectivity_factor,
+                                self.range_fallback_handler,
+                            )
+                        } else {
+                            analyzed_filter_selectivity(&table_stats, &op.pushed_down_conds)
+                        };
+                        let stats = range_selectivity.map_or_else(
+                            || {
+                                crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
+                                    &table_stats,
+                                    &op.pushed_down_conds,
+                                    &resolve,
+                                    &[],
+                                    crate::cost_factors::SELECTION_FACTOR,
+                                    crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                                )
+                            },
+                            |selectivity| {
+                                table_stats.scale(
+                                    selectivity,
+                                    crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                                )
+                            },
+                        );
+                        op.base.base.set_stats(Some(stats.clone()));
+                        StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                    }
                 }
             },
             LogicalPlan::Selection(op) => StatsOutcome::Done(
@@ -1321,21 +2377,49 @@ impl OwnedRewrite for DeriveStatsFold {
                 }
             }
             LogicalPlan::Apply(op) => {
-                if op.needs_lateral_row_count_estimate() {
-                    // The first two `IsLateral` branches of Go's body; see
-                    // the operator's own doc for what they need.
-                    StatsOutcome::Done(unported_stats(
-                        "LogicalApply.DeriveStats' IsLateral row-count branches (logical_apply.go)",
-                    ))
+                let outer_len = child_schemas
+                    .first()
+                    .map_or(0, |schema| schema.columns.len());
+                let lateral_row_count = if op.needs_lateral_row_count_estimate() {
+                    match (child_stats.first(), child_stats.get(1)) {
+                        (Some(left), Some(right)) => {
+                            let (left_keys, right_keys, _, _) = op.join.get_join_keys();
+                            let input = FullJoinRowCountInput {
+                                left_row_count: left.row_count(),
+                                right_row_count: right.row_count(),
+                                // Go passes `false` for IsCartesian after
+                                // confirming that the left key slice is
+                                // non-empty, even when other equal-condition
+                                // shapes are present.
+                                is_cartesian: false,
+                                left_join_keys: join_key_estimate(&left_keys, left),
+                                right_join_keys: join_key_estimate(&right_keys, right),
+                                // Go passes nil NA keys for LogicalApply.
+                                left_non_equi_keys: join_key_estimate(&[], left),
+                                right_non_equi_keys: join_key_estimate(&[], right),
+                                join_reorder_threshold: self.join_reorder_threshold,
+                            };
+                            Some(estimate_full_join_row_count(&input))
+                        }
+                        _ => None,
+                    }
                 } else {
-                    let outer_len = child_schemas
-                        .first()
-                        .map_or(0, |schema| schema.columns.len());
-                    StatsOutcome::Done(
-                        op.derive_stats(&child_stats, &self_schema, outer_len, None, &reloads)
-                            .ok_or_else(|| stats_arity("LogicalApply.DeriveStats")),
+                    None
+                };
+                let result = if op.needs_lateral_row_count_estimate() && lateral_row_count.is_none()
+                {
+                    Err(stats_arity("LogicalApply.DeriveStats"))
+                } else {
+                    op.derive_stats(
+                        &child_stats,
+                        &self_schema,
+                        outer_len,
+                        lateral_row_count,
+                        &reloads,
                     )
-                }
+                    .ok_or_else(|| stats_arity("LogicalApply.DeriveStats"))
+                };
+                StatsOutcome::Done(result)
             }
             LogicalPlan::Aggregation(op) => StatsOutcome::Done(
                 op.derive_stats(&child_stats, &self_schema, &reloads)
@@ -1400,11 +2484,62 @@ impl OwnedRewrite for DeriveStatsFold {
                 }))
             }
 
+            LogicalPlan::CTE(op) => {
+                let class = op
+                    .cte
+                    .clone()
+                    .ok_or_else(|| PlanError::internal("LogicalCTE.DeriveStats: CTEClass is nil"));
+                StatsOutcome::Done(class.and_then(|class| {
+                    let class = class.borrow();
+                    let seed_plan = class.seed_part_physical_plan.as_deref().ok_or_else(|| {
+                        PlanError::internal("LogicalCTE.DeriveStats: seed physical plan is nil")
+                    })?;
+                    let seed_stats = seed_plan.stats_info().cloned().ok_or_else(|| {
+                        PlanError::internal("LogicalCTE.DeriveStats: seed stats are nil")
+                    })?;
+                    let seed_schema = class
+                        .seed_part_logical_plan
+                        .as_deref()
+                        .and_then(LogicalPlan::schema)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PlanError::internal("LogicalCTE.DeriveStats: seed schema is nil")
+                        })?;
+                    let recursive = match (
+                        class.recursive_part_physical_plan.as_deref(),
+                        class.recursive_part_logical_plan.as_deref(),
+                    ) {
+                        (Some(plan), Some(logical)) => Some((
+                            plan.stats_info().cloned().ok_or_else(|| {
+                                PlanError::internal(
+                                    "LogicalCTE.DeriveStats: recursive stats are nil",
+                                )
+                            })?,
+                            logical.schema().cloned().ok_or_else(|| {
+                                PlanError::internal(
+                                    "LogicalCTE.DeriveStats: recursive schema is nil",
+                                )
+                            })?,
+                        )),
+                        (None, None) => None,
+                        _ => {
+                            return Err(PlanError::internal(
+                                "LogicalCTE.DeriveStats: recursive logical/physical plans disagree",
+                            ));
+                        }
+                    };
+                    drop(class);
+                    Ok(op.derive_stats(
+                        &seed_stats,
+                        &seed_schema,
+                        recursive.as_ref().map(|(stats, schema)| (stats, schema)),
+                        &self_schema,
+                        None,
+                        &reloads,
+                    ))
+                }))
+            }
             // -- Go overrides NOT yet ported: refuse, never fall through ---
-            LogicalPlan::CTE(_) => StatsOutcome::Done(unported_stats(
-                "utilfuncp.DoOptimize: Go derives a CTE's stats from its \
-                 OPTIMIZED seed's physical plan (logical_cte.go)",
-            )),
             LogicalPlan::TableScan(_) => StatsOutcome::Done(unported_stats(
                 "deriveStats4LogicalTableScan (core/stats.go): needs \
                  deriveStatsByFilter and ranger.BuildTableRange — the \
@@ -1415,11 +2550,6 @@ impl OwnedRewrite for DeriveStatsFold {
                  deriveStatsByFilter, ranger.FullRange and \
                  util.IndexInfo2Cols — the access-path/selectivity machinery",
             )),
-            LogicalPlan::Todo(op) => {
-                let go_operator = op.go_operator.clone();
-                StatsOutcome::Done(unported_stats(&go_operator))
-            }
-
             // -- Go inherits the base body ---------------------------------
             // `logical_expand.go:133` says so explicitly; the others have no
             // DeriveStats in their files.
@@ -1454,13 +2584,206 @@ pub fn recursive_derive_stats(
     col_groups: Vec<Vec<tidb_expr::column::Column>>,
     join_reorder_threshold: i32,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    recursive_derive_stats_with_range_quota(
+        plan,
+        col_groups,
+        join_reorder_threshold,
+        64 * 1024 * 1024,
+        crate::cost_factors::SELECTION_FACTOR,
+        None,
+    )
+}
+
+/// Derives stats using the session settings shared by logical optimization.
+pub fn recursive_derive_stats_with_context(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    context: &RuleContext<'_>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    recursive_derive_stats_with_range_quota(
+        plan,
+        col_groups,
+        context.join_reorder_threshold,
+        context.range_max_size,
+        context.selectivity_factor,
+        context.range_fallback_handler,
+    )
+}
+
+fn recursive_derive_stats_with_range_quota(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    join_reorder_threshold: i32,
+    range_max_size: i64,
+    selectivity_factor: f64,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
         failure: RewriteFailure::default(),
         join_reorder_threshold,
+        range_max_size,
+        selectivity_factor,
+        range_fallback_handler,
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {
         Some(error) => (plan, Err(error)),
         None => (plan, Ok((stats, reload))),
+    }
+}
+
+#[cfg(test)]
+mod analyzed_filter_selectivity_tests {
+    use super::analyzed_filter_selectivity;
+    use crate::cardinality::row_count_estimator::ColumnStats;
+    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
+    use tidb_stats::{Bucket, Histogram};
+
+    /// Go `cardinality.Selectivity`'s equality arm reads the loaded
+    /// histogram: when the value is a bucket's upper bound the estimate is
+    /// that bucket's `Repeat`, not `1/NDV`. The rule used to ignore the
+    /// histogram and divide by the NDV, so a 299,995-row sampled histogram
+    /// with a 29,702-value repeat estimated 0.1 instead of 0.099008.
+    #[test]
+    fn equality_uses_the_loaded_histogram_repeat() {
+        let unique_id = 7;
+        let histogram = Histogram {
+            id: 1,
+            ndv: 10,
+            last_update_version: 1,
+            buckets: vec![Bucket {
+                count: 299_995,
+                repeat: 29_702,
+                ndv: 10,
+                lower_bound: Datum::Int(1),
+                upper_bound: Datum::Int(1),
+            }],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 300_000, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(300_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+
+        let long = || FieldType::new(FieldTypeCode::LongLong);
+        let condition = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("eq"),
+            long(),
+            vec![
+                Expression::Column(Column::new(unique_id, long())),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ));
+        let selectivity = analyzed_filter_selectivity(&table_stats, &[condition])
+            .expect("an analyzed profile keeps the equality");
+
+        // 29_702 * (300_000 / 299_995) / 300_000.
+        let expected = 29_702.0 * (300_000.0 / 299_995.0) / 300_000.0;
+        assert!(
+            (selectivity - expected).abs() < 1e-12,
+            "{selectivity} != {expected}"
+        );
+        assert!(
+            (selectivity - 0.1).abs() > 1e-9,
+            "the NDV fallback must not answer a loaded histogram"
+        );
+    }
+
+    /// Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a plain
+    /// `prefix%` LIKE estimates from the histogram's bucket bounds, and a
+    /// pattern the histogram cannot answer falls back to
+    /// `GetStrMatchDefaultSelectivity` (0.1), never the generic 0.8.
+    #[test]
+    fn a_prefix_like_uses_the_histogram_then_the_string_match_default() {
+        let unique_id = 7;
+        let varchar = || FieldType::new(FieldTypeCode::VarString);
+        let histogram = Histogram {
+            id: 1,
+            ndv: 3,
+            last_update_version: 1,
+            buckets: vec![
+                Bucket {
+                    count: 1,
+                    repeat: 1,
+                    ndv: 1,
+                    lower_bound: Datum::Bytes(b"green alpha".to_vec()),
+                    upper_bound: Datum::Bytes(b"green alpha".to_vec()),
+                },
+                Bucket {
+                    count: 101,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Bytes(b"red 002".to_vec()),
+                    upper_bound: Datum::Bytes(b"red 101".to_vec()),
+                },
+            ],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 128, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(hist_coll);
+        let like = |pattern: &str| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("like"),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(Column::new(unique_id, varchar())),
+                    Expression::Constant(Constant::new(
+                        Datum::Bytes(pattern.as_bytes().to_vec()),
+                        varchar(),
+                    )),
+                ],
+            ))
+        };
+
+        // One bucket's bounds start with `green`; its single row over 128.
+        let selectivity =
+            analyzed_filter_selectivity(&table_stats, &[like("green%")]).expect("analyzed");
+        assert!(
+            (selectivity - 1.0 / 128.0).abs() < 1e-12,
+            "{selectivity} != {}",
+            1.0 / 128.0
+        );
+
+        // No bucket bound starts with `blue`, so the sampled estimate is
+        // empty and floors at Go's one-row minimum.
+        let selectivity =
+            analyzed_filter_selectivity(&table_stats, &[like("blue%")]).expect("analyzed");
+        assert!(
+            (selectivity - 1.0 / 128.0).abs() < 1e-12,
+            "an empty histogram sample floors at one row: {selectivity}"
+        );
+
+        // Without a histogram the pattern answers the 0.1 default.
+        let bare = StatsInfo::new(128.0, [(unique_id, 3.0)]);
+        let selectivity = analyzed_filter_selectivity(&bare, &[like("green%")]).expect("analyzed");
+        assert!(
+            (selectivity - 0.1).abs() < 1e-12,
+            "the default string-match selectivity is 0.1, not 0.8: {selectivity}"
+        );
     }
 }

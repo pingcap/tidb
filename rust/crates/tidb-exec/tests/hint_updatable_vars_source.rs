@@ -14,7 +14,10 @@
 
 //! Source-backed tests for SET_VAR hint-updatable variables.
 
-use tidb_exec::hint_updatable_vars::{is_hint_updatable_verified, HINT_UPDATABLE_VARIABLES};
+use tidb_exec::hint_updatable_vars::{
+    is_hint_updatable_verified, HINT_UPDATABLE_VARIABLES,
+    SYSVAR_DECLARED_HINT_UPDATABLE_VARIABLES,
+};
 
 #[test]
 fn hint_updatable_registry_preserves_source_membership() {
@@ -27,6 +30,8 @@ fn hint_updatable_registry_preserves_source_membership() {
     }
     assert!(is_hint_updatable_verified("tidb_max_keys_read"));
     assert!(is_hint_updatable_verified("sql_mode"));
+    assert!(is_hint_updatable_verified("group_concat_max_len"));
+    assert_eq!(SYSVAR_DECLARED_HINT_UPDATABLE_VARIABLES, ["group_concat_max_len"]);
     assert!(!is_hint_updatable_verified("tidb_read_staleness"));
 }
 

@@ -35,8 +35,9 @@ fn datums_to_constants(datums: &[Datum]) -> Vec<Expression> {
             let ft = match d {
                 Datum::Null => FieldType::new(C::Null),
                 Datum::Int(_) => FieldType::new(C::LongLong),
-                Datum::UInt(_) => FieldType::new(C::LongLong)
-                    .with_added_flags(FieldTypeFlags::UNSIGNED),
+                Datum::UInt(_) => {
+                    FieldType::new(C::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED)
+                }
                 Datum::Float32(_) | Datum::Real(_) => FieldType::new(C::Double),
                 Datum::String(_) | Datum::Bytes(_) => FieldType::new(C::VarString),
                 // Go's table continues past what the signed-numeric tables
@@ -58,17 +59,10 @@ fn datums_to_constants(datums: &[Datum]) -> Vec<Expression> {
 fn go_eval(name: &str, args: &[Datum]) -> Result<Datum, crate::EvalError> {
     let exprs = datums_to_constants(args);
     assert_eq!(exprs.len(), 2, "binary arithmetic only");
-    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type(
-        name,
-        &exprs[0],
-        &exprs[1],
-    )
-    .unwrap_or_else(|| panic!("{name}: no inferred type"));
-    let function = crate::scalar_function::ScalarFunction::new(
-        tidb_ast::CiString::new(name),
-        ret_type,
-        exprs,
-    );
+    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type(name, &exprs[0], &exprs[1])
+        .unwrap_or_else(|| panic!("{name}: no inferred type"));
+    let function =
+        crate::scalar_function::ScalarFunction::new(tidb_ast::CiString::new(name), ret_type, exprs);
     let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
@@ -184,8 +178,7 @@ fn go_test_arithmetic_divide() {
         (vec![Datum::Null, Datum::Null], Datum::Null),
     ];
     for (args, expected) in cases {
-        let value =
-            go_eval("div", args).unwrap_or_else(|error| panic!("{args:?}: {error:?}"));
+        let value = go_eval("div", args).unwrap_or_else(|error| panic!("{args:?}: {error:?}"));
         assert!(
             datum_equal(&value, expected),
             "{args:?}: {value:?} != {expected:?}"
@@ -233,6 +226,31 @@ fn go_test_arithmetic_int_divide() {
             vec![u(1), r(-1.0)],
             Datum::Null,
             Some("BIGINT UNSIGNED value is out of range in '(1 DIV -1)'"),
+        ),
+        // Go stamps the decimal DIV result unsigned when either operand is
+        // unsigned, then reads the exact quotient through ToUint. This value
+        // is above i64::MAX but still valid in BIGINT UNSIGNED.
+        (
+            vec![u(u64::MAX), Datum::Decimal(Decimal::from_literal("1.5"))],
+            u(12_297_829_382_473_034_410),
+            None,
+        ),
+        // A negative quotient remains an unsigned overflow, while a quotient
+        // truncated from (-1, 0] is the source's special zero result.
+        (
+            vec![u(1), Datum::Decimal(Decimal::from_literal("-0.5"))],
+            Datum::Null,
+            Some("BIGINT UNSIGNED value is out of range in '(1 DIV -0.5)'"),
+        ),
+        (
+            vec![u(1), Datum::Decimal(Decimal::from_literal("-2.0"))],
+            u(0),
+            None,
+        ),
+        (
+            vec![u(u64::MAX), Datum::Decimal(Decimal::from_literal("0.5"))],
+            Datum::Null,
+            Some("BIGINT UNSIGNED value is out of range in '(18446744073709551615 DIV 0.5)'"),
         ),
     ];
     for (args, expected, error_part) in cases {

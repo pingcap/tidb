@@ -354,21 +354,18 @@ pub(crate) fn validate_on_update_current_timestamp(
     expr: &Expr,
     field_type: &FieldType,
 ) -> Result<(), DefaultError> {
+    // Go's ADD/MODIFY COLUMN paths reject ON UPDATE for every destination
+    // other than TIMESTAMP or DATETIME before consulting the expression
+    // helper (`pkg/ddl/add_column.go` and `modify_column.go`).  The shared
+    // expression predicate intentionally knows only about CURRENT_TIMESTAMP
+    // syntax and FSP consistency, so keep this DDL-only type gate here.
     if !matches!(
         field_type.code(),
         FieldTypeCode::Timestamp | FieldTypeCode::Datetime
     ) {
         return Err(DefaultError::InvalidDefault);
     }
-    let Some(args) = clock_marker_call(expr) else {
-        return Err(DefaultError::InvalidDefault);
-    };
-    let written_fsp = match args {
-        [] => 0,
-        [only] => clock_fsp_argument(only).ok_or(DefaultError::InvalidDefault)?,
-        _ => return Err(DefaultError::InvalidDefault),
-    };
-    if written_fsp != field_type.decimal() {
+    if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(field_type)) {
         return Err(DefaultError::InvalidDefault);
     }
     Ok(())
@@ -881,6 +878,41 @@ mod tests {
         assert_eq!(clause, "'slash\\\\quote''\\0nul\\nline\\rcarriage'");
     }
 
+    #[test]
+    fn on_update_validation_uses_current_timestamp_predicate() {
+        let current = |name: &str, args: Vec<Expr>| Expr::Func {
+            name: name.to_owned(),
+            args,
+            origin_position: 0,
+        };
+        let timestamp = FieldType::new(FieldTypeCode::Timestamp);
+        let timestamp_fsp3 = timestamp.clone().with_decimal(3);
+
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![]),
+            &timestamp,
+        )
+        .is_ok());
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![Expr::Int("3".to_owned())]),
+            &timestamp_fsp3,
+        )
+        .is_ok());
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![]),
+            &FieldType::new(FieldTypeCode::Long),
+        )
+        .is_err());
+        assert!(
+            validate_on_update_current_timestamp(&current("NOW", vec![]), &timestamp,).is_err()
+        );
+        assert!(validate_on_update_current_timestamp(
+            &Expr::Column(vec!["CURRENT_TIMESTAMP".to_owned()]),
+            &timestamp,
+        )
+        .is_err());
+    }
+
     fn fixed_zone(name: &str, offset_secs: i32) -> SessionTimeZone {
         SessionTimeZone::Fixed {
             name: name.to_owned(),
@@ -1008,6 +1040,13 @@ mod tests {
 
     #[test]
     fn timestamp_projection_preserves_conversion_event() {
+        // The wall clock is in America/Los_Angeles' spring-forward gap, so
+        // casting the DateTime into the TIMESTAMP type is Go's
+        // `Time.Convert` DST branch: `t1.Check` reports
+        // `ErrTimestampInDSTTransition`, `AdjustedGoTime` moves the value and
+        // Go appends that WARNING (`pkg/types/time.go:459-467`). The event
+        // rides the original cast; the LA->UTC reprojection only changes the
+        // produced wall clock.
         let stored = Datum::new_time(
             Time::new(
                 CoreTime::from_date(2011, 3, 13, 2, 30, 0, 0),
@@ -1031,7 +1070,7 @@ mod tests {
         assert_eq!(materialized_time_text(&converted), "2011-03-13 10:00:00");
         assert_eq!(
             converted.event,
-            Some(tidb_datatype::ScalarConversionEvent::Truncated)
+            Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
         );
     }
 

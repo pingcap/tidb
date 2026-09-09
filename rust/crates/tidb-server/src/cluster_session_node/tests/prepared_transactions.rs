@@ -52,6 +52,177 @@ fn prepared_dml_retains_the_parse_tree_for_execute() {
     assert!(statement.template().is_some());
 }
 
+/// Go retains the resolved INSERT plan and only rebuilds its parameter values
+/// on later EXECUTEs. The retired Rust fast-DML arm rediscovered the table and
+/// column layout each time and therefore never produced a plan-cache hit.
+#[test]
+fn prepared_insert_reuses_the_planned_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("INSERT INTO t (id, v) VALUES (?, ?)")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(101, 0), (102, 1)] {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::SignedLongLong(id),
+                    PreparedValue::SignedLongLong(id * 10),
+                ],
+            )
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, v FROM t WHERE id BETWEEN 101 AND 102 ORDER BY id"
+        ),
+        vec![
+            vec![Datum::Int(101), Datum::Int(1010)],
+            vec![Datum::Int(102), Datum::Int(1020)]
+        ],
+    );
+}
+
+/// Go caches the ordinary `Insert` root, not a one-row/all-columns fast shape.
+/// Omitting a column must therefore use the same default/NULL row builder on
+/// both the first execution and the cache hit.
+#[test]
+fn prepared_insert_with_omitted_column_reuses_common_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    let statement = session
+        .prepare_general("INSERT INTO t (id) VALUES (?)")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(111, 0), (112, 1)] {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, v FROM t WHERE id BETWEEN 111 AND 112 ORDER BY id"
+        ),
+        vec![
+            vec![Datum::Int(111), Datum::Null],
+            vec![Datum::Int(112), Datum::Null]
+        ],
+    );
+}
+
+/// Go caches the point-update plan produced by `tryUpdatePointPlan`: the first
+/// EXECUTE plans and the second rebuilds that same DML plan with new values.
+/// The old Rust fast-DML arm re-matched the AST and catalog on every EXECUTE,
+/// so it could never report or realize a plan-cache hit.
+#[test]
+fn prepared_point_update_reuses_the_planned_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    let statement = session
+        .prepare_general("UPDATE t SET v = v + ? WHERE id = ?")
+        .expect("prepare");
+
+    for (delta, expected_cache) in [(1, 0), (2, 1)] {
+        let outcome = session
+            .execute_general(
+                &statement,
+                &[
+                    PreparedValue::SignedLongLong(delta),
+                    PreparedValue::SignedLongLong(1),
+                ],
+            )
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(13)]],
+    );
+}
+
+/// Go's `tryDeletePointPlan` retains the point child and only rebuilds its
+/// handle value. Stock sysbench executes exactly this prepared shape.
+#[test]
+fn prepared_point_delete_reuses_the_planned_dml() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
+        .expect("seed");
+    let statement = session
+        .prepare_general("DELETE FROM t WHERE id = ?")
+        .expect("prepare");
+
+    for (id, expected_cache) in [(1, 0), (2, 1)] {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .expect("execute");
+        assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+        drop(outcome);
+        assert_eq!(
+            rows(&mut session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(expected_cache)]],
+        );
+    }
+    assert!(rows(&mut session, "SELECT id FROM t").is_empty());
+}
+
+#[test]
+fn prepared_point_update_preserves_typed_handle_coercion() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    let statement = session
+        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .expect("prepare");
+    let outcome = session
+        .execute_general(
+            &statement,
+            &[
+                PreparedValue::SignedLongLong(20),
+                PreparedValue::String(b"1".to_vec()),
+            ],
+        )
+        .expect("the full typed UPDATE handles the string-to-integer comparison");
+    assert!(matches!(outcome, GeneralExecuteOutcome::Write(_)));
+    drop(outcome);
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(20)]],
+    );
+}
+
 /// Reads through the prepared path, so the snapshot under test is the one an
 /// EXECUTE takes.
 fn prepared_rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
@@ -273,10 +444,9 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
     }
 }
 
-/// A prepared UPDATE whose table the fast write planner declines — here a
-/// composite clustered primary key, which `run_fast_prepared_update` admits
-/// only for a single-column handle — falls back to the ordinary bound
-/// execution, and that fallback must apply its parameters.
+/// A prepared UPDATE whose table the point-write planner declines falls back
+/// to the ordinary bound execution, and that fallback must apply its
+/// parameters.
 ///
 /// The regression: the fallback reparsed the PREPARE-time SQL text on every
 /// EXECUTE, resurrecting raw `?` markers into the expression rewriter (1105
@@ -286,7 +456,7 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
 /// `SET d_ytd = d_ytd + ?` answers 1 affected row; here it answered an error
 /// and every prepared payment failed.
 #[test]
-fn a_prepared_update_the_fast_planner_declines_binds_its_parameters() {
+fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
     use tidb_protocol::PreparedValue;
 
     let (mut session, _node) = open_session();

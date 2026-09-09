@@ -36,16 +36,13 @@
 //! ShardIndexFuncSuites, MinAccessCondsForDNFCond, the three
 //! RangeFallback ladders, MemUsage, BinCollation, and issues 40997/50051.
 //!
-//! Boundaries, by name:
-//! * `RangesToString`/`RangeSingleColToString` are not ported: nothing in
-//!   the production tree consumes them (only `ranger.go` itself defines
-//!   them), and no upstream test covers them.
-//! * Index, table and column `_in` entry points evaluate retained constants
-//!   with the caller's current context. Context-free entries are for static
-//!   expressions; unbound parameters fail rather than using saved values.
-//!   `ValueInfo` preserves parameter/deferred mutability. Complete cache
-//!   admission, conversion diagnostics and executor migration remain open;
-//!   this module is not a whole-package completion claim.
+//! Native adaptations:
+//! * `ranges_to_string` and `range_single_col_to_string` restore range bounds
+//!   with typed datum comparison and literal restoration.
+//! * Context-aware `_in` entry points evaluate retained expressions using the
+//!   current execution. Static entry points reject unbound parameters.
+//!   `ValueInfo` preserves parameter and deferred-expression mutability.
+//!   This module is not a whole-package completion claim.
 //! * `TestTableShardIndex` and `TestRangeFallback*`'s warning surface are
 //!   testkit/plan-level: their ranger-observable cores are pinned here,
 //!   and the plan-level halves belong to the driver's rule track.
@@ -57,6 +54,7 @@ pub mod points;
 pub mod ranger;
 pub mod types;
 
+pub use ranger::{range_single_col_to_string, ranges_to_string};
 pub use types::{HasFullRange, Range, Ranges};
 
 /// The pseudo-statistics bridge: `ranger` ranges into the shapes
@@ -67,7 +65,8 @@ pub mod stats_bridge {
     use tidb_datatype::Datum;
 
     use crate::cardinality::pseudo::{
-        pseudo_row_count_by_index_ranges, pseudo_row_count_by_signed_int_ranges,
+        pseudo_row_count_by_index_ranges as estimate_pseudo_index_ranges,
+        pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
         pseudo_row_count_by_unsigned_int_ranges, IndexRange, PseudoBoundKind, ScalarRange,
         SignedIntRange, UnsignedIntRange,
     };
@@ -98,6 +97,18 @@ pub mod stats_bridge {
     /// unexported) over this port's range model.
     #[must_use]
     pub fn pseudo_count_by_ranges(ranges: &super::types::Ranges, table_row_count: f64) -> f64 {
+        pseudo_count_by_index_ranges(ranges, table_row_count, None)
+    }
+
+    /// The same Go index-range estimator with the index's declared unique
+    /// column count. A fully bound unique key estimates one row; passing
+    /// `None` preserves the ordinary secondary-index behavior.
+    #[must_use]
+    pub fn pseudo_count_by_index_ranges(
+        ranges: &super::types::Ranges,
+        table_row_count: f64,
+        unique_columns: Option<usize>,
+    ) -> f64 {
         let mut index_ranges = Vec::with_capacity(ranges.len());
         for ran in ranges {
             let equal_prefix_len = ran.prefix_equal_len().unwrap_or(0);
@@ -151,7 +162,45 @@ pub mod stats_bridge {
                 high_exclude: ran.high_exclude,
             });
         }
-        pseudo_row_count_by_index_ranges(&index_ranges, table_row_count, None)
+        estimate_pseudo_index_ranges(&index_ranges, table_row_count, unique_columns)
+    }
+
+    /// Go `getPseudoRowCountByColumnRanges` (`cardinality/pseudo.go:210`)
+    /// over one ordinary (non-handle) pseudo column. Unlike an index point,
+    /// an equality is not unique: it estimates `RealtimeCount / 1000`.
+    #[must_use]
+    pub fn pseudo_count_by_column_ranges(
+        ranges: &super::types::Ranges,
+        table_row_count: f64,
+    ) -> f64 {
+        let mapped = ranges
+            .iter()
+            .filter_map(|ran| {
+                // Go indexes `ran.LowVal[0]` and `ran.HighVal[0]` directly.
+                let low_datum = ran.low_val.first().expect("range bound missing low value");
+                let high_datum = ran
+                    .high_val
+                    .first()
+                    .expect("range bound missing high value");
+                let low_kind = bound_kind(low_datum);
+                let high_kind = bound_kind(high_datum);
+                let low = datum_to_scalar(low_datum).unwrap_or(0.0);
+                let high = datum_to_scalar(high_datum).unwrap_or_else(|| {
+                    if low_datum == high_datum {
+                        low
+                    } else {
+                        low + 1.0
+                    }
+                });
+                Some(ScalarRange {
+                    low,
+                    high,
+                    low_kind,
+                    high_kind,
+                })
+            })
+            .collect::<Vec<_>>();
+        pseudo_row_count_by_scalar_ranges(&mapped, table_row_count)
     }
 
     /// Go's int-handle pseudo estimate: `getPseudoRowCountBySignedIntRanges`

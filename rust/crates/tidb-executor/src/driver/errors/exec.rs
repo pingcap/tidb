@@ -63,7 +63,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         ExecError::Killed(error) => {
             let mut state = [0; 5];
             state.copy_from_slice(error.state.as_bytes());
-            MysqlError::new(error.code, state, error.message)
+            MysqlError::with_state(error.code, state, error.message)
         }
         // `From<ExecError> for DriverError` rewrites each of these into its
         // own driver variant, so they arrive here only from an `ExecError` a
@@ -71,6 +71,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         // spelling of each message instead of a second copy. Named one by one
         // rather than with `_` so a new executor failure has to be placed.
         error @ (ExecError::SubqueryReturnsMoreThanOneRow
+        | ExecError::CteMaxRecursionDepth(_)
         | ExecError::MemoryExceedForQuery { .. }
         | ExecError::JsonDocumentNullKey
         | ExecError::InvalidJsonCharset { .. }) => DriverError::from(error).to_mysql_error(),
@@ -102,16 +103,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // `COLLATE`. The operand list is formatted where the tie is detected,
         // so for the two mix errors the payload IS the message.
         EvalError::IllegalMixCollation(message) => {
-            MysqlError::new(ER_CANT_AGGREGATE_COLLATIONS, *b"HY000", message)
+            MysqlError::new(ER_CANT_AGGREGATE_COLLATIONS, message)
         }
         EvalError::IllegalMixCollationGeneric(message) => {
-            MysqlError::new(ER_CANT_AGGREGATE_NCOLLATIONS, *b"HY000", message)
+            MysqlError::new(ER_CANT_AGGREGATE_NCOLLATIONS, message)
         }
-        EvalError::UnknownCollation(name) => MysqlError::new(
-            ER_UNKNOWN_COLLATION,
-            *b"HY000",
-            format!("Unknown collation: '{name}'"),
-        ),
+        EvalError::UnknownCollation(name) => {
+            MysqlError::new(ER_UNKNOWN_COLLATION, format!("Unknown collation: '{name}'"))
+        }
         EvalError::CollationCharsetMismatch { collation, charset } => MysqlError::coded(
             ER_COLLATION_CHARSET_MISMATCH,
             format!("COLLATION '{collation}' is not valid for CHARACTER SET '{charset}'"),
@@ -133,11 +132,9 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             MysqlError::coded(ER_WARN_ALLOWED_PACKET_OVERFLOWED, message)
         }
         EvalError::FunctionNotExists(name) => {
-            MysqlError::new(1305, *b"42000", format!("FUNCTION {name} does not exist"))
+            MysqlError::new(1305, format!("FUNCTION {name} does not exist"))
         }
-        EvalError::NoDatabaseSelected => {
-            MysqlError::new(1046, *b"3D000", "No database selected".to_owned())
-        }
+        EvalError::NoDatabaseSelected => MysqlError::new(1046, "No database selected".to_owned()),
         // A typed temporal literal raises 1292 (22007) for a parse failure and
         // 1525 (HY000) for its regex gate, so the code travels with the
         // message and the SQLSTATE is derived from it like the JSON class
@@ -153,10 +150,16 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect parameter count in the call to native function '{function}'"),
         ),
         EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
+        // Go `types.ErrTooBigPrecision` (1426): the clock signatures raise it
+        // at evaluation time, not at parse time
+        // (`pkg/expression/builtin_time.go:2730` and siblings).
+        EvalError::TooBigFsp { fsp, function } => MysqlError::coded(
+            1426,
+            format!("Too-big precision {fsp} specified for '{function}'. Maximum is 6."),
+        ),
         EvalError::AdvisoryLock { code, message } => MysqlError::coded(code, message),
         EvalError::DataOutOfRange { value, expression } => MysqlError::new(
             ER_DATA_OUT_OF_RANGE,
-            *b"22003",
             format!("{value} value is out of range in '{expression}'"),
         ),
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
@@ -172,15 +175,21 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::Unsupported(reason) => MysqlError::unknown(reason),
         // Go `ErrBadField` with `clauseMsg[expressionClause]` — the clause a
         // resolution site without its own clause name reports.
-        EvalError::UnknownColumn(column) => MysqlError::new(
-            1054,
-            *b"42S22",
-            format!("Unknown column '{column}' in 'expression'"),
-        ),
+        EvalError::UnknownColumn(column) => {
+            MysqlError::new(1054, format!("Unknown column '{column}' in 'expression'"))
+        }
+        // Go `ErrBadField` with the clause the name was written in
+        // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
+        EvalError::UnknownColumnInClause(column, clause) => {
+            MysqlError::new(1054, format!("Unknown column '{column}' in '{clause}'"))
+        }
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),
         EvalError::Vector(message) => MysqlError::unknown(message),
+        EvalError::ParamIndexExceedParamCounts => {
+            MysqlError::unknown("Param index exceed param counts")
+        }
     }
 }
 
@@ -194,7 +203,6 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
 fn out_of_range(class: &str) -> MysqlError {
     MysqlError::new(
         ER_DATA_OUT_OF_RANGE,
-        *b"22003",
         format!("{class} value is out of range"),
     )
 }
@@ -250,7 +258,7 @@ mod tests {
             EvalError::IncorrectArguments("bad AES initialization vector".to_owned()),
             EvalError::DataOutOfRange {
                 value: "length",
-                expression: "random_bytes",
+                expression: "random_bytes".to_string(),
             },
         ];
         for error in coded {
@@ -263,11 +271,11 @@ mod tests {
             rendered(ExecError::Eval(EvalError::Sequence(
                 SequenceEvalError::RunOut("test.s1".to_owned())
             ))),
-            MysqlError::new(4135, *b"HY000", "Sequence 'test.s1' has run out")
+            MysqlError::new(4135, "Sequence 'test.s1' has run out")
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
-            MysqlError::new(1365, *b"22012", "Division by 0")
+            MysqlError::new(1365, "Division by 0")
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::WrongParameterCount(
@@ -275,7 +283,6 @@ mod tests {
             ))),
             MysqlError::new(
                 1582,
-                *b"42000",
                 "Incorrect parameter count in the call to native function 'aes_encrypt'"
             )
         );
@@ -285,20 +292,15 @@ mod tests {
             ))),
             MysqlError::new(
                 1210,
-                *b"HY000",
                 "The initialization vector supplied to aes_encrypt is too short"
             )
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DataOutOfRange {
                 value: "length",
-                expression: "random_bytes",
+                expression: "random_bytes".to_string(),
             })),
-            MysqlError::new(
-                1690,
-                *b"22003",
-                "length value is out of range in 'random_bytes'"
-            )
+            MysqlError::new(1690, "length value is out of range in 'random_bytes'")
         );
     }
 
@@ -352,16 +354,13 @@ mod tests {
     #[test]
     fn an_internal_executor_error_is_not_reported_as_unsupported() {
         let mysql = rendered(ExecError::internal("chunk invariant failed"));
-        assert_eq!(
-            mysql,
-            MysqlError::new(1105, *b"HY000", "chunk invariant failed")
-        );
+        assert_eq!(mysql, MysqlError::new(1105, "chunk invariant failed"));
     }
 
     #[test]
     fn local_temporary_space_quota_reaches_the_wire_unchanged() {
-        let message = tidb_util::disk::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR;
+        let message = tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR;
         let mysql = rendered(ExecError::SpillFailed(message.to_owned()));
-        assert_eq!(mysql, MysqlError::new(1105, *b"HY000", message));
+        assert_eq!(mysql, MysqlError::new(1105, message));
     }
 }

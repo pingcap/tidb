@@ -28,7 +28,6 @@ use tidb_protocol::{
     PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
     DEFAULT_MAX_ALLOWED_PACKET,
 };
-use tidb_util::versioninfo::VersionInfo;
 
 use crate::auth_exchange::AuthSwitchRequest;
 use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
@@ -37,16 +36,18 @@ use crate::connection_resultset::{
 };
 use crate::connection_writers::{
     access_denied_message, account_locked_message, prepared_parameter_column,
-    prepared_statement_id, write_affected_rows_ok, write_eof_or_ok, write_error, write_ok,
-    write_packet_to, write_payload, write_query_error, write_query_error_at,
-    write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink, WireFraming,
+    prepared_statement_id, write_affected_rows_ok, write_affected_rows_ok_with_info,
+    write_eof_or_ok, write_error, write_ok, write_packet_to, write_payload, write_query_error,
+    write_query_error_at, write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink,
+    WireFraming,
 };
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
     InitialHandshake, AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS,
-    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
-    CLIENT_SSL, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
+    CLIENT_CONNECT_WITH_DB, CLIENT_FOUND_ROWS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
+    CLIENT_SECURE_CONNECTION, CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM,
+    DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -123,16 +124,23 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
 ) -> Result<CursorState, PreparedCursorOpenError> {
     let warnings = result.warning_count();
     let status = result.wire_status();
+    let affected_rows = result.affected_rows();
+    let last_insert_id = result.last_insert_id();
+    let info = result.info().to_vec();
     let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
-    let options = framing.result_set(
+    let options = framing.result_set_with_output(
         status.with(SERVER_STATUS_CURSOR_EXISTS),
         warnings,
+        affected_rows,
+        last_insert_id,
+        info,
         result_encoder,
     );
-    let mut stream = tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options)
-        .map_err(|error| {
-            PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
-        })?;
+    let mut stream =
+        tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options.clone())
+            .map_err(|error| {
+                PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+            })?;
     let metadata = stream.metadata_packets().map_err(|error| {
         PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
     })?;
@@ -190,6 +198,8 @@ const CLIENT_MULTI_STATEMENTS: u32 = 1 << 16;
 /// `SERVER_MORE_RESULTS_EXISTS` chains. Advertised alongside
 /// `CLIENT_MULTI_STATEMENTS`, as Go does.
 const CLIENT_MULTI_RESULTS: u32 = 1 << 17;
+/// `CLIENT_LOCAL_FILES`: client-local transfer used by LOAD STATS.
+const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 /// Go's `defaultCapability` (`pkg/server/server.go`) restricted to what this
 /// node actually serves.
 ///
@@ -202,13 +212,16 @@ const CLIENT_MULTI_RESULTS: u32 = 1 << 17;
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_COMPRESS
     | CLIENT_CONNECT_WITH_DB
+    | CLIENT_FOUND_ROWS
+    | CLIENT_TRANSACTIONS
     | CLIENT_SECURE_CONNECTION
     | CLIENT_PLUGIN_AUTH
     | CLIENT_CONNECT_ATTRS
     | CLIENT_DEPRECATE_EOF
     | CLIENT_ZSTD_COMPRESSION_ALGORITHM
     | CLIENT_MULTI_STATEMENTS
-    | CLIENT_MULTI_RESULTS;
+    | CLIENT_MULTI_RESULTS
+    | CLIENT_LOCAL_FILES;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 /// SQLSTATE `08S01` for [`ER_UNKNOWN_COM_ERROR`]. Go resolves every ERR
@@ -237,6 +250,18 @@ const ER_WRONG_ARGUMENTS: u16 = 1210;
 pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 
+/// Go `clientConn.dispatch`'s default arm (`pkg/server/conn.go:1592-1593`)
+/// for a command byte with no owner. This is deliberately distinct from
+/// `ER_UNKNOWN_COM_ERROR` (1047), which is Go's errno for a *known* command
+/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
+fn unknown_command_error(code: u8) -> SqlQueryError {
+    SqlQueryError::new(
+        ER_UNKNOWN_ERROR,
+        *b"HY000",
+        format!("command {code} not supported now"),
+    )
+}
+
 struct ConnectionPreparedStatement {
     /// The parsed statement is immutable after PREPARE.  Keep it behind an
     /// `Arc` so COM_STMT_EXECUTE only clones a pointer; cloning the retained
@@ -255,15 +280,28 @@ struct ConnectionPreparedStatement {
     /// parameter was never sent as long data" -- and is what makes an empty
     /// bound buffer distinguishable from an unbound one.
     bound_params: Vec<Option<Vec<u8>>>,
+    /// Number of long-data bytes currently charged to the connection's
+    /// session tracker for this statement.
+    bound_long_data_bytes: i64,
+    /// Sticky Go `AppendParam` state: a refused chunk is reported by the next
+    /// EXECUTE and further SEND_LONG_DATA chunks remain silent.
+    bound_params_mem_quota_exceeded: bool,
+    bound_params_too_large: bool,
 }
 
 impl ConnectionPreparedStatement {
     /// Go `for i := range ts.boundParams { ts.boundParams[i] = nil }`.
     /// The vector keeps its prepare-time length; only the buffers go.
-    fn clear_bound_params(&mut self) {
+    fn clear_bound_params<S: QuerySession>(&mut self, session: &mut S) {
+        if self.bound_long_data_bytes > 0 {
+            session.release_long_data(self.bound_long_data_bytes);
+            self.bound_long_data_bytes = 0;
+        }
         for slot in &mut self.bound_params {
             *slot = None;
         }
+        self.bound_params_mem_quota_exceeded = false;
+        self.bound_params_too_large = false;
     }
 }
 
@@ -274,70 +312,6 @@ enum AppendParamError {
     UnknownStatement,
     /// The parameter ID is at or past the statement's marker count.
     ParameterOutOfRange,
-    /// The accumulated buffer would exceed the wire payload cap.
-    TooLarge,
-}
-
-/// What the per-command `TIKV_QUERY_TRACE` report carries after the kind: a
-/// statement fingerprint naming the actual SQL. Kind alone cannot say which
-/// of a session's statements owns a tail latency, which is exactly what the
-/// mixed-workload slow-command attribution needs.
-enum CommandFingerprint {
-    /// Kind only -- tracing disabled (the quiet path stays allocation-free)
-    /// or no SQL text is decodable for the command.
-    Kind(&'static str),
-    /// Kind plus the statement's SQL head.
-    Sql(&'static str, String),
-}
-
-/// The first 120 characters of `sql` with control characters flattened to
-/// spaces: enough to name a bank/TPCC statement, short enough that one slow
-/// report stays one greppable line even when the client sent a wide payload.
-fn trace_sql_head(sql: &str) -> String {
-    sql.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .take(120)
-        .collect()
-}
-
-fn trace_command_kind(command: &Command) -> &'static str {
-    match command {
-        Command::Query(_) => "query",
-        Command::StmtExecute(_) => "stmt_execute",
-        Command::StmtPrepare(_) => "stmt_prepare",
-        _ => "other",
-    }
-}
-
-/// Builds the fingerprint for one decoded command. A COM_QUERY names itself;
-/// a COM_STMT_EXECUTE names the prepare-time SQL recorded for its handle in
-/// `prepared_sql`. Handles are monotonic per connection and never reused, so
-/// entries never collide and stale entries stay attributable.
-fn command_fingerprint(
-    command: &Command,
-    prepared_sql: &HashMap<u32, String>,
-    enabled: bool,
-) -> CommandFingerprint {
-    if !enabled {
-        return CommandFingerprint::Kind(trace_command_kind(command));
-    }
-    match command {
-        Command::Query(bytes) => {
-            let head = trace_sql_head(&String::from_utf8_lossy(bytes));
-            CommandFingerprint::Sql("query", format!("sql={head}"))
-        }
-        Command::StmtExecute(bytes) => match prepared_statement_id(bytes)
-            .ok()
-            .and_then(|id| prepared_sql.get(&id))
-        {
-            Some(sql) => CommandFingerprint::Sql(
-                "stmt_execute",
-                format!("sql={}", trace_sql_head(sql)),
-            ),
-            None => CommandFingerprint::Sql("stmt_execute", "sql=?".to_owned()),
-        },
-        _ => CommandFingerprint::Kind(trace_command_kind(command)),
-    }
 }
 
 struct PreparedStatementRegistry {
@@ -364,6 +338,9 @@ impl PreparedStatementRegistry {
             statement_id,
             ConnectionPreparedStatement {
                 bound_params: vec![None; statement.parameter_count()],
+                bound_long_data_bytes: 0,
+                bound_params_mem_quota_exceeded: false,
+                bound_params_too_large: false,
                 statement: Arc::new(statement),
                 parameter_types: None,
                 cursor: None,
@@ -386,8 +363,17 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn remove(&mut self, statement_id: u32) -> Option<ConnectionPreparedStatement> {
-        self.statements.remove(&statement_id)
+    fn remove<S: QuerySession>(
+        &mut self,
+        statement_id: u32,
+        session: &mut S,
+    ) -> Option<ConnectionPreparedStatement> {
+        let mut statement = self.statements.remove(&statement_id)?;
+        if statement.bound_long_data_bytes > 0 {
+            session.release_long_data(statement.bound_long_data_bytes);
+            statement.bound_long_data_bytes = 0;
+        }
+        Some(statement)
     }
 
     /// Go `stmt.Reset` (`pkg/server/driver_tidb.go:151-160`): returns the
@@ -399,10 +385,14 @@ impl PreparedStatementRegistry {
     /// parameter-type vector deliberately survives: Go's `TiDBStatement.Reset`
     /// leaves `paramsType` untouched, so a later execute may keep its
     /// new-parameter-bound flag clear.
-    fn reset(&mut self, statement_id: u32) -> Result<Option<CursorState>, ()> {
+    fn reset<S: QuerySession>(
+        &mut self,
+        statement_id: u32,
+        session: &mut S,
+    ) -> Result<Option<CursorState>, ()> {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
-                statement.clear_bound_params();
+                statement.clear_bound_params(session);
                 Ok(statement.cursor.take())
             }
             None => Err(()),
@@ -416,29 +406,84 @@ impl PreparedStatementRegistry {
     /// `ErrWrongArguments("stmt_send_longdata")`. An empty chunk stores an
     /// empty buffer rather than nothing, which is how Go keeps "bound to the
     /// empty string" distinct from "never bound".
-    fn append_param(
+    fn append_param<S: QuerySession>(
         &mut self,
         statement_id: u32,
         parameter_id: usize,
         chunk: &[u8],
+        session: &mut S,
     ) -> Result<(), AppendParamError> {
         let statement = self
             .statements
-            .get_mut(&statement_id)
+            .get(&statement_id)
             .ok_or(AppendParamError::UnknownStatement)?;
-        let slot = statement
+        let current_len = statement
             .bound_params
-            .get_mut(parameter_id)
-            .ok_or(AppendParamError::ParameterOutOfRange)?;
-        let buffer = slot.get_or_insert_with(Vec::new);
+            .get(parameter_id)
+            .ok_or(AppendParamError::ParameterOutOfRange)?
+            .as_ref()
+            .map_or(0, Vec::len);
+
+        // Go treats an empty chunk as an explicit empty-string binding. It
+        // runs this branch before either sticky overflow flag is consulted.
+        if chunk.is_empty() {
+            let statement = self
+                .statements
+                .get_mut(&statement_id)
+                .expect("statement was present above");
+            if let Some(buffer) = statement.bound_params[parameter_id].as_mut() {
+                let released = i64::try_from(buffer.len()).unwrap_or(i64::MAX);
+                if released > 0 {
+                    session.release_long_data(released);
+                    statement.bound_long_data_bytes =
+                        statement.bound_long_data_bytes.saturating_sub(released);
+                }
+                buffer.clear();
+            } else {
+                statement.bound_params[parameter_id] = Some(Vec::new());
+            }
+            return Ok(());
+        }
+
+        if statement.bound_params_mem_quota_exceeded || statement.bound_params_too_large {
+            return Ok(());
+        }
+
         // Go bounds the accumulated value with `max_allowed_packet`, which
         // this node does not have as a session variable yet (gap #185); the
         // same hardcoded wire cap the packet reader enforces is therefore the
         // bound here, so a client cannot grow one parameter without limit.
-        if buffer.len().saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
-            return Err(AppendParamError::TooLarge);
+        if current_len.saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
+            self.statements
+                .get_mut(&statement_id)
+                .expect("statement was present above")
+                .bound_params_too_large = true;
+            return Ok(());
         }
+
+        let chunk_size = i64::try_from(chunk.len()).unwrap_or(i64::MAX);
+        if !session.try_consume_long_data(chunk_size) {
+            self.statements
+                .get_mut(&statement_id)
+                .expect("statement was present above")
+                .bound_params_mem_quota_exceeded = true;
+            return Ok(());
+        }
+
+        let statement = self
+            .statements
+            .get_mut(&statement_id)
+            .expect("statement was present above");
+        if statement.bound_params_mem_quota_exceeded || statement.bound_params_too_large {
+            // A sticky refusal must not retain bytes if a session-specific
+            // implementation accepted a charge concurrently with it.
+            session.release_long_data(chunk_size);
+            return Ok(());
+        }
+        let buffer = statement.bound_params[parameter_id].get_or_insert_with(Vec::new);
         buffer.extend_from_slice(chunk);
+        statement.bound_long_data_bytes =
+            statement.bound_long_data_bytes.saturating_add(chunk_size);
         Ok(())
     }
 
@@ -452,10 +497,31 @@ impl PreparedStatementRegistry {
     /// `parseBinaryParams` has read the buffers
     /// (`pkg/server/conn_stmt.go:212-217`): long data is consumed by exactly
     /// one execute and never leaks into the next one.
-    fn clear_bound_params(&mut self, statement_id: u32) {
+    fn clear_bound_params<S: QuerySession>(&mut self, statement_id: u32, session: &mut S) {
         if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.clear_bound_params();
+            statement.clear_bound_params(session);
         }
+    }
+
+    fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
+        let statement = self.statements.get(&statement_id)?;
+        if statement.bound_params_mem_quota_exceeded {
+            let error = tidb_executor::mem_quota::memory_exceed_for_query(connection_id);
+            return Some(SqlQueryError::new(
+                error.code,
+                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+                error.message,
+            ));
+        }
+        if statement.bound_params_too_large {
+            let error = tidb_error::mysql::SqlError::new(1153, &[]);
+            return Some(SqlQueryError::new(
+                error.code,
+                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+                error.message,
+            ));
+        }
+        None
     }
 
     fn open_cursor(&mut self, statement_id: u32, state: CursorState) -> Option<CursorState> {
@@ -533,6 +599,73 @@ pub struct ConnectionReport {
 struct AcceptedConnectionIdentity {
     connection_id: u64,
     peer_addr: SocketAddr,
+}
+
+/// Adds Go `clientConn.user`/`peerHost` error accounting to the ordinary
+/// authenticated command writer without changing packet framing.
+struct ClientErrorRecordingOutput<O> {
+    inner: O,
+    user: String,
+    host: String,
+}
+
+impl<O> ClientErrorRecordingOutput<O> {
+    fn new(inner: O, user: String, host: String) -> Self {
+        Self { inner, user, host }
+    }
+
+    fn set_user(&mut self, user: String) {
+        self.user = user;
+    }
+}
+
+impl<O: Write> Write for ClientErrorRecordingOutput<O> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingOutput<O> {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
+        self.inner.write_packet(sequence, payload)
+    }
+
+    fn write_packets(
+        &mut self,
+        sequence: u8,
+        payloads: &[&[u8]],
+    ) -> Result<u8, MysqlConnectionError> {
+        self.inner.write_packets(sequence, payloads)
+    }
+
+    fn record_client_error(&self, code: u16) {
+        tidb_error::tidb::infoschema::increment_error(code, &self.user, &self.host);
+    }
+
+    fn record_client_warning(&self, code: u16) {
+        tidb_error::tidb::infoschema::increment_warning(code, &self.user, &self.host);
+    }
+
+    fn compressed_sequence(&self) -> Option<u8> {
+        self.inner.compressed_sequence()
+    }
+
+    fn set_compressed_sequence(&mut self, sequence: u8) {
+        self.inner.set_compressed_sequence(sequence);
+    }
+}
+
+fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
+    output: &O,
+    session: &S,
+) {
+    for code in session.warning_codes() {
+        output.record_client_warning(code);
+    }
 }
 
 /// Fatal socket/protocol failure that prevents orderly command continuation.
@@ -666,8 +799,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
     max_allowed_packet: usize,
     tls: Option<&MysqlServerTls>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
-    let version_info = VersionInfo::build_default();
-    serve_mysql_connection_with_tls_and_version_info(
+    serve_mysql_connection_with_runtime(
         stream,
         peer_addr,
         cancellation,
@@ -677,7 +809,6 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
         MysqlConnectionRuntime {
             max_allowed_packet,
             tls,
-            version_info: &version_info,
         },
     )
 }
@@ -685,10 +816,9 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
 pub(crate) struct MysqlConnectionRuntime<'a> {
     pub(crate) max_allowed_packet: usize,
     pub(crate) tls: Option<&'a MysqlServerTls>,
-    pub(crate) version_info: &'a VersionInfo,
 }
 
-pub(crate) fn serve_mysql_connection_with_tls_and_version_info<F: QuerySessionFactory>(
+pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     stream: TcpStream,
     peer_addr: SocketAddr,
     cancellation: ConnectionCancellation,
@@ -781,7 +911,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // upgrade there is exactly one TLS session and both directions run through
     // it.
     let socket = ClientStream::plain(stream);
-    let mut output = socket.clone();
+    let mut output =
+        ClientErrorRecordingOutput::new(socket.clone(), String::new(), peer_addr.ip().to_string());
     let server_capabilities = if runtime.tls.is_some() {
         SERVER_CAPABILITIES | CLIENT_SSL
     } else {
@@ -796,7 +927,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // Go `writeInitialHandshake` (`pkg/server/conn.go:496`) hardcodes this
         // one word, and only this one: the handshake precedes any session.
         status_flags: WireStatus::AUTOCOMMIT.bits(),
-        server_version: runtime.version_info.server_version.clone(),
+        server_version: tidb_mysql::runtime_versions().server_version,
         auth_plugin: AUTH_NATIVE_PASSWORD.to_owned(),
     };
     output
@@ -883,6 +1014,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // the protocol parser.
     let response_user = response.user.to_string_lossy().into_owned();
     let response_db_name = response.db_name.to_string_lossy().into_owned();
+    output.set_user(response_user.clone());
     // Go rejects an insecure transport immediately after parsing the full
     // handshake response, before selecting an account plugin or sending an
     // AuthSwitchRequest. Keep the returned token so the account verifier
@@ -912,7 +1044,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
-    let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
+    let mut capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
             write_error(
@@ -1111,16 +1243,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         connection_id,
         peer_addr,
         identity,
+        client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
         secure_transport: socket.is_tls(),
         tls_status: socket.negotiated_tls().map(|(cipher, version)| {
             (
-                tidb_util::tlsutil::cipher_suite_name(cipher),
-                tidb_util::tlsutil::version_name(version),
+                tidb_util::tls::cipher_suite_name(cipher).to_owned(),
+                tidb_util::tls::version_name(version),
             )
         }),
         cancellation: cancellation.clone(),
         close: close.clone(),
-        version_info: runtime.version_info.clone(),
     }) {
         Ok(session) => session,
         Err(error) => {
@@ -1193,12 +1325,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     };
     let mut queries = 0_u64;
     let mut prepared = PreparedStatementRegistry::default();
-    // `TIKV_QUERY_TRACE`: read once per connection; every capture below is
-    // skipped when it is off, so the quiet path keeps today's exact shape.
-    let query_trace_enabled = std::env::var_os("TIKV_QUERY_TRACE").is_some();
-    // Prepared-handle -> prepare-time SQL head. Populated only under tracing.
-    let mut prepared_sql: HashMap<u32, String> = HashMap::new();
-    let mut last_command: Option<(std::time::Instant, CommandFingerprint)> = None;
     loop {
         // A `KILL` that arrived while the previous command ran ends the
         // connection here, before it serves another one.
@@ -1260,8 +1386,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // statements, and the second one has to go out in the new charset.
         // An unregistered name falls back to Go's unset state, which is what
         // `initResultEncoder` does when the read fails.
+        let result_charset = engine.result_charset();
         let result_encoder =
-            ResultEncoder::new(&engine.result_charset()).unwrap_or_else(|_| ResultEncoder::null());
+            ResultEncoder::new(result_charset.as_ref()).unwrap_or_else(|_| ResultEncoder::null());
         let command = match decode_command(&payload) {
             Ok(command) => command,
             Err(error) => {
@@ -1279,36 +1406,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         let _query_cancellation = engine
             .query_cancellation()
             .map(|active| cancellation.install(active));
-        // `TIKV_QUERY_TRACE`: report the previous command's full server-side
-        // duration when its successor arrives (client-observed latency proxy).
-        // The report names the statement (SQL head) so slow commands can be
-        // attributed without replaying the client's parameter stream.
-        if query_trace_enabled {
-            if let Some((started, fingerprint)) = last_command.take() {
-                let elapsed = started.elapsed();
-                if elapsed.as_millis() >= 20 {
-                    match &fingerprint {
-                        CommandFingerprint::Kind(kind) => eprintln!(
-                            "[QTRACE-SQL] {}ms conn={} kind={}",
-                            elapsed.as_millis(),
-                            connection_id,
-                            kind
-                        ),
-                        CommandFingerprint::Sql(kind, sql) => eprintln!(
-                            "[QTRACE-SQL] {}ms conn={} kind={} {}",
-                            elapsed.as_millis(),
-                            connection_id,
-                            kind,
-                            sql
-                        ),
-                    }
-                }
-            }
-        }
-        last_command = Some((
-            std::time::Instant::now(),
-            command_fingerprint(&command, &prepared_sql, query_trace_enabled),
-        ));
         match command {
             Command::Quit => {
                 return Ok(ConnectionReport {
@@ -1336,6 +1433,62 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 );
                 crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
             }
+            Command::Refresh(data) => {
+                // Go `handleRefresh` (`pkg/server/conn.go:2875-2882`) treats
+                // refresh targets other than 0x01 as no-ops.  `0x01` first
+                // runs `FLUSH PRIVILEGES` through the ordinary SQL path,
+                // which writes one OK, and then writes the command's own OK
+                // as well.  Keep both packets: clients expect the second
+                // response and consume it before sending their next command.
+                let Some(subcommand) = data.first().copied() else {
+                    write_error(
+                        &mut output,
+                        1,
+                        ER_UNKNOWN_ERROR,
+                        *b"HY000",
+                        "malform packet error",
+                        protocol_41,
+                    )?;
+                    continue;
+                };
+                let mut next_sequence = 1;
+                if subcommand == 0x01 {
+                    match engine.execute_write("FLUSH PRIVILEGES") {
+                        Ok(Some(outcome)) => {
+                            write_affected_rows_ok_with_info(
+                                &mut output,
+                                1,
+                                outcome.affected_rows,
+                                outcome.last_insert_id,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                protocol_41,
+                                &engine.statement_info(),
+                            )?;
+                            record_client_warnings(&output, &engine);
+                            queries += 1;
+                            next_sequence = 2;
+                        }
+                        // Query-only sessions have no privilege cache to
+                        // refresh; the command remains Go's successful
+                        // no-op and still gets its trailing command OK.
+                        Ok(None) => {}
+                        Err(error) => {
+                            write_query_error(&mut output, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
+                            continue;
+                        }
+                    }
+                }
+                write_ok(
+                    &mut output,
+                    next_sequence,
+                    engine.wire_status(),
+                    engine.warning_count(),
+                    protocol_41,
+                )?;
+                record_client_warnings(&output, &engine);
+            }
             Command::Ping => write_ok(
                 &mut output,
                 1,
@@ -1344,11 +1497,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 protocol_41,
             )?,
             Command::Query(bytes) => {
+                let query_started = std::time::Instant::now();
                 commands.text_query_commands += 1;
                 // `decode_command` has already trimmed exactly one terminal
                 // NUL for issue 1989. Embedded and repeated NUL bytes remain
                 // parser-visible here.
-                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
+                let input_charset = engine.input_charset();
+                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
                     Ok(sql) => sql,
                     Err(()) => {
                         write_error(
@@ -1406,6 +1561,74 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             status
                         }
                     };
+                    // Go executes LOAD STATS far enough to park its file
+                    // request, then the connection asks the CLIENT for that
+                    // path with a 0xfb local-infile packet and feeds the
+                    // returned packet stream back into the same statement.
+                    let local_infile_path = match engine.local_infile_path(sql) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                    };
+                    if let Some(path) = local_infile_path {
+                        if capabilities & CLIENT_LOCAL_FILES == 0 {
+                            let error = SqlQueryError::new(
+                                1148,
+                                *b"42000",
+                                "The used command is not allowed with this MySQL version",
+                            );
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                        let mut request = Vec::with_capacity(path.len() + 1);
+                        request.push(0xfb);
+                        request.extend_from_slice(path.as_bytes());
+                        write_payload(&mut output, sequence, &request)?;
+                        if let Some(compressed_sequence) = output.compressed_sequence() {
+                            reader.set_compressed_sequence(compressed_sequence);
+                        }
+                        reader.set_sequence(sequence.wrapping_add(1));
+                        let mut data = Vec::new();
+                        loop {
+                            let packet = reader.read_packet()?;
+                            if packet.is_empty() {
+                                break;
+                            }
+                            data.extend_from_slice(&packet);
+                        }
+                        if let Some(compressed_sequence) = reader.compressed_sequence() {
+                            output.set_compressed_sequence(compressed_sequence);
+                        }
+                        sequence = reader.sequence();
+                        match engine.execute_local_infile(sql, &data) {
+                            Ok(outcome) => {
+                                write_affected_rows_ok_with_info(
+                                    &mut output,
+                                    sequence,
+                                    outcome.affected_rows,
+                                    outcome.last_insert_id,
+                                    stamp(engine.wire_status()),
+                                    engine.warning_count(),
+                                    protocol_41,
+                                    &engine.statement_info(),
+                                )?;
+                                record_client_warnings(&output, &engine);
+                                sequence = sequence.wrapping_add(1);
+                                queries += 1;
+                                continue;
+                            }
+                            Err(error) => {
+                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                record_client_warnings(&output, &engine);
+                                aborted = true;
+                                break;
+                            }
+                        }
+                    }
                     // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
                     // answer with an OK packet carrying the transaction status, not a
                     // result set; every other statement runs as an ordinary query.
@@ -1421,6 +1644,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.warning_count(),
                                 protocol_41,
                             )?;
+                            record_client_warnings(&output, &engine);
                             sequence = sequence.wrapping_add(1);
                             queries += 1;
                             continue;
@@ -1437,7 +1661,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // everything else runs as an ordinary result-set query.
                     match engine.execute_write(sql) {
                         Ok(Some(outcome)) => {
-                            write_affected_rows_ok(
+                            let info = engine.statement_info();
+                            write_affected_rows_ok_with_info(
                                 &mut output,
                                 sequence,
                                 outcome.affected_rows,
@@ -1445,7 +1670,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 stamp(engine.wire_status()),
                                 engine.warning_count(),
                                 protocol_41,
+                                &info,
                             )?;
+                            record_client_warnings(&output, &engine);
                             sequence = sequence.wrapping_add(1);
                             queries += 1;
                             continue;
@@ -1453,6 +1680,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(None) => {}
                         Err(error) => {
                             write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
                             aborted = true;
                             break;
                         }
@@ -1466,9 +1694,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     };
                     let (write_result, next_sequence) = {
-                        let statement_options = framing.result_set(
+                        let statement_options = framing.result_set_with_output(
                             stamp(result.wire_status()),
                             result.warning_count(),
+                            result.affected_rows(),
+                            result.last_insert_id(),
+                            result.info().to_vec(),
                             result_encoder,
                         );
                         let mut sink = TcpResultSetSink::new(&mut output, sequence);
@@ -1492,21 +1723,29 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 error.message,
                                 protocol_41,
                             )?;
+                            drop(result);
+                            record_client_warnings(&output, &engine);
                             aborted = true;
                             break;
                         }
                         Err(error) => {
-                            return Err(MysqlConnectionError::PartialResult(error.message))
+                            drop(result);
+                            engine.finish_execute_stmt(query_started.elapsed());
+                            return Err(MysqlConnectionError::PartialResult(error.message));
                         }
                     }
+                    drop(result);
+                    record_client_warnings(&output, &engine);
                 }
                 if !aborted {
                     engine.flush_multi_statement_warning();
                 }
+                engine.finish_execute_stmt(query_started.elapsed());
             }
             Command::StmtPrepare(bytes) => {
                 commands.stmt_prepare_commands += 1;
-                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
+                let input_charset = engine.input_charset();
+                let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
                     Ok(sql) => sql,
                     Err(()) => {
                         write_error(
@@ -1584,9 +1823,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
-                if query_trace_enabled {
-                    prepared_sql.insert(statement_id, trace_sql_head(sql));
-                }
                 let parameter_columns = vec![prepared_parameter_column(); parameter_count];
                 // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
                 // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
@@ -1599,7 +1835,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
-                        drop(prepared.remove(statement_id));
+                        drop(prepared.remove(statement_id, &mut engine));
                         write_error(
                             &mut output,
                             1,
@@ -1621,6 +1857,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 commands.stmt_prepare_successes += 1;
             }
             Command::StmtExecute(bytes) => {
+                let execute_started = std::time::Instant::now();
                 commands.stmt_execute_commands += 1;
                 let statement_id = match prepared_statement_id(&bytes) {
                     Ok(statement_id) => statement_id,
@@ -1657,13 +1894,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // then calls `stmt.Reset()` unconditionally -- on the decode
                 // error path too (`pkg/server/conn_stmt.go:212-217`), so a
                 // rejected execute still consumes the long data.
+                let long_data_error =
+                    prepared.long_data_error(statement_id, engine.connection_id());
                 let bound_params = prepared.bound_params(statement_id).to_vec();
-                prepared.clear_bound_params(statement_id);
+                prepared.clear_bound_params(statement_id, &mut engine);
                 // Go calls `stmt.Reset()` after parsing every execute packet,
                 // successful or not. The retained cursor therefore closes
                 // before a replacement execution starts, and a malformed
                 // replacement cannot leave the old cursor fetchable.
                 drop(prepared.take_cursor(statement_id));
+                if let Some(error) = long_data_error {
+                    write_query_error(&mut output, &error, protocol_41)?;
+                    continue;
+                }
                 let execute_packet = match split_prepared_statement_execute(
                     &bytes,
                     parameter_count,
@@ -1697,7 +1940,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     prepared.remember_parameter_types(statement_id, types);
                 }
                 let input_charset = engine.input_charset();
-                let execute = match execute_packet.decode(&bound_params, &input_charset) {
+                let execute = match execute_packet.decode(&bound_params, input_charset.as_ref()) {
                     Ok(execute) => execute,
                     Err(error) => {
                         write_error(
@@ -1743,6 +1986,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             )?,
                             Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                         }
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::PointRead(point_read) => {
                         // A point read binds a signed-integer clustered handle; a
@@ -1761,14 +2005,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 continue;
                             }
                         };
+                        let execution = engine.execute_prepared_point_read(point_read, &parameters);
+                        if execution.is_err() {
+                            let error = execution
+                                .err()
+                                .expect("the prepared point read error was just observed");
+                            write_query_error(&mut output, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
+                            continue;
+                        }
                         let mut result =
-                            match engine.execute_prepared_point_read(point_read, &parameters) {
-                                Ok(result) => result,
-                                Err(error) => {
-                                    write_query_error(&mut output, &error, protocol_41)?;
-                                    continue;
-                                }
-                            };
+                            execution.expect("the prepared point read success was just observed");
                         if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
                             match open_prepared_cursor(
                                 &mut result,
@@ -1790,12 +2037,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     return Err(error);
                                 }
                             }
+                            record_client_warnings(&output, &engine);
                             continue;
                         }
                         let write_result = {
-                            let statement_options = framing.result_set(
+                            let statement_options = framing.result_set_with_output(
                                 result.wire_status(),
                                 result.warning_count(),
+                                result.affected_rows(),
+                                result.last_insert_id(),
+                                result.info().to_vec(),
                                 result_encoder,
                             );
                             let mut sink = TcpResultSetSink::new(&mut output, 1);
@@ -1825,6 +2076,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 return Err(MysqlConnectionError::PartialResult(error.message))
                             }
                         }
+                        drop(result);
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::General(general) => {
                         // Go's read-only cursor: the execute materializes the
@@ -1871,7 +2124,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             }
                             if let Some(outcome) = write_outcome {
-                                write_affected_rows_ok(
+                                let info = engine.statement_info();
+                                write_affected_rows_ok_with_info(
                                     &mut output,
                                     1,
                                     outcome.affected_rows,
@@ -1879,19 +2133,24 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
+                                    &info,
                                 )?;
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
                             }
+                            record_client_warnings(&output, &engine);
                             continue;
                         }
                         let mut write_outcome = None;
                         match engine.execute_general(general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
-                                    let statement_options = framing.result_set(
+                                    let statement_options = framing.result_set_with_output(
                                         result.wire_status(),
                                         result.warning_count(),
+                                        result.affected_rows(),
+                                        result.last_insert_id(),
+                                        result.info().to_vec(),
                                         result_encoder,
                                     );
                                     let mut sink = TcpResultSetSink::new(&mut output, 1);
@@ -1935,7 +2194,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         }
                         if let Some(outcome) = write_outcome {
-                            write_affected_rows_ok(
+                            let info = engine.statement_info();
+                            write_affected_rows_ok_with_info(
                                 &mut output,
                                 1,
                                 outcome.affected_rows,
@@ -1943,10 +2203,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
+                                &info,
                             )?;
                             queries += 1;
                             commands.stmt_execute_successes += 1;
                         }
+                        record_client_warnings(&output, &engine);
                     }
                     PreparedStatement::Write(write) => {
                         // A write answers with one OK packet and never a result
@@ -1955,7 +2217,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // terminal state arrived here as an error.
                         match engine.execute_prepared_write(write, &write_bind_parameters(values)) {
                             Ok(outcome) => {
-                                write_affected_rows_ok(
+                                let info = engine.statement_info();
+                                write_affected_rows_ok_with_info(
                                     &mut output,
                                     1,
                                     outcome.affected_rows,
@@ -1963,6 +2226,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
+                                    &info,
                                 )?;
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
@@ -1971,8 +2235,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 write_query_error(&mut output, &error, protocol_41)?;
                             }
                         }
+                        record_client_warnings(&output, &engine);
                     }
                 }
+                engine.finish_execute_stmt(execute_started.elapsed());
             }
             Command::StmtSendLongData(bytes) => {
                 commands.stmt_send_long_data_commands += 1;
@@ -1992,6 +2258,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             statement_id,
                             usize::from(long_data.parameter_id),
                             &long_data.chunk,
+                            &mut engine,
                         ) {
                             Ok(()) => {}
                             Err(AppendParamError::UnknownStatement) => {
@@ -2012,14 +2279,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 "Incorrect arguments to stmt_send_longdata",
                                 protocol_41,
                             )?,
-                            Err(AppendParamError::TooLarge) => write_error(
-                                &mut output,
-                                1,
-                                ER_UNKNOWN_ERROR,
-                                *b"HY000",
-                                "COM_STMT_SEND_LONG_DATA exceeds the maximum packet size",
-                                protocol_41,
-                            )?,
                         }
                     }
                     Err(error) => write_error(
@@ -2035,7 +2294,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::StmtClose(bytes) => {
                 commands.stmt_close_commands += 1;
                 if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                    drop(prepared.remove(statement_id));
+                    drop(prepared.remove(statement_id, &mut engine));
                 }
             }
             Command::StmtReset(bytes) => {
@@ -2043,7 +2302,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 match decode_prepared_statement_close(&bytes) {
                     // The payload is the same four-byte statement id the
                     // close command carries.
-                    Ok(statement_id) => match prepared.reset(statement_id) {
+                    Ok(statement_id) => match prepared.reset(statement_id, &mut engine) {
                         Ok(cursor) => {
                             drop(cursor);
                             // COM_STMT_RESET runs no statement, so like Go's
@@ -2056,6 +2315,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
+                                &[],
                             )?;
                         }
                         Err(()) => write_unknown_statement(
@@ -2162,10 +2422,46 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                 }
             }
+            Command::SetOption(data) => {
+                // Go `handleSetOption` (conn_stmt.go:651-672): the two-byte
+                // option word toggles CLIENT_MULTI_STATEMENTS (0 = on, 1 =
+                // off) and the reply is an EOF packet carrying the live
+                // status -- never an ERR. JDBC sends this during connection
+                // setup with `allowMultiQueries=true`; answering ERR there
+                // fails the whole connection.
+                if data.len() < 2 {
+                    return Err(MysqlConnectionError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "malform packet error",
+                    )));
+                }
+                match u16::from_le_bytes([data[0], data[1]]) {
+                    0 => capabilities |= CLIENT_MULTI_STATEMENTS,
+                    1 => capabilities &= !CLIENT_MULTI_STATEMENTS,
+                    _ => {
+                        return Err(MysqlConnectionError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "malform packet error",
+                        )));
+                    }
+                }
+                write_eof_or_ok(
+                    &mut output,
+                    1,
+                    framing.result_set(
+                        engine.wire_status(),
+                        engine.warning_count(),
+                        result_encoder,
+                    ),
+                )?;
+            }
+            // Go answers COM_SHUTDOWN with handleQuery("SHUTDOWN") and
+            // COM_CHANGE_USER with handleChangeUser; both need the full
+            // server, which this read-only node does not implement yet.
             Command::FieldList(_)
-            | Command::SetOption(_)
             | Command::ResetConnection
-            | Command::Unknown { .. } => write_error(
+            | Command::Shutdown
+            | Command::ChangeUser(_) => write_error(
                 &mut output,
                 1,
                 ER_UNKNOWN_COM_ERROR,
@@ -2173,6 +2469,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 "command is not supported by the read-only Rust SQL node",
                 protocol_41,
             )?,
+            Command::Unknown { code, .. } => {
+                // Go's default dispatch arm answers a genuinely unknown
+                // command with generic 1105/HY000 and the command byte in the
+                // message.  1047/08S01 belongs only to a known command that
+                // this node refuses, not to an unowned command byte.
+                let error = unknown_command_error(code);
+                write_query_error(&mut output, &error, protocol_41)?;
+            }
         }
     }
 }
@@ -2467,5 +2771,32 @@ mod decode_client_sql_tests {
         let sql = decode_client_sql(b"SELECT '\xc4\xe3'", "gbk").expect("decodes");
         assert_eq!(sql, "SELECT '你'");
         assert!(decode_client_sql(b"SELECT '\x81\x20'", "gbk").is_err());
+    }
+}
+
+#[cfg(test)]
+mod unknown_command_tests {
+    use super::unknown_command_error;
+
+    #[test]
+    fn unknown_command_keeps_go_generic_error_identity() {
+        // Go's `default` dispatch (`pkg/server/conn.go:1592-1593`) formats
+        // the raw command byte as decimal and uses `mysql.ErrUnknown`.
+        let error = unknown_command_error(0xfa);
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(error.message, "command 250 not supported now");
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::{CLIENT_TRANSACTIONS, SERVER_CAPABILITIES};
+
+    #[test]
+    fn server_advertises_go_transaction_capability() {
+        // Go's `defaultCapability` includes ClientTransactions, so a client
+        // must be able to negotiate transaction-aware status and commands.
+        assert_ne!(SERVER_CAPABILITIES & CLIENT_TRANSACTIONS, 0);
     }
 }

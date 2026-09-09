@@ -27,6 +27,7 @@ use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
 use crate::schema::Schema;
+use std::sync::{Arc, RwLock};
 use tidb_chunk::row::Row;
 use tidb_codec::encode_int;
 use tidb_datatype::{Datum, FieldType};
@@ -232,7 +233,7 @@ impl Column {
 const FNV_OFFSET_64: u64 = 14_695_981_039_346_656_037;
 const FNV_PRIME_64: u64 = 1_099_511_628_211;
 
-struct Fnv64(u64);
+pub(crate) struct Fnv64(u64);
 
 impl Default for Fnv64 {
     fn default() -> Self {
@@ -273,7 +274,7 @@ fn hash_column(column: &Column, hasher: &mut Fnv64) {
     column.correlated_col_unique_id.hash(hasher);
 }
 
-fn expression_hash64(expression: &Expression) -> u64 {
+pub(crate) fn expression_hash64(expression: &Expression) -> u64 {
     match expression {
         Expression::Constant(constant) => constant.hash64(),
         Expression::Column(column) => column.hash64(),
@@ -308,7 +309,7 @@ fn optional_expression_equals(
     }
 }
 
-fn expression_equals(left: &Expression, right: &Expression) -> bool {
+pub(crate) fn expression_equals(left: &Expression, right: &Expression) -> bool {
     match (left, right) {
         (Expression::Constant(left), Expression::Constant(right)) => left.equals(right),
         (Expression::Column(left), Expression::Column(right)) => left.equals(right),
@@ -363,35 +364,48 @@ pub fn gc_column_expr_is_tidb_shard(virtual_expr: Option<&Expression>) -> bool {
 pub struct CorrelatedColumn {
     /// Go embedded `Column`.
     pub column: Column,
-    /// Go `Data`: clones share the current outer value. A new execution must
-    /// rebind its physical inner tree to fresh cells before construction.
-    pub data: CorrelatedDatum,
-}
-
-/// Go's shared `*types.Datum`. Synchronization keeps expression clones Send
-/// and Sync; each parallel Apply worker must still own distinct binding cells.
-#[derive(Clone, Debug, Default)]
-pub struct CorrelatedDatum(std::sync::Arc<std::sync::RwLock<Option<Datum>>>);
-
-impl From<Option<Datum>> for CorrelatedDatum {
-    fn from(value: Option<Datum>) -> Self {
-        Self(std::sync::Arc::new(std::sync::RwLock::new(value)))
-    }
-}
-
-impl CorrelatedDatum {
-    /// Read the current bound outer value.
-    pub fn get(&self) -> Datum {
-        self.0.read().expect("correlated datum lock poisoned").clone().unwrap_or(Datum::Null)
-    }
-
-    /// Bind the next outer row without replacing the shared cell.
-    pub fn set(&self, value: Datum) {
-        *self.0.write().expect("correlated datum lock poisoned") = Some(value);
-    }
+    /// Go `Data` (a `*types.Datum`): the shared current bound value, if any.
+    ///
+    /// Cloning a correlated column must clone the pointer, not the datum:
+    /// `NestedLoopApplyExec` writes through `OuterSchema`, while expressions
+    /// in the retained inner plan read through their own cloned column.
+    pub data: Option<Arc<RwLock<Datum>>>,
 }
 
 impl CorrelatedColumn {
+    /// Allocate the binding cell Go creates for a correlated expression.
+    #[must_use]
+    pub fn binding() -> Arc<RwLock<Datum>> {
+        Arc::new(RwLock::new(Datum::Null))
+    }
+
+    /// Construct a correlated column with a live, initially-NULL binding.
+    #[must_use]
+    pub fn new(column: Column) -> Self {
+        Self {
+            column,
+            data: Some(Self::binding()),
+        }
+    }
+
+    /// Construct a correlated column whose binding starts with `value`.
+    #[must_use]
+    pub fn with_value(column: Column, value: Datum) -> Self {
+        Self {
+            column,
+            data: Some(Arc::new(RwLock::new(value))),
+        }
+    }
+
+    /// Write the current outer-row value through Go's shared `Data` pointer.
+    pub fn bind(&self, value: Datum) {
+        if let Some(data) = &self.data {
+            *data
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+        }
+    }
+
     /// Go `IsCorrelated`: always true.
     #[must_use]
     pub fn is_correlated(&self) -> bool {
@@ -440,7 +454,11 @@ impl CorrelatedColumn {
     /// Go dereferences the `Data` pointer; a not-yet-bound column yields NULL.
     #[must_use]
     pub fn eval(&self) -> Datum {
-        self.data.get()
+        self.data.as_ref().map_or(Datum::Null, |data| {
+            data.read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        })
     }
 }
 
@@ -754,10 +772,7 @@ mod tests {
 
     #[test]
     fn correlated_column_decorrelates_and_is_correlated() {
-        let mut cc = CorrelatedColumn {
-            column: col(5),
-            data: Some(Datum::Int(3)).into(),
-        };
+        let mut cc = CorrelatedColumn::with_value(col(5), Datum::Int(3));
         assert!(cc.is_correlated());
         assert_eq!(cc.const_level(), ConstLevel::NONE);
         // Equal only to another correlated column with the same UniqueID.
@@ -813,11 +828,19 @@ mod tests {
         ];
 
         for (code, datum) in cases {
-            let correlated = CorrelatedColumn {
-                column: Column::new(1, FieldType::new(code)),
-                data: Some(datum.clone()).into(),
-            };
+            let correlated =
+                CorrelatedColumn::with_value(Column::new(1, FieldType::new(code)), datum.clone());
             assert_eq!(correlated.eval(), datum, "{code:?}");
         }
+    }
+
+    #[test]
+    fn correlated_column_clone_shares_the_outer_binding() {
+        let outer = CorrelatedColumn::new(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
+        let inner_expression = outer.clone();
+
+        outer.bind(Datum::Int(42));
+
+        assert_eq!(inner_expression.eval(), Datum::Int(42));
     }
 }

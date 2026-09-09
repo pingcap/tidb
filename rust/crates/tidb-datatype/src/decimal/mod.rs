@@ -185,6 +185,25 @@ impl Decimal {
         scale: u32,
         storage_scale: u32,
     ) -> Self {
+        Self::new_with_storage_sign(negative, digits, scale, storage_scale, false)
+    }
+
+    fn new_with_storage_preserving_zero_sign(
+        negative: bool,
+        digits: impl Into<DecimalDigits>,
+        scale: u32,
+        storage_scale: u32,
+    ) -> Self {
+        Self::new_with_storage_sign(negative, digits, scale, storage_scale, true)
+    }
+
+    fn new_with_storage_sign(
+        negative: bool,
+        digits: impl Into<DecimalDigits>,
+        scale: u32,
+        storage_scale: u32,
+        preserve_zero_sign: bool,
+    ) -> Self {
         let mut digits = digits.into();
         debug_assert!(storage_scale >= scale);
         // Left-pad `digits` to at least the storage scale, then strip any
@@ -198,7 +217,7 @@ impl Decimal {
         }
         let is_zero = digits.bytes().all(|b| b == b'0');
         Decimal {
-            negative: negative && !is_zero,
+            negative: negative && (preserve_zero_sign || !is_zero),
             digits,
             scale,
             storage_scale,
@@ -289,6 +308,51 @@ impl Decimal {
             self.scale,
             true,
         )
+    }
+
+    /// Converts this value to the fixed `MyDecimal` cell used by Go's chunk
+    /// datums, retaining Go's prefix/truncation result when the value exceeds
+    /// the nine-word storage buffer.
+    ///
+    /// Go's `Datum` already owns a `MyDecimal`; `chunk.AppendDatum` and
+    /// `MutRow.SetDatum` copy that value and do not introduce a new overflow
+    /// panic. Rust's value-layer [`Decimal`] can temporarily carry more digits
+    /// than that fixed buffer, so an exact conversion error must be resolved
+    /// at this boundary by applying `MyDecimal.FromString`'s ordinary
+    /// truncation rules rather than aborting the statement.
+    #[must_use]
+    pub fn to_chunk_my_decimal_lossy(&self) -> MyDecimal {
+        if let Ok(value) = self.to_chunk_my_decimal() {
+            return value;
+        }
+
+        let mut text = self.digits.as_str().to_owned();
+        let storage_scale = self.storage_scale as usize;
+        debug_assert!(storage_scale <= text.len());
+        if storage_scale > 0 {
+            // `from_decimal_parts(..., minimum_integer_digit = true)` gives
+            // values below one a leading zero in Go's chunk cell. Preserve
+            // that source shape before asking `MyDecimal.FromString` to
+            // apply its fixed-word truncation.
+            if storage_scale == text.len() {
+                text.insert(0, '0');
+            }
+            let split = text.len() - storage_scale;
+            text.insert(split, '.');
+        }
+        if self.negative {
+            text.insert(0, '-');
+        }
+        let mut value = MyDecimal::from_string(text.as_bytes()).0;
+        // Go's `ToString` renders the clamped cell's `digitsFrac`, while a
+        // Rust chunk read-back (`Decimal::from_my_decimal`) renders
+        // `resultFrac`. Pin `resultFrac` to the kept fraction — never above
+        // this value's own visible scale — so the datum text a client sees
+        // matches Go's `ToString` of the same clamped cell. The exact path
+        // above already carries this convention (`resultFrac = scale`).
+        let kept = value.digits_frac().max(0) as u32;
+        value.set_result_frac(self.scale.min(kept) as i8);
+        value
     }
 
     /// Parses the signed decimal strings accepted by datatype conversion.
@@ -385,7 +449,12 @@ impl Decimal {
             let (exponent, exponent_error) = parse_mysql_exponent(&input[end + 1..]);
             match exponent_error {
                 Some(DecimalParseError::BadNumber) => {
-                    return (Self::from_int(0), Some(DecimalParseError::BadNumber));
+                    // Go zeroes the parsed value for a bad exponent but keeps
+                    // scanning. A clamped i64 exponent can then cross the
+                    // i32 bound below, where ErrOverflow/ErrTruncated takes
+                    // precedence over the intermediate ErrBadNumber.
+                    value = Self::from_int(0);
+                    disposition = Some(DecimalParseError::BadNumber);
                 }
                 Some(DecimalParseError::Truncated) => {
                     disposition = Some(DecimalParseError::Truncated);
@@ -436,9 +505,8 @@ impl Decimal {
         if !value.is_finite() {
             return None;
         }
-        let rendered = value.to_string();
-        let expanded = crate::convert_scientific_notation(&rendered).ok()?;
-        Some(Self::from_signed_literal(&expanded))
+        let rendered = format_go_shortest_float(value);
+        Some(Self::from_signed_literal(&rendered))
     }
 
     /// Source `MyDecimal.FromParquetArray`: decode a signed big-endian
@@ -715,12 +783,33 @@ impl Decimal {
 
     /// Source `DecimalAdd`, including MyDecimal's nine-word result bound.
     pub fn add_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
-        self.bound_add_sub_result(self.add(other))
+        let result = self.add(other);
+        // `DecimalAdd` reaches Go's `doAdd` only when both operands have the
+        // same sign. Opposite-sign inputs use `doSub` and must be bounded from
+        // the actual difference instead of this add-only heuristic.
+        if self.negative == other.negative && add_leading_word_overflow(self, other) {
+            return (
+                Decimal::max_or_min(false, (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32, 0),
+                Some(DecimalCodecWarning::Overflow),
+            );
+        }
+        self.bound_add_sub_result(result)
     }
 
     /// Source `DecimalSub`, including MyDecimal's nine-word result bound.
     pub fn sub_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
-        self.bound_add_sub_result(self.add(&other.negate()))
+        let result = self.add(&other.negate());
+        // Go's DecimalSub reaches doAdd only when the operands have opposite
+        // signs; in that branch the same leading-word carry heuristic applies
+        // to the two magnitudes. Same-sign subtraction uses doSub and is
+        // bounded from the actual result below.
+        if self.negative != other.negative && add_leading_word_overflow(self, other) {
+            return (
+                Decimal::max_or_min(false, (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32, 0),
+                Some(DecimalCodecWarning::Overflow),
+            );
+        }
+        self.bound_add_sub_result(result)
     }
 
     fn bound_add_sub_result(&self, result: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
@@ -787,7 +876,19 @@ impl Decimal {
         let result_scale = (self.scale + other.scale).min(CODEC_MAX_DECIMAL_SCALE as u32);
 
         if warning == Some(DecimalCodecWarning::Overflow) {
-            return (Decimal::new(false, "0".to_owned(), 0), warning);
+            // Go assigns `to.negative` before returning ErrOverflow.  The
+            // fixed-word receiver therefore retains a signed zero when the
+            // operands have opposite signs; preserve that observable
+            // `ToString` result instead of normalizing it away.
+            return (
+                Decimal::new_with_storage_preserving_zero_sign(
+                    self.negative != other.negative,
+                    "0".to_owned(),
+                    result_scale,
+                    result_scale,
+                ),
+                warning,
+            );
         }
 
         let mut tmp_int = requested_words_int;
@@ -842,7 +943,12 @@ impl Decimal {
             if carry > 0 {
                 if index_to < 0 {
                     return (
-                        Decimal::new(false, "0".to_owned(), 0),
+                        Decimal::new_with_storage_preserving_zero_sign(
+                            self.negative != other.negative,
+                            "0".to_owned(),
+                            result_scale,
+                            result_scale,
+                        ),
                         Some(DecimalCodecWarning::Overflow),
                     );
                 }
@@ -853,7 +959,12 @@ impl Decimal {
             while carry > 0 {
                 if index_to < 0 {
                     return (
-                        Decimal::new(false, "0".to_owned(), 0),
+                        Decimal::new_with_storage_preserving_zero_sign(
+                            self.negative != other.negative,
+                            "0".to_owned(),
+                            result_scale,
+                            result_scale,
+                        ),
                         Some(DecimalCodecWarning::Overflow),
                     );
                 }
@@ -957,6 +1068,17 @@ impl Decimal {
 
         let kept_scale = ((word_limit - words_int) * DIGITS_PER_WORD) as i32;
         let rounded = exact.round_to_scale(kept_scale);
+        // Go checks the pre-round digit bounds after applying the carry. If
+        // every source digit was below the retained fractional boundary, a
+        // carry from rounding must not resurrect that shifted-out value.
+        let discarded_digits = exact.storage_scale.saturating_sub(kept_scale as u32) as usize;
+        let retained_len = exact.digits.len().saturating_sub(discarded_digits);
+        if exact.digits[..retained_len]
+            .bytes()
+            .all(|digit| digit == b'0')
+        {
+            return (Decimal::from_int(0), Some(DecimalCodecWarning::Truncated));
+        }
         if rounded.is_zero() {
             return (Decimal::from_int(0), Some(DecimalCodecWarning::Truncated));
         }
@@ -980,6 +1102,21 @@ impl Decimal {
     /// the dividend). `None` for division by zero (MySQL: `NULL`) or a
     /// quotient too large for `i64`.
     pub fn div_rem(&self, other: &Decimal) -> Option<(i64, Decimal)> {
+        let (quotient, remainder) = self.div_rem_unbounded(other)?;
+        let (quotient, warning) = quotient.to_i64_trunc();
+        (warning != Some(DecimalIntegerWarning::Overflow)).then_some((quotient, remainder))
+    }
+
+    /// Truncating division (`DIV`) and remainder with the complete quotient.
+    ///
+    /// Go's decimal `DIV` evaluates `DecimalDiv` and only then converts the
+    /// quotient through `ToInt` or `ToUint`. The latter accepts every value in
+    /// `[0, 2^64)` when either input is unsigned, so routing the quotient
+    /// through `i64` first loses valid results above `i64::MAX`. This value
+    /// layer keeps the quotient as a scale-zero [`Decimal`]; the expression
+    /// layer can then apply the source conversion and distinguish overflow
+    /// from a valid upper-half unsigned result.
+    pub fn div_rem_unbounded(&self, other: &Decimal) -> Option<(Decimal, Decimal)> {
         if other.is_zero() {
             return None;
         }
@@ -988,12 +1125,7 @@ impl Decimal {
         let a = pad_scale(&self.digits, self.storage_scale, storage_scale);
         let b = pad_scale(&other.digits, other.storage_scale, storage_scale);
         let (q_digits, r_digits) = digit_divmod(&a, &b);
-        let q_mag: i64 = q_digits.parse().ok()?;
-        let quotient = if self.negative != other.negative {
-            -q_mag
-        } else {
-            q_mag
-        };
+        let quotient = Decimal::new_with_storage(self.negative != other.negative, q_digits, 0, 0);
         let remainder = Decimal::new_with_storage(self.negative, r_digits, scale, storage_scale);
         Some((quotient, remainder))
     }
@@ -1019,8 +1151,25 @@ impl Decimal {
 
     /// Source `DecimalDiv`: retain the whole base-1e9 fraction words produced
     /// by the division while exposing `div_precision_increment` through
-    /// `resultFrac`.
+    /// `resultFrac`. Use [`Self::div_mysql_with_warning`] when the caller
+    /// needs Go's fixed-word disposition as well.
     pub fn div_mysql(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
+        self.div_mysql_with_warning(other, frac_increment)
+            .map(|(value, _)| value)
+    }
+
+    /// Source `DecimalDiv`, retaining the fixed-word disposition beside the
+    /// quotient. `None` means division by zero.
+    pub fn div_mysql_with_warning(
+        &self,
+        other: &Decimal,
+        frac_increment: u32,
+    ) -> Option<(Decimal, Option<DecimalCodecWarning>)> {
+        self.div_mysql_unbounded(other, frac_increment)
+            .map(bound_decimal_codec_result)
+    }
+
+    fn div_mysql_unbounded(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
         if other.is_zero() {
             return None;
         }
@@ -1138,7 +1287,18 @@ impl Decimal {
     /// divisor. Sign follows the standard XOR rule, same as every other
     /// decimal operator.
     pub fn true_div(&self, other: &Decimal, target_scale: u32) -> Option<Decimal> {
-        self.div_mysql(other, target_scale.saturating_sub(self.scale))
+        self.true_div_with_warning(other, target_scale)
+            .map(|(value, _)| value)
+    }
+
+    /// MySQL `/` division with the fixed-word disposition retained beside the
+    /// quotient. `None` means division by zero.
+    pub fn true_div_with_warning(
+        &self,
+        other: &Decimal,
+        target_scale: u32,
+    ) -> Option<(Decimal, Option<DecimalCodecWarning>)> {
+        self.div_mysql_with_warning(other, target_scale.saturating_sub(self.scale))
     }
 
     /// Rounds to the nearest integer, ties away from zero — MySQL's
@@ -1378,7 +1538,19 @@ impl Decimal {
         }
         let split = digits.len() - shift;
         let kept = &digits[..split];
-        let discarded_nonzero = digits[split..].bytes().any(|digit| digit != b'0');
+        // Go's non-word-aligned `MyDecimal.Round` branch has a documented
+        // ceiling TODO and inspects only the first digit after the cut. The
+        // word-aligned branch scans every discarded word; preserve that
+        // source inconsistency instead of applying mathematical ceiling to
+        // the whole remainder in both cases.
+        let discarded_nonzero = if target_scale >= 0 && target_scale % DIGITS_PER_WORD as i32 == 0 {
+            digits[split..].bytes().any(|digit| digit != b'0')
+        } else {
+            digits
+                .as_bytes()
+                .get(split)
+                .is_some_and(|digit| *digit != b'0')
+        };
         let mut kept = if discarded_nonzero {
             digit_add(kept, "1")
         } else {
@@ -1463,6 +1635,87 @@ impl Decimal {
         let digits = pad_scale(&kept, result_scale, storage_scale);
         Decimal::new_with_storage(self.negative, digits, result_scale, storage_scale)
     }
+}
+
+/// Go `doAdd` decides an overflow from the leading base-1e9 word before it
+/// adds the remaining words. That heuristic intentionally over-reports for a
+/// full leading word of `999999999`, even when the exact result would still
+/// fit in nine words; preserving it is required for the source error/value
+/// pair at the fixed-word boundary.
+fn add_leading_word_overflow(left: &Decimal, right: &Decimal) -> bool {
+    let left = MyDecimalWords::from_decimal(left);
+    let right = MyDecimalWords::from_decimal(right);
+    let left_words = digits_to_words(left.digits_int.max(0) as usize);
+    let right_words = digits_to_words(right.digits_int.max(0) as usize);
+    let leading = if left_words > right_words {
+        left.word_buf[0]
+    } else if right_words > left_words {
+        right.word_buf[0]
+    } else {
+        left.word_buf[0].saturating_add(right.word_buf[0])
+    };
+    // `doAdd` increments the destination word count when this leading
+    // word can carry.  That is only an overflow once the increment would
+    // exceed the fixed nine-word buffer; smaller values (for example,
+    // `999999999 + 1`) legitimately grow from one word to two.
+    let carry = leading > CODEC_POWERS10[DIGITS_PER_WORD] - 2;
+    left_words.max(right_words) + usize::from(carry) > CODEC_WORD_BUF_LEN
+}
+
+fn format_go_shortest_float(value: f64) -> String {
+    let mut buffer = ryu::Buffer::new();
+    let rendered = buffer.format_finite(value);
+    let (negative, rendered) = rendered
+        .strip_prefix('-')
+        .map_or((false, rendered), |value| (true, value));
+    let (mantissa, exponent) = rendered
+        .split_once(['e', 'E'])
+        .map_or((rendered, 0), |(mantissa, exponent)| {
+            (mantissa, exponent.parse::<i32>().expect("ryu exponent"))
+        });
+    let mantissa = mantissa.strip_suffix(".0").unwrap_or(mantissa);
+    let decimal_index = mantissa.find('.').unwrap_or(mantissa.len());
+    let digits: String = mantissa
+        .chars()
+        .filter(|character| *character != '.')
+        .collect();
+    let Some(first_nonzero) = digits.bytes().position(|digit| digit != b'0') else {
+        return "0".to_owned();
+    };
+    let significant = digits[first_nonzero..].trim_end_matches('0');
+    let exponent = exponent + decimal_index as i32 - first_nonzero as i32 - 1;
+    let prefix = if negative { "-" } else { "" };
+
+    // strconv.FormatFloat with `g`, -1 chooses scientific notation below
+    // -4 or at/above six significant-digit positions.
+    if !(-4..6).contains(&exponent) {
+        let mut output = format!("{prefix}{}", &significant[..1]);
+        if significant.len() > 1 {
+            output.push('.');
+            output.push_str(&significant[1..]);
+        }
+        output.push('e');
+        output.push(if exponent >= 0 { '+' } else { '-' });
+        output.push_str(&format!("{:02}", exponent.unsigned_abs()));
+        return output;
+    }
+
+    let digits_before_decimal = exponent + 1;
+    let mut output = prefix.to_owned();
+    if digits_before_decimal <= 0 {
+        output.push_str("0.");
+        output.push_str(&"0".repeat((-digits_before_decimal) as usize));
+        output.push_str(significant);
+    } else if digits_before_decimal as usize >= significant.len() {
+        output.push_str(significant);
+        output.push_str(&"0".repeat(digits_before_decimal as usize - significant.len()));
+    } else {
+        let split = digits_before_decimal as usize;
+        output.push_str(&significant[..split]);
+        output.push('.');
+        output.push_str(&significant[split..]);
+    }
+    output
 }
 
 impl std::fmt::Display for Decimal {
@@ -1602,6 +1855,51 @@ fn pad_scale(digits: &str, scale: u32, target: u32) -> String {
 /// even when its SQL-visible `resultFrac` is smaller.
 fn word_scale(scale: u32) -> u32 {
     scale.div_ceil(9) * 9
+}
+
+/// Applies Go `DecimalDiv`'s nine-word result bound after the digit-string
+/// arithmetic has produced its exact value. The SQL-visible scale remains
+/// intact; only hidden fractional words are dropped when the source reports
+/// `ErrTruncated`.
+fn bound_decimal_codec_result(value: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+    if value.is_zero() {
+        return (value, None);
+    }
+    let split = value
+        .digits
+        .len()
+        .saturating_sub(value.storage_scale as usize);
+    let integer_digits = value.digits[..split].trim_start_matches('0').len();
+    let words_int = digits_to_words(integer_digits);
+    let words_frac = digits_to_words(value.storage_scale as usize);
+    let (_, fixed_frac, warning) = fix_word_cnt_error(words_int, words_frac);
+    match warning {
+        None => (value, None),
+        Some(DecimalCodecWarning::Overflow) => (
+            Decimal::max_or_min(
+                value.negative,
+                (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32,
+                0,
+            ),
+            warning,
+        ),
+        Some(DecimalCodecWarning::Truncated) => {
+            let target_storage = (fixed_frac * DIGITS_PER_WORD) as u32;
+            let target_storage = target_storage.max(value.scale);
+            let discarded = value.storage_scale.saturating_sub(target_storage) as usize;
+            let digits = if discarded == 0 {
+                value.digits.clone()
+            } else {
+                value.digits[..value.digits.len() - discarded]
+                    .to_owned()
+                    .into()
+            };
+            (
+                Decimal::new_with_storage(value.negative, digits, value.scale, target_storage),
+                warning,
+            )
+        }
+    }
 }
 
 /// Left-pads two unsigned digit strings with `0` to equal length, so they can
@@ -1806,4 +2104,4 @@ use codec::{
     CODEC_WORD_BUF_LEN, DIGITS_PER_WORD,
 };
 
-pub use codec::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
+pub use codec::{decimal_bin_size, DecimalCodecError, DecimalCodecFailure, DecimalCodecWarning};

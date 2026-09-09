@@ -1,0 +1,174 @@
+# `pkg/util/chunk` — complete package audit and `UsedMemoryUsage` parity
+
+Status: complete dependency-closed audit at the current Go-master authority;
+the missing Go `Chunk.UsedMemoryUsage` method and source regression have been
+restored, matching the existing Rust owner.
+
+Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). This refresh
+supersedes the earlier `0bc44483e3e41a8ea917d4382dc202369468d200` pin.
+
+## Complete inventory
+
+The package has exactly 29 artifacts and 11,342 Go lines at `origin/master`.
+Every production
+file, test, support harness, and build row was read from the pinned tree; the
+earlier source-shaped transcreation receipts `b015`, `b016`, and `b017` cover
+the complete Go test-function mapping and the Rust owner/test surface.
+
+| Artifact | Lines | Role |
+| --- | ---: | --- |
+| `BUILD.bazel` | 81 | library/test targets and source rows |
+| `alloc.go` | 335 | chunk allocator and reuse hooks |
+| `alloc_test.go` | 361 | allocator/reuse/concurrency tests |
+| `chunk.go` | 772 | chunk storage, row operations, memory accounting |
+| `chunk_in_disk.go` | 395 | spilled chunk representation |
+| `chunk_in_disk_test.go` | 106 | spilled-chunk tests |
+| `chunk_test.go` | 1,212 | chunk behavior and memory tests |
+| `chunk_util.go` | 410 | chunk utility functions |
+| `chunk_util_test.go` | 261 | utility tests |
+| `codec.go` | 341 | chunk encoding/decoding |
+| `codec_test.go` | 191 | codec tests |
+| `column.go` | 949 | fixed/variable column storage |
+| `column_test.go` | 1,045 | column tests |
+| `compare.go` | 265 | row/column comparison |
+| `iterator.go` | 488 | chunk iterators |
+| `iterator_test.go` | 198 | iterator tests |
+| `list.go` | 190 | chunk list |
+| `list_test.go` | 179 | list tests |
+| `main_test.go` | 56 | testkit bootstrap |
+| `mutrow.go` | 415 | mutable row |
+| `mutrow_test.go` | 228 | mutable-row tests |
+| `pool.go` | 125 | chunk pool |
+| `pool_test.go` | 110 | pool tests |
+| `row.go` | 264 | row view/accessors |
+| `row_container.go` | 691 | memory-tracked row container and spill |
+| `row_container_reader.go` | 170 | spilled-row reader |
+| `row_container_test.go` | 603 | row-container/spill tests |
+| `row_in_disk.go` | 420 | on-disk row representation |
+| `row_in_disk_test.go` | 481 | on-disk row tests |
+
+There is no `doc.go`, generated or platform-specific source, fixture tree,
+benchmark, example, or additional harness in this package. Go master differs
+from `origin/hparser-integration` only in `Chunk.UsedMemoryUsage` and its
+three assertions in `TestChunkMemoryUsage`; this batch restores those Go
+source changes locally. `BUILD.bazel` is unchanged.
+
+## Rust ownership and implementation
+
+`rust/crates/tidb-chunk` owns the package (the crate is intentionally separate
+from the `tidb-util` dependency root). The complete owner modules, source-test
+ports, spill support, and consumer call-site inventory are recorded in
+receipts `b015`, `b016`, and `b017`; no unreviewed Rust-only implementation was
+left in the path touched here.
+
+Go's new method reports currently occupied bytes, while `MemoryUsage` reports
+retained allocation. Rust now mirrors that distinction:
+
+- `Column::used_memory_usage` sums the Go column payload constant (112 bytes)
+  plus null-bitmap, offset, data, and element-buffer *lengths*.
+- `Chunk::used_memory_usage` sums those per-column values and is public for the
+  source-shaped chunk API.
+- `go_test_chunk_memory_usage` proves used bytes start below retained
+  allocation, grow when rows are appended, and return to the initial value on
+  `Reset` while retained allocation remains unchanged.
+
+No Rust consumer currently needs this informational method, so no speculative
+memory-accounting integration was added.
+
+## Validation
+
+Profile: Ready for this package batch; the repository-wide audit is still
+continuing.
+
+- Pre-fix detached worktree run with the new `TestChunkMemoryUsage` assertions —
+  failed at compile time because `Chunk.UsedMemoryUsage` was undefined.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/chunk -run '^TestChunkMemoryUsage$' -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/util/chunk -count=1` — passed; failpoint enable/disable was reference-counted by the shared runner.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-chunk chunk::go_test_chunk_memory_usage --lib` — passed (1).
+- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-executor --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `make lint` — passed.
+- `git diff --check` — passed.
+- A full `tidb-chunk` lib/nextest sweep was attempted: the clean environment
+  reports the pre-existing temporary spill-path and row-container timing
+  failures (35/279 lib tests; 40/325 nextest tests). The focused regression
+  passes; those unrelated failures remain explicitly unverified here.
+
+`make bazel_prepare` was attempted for the restored Go source and is blocked
+locally because the `bazel` executable is not installed. The package uses
+failpoints, so the canonical wrapper was used for both Go runs above.
+
+## Risk
+
+- Correctness: low; the new method follows Go's length-versus-capacity
+  accounting and preserves the existing 112-byte per-column term.
+- Compatibility: additive public Rust API only; no existing call path changes.
+- Performance: one linear pass over columns and their current buffer lengths;
+  no allocations and no change to retained-allocation accounting.
+
+## Follow-up: discardable core source-return contract (2026-09-06)
+
+The complete 29-artifact `pkg/util/chunk` inventory above remains the
+authority for this package batch and was rechecked before editing. Go callers
+may discard the direct results of the core `Chunk`, `Column`, `Row`, and
+`MutRow` APIs without a Rust-only diagnostic. This removes 80 source-level
+`#[must_use]` annotations from the four core owner files while retaining
+annotations on Rust-only ownership adapters, private capacity/type helpers,
+selection inspection (`Option`), and other non-Go support surfaces.
+
+`chunk_source_test_contract::source_return_values_may_be_ignored_like_go`
+invokes the discarded constructors, metadata/accessor, copy, formatting, and
+mutable-row returns under `#[deny(unused_must_use)]`. In detached pre-fix
+worktree `3c4cf8ddd49ad001532d318db9c6f224f7872312`, the focused test failed
+with exactly 56 diagnostics; after removing the annotations it passes.
+
+Follow-up validation:
+
+- Focused discard regression — passed after the fix; the pre-fix 56-diagnostic
+  failure is recorded above.
+- The existing complete chunk source carriers remain the package behavior
+  surface; no Go source, fixture, generated input, platform variant, Bazel
+  target, or Cargo manifest changed.
+- Full `tidb-chunk` and spill sweeps are still the broader package gate; their
+  pre-existing temporary-spill/timing failures remain outside this contract
+  slice and are not reclassified as regressions here.
+
+## Follow-up: allocator and iterator discardable returns (2026-09-07)
+
+The complete Go package inventory above remains the atomic authority. Before
+this Rust-only correction, the full `tidb-chunk` owner was re-enumerated: 46
+tracked Rust artifacts (45 Rust sources plus the manifest) and 25,231 lines,
+including every production module, inline/source-derived test, aggregate test
+build input, and package manifest. No checked-in generated output, platform
+variant, fixture, or crate-local build script was found beyond the shared
+aggregate-test build input. The allocator, iterator, row-container iterator,
+public source tests, all callers, and the existing chunk return-contract
+regression were read before editing.
+
+Go permits discarding the seven allocator constructors and six standalone
+iterator constructor/accessor returns covered by this batch, plus
+`Iterator4RowContainer::new`. Rust had added explicit `#[must_use]`
+diagnostics to all fourteen. Those annotations are now removed; the Rust-only
+`AllocatedChunk::into_chunk`, `LendingIterator` wrappers, and
+`LendingMultiIterator` helpers retain their diagnostics because they are
+ownership/lifetime adapters rather than direct Go return APIs.
+
+`chunk_source_test_contract::allocator_and_iterator_returns_may_be_ignored_like_go`
+discards all fourteen corrected values under `#[deny(unused_must_use)]`. On the
+pre-fix owner, the focused command failed with exactly fourteen diagnostics;
+the complete log is `/tmp/tidb-chunk-allocator-iterator-prefix.log`. The same
+focused test passes after removing the annotations.
+
+Validation for this bounded Rust-only batch:
+
+- focused post-fix regression — 1 passed;
+- nextest owner suite — 329 passed, 4 skipped;
+- owner all-target check — passed with existing warnings;
+- pinned nightly rustfmt on changed files and `git diff --check` — passed;
+- pinned repository Ready `make lint` — passed (exit 0).
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required. Remaining allocator lease, list/pool,
+codec, spill, and Rust lending adapters retain explicit boundaries and are not
+claimed by this focused return-contract batch.

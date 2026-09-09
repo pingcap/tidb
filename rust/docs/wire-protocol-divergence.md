@@ -8,29 +8,34 @@ Rust one.
 | Go | `pkg/server/conn.go`, `pkg/server/conn_stmt.go`, `pkg/server/driver_tidb.go`, `pkg/server/internal/packetio.go`, `pkg/server/internal/column/{column,convert}.go`, `pkg/format/textrow/result_encoder.go`, `pkg/parser/mysql/{const,charset,state}.go` |
 | Rust | `rust/crates/tidb-protocol/src/*`, `rust/crates/tidb-mysql/src/charset.rs`, `rust/crates/tidb-error/src/mysql/state.rs`, `rust/crates/tidb-exec/src/result_metadata.rs`, `rust/crates/tidb-server/src/{handshake,mysql_connection,resultset_writer}.rs` |
 
-**Nothing here was executed.** This machine cannot run a freshly built binary
-(`syspolicyd` is wedged; every new executable hangs at `_dyld_start`), so no
-client was ever pointed at a Rust node. Every claim below is source-derived,
-with the Go file:line, the Rust file:line, and the client action that produces
-different bytes. Line numbers on the Rust side are as of commit `b05550e670`.
+Every claim below is source-derived, with the Go file:line, the Rust file:line,
+and the client action that produces different bytes. Focused Rust regressions
+have now executed for the fixed command/error/capability/metadata seams,
+including loopback TCP packet tests for command framing. No external MySQL
+client or production-cluster packet capture has been run. Line numbers on the
+Rust side are refreshed only where a batch touched the entry.
 
-Counts: **12 divergences** (2 rank-1, 3 rank-2, 5 rank-3, 2 rank-4) and
-**11 verified-equal areas**.
+Counts: **12 audited divergence entries**: 8 fixed, 4 remaining (1 rank-2,
+1 rank-3, 2 rank-4), plus **11 verified-equal areas**. D11's packet encoder,
+statement-value plumbing, and the live UPDATE producer are now aligned; the
+remaining insert/replace/load and configured real-TiKV message producers stay
+explicitly partial instead of being counted as fixed.
 
 ---
 
 ## Rank 1 — the client breaks or desynchronises (the 2014 class)
 
-### D1. `COM_STMT_SEND_LONG_DATA` is answered with an ERR packet; Go answers with nothing
+### D1. `COM_STMT_SEND_LONG_DATA` buffers data and answers with nothing (FIXED 2026-09-05)
 
 - Go: `pkg/server/conn.go:1578-1579` dispatches `mysql.ComStmtSendLongData` to
   `handleStmtSendLongData` (`pkg/server/conn_stmt.go:610-625`), which returns
   `nil` after `stmt.AppendParam`. A `nil` return from `dispatch` writes **no
   packet at all** — MySQL's `COM_STMT_SEND_LONG_DATA` has no response.
-- Rust: `rust/crates/tidb-protocol/src/command.rs:24-46` has no constant for
-  `0x18`, so `decode_command` returns `Command::Unknown { code: 0x18, .. }`,
-  and `rust/crates/tidb-server/src/mysql_connection.rs:1453-1463` answers every
-  `Unknown` with an ERR packet at sequence 1.
+- Rust: `tidb-protocol` decodes `0x18` as `Command::StmtSendLongData`, and the
+  connection-owned prepared-statement registry appends each chunk to the
+  matching parameter buffer. The command arm intentionally writes no packet;
+  `COM_STMT_EXECUTE` consumes and clears the retained chunks on both success
+  and decode failure, matching Go's `BoundParams`/`Reset` lifetime.
 
 Distinguishing case: any client that binds a `TEXT`/`BLOB`/large parameter —
 JDBC `PreparedStatement.setBinaryStream`, `setBlob`, or any parameter over
@@ -39,24 +44,14 @@ API `mysql_stmt_send_long_data`.
 
 ```
 C: COM_STMT_PREPARE "INSERT INTO t VALUES (?)"    S: PREPARE_OK
-C: COM_STMT_SEND_LONG_DATA(stmt, param 0, bytes)  S: (Go: nothing) (Rust: ERR 1047)
+C: COM_STMT_SEND_LONG_DATA(stmt, param 0, bytes)  S: nothing (both)
 C: COM_STMT_EXECUTE(stmt)                         S: OK / result set
 ```
 
-The client does not read after `SEND_LONG_DATA`. Our extra ERR sits in the
-socket, is consumed as the answer to `COM_STMT_EXECUTE` (its sequence id 1 is
-valid there, so nothing rejects it), and the real execute response is left
-behind. From that point every response is off by one — the exact shape of the
-error 2014 "Commands out of sync" bug this project already hit on a binary-
-protocol range select. Every subsequent command on the connection is wrong.
+The client does not read after `SEND_LONG_DATA`; the Rust server now leaves no
+packet queued to desynchronize the following execute response.
 
-Not a small fix: correct behavior needs a per-statement long-data parameter
-buffer (Go's `TiDBStatement.AppendParam` / `BoundParams`), which
-`rust/crates/tidb-protocol/src/binary_params.rs:170-200` already accepts as
-`bound_params` but no server code ever fills. Writing nothing instead of the
-ERR would fix the framing but silently drop the parameter, which is worse.
-
-### D2. Every OK and EOF packet claims `SERVER_STATUS_AUTOCOMMIT` and never `SERVER_STATUS_IN_TRANS`
+### D2. OK and EOF packets carry the live transaction status (FIXED 2026-09-05)
 
 - Go: `pkg/server/conn.go:2265` takes `status := cc.ctx.Status()` — the live
   session status — and threads it through `writeResultSet`/`writeChunks` into
@@ -65,56 +60,47 @@ ERR would fix the framing but silently drop the parameter, which is worse.
   `SERVER_STATUS_IN_TRANS` (0x0001) is set on every packet while a transaction
   is open, and `SERVER_STATUS_AUTOCOMMIT` (0x0002) is cleared after
   `SET autocommit=0`.
-- Rust: `rust/crates/tidb-server/src/mysql_connection.rs:696` builds the
-  connection-lifetime `ResultSetOptions { status_flags: SERVER_STATUS_AUTOCOMMIT, .. }`
-  once, and every result set inherits it (`:830, :1080, :1154`).
-  `write_affected_rows_ok` hardcodes it again at `:1480`, and `write_ok` at `:1657`. Only `write_transaction_control_ok` (`:1490-1509`) ever ORs in
-  `SERVER_STATUS_IN_TRANS`, and only for the `BEGIN`/`COMMIT`/`ROLLBACK`
-  statement itself.
+- Rust: `QuerySession::wire_status` now snapshots the session's live
+  transaction/autocommit state for every OK packet and result set. `WireStatus`
+  is passed through `WireFraming::result_set`, `write_ok`, and
+  `write_affected_rows_ok`; no connection-lifetime autocommit literal remains
+  on those response paths.
 
 Distinguishing case:
 
 ```
 C: BEGIN                  S: OK status=0x0003 (both)
-C: INSERT INTO t VALUES(1) S: Go OK status=0x0003; Rust OK status=0x0002
-C: SELECT * FROM t         S: Go EOF status=0x0003; Rust EOF status=0x0002
+C: INSERT INTO t VALUES(1) S: OK status=0x0003 (both)
+C: SELECT * FROM t         S: EOF status=0x0003 (both)
 C: COMMIT                  S: OK status=0x0002 (both)
 ```
 
-After the first statement inside the transaction we tell the client the
-transaction is gone. Connector/J with `useLocalTransactionState=true` (a common
-production setting) then **skips sending `COMMIT` entirely** because
-`inTransactionOnServer()` is false — the writes are silently lost when the
-connection returns to the pool and is reset. The same flag drives whether
-`Connection.close()` issues a rollback. Separately, `SET autocommit=0` never
-clears bit 0x0002, so a client reading autocommit from the status flags
-believes autocommit is still on.
-
-Not a small fix: the status word has to come from the session
-(`QuerySession`) per statement, not from a connection-lifetime constant.
+Connector/J and other clients that use the server status for local transaction
+state now observe an open transaction until the session actually commits or
+rolls it back; `SET autocommit=0` also clears the advertised autocommit bit.
 
 ---
 
 ## Rank 2 — the client silently misinterprets data
 
-### D3. The column-definition charset id is the column's collation id, not its charset's default collation id
+### D3. The column-definition charset id uses the charset's default collation id (FIXED 2026-09-05)
 
 - Go: `pkg/server/internal/column/convert.go:31` sets
   `Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset()))` — the id is
   derived from the **charset name**, so it is always that charset's default
   collation (`pkg/parser/mysql/charset.go:19-34`).
-- Rust: `rust/crates/tidb-exec/src/result_metadata.rs:214` sets
-  `charset: collation_id(field.field_type.collation)` — the column's **actual**
-  collation id.
+- Rust now derives the protocol field from the owning `Charset` using the
+  source `CharsetNameToID` defaults (`utf8mb4` → 46, `gbk` → 28, and so on),
+  independent of the new-collation compatibility switch. The selected column
+  collation remains available to execution and length calculations; it no
+  longer leaks into the wire charset number.
 
 Distinguishing case: `CREATE TABLE t (c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci); SELECT c FROM t;`
-Go puts `46` (`utf8mb4_bin`) in the column definition's two charset bytes;
-Rust puts `224`. With `COLLATE utf8mb4_general_ci` Go still puts `46`, Rust
-puts `45`. Any client that surfaces `charsetnr` — `mysql_fetch_fields()`,
-JDBC `ResultSetMetaData`, ORM schema reflection — reads a different value for
-the identical table.
+now puts `46` (`utf8mb4_bin`) in the column definition's two charset bytes on
+both implementations. With `COLLATE utf8mb4_general_ci`, the wire id remains
+`46`; clients that surface `charsetnr` therefore see the same metadata.
 
-### D4. `@@character_set_results` is ignored on the wire — both the advertised charset id and the row bytes
+### D4. `@@character_set_results` controls the advertised charset id and row bytes (FIXED 2026-09-05)
 
 - Go: `pkg/server/internal/column/column.go:76` writes
   `d.ColumnCharsetID(column.dumpCharset(), textrow.IsStringColumnType(column.Type))`,
@@ -123,52 +109,56 @@ the identical table.
   values go through `d.EncodeData(...)` (`column.go:162-179` text,
   `:181-232` binary), which transcodes them (`result_encoder.go:137-148`).
   `cc.initResultEncoder` builds the encoder per statement (`conn.go:1103`).
-- Rust: `ColumnInfo::dump_charset` (`rust/crates/tidb-protocol/src/column.rs:165-171`)
-  returns `self.charset` verbatim. `ResultEncoder` exists and is faithful
-  (`rust/crates/tidb-protocol/src/result_encoder.rs`) but **nothing in
-  `tidb-server` ever constructs one** — grep for `ResultEncoder` across
-  `rust/crates/tidb-server/src` returns no hits. `character_set_results` is a
-  settable sysvar (`rust/crates/tidb-session/src/sysvar/catalog/types_and_expressions.rs:64`)
-  with no wire effect.
+- Rust: `serve_connection_inner` refreshes `ResultEncoder` from
+  `QuerySession::result_charset` once per command (`rust/crates/tidb-server/src/mysql_connection.rs:1274-1281`)
+  and passes it through `ResultSetOptions` to both metadata and row writers.
+  `ColumnInfo::dump_charset` and `ResultEncoder::encode_data` therefore use the
+  same per-command result charset as Go, including the unset/binary fallback.
+  Unknown session-charset spellings also follow Go's
+  `FindEncodingTakeUTF8AsNoop`: the encoder stays byte-preserving and
+  `ColumnCharsetID` emits charset number zero instead of refusing construction.
 
-Distinguishing case: connect with `charset=latin1` (go-sql-driver `?charset=latin1`,
-JDBC `characterEncoding=latin1`, or plain `SET character_set_results = latin1`),
-then `SELECT 'é'` from a utf8mb4 column. Go advertises collation `47` and sends
-the single byte `0xE9`. Rust advertises the column's own utf8mb4 id and sends
-the two bytes `0xC3 0xA9`; the client, told to expect latin1 by its own
-session setting, renders `Ã©`. Silent mojibake with no error anywhere.
+Distinguishing case: with `SET character_set_results = latin1`, both servers
+advertise collation `47` and send `0xE9` for `SELECT 'é'`; the client no longer
+sees a UTF-8 column id paired with UTF-8 row bytes.
 
-### D5. `CLIENT_TRANSACTIONS` and `CLIENT_FOUND_ROWS` are not advertised
+### D5. `CLIENT_FOUND_ROWS` and `CLIENT_TRANSACTIONS` are advertised (FIXED 2026-09-05)
 
 - Go: `pkg/server/server.go:116-121` `defaultCapability` includes
   `ClientTransactions` (1<<13) and `ClientFoundRows` (1<<1).
-- Rust: `rust/crates/tidb-server/src/mysql_connection.rs:107-112`
-  `SERVER_CAPABILITIES` is exactly
-  `CLIENT_PROTOCOL_41 | CLIENT_CONNECT_WITH_DB | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_ATTRS | CLIENT_DEPRECATE_EOF`.
+- Rust: `rust/crates/tidb-server/src/mysql_connection.rs` advertises both bits
+  and stores negotiated `CLIENT_FOUND_ROWS` state in `SessionContext`.
+  Pipeline and cluster sessions copy it into each statement context, while
+  configured real-TiKV nodes apply the same value to their completed write
+  reports. Single-table UPDATE, multi-table UPDATE, unchanged duplicate-key
+  UPDATE, and configured point-update reports then count successfully touched
+  rows when the bit is enabled while retaining the changed-row default when it
+  is absent.
 
 Distinguishing case: a client connecting with `CLIENT_FOUND_ROWS` set (JDBC
-`useAffectedRows=false`, which is the **default**) has the bit masked away by
-`negotiate_capabilities` (`handshake.rs:485-490`, `client & server`). An
-`UPDATE t SET c=c WHERE id=1` that matches one row but changes nothing then
-reports `affected_rows=0` where MySQL and Go report 1 — JDBC's
-`executeUpdate()` returns a different number, and code that branches on
-"did the update find the row" takes the wrong branch. `CLIENT_TRANSACTIONS`
-compounds D2: a client is told the server has no transaction support at all.
+`useAffectedRows=false`, which is the **default**) now retains the bit through
+`negotiate_capabilities` (`handshake.rs`, `client & server`). Over one changed
+row and one unchanged matched row, `UPDATE t SET c=10` reports
+`affected_rows=2`; an unchanged `ON DUPLICATE KEY UPDATE` reports one. Without
+the bit, the same execution paths preserve their changed-row counts.
 
 ---
 
 ## Rank 3 — a missing command or capability that clients actually use
 
-### D6. `COM_FIELD_LIST`, `COM_SET_OPTION`, `COM_RESET_CONNECTION` and `COM_CHANGE_USER` are refused
+### D6. `COM_FIELD_LIST`, `COM_RESET_CONNECTION` and `COM_CHANGE_USER` remain unavailable (`COM_SET_OPTION`, `COM_STATISTICS`, and `COM_REFRESH` fixed)
 
-- Go: `pkg/server/conn.go:1548-1549` (`handleFieldList`, `conn.go:2443`),
+- Go: `pkg/server/conn.go:1548-1554` (`handleFieldList`, `handleRefresh`),
   `:1584-1585` (`handleSetOption`, `conn_stmt.go:656-677`, replies with an
   **EOF packet**), `:1589-1590` (`handleResetConnection`, `conn.go:2781`),
   `:1566-1567` (`handleChangeUser`, `conn.go:2720`).
-- Rust: `mysql_connection.rs:1453-1463` — `FieldList`, `SetOption`,
-  `ResetConnection` and every `Unknown` code (which includes `COM_CHANGE_USER`
-  0x11, `COM_REFRESH` 0x07, `COM_SHUTDOWN` 0x08, `COM_STATISTICS` 0x09) get one
-  ERR packet.
+- Rust: `COM_SET_OPTION` now toggles the negotiated multi-statement bit and
+  returns Go's EOF/OK form; `COM_STATISTICS` writes Go's raw status line; and
+  `COM_REFRESH` decodes its subcommand, runs `FLUSH PRIVILEGES` for `0x01`, and
+  preserves Go's two-OK response shape. `COM_FIELD_LIST` and
+  `COM_RESET_CONNECTION` remain explicit 1047/`08S01` refusals. `COM_CHANGE_USER`
+  and `COM_SHUTDOWN` are still unowned command bytes and therefore use the
+  generic 1105/`HY000` unknown-command response.
 
 Distinguishing cases the user never types: the `mysql` CLI with `--auto-rehash`
 (the default when not `--batch`) sends `COM_FIELD_LIST` per table to build tab
@@ -179,69 +169,78 @@ PHP `mysqlnd` persistent connections and `mysql_change_user()` send
 `COM_CHANGE_USER`. Because each does get *a* packet back, these are refusals,
 not desyncs.
 
-### D7. The errno for a genuinely unknown command differs
+### D7. The errno for a genuinely unknown command differs (FIXED)
 
 - Go: `pkg/server/conn.go:1592-1593` default arm returns
   `mysql.NewErrf(mysql.ErrUnknown /* 1105 */, "command %d not supported now", nil, cmd)`,
   written with SQLSTATE `HY000`.
-- Rust: `mysql_connection.rs:1453-1463` uses `ER_UNKNOWN_COM_ERROR` (1047).
+- Rust: `mysql_connection.rs` now routes `Command::Unknown` through the Go
+  generic unknown error (1105/HY000); 1047/08S01 remains reserved for a known
+  command that this node explicitly refuses.
 
-Distinguishing case: send command byte `0xfa`. Go replies
-`ERR 1105 HY000 "command 250 not supported now"`; Rust replies
-`ERR 1047 08S01 "command is not supported by the read-only Rust SQL node"`.
-(1047's SQLSTATE was `HY000` before commit `b05550e670`; the errno itself is
-still deliberately different and is left alone here.)
+Distinguishing case: send command byte `0xfa`. Both implementations now reply
+`ERR 1105 HY000 "command 250 not supported now"`; sending a known but
+unsupported command such as `COM_FIELD_LIST` still takes the separate Rust
+1047/08S01 refusal path.
 
-### D8. `CLIENT_COMPRESS` / `CLIENT_ZSTD_COMPRESSION_ALGORITHM` are implemented but never advertised
+### D8. `CLIENT_COMPRESS` / `CLIENT_ZSTD_COMPRESSION_ALGORITHM` are implemented and advertised (FIXED 2026-09-05)
 
 - Go: `pkg/server/server.go:121` advertises both; `packetio.go:316-470` and
   `:472-552` implement the compressed envelope.
-- Rust: `rust/crates/tidb-protocol/src/compression.rs` and
-  `rust/crates/tidb-server/src/compressed_command_io.rs` implement the same
-  envelope, and `PacketIoReader`/`PacketIoWriter`
-  (`rust/crates/tidb-protocol/src/packet.rs:251-544`) carry the dual
-  inner/outer sequence rule faithfully — but `SERVER_CAPABILITIES`
-  (`mysql_connection.rs:107-112`) omits both bits and
-  `serve_connection_inner` constructs the plain `PacketReader`
-  (`:474`). The compression path is dead on the live connection.
+- Rust: `SERVER_CAPABILITIES` includes both bits and the negotiated command
+  loop selects `PacketIoReader`/`PacketIoWriter`
+  (`rust/crates/tidb-server/src/mysql_connection.rs:1190-1199`) over the same
+  envelope covered by the compressed packet suite.
 
-Distinguishing case: `mysql --compress` or go-sql-driver
-`?compress=true` connects uncompressed against Rust. No breakage — the clients
-degrade — but the entire ported implementation is unreachable.
+Distinguishing case: `mysql --compress` or go-sql-driver `?compress=true` now
+negotiates zlib against both servers; clients that request the zstd capability
+likewise reach the Rust zstd envelope.
 
-### D9. `CLIENT_MULTI_STATEMENTS` / `CLIENT_MULTI_RESULTS` / `CLIENT_LOCAL_FILES` are not advertised
+### D9. `CLIENT_MULTI_STATEMENTS` / `CLIENT_MULTI_RESULTS` / `CLIENT_LOCAL_FILES` are advertised (FIXED 2026-09-05)
 
-Go `server.go:119-120` advertises all three; Rust does not
-(`mysql_connection.rs:107-112`). Consequences: `SELECT 1; SELECT 2` in one
-`COM_QUERY` reaches the parser as one string and fails; `SERVER_MORE_RESULTS_EXISTS`
-(0x0008), which Go sets at `conn.go:2269`, is never set by Rust (consistent,
-since the capability is absent); `LOAD DATA LOCAL INFILE` cannot work.
+Go `server.go:119-120` advertises all three, and Rust now does the same in
+`SERVER_CAPABILITIES`. The command loop splits admitted multi-statements,
+stamps `SERVER_MORE_RESULTS_EXISTS` on every non-final response, and negotiates
+the `CLIENT_LOCAL_FILES` request/transfer path.
 
-### D10. The advertised server version is `5.7.25`, not `8.0.11`
+### D10. The advertised server version is runtime-configured like Go (FIXED 2026-09-05)
 
 - Go: `pkg/parser/mysql/const.go:30,59` — `ServerVersion` is
   `"8.0.11" + "-TiDB-" + TiDBReleaseVersion`.
-- Rust: `mysql_connection.rs:466` — `"5.7.25-TiDB-Rust"`.
+- Rust: `mysql_connection.rs:817` reads
+  `tidb_mysql::runtime_versions().server_version`, whose default is the same
+  `8.0.11-TiDB-<release>` shape and which the configured node can override.
 
-Distinguishing case: any client that version-gates. Connector/J's
-`versionMeetsMinimum(8, 0, x)` switches off the 8.0-only paths (query
-attributes, `utf8mb4_0900_ai_ci` handling, `RESET CONNECTION` availability);
-ORMs pick 5.7 SQL dialects. Nothing breaks loudly, but the negotiated feature
-set changes wholesale from a single string.
+Distinguishing case: version-gating clients now observe the same runtime
+server-version contract as Go; `RESET CONNECTION` remains unavailable for the
+separate command-owner reason recorded in D6.
 
 ---
 
 ## Rank 4 — cosmetic field differences
 
-### D11. The `CLIENT_DEPRECATE_EOF` terminal packet zeroes `affected_rows`/`last_insert_id` and carries no info string
+### D11. The `CLIENT_DEPRECATE_EOF` terminal packet zeroes `affected_rows`/`last_insert_id` and carries no info string (PARTIALLY FIXED 2026-09-05)
 
 - Go: `pkg/server/conn.go:1770-1772` — `writeEOF` under `ClientDeprecateEOF`
   delegates to `writeOkWith(mysql.EOFHeader, ...)`, which fills
   `cc.ctx.AffectedRows()`, `cc.ctx.LastInsertID()` and the length-encoded
   `cc.ctx.LastMessage()` (`conn.go:1688-1721`).
-- Rust: `rust/crates/tidb-protocol/src/resultset.rs:145-157` hardcodes
-  `affected_rows: 0, last_insert_id: 0`, and every server call site passes
-  `info: Vec::new()` (`mysql_connection.rs:1576-1583`).
+- Rust before this batch: `rust/crates/tidb-protocol/src/resultset.rs:145-157`
+  hardcoded `affected_rows: 0, last_insert_id: 0`, and every server call site
+  passed `info: Vec::new()` (`mysql_connection.rs:1576-1583`).
+- Rust after this batch: `ResultSetOptions`, `EofPacket`, and
+  `QueryResult` preserve the statement's affected rows, last-insert id, and
+  info bytes through text, binary, prepared, and cursor result writers
+  (`tidb-protocol/src/resultset.rs`, `tidb-server/src/sql_node.rs`,
+  `connection_writers.rs`, `mysql_connection.rs`). Pipeline and cluster
+  sessions now publish their live `last_insert_id` into that snapshot. A
+  focused protocol regression proves non-zero values and info bytes survive
+  the deprecated-EOF encoding.
+- Remaining boundary: Rust's pipeline and cluster UPDATE paths now publish
+  Go's `Rows matched: …  Changed: …  Warnings: …` message through the session
+  and OK/EOF writers. INSERT/REPLACE/LOAD DATA and configured real-TiKV write
+  paths still have no equivalent producer, so their info field remains empty;
+  the transport no longer discards a value if a producer supplies one.
 
 Distinguishing case: after a statement that set `LastMessage` (e.g. an
 `UPDATE`'s `"Rows matched: 1  Changed: 0  Warnings: 0"`), the next result set's
@@ -289,14 +288,15 @@ These were compared field by field and match. Do not re-audit them.
    rule exactly: an inner sequence mismatch is ignored only under compression,
    an outer mismatch is always an error; and `flush` reassigns the inner
    sequence from the compressed sequence (`packet.rs:499-509` vs
-   `packetio.go:299-314`). Unreachable in production today — see D8.
+   `packetio.go:299-314`). The negotiated zlib/zstd path now exercises this
+   logic in production too — see D8.
 5. **Initial handshake packet layout.** `InitialHandshake::encode_payload`
    (`handshake.rs:83-108`) emits byte-for-byte what
    `conn.go:writeInitialHandshake` (`:474-531`) does: protocol 10, NUL server
    version, 4-byte connection id, `salt[0..8]`, filler `0`, low capability
    word, collation, status, high capability word, `len(salt)+1`, ten reserved
-   zeros, `salt[8..]`, `0`, plugin name, `0`. Field *values* diverge (D5, D10);
-   the layout does not.
+   zeros, `salt[8..]`, `0`, plugin name, `0`. The capability value, layout,
+   and runtime server-version value (D10) now match for the implemented bits.
 6. **HandshakeResponse41 parsing**, including the `CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA`
    one-byte-marker special case, the `CLIENT_SECURE_CONNECTION` fallback, the
    NUL-terminated legacy form, optional database, plugin name, the 1 MiB
@@ -353,10 +353,7 @@ These were compared field by field and match. Do not re-audit them.
 
 ---
 
-## Fixed in this pass
-
-Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
-`cargo fmt --all --check` clean (commit `b05550e670`):
+## Fixed in current Rust batches
 
 - `COM_STMT_PREPARE` now drops one trailing NUL like `COM_QUERY`. Go trims it
   for both (`conn.go:1543-1546` and `:1571-1574`, issue 39132); Rust trimmed it
@@ -365,6 +362,16 @@ Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
 - `ER_UNKNOWN_COM_ERROR` (1047) now carries SQLSTATE `08S01`. Go resolves every
   ERR packet's state through `mysql.MySQLState`, which maps `ErrUnknownCom` to
   `08S01`; both call sites hardcoded the `HY000` default.
+- Genuinely unknown command bytes now keep Go's generic `ErrUnknown` identity
+  (1105/HY000 and `command %d not supported now`) instead of being flattened
+  into the known-command `ErrUnknownCom` (1047/08S01) refusal.
+- Result metadata now emits the charset's default collation ID, as Go's
+  `CharsetNameToID` does, even when the column uses a non-default collation;
+  the focused `tidb-exec` regression covers `utf8mb4_general_ci` → 46.
+- `COM_REFRESH` now follows Go's command routing: non-privilege targets are
+  successful no-ops, while `0x01` runs `FLUSH PRIVILEGES` and emits the same
+  two consecutive OK packets as Go. The focused TCP regression consumes both
+  packets and verifies the connection remains synchronized.
 
 ## Known gaps that are not divergences in the compared files
 
@@ -372,16 +379,12 @@ Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
   (`prepared_statement.rs:726-747`); temporal, enum, set, JSON and vector
   columns fail `BinaryResultSetStream::new` closed, so a prepared
   `SELECT` over a `DATE` column gets an ERR packet rather than wrong bytes.
-  Graceful, but the encoders in verified-equal item 9 are unreachable.
-- `parse_binary_params`' `bound_params` argument (`binary_params.rs:169-200`)
-  is the long-data seam D1 needs; no caller supplies it.
+  Graceful, but those temporal encoders remain outside the currently served
+  binary result-cell set.
 
-## Not verified because nothing can execute here
+## Validation boundary
 
-Everything. Specifically: no packet capture was taken, no client
-(`mysql`, `sysbench`, go-sql-driver, Connector/J) was connected, and none of
-the Rust unit tests in `tidb-protocol` were run — including the two assertions
-added to `command.rs`'s `dispatch_command_vectors_preserve_source_payloads`.
-The evidence is `cargo check` + `cargo clippy` (both exit 0) plus source
-reading and machine diffs of the static tables. Each finding above names the
-client action that would confirm it against a running node in one round trip.
+The fixed command seams have loopback TCP packet evidence, but no external
+client (`mysql`, `sysbench`, go-sql-driver, or Connector/J) was connected and
+no production TiKV-backed cluster was used. Remaining divergence claims are
+source-derived and still need their own implementation and client round trip.

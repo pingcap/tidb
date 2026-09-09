@@ -70,7 +70,8 @@
 //!   real `tidb_config::config_tree::get_global_config`.
 //! - `execdetails.LoadTiKVExecDetails` is already applied: v1's
 //!   `StmtExecInfo::tikv_exec_details` arrives as a loaded
-//!   `TikvExecDetailsSnapshot`, so Go's atomic loads become field reads.
+//!   canonical client-go `ExecDetailsSnapshot`, so Go's atomic loads become
+//!   field reads.
 //! - Go's `sql[:maxSQLLength]` byte slice becomes a UTF-8 boundary-safe
 //!   truncation, as in v1's `format_sql`.
 
@@ -83,16 +84,18 @@ use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 use tidb_exec::exec_details::{
-    get_ia_remote_read_segment_stats, CommitDetails, CopExecDetails, ExecDetails,
-    ResolveLockDetail, ScanDetail, TimeDetail,
+    get_ia_remote_read_segment_stats, CommitDetails, CommitDetailsInner, CopExecDetails,
+    CopTasksSummary, ExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
 };
-use tidb_exec::slow_log_format::{RuDetailsSnapshot, TikvExecDetailsSnapshot};
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
+use tidb_util::stringutil::go_to_lower;
+use tikv_client::util::ExecDetailsSnapshot;
+use tikv_client::RuDetails;
 
 use crate::statement_summary::{
-    CopTasksSummary, EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtNetworkTrafficSummary,
-    StmtRuSummary, StmtSummaryStmtCtx, TableEntry,
+    EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtNetworkTrafficSummary, StmtRuSummary,
+    StmtSummaryStmtCtx, TableEntry,
 };
 
 /// Go `MaxEncodedPlanSizeInBytes`: the upper limit of the size of the plan and
@@ -222,6 +225,8 @@ pub struct StmtRecord {
     pub sum_rocksdb_block_read_byte: u64,
     /// Go `MaxRocksdbBlockReadByte`.
     pub max_rocksdb_block_read_byte: u64,
+    /// Go `IAExecCount`.
+    pub ia_exec_count: i64,
     /// Go `SumIARemoteReadSegmentCount`.
     pub sum_ia_remote_read_segment_count: u64,
     /// Go `MaxIARemoteReadSegmentCount`.
@@ -303,9 +308,9 @@ pub struct StmtRecord {
     /// Go `SumWriteSQLRespTotal`.
     pub sum_write_sql_resp_total: Duration,
     /// Go `SumTidbCPU`.
-    pub sum_tidb_cpu: Duration,
+    pub sum_tidb_cpu: i64,
     /// Go `SumTikvCPU`.
-    pub sum_tikv_cpu: Duration,
+    pub sum_tikv_cpu: i64,
     /// Go `SumResultRows`.
     pub sum_result_rows: i64,
     /// Go `MaxResultRows`.
@@ -411,6 +416,7 @@ impl Default for StmtRecord {
             max_rocksdb_block_read_count: 0,
             sum_rocksdb_block_read_byte: 0,
             max_rocksdb_block_read_byte: 0,
+            ia_exec_count: 0,
             sum_ia_remote_read_segment_count: 0,
             max_ia_remote_read_segment_count: 0,
             sum_ia_remote_read_segment_size: 0,
@@ -450,8 +456,8 @@ impl Default for StmtRecord {
             sum_pd_total: Duration::ZERO,
             sum_backoff_total: Duration::ZERO,
             sum_write_sql_resp_total: Duration::ZERO,
-            sum_tidb_cpu: Duration::ZERO,
-            sum_tikv_cpu: Duration::ZERO,
+            sum_tidb_cpu: 0,
+            sum_tikv_cpu: 0,
             sum_result_rows: 0,
             max_result_rows: 0,
             min_result_rows: 0,
@@ -487,22 +493,21 @@ impl Default for StmtRecord {
 /// Go's `GetEncodedPlan` returns a third `any` result that `NewStmtRecord`
 /// discards with `_`; the ported call discards the [`EncodedPlanError`] the
 /// same way, so unlike v1's `newStmtSummaryStats` this never yields `nil`.
-#[must_use]
 pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
     // Use "," to separate table names to support FIND_IN_SET.
     let mut buffer = String::new();
-    for (i, value) in info.stmt_ctx.tables.iter().enumerate() {
+    for value in &info.stmt_ctx.tables {
         // In `create database` statement, DB name is not empty but table name
         // is empty.
         if value.table.is_empty() {
             continue;
         }
-        buffer.push_str(&value.db.to_lowercase());
-        buffer.push('.');
-        buffer.push_str(&value.table.to_lowercase());
-        if i < info.stmt_ctx.tables.len() - 1 {
+        if !buffer.is_empty() {
             buffer.push(',');
         }
+        buffer.push_str(&go_to_lower(&value.db));
+        buffer.push('.');
+        buffer.push_str(&go_to_lower(&value.table));
     }
     let table_names = buffer;
     let mut plan_digest = info.plan_digest.clone();
@@ -531,7 +536,7 @@ pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
         digest: info.digest.clone(),
         plan_digest,
         stmt_type: info.stmt_ctx.stmt_type.clone(),
-        normalized_sql: info.normalized_sql.clone(),
+        normalized_sql: format_sql(&info.normalized_sql),
         table_names,
         is_internal: info.is_internal,
         binding_sql,
@@ -643,11 +648,14 @@ impl StmtRecord {
             if scan_detail.rocksdb_block_read_count > self.max_rocksdb_block_read_count {
                 self.max_rocksdb_block_read_count = scan_detail.rocksdb_block_read_count;
             }
-            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_byte;
-            if scan_detail.rocksdb_block_read_byte > self.max_rocksdb_block_read_byte {
-                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_byte;
+            self.sum_rocksdb_block_read_byte += scan_detail.rocksdb_block_read_bytes;
+            if scan_detail.rocksdb_block_read_bytes > self.max_rocksdb_block_read_byte {
+                self.max_rocksdb_block_read_byte = scan_detail.rocksdb_block_read_bytes;
             }
             let ia_stats = get_ia_remote_read_segment_stats(Some(scan_detail));
+            if ia_stats.count > 0 {
+                self.ia_exec_count += 1;
+            }
             self.sum_ia_remote_read_segment_count += ia_stats.count;
             if ia_stats.count > self.max_ia_remote_read_segment_count {
                 self.max_ia_remote_read_segment_count = ia_stats.count;
@@ -676,7 +684,7 @@ impl StmtRecord {
             if commit_details.get_commit_ts_time > self.max_get_commit_ts_time {
                 self.max_get_commit_ts_time = commit_details.get_commit_ts_time;
             }
-            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time;
+            let resolve_lock_time = commit_details.resolve_lock.resolve_lock_time_ns;
             self.sum_resolve_lock_time += resolve_lock_time;
             if resolve_lock_time > self.max_resolve_lock_time {
                 self.max_resolve_lock_time = resolve_lock_time;
@@ -685,34 +693,37 @@ impl StmtRecord {
             if commit_details.local_latch_time > self.max_local_latch_time {
                 self.max_local_latch_time = commit_details.local_latch_time;
             }
-            self.sum_write_keys += commit_details.write_keys;
-            if commit_details.write_keys > self.max_write_keys {
-                self.max_write_keys = commit_details.write_keys;
+            let write_keys = commit_details.write_keys as i64;
+            self.sum_write_keys += write_keys;
+            if write_keys > self.max_write_keys {
+                self.max_write_keys = write_keys;
             }
-            self.sum_write_size += commit_details.write_size;
-            if commit_details.write_size > self.max_write_size {
-                self.max_write_size = commit_details.write_size;
+            let write_size = commit_details.write_size as i64;
+            self.sum_write_size += write_size;
+            if write_size > self.max_write_size {
+                self.max_write_size = write_size;
             }
             let prewrite_region_num = commit_details.prewrite_region_num;
             self.sum_prewrite_region_num += i64::from(prewrite_region_num);
             if prewrite_region_num > self.max_prewrite_region_num {
                 self.max_prewrite_region_num = prewrite_region_num;
             }
-            self.sum_txn_retry += commit_details.txn_retry;
-            if commit_details.txn_retry > self.max_txn_retry {
-                self.max_txn_retry = commit_details.txn_retry;
+            let transaction_retry = commit_details.transaction_retry as i64;
+            self.sum_txn_retry += transaction_retry;
+            if transaction_retry > self.max_txn_retry {
+                self.max_txn_retry = transaction_retry;
             }
-            let commit_backoff_time = commit_details.commit_backoff_time;
+            let commit_backoff_time = commit_details.detail.commit_backoff_time_ns;
             self.sum_commit_backoff_time += commit_backoff_time;
             if commit_backoff_time > self.max_commit_backoff_time {
                 self.max_commit_backoff_time = commit_backoff_time;
             }
-            self.sum_backoff_times += commit_details.prewrite_backoff_types.len() as i64;
-            for backoff_type in &commit_details.prewrite_backoff_types {
+            self.sum_backoff_times += commit_details.detail.prewrite_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.prewrite_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
-            self.sum_backoff_times += commit_details.commit_backoff_types.len() as i64;
-            for backoff_type in &commit_details.commit_backoff_types {
+            self.sum_backoff_times += commit_details.detail.commit_backoff_types.len() as i64;
+            for backoff_type in &commit_details.detail.commit_backoff_types {
                 *self.backoff_types.entry(backoff_type.clone()).or_insert(0) += 1;
             }
         }
@@ -766,18 +777,22 @@ impl StmtRecord {
             self.min_result_rows = 0;
         }
         if let Some(tikv) = info.tikv_exec_details.as_ref() {
-            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_resp_duration);
-            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_resp_duration);
-            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration);
+            self.sum_kv_total += nanos_to_duration(tikv.wait_kv_response_duration_ns);
+            self.sum_pd_total += nanos_to_duration(tikv.wait_pd_response_duration_ns);
+            self.sum_backoff_total += nanos_to_duration(tikv.backoff_duration_ns);
         }
         self.sum_write_sql_resp_total += info.write_sql_resp_duration;
-        self.sum_tidb_cpu += info.cpu_usages.tidb_cpu_time;
-        self.sum_tikv_cpu += info.cpu_usages.tikv_cpu_time;
+        self.sum_tidb_cpu = self
+            .sum_tidb_cpu
+            .wrapping_add(info.cpu_usages.tidb_cpu_time);
+        self.sum_tikv_cpu = self
+            .sum_tikv_cpu
+            .wrapping_add(info.cpu_usages.tikv_cpu_time);
 
         // Networks.
         self.network.add(info.tikv_exec_details.as_ref());
         // RU.
-        self.ru.add(info.ru_detail.as_ref(), info.total_ru_v2);
+        self.ru.add(info.ru_detail.as_deref(), info.total_ru_v2);
 
         self.storage_kv = info.stmt_ctx.is_tikv.load(Ordering::SeqCst);
         self.storage_mpp = info.stmt_ctx.is_tiflash.load(Ordering::SeqCst);
@@ -863,6 +878,7 @@ impl StmtRecord {
         if self.max_rocksdb_block_read_byte < other.max_rocksdb_block_read_byte {
             self.max_rocksdb_block_read_byte = other.max_rocksdb_block_read_byte;
         }
+        self.ia_exec_count += other.ia_exec_count;
         self.sum_ia_remote_read_segment_count += other.sum_ia_remote_read_segment_count;
         if self.max_ia_remote_read_segment_count < other.max_ia_remote_read_segment_count {
             self.max_ia_remote_read_segment_count = other.max_ia_remote_read_segment_count;
@@ -950,8 +966,8 @@ impl StmtRecord {
         self.sum_pd_total += other.sum_pd_total;
         self.sum_backoff_total += other.sum_backoff_total;
         self.sum_write_sql_resp_total += other.sum_write_sql_resp_total;
-        self.sum_tidb_cpu += other.sum_tidb_cpu;
-        self.sum_tikv_cpu += other.sum_tikv_cpu;
+        self.sum_tidb_cpu = self.sum_tidb_cpu.wrapping_add(other.sum_tidb_cpu);
+        self.sum_tikv_cpu = self.sum_tikv_cpu.wrapping_add(other.sum_tikv_cpu);
         self.sum_errors += other.sum_errors;
         self.ru.merge(&other.ru);
     }
@@ -959,7 +975,7 @@ impl StmtRecord {
 
 /// Go `time.Duration(int64)` for non-negative nanosecond counts; negative
 /// counts (which `time.Duration` allows and `Duration` does not) clamp to zero.
-fn nanos_to_duration(nanos: i64) -> Duration {
+pub(crate) fn nanos_to_duration(nanos: i64) -> Duration {
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(0))
 }
 
@@ -967,7 +983,6 @@ fn nanos_to_duration(nanos: i64) -> Duration {
 ///
 /// Go slices raw bytes; this truncates at the nearest UTF-8 boundary at or
 /// below the limit, and reports Go's byte length.
-#[must_use]
 pub fn format_sql(sql: &str) -> String {
     let max_sql_length = max_sql_length() as usize;
     let length = sql.len();
@@ -984,7 +999,6 @@ pub fn format_sql(sql: &str) -> String {
 
 /// Go `maxSQLLength`: `GlobalStmtSummary.MaxSQLLength()`, or
 /// [`DEFAULT_MAX_SQL_LENGTH`] while the global is unset.
-#[must_use]
 pub fn max_sql_length() -> u32 {
     crate::v2::stmtsummary::global_max_sql_length()
 }
@@ -1199,6 +1213,7 @@ impl StmtRecord {
             "max_rocksdb_block_read_byte",
             &self.max_rocksdb_block_read_byte,
         )?;
+        map.serialize_entry("ia_remote_exec_count", &self.ia_exec_count)?;
         map.serialize_entry(
             "sum_ia_remote_read_segment_count",
             &self.sum_ia_remote_read_segment_count,
@@ -1277,8 +1292,8 @@ impl StmtRecord {
             "sum_write_sql_resp_total",
             &nanos(self.sum_write_sql_resp_total),
         )?;
-        map.serialize_entry("sum_tidb_cpu", &nanos(self.sum_tidb_cpu))?;
-        map.serialize_entry("sum_tikv_cpu", &nanos(self.sum_tikv_cpu))?;
+        map.serialize_entry("sum_tidb_cpu", &self.sum_tidb_cpu)?;
+        map.serialize_entry("sum_tikv_cpu", &self.sum_tikv_cpu)?;
         map.serialize_entry("sum_result_rows", &self.sum_result_rows)?;
         map.serialize_entry("max_result_rows", &self.max_result_rows)?;
         map.serialize_entry("min_result_rows", &self.min_result_rows)?;
@@ -1398,7 +1413,6 @@ impl StmtExecLazyInfo for MockLazyInfo {
 /// Go's `util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond)` and
 /// `&util.ExecDetails{}` arrive here as the already-loaded snapshots v1's
 /// `StmtExecInfo` carries.
-#[must_use]
 pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
     let tables = vec![
         TableEntry {
@@ -1446,15 +1460,17 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
                 prewrite_time: Duration::from_nanos(10000),
                 commit_time: Duration::from_nanos(1000),
                 local_latch_time: Duration::from_nanos(10),
-                commit_backoff_time: 200,
-                prewrite_backoff_types: vec!["txnlock".to_owned()],
-                commit_backoff_types: Vec::new(),
+                detail: CommitDetailsInner {
+                    commit_backoff_time_ns: 200,
+                    prewrite_backoff_types: vec!["txnlock".to_owned()],
+                    ..CommitDetailsInner::default()
+                },
                 write_keys: 20000,
                 write_size: 200_000,
                 prewrite_region_num: 20,
-                txn_retry: 2,
+                transaction_retry: 2,
                 resolve_lock: ResolveLockDetail {
-                    resolve_lock_time: 2000,
+                    resolve_lock_time_ns: 2000,
                 },
                 ..CommitDetails::default()
             }),
@@ -1467,7 +1483,7 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
                     rocksdb_key_skipped_count: 10,
                     rocksdb_block_cache_hit_count: 10,
                     rocksdb_block_read_count: 10,
-                    rocksdb_block_read_byte: 1000,
+                    rocksdb_block_read_bytes: 1000,
                     ..ScanDetail::default()
                 }),
                 time_detail: TimeDetail {
@@ -1476,6 +1492,7 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
                     ..TimeDetail::default()
                 },
                 callee_address: "129".to_owned(),
+                ..CopExecDetails::default()
             },
             ..ExecDetails::default()
         },
@@ -1495,21 +1512,20 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
         exec_retry_time: Duration::ZERO,
         write_sql_resp_duration: Duration::ZERO,
         result_rows: 0,
-        tikv_exec_details: Some(TikvExecDetailsSnapshot::default()),
+        tikv_exec_details: Some(ExecDetailsSnapshot::default()),
         prepared: false,
         keyspace_name: "keyspace_a".to_owned(),
         keyspace_id: 1,
         resource_group_name: "rg1".to_owned(),
-        ru_detail: Some(RuDetailsSnapshot {
-            rru: 1.2,
-            wru: 3.4,
-            ru_wait_duration: Duration::from_millis(2),
-            ..RuDetailsSnapshot::default()
-        }),
+        ru_detail: Some(Arc::new(RuDetails::new_with(
+            1.2,
+            3.4,
+            Duration::from_millis(2),
+        ))),
         total_ru_v2: 12345.0,
         cpu_usages: CpuUsages {
-            tidb_cpu_time: Duration::from_nanos(20),
-            tikv_cpu_time: Duration::from_nanos(10000),
+            tidb_cpu_time: 20,
+            tikv_cpu_time: 10000,
         },
         plan_cache_unqualified: String::new(),
         lazy_info: Arc::new(MockLazyInfo),
@@ -1586,17 +1602,18 @@ mod tests {
         assert_eq!(record1.sum_latency, info.total_latency);
         assert_eq!(record1.max_latency, info.total_latency);
         assert_eq!(record1.min_latency, info.total_latency);
-        let ru = info.ru_detail.unwrap();
-        assert!((record1.ru.max_rru - ru.rru).abs() < f64::EPSILON);
-        assert!((record1.ru.sum_rru - ru.rru).abs() < f64::EPSILON);
-        assert!((record1.ru.max_wru - ru.wru).abs() < f64::EPSILON);
-        assert!((record1.ru.sum_wru - ru.wru).abs() < f64::EPSILON);
-        assert_eq!(record1.ru.max_ru_wait_duration, ru.ru_wait_duration);
-        assert_eq!(record1.ru.sum_ru_wait_duration, ru.ru_wait_duration);
+        let ru = info.ru_detail.as_ref().unwrap();
+        assert!((record1.ru.max_rru - ru.read_ru()).abs() < f64::EPSILON);
+        assert!((record1.ru.sum_rru - ru.read_ru()).abs() < f64::EPSILON);
+        assert!((record1.ru.max_wru - ru.write_ru()).abs() < f64::EPSILON);
+        assert!((record1.ru.sum_wru - ru.write_ru()).abs() < f64::EPSILON);
+        assert_eq!(record1.ru.max_ru_wait_duration, ru.ru_wait_duration());
+        assert_eq!(record1.ru.sum_ru_wait_duration, ru.ru_wait_duration());
         assert!((record1.ru.max_ru_v2 - info.total_ru_v2).abs() < f64::EPSILON);
         assert!((record1.ru.sum_ru_v2 - info.total_ru_v2).abs() < f64::EPSILON);
         assert_eq!(record1.sum_tidb_cpu, info.cpu_usages.tidb_cpu_time);
         assert_eq!(record1.sum_tikv_cpu, info.cpu_usages.tikv_cpu_time);
+        assert_eq!(record1.ia_exec_count, 1);
         assert_eq!(record1.sum_ia_remote_read_segment_count, 3);
         assert_eq!(record1.max_ia_remote_read_segment_count, 3);
 
@@ -1609,12 +1626,13 @@ mod tests {
         assert_eq!(record2.sum_latency, info.total_latency * 2);
         assert_eq!(record2.max_latency, info.total_latency);
         assert_eq!(record2.min_latency, info.total_latency);
-        assert!((record2.ru.sum_rru - ru.rru * 2.0).abs() < f64::EPSILON);
-        assert!((record2.ru.sum_wru - ru.wru * 2.0).abs() < f64::EPSILON);
-        assert_eq!(record2.ru.sum_ru_wait_duration, ru.ru_wait_duration * 2);
+        assert!((record2.ru.sum_rru - ru.read_ru() * 2.0).abs() < f64::EPSILON);
+        assert!((record2.ru.sum_wru - ru.write_ru() * 2.0).abs() < f64::EPSILON);
+        assert_eq!(record2.ru.sum_ru_wait_duration, ru.ru_wait_duration() * 2);
         assert!((record2.ru.sum_ru_v2 - info.total_ru_v2 * 2.0).abs() < f64::EPSILON);
         assert_eq!(record2.sum_tidb_cpu, info.cpu_usages.tidb_cpu_time * 2);
         assert_eq!(record2.sum_tikv_cpu, info.cpu_usages.tikv_cpu_time * 2);
+        assert_eq!(record2.ia_exec_count, 2);
         assert_eq!(record2.sum_ia_remote_read_segment_count, 6);
         assert_eq!(record2.max_ia_remote_read_segment_count, 3);
 
@@ -1639,6 +1657,7 @@ mod tests {
             serde_json::json!({"stmt_meta_a": "value_a"})
         );
         assert_eq!(items["digest"], serde_json::json!(record2.digest));
+        assert_eq!(items["ia_remote_exec_count"], serde_json::json!(2));
         assert!(items.contains_key("sum_ia_remote_read_segment_count"));
         assert!(items.contains_key("max_ia_remote_read_segment_count"));
         assert!(!items.contains_key("sum_ia_read_segment_count"));
@@ -1652,7 +1671,46 @@ mod tests {
         );
         assert_eq!(items["evicted"], serde_json::json!(true));
         assert_eq!(items["digest"], serde_json::json!(record2.digest));
+        assert_eq!(items["ia_remote_exec_count"], serde_json::json!(2));
 
         store_global_config(restore);
+    }
+
+    /// Go `78cac443a4`: v2 records skip empty table entries and format the
+    /// normalized SQL with the package's length limit.
+    #[test]
+    fn stmt_record_latest_history_and_table_contracts() {
+        let mut info = generate_stmt_exec_info_4_test("digest");
+        let stmt_ctx = Arc::get_mut(&mut info.stmt_ctx).expect("test context is unique");
+        stmt_ctx.tables = vec![
+            TableEntry {
+                db: "db1".to_owned(),
+                table: String::new(),
+            },
+            TableEntry {
+                db: "DB2".to_owned(),
+                table: "TB2".to_owned(),
+            },
+            TableEntry {
+                db: "db3".to_owned(),
+                table: String::new(),
+            },
+        ];
+        info.normalized_sql = "x".repeat(DEFAULT_MAX_SQL_LENGTH as usize + 1);
+
+        let mut record = new_stmt_record(&info);
+        record.add(&info);
+        assert_eq!(record.table_names, "db2.tb2");
+        assert_eq!(record.normalized_sql, format_sql(&info.normalized_sql));
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_record_returns_can_be_ignored() {
+        generate_stmt_exec_info_4_test("");
+        let info = generate_stmt_exec_info_4_test("");
+        new_stmt_record(&info);
+        format_sql("");
+        max_sql_length();
     }
 }

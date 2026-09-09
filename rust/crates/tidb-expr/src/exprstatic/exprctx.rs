@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use tidb_error::errctx::{ErrGroup, Level};
 use tidb_util::context::PlanCacheTracker;
 use tidb_util::mathutil::MysqlRng;
 use tidb_vardef::defaults::{
@@ -30,12 +31,13 @@ use tidb_vardef::tidb_vars::{TIDB_ENABLE_NOOP_FUNCS, TIDB_SYSDATE_IS_NOW};
 
 use super::evalctx::{
     make_eval_context_static, new_session_vars_with_system_variables, tidb_opt_on_off_warn,
-    EvalContext, EvalCtxError, SessionVarsSnapshot, StaticConvertibleEvalContext,
-    BLOCK_ENCRYPTION_MODE, CHARACTER_SET_CONNECTION, COLLATION_CONNECTION,
-    DEFAULT_COLLATION_FOR_UTF8MB4, GROUP_CONCAT_MAX_LEN, OFF_INT, ON_INT, WARN_INT,
-    WINDOWING_USE_HIGH_PRECISION,
+    with_err_level_map, with_type_flags, EvalContext, EvalCtxError, SessionVarsSnapshot,
+    StaticConvertibleEvalContext, BLOCK_ENCRYPTION_MODE, CHARACTER_SET_CONNECTION,
+    COLLATION_CONNECTION, DEFAULT_COLLATION_FOR_UTF8MB4, GROUP_CONCAT_MAX_LEN, OFF_INT, ON_INT,
+    WARN_INT, WINDOWING_USE_HIGH_PRECISION,
 };
 use crate::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
+use tidb_hack::go_to_lower;
 
 /// Go `exprCtxState`: the internal state of an [`ExprContext`], kept separate
 /// so that an [`ExprCtxOption`] can only run inside a constructor.
@@ -57,6 +59,7 @@ struct ExprCtxState {
     connection_id: u64,
     windowing_use_high_precision: bool,
     group_concat_max_len: u64,
+    new_collation_enabled: bool,
 }
 
 /// Go `ExprCtxOption`: one option of an [`ExprContext`].
@@ -154,10 +157,43 @@ pub fn with_group_concat_max_len(max_len: u64) -> ExprCtxOption {
     ExprCtxOption::new(move |state| state.group_concat_max_len = max_len)
 }
 
+/// Go `WithNewCollationEnabled`.
+#[must_use]
+pub fn with_new_collation_enabled(enabled: bool) -> ExprCtxOption {
+    ExprCtxOption::new(move |state| state.new_collation_enabled = enabled)
+}
+
 /// Go `ExprContext`: a static expression-building context, whose state does
 /// not rely on the session.
 pub struct ExprContext {
     state: ExprCtxState,
+}
+
+/// Go `exprctx.CtxWithHandleTruncateErrLevel`: return an expression-building
+/// context whose type flags and truncate error-group level both represent the
+/// requested handling policy. All other evaluation state is shared with the
+/// input context, including warning storage, location, current time, and
+/// connection metadata. Rust's context is an owned value, so the no-op case
+/// returns a value clone that retains the exact original evaluation-context
+/// allocation; callers that need identity can compare `Arc::ptr_eq` on
+/// [`ExprContext::get_eval_ctx`].
+#[must_use]
+pub fn ctx_with_handle_truncate_err_level(ctx: &ExprContext, level: Level) -> ExprContext {
+    let eval_ctx = ctx.get_eval_ctx();
+    let original_flags = eval_ctx.type_flags();
+    let flags = original_flags
+        .with_truncate_as_warning(level == Level::Warn)
+        .with_ignore_truncate_err(level == Level::Ignore);
+    let original_levels = eval_ctx.err_level_map();
+    if flags == original_flags && original_levels.get(ErrGroup::Truncate) == level {
+        return ctx.apply([]);
+    }
+
+    let overridden = eval_ctx.apply([
+        with_type_flags(flags),
+        with_err_level_map(original_levels.with_level(ErrGroup::Truncate, level)),
+    ]);
+    ctx.apply([with_eval_ctx(Arc::new(overridden))])
 }
 
 impl fmt::Debug for ExprContext {
@@ -202,6 +238,7 @@ impl ExprContext {
             connection_id: 0,
             windowing_use_high_precision: true,
             group_concat_max_len: DEF_GROUP_CONCAT_MAX_LEN,
+            new_collation_enabled: tidb_datatype::new_collation_enabled(),
         };
 
         for opt in opts {
@@ -327,6 +364,12 @@ impl ExprContext {
         self.state.group_concat_max_len
     }
 
+    /// Go `NewCollationEnabled`.
+    #[must_use]
+    pub fn new_collation_enabled(&self) -> bool {
+        self.state.new_collation_enabled
+    }
+
     /// Go `GetLastPlanColumnID`, implementing `StaticConvertibleExprContext`.
     #[must_use]
     pub fn get_last_plan_column_id(&self) -> i64 {
@@ -369,7 +412,7 @@ impl ExprContext {
                 .load_session_vars_internal(session_vars, sys_vars),
         )));
         for name in sys_vars.keys() {
-            match name.to_lowercase().as_str() {
+            match go_to_lower(name).as_str() {
                 CHARACTER_SET_CONNECTION | COLLATION_CONNECTION => {
                     let (charset, collation) = session_vars.charset_info();
                     opts.push(with_charset(charset, collation));
@@ -446,6 +489,8 @@ pub trait StaticConvertibleExprContext {
     fn get_windowing_use_high_precision(&self) -> bool;
     /// Go `ExprContext.GetGroupConcatMaxLen`.
     fn get_group_concat_max_len(&self) -> u64;
+    /// Go `ExprContext.NewCollationEnabled`.
+    fn new_collation_enabled(&self) -> bool;
 }
 
 impl StaticConvertibleExprContext for ExprContext {
@@ -497,6 +542,10 @@ impl StaticConvertibleExprContext for ExprContext {
     fn get_group_concat_max_len(&self) -> u64 {
         ExprContext::get_group_concat_max_len(self)
     }
+
+    fn new_collation_enabled(&self) -> bool {
+        ExprContext::new_collation_enabled(self)
+    }
 }
 
 /// Go `MakeExprContextStatic`.
@@ -520,6 +569,7 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
         with_connection_id(ctx.connection_id()),
         with_windowing_use_high_precision(ctx.get_windowing_use_high_precision()),
         with_group_concat_max_len(ctx.get_group_concat_max_len()),
+        with_new_collation_enabled(ctx.new_collation_enabled()),
     ])
 }
 
@@ -701,6 +751,7 @@ mod tests {
         let eval_ctx = Arc::new(EvalContext::new([]));
         let plan_cache_tracker =
             Arc::new(PlanCacheTracker::new(Arc::new(StaticWarnHandler::new(0))));
+        let new_collation_enabled = !tidb_datatype::new_collation_enabled();
         let obj = ExprContext::new([
             with_eval_ctx(Arc::clone(&eval_ctx)),
             with_charset("a", "b"),
@@ -714,6 +765,7 @@ mod tests {
             with_connection_id(1),
             with_windowing_use_high_precision(false),
             with_group_concat_max_len(1),
+            with_new_collation_enabled(new_collation_enabled),
         ]);
 
         // Go first proves every field differs from a default context.
@@ -766,6 +818,10 @@ mod tests {
         assert_eq!(
             static_obj.get_group_concat_max_len(),
             obj.get_group_concat_max_len()
+        );
+        assert_eq!(
+            static_obj.new_collation_enabled(),
+            obj.new_collation_enabled()
         );
         assert_eq!(
             static_obj.get_last_plan_column_id(),
@@ -907,5 +963,14 @@ mod tests {
             tidb_util::timeutil::zone_name(ctx.get_eval_ctx().location()),
             "Asia/Tokyo"
         );
+    }
+
+    #[test]
+    fn new_collation_mode_is_captured_per_context() {
+        let enabled = tidb_datatype::new_collation_enabled();
+        let ctx = ExprContext::new([with_new_collation_enabled(!enabled)]);
+        assert_eq!(ctx.new_collation_enabled(), !enabled);
+        let applied = ctx.apply([with_new_collation_enabled(enabled)]);
+        assert_eq!(applied.new_collation_enabled(), enabled);
     }
 }

@@ -14,71 +14,27 @@
 
 #![allow(missing_docs)]
 
-use tidb_planner::physical_selection::{
-    BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionError,
-    PhysicalSelectionPlan, SelectionPushdownLayout,
+use tidb_planner::{
+    read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan},
+    signed_bigint_ranger::{
+        BigIntComparison, BigIntComparisonError, ComparisonOp, ComparisonOperand,
+    },
 };
 
-#[test]
-fn physical_selection_owns_all_signed_comparisons_and_exact_input_offsets() {
-    // pkg/planner/core/operator/physicalop/physical_utils_test.go:31
-    // TestFlattenListPushDownPlan
-    let operators = [
-        ComparisonOp::Lt,
-        ComparisonOp::Le,
-        ComparisonOp::Gt,
-        ComparisonOp::Ge,
-        ComparisonOp::Eq,
-        ComparisonOp::Ne,
-    ];
-    let conditions = operators
-        .into_iter()
-        .enumerate()
-        .map(|(index, op)| {
-            let offset = u32::try_from(index % 3).unwrap();
-            if index % 2 == 0 {
-                BigIntComparison::new(
-                    op,
-                    ComparisonOperand::InputOffset(offset),
-                    ComparisonOperand::Int(index as i64 - 3),
-                )
-            } else {
-                BigIntComparison::new(
-                    op,
-                    ComparisonOperand::Int(index as i64 - 3),
-                    ComparisonOperand::InputOffset(offset),
-                )
-            }
-            .unwrap()
-        })
-        .collect::<Vec<_>>();
-
-    let plan = PhysicalSelectionPlan::with_conditions(
-        "lt(a, -3), le(-2, b), gt(c, -1), ge(0, a), eq(b, 1), ne(2, c)",
-        4,
-        0,
-        conditions,
+fn table() -> ConfiguredTable {
+    ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 7),
+            ConfiguredColumn::stored_not_null("balance", 9),
+        ],
     )
-    .unwrap();
-
-    assert_eq!(plan.conditions().len(), 6);
-    assert_eq!(
-        plan.conditions()
-            .iter()
-            .copied()
-            .map(BigIntComparison::op)
-            .collect::<Vec<_>>(),
-        operators
-    );
-    assert_eq!(
-        plan.condition_input_offsets().collect::<Vec<_>>(),
-        [0, 1, 2, 0, 1, 2]
-    );
-    assert_eq!(plan.query_block_offset(), 4);
 }
 
 #[test]
-fn operand_order_is_preserved_for_expression_lowering() {
+fn bounded_comparison_preserves_operand_order_and_rejects_invalid_pairs() {
     let column_left = BigIntComparison::new(
         ComparisonOp::Lt,
         ComparisonOperand::InputOffset(2),
@@ -98,72 +54,38 @@ fn operand_order_is_preserved_for_expression_lowering() {
     assert_eq!(literal_left.rhs(), ComparisonOperand::InputOffset(1));
     assert_eq!(column_left.input_offset(), 2);
     assert_eq!(literal_left.input_offset(), 1);
-}
-
-#[test]
-fn malformed_or_empty_selection_fails_closed() {
     assert_eq!(
         BigIntComparison::new(
             ComparisonOp::Eq,
             ComparisonOperand::InputOffset(0),
             ComparisonOperand::InputOffset(1),
         ),
-        Err(PhysicalSelectionError::InvalidComparisonOperands)
-    );
-    assert_eq!(
-        BigIntComparison::new(
-            ComparisonOp::Eq,
-            ComparisonOperand::Int(1),
-            ComparisonOperand::Int(2),
-        ),
-        Err(PhysicalSelectionError::InvalidComparisonOperands)
-    );
-    assert_eq!(
-        PhysicalSelectionPlan::with_conditions("", 0, 0, Vec::new()),
-        Err(PhysicalSelectionError::EmptyConditions)
+        Err(BigIntComparisonError::InvalidOperands)
     );
 }
 
 #[test]
-fn tikv_uses_list_pushdown_without_embedded_selection_child() {
-    let condition = BigIntComparison::new(
-        ComparisonOp::Gt,
-        ComparisonOperand::InputOffset(0),
-        ComparisonOperand::Int(0),
+fn real_physical_selection_is_the_only_stored_condition_authority() {
+    let plan = ReadOnlyScanPlan::lower(
+        "SELECT id FROM accounts WHERE balance > 10 AND 20 < balance",
+        &table(),
     )
     .unwrap();
-    let plan = PhysicalSelectionPlan::with_conditions("gt(a, 0)", 0, 0, vec![condition]).unwrap();
+    let selection: &tidb_planner::physical::PhysicalSelection = plan.selection().unwrap();
+    assert_eq!(selection.base.base.tp(), "Selection");
+    assert!(selection.from_data_source);
 
-    assert_eq!(
-        plan.pushdown_layout(),
-        SelectionPushdownLayout::TiKvExecutorList
-    );
-    assert!(!plan.tikv_embeds_child());
-}
-
-#[test]
-fn runtime_constructor_owns_semantics_without_inventing_plan_metadata() {
-    let condition = BigIntComparison::new(
-        ComparisonOp::Eq,
-        ComparisonOperand::InputOffset(1),
-        ComparisonOperand::Int(-7),
-    )
-    .unwrap();
-    let plan = PhysicalSelectionPlan::from_bigint_conditions(vec![condition]).unwrap();
-
-    assert_eq!(plan.conditions(), [condition]);
-    assert_eq!(plan.condition_explain(), "");
-    assert_eq!(plan.query_block_offset(), 0);
-    assert_eq!(plan.stream_count(), 0);
-}
-
-#[test]
-fn metadata_only_init_keeps_existing_explain_contract() {
-    let plan = PhysicalSelectionPlan::init("gt(a, 1)", -2, 10);
-    assert!(plan.conditions().is_empty());
-    assert_eq!(plan.plan_type(), "Selection");
-    assert_eq!(plan.query_block_offset(), -2);
-    assert_eq!(plan.condition_explain(), "gt(a, 1)");
-    assert_eq!(plan.stream_count(), 10);
-    assert_eq!(plan.explain_info(), "gt(a, 1), stream_count: 10");
+    let comparisons = selection
+        .conditions
+        .iter()
+        .map(BigIntComparison::from_expression)
+        .collect::<Option<Vec<_>>>()
+        .unwrap();
+    assert_eq!(comparisons.len(), 2);
+    assert_eq!(comparisons[0].op(), ComparisonOp::Gt);
+    assert_eq!(comparisons[0].lhs(), ComparisonOperand::InputOffset(1));
+    assert_eq!(comparisons[0].rhs(), ComparisonOperand::Int(10));
+    assert_eq!(comparisons[1].op(), ComparisonOp::Lt);
+    assert_eq!(comparisons[1].lhs(), ComparisonOperand::Int(20));
+    assert_eq!(comparisons[1].rhs(), ComparisonOperand::InputOffset(1));
 }

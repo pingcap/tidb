@@ -70,24 +70,26 @@
 //! refused by name rather than approximated, because a wrong histogram is
 //! worse than no histogram: the planner trusts it. See [`AnalyzeError`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_executor::analyze::AnalyzeError as ComputeError;
 use tidb_executor::analyze::{
     AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
 };
+use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::SchemaState;
 
-use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot};
+use crate::cluster_catalog::{prefix_scan_end, PagedMetaSnapshot, RegionPagedMetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 use crate::system_row_write::origin_default;
 
 pub use tidb_executor::analyze::{
-    AnalyzeOptions, AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota,
-    MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2,
+    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions,
+    AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE,
+    STATS_VERSION_2,
 };
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
@@ -168,10 +170,10 @@ pub struct AnalyzeReport {
 /// sees it -- what Go's `getAdjustedSampleRate` calls `RealtimeCount` -- and
 /// `None` means the table has no row there at all.
 ///
-/// `version` is the TSO the statistics are stamped with, and must be the
-/// `start_ts` of the transaction that will store them: that is what makes a
-/// concurrent `ANALYZE` on a Go node either lose the write conflict or be
-/// ordered after this one, rather than interleave with it.
+/// `version` is the sampling snapshot TSO stored in `AnalyzeResults.Snapshot`.
+/// Pinned Go stamps the histogram rows with the later statistics-save
+/// transaction version; the real cluster boundary performs that replacement
+/// after this snapshot-only sampler returns.
 /// Rows one paged read of the analyzed table returns.
 ///
 /// Go's analyze consumes coprocessor batches as they land and never holds
@@ -194,8 +196,58 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
     version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<AnalyzeReport, AnalyzeError> {
-    let plan = cluster_analyze_plan(table)?;
+    if table.partition.is_some() {
+        return Err(AnalyzeError::unsupported(format!(
+            "analyzing the partitioned table `{}` requires an explicit physical partition target",
+            table.name.original()
+        )));
+    }
+    analyze_physical_table(
+        snapshot,
+        table,
+        table.id,
+        options,
+        realtime_count,
+        version,
+        selected_column_ids,
+    )
+}
+
+/// Runs one physical table or partition using the logical table's schema.
+pub fn analyze_physical_table<S: PagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    physical_id: i64,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<AnalyzeReport, AnalyzeError> {
+    analyze_physical_table_with_progress(
+        snapshot,
+        table,
+        physical_id,
+        options,
+        realtime_count,
+        version,
+        selected_column_ids,
+        |_| {},
+    )
+}
+
+pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    physical_id: i64,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    version: u64,
+    selected_column_ids: Option<&HashSet<i64>>,
+    mut progress: impl FnMut(i64),
+) -> Result<AnalyzeReport, AnalyzeError> {
+    let plan = cluster_analyze_plan(table, selected_column_ids)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
 
     let names: Vec<&str> = plan
@@ -203,7 +255,9 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
         .iter()
         .map(|column| column.name.as_str())
         .collect();
-    let view = SystemTableView::project(table.name.original(), table, &names);
+    let mut physical_table = table.clone();
+    physical_table.id = physical_id;
+    let view = SystemTableView::project(table.name.original(), &physical_table, &names);
     // The rows stream into the sampler one page at a time, exactly as Go's
     // region collectors feed it: nothing here may materialize the whole table
     // first, because a table this engine analyzes can be the largest thing the
@@ -235,6 +289,7 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
             }
             run.push(&columns)?;
         }
+        progress(i64::try_from(page.len()).unwrap_or(i64::MAX));
         let last_key = page
             .last()
             .map(|(key, _)| key.clone())
@@ -244,9 +299,11 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
     let analyzed = run.finish()?;
 
     let stats = ClusterTableStats {
-        table_id: table.id,
+        table_id: physical_id,
         version,
+        snapshot: version,
         last_analyze_version: version,
+        last_stats_hist_version: version,
         // Go's `SaveAnalyzeResultToStorage` stores
         // `max(curModifyCnt - results.BaseModifyCnt, 0)`: the modifications
         // that arrived *while the analyze ran*, which its sample therefore
@@ -273,7 +330,6 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
             .into_iter()
             .map(|built| stored_item(built, true))
             .collect(),
-        load_state: Default::default(),
     };
 
     Ok(AnalyzeReport {
@@ -281,6 +337,90 @@ pub fn analyze_table<S: PagedMetaSnapshot>(
         scanned_rows: analyzed.scanned_rows,
         sampled_rows: analyzed.sampled_rows,
         sample_rate: analyzed.sample_rate,
+    })
+}
+
+/// Runs one pinned-Go independent global-index task.
+pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    index: &IndexInfo,
+    options: &AnalyzeOptions,
+    version: u64,
+) -> Result<AnalyzeReport, AnalyzeError> {
+    analyze_independent_index_with_progress(snapshot, table, index, options, version, |_| {})
+}
+
+pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot>(
+    snapshot: &mut S,
+    table: &TableInfo,
+    index: &IndexInfo,
+    options: &AnalyzeOptions,
+    version: u64,
+    mut progress: impl FnMut(i64),
+) -> Result<AnalyzeReport, AnalyzeError> {
+    let bucket_count = usize::try_from(options.num_buckets)
+        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE bucket count".to_owned()))?;
+    let topn_count = usize::try_from(options.num_topn)
+        .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE TopN count".to_owned()))?;
+    let column_count = index.columns.len();
+    let prefix = tidb_codec::table_key::encode_index_seek_key(table.id, index.id, &[]);
+    let range_end = finite_successor(&prefix)?;
+    let regions = snapshot
+        .scan_regions(&prefix, &range_end)
+        .map_err(|error| AnalyzeError::Read(error.into()))?;
+    let mut fragments = Vec::with_capacity(regions.len());
+    for region in regions {
+        let mut processor = tidb_stats::IndependentIndexAnalyze::new(
+            index.id,
+            column_count,
+            bucket_count,
+            topn_count,
+        );
+        let row_count = region.pairs.len();
+        for (key, _) in region.pairs {
+            let (encoded_columns, _) = tidb_tablecodec::cut_index_key(&key, column_count)
+                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+            processor
+                .push(&encoded_columns)
+                .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+        }
+        progress(i64::try_from(row_count).unwrap_or(i64::MAX));
+        fragments.push(processor.finish_fragment());
+    }
+    let built = tidb_stats::merge_independent_index_fragments(
+        index.id,
+        bucket_count,
+        topn_count,
+        fragments,
+    )
+    .map_err(|error| AnalyzeError::unsupported(error.to_string()))?;
+    let count = built.count;
+    Ok(AnalyzeReport {
+        stats: ClusterTableStats {
+            table_id: table.id,
+            version,
+            snapshot: version,
+            last_analyze_version: version,
+            last_stats_hist_version: version,
+            modify_count: 0,
+            row_count: u64::try_from(count).unwrap_or_default(),
+            columns: Vec::new(),
+            indexes: vec![ClusterStatsItem {
+                id: index.id,
+                is_index: true,
+                stats_ver: 2,
+                flag: 0,
+                load_status: tidb_stats::StatsLoadedStatus::full_load(),
+                histogram: built.histogram,
+                topn: Some(built.topn),
+                cms: None,
+                fm_sketch: Some(built.fm_sketch),
+            }],
+        },
+        scanned_rows: count,
+        sampled_rows: count,
+        sample_rate: 1.0,
     })
 }
 
@@ -295,9 +435,11 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
         is_index,
         stats_ver: built.stats_ver,
         flag: 0,
+        load_status: tidb_stats::StatsLoadedStatus::full_load(),
         histogram: built.histogram,
         topn: built.topn,
         cms: None,
+        fm_sketch: built.fm_sketch,
     }
 }
 
@@ -306,19 +448,18 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
 /// Every refusal here is about a value this tier cannot reproduce from the
 /// stored bytes; the shape rules the two tiers share (which TopN is
 /// suppressed, which slots exist) are [`AnalyzePlan`]'s own.
-fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> {
-    if table.partition.is_some() {
-        return Err(AnalyzeError::unsupported(format!(
-            "this node does not analyze the partitioned table `{}`: its statistics are one set \
-             per partition plus a merged global set, which is a separate write path",
-            table.name.original()
-        )));
-    }
+fn cluster_analyze_plan(
+    table: &TableInfo,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<AnalyzePlan, AnalyzeError> {
     let mut columns = Vec::new();
     let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
     for column in table.cols().iter_deref() {
         let column = column.read();
         if column.state != SchemaState::PUBLIC || column.hidden {
+            continue;
+        }
+        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
             continue;
         }
         // A VIRTUAL generated column has no bytes in the stored row to
@@ -330,14 +471,6 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         // normal column: its value IS in the row.
         if column.is_virtual_generated() {
             continue;
-        }
-        if column.is_generated() {
-            return Err(AnalyzeError::unsupported(format!(
-                "this node does not analyze `{}`.`{}`: a generated column's value is an \
-                 expression it does not evaluate over stored rows",
-                table.name.original(),
-                column.name.original()
-            )));
         }
         let qualified = format!("`{}`.`{}`", table.name.original(), column.name.original());
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
@@ -356,6 +489,7 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         columns.push(AnalyzedColumn {
             id: column.id,
             name: column.name.lowercase().to_owned(),
+            field_type: column.field_type.clone(),
             collation,
             absent_value,
         });
@@ -367,8 +501,21 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         if index.state != SchemaState::PUBLIC {
             continue;
         }
+        let is_special_global = index.global
+            && index.columns.iter_deref().any(|index_column| {
+                let index_column = index_column.read();
+                index_column.length != UNSPECIFIED_LENGTH
+                    || table
+                        .cols()
+                        .get(index_column.offset as usize)
+                        .is_some_and(|column| column.read().is_virtual_generated())
+            });
+        if is_special_global {
+            // Pinned Go removes this index from the ordinary column-sampling
+            // task and creates one independent ordered index task for it.
+            continue;
+        }
         if index.mv_index
-            || index.global
             || index.vector_info.is_some()
             || index.inverted_info.is_some()
             || index.full_text_info.is_some()
@@ -380,38 +527,20 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
                 table.name.original()
             )));
         }
-        // An index whose key parts are virtual generated columns (or
-        // prefixes) reads values the stored row does not carry, so sampling
-        // rows cannot build its histogram; Go answers those through a
-        // separate pushed-down index job this tier has no peer of
-        // (`analyze_col.go`'s `specialIndexes`). Skipping the INDEX leaves
-        // its slot to the planner's fallback estimates instead of failing
-        // the whole statement, which is the same trade the column skip
-        // above makes.
+        // An index whose key parts are virtual generated columns reads values
+        // the stored row does not carry. Prefix values are cut below with the
+        // same rule as Go's sampling builder.
         let covers_unsampled_part = index.columns.iter_deref().any(|index_column| {
             let index_column = index_column.read();
-            index_column.length != UNSPECIFIED_LENGTH
-                || !by_offset.contains_key(&index_column.offset)
+            !by_offset.contains_key(&index_column.offset)
         });
         if covers_unsampled_part {
             continue;
         }
         let mut column_positions = Vec::with_capacity(index.columns.len());
-        // A prefix key part (`KEY idx(s(4))`) files each entry under the CUT
-        // value, and this sampler does not cut, so a histogram built here
-        // would describe keys the index never holds. Go samples the index KV
-        // directly and needs no cut; until this sampler reads the index the
-        // way it is stored, the honest move is to leave THAT index without a
-        // histogram -- the planner then falls back to pseudo index statistics
-        // exactly as for an index never analyzed -- while the table's column
-        // histograms and every full-length index still land.
-        let mut has_prefix_key_part = false;
+        let mut prefix_lengths = Vec::with_capacity(index.columns.len());
         for index_column in index.columns.iter_deref() {
             let index_column = index_column.read();
-            if index_column.length != UNSPECIFIED_LENGTH {
-                has_prefix_key_part = true;
-                break;
-            }
             let position = by_offset
                 .get(&index_column.offset)
                 .copied()
@@ -423,16 +552,180 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
                     ))
                 })?;
             column_positions.push(position);
+            prefix_lengths.push(index_column.length);
         }
-        if has_prefix_key_part {
-            continue;
-        }
+        let has_prefix = prefix_lengths
+            .iter()
+            .any(|length| *length != UNSPECIFIED_LENGTH);
         indexes.push(AnalyzedIndex {
             id: index.id,
-            single_column_unique: index.unique && column_positions.len() == 1,
+            single_column_unique: index.unique && column_positions.len() == 1 && !has_prefix,
             column_positions,
+            prefix_lengths,
         });
     }
 
     Ok(AnalyzePlan::new(columns, indexes, table.name.original())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{analyze_independent_index, cluster_analyze_plan, AnalyzeOptions};
+    use crate::cluster_catalog::{
+        ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot, RegionPagedMetaSnapshot,
+    };
+    use tidb_ast::CiString;
+    use tidb_codec::table_key::encode_index_seek_key;
+    use tidb_codec::Encoder;
+    use tidb_datatype::UNSPECIFIED_LENGTH;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_model::column::ColumnInfo;
+    use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::table_info::TableInfo;
+    use tidb_model::SchemaState;
+
+    #[test]
+    fn ordinary_global_index_is_sampled_with_partition_rows_like_go() {
+        let column = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::LongLong));
+        let table = TableInfo {
+            name: CiString::new("t"),
+            columns: vec![column].into(),
+            indices: vec![IndexInfo {
+                id: 2,
+                name: CiString::new("idx_a"),
+                state: SchemaState::PUBLIC,
+                global: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    length: UNSPECIFIED_LENGTH,
+                    use_changing_type: false,
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        let plan = cluster_analyze_plan(&table, None)
+            .expect("an ordinary global index uses the column sampling task");
+        assert_eq!(plan.indexes().len(), 1);
+        assert_eq!(plan.indexes()[0].id, 2);
+    }
+
+    #[test]
+    fn special_global_index_is_not_in_the_ordinary_sampling_plan() {
+        let column = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::Varchar));
+        let table = TableInfo {
+            name: CiString::new("t"),
+            columns: vec![column].into(),
+            indices: vec![IndexInfo {
+                id: 2,
+                name: CiString::new("idx_a"),
+                state: SchemaState::PUBLIC,
+                global: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    length: 3,
+                    use_changing_type: false,
+                }]
+                .into(),
+                ..IndexInfo::default()
+            }]
+            .into(),
+            ..TableInfo::default()
+        };
+
+        let plan = cluster_analyze_plan(&table, None)
+            .expect("the independent task owns a special global index");
+        assert!(plan.indexes().is_empty());
+    }
+
+    struct RegionSnapshot(Vec<tidb_txnkv::transaction::SnapshotScanRegion>);
+
+    impl MetaSnapshot for RegionSnapshot {
+        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(&mut self, _prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl PagedMetaSnapshot for RegionSnapshot {
+        fn scan_page(
+            &mut self,
+            _start: &[u8],
+            _end: &[u8],
+            _limit: usize,
+        ) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl RegionPagedMetaSnapshot for RegionSnapshot {
+        fn scan_regions(
+            &mut self,
+            _start: &[u8],
+            _end: &[u8],
+        ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn independent_index_keeps_region_topn_boundaries() {
+        let table = TableInfo {
+            id: 42,
+            name: CiString::new("t"),
+            ..TableInfo::default()
+        };
+        let index = IndexInfo {
+            id: 7,
+            name: CiString::new("idx_a"),
+            state: SchemaState::PUBLIC,
+            global: true,
+            columns: vec![IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: 3,
+                use_changing_type: false,
+            }]
+            .into(),
+            ..IndexInfo::default()
+        };
+        let encoder = Encoder::new(false);
+        let one = encoder.encode_key(&[Datum::Int(1)]).unwrap();
+        let two = encoder.encode_key(&[Datum::Int(2)]).unwrap();
+        let key = |value: &[u8], handle: i64| {
+            let mut encoded = value.to_vec();
+            encoded.extend(encoder.encode_key(&[Datum::Int(handle)]).unwrap());
+            encode_index_seek_key(table.id, index.id, &encoded)
+        };
+        let mut snapshot = RegionSnapshot(vec![
+            tidb_txnkv::transaction::SnapshotScanRegion {
+                region: tidb_txnkv::region::RegionVerId::new(1, 1, 1),
+                end_key: key(&two, 1),
+                pairs: vec![(key(&one, 1), Vec::new()), (key(&two, 1), Vec::new())],
+            },
+            tidb_txnkv::transaction::SnapshotScanRegion {
+                region: tidb_txnkv::region::RegionVerId::new(2, 1, 1),
+                end_key: Vec::new(),
+                pairs: vec![(key(&two, 2), Vec::new()), (key(&two, 3), Vec::new())],
+            },
+        ]);
+        let mut options = AnalyzeOptions::default();
+        options.num_buckets = 2;
+        options.num_topn = 1;
+
+        let report =
+            analyze_independent_index(&mut snapshot, &table, &index, &options, 100).unwrap();
+        let item = &report.stats.indexes[0];
+        assert_eq!(report.scanned_rows, 4);
+        assert_eq!(item.topn.as_ref().unwrap().entries()[0].count, 2);
+        assert_eq!(item.histogram.buckets.last().unwrap().count, 2);
+    }
 }

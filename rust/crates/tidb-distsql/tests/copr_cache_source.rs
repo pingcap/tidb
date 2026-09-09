@@ -18,9 +18,9 @@ use std::mem;
 
 use prost::Message;
 use tidb_distsql::{
-    build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
-    CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome, CoprCacheValue,
-    CoprocessorRequestEnvelope, RequestKeyRange,
+    build_copr_cache_key, copr_cache_metric_snapshot, CoprCache, CoprCacheAdmission,
+    CoprCacheConfig, CoprCacheError, CoprCacheRequestContext, CoprCacheResponseContext,
+    CoprCacheResponseOutcome, CoprCacheValue, CoprocessorRequestEnvelope, RequestKeyRange,
 };
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
@@ -275,6 +275,7 @@ fn test_cache_value_len() {
 
 #[test]
 fn test_get_set_and_live_request_response_lifecycle() {
+    let metrics_before = copr_cache_metric_snapshot();
     let cache = cache();
     assert!(cache.get(b"foo").is_none());
     assert!(cache.set(
@@ -361,6 +362,12 @@ fn test_get_set_and_live_request_response_lifecycle() {
     );
     assert_eq!(hit.data, b"cached");
     assert_eq!(hit.range.unwrap().start, b"m");
+    let metrics_after = copr_cache_metric_snapshot();
+    // The counters are process-global like Go's Prometheus vectors. Other
+    // parallel tests can only increase them, so assert the lifecycle's
+    // monotonic minimum rather than an exact isolated delta.
+    assert!(metrics_after.miss >= metrics_before.miss + 1);
+    assert!(metrics_after.hit >= metrics_before.hit + 1);
 
     let stale_region = cache
         .prepare_request(&mut request, request_context(8, 101))
@@ -570,6 +577,46 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
         )
         .unwrap();
     assert_eq!(nonpaging_hit.range.unwrap().start, b"transport");
+}
+
+#[test]
+fn cache_key_rejects_oversized_range_keys_in_source_order() {
+    // Go `coprCacheBuildKey` checks the start key before the end key and
+    // requires both to fit the two-byte length prefix (`math.MaxUint16`).
+    // Go's own `TestBuildCacheKey` exercises only the `Tp too big` branch, so
+    // these two error paths are pinned here.
+    let oversized = vec![0u8; usize::from(u16::MAX) + 1];
+    let mut request = CoprocessorRequestEnvelope {
+        tp: 1,
+        ranges: vec![RequestKeyRange {
+            start_key: oversized.clone().into(),
+            end_key: b"z".to_vec().into(),
+        }],
+        ..CoprocessorRequestEnvelope::default()
+    };
+    assert_eq!(
+        build_copr_cache_key(&request),
+        Err(CoprCacheError::StartKeyTooBig)
+    );
+
+    request.ranges[0].start_key = b"a".to_vec().into();
+    request.ranges[0].end_key = oversized.into();
+    assert_eq!(
+        build_copr_cache_key(&request),
+        Err(CoprCacheError::EndKeyTooBig)
+    );
+}
+
+#[test]
+fn negative_request_type_keeps_go_uint8_low_byte() {
+    // Go only rejects `Tp > math.MaxUint8`, so a negative `kv.Request.Tp`
+    // still reaches `key[0] = uint8(copReq.Tp)` and keeps its low byte.
+    let request = CoprocessorRequestEnvelope {
+        tp: -1,
+        ..CoprocessorRequestEnvelope::default()
+    };
+    let key = build_copr_cache_key(&request).expect("a negative Tp is not rejected");
+    assert_eq!(key[0], 0xff);
 }
 
 #[test]

@@ -53,6 +53,15 @@ impl Default for OkPacket {
 /// The source-owned fields emitted by TiDB's `writeEOF` helper.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EofPacket {
+    /// Number of rows affected by the statement that produced this result.
+    ///
+    /// Go's deprecated-EOF path delegates to `writeOkWith`, so these fields
+    /// are not intrinsically zero even though legacy EOF packets do not carry
+    /// them. Keeping them on the source packet lets the two wire forms share
+    /// one statement snapshot.
+    pub affected_rows: u64,
+    /// Statement-generated auto-increment identifier.
+    pub last_insert_id: u64,
     /// Number of warnings attached to the result set.
     pub warnings: u16,
     /// MySQL server status flags.
@@ -68,6 +77,8 @@ pub struct EofPacket {
 impl Default for EofPacket {
     fn default() -> Self {
         Self {
+            affected_rows: 0,
+            last_insert_id: 0,
             warnings: 0,
             status_flags: 0,
             deprecate_eof: false,
@@ -78,8 +89,14 @@ impl Default for EofPacket {
 }
 
 /// Controls the metadata and terminal packets around a text result set.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResultSetOptions {
+    /// Number of rows affected by the statement that produced this result.
+    pub affected_rows: u64,
+    /// Statement-generated auto-increment identifier.
+    pub last_insert_id: u64,
+    /// Statement informational text carried by a deprecated-EOF OK packet.
+    pub info: Vec<u8>,
     /// MySQL server status flags for metadata and terminal EOF packets.
     pub status_flags: u16,
     /// Number of warnings emitted with metadata and terminal EOF packets.
@@ -100,6 +117,9 @@ pub struct ResultSetOptions {
 impl Default for ResultSetOptions {
     fn default() -> Self {
         Self {
+            affected_rows: 0,
+            last_insert_id: 0,
+            info: Vec::new(),
             status_flags: 0,
             warnings: 0,
             deprecate_eof: false,
@@ -148,15 +168,16 @@ pub fn encode_ok_packet(packet: &OkPacket) -> Vec<u8> {
 /// Encodes the payload of an EOF packet using TiDB's `writeEOF` behavior.
 ///
 /// With `deprecate_eof`, TiDB emits an OK-shaped packet with an EOF header and
-/// zero affected rows/last-insert-id fields. Otherwise it emits the compact
-/// legacy EOF form, including warning/status fields only under protocol 4.1.
+/// the statement's affected-row/last-insert-id fields. Otherwise it emits the
+/// compact legacy EOF form, including warning/status fields only under
+/// protocol 4.1.
 pub fn encode_eof_packet(packet: &EofPacket) -> Vec<u8> {
     if packet.deprecate_eof {
         return encode_ok_like_packet(
             EOF_HEADER,
             &OkPacket {
-                affected_rows: 0,
-                last_insert_id: 0,
+                affected_rows: packet.affected_rows,
+                last_insert_id: packet.last_insert_id,
                 status_flags: packet.status_flags,
                 warnings: packet.warnings,
                 info: packet.info.clone(),
@@ -198,11 +219,13 @@ pub fn encode_text_result_set(
     }
 
     let eof = EofPacket {
+        affected_rows: options.affected_rows,
+        last_insert_id: options.last_insert_id,
         warnings: options.warnings,
         status_flags: options.status_flags,
         deprecate_eof: options.deprecate_eof,
         protocol_41: options.protocol_41,
-        info: Vec::new(),
+        info: options.info.clone(),
     };
     if !options.deprecate_eof {
         packets.push(encode_eof_packet(&eof));

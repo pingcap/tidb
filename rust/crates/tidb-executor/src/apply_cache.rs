@@ -24,13 +24,17 @@
 //! section. `applyCacheKey` and its `Hash()` method are not a distinct type:
 //! they exist in Go only to satisfy `kvcache.Key`, whose `Hash()` returns the
 //! key bytes unchanged, so the byte slice *is* the key here. Both upstream
-//! tests are ported in `tests/apply_cache_source.rs`.
+//! tests are ported in `crate::tests_executor_internal_source`
+//! (`apply_cache_admits_values_and_evicts_oldest_entries`,
+//! `apply_cache_concurrent_get_and_set_is_safe`), and the live ApplyExec cache
+//! reuse is covered by `apply::tests`. This module's separate external test
+//! file was removed when it was narrowed to executor internals.
 //!
 //! The policy the source owns, reproduced exactly: charge each pair as
 //! `len(key) + value memory`; reject outright an item larger than the quota;
 //! otherwise evict oldest-first until the item fits, then store it. Note that
 //! Go re-charges a replaced key without refunding the old entry, which the
-//! Rust keeps — see `replacing_a_key_preserves_the_source_tracker_charge`.
+//! Rust keeps.
 //!
 //! Narrowed dependencies:
 //!
@@ -57,7 +61,7 @@ use tidb_util::kvcache::SimpleLruCache;
 
 /// Computes the source apply-cache memory charge for one key/value pair.
 #[must_use]
-pub fn apply_cache_kv_mem(key: &[u8], value_memory: i64) -> i64 {
+pub(crate) fn apply_cache_kv_mem(key: &[u8], value_memory: i64) -> i64 {
     key.len() as i64 + value_memory
 }
 
@@ -73,7 +77,7 @@ struct CacheState<V> {
 
 /// Thread-safe bounded LRU cache whose admission and eviction are driven by
 /// retained bytes.
-pub struct ApplyCache<V> {
+pub(crate) struct ApplyCache<V> {
     memory_capacity: i64,
     state: Mutex<CacheState<V>>,
 }
@@ -81,7 +85,7 @@ pub struct ApplyCache<V> {
 impl<V> ApplyCache<V> {
     /// Creates an empty apply cache with the source memory quota.
     #[must_use]
-    pub fn new(memory_capacity: i64) -> Self {
+    pub(crate) fn new(memory_capacity: i64) -> Self {
         Self {
             memory_capacity,
             state: Mutex::new(CacheState {
@@ -92,7 +96,7 @@ impl<V> ApplyCache<V> {
     }
 
     /// Looks up a shared immutable value and marks it most recently used.
-    pub fn get(&self, key: &[u8]) -> Option<Arc<V>> {
+    pub(crate) fn get(&self, key: &[u8]) -> Option<Arc<V>> {
         let mut state = self.lock();
         state.entries.get(key).map(|entry| Arc::clone(&entry.value))
     }
@@ -102,7 +106,7 @@ impl<V> ApplyCache<V> {
     /// Returns `false` without mutation when the item itself exceeds the
     /// quota. Otherwise, oldest entries are removed until the item fits;
     /// `true` means the value is retained.
-    pub fn set(&self, key: impl Into<Vec<u8>>, value: V, value_memory: i64) -> bool {
+    pub(crate) fn set(&self, key: impl Into<Vec<u8>>, value: V, value_memory: i64) -> bool {
         self.set_shared(key, Arc::new(value), value_memory)
     }
 
@@ -111,7 +115,12 @@ impl<V> ApplyCache<V> {
     /// Apply executors keep iterating a newly computed inner relation while
     /// the cache begins owning it. Sharing that one allocation avoids a
     /// second full relation copy without exposing mutable cached state.
-    pub fn set_shared(&self, key: impl Into<Vec<u8>>, value: Arc<V>, value_memory: i64) -> bool {
+    pub(crate) fn set_shared(
+        &self,
+        key: impl Into<Vec<u8>>,
+        value: Arc<V>,
+        value_memory: i64,
+    ) -> bool {
         let key = key.into();
         let memory = apply_cache_kv_mem(&key, value_memory);
         if memory > self.memory_capacity {
@@ -133,20 +142,8 @@ impl<V> ApplyCache<V> {
 
     /// Returns the current memory charge.
     #[must_use]
-    pub fn memory_consumed(&self) -> i64 {
+    pub(crate) fn memory_consumed(&self) -> i64 {
         self.lock().memory_consumed
-    }
-
-    /// Returns the number of retained values.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.lock().entries.len()
-    }
-
-    /// Returns whether the cache has no retained values.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.lock().entries.is_empty()
     }
 
     fn lock(&self) -> MutexGuard<'_, CacheState<V>> {

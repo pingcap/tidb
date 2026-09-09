@@ -22,17 +22,14 @@ mod index_prefix_lengths;
 mod index_prefix_reads;
 mod index_ranges;
 mod indexes;
-mod join_reorder;
 mod joins;
 mod mem_quota;
 mod point_get;
-mod predicate_pushdown;
 mod primary_keys;
 mod select_clauses;
 mod set_operations;
 mod subqueries;
 mod table_round_trip;
-mod through_proj;
 
 use super::*;
 
@@ -157,6 +154,12 @@ fn scale_analyzed_tpcc_table(
             .collect::<Vec<_>>();
         let mut options = crate::analyze::AnalyzeOptions::default();
         options.num_topn = 0;
+        // Go `getAdjustedSampleRate` falls back to 0.001 only when it cannot
+        // read any row count at all; a real ANALYZE of this fixture's table
+        // has a `mysql.stats_meta.count`, so it reads every row. The fixture
+        // passes no count, so it must say "read all" explicitly or the
+        // Bernoulli policy keeps no sample and every histogram is empty.
+        options.sample_rate = Some(1.0);
         let statistics = crate::analyze::kv::analyze_kv_table(table, &options, None, ctx).unwrap();
         (table_id, column_ndvs, indexes, statistics)
     };

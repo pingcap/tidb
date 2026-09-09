@@ -50,6 +50,8 @@ mod field_type;
 mod index;
 #[path = "ddl/column/inline_key.rs"]
 mod inline_key;
+#[path = "ddl/materialized_view.rs"]
+mod materialized_view;
 #[path = "ddl_partition.rs"]
 mod partition;
 #[path = "ddl/table_option.rs"]
@@ -1108,7 +1110,16 @@ impl Parser {
                 "COPY" => AlterTableAlgorithm::Copy,
                 "INPLACE" => AlterTableAlgorithm::Inplace,
                 "INSTANT" => AlterTableAlgorithm::Instant,
-                _ => return Err(self.err_here("unknown ALTER TABLE algorithm")),
+                _ => {
+                    // Go `AlgorithmClause`'s identifier arm
+                    // (parser.y:3188-3192): `ErrUnknownAlterAlgorithm` is
+                    // `terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)`
+                    // — `[parser:1800]`, the name as written.
+                    return Err(self.err_coded(
+                        1800,
+                        &format!("[parser:1800]Unknown ALGORITHM '{}'", token.text),
+                    ));
+                }
             };
             AlterTableAction::Algorithm(algorithm)
         } else if self.is_kw("READ") {

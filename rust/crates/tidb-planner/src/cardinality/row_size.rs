@@ -23,6 +23,8 @@
 //! integers at this boundary; conversion happens only where Go converts them
 //! to `float64` for arithmetic.
 
+use tidb_datatype::FieldTypeCode;
+
 /// The MySQL storage types whose row-size encoding has a fixed or special
 /// planner width in TiDB.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,43 @@ pub enum RowSizeType {
 }
 
 impl RowSizeType {
+    /// Maps Go `FieldType.GetType()` onto the branches in `GetFixedLen`,
+    /// `AvgColSize`, and `AvgColSizeDataInDiskByRows`.
+    #[must_use]
+    pub const fn from_field_type_code(code: FieldTypeCode) -> Self {
+        match code {
+            FieldTypeCode::Float => Self::Float,
+            FieldTypeCode::Double => Self::Double,
+            FieldTypeCode::Duration => Self::Duration,
+            FieldTypeCode::Date | FieldTypeCode::NewDate => Self::Date,
+            FieldTypeCode::Datetime => Self::Datetime,
+            FieldTypeCode::Timestamp => Self::Timestamp,
+            FieldTypeCode::Tiny => Self::Tiny,
+            FieldTypeCode::Short => Self::Short,
+            FieldTypeCode::Int24 => Self::Int24,
+            FieldTypeCode::Long => Self::Long,
+            FieldTypeCode::LongLong => Self::LongLong,
+            FieldTypeCode::Year => Self::Year,
+            FieldTypeCode::Enum => Self::Enum,
+            FieldTypeCode::Bit => Self::Bit,
+            FieldTypeCode::Set => Self::Set,
+            FieldTypeCode::NewDecimal => Self::Decimal,
+            FieldTypeCode::Unspecified
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::Json
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::String
+            | FieldTypeCode::Geometry
+            | FieldTypeCode::VectorFloat32
+            | FieldTypeCode::Null
+            | FieldTypeCode::VarString
+            | FieldTypeCode::Blob
+            | FieldTypeCode::Unknown(_) => Self::Variable,
+        }
+    }
+
     /// Returns the chunk-memory width used by `GetFixedLen`.
     #[must_use]
     pub const fn fixed_len(self) -> Option<f64> {

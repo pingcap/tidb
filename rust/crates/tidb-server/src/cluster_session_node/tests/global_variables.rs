@@ -87,12 +87,15 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> ClusterSessi
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::new(super::mock_seams::MockStatsLock)
+            as Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         globals,
-        Arc::new(SharedStats::new(
-            tidb_exec::stats_watch::StatsSnapshot::new(),
-        )),
+        Arc::new(
+            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+                .expect("statistics cache"),
+        ),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     )
 }

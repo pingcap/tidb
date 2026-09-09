@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! An in-memory table source: emits rows from a provided value matrix.
-//!
-//! This is the mock table source that lets `SELECT ... FROM t` run before the
-//! storage-backed readers exist -- the seam where Go's `TableReaderExec`
-//! (distsql/tikv, via tablecodec) will plug in. It is deliberately NOT a port
-//! of a specific Go executor; it stands in for one, and is documented as such.
+//! The row source used by Go's `executorBuilder.buildMemTable` path after a
+//! `PhysicalMemTable` resolves its virtual-table rows.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};

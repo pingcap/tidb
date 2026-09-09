@@ -16,7 +16,7 @@
 //! `LogicalMaxOneRow`, which "checks if a query returns no more than one row".
 //!
 //! SEED of `pkg/planner/core`. This operator was a
-//! [`crate::logical::TodoLogicalOp`] before this batch, and it MERGES the
+//! `LogicalPlan` placeholder arm before this batch, and it MERGES the
 //! crate's former `logical_max_one_row` identity leaf — that leaf modelled the
 //! generated `Hash64`/`Equals`, which for this operator is the PLAN ID and
 //! nothing else, because Go's own comment says it "doesn't have any other

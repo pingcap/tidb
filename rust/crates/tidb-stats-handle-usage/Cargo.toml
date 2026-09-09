@@ -1,0 +1,15 @@
+[package]
+name = "tidb-stats-handle-usage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB session statistics and column-usage collection."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-model = { path = "../tidb-model" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }

@@ -32,7 +32,7 @@ pub struct ByteSize(pub u64);
 const BINARY_ABBRS: [&str; 9] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
 
 /// go-units `BytesSize`: binary units, `%.4g` significand.
-pub fn bytes_size(mut size: f64) -> String {
+fn bytes_size(mut size: f64) -> String {
     let mut i = 0;
     while size >= 1024.0 && i < BINARY_ABBRS.len() - 1 {
         size /= 1024.0;
@@ -60,43 +60,176 @@ fn format_g4(v: f64) -> String {
 /// go-units `RAMInBytes`: parses a human size with binary units (both `KB`
 /// and `KiB` mean 1024).
 pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
-    // Regex in the source: `^(\d+(\.\d+)*) ?([kKmMgGtTpP])?([iI])?[bB]?$`
-    let s = size.trim_end();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
-        i += 1;
-    }
-    let (num, rest) = s.split_at(i);
-    if num.is_empty() || num.starts_with('.') || num.ends_with('.') || num.matches('.').count() > 1
-    {
+    // docker/go-units v0.5.0 `parseSize`: the numeric prefix is everything
+    // through the last digit, period, or separating space. In particular,
+    // this deliberately accepts the exponent and leading-plus forms accepted
+    // by strconv.ParseFloat.
+    let bytes = size.as_bytes();
+    let Some(separator) = bytes
+        .iter()
+        .rposition(|byte| byte.is_ascii_digit() || *byte == b'.' || *byte == b' ')
+    else {
+        return Err(format!("invalid size: '{size}'"));
+    };
+    let (number, suffix) = if bytes[separator] == b' ' {
+        (&size[..separator], &size[separator + 1..])
+    } else {
+        (&size[..=separator], &size[separator + 1..])
+    };
+    let mut value = parse_go_float(number).map_err(|_| format!("invalid size: '{size}'"))?;
+    if !value.is_finite() || value < 0.0 {
         return Err(format!("invalid size: '{size}'"));
     }
-    let value: f64 = num.parse().map_err(|_| format!("invalid size: '{size}'"))?;
+    if suffix.is_empty() {
+        return Ok(go_float_to_i64(value));
+    }
 
-    let mut rest = rest.strip_prefix(' ').unwrap_or(rest).to_string();
-    // strip optional trailing 'b'/'B'
-    if rest.len() > 1 || rest.eq_ignore_ascii_case("b") {
-        if let Some(r) = rest.strip_suffix(['b', 'B']) {
-            rest = r.to_string();
-        }
+    let suffix = suffix.to_ascii_lowercase();
+    let suffix = suffix.as_bytes();
+    if suffix.len() > 3 {
+        return Err(format!(
+            "invalid suffix: '{}'",
+            String::from_utf8_lossy(suffix)
+        ));
     }
-    // strip optional 'i'/'I'
-    if rest.len() == 2 {
-        if let Some(r) = rest.strip_suffix(['i', 'I']) {
-            rest = r.to_string();
+    if suffix[0] == b'b' {
+        if suffix.len() == 1 {
+            return Ok(go_float_to_i64(value));
         }
+        return Err(format!(
+            "invalid suffix: '{}'",
+            String::from_utf8_lossy(suffix)
+        ));
     }
-    let mul: i64 = match rest.to_lowercase().as_str() {
-        "" => 1,
-        "k" => 1 << 10,
-        "m" => 1 << 20,
-        "g" => 1 << 30,
-        "t" => 1 << 40,
-        "p" => 1 << 50,
-        _ => return Err(format!("invalid size: '{size}'")),
+    let multiplier = match suffix[0] {
+        b'k' => 1u64 << 10,
+        b'm' => 1u64 << 20,
+        b'g' => 1u64 << 30,
+        b't' => 1u64 << 40,
+        b'p' => 1u64 << 50,
+        _ => {
+            return Err(format!(
+                "invalid suffix: '{}'",
+                String::from_utf8_lossy(suffix)
+            ))
+        }
     };
-    Ok((value * mul as f64) as i64)
+    if (suffix.len() == 2 && suffix[1] != b'b') || (suffix.len() == 3 && &suffix[1..] != b"ib") {
+        return Err(format!(
+            "invalid suffix: '{}'",
+            String::from_utf8_lossy(suffix)
+        ));
+    }
+    value *= multiplier as f64;
+    Ok(go_float_to_i64(value))
+}
+
+/// Parses the decimal and hexadecimal floating-point forms accepted by Go's
+/// `strconv.ParseFloat`. Rust's standard `f64` parser does not accept the
+/// hexadecimal or digit-separator forms that `docker/go-units` inherits.
+fn parse_go_float(input: &str) -> Result<f64, ()> {
+    let input = strip_go_float_underscores(input)?;
+    let body_start = usize::from(input.starts_with(['+', '-']));
+    let body = &input[body_start..];
+    if body.len() >= 2 && body.as_bytes()[0] == b'0' && matches!(body.as_bytes()[1], b'x' | b'X') {
+        parse_hex_float(&input)
+    } else {
+        input.parse::<f64>().map_err(|_| ())
+    }
+}
+
+/// Removes Go numeric separators while enforcing their placement rules.
+fn strip_go_float_underscores(input: &str) -> Result<String, ()> {
+    if !input.contains('_') {
+        return Ok(input.to_owned());
+    }
+    let bytes = input.as_bytes();
+    let sign_len = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let is_hex = bytes.len() >= sign_len + 2
+        && bytes[sign_len] == b'0'
+        && matches!(bytes[sign_len + 1], b'x' | b'X');
+    let prefix_end = sign_len + 2;
+    let mut output = String::with_capacity(input.len());
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte != b'_' {
+            output.push(byte as char);
+            continue;
+        }
+        let Some(&next) = bytes.get(index + 1) else {
+            return Err(());
+        };
+        let previous = bytes[index.saturating_sub(1)];
+        let valid = if is_hex && index == prefix_end {
+            next.is_ascii_hexdigit()
+        } else if is_hex {
+            previous.is_ascii_hexdigit() && next.is_ascii_hexdigit()
+        } else {
+            previous.is_ascii_digit() && next.is_ascii_digit()
+        };
+        if !valid {
+            return Err(());
+        }
+    }
+    Ok(output)
+}
+
+/// Parses a Go hexadecimal floating-point literal (`0x1.8p+1`).
+fn parse_hex_float(input: &str) -> Result<f64, ()> {
+    let sign_len = usize::from(input.starts_with(['+', '-']));
+    let negative = input.as_bytes().first() == Some(&b'-');
+    let body = &input[sign_len + 2..];
+    let exponent_start = body.find(['p', 'P']).ok_or(())?;
+    let (mantissa, exponent) = body.split_at(exponent_start);
+    let exponent = exponent
+        .get(1..)
+        .ok_or(())?
+        .parse::<i32>()
+        .map_err(|_| ())?;
+    if mantissa.is_empty() {
+        return Err(());
+    }
+
+    let mut value = 0.0;
+    let mut fractional_digits = 0i32;
+    let mut after_dot = false;
+    let mut digit_count = 0;
+    for byte in mantissa.bytes() {
+        if byte == b'.' {
+            if after_dot {
+                return Err(());
+            }
+            after_dot = true;
+            continue;
+        }
+        let digit = match byte {
+            b'0'..=b'9' => f64::from(byte - b'0'),
+            b'a'..=b'f' => f64::from(byte - b'a' + 10),
+            b'A'..=b'F' => f64::from(byte - b'A' + 10),
+            _ => return Err(()),
+        };
+        value = value * 16.0 + digit;
+        digit_count += 1;
+        if after_dot {
+            fractional_digits += 1;
+        }
+    }
+    if digit_count == 0 {
+        return Err(());
+    }
+    value *= 16.0f64.powi(-fractional_digits);
+    value *= 2.0f64.powi(exponent);
+    if !value.is_finite() {
+        return Err(());
+    }
+    Ok(if negative { -value } else { value })
+}
+
+fn go_float_to_i64(value: f64) -> i64 {
+    if value >= 9_223_372_036_854_775_808.0 {
+        i64::MIN
+    } else {
+        value as i64
+    }
 }
 
 impl Serialize for ByteSize {
@@ -118,26 +251,13 @@ impl<'de> Deserialize<'de> for ByteSize {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, PartialOrd, Ord)]
 pub struct Duration(pub i64);
 
-impl Duration {
-    /// The wrapped duration as a std `Duration` (panics on negative, like
-    /// converting a negative Go duration would).
-    pub fn as_std(&self) -> std::time::Duration {
-        std::time::Duration::from_nanos(self.0 as u64)
-    }
-
-    /// Builds from a std `Duration`.
-    pub fn from_std(d: std::time::Duration) -> Duration {
-        Duration(d.as_nanos() as i64)
-    }
-}
-
 /// Go `time.Duration.String()`.
-pub fn format_go_duration(d: i64) -> String {
+fn format_go_duration(d: i64) -> String {
     if d == 0 {
         return "0s".to_string();
     }
     let neg = d < 0;
-    let mut u = d.unsigned_abs();
+    let u = d.unsigned_abs();
     let mut out = String::new();
 
     if u < 1_000_000_000 {
@@ -182,8 +302,6 @@ pub fn format_go_duration(d: i64) -> String {
         }
         out.push_str(&sec_part);
         out.push('s');
-        u = 0;
-        let _ = u;
     }
     if neg {
         format!("-{out}")
@@ -207,36 +325,30 @@ pub fn parse_go_duration(s: &str) -> Result<i64, String> {
     if s.is_empty() {
         return Err(format!("time: invalid duration {orig:?}"));
     }
-    let mut d: i64 = 0;
+    let mut duration = 0u64;
     while !s.is_empty() {
-        // integer part
-        let int_len = s.bytes().take_while(u8::is_ascii_digit).count();
-        let (int_str, rest) = s.split_at(int_len);
-        s = rest;
-        // fraction part
-        let mut frac: f64 = 0.0;
-        let mut has_frac = false;
-        if let Some(rest) = s.strip_prefix('.') {
-            let frac_len = rest.bytes().take_while(u8::is_ascii_digit).count();
-            if frac_len > 0 {
-                has_frac = true;
-                frac = format!("0.{}", &rest[..frac_len])
-                    .parse()
-                    .map_err(|_| format!("time: invalid duration {orig:?}"))?;
-            }
-            s = &rest[frac_len..];
-        }
-        if int_str.is_empty() && !has_frac {
+        if !matches!(s.as_bytes()[0], b'.' | b'0'..=b'9') {
             return Err(format!("time: invalid duration {orig:?}"));
         }
-        let int_val: u64 = if int_str.is_empty() {
-            0
-        } else {
-            int_str
-                .parse()
-                .map_err(|_| format!("time: invalid duration {orig:?}"))?
-        };
-        // unit
+        let (integer, rest) =
+            leading_int(s).ok_or_else(|| format!("time: invalid duration {orig:?}"))?;
+        let has_integer = rest.len() != s.len();
+        s = rest;
+
+        let mut fraction = 0u64;
+        let mut scale = 1f64;
+        let mut has_fraction = false;
+        if let Some(rest) = s.strip_prefix('.') {
+            let (value, value_scale, remaining) = leading_fraction(rest);
+            fraction = value;
+            scale = value_scale;
+            has_fraction = remaining.len() != rest.len();
+            s = remaining;
+        }
+        if !has_integer && !has_fraction {
+            return Err(format!("time: invalid duration {orig:?}"));
+        }
+
         let unit_len = s
             .char_indices()
             .find(|(_, c)| c.is_ascii_digit() || *c == '.')
@@ -244,7 +356,7 @@ pub fn parse_go_duration(s: &str) -> Result<i64, String> {
             .unwrap_or(s.len());
         let (unit_str, rest) = s.split_at(unit_len);
         s = rest;
-        let unit: i64 = match unit_str {
+        let unit: u64 = match unit_str {
             "ns" => 1,
             "us" | "µs" | "μs" => 1_000,
             "ms" => 1_000_000,
@@ -258,13 +370,75 @@ pub fn parse_go_duration(s: &str) -> Result<i64, String> {
                 ))
             }
         };
-        let v = int_val as i64 * unit + (frac * unit as f64) as i64;
-        d += v;
-        if d < 0 {
+        if integer > (1u64 << 63) / unit {
             return Err(format!("time: invalid duration {orig:?}"));
         }
+        let mut value = integer * unit;
+        if fraction > 0 {
+            value += (fraction as f64 * (unit as f64 / scale)) as u64;
+            if value > 1u64 << 63 {
+                return Err(format!("time: invalid duration {orig:?}"));
+            }
+        }
+        duration = duration
+            .checked_add(value)
+            .filter(|value| *value <= 1u64 << 63)
+            .ok_or_else(|| format!("time: invalid duration {orig:?}"))?;
     }
-    Ok(if neg { -d } else { d })
+    if neg {
+        Ok(duration.wrapping_neg() as i64)
+    } else if duration > i64::MAX as u64 {
+        Err(format!("time: invalid duration {orig:?}"))
+    } else {
+        Ok(duration as i64)
+    }
+}
+
+fn leading_int(value: &str) -> Option<(u64, &str)> {
+    let mut parsed = 0u64;
+    let mut length = 0;
+    for byte in value.bytes() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        if parsed > (1u64 << 63) / 10 {
+            return None;
+        }
+        parsed = parsed * 10 + u64::from(byte - b'0');
+        if parsed > 1u64 << 63 {
+            return None;
+        }
+        length += 1;
+    }
+    Some((parsed, &value[length..]))
+}
+
+fn leading_fraction(value: &str) -> (u64, f64, &str) {
+    let mut parsed = 0u64;
+    let mut scale = 1f64;
+    let mut overflow = false;
+    let mut length = 0;
+    for byte in value.bytes() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        length += 1;
+        if overflow {
+            continue;
+        }
+        if parsed > (i64::MAX as u64) / 10 {
+            overflow = true;
+            continue;
+        }
+        let next = parsed * 10 + u64::from(byte - b'0');
+        if next > 1u64 << 63 {
+            overflow = true;
+            continue;
+        }
+        parsed = next;
+        scale *= 10.0;
+    }
+    (parsed, scale, &value[length..])
 }
 
 impl fmt::Display for Duration {
@@ -356,10 +530,31 @@ mod tests {
             ("32P", 32i64 << 50),
             ("32.3", 32),
             ("32.5KiB", (32.5 * 1024.0) as i64),
+            (".3kB", (0.3 * 1024.0) as i64),
+            ("32.KiB", 32 << 10),
+            ("+32MiB", 32 << 20),
+            ("1e2KiB", 100 << 10),
         ] {
             assert_eq!(ram_in_bytes(s).unwrap(), v, "case {s}");
         }
-        for s in ["", "hello", "-32", ".3kB", "32.KiB", "32.5x"] {
+        for s in ["", "hello", "-32", "32.5x"] {
+            assert!(ram_in_bytes(s).is_err(), "case {s}");
+        }
+    }
+
+    #[test]
+    fn ram_in_bytes_accepts_go_float_literals() {
+        for (s, v) in [
+            // strconv.ParseFloat accepts hexadecimal mantissas with a binary
+            // exponent and valid Go digit separators.
+            ("0x1p10KiB", 1024 * 1024),
+            ("0x1.8p1KiB", 3 * 1024),
+            ("0x_1p10KiB", 1024 * 1024),
+            ("1_000KiB", 1_000 * 1024),
+        ] {
+            assert_eq!(ram_in_bytes(s).unwrap(), v, "case {s}");
+        }
+        for s in ["1_e2KiB", "0x1_p10KiB"] {
             assert!(ram_in_bytes(s).is_err(), "case {s}");
         }
     }

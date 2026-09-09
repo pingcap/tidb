@@ -49,7 +49,20 @@ region can confirm it now warns rather than failing.
 
 ## Rank 1 — TiKV computes a different result
 
-### 1.1 `DAGRequest.flags` is hardcoded to `0` on both live paths
+### 1.1 `DAGRequest.flags` is hardcoded to `0` on both live paths — FIXED (verified 2026-09-05)
+
+Both live paths now send the computed word. The read-only tier's session
+carries a `push_down_flags` field defaulting to `select_push_down_flags()`'s
+derivation for the tier's single statement class — Go's `*ast.SelectStmt`
+arm of `ResetContextOfStmt` writes those bits as literals with no SQL-mode
+input — overridable with `set_push_down_flags` for a driver that runs a
+non-SELECT over the tier, and `construct_read_only_dag_req` passes the
+field through (`real_tikv_read.rs`). The cluster scan path threads
+`request.statement.push_down_flags` from the executor's `StmtContext` into
+`DagRequestContext::new` (`cop_scan.rs`), pinned by
+`the_statements_push_down_flags_reach_the_coprocessor_request`.
+
+Original finding, retained for the Go evidence:
 
 * Go: `pkg/executor/internal/builder/builder_utils.go:72`
   — `dagReq.Flags = sc.PushDownFlags()`, unconditionally, for every DAG.
@@ -59,7 +72,8 @@ region can confirm it now warns rather than failing.
   third argument is `push_down_flags`, and it is the literal `0`.
 
 The port itself is correct and complete:
-`rust/crates/tidb-exec/src/statement_pushdown.rs:85-125` reproduces
+`rust/crates/tidb-executor/src/statement_pushdown.rs:85-125` (re-exported as
+`tidb_exec::statement_pushdown`) reproduces
 `PushDownFlagsWithTypeFlagsAndErrLevels` and `PushDownFlags` bit for bit,
 including the `FLAG_TRUNCATE_AS_WARNING | FLAG_OVERFLOW_AS_WARNING` pairing and
 the `IGNORE_TRUNCATE`-wins precedence. It has **no production caller**. The
@@ -130,7 +144,23 @@ I cannot send one request to check.
 
 ## Rank 2 — a correctness-relevant flag dropped
 
-### 2.1 `SetFromSessionVars` has no production caller
+### 2.1 `SetFromSessionVars` has no production caller — FIXED (verified 2026-09-05, bounded)
+
+The cluster scan path now builds a real `DistSqlContext` per request and
+drives the builder through `RequestBuilder::from_context` (`cop_scan.rs`
+`open_scan`): the resource group name travels per request (statement-scoped
+in Go), the replica-read preference is threaded from the `StmtContext`, the
+statement's `Priority` and `NotFillCache` (`SQL_NO_CACHE`) are threaded from
+the AST through `StmtContext` (`statement_context_for_stmt`,
+`pkg/executor/select.go`'s `ResetContextOfStmt` arms), and the IndexLookUp
+first-window paging floor raises the paging bounds. The remaining
+`SetFromSessionVars` inputs that no `StmtContext` carries yet — request
+source, task id, `max_execution_time`, `tidb_kv_read_timeout`, the runaway
+checker — are documented in the code at the construction site as the
+explicit residual, so the gap is now a listed plumbing queue rather than an
+invisible default.
+
+Original finding, retained for the Go evidence:
 
 * Go: `pkg/distsql/request_builder.go:339-379` — every DAG request goes through
   `SetFromSessionVars`, which sets isolation level, priority, `NotFillCache`,
@@ -164,8 +194,8 @@ SELECT LOW_PRIORITY SQL_NO_CACHE * FROM t WHERE id > 100;
 | --- | --- | --- |
 | `isolation_level` | `RC` (1) | `SI` (0) |
 | `replica_read` | `true`, type Follower | `false`, Leader |
-| `priority` | `Low` (1) | `Normal` (0) |
-| `not_fill_cache` | `true` | `false` |
+| `priority` | `Low` (1) | `Low` (1) — carried since this batch |
+| `not_fill_cache` | `true` | `true` — carried since this batch |
 | `resource_group_tag` | SQL+plan digest | empty |
 | `resource_control_context.resource_group_name` | session's group | `""` |
 | `task_id` | statement task id | `0` |

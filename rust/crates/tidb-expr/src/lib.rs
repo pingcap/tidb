@@ -346,8 +346,12 @@ mod coerce;
 pub mod collation_derive;
 pub mod column;
 pub mod constant;
-mod constant_fold;
-pub use constant_fold::{derive_constant_null_flag, fold_constant_in_mode, ConstantFoldMode};
+pub mod constant_fold;
+pub mod constant_propagation;
+pub use constant_fold::{
+    derive_constant_null_flag, fold_constant_in_mode,
+    fold_constant_in_mode_preserving_warning_casts, ConstantFoldMode,
+};
 mod context;
 pub mod convert_charset;
 pub mod evaluator;
@@ -399,6 +403,7 @@ pub use context::{
 };
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
+pub use regexp::regexp_match_bin_collation;
 pub use row::{compare_datums, compare_datums_with_collation};
 pub(crate) use tidb_datatype::{Datum, Decimal};
 pub use tidb_util::mathutil::MysqlRng;
@@ -421,6 +426,31 @@ fn is_signed_binary_literal(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// Go's arithmetic signatures include the source-shaped binary expression in
+/// DOUBLE and DECIMAL overflow errors. The AST evaluator retains that syntax
+/// until this boundary; the values-only operator helper intentionally keeps
+/// returning its datum-level carrier.
+fn ast_binary_overflow_error(
+    operator: tidb_ast::BinaryOp,
+    left: &Expr,
+    right: &Expr,
+    integer_unsigned: bool,
+    error: EvalError,
+) -> EvalError {
+    let value = match error {
+        EvalError::IntOverflow if integer_unsigned => "BIGINT UNSIGNED",
+        EvalError::IntOverflow => "BIGINT",
+        EvalError::FloatOverflow => "DOUBLE",
+        EvalError::DecimalOverflow => "DECIMAL",
+        _ => return error,
+    };
+    let Some(expression) = crate::math_fn::render_ast_binary_expression(operator, left, right)
+    else {
+        return error;
+    };
+    EvalError::DataOutOfRange { value, expression }
+}
 use coerce::{bool_int, coerce_str, coerce_str_bytes};
 use func::{eval_func, eval_in_list, negate_if};
 use like::like_match;
@@ -437,6 +467,204 @@ pub fn eval(expr: &Expr) -> Result<Datum, EvalError> {
     eval_in(expr, &NoColumns)
 }
 
+/// Mirrors Go `expression.IsValidCurrentTimestampExpr` from
+/// `pkg/expression/helper.go`.
+///
+/// The predicate is used while validating a temporal column's DEFAULT AST,
+/// before the expression is lowered into an executable evaluator. Go accepts
+/// only a `CURRENT_TIMESTAMP` function call: a bare call is valid when the
+/// destination has no fractional-second precision, while an explicit first
+/// integer argument is valid only when it exactly matches the destination
+/// field type's decimal/FSP metadata. Additional arguments are intentionally
+/// ignored here, matching Go's direct `Args[0]` read; malformed first
+/// arguments simply fail the predicate.
+#[must_use]
+pub fn is_valid_current_timestamp_expr(
+    expr: &Expr,
+    field_type: Option<&tidb_datatype::FieldType>,
+) -> bool {
+    let Expr::Func { name, args, .. } = expr else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
+        return false;
+    }
+
+    match args.first() {
+        None => field_type.is_none_or(|field_type| field_type.decimal() <= 0),
+        Some(Expr::Int(digits)) => {
+            let Some(field_type) = field_type else {
+                return false;
+            };
+            let Ok(fsp) = digits.parse::<i64>() else {
+                return false;
+            };
+            fsp == field_type.decimal()
+        }
+        Some(_) => false,
+    }
+}
+
+/// The AST/value boundary for Go `expression.GetTimeValue`.
+///
+/// Go's helper is used while constructing temporal defaults, so it accepts
+/// both raw sentinel strings (`CURRENT_TIMESTAMP`/`CURRENT_DATE`) and parser
+/// value expressions. Rust represents the latter with [`Expr`]:
+/// `String`/`Int`/`Null` stand in for `driver.ValueExpr`, `RawString` is the
+/// untyped Go `string` case, `Func` is an AST function call, and `Unary` is
+/// the small arithmetic form the source helper evaluates before parsing.
+/// Unknown AST forms preserve Go's zero-value datum (`NULL`) rather than
+/// pretending to evaluate a wider build-context surface.
+pub fn get_time_value(
+    cols: &dyn Columns,
+    expr: &Expr,
+    kind: tidb_datatype::TimeType,
+    fsp: i64,
+    explicit_timezone: Option<&tidb_datatype::SessionTimeZone>,
+) -> Result<Datum, EvalError> {
+    let parse_zone = explicit_timezone
+        .cloned()
+        .unwrap_or_else(|| cols.time_zone());
+    let modes = cols.date_modes();
+
+    let parse_text = |text: &str| {
+        tidb_datatype::parse_time(
+            text,
+            kind,
+            fsp,
+            false,
+            !modes.no_zero_in_date,
+            modes.allow_invalid_dates,
+            &parse_zone,
+        )
+        .map(|parsed| parsed.time)
+        .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))
+    };
+    let parse_number = |number: i64| {
+        tidb_datatype::parse_time_from_num(
+            number,
+            kind,
+            fsp,
+            !modes.no_zero_in_date,
+            modes.allow_invalid_dates,
+            number == 0 || !modes.no_zero_date,
+            &parse_zone,
+        )
+        .map(|parsed| parsed.time)
+        .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))
+    };
+
+    let time = match expr {
+        // `GetTimeValue(ctx, string, ...)`: the two clock sentinels are
+        // interpreted before ordinary text parsing.
+        Expr::RawString(text) if text.eq_ignore_ascii_case("CURRENT_TIMESTAMP") => {
+            current_time_value(cols, kind, fsp)?
+        }
+        Expr::RawString(text) if text.eq_ignore_ascii_case("CURRENT_DATE") => {
+            current_date_value(cols, kind, fsp)?
+        }
+        Expr::RawString(text) if text == "0000-00-00 00:00:00" => {
+            // Go logs (rather than returns) the zero-date parse error here;
+            // the value remains the parser's zero temporal value.
+            tidb_datatype::parse_time_from_num(
+                0,
+                kind,
+                fsp,
+                !modes.no_zero_in_date,
+                modes.allow_invalid_dates,
+                true,
+                &parse_zone,
+            )
+            .map(|parsed| parsed.time)
+            .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))?
+        }
+        Expr::RawString(text) => parse_text(text)?,
+
+        // `*driver.ValueExpr` source cases.
+        Expr::String(text) => parse_text(text)?,
+        Expr::Int(digits) => {
+            let number = digits.parse::<i64>().map_err(|_| EvalError::IntOverflow)?;
+            parse_number(number)?
+        }
+        Expr::Null => return Ok(Datum::Null),
+
+        // `*ast.FuncCallExpr` returns a string marker, not a parsed temporal
+        // value; this is what DEFAULT-expression construction stores.
+        Expr::Func { name, .. }
+            if name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                || name.eq_ignore_ascii_case("CURRENT_DATE") =>
+        {
+            return Ok(Datum::new_string(name.to_ascii_uppercase()));
+        }
+        Expr::Func { .. } => {
+            return Err(EvalError::Unsupported("default value expression"));
+        }
+
+        // `*ast.UnaryOperationExpr`: evaluate the simple expression and then
+        // feed its signed integer representation to ParseTimeFromNum.
+        Expr::Unary(_, _) => {
+            let value = eval_in(expr, cols)?;
+            parse_number(crate::cast::to_i64_signed(&value))?
+        }
+
+        // Go's type switch returns the zero datum for every other `any` value.
+        _ => return Ok(Datum::Null),
+    };
+    Ok(Datum::new_time(time))
+}
+
+fn current_time_value(
+    cols: &dyn Columns,
+    kind: tidb_datatype::TimeType,
+    fsp: i64,
+) -> Result<tidb_datatype::Time, EvalError> {
+    use chrono::{Datelike, Timelike};
+
+    let normalized_fsp = tidb_datatype::check_fsp(fsp)
+        .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))?;
+    let (seconds, nanos, _) = cols.now().ok_or(EvalError::Unsupported(
+        "no statement clock for GetTimeValue",
+    ))?;
+    let instant = chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, nanos)
+        .ok_or(EvalError::Unsupported("statement clock is out of range"))?
+        .with_timezone(&cols.time_zone());
+    let quantum = 10_u32.pow((9 - normalized_fsp) as u32);
+    let nanos = (instant.nanosecond() / quantum) * quantum;
+    tidb_datatype::Time::from_date_checked(
+        instant.year(),
+        instant.month() as i32,
+        instant.day() as i32,
+        instant.hour() as i32,
+        instant.minute() as i32,
+        instant.second() as i32,
+        (nanos / 1_000) as i32,
+        kind,
+        normalized_fsp,
+    )
+    .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))
+}
+
+fn current_date_value(
+    cols: &dyn Columns,
+    kind: tidb_datatype::TimeType,
+    fsp: i64,
+) -> Result<tidb_datatype::Time, EvalError> {
+    let current = current_time_value(cols, kind, fsp)?;
+    let core = current.core_time();
+    tidb_datatype::Time::from_date_checked(
+        core.year(),
+        core.month() as i32,
+        core.day() as i32,
+        0,
+        0,
+        0,
+        0,
+        kind,
+        fsp,
+    )
+    .map_err(|error| EvalError::TruncatedWrongValue(error.to_string()))
+}
+
 /// Evaluates one already-built expression against the caller's statement
 /// context and the single virtual row used for a column-free expression.
 ///
@@ -445,7 +673,7 @@ pub fn eval(expr: &Expr) -> Result<Datum, EvalError> {
 /// fold uses the same row shape instead of inventing a second evaluator.
 pub fn eval_expression_once(
     expression: &expression::Expression,
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
@@ -690,7 +918,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 eval_in(r, cols)?,
                 signed,
             );
+            let unsigned_result =
+                !matches!(*op, tidb_ast::BinaryOp::Minus) || !cols.no_unsigned_subtraction();
+            let integer_unsigned = unsigned_result
+                && (matches!(&left, Datum::UInt(_)) || matches!(&right, Datum::UInt(_)));
             eval_binary_with_div_precision(*op, left, right, cols.div_precision_increment(), cols)
+                .map_err(|error| ast_binary_overflow_error(*op, l, r, integer_unsigned, error))
         }
         // A constant `RAND(N)` has state per function occurrence for the
         // whole statement. The function node's address is stable while this

@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
 use crate::tso::{
-    is_retryable_tso_error, remaining as remaining_tso_time, retry_delay, RetainedTsoStream,
-    TimestampParts, TsoBatch, MAX_TSO_RETRIES,
+    remaining as remaining_tso_time, retry_delay, timeout_error, RetainedTsoStream, TimestampParts,
+    TsoBatch,
 };
 
 /// Upper bound on waiters merged into one PD Tso round trip.
@@ -385,7 +385,11 @@ pub(super) fn get_timestamps_with_retry(
 ) -> Result<TsoBatch, PdClientError> {
     let TsoBatchSpec { deadline, count } = spec;
     let mut last_error = None;
-    for attempt in 0..MAX_TSO_RETRIES {
+    // Go's dispatcher retries EVERY processRequest failure until the context
+    // is done (dispatcher.go:356-398) -- there is no attempt cap; the batch
+    // deadline is the natural bound.
+    let mut attempt = 0usize;
+    loop {
         let snapshot = state.read().expect("PD state lock poisoned").clone();
         let leader = snapshot.members.leader_url;
         if stream
@@ -395,7 +399,7 @@ pub(super) fn get_timestamps_with_retry(
             *stream = None;
         }
 
-        let result = (|| {
+        let result: Result<TsoBatch, PdClientError> = (|| {
             let batch = if stream.is_none() {
                 let client = tonic_client(runtime, clients, &leader)?;
                 let (opened, timestamp) = RetainedTsoStream::open_and_request(
@@ -432,10 +436,22 @@ pub(super) fn get_timestamps_with_retry(
             Ok(timestamp) => return Ok(timestamp),
             Err(error) => {
                 *stream = None;
-                if !is_retryable_tso_error(&error) || attempt + 1 == MAX_TSO_RETRIES {
+                // Go panics on a monotonicity violation
+                // (dispatcher.go:522-536) -- it is terminal there and stays
+                // terminal here (documented narrowing: error instead of
+                // process death); retrying a regressed timestamp can never
+                // fix it.
+                if error.kind() == "tso_fallback" {
                     return Err(error);
                 }
+                // Go's dispatcher surfaces ctx.Err() when the deadline
+                // expires (dispatcher.go:344-349): the caller sees the
+                // deadline miss, not the underlying transport error.
+                if Instant::now() >= deadline {
+                    return Err(timeout_error(&leader.to_string(), Duration::ZERO));
+                }
                 last_error = Some(error);
+                attempt += 1;
             }
         }
 
@@ -453,7 +469,7 @@ pub(super) fn get_timestamps_with_retry(
             Err(_) => {}
         }
 
-        let delay = retry_delay(attempt);
+        let delay = retry_delay(attempt + 1);
         if !delay.is_zero() {
             let leader = state
                 .read()

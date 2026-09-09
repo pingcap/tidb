@@ -1,0 +1,292 @@
+# `pkg/distsql` — Go-master batching contract audit receipt
+
+Status: complete Go inventory; implemented the dependency-closed request
+batching slice from Go commit `b1daa76b65` (request flags, setters, context
+projection, coprocessor wire fields, and unhinted opt-in task batching).
+The later Go-master runtime-stat changes from `bc04813887` and `db35d47066`
+remain an explicit boundary: the Rust response owner does not yet own Go's
+`ExecDetails`, TiKV scan/read-pool evidence, RU accounting, or percentile
+collector, so those behaviors were not guessed or partially duplicated.
+
+The latest package re-audit below supersedes the historical snapshots in this
+receipt. Comparison source: Go `origin/master` at
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-05). The complete root
+package plus `context` subpackage has 17 tracked artifacts and 5,682 lines;
+all production, test, benchmark, fixture/harness, ownership, and Bazel files
+were read before editing. No package `doc.go`, generated Go source, platform
+variant, or separate testdata tree exists.
+
+## Complete Go inventory
+
+| Artifact | Lines | Role |
+| --- | ---: | --- |
+| `BUILD.bazel` | 108 | library/test target, deps, and shard metadata |
+| `OWNERS` | 10 | package ownership |
+| `bench_test.go` | 74 | benchmark helper |
+| `context/BUILD.bazel` | 47 | context subpackage target |
+| `context/context.go` | 132 | DistSQL request context |
+| `context/context_test.go` | 139 | context unit tests |
+| `context_test.go` | 47 | package context helpers |
+| `distsql.go` | 297 | Select/Analyze/Checksum result constructors |
+| `distsql_test.go` | 733 | select, analyze, checksum, and mock response tests |
+| `main_test.go` | 34 | package setup/teardown |
+| `request_builder.go` | 949 | request defaults, ranges, and batching options |
+| `request_builder_test.go` | 975 | request/range/concurrency tests |
+| `select_result.go` | 1,343 | response decoding and runtime statistics |
+| `select_result_test.go` | 567 | result decoding/runtime-stat tests |
+
+All 15 files were read in full before editing. The inventory contains 126
+production function/method declarations and 63 test/helper declarations.
+
+## Implemented Rust slice
+
+- `tidb-txnkv::Request` now carries
+  `allow_batch_task_data_merge` and `execute_batch_tasks_serially`, matching
+  Go `kv.Request` fields 18/19's request-level meaning.
+- `DistSqlContext`, `ReadRequestMetadata`, and `KvRequestMetadata` preserve
+  both flags through `SetFromSessionVars`-equivalent projection.
+- `RequestBuilder` exposes source-shaped setters for store batch size and both
+  flags.
+- `coprocessor.proto` and `CoprocessorRequestEnvelope` encode/decode the exact
+  bool fields at wire tags 18 and 19.
+- Region task construction permits unhinted batching only with the explicit
+  merge opt-in, keeps normal hint-based batching unchanged, and retains
+  `row_count_hint = -1` for merged unhinted parents/children.
+
+No Rust-only request flag or batching behavior was removed. Existing direct
+unary transport still clears the per-request batch size for ordinary retries,
+which is the source `BuildCopIterator` ownership rule; the new opt-in flags
+remain immutable metadata and are only serialized when a task is sent.
+
+## Follow-up Go package batch: cop-request limiter handoff
+
+The current Go-master dependency snapshot (`a74cc596996d`, pulled 2026-09-02)
+uses `kv.CoprRequestLimiter` rather than the removed client-go `RateLimit` field.
+`RequestBuilder.SetCoprRequestLimiter` now stores that typed limiter, the
+query-scoped limiter is copied from `DistSQLContext` in `Select`, and the
+store-batching option setters are restored. `TestRequestBuilderCoprRequestLimiter`
+covers the limiter pointer and all three request-option projections; the
+pre-fix build failed with `Request.CoprRequestRateLimit undefined` when the
+dependent copr test package was compiled.
+
+Ready evidence for this bounded batch:
+
+- failpoint-wrapped `pkg/distsql` focused test
+  `TestRequestBuilderCoprRequestLimiter` passes;
+- `git diff --check` passes;
+- `make lint` and `make bazel_prepare` remain completion gates for the package
+  commit (the latter is expected to be blocked locally because Bazel is not
+  installed).
+
+The executor-side merge-sort caller still passes the legacy rate-limit type;
+that is a separate `pkg/executor` package boundary and is intentionally not
+claimed by this receipt.
+
+## Follow-up Go package batch: limiter wait runtime statistics
+
+The current Go-master snapshot (`1c1a334d2b`, pulled 2026-09-02) exposes
+coprocessor request-limiter wait totals and maxima through `selectResult`.
+`close` now preserves the response close error while harvesting
+`copr.HasLimiterWaitStats`, `selectResultRuntimeStats` carries the aggregate
+through clone/merge, and its textual runtime-stat rendering reports the
+`limiter_wait` field. `TestSelectResultCloseRecordsLimiterWaitStats` covers
+collection, formatting, clone, and merge semantics. The Rust
+`tidb-distsql` runtime contract now carries the same saturating total/max
+aggregate and source-derived regression coverage; concrete Rust transport
+response plumbing remains an explicit boundary because no dependency-closed
+coprocessor response owner exists yet.
+
+Ready evidence for this package-level batch:
+
+- failpoint-wrapped Go focused test
+  `TestSelectResultCloseRecordsLimiterWaitStats` passes;
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-distsql --test all limiter_wait -- --test-threads=1` — one focused Rust test passed;
+- `git diff --check` passes; the pinned `make lint` Ready gate is run before
+  commit; `make bazel_prepare` remains required for the Go test/import changes
+  but is blocked by the unavailable local Bazel executable.
+
+The complete 15-artifact root inventory above remains the atomic Go package
+boundary. Nested executor consumers and live TiKV transport are separate
+claims, and no Rust-only limiter behavior was introduced beyond the bounded
+runtime aggregate contract.
+
+## Validation and boundaries
+
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-distsql --test all -- --test-threads=1` — 252 passed, 2 ignored.
+- Focused regressions: `batch_request_options_round_trip_from_context_and_builder`, `coprocessor_request_uses_source_field_numbers_and_preserves_payload`, and `unhinted_store_batching_requires_explicit_merge_opt_in` all pass within that run.
+- Go `pkg/distsql` runtime-stat behavior was inventoried but not executed here;
+  the Rust crate has no concrete Go `ExecDetails`/RU collector owner yet.
+- The Go `pkg/store/copr` batching worker and live TiKV integration remain
+  outside this dependency-closed Rust slice; wire flags are now preserved for
+  the eventual transport owner.
+
+This receipt is a bounded parity slice, not a claim that the entire distsql
+package has been transcreated. Continue the package loop with the remaining
+runtime-stat and transport boundaries recorded above.
+
+## Current Go-master consumer batch (`78cac443a4f46c13bfe27eb247b5c80657952547`)
+
+The current fetched Go `origin/master` is
+`78cac443a4f46c13bfe27eb247b5c80657952547`. The complete package inventory
+was re-read before editing and corrected to the actual 14 tracked artifacts:
+11 root files (including `BUILD.bazel`, `OWNERS`, benchmark and test harnesses)
+and the three `pkg/distsql/context` artifacts. The inventory totals 5,077
+lines, 14 production/test/build artifacts, 126 production declarations, and
+40 test/benchmark declarations; there is no `doc.go`, fixture/testdata tree,
+generated source, platform variant, or additional nested package.
+
+This one package-scoped batch applies the nine-file, 738-insertion/133-
+deletion Go-master delta. `selectResult` now preserves response-close errors
+while collecting unconsumed runtime stats, propagates read-pool details,
+validates and records response-summary coverage, and supports raw Analyze
+execution-stat collection with open-ended close handling. The request and
+context surfaces retain the query-scoped cop limiter. Focused regressions
+`TestSelectAppliesQueryCopStoreLimiter` and
+`TestCloseCollectsUnconsumedStatsAfterResponseClose` pass, as does the full
+failpoint-aware root package suite. The nested context test deletion is a
+source-parity cleanup with no production behavior change.
+
+The batch is intentionally Go-only: `pkg/util/execdetails` supplies the
+runtime evidence API and `pkg/store/copr` remains the separate transport
+owner. Rust's `tidb-distsql` crate has the bounded limiter aggregate but no
+dependency-closed coprocessor response owner, so no speculative Rust wiring
+was added. The remaining TiKV/client-go integration is an explicit boundary.
+
+Latest validation evidence:
+
+- Pre-fix failpoint-aware command:
+  `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/distsql -run '^TestCloseCollectsUnconsumedStatsAfterResponseClose$' -count=1 -vet=off`
+  — failed as expected because the restored `RecordCopStats` API had not yet
+  been connected (missing read-pool argument in existing callers).
+- Post-fix focused failpoint-aware run for both new tests — passed (`0.793s`).
+- Post-fix full failpoint-aware root package run — passed (`0.745s`), with
+  expected warnings for intentionally malformed summary fixtures.
+- `git diff --check` — passed before staging.
+- `make lint` is required for the final Ready gate; `make bazel_prepare` is
+  required by the BUILD/test changes and remains blocked locally because no
+  Bazel executable is installed. No Rust source changed, so pinned Rust
+  formatting is not applicable to this Go consumer batch.
+
+## Current Go-master Rust alignment batch: limiter-wait evidence
+
+The 2026-09-05 re-audit covers all 17 tracked `pkg/distsql` artifacts and
+5,682 lines at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+The Rust gap was bounded to the already-owned response lifecycle: Go's
+`selectResult.closeImpl` reads `copr.HasLimiterWaitStats` and merges the
+blocking total/max after response consumption, while Rust enforced the
+request limiter but discarded the measured wait and had no response-to-result
+transfer seam.
+
+Rust now measures every blocking TiKV attempt admission in
+`DirectUnaryQueryResponse`, exposes the aggregate through the `QueryResponse`
+contract, and merges it into `SelectResponseIter` during the one-way
+`QuerySelectResult::into_select_iter` conversion. Fast-path admissions and
+cancelled/deadline-aborted waits remain zero, matching Go's callback (which
+records only a successfully acquired blocked permit). The aggregate uses the
+existing saturating `LimiterWaitStats` total/max contract; raw Analyze and
+Checksum ownership is unchanged.
+
+Regression evidence:
+
+- Before the transfer call, `query_runtime_source::select_conversion_transfers_limiter_wait_stats_to_the_result_iterator`
+  failed with `left: 0, right: 17`.
+- After the transfer, the same focused test passed; the direct transport source
+  regression also pins wait timing/recording and response exposure.
+- `cargo +nightly-2026-08-22 test -p tidb-distsql --test all query_runtime_source::select_conversion_transfers_limiter_wait_stats_to_the_result_iterator -- --exact`
+  passed after the fix.
+- `cargo +nightly-2026-08-22 test -p tidb-distsql --test all -- --test-threads=1`
+  passed with 255 tests and 2 documented ignored parity gaps.
+
+Ready validation for this Rust-only package batch:
+
+- package-scoped Rust formatting check, `git diff --check`, and the pinned
+  `make lint` gate are required before the package commit;
+- no `make bazel_prepare` is required because no Go/Bazel/module file changed;
+- no live TiKV/PD transport or Go test execution was claimed locally.
+
+The remaining Go runtime-stat fields (`ExecDetails`, RU/read-pool evidence,
+percentiles, and concrete coprocessor response plumbing) stay explicit
+boundaries; this batch only closes the limiter-wait evidence path already
+owned by the Rust distsql response/result lifecycle.
+
+## Current Rust alignment batch: discardable context detach (2026-09-06)
+
+The complete 17-artifact Go inventory (including the nested
+`pkg/distsql/context` package), its production/test/benchmark/build files, and
+the Rust context owner were rechecked before editing. Go's
+`DistSQLContext.Detach` returns a new context but does not require callers to
+use that value. Rust now removes the one corresponding Rust-only
+`#[must_use]` annotation from `DistSqlContext::detach`; the unrelated Rust
+constructors and warning snapshots remain annotated because they have no
+direct Go return contract.
+
+`context_return_contract::detach_result_may_be_ignored_like_go` invokes the
+discarded result under `#[deny(unused_must_use)]`. The detached pre-fix owner
+at `821ca535dc6` failed with exactly one diagnostic, and the focused test passes
+after the fix. The full distsql aggregate passes 256 tests with two documented
+ignored parity gaps.
+
+Ready validation for this Rust-only package batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p
+  tidb-distsql --test all --offline --locked -- --test-threads=1` — 256
+  passed, 2 ignored.
+- Focused `context_return_contract` regression — passed after the fix.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all --
+  --check` — passed.
+- `make lint` with the repository Go 1.25.10 toolchain — passed.
+- `git diff --check` — passed.
+
+No Go, fixture, generated/platform, Bazel, or Cargo metadata changed, so
+`make bazel_prepare` is not required.
+
+## Current Rust alignment batch: statement priority and `NotFillCache` (2026-09-09)
+
+Re-verified against Go `origin/master` at
+`f5cf8f6337612c6ae51fb6e384e4bb3469dde680`. `SetFromSessionVars` copies two
+statement-scoped inputs onto every `kv.Request` that the Rust request builder
+already understood but no production caller supplied:
+
+- `pkg/executor/select.go:1173-1174` — the `*ast.SelectStmt` arm sets
+  `sc.Priority = opts.Priority` and `sc.NotFillCache = !opts.SQLCache`;
+  `select.go:1139`, `:1296`, and `:1317` set `sc.Priority = stmt.Priority`
+  for INSERT, UPDATE, and DELETE, and `select.go:1155` maps LOAD DATA's
+  dedicated `LowPriority` word to the same field.
+- `pkg/distsql/request_builder.go:357-359` — `SetFromSessionVars` copies
+  `dctx.NotFillCache` and `getKVPriority(dctx)` (`:324-335`) onto the request.
+- `pkg/distsql/context/context.go` builds `DistSQLContext.NotFillCache` and
+  `.Priority` from the same `StmtCtx` fields
+  (`pkg/session/session.go:3615-3616`).
+
+Rust already mapped `RequestContext.priority`/`.not_fill_cache` through
+`ReadRequestMetadata` and `tikv_rpc_contract` onto `kvrpcpb.Context`, but
+`StmtContext` carried neither, so `SELECT HIGH_PRIORITY SQL_NO_CACHE` still
+sent `PriorityNormal` with the storage cache enabled. `StmtContext` now owns
+both fields; `statement_context_for_stmt` reads them off the AST (SELECT plus
+INSERT/UPDATE/DELETE/LOAD DATA, unwrapping `WITH`), the SELECT funnel uses it,
+and `cop_scan` copies `PushdownStatementContext.priority`/`.not_fill_cache`
+onto the `DistSqlContext`.
+
+Regression evidence:
+
+- `cop_scan_string_selection_source::each_request_carries_the_statements_priority_and_cache_policy`
+  failed before the `cop_scan` assignment with `left: Priority(0), right:
+  Priority(2)` and passes after, asserting the default request stays
+  `PriorityNormal`/`not_fill_cache = false`.
+- `stmt_ctx::tests::statement_priority_and_no_cache_reach_the_statement_context`
+  pins the AST projection, including `UPDATE LOW_PRIORITY`,
+  `LOAD DATA LOW_PRIORITY`, and the SELECT-only `NotFillCache`.
+
+Ready validation for this Rust-only package batch:
+
+- focused `tidb-session` and `tidb-exec` regressions — passed;
+- `cargo check --locked -p tidb-executor -p tidb-session -p tidb-exec
+  --all-targets` — passed;
+- `cargo fmt --all -- --check` and `git diff --check -- rust` — passed;
+- no Go, fixture, generated/platform, Bazel, or Cargo metadata changed, so
+  `make bazel_prepare` is not required; no live TiKV/PD transport or Go test
+  execution was claimed locally.
+
+The remaining `SetFromSessionVars` inputs with no `StmtContext` owner are the
+request source, task id, `max_execution_time`, `tidb_kv_read_timeout`, and the
+runaway checker.

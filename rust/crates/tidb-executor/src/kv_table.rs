@@ -79,10 +79,12 @@ use std::collections::HashSet;
 pub(crate) use table_meta::NOT_NULL_FLAG;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
+use tidb_expr::expression::Expression;
 
 use index_entries::duplicate_value_text;
 pub(in crate::kv_table) use index_entries::index_entry_handle;
 pub(crate) use index_entries::IndexEntryForCheck;
+use tidb_hack::GoToLower;
 use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::{CommonHandle, Key};
 
@@ -400,11 +402,58 @@ impl CreateIndexOptions {
     }
 }
 
+/// One enforced CHECK constraint compiled from persisted table metadata.
+#[derive(Clone, Debug)]
+struct KvCheckConstraint {
+    name: String,
+    expr: Expression,
+    dependencies: Vec<String>,
+    source: tidb_ast::Expr,
+    build_zone: tidb_datatype::SessionTimeZone,
+    build_like_default_escape: u8,
+    zone_sensitive: bool,
+    like_default_escape_sensitive: bool,
+}
+
+/// The lightweight evaluation context used by a partial-index predicate.
+/// Index maintenance historically received only a session timezone rather
+/// than the whole statement context; carrying the row and table columns here
+/// preserves that narrow seam while still evaluating the compiled expression
+/// through the same `tidb_expr` machinery as CHECK constraints.
+struct IndexConditionContext<'a> {
+    columns: &'a [KvColumn],
+    row: &'a [Datum],
+    zone: &'a SessionTimeZone,
+}
+
+impl tidb_expr::Columns for IndexConditionContext<'_> {
+    fn get(&self, path: &[String]) -> Option<Datum> {
+        let name = path.last()?;
+        let offset = self
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))?;
+        self.row.get(offset).cloned()
+    }
+
+    fn time_zone(&self) -> SessionTimeZone {
+        self.zone.clone()
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
     /// The table id (Go `TableInfo.ID`), the record-key prefix.
     pub table_id: i64,
+    /// `(row count, average row length, data length, index length)` from Go
+    /// `TableSizeStats.EstimateDataLength` for this catalog image.
+    storage_statistics: (u64, u64, u64, u64),
+    /// Per-physical-partition values used by Go
+    /// `information_schema.PARTITIONS`. The logical table's aggregate stays
+    /// in `storage_statistics`; these entries retain each partition's own
+    /// row count and lengths.
+    partition_storage_statistics: std::collections::BTreeMap<i64, (u64, u64, u64, u64)>,
     /// The table's name, which a duplicate-key error qualifies its index with
     /// (`Duplicate entry 'a' for key 'm.code'`).
     pub name: String,
@@ -447,6 +496,11 @@ pub struct KvTable {
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
     indexes: std::sync::Arc<Vec<KvIndex>>,
+    /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
+    /// `IndexInfo.ID`. Keeping this sidecar separate from [`KvIndex`] avoids
+    /// widening every source-shaped index fixture while making the predicate
+    /// available to every index write and backfill path.
+    partial_index_conditions: std::collections::BTreeMap<i64, KvCheckConstraint>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
@@ -459,12 +513,18 @@ pub struct KvTable {
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
     common_handle_offsets: Vec<usize>,
+    /// Go `TableInfo.CommonHandleVersion`.
+    common_handle_version: u16,
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
     /// collation, which its unqualified string columns inherit.
     charset: TableCharset,
     /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
     /// metadata statements.
     comment: String,
+    /// Go `TableInfo.Compression`, persisted by CREATE/ALTER TABLE and
+    /// printed by `SHOW CREATE TABLE` when non-empty. Unvalidated, exactly
+    /// like Go (`create_table.go:964-965` stores whatever string arrives).
+    compression: String,
     /// Go `TableInfo.AutoIDCache`: how many ids one reservation takes. Zero
     /// is Go's "unset"; `SHOW CREATE TABLE` prints it only when set.
     auto_id_cache: i64,
@@ -490,6 +550,10 @@ pub struct KvTable {
     /// disabled here; cluster-loaded metadata may still carry the source
     /// value verbatim.
     cache_status: tidb_model::TableCacheStatusType,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    has_affinity: bool,
+    /// Go `TableInfo.TiFlashReplica`.
+    tiflash_replica: Option<tidb_model::TiFlashReplicaInfo>,
     /// Go `TableInfo.TempTableType` (`setTemporaryType`, `create_table.go`):
     /// whether this is an ordinary table, a GLOBAL temporary table, or a
     /// LOCAL one.
@@ -521,6 +585,14 @@ pub struct KvTable {
     /// the tables whose foreign keys name this one, as Go's
     /// `ReferredFKInfo` index does.
     foreign_keys: Vec<KvForeignKey>,
+    /// Go `TableCommon.writableConstraints`: enforced CHECK constraints not
+    /// in delete-only/delete-reorganization state.
+    check_constraints: std::sync::Arc<Vec<KvCheckConstraint>>,
+    /// Go `TableInfo.Constraints`: the persisted CHECK metadata used by DDL,
+    /// SHOW, CREATE LIKE, and dependency checks.
+    check_constraint_infos: std::sync::Arc<Vec<tidb_model::table::ConstraintInfo>>,
+    /// Go `TableInfo.MaxConstraintID`.
+    max_constraint_id: i64,
     /// Go `TableInfo.MaxForeignKeyID`: the counter an UNNAMED constraint is
     /// named after (`fk_1`, `fk_2`, ...). It only ever rises, so dropping
     /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
@@ -616,6 +688,18 @@ pub enum KvTableError {
         /// `ERROR_FOR_DIVISION_BY_ZERO`).
         eval: Option<tidb_expr::EvalError>,
     },
+    /// Go `table.ErrCheckConstraintViolated` (3819).
+    CheckConstraintViolated(String),
+    /// A persisted CHECK expression could not be built or evaluated.
+    CheckConstraint {
+        /// Constraint name.
+        name: String,
+        /// Build/evaluation detail.
+        detail: String,
+        /// The evaluation error when evaluation, rather than metadata build,
+        /// failed.
+        eval: Option<tidb_expr::EvalError>,
+    },
     /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
     DuplicateEntry {
         /// The rejected key value, as MySQL prints it.
@@ -642,14 +726,9 @@ pub enum KvTableError {
     /// Go's plain VECTOR conversion error. Vector dimension failures are not
     /// retitled as a generic truncation while a column is reorganized.
     Vector(String),
-    /// Go `ErrTruncatedWrongValueForField` (1265) with the row form: a stored
-    /// NULL is rejected by the column's new NOT NULL.
-    DataTruncatedAtRow {
-        /// The column being modified.
-        column: String,
-        /// The offending row's 1-based position.
-        row: usize,
-    },
+    /// Go `dbterror.ErrInvalidUseOfNull` (1138): a stored NULL is rejected
+    /// while changing a column to `NOT NULL`.
+    InvalidUseOfNull,
     /// Go `table.ErrNoPartitionForGivenValue` (1526): the row's partition
     /// value falls outside every partition. HASH cannot produce it; RANGE and
     /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
@@ -730,6 +809,13 @@ impl KvTable {
         std::sync::Arc::make_mut(&mut self.columns)
     }
 
+    /// All table columns in physical offset order, including hidden columns
+    /// used by expression indexes, matching `TableInfo.Columns`.
+    #[must_use]
+    pub fn columns(&self) -> &[KvColumn] {
+        &self.columns
+    }
+
     fn indexes_mut(&mut self) -> &mut Vec<KvIndex> {
         std::sync::Arc::make_mut(&mut self.indexes)
     }
@@ -772,14 +858,19 @@ impl KvTable {
             shard_row_id_bits: 0,
             pre_split_regions: 0,
             table_id,
+            storage_statistics: (0, 0, 0, 0),
+            partition_storage_statistics: std::collections::BTreeMap::new(),
             name: String::new(),
+            compression: String::new(),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
             mv_key_part_sources: std::collections::BTreeMap::new(),
             store,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
+            partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
+            common_handle_version: 0,
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
             auto_random: None,
@@ -787,16 +878,58 @@ impl KvTable {
             charset: TableCharset::default(),
             comment: String::new(),
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
+            has_affinity: false,
+            tiflash_replica: None,
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
             all_columns_public: true,
             foreign_keys: Vec::new(),
+            check_constraints: std::sync::Arc::new(Vec::new()),
+            check_constraint_infos: std::sync::Arc::new(Vec::new()),
+            max_constraint_id: 0,
             max_foreign_key_id: 0,
             partition: None,
             placement_policy: None,
             read_partitions: None,
             dirty_content: DirtyMark::default(),
         }
+    }
+
+    /// Publishes Go's four `information_schema.tables` statistics values.
+    pub fn set_storage_statistics(&mut self, statistics: (u64, u64, u64, u64)) {
+        self.storage_statistics = statistics;
+    }
+
+    /// Go `TableSizeStats.EstimateDataLength` for this catalog image.
+    #[must_use]
+    pub const fn storage_statistics(&self) -> (u64, u64, u64, u64) {
+        self.storage_statistics
+    }
+
+    /// Publishes one physical partition's Go row/length estimates.
+    pub fn set_partition_storage_statistics(
+        &mut self,
+        physical_id: i64,
+        statistics: (u64, u64, u64, u64),
+    ) {
+        self.partition_storage_statistics
+            .insert(physical_id, statistics);
+    }
+
+    /// Go `TableSizeStats.GetTableRows` plus
+    /// `GetDataAndIndexLength` for one physical partition.
+    #[must_use]
+    pub fn partition_storage_statistics(&self, physical_id: i64) -> (u64, u64, u64, u64) {
+        self.partition_storage_statistics
+            .get(&physical_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Clears statement-derived information-schema size values.
+    pub fn clear_storage_statistics(&mut self) {
+        self.storage_statistics = (0, 0, 0, 0);
+        self.partition_storage_statistics.clear();
     }
 
     /// Rebinds a freshly loaded table to a collation mode its outer plan
@@ -832,7 +965,9 @@ impl KvTable {
     /// staged a row write to this table. See the field's own doc.
     #[must_use]
     pub fn has_dirty_content(&self) -> bool {
-        self.dirty_content.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.dirty_content
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Forgets the staged writes: the state Go's membuffer is in at the start
@@ -872,6 +1007,7 @@ impl KvTable {
     pub fn create_like(
         &self,
         table_id: i64,
+        table_name: &str,
         allocate_partition_id: &mut dyn FnMut() -> i64,
     ) -> Self {
         let mut copy = KvTable::with_storage_and_collation(
@@ -881,10 +1017,19 @@ impl KvTable {
             self.use_new_collation,
         );
         copy.hidden_columns = self.hidden_columns;
+        copy.name = table_name.to_owned();
         copy.mv_key_part_sources = self.mv_key_part_sources.clone();
         copy.pk_handle_offset = self.pk_handle_offset;
         copy.indexes = self.indexes.clone();
+        copy.partial_index_conditions = self.partial_index_conditions.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
+        copy.common_handle_version = self.common_handle_version;
+        copy.has_affinity = self.has_affinity;
+        copy.tiflash_replica = self.tiflash_replica.clone().map(|mut replica| {
+            replica.available = false;
+            replica.available_partition_ids = Default::default();
+            replica
+        });
         copy.auto_increment_offset = self.auto_increment_offset;
         copy.auto_random = self.auto_random;
         if let Some(spec) = copy.auto_random {
@@ -892,6 +1037,25 @@ impl KvTable {
         }
         copy.charset = self.charset;
         copy.comment = self.comment.clone();
+        copy.compression = self.compression.clone();
+        let mut renamed = self.check_constraint_infos.as_ref().clone();
+        let mut names = std::collections::HashMap::with_capacity(renamed.len());
+        for (offset, info) in renamed.iter_mut().enumerate() {
+            let old = info.name.lowercase().to_owned();
+            let new = format!("{}_chk_{}", table_name.go_to_lower(), offset + 1);
+            info.name = tidb_ast::CiString::new(new.clone());
+            info.table = tidb_ast::CiString::new(table_name);
+            names.insert(old, new);
+        }
+        let mut compiled = self.check_constraints.as_ref().clone();
+        for constraint in &mut compiled {
+            if let Some(name) = names.get(&constraint.name.go_to_lower()) {
+                constraint.name.clone_from(name);
+            }
+        }
+        copy.check_constraint_infos = std::sync::Arc::new(renamed);
+        copy.check_constraints = std::sync::Arc::new(compiled);
+        copy.max_constraint_id = self.max_constraint_id;
         if let Some(partition) = self.partition() {
             let mut partition = partition.clone();
             for definition in &mut partition.definitions {
@@ -1270,10 +1434,7 @@ impl KvTable {
             match physical_ids.and_then(|ids| ids.get(index).copied()) {
                 Some(id) => grouped.entry(id).or_default().push((
                     index,
-                    Key::from_bytes(encode_row_key_with_handle(
-                        id,
-                        &handle.record_handle(),
-                    )),
+                    Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle())),
                 )),
                 None => {
                     for id in &partition_ids {
@@ -1398,6 +1559,19 @@ impl KvTable {
         std::mem::replace(&mut self.store, store)
     }
 
+    /// Whether this table's row backend is rolled back by the cluster
+    /// session's outer statement savepoint rather than by a catalog image.
+    #[must_use]
+    pub(crate) fn has_external_statement_rollback(&self) -> bool {
+        self.store.has_external_statement_rollback()
+    }
+
+    /// Go snapshot runtime `CmdGet` and `CmdBatchGet` totals for this table's
+    /// statement snapshot.
+    pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.store.point_rpc_counts()
+    }
+
     /// Records Go `TableInfo.TempTableType` (`setTemporaryType`).
     pub fn set_temp_table_type(&mut self, kind: tidb_model::TempTableType) {
         self.temp_table_type = kind;
@@ -1407,6 +1581,12 @@ impl KvTable {
     #[must_use]
     pub const fn temp_table_type(&self) -> tidb_model::TempTableType {
         self.temp_table_type
+    }
+
+    /// Go `TableInfo.TableCacheStatusType`.
+    #[must_use]
+    pub const fn cache_status(&self) -> tidb_model::TableCacheStatusType {
+        self.cache_status
     }
 
     /// Whether this table is temporary at all, in either scope -- Go's
@@ -1461,10 +1641,55 @@ impl KvTable {
         &self.comment
     }
 
+    /// The table's `COMPRESSION` setting. Go records whatever string the
+    /// option carries and `SHOW CREATE TABLE` prints it only when non-empty.
+    #[must_use]
+    pub fn compression(&self) -> &str {
+        &self.compression
+    }
+
+    /// Replaces the table's `COMPRESSION` setting.
+    pub fn set_compression(&mut self, compression: String) {
+        self.compression = compression;
+    }
+
     /// Marks the columns whose encoding is the clustered row handle, which Go
     /// records as `TableInfo.IsCommonHandle`.
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
         self.common_handle_offsets = offsets;
+    }
+
+    /// Records Go `TableInfo.CommonHandleVersion`.
+    pub fn set_common_handle_version(&mut self, version: u16) {
+        self.common_handle_version = version;
+    }
+
+    /// Go `TableInfo.CommonHandleVersion`.
+    #[must_use]
+    pub const fn common_handle_version(&self) -> u16 {
+        self.common_handle_version
+    }
+
+    /// Records whether Go `TableInfo.Affinity` is non-nil.
+    pub fn set_has_affinity(&mut self, has_affinity: bool) {
+        self.has_affinity = has_affinity;
+    }
+
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    #[must_use]
+    pub const fn has_affinity(&self) -> bool {
+        self.has_affinity
+    }
+
+    /// Installs Go `TableInfo.TiFlashReplica` metadata.
+    pub fn set_tiflash_replica(&mut self, replica: Option<tidb_model::TiFlashReplicaInfo>) {
+        self.tiflash_replica = replica;
+    }
+
+    /// Returns Go `TableInfo.TiFlashReplica` metadata.
+    #[must_use]
+    pub fn tiflash_replica(&self) -> Option<&tidb_model::TiFlashReplicaInfo> {
+        self.tiflash_replica.as_ref()
     }
 
     /// The clustered primary key's column offsets, empty when there is none.
@@ -1542,6 +1767,207 @@ impl KvTable {
         }
         crate::generated_column::materialize(&self.columns, row, false, ctx)
             .map_err(generation_error)
+    }
+
+    /// Builds one enforced, writable CHECK constraint from persisted metadata.
+    pub fn add_check_constraint(
+        &mut self,
+        name: impl Into<String>,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        self.add_check_constraint_with_like_default_escape(name, expression, zone, b'\\')
+    }
+
+    /// Statement-aware form of [`Self::add_check_constraint`].
+    pub fn add_check_constraint_with_like_default_escape(
+        &mut self,
+        name: impl Into<String>,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let name = name.into();
+        let compiled =
+            self.compile_check_constraint(&name, expression, zone, like_default_escape)?;
+        std::sync::Arc::make_mut(&mut self.check_constraints).push(compiled);
+        Ok(())
+    }
+
+    /// Replaces Go `TableInfo.Constraints` and rebuilds the ordinary writable
+    /// constraint list from that metadata.
+    pub fn set_check_constraint_infos(
+        &mut self,
+        infos: Vec<tidb_model::table::ConstraintInfo>,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let mut compiled = Vec::new();
+        for info in &infos {
+            if !info.enforced
+                || info.state == tidb_model::SchemaState::DELETE_ONLY
+                || info.state == tidb_model::SchemaState::DELETE_REORGANIZATION
+            {
+                continue;
+            }
+            let expression = tidb_model::generated_expr::parse_expression(&info.expr_string)
+                .map_err(|error| KvTableError::CheckConstraint {
+                    name: info.name.original().to_owned(),
+                    detail: format!("{error:?}"),
+                    eval: None,
+                })?;
+            compiled.push(self.compile_check_constraint(
+                info.name.original(),
+                &expression,
+                zone,
+                like_default_escape,
+            )?);
+        }
+        // Go's `TableInfo.MaxConstraintID` is an allocator high-water mark,
+        // not the largest ID still present.  In particular, dropping the
+        // newest constraint must not make its ID reusable.
+        self.max_constraint_id = self
+            .max_constraint_id
+            .max(infos.iter().map(|info| info.id).max().unwrap_or(0));
+        self.check_constraint_infos = std::sync::Arc::new(infos);
+        self.check_constraints = std::sync::Arc::new(compiled);
+        Ok(())
+    }
+
+    /// Restores Go `TableInfo.MaxConstraintID` while loading persisted table
+    /// metadata. The value may be greater than every surviving constraint ID.
+    pub fn set_max_constraint_id(&mut self, max_constraint_id: i64) {
+        self.max_constraint_id = max_constraint_id;
+    }
+
+    /// Go `TableInfo.Constraints`.
+    #[must_use]
+    pub fn check_constraint_infos(&self) -> &[tidb_model::table::ConstraintInfo] {
+        &self.check_constraint_infos
+    }
+
+    /// Go `TableInfo.MaxConstraintID`.
+    #[must_use]
+    pub const fn max_constraint_id(&self) -> i64 {
+        self.max_constraint_id
+    }
+
+    fn compile_check_constraint(
+        &self,
+        name: &str,
+        expression: &tidb_ast::Expr,
+        zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<KvCheckConstraint, KvTableError> {
+        let names = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        let types = self
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>();
+        let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+            &names,
+            &types,
+            zone.clone(),
+            like_default_escape,
+        );
+        let expr =
+            tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver).map_err(|error| {
+                KvTableError::CheckConstraint {
+                    name: name.to_owned(),
+                    detail: format!("{error:?}"),
+                    eval: None,
+                }
+            })?;
+        if let Some(missing) = resolver.missing_name() {
+            return Err(KvTableError::CheckConstraint {
+                name: name.to_owned(),
+                detail: format!("unknown column '{missing}'"),
+                eval: None,
+            });
+        }
+        Ok(KvCheckConstraint {
+            name: name.to_owned(),
+            expr,
+            dependencies: resolver.dependency_names(),
+            source: expression.clone(),
+            build_zone: zone.clone(),
+            build_like_default_escape: like_default_escape,
+            zone_sensitive: resolver.zone_was_read(),
+            like_default_escape_sensitive: resolver.like_default_escape_was_read(),
+        })
+    }
+
+    /// Go `CheckRowConstraintWithDatum` over this table's writable constraints.
+    pub fn validate_check_constraints(
+        &self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        for constraint in self.check_constraints.iter() {
+            let rebuilt;
+            let expression = if (constraint.zone_sensitive
+                && constraint.build_zone != ctx.time_zone())
+                || (constraint.like_default_escape_sensitive
+                    && constraint.build_like_default_escape != ctx.like_default_escape())
+            {
+                let names = self
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect::<Vec<_>>();
+                let types = self
+                    .columns
+                    .iter()
+                    .map(|column| column.field_type.clone())
+                    .collect::<Vec<_>>();
+                let resolver =
+                    crate::generated_column::TableColumnResolver::with_like_default_escape(
+                        &names,
+                        &types,
+                        ctx.time_zone(),
+                        ctx.like_default_escape(),
+                    );
+                rebuilt = tidb_expr::rewriter::rewrite_expr_resolved(&constraint.source, &resolver)
+                    .map_err(|error| KvTableError::CheckConstraint {
+                        name: constraint.name.clone(),
+                        detail: format!("{error:?}"),
+                        eval: None,
+                    })?;
+                &rebuilt
+            } else {
+                &constraint.expr
+            };
+            let value = crate::generated_column::eval_over_dependencies(
+                expression,
+                &constraint.dependencies,
+                &*self.columns,
+                row,
+                ctx,
+            )
+            .map_err(|error| KvTableError::CheckConstraint {
+                name: constraint.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })?;
+            match tidb_expr::truthy_of(&value).map_err(|error| KvTableError::CheckConstraint {
+                name: constraint.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })? {
+                Some(false) => {
+                    return Err(KvTableError::CheckConstraintViolated(
+                        constraint.name.clone(),
+                    ));
+                }
+                Some(true) | None => {}
+            }
+        }
+        Ok(())
     }
 
     /// The handle a row's values produce.
@@ -1758,6 +2184,9 @@ impl KvTable {
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         let mut written = Vec::new();
         for (handle, row) in &rows {
+            if !self.index_condition_holds(&index, row, &zone)? {
+                continue;
+            }
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let (key, distinct) = self.index_key(&index, row, handle, physical_id, &zone)?;
             let key = Key::from_bytes(key);
@@ -1775,7 +2204,8 @@ impl KvTable {
             // The same entry value an INSERT writes, restored data and all --
             // a backfill that stored a simpler one would leave the index
             // holding two different formats for the same table.
-            let value = self.index_entry_value(&index, row, handle, distinct, &zone)?;
+            let value =
+                self.index_entry_value(&index, row, handle, distinct, physical_id, &zone)?;
             self.store
                 .set(key.clone(), value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1818,12 +2248,16 @@ impl KvTable {
         let index = self.indexes_mut().remove(position);
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         for (handle, row) in &rows {
+            if !self.index_condition_holds(&index, row, zone)? {
+                continue;
+            }
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let (key, _) = self.index_key(&index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
+        self.remove_partial_index_condition(index.id);
         Ok(true)
     }
 
@@ -1840,6 +2274,14 @@ impl KvTable {
     #[must_use]
     pub fn visible_columns(&self) -> &[KvColumn] {
         &self.columns[..self.visible_column_count()]
+    }
+
+    /// Columns carried by Go's logical `DataSource`, including hidden
+    /// expression-index columns. Index-join key metadata addresses index
+    /// offsets in this complete physical row layout.
+    #[must_use]
+    pub(crate) fn logical_columns(&self) -> &[KvColumn] {
+        &self.columns
     }
 
     /// How many columns a user can name or see.
@@ -2015,7 +2457,7 @@ impl KvTable {
         // In both cases the existing physical owner is the source of truth.
         let rows = self.scan_physical_rows_with_handles_with_context(decode_context)?;
         let mut converted_rows = Vec::with_capacity(rows.len());
-        for (row_number, (physical_id, handle, row)) in rows.into_iter().enumerate() {
+        for (physical_id, handle, row) in rows {
             let mut row = row;
             let mut value = row[offset].clone();
             // Go `updateColumnWorker.getRowRecord`: "convert null value to
@@ -2029,10 +2471,7 @@ impl KvTable {
             // new NOT NULL rejects, and the value itself for a bad conversion.
             if value.is_null() {
                 if not_null {
-                    return Err(KvTableError::DataTruncatedAtRow {
-                        column: new_column.name.clone(),
-                        row: row_number + 1,
-                    });
+                    return Err(KvTableError::InvalidUseOfNull);
                 }
             } else {
                 let converted = value
@@ -2177,17 +2616,9 @@ impl KvTable {
             };
             let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let handle = match handle {
-                tidb_txnkv::Handle::Int(value) => TableHandle::Int(value.value()),
-                tidb_txnkv::Handle::Common(common) => {
-                    TableHandle::Common(common.encoded().to_vec())
-                }
-                tidb_txnkv::Handle::Partition(_) => {
-                    return Err(KvTableError::Decode(
-                        "a partitioned handle has no place in this tier".to_owned(),
-                    ))
-                }
-            };
+            let handle = handle
+                .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
+            let handle = index_entries::convert_handle(&handle);
             if !found.contains(&handle) {
                 found.push(handle);
             }
@@ -2316,6 +2747,129 @@ impl KvTable {
             .find(|index| index.name.eq_ignore_ascii_case(name))
     }
 
+    /// Compiles and records a partial-index predicate beside the index
+    /// metadata. The predicate is evaluated for every backfill and row write;
+    /// a false/NULL result means that row has no entry in the partial index.
+    pub(crate) fn add_partial_index_condition(
+        &mut self,
+        index_id: i64,
+        index_name: &str,
+        expression: &tidb_ast::Expr,
+        zone: &SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let compiled = self.compile_check_constraint(
+            &format!("index {index_name}"),
+            expression,
+            zone,
+            like_default_escape,
+        )?;
+        self.partial_index_conditions.insert(index_id, compiled);
+        Ok(())
+    }
+
+    /// Removes a predicate when an index backfill fails or the index is
+    /// dropped. The sidecar must never outlive its `KvIndex` owner.
+    pub(crate) fn remove_partial_index_condition(&mut self, index_id: i64) {
+        self.partial_index_conditions.remove(&index_id);
+    }
+
+    /// Returns the first partial index whose predicate names `column_name`.
+    /// Go's DROP/MODIFY/CHANGE validator reports the index name in its 8272
+    /// diagnostic rather than allowing the predicate to dangle.
+    pub(crate) fn partial_index_condition_dependency(&self, column_name: &str) -> Option<String> {
+        self.indexes.iter().find_map(|index| {
+            let condition = self.partial_index_conditions.get(&index.id)?;
+            condition
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.eq_ignore_ascii_case(column_name))
+                .then(|| index.name.clone())
+        })
+    }
+
+    /// Whether a row belongs in an index's partial predicate. A NULL result
+    /// follows Go's `EvalBool` rule for index conditions and is treated as
+    /// false, so `WHERE b IS NOT NULL` excludes NULL rows.
+    pub(crate) fn index_condition_holds(
+        &self,
+        index: &KvIndex,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<bool, KvTableError> {
+        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+            return Ok(true);
+        };
+        let context = IndexConditionContext {
+            columns: &self.columns,
+            row,
+            zone,
+        };
+        let value = crate::generated_column::eval_over_dependencies(
+            &condition.expr,
+            &condition.dependencies,
+            &*self.columns,
+            row,
+            &context,
+        )
+        .map_err(|error| KvTableError::CheckConstraint {
+            name: condition.name.clone(),
+            detail: format!("{error:?}"),
+            eval: Some(error),
+        })?;
+        tidb_expr::truthy_of(&value)
+            .map(|truthy| truthy.unwrap_or(false))
+            .map_err(|error| KvTableError::CheckConstraint {
+                name: condition.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })
+    }
+
+    /// Whether a partial index is safe to use as a foreign-key covering key.
+    /// Go's FK validator accepts an `IS NOT NULL` predicate on every indexed
+    /// column; a predicate on another column does not prove that the key row
+    /// exists and therefore must not suppress the FK's auto-created support
+    /// index. Non-partial indexes are safe by definition.
+    pub(crate) fn partial_index_safe_for_columns(
+        &self,
+        index: &KvIndex,
+        offsets: &[usize],
+    ) -> bool {
+        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+            return true;
+        };
+        let mut not_null = HashSet::new();
+        fn collect(expr: &tidb_ast::Expr, not_null: &mut HashSet<String>) -> bool {
+            match expr {
+                tidb_ast::Expr::Paren(inner) => collect(inner, not_null),
+                tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+                    collect(left, not_null) && collect(right, not_null)
+                }
+                tidb_ast::Expr::Is {
+                    expr,
+                    target: tidb_ast::IsTarget::Null,
+                    not: true,
+                } => match expr.as_ref() {
+                    tidb_ast::Expr::Column(path) => path.last().is_some_and(|name| {
+                        not_null.insert(name.go_to_lower());
+                        true
+                    }),
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+        if !collect(&condition.source, &mut not_null) {
+            return false;
+        }
+        offsets.iter().all(|offset| {
+            self.columns
+                .get(*offset)
+                .is_some_and(|column| not_null.contains(&column.name.go_to_lower()))
+        })
+    }
+
     /// The indexes a plan may read through, which is [`Self::indexes`] minus
     /// the invisible ones (Go's `IndexInfo.Invisible`). Every site that
     /// *chooses* an access path -- the cost-based index candidates and the
@@ -2435,7 +2989,7 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, false, false)
+        self.insert_row_in(row, row_id, shard, ctx, false, false, None)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -2453,10 +3007,10 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &impl tidb_expr::Columns,
+        ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false)
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
     }
 
     /// [`Self::insert_row_with_row_id_checked`] for a normal clustered INSERT
@@ -2468,10 +3022,10 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &impl tidb_expr::Columns,
+        ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true)
+        self.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
     }
 
     fn insert_row_in(
@@ -2482,6 +3036,7 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
@@ -2497,6 +3052,7 @@ impl KvTable {
         } else {
             row
         };
+        self.validate_check_constraints(row, ctx)?;
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
@@ -2508,8 +3064,11 @@ impl KvTable {
         let explicit_handle = match row_id {
             Some(0) => Some(TableHandle::Int(0)),
             Some(value) => {
+                // Go's `adjustImplicitRowID` rebases with allocIDs=true, so an
+                // ascending run of explicit row ids crosses to the counter's
+                // home once per reserved window.
                 self.auto_id
-                    .rebase(value as u64)
+                    .rebase_allocating(value as u64)
                     .map_err(|error| KvTableError::Storage(error.0))?;
                 Some(TableHandle::Int(value))
             }
@@ -2564,6 +3123,9 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx.update_table_delta(physical_id, 1, 1);
+        }
         Ok(handle)
     }
 
@@ -2622,108 +3184,6 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
         self.read_row(handle, context)
-    }
-
-    /// The point row under one already-routed physical partition id.
-    ///
-    /// Go's partitioned `BatchPointGetExec` carries one physical id beside
-    /// each handle. This is the matching storage boundary: one exact row-key
-    /// lookup, without probing the table's remaining partitions.
-    pub(crate) fn get_row_by_handle_in_physical_id_with_context(
-        &mut self,
-        handle: &TableHandle,
-        physical_id: i64,
-        context: &RowDecodeContext,
-    ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            physical_id,
-            &handle.record_handle(),
-        ));
-        let entry = match self.store.get(&key) {
-            Ok(entry) => entry,
-            Err(StorageError::NotFound) => return Ok(None),
-            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
-        };
-        Ok(Some(self.decode_row_entry(handle, &entry, context)?))
-    }
-
-    /// Every stored record inside half-open RECORD-KEY `ranges`, decoded by
-    /// [`PreparedPointGetRowDecoder`] with each record's handle parsed from
-    /// its key. This is the row source of a prepared point read whose pins
-    /// name only a leading prefix of a CLUSTERED primary key -- the same
-    /// immutable reader the single-row arm uses, walked over several keys.
-    pub(crate) fn prepared_rows_in_record_ranges(
-        &mut self,
-        ranges: &[(Key, Key)],
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-        max_rows: usize,
-    ) -> Result<Option<Vec<Vec<Datum>>>, KvTableError> {
-        let mut rows = Vec::new();
-        for (low, upper) in ranges {
-            let mut iterator = self
-                .store
-                .iter(Some(low), Some(upper))
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-            while iterator.valid() {
-                if rows.len() > max_rows {
-                    iterator.close();
-                    return Ok(None);
-                }
-                let key = iterator.key().as_bytes().to_vec();
-                let value = iterator.value().to_vec();
-                iterator
-                    .next()
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-                let handle = decoder.record_handle(&key)?;
-                rows.push(decoder.decode(&handle, &value, context)?);
-            }
-            iterator.close();
-        }
-        Ok(Some(rows))
-    }
-
-    /// Several stored-record reads decoded by the immutable projection
-    /// retained on a prepared PointGet plan, through ONE batched storage call
-    /// per physical partition -- Go's `IndexLookUpExecutor` fetching every
-    /// handle of a lookup task with a single `BatchGet`, not one point read
-    /// per entry. Slots preserve input order; `None` marks an absent record.
-    pub(crate) fn get_prepared_point_rows(
-        &mut self,
-        handles: &[TableHandle],
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        if handles.is_empty() {
-            return Ok(Vec::new());
-        }
-        let physical_ids = self.record_physical_ids();
-        let mut probes = Vec::with_capacity(handles.len() * physical_ids.len());
-        for handle in handles {
-            for physical_id in &physical_ids {
-                probes.push((
-                    Key::from_bytes(encode_row_key_with_handle(
-                        *physical_id,
-                        &handle.record_handle(),
-                    )),
-                    handle,
-                ));
-            }
-        }
-        let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
-        let entries = self
-            .store
-            .batch_get(&keys)
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-        let mut rows = Vec::with_capacity(handles.len());
-        for (key, handle) in probes {
-            let Some(entry) = entries.get(&key) else {
-                rows.push(None);
-                continue;
-            };
-            rows.push(decoder.decode(handle, entry, context).map(Some)?);
-        }
-        Ok(rows)
     }
 
     /// One stored-record read decoded by the immutable projection retained on
@@ -2804,22 +3264,18 @@ impl KvTable {
                     tidb_codec::Handle::Common(parts)
                 }
             };
-            let defaults = self
-                .columns
-                .iter()
-                .map(|column| {
-                    column
-                        .origin_default_value(context.origin_default_flags(), context.zone())
-                        .map_err(|error| KvTableError::Decode(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let default_datum = |index: usize| {
+                self.columns[index]
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
             return tidb_codec::decode_row_to_datums(
                 entry,
                 &columns,
                 &tidb_codec::DecodeRowOptions {
                     handle_column_ids: &handle_column_ids,
                     handle: Some(&codec_handle),
-                    defaults: Some(&defaults),
+                    default_datum: Some(&default_datum),
                     timezone: Some(context.zone()),
                     ..tidb_codec::DecodeRowOptions::default()
                 },
@@ -2857,7 +3313,32 @@ impl KvTable {
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_in(handle, None, row, ctx, &RowDecodeContext::for_write(ctx))
+        self.update_row_in(
+            handle,
+            None,
+            row,
+            ctx,
+            &RowDecodeContext::for_write(ctx),
+            Some(ctx),
+        )
+    }
+
+    /// [`Self::update_row_with_old`] with Go transaction-delta collection.
+    pub fn update_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: Option<&[Datum]>,
+        row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        self.update_row_in(
+            handle,
+            old_row,
+            row,
+            ctx,
+            &RowDecodeContext::for_write(ctx),
+            Some(ctx),
+        )
     }
 
     /// Replaces a row when the caller already holds the selected row. Passing
@@ -2877,6 +3358,7 @@ impl KvTable {
             row,
             ctx,
             &RowDecodeContext::legacy_default(&zone),
+            None,
         )
     }
 
@@ -2895,6 +3377,7 @@ impl KvTable {
             row,
             ctx,
             &RowDecodeContext::legacy_default(&zone),
+            None,
         )
     }
 
@@ -2905,6 +3388,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
         // Recomputed, never carried over: an UPDATE that changes a dependency
@@ -2919,6 +3403,7 @@ impl KvTable {
         } else {
             row
         };
+        self.validate_check_constraints(row, ctx)?;
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
         // allocator, exactly as an explicit value on INSERT does, so later rows
         // land past the value the UPDATE named. Without this an `UPDATE t SET
@@ -2941,8 +3426,10 @@ impl KvTable {
                 Some(Datum::UInt(value)) => *value,
                 _ => 0,
             };
+            // Same arm Go's insert arms use: the rebase reserves a window on
+            // its one store crossing, matching `Rebase(..., true)`.
             self.auto_id
-                .rebase(assigned)
+                .rebase_allocating(assigned)
                 .map_err(|error| KvTableError::Storage(error.0))?;
         }
         self.rebase_auto_random_from_row(row)?;
@@ -3063,6 +3550,14 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            if old_physical_id == new_physical_id {
+                stats_ctx.update_table_delta(old_physical_id, 0, 1);
+            } else {
+                stats_ctx.update_table_delta(old_physical_id, -1, 1);
+                stats_ctx.update_table_delta(new_physical_id, 1, 1);
+            }
+        }
         Ok(())
     }
 
@@ -3073,7 +3568,7 @@ impl KvTable {
         ctx: &crate::StmtContext,
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
-        self.delete_row_in(handle, &zone, &RowDecodeContext::for_write(ctx))
+        self.delete_row_in(handle, &zone, &RowDecodeContext::for_write(ctx), Some(ctx))
     }
 
     /// Legacy zone-only row delete retained for unmigrated DML/FK callers.
@@ -3083,7 +3578,7 @@ impl KvTable {
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
-        self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone))
+        self.delete_row_in(handle, zone, &RowDecodeContext::legacy_default(zone), None)
     }
 
     /// [`KvTable::delete_row`] for a row THIS STATEMENT already fetched.
@@ -3118,11 +3613,25 @@ impl KvTable {
         Ok(())
     }
 
+    /// [`Self::delete_row_with_old`] with Go transaction-delta collection.
+    pub fn delete_row_with_old_context(
+        &mut self,
+        handle: &TableHandle,
+        old_row: &[Datum],
+        ctx: &crate::StmtContext,
+    ) -> Result<(), KvTableError> {
+        let physical_id = self.record_physical_id(old_row, ctx)?;
+        self.delete_row_with_old(handle, old_row, ctx)?;
+        ctx.update_table_delta(physical_id, -1, 1);
+        Ok(())
+    }
+
     fn delete_row_in(
         &mut self,
         handle: &TableHandle,
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
+        stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
@@ -3139,6 +3648,9 @@ impl KvTable {
         self.dirty_content
             .0
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(stats_ctx) = stats_ctx {
+            stats_ctx.update_table_delta(physical_id, -1, 1);
+        }
         Ok(())
     }
 }
@@ -3260,6 +3772,55 @@ mod tests {
                 },
             ],
         )
+    }
+
+    #[test]
+    fn writable_check_constraints_guard_insert_and_update() {
+        let mut table = test_table();
+        let expression = tidb_model::generated_expr::parse_expression("a > 0")
+            .expect("persisted CHECK expression parses");
+        table
+            .add_check_constraint(
+                "positive_a",
+                &expression,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .expect("persisted CHECK expression builds");
+
+        let handle = table
+            .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
+            .expect("TRUE passes CHECK");
+        table
+            .insert_row(&[Datum::Null, Datum::Null], &tidb_expr::NoColumns)
+            .expect("UNKNOWN passes CHECK");
+        assert!(matches!(
+            table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_expr::NoColumns),
+            Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        ));
+        assert!(matches!(
+            table.update_row(
+                &handle,
+                &[Datum::Int(-1), Datum::Null],
+                &tidb_expr::NoColumns,
+            ),
+            Err(KvTableError::CheckConstraintViolated(name)) if name == "positive_a"
+        ));
+        assert_eq!(
+            table
+                .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+                .expect("scan preserved rows")[0][0],
+            Datum::Int(1),
+            "failed UPDATE must leave the original row"
+        );
+
+        let wire =
+            crate::DriverError::CheckConstraintViolated("positive_a".to_owned()).to_mysql_error();
+        assert_eq!(
+            wire.code,
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated
+        );
+        assert_eq!(wire.state, *b"HY000");
+        assert_eq!(wire.message, "Check constraint 'positive_a' is violated.");
     }
 
     #[test]
@@ -3498,6 +4059,7 @@ mod tests {
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
                 global: false,
+                global_index_version: 0,
                 clustered_primary: false,
             },
             false,
@@ -3539,7 +4101,11 @@ mod tests {
             )
             .unwrap();
         let after_touched = table.index_entries_for_check(1).unwrap();
-        assert_eq!(after_touched.len(), 1, "exactly one entry, moved not copied");
+        assert_eq!(
+            after_touched.len(),
+            1,
+            "exactly one entry, moved not copied"
+        );
         assert_ne!(after_touched, before, "entry follows the new indexed value");
     }
 
@@ -3551,17 +4117,21 @@ mod tests {
         // so two NULLs must create two entries without a duplicate error.
         let mut table = test_table();
         table.set_pk_handle_offset(0);
-        table.add_index(KvIndex {
-            id: 1,
-            name: "s".to_owned(),
-            comment: String::new(),
-            unique: true,
-            column_offsets: vec![1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "s".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
 
         table
             .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
@@ -3848,17 +4418,21 @@ mod tests {
             ],
         );
         t.set_common_handle_offsets(vec![0]);
-        t.add_index(KvIndex {
-            id: 1,
-            name: "idx".to_owned(),
-            comment: String::new(),
-            unique: false,
-            column_offsets: vec![1],
-            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            clustered_primary: false,
-        }, false);
+        t.add_index(
+            KvIndex {
+                id: 1,
+                name: "idx".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
         let written = t
             .insert_row(
                 &[

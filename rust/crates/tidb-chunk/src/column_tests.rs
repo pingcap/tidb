@@ -15,7 +15,7 @@
 use super::*;
 use crate::chunk::Chunk;
 use crate::column::Column;
-use crate::iterator::{ChunkIterator, Iterator4Chunk};
+use crate::iterator::ChunkIterator;
 use tidb_datatype::Decimal;
 
 /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
@@ -773,7 +773,6 @@ fn vector_decoder_accepts_a_valid_image_with_a_suffix() {
     assert_eq!(column.get_vector_float32(0), expected);
 }
 
-
 /// Go `TestColumnCopy` (`pkg/util/chunk/column_test.go`): `CopyConstruct(nil)`
 /// is an equal deep copy, and `CopyConstruct(dst)` reuses the destination.
 #[test]
@@ -1024,7 +1023,10 @@ fn go_test_duration_slice_column() {
     let mut i = 0i64;
     let mut row = it.begin();
     while row != it.end() {
-        assert_eq!(row.expect("not end").get_duration(0, 0).nanoseconds(), i * 2);
+        assert_eq!(
+            row.expect("not end").get_duration(0, 0).nanoseconds(),
+            i * 2
+        );
         assert_eq!(
             chk.column(0).get_duration(i as usize, 0).nanoseconds(),
             i * 2
@@ -1050,7 +1052,10 @@ fn go_test_my_decimal() {
     for i in 0..1024usize {
         let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
         assert!(error.is_none());
-        assert_eq!(d.compare(&chk.column(0).get_my_decimal(i)), std::cmp::Ordering::Equal);
+        assert_eq!(
+            d.compare(&chk.column(0).get_my_decimal(i)),
+            std::cmp::Ordering::Equal
+        );
     }
 
     // Go mutates the stored cells through the `Decimals()` slice view:
@@ -1089,7 +1094,8 @@ fn go_test_string_column() {
     let fields = vec![FieldType::new(FieldTypeCode::VarString)];
     let mut chk = Chunk::new_with_capacity(&fields, 1024);
     for i in 0..1024usize {
-        chk.column_mut(0).append_string((i * i).to_string().as_str());
+        chk.column_mut(0)
+            .append_string((i * i).to_string().as_str());
     }
 
     let mut it = crate::iterator::Iterator4Chunk::new(&chk);
@@ -1097,7 +1103,10 @@ fn go_test_string_column() {
     let mut row = it.begin();
     while row != it.end() {
         let expect = (i * i).to_string();
-        assert_eq!(row.expect("not end").get_string(0).as_bytes(), expect.as_bytes());
+        assert_eq!(
+            row.expect("not end").get_string(0).as_bytes(),
+            expect.as_bytes()
+        );
         assert_eq!(chk.column(0).get_string(i).as_bytes(), expect.as_bytes());
         i += 1;
         row = it.next_row();
@@ -1472,14 +1481,8 @@ fn go_test_get_raw() {
     let mut row = it.begin();
     while row != it.end() {
         let expected = i.to_string();
-        assert_eq!(
-            row.expect("not end").get_raw(0),
-            expected.as_bytes()
-        );
-        assert_eq!(
-            chk.column(0).get_raw(i as usize),
-            expected.as_bytes()
-        );
+        assert_eq!(row.expect("not end").get_raw(0), expected.as_bytes());
+        assert_eq!(chk.column(0).get_raw(i as usize), expected.as_bytes());
         i += 1;
         row = it.next_row();
     }
@@ -1684,4 +1687,10 @@ fn go_test_column_resize_int64() {
     col.append_uint64(32);
     col.append_uint64(32);
     assert_eq!(col.null_bitmap, vec![0b1000_0000, 0b1]);
+}
+
+#[test]
+fn zero_value_variable_column_reads_as_empty_bytes() {
+    let column = Column::default();
+    assert!(column.get_bytes(0).is_empty());
 }

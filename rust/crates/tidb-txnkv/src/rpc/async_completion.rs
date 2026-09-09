@@ -28,6 +28,7 @@ use std::task::Waker;
 
 use crate::client::{DirectUnaryRequest, DirectUnaryResponse};
 
+use super::unary::CancellationWaiter;
 use super::{DirectUnaryClientError, UnaryCallContext};
 
 /// Immutable evidence that one async request was published on a concrete
@@ -310,6 +311,12 @@ impl RunLoopSignal {
     }
 }
 
+impl CancellationWaiter for RunLoopSignal {
+    fn wake_all(&self) {
+        Self::wake_all(self);
+    }
+}
+
 /// Configurable source-shaped worker delegation used by [`CompletionRunLoop::go`].
 pub trait CompletionSpawner: Send + Sync + 'static {
     /// Starts one independent producer task.
@@ -553,7 +560,11 @@ impl CompletionRunLoop {
         self.run(running, Some(cancellation))
     }
 
-    fn execute_with_call(&self, call: &UnaryCallContext) -> CompletionRunOutcome {
+    /// Waits for one or more callbacks and drives every callback made ready in
+    /// the same batch. One response owner can use this method for all of its
+    /// pending requests, matching client-go's one executor per async owner.
+    #[must_use]
+    pub fn execute_with_call(&self, call: &UnaryCallContext) -> CompletionRunOutcome {
         let mut inner = self.lock_inner();
         if inner.state != CompletionRunLoopState::Idle {
             return CompletionRunOutcome::failed(0, CompletionError::ConcurrentDriver);
@@ -1118,6 +1129,9 @@ impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientErr
 
 /// One in-flight source request returned by [`AsyncRequestDispatcher::begin`].
 pub trait PendingRequest {
+    /// Registers a shared wakeup without changing the response delivery mode.
+    fn set_notifier(&mut self, _notifier: CompletionNotifier, _token: u64) {}
+
     /// Reads already-published identity without waiting for transport admission.
     /// Implementations with deferred admission must override this separately
     /// from the explicit receipt barrier in [`Self::publication`].
@@ -1134,11 +1148,6 @@ pub trait PendingRequest {
     fn publication(&self) -> Option<AsyncRequestPublication> {
         None
     }
-
-    /// Registers a shared wakeup for a consumer waiting on several requests.
-    /// Implementations that cannot publish asynchronously may leave the
-    /// default no-op and continue to use [`Self::complete`].
-    fn set_notifier(&mut self, _notifier: CompletionNotifier, _token: u64) {}
 
     /// Polls without blocking. `None` means the exact attempt is still pending.
     fn try_complete(
@@ -1169,4 +1178,36 @@ pub trait AsyncRequestDispatcher {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError>;
+
+    /// Begins one attempt on the response owner's shared callback executor.
+    fn begin_with_run_loop(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+        _run_loop: CompletionRunLoop,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        self.begin(physical_address, forwarded_host, request, call)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{completion_pair, CompletionRunLoop};
+
+    #[test]
+    fn one_run_loop_drives_any_of_its_pending_requests() {
+        let run_loop = CompletionRunLoop::new();
+        let (_first_request, mut first_pending) =
+            completion_pair::<i32, (), _>(run_loop.clone(), || {});
+        let (second_request, mut second_pending) =
+            completion_pair::<i32, (), _>(run_loop.clone(), || {});
+
+        second_request.schedule(Ok(7));
+
+        assert_eq!(run_loop.num_runnable(), 1);
+        assert_eq!(first_pending.try_complete(), Ok(None));
+        assert_eq!(second_pending.try_complete(), Ok(Some(Ok(7))));
+    }
 }

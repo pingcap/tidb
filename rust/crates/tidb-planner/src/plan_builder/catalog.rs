@@ -19,19 +19,11 @@
 //! and `pkg/table.Table`, as READ by `PlanBuilder.buildDataSource`
 //! (`logical_plan_builder.go:4927`).
 //!
-//! # Why a trait and not the model types
-//!
-//! `tidb-planner` has no `tidb-model` / `tidb-meta` dependency and MUST NOT
-//! gain one: the catalogue drags in the DDL job model, the schema-version
-//! machinery and the storage handles, none of which any planner body reads.
-//! [`crate::logical::data_source::DataSource`] already recorded the narrowing
-//! ("what the ported bodies actually READ off them is kept as explicit
-//! fields"); this module is the INPUT side of that same narrowing, so the two
-//! agree field for field.
-//!
-//! [`TableSource`] is therefore the whole of Go's
-//! `infoschema.InfoSchema` + `model.TableInfo` as far as this crate is
-//! concerned. A downstream crate that owns the real catalogue implements it.
+//! [`TableSource`] keeps the immutable infoschema lookup behind a trait so the
+//! planner does not own storage handles. Each [`SourceTable`] nevertheless
+//! carries the shared, complete model objects that preprocessing records in
+//! `resolve.Context`; planner-specific access-path inputs remain beside those
+//! handles instead of replacing them.
 //!
 //! # The method set, and why exactly these
 //!
@@ -62,11 +54,9 @@
 //! * `statistics.Table` / `statistics.HistColl` (`TableStats`). Statistics
 //!   arrive at [`crate::cardinality`] already derived; the builder only tags
 //!   the operator, so no statistics handle crosses this seam.
-//! * `model.TableInfo.State` / `ColumnInfo.State` /
-//!   `IndexInfo.State`. Go filters on `== model.StatePublic`. Reduced to the
-//!   booleans [`SourceColumn::is_public`] / [`SourceIndex::is_public`]: the
-//!   builder only ever asks the yes/no question, and the DDL state machine
-//!   that produces the other states is not in this crate.
+//! * The builder's hot path caches `StatePublic` as
+//!   [`SourceColumn::is_public`] / [`SourceIndex::is_public`], while the full
+//!   states remain available through [`SourceTable::table_info`].
 //! * `infoschema.InfoSchema.SchemaMetaVersion` / `AllSchemas` / the
 //!   `TableByID` family. `buildDataSource` reaches the catalogue exactly once,
 //!   by (db, table) name; the rest of the interface serves DDL and SHOW.
@@ -74,6 +64,10 @@
 //!   [`crate::plan_builder`]'s header — dropped tree-wide, not narrowed here.
 
 use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_model::{
+    ColumnInfo, DBInfo, GoShared, GoSharedPointerSlice, IndexColumn, IndexInfo, SchemaState,
+    TableInfo,
+};
 
 /// What the ported builder bodies read off a `*model.ColumnInfo`.
 ///
@@ -81,7 +75,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 /// [`FieldType`] has no `Default` — Go's zero `types.FieldType` is a
 /// `TypeUnspecified`, which [`FieldTypeCode::Unspecified`] spells explicitly.
 ///
-/// The first three fields are exactly
+/// The first four fields are exactly
 /// [`DataSourceColumn`](crate::logical::data_source::DataSourceColumn); the
 /// rest are the builder-only inputs named in this module's header.
 #[derive(Clone, Debug)]
@@ -107,6 +101,9 @@ pub struct SourceColumn {
     /// column, which the storage layer cannot return and the planner must
     /// compute. Read by `FlagGcSubstitute`'s eligibility.
     pub is_virtual_generated: bool,
+    /// Go `ColumnInfo.GeneratedExpr`, retained for virtual-column expression
+    /// construction in the reading statement's own expression context.
+    pub generated_expr: Option<tidb_ast::Expr>,
 }
 
 impl Default for SourceColumn {
@@ -120,6 +117,7 @@ impl Default for SourceColumn {
             is_public: true,
             is_hidden: false,
             is_virtual_generated: false,
+            generated_expr: None,
         }
     }
 }
@@ -159,19 +157,31 @@ pub struct SourceIndex {
     pub is_columnar: bool,
     /// Go `IndexInfo.MVIndex`.
     pub is_multi_valued: bool,
+    /// Go `IndexInfo.Global`.
+    pub global: bool,
+    /// Go `IndexInfo.ConditionExprString`: non-empty for a partial index.
+    pub condition_expr_string: String,
+    /// Go `IndexInfo.AffectColumn`, represented by table-column offsets.
+    /// `rule_prune_indexes` uses these offsets for its conservative partial
+    /// index eligibility precheck.
+    pub affect_column_offsets: Vec<usize>,
 }
 
 /// What the ported builder bodies read off a `*model.TableInfo` plus the
 /// partition selection `buildDataSource` has already made.
 ///
-/// One value per PHYSICAL table read: a partitioned table hands back one of
-/// these per targeted partition, with `physical_table_id` and
-/// `partition_def_idx` already resolved. That mirrors what
-/// [`DataSource`](crate::logical::data_source::DataSource) stores and keeps
-/// partition pruning on the implementor's side of the seam, where the
-/// partition expression lives.
+/// One value per logical table. Static partition pruning later copies the
+/// resulting `DataSource` once per surviving physical definition, exactly as
+/// Go's `PartitionProcessor.makeUnionAllChildren` does.
 #[derive(Clone, Debug, Default)]
 pub struct SourceTable {
+    /// Go `DBInfo`, shared by every table occurrence in one infoschema.
+    pub db_info: Option<GoShared<DBInfo>>,
+    /// Go `TableInfo`, shared by every occurrence of this table.
+    pub table_info: Option<GoShared<TableInfo>>,
+    /// Go `table.Type().IsVirtualTable()`: this table is planned through
+    /// `buildMemTable`, not `buildDataSource`.
+    pub is_memory_table: bool,
     /// Go `TableInfo.ID`.
     pub table_id: i64,
     /// Go `TableInfo.Name.O`.
@@ -182,8 +192,12 @@ pub struct SourceTable {
     pub physical_table_id: i64,
     /// Go `PartitionDefIdx`.
     pub partition_def_idx: Option<usize>,
+    /// Whether Go `TableInfo.GetPartitionInfo()` is non-nil.
+    pub is_partitioned: bool,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
     pub partition_definition_names: Vec<String>,
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
+    pub partition_definition_ids: Vec<i64>,
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
     /// Go `TableInfo.Indices`, in declaration order.
@@ -192,6 +206,14 @@ pub struct SourceTable {
     pub pk_is_handle: bool,
     /// Go `TableInfo.IsCommonHandle`.
     pub is_common_handle: bool,
+    /// Go `TableInfo.CommonHandleVersion`.
+    pub common_handle_version: u16,
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    pub is_temporary: bool,
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    pub is_cached: bool,
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    pub has_affinity: bool,
     /// Offsets into [`Self::columns`] of Go `HandleCols`' columns. Empty when
     /// the table has no usable handle, in which case `buildDataSource` appends
     /// the `_tidb_rowid` extra handle.
@@ -201,11 +223,89 @@ pub struct SourceTable {
     /// Go `CommonHandleLens`, index-parallel to
     /// [`Self::common_handle_col_offsets`].
     pub common_handle_lens: Vec<i64>,
-    /// Go `PreferStoreType`: the already-resolved `READ_FROM_STORAGE` hint.
-    pub prefer_store_type: i32,
+    /// Whether Go `TableInfo.TiFlashReplica` exists and is available.
+    /// `READ_FROM_STORAGE` is resolved by the planner from this fact and the
+    /// active query-block hints; it is not pre-resolved by the catalog.
+    pub has_tiflash_replica: bool,
 }
 
 impl SourceTable {
+    /// Attaches the metadata objects that Go's preprocessor records in
+    /// `resolve.Context` for this infoschema table.
+    pub fn attach_resolve_metadata(&mut self, db_info: GoShared<DBInfo>) {
+        let columns = self
+            .columns
+            .iter()
+            .map(|column| {
+                Some(GoShared::new(ColumnInfo {
+                    id: column.id,
+                    name: tidb_ast::CiString::new(column.name.clone()),
+                    offset: column.offset as i64,
+                    field_type: column.ret_type.clone(),
+                    state: if column.is_public {
+                        SchemaState::PUBLIC
+                    } else {
+                        SchemaState::NONE
+                    },
+                    hidden: column.is_hidden,
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect();
+        let indices = self
+            .indexes
+            .iter()
+            .map(|index| {
+                Some(GoShared::new(IndexInfo {
+                    id: index.id,
+                    name: tidb_ast::CiString::new(index.name.clone()),
+                    table: tidb_ast::CiString::new(self.table_name.clone()),
+                    columns: GoSharedPointerSlice::from_nullable(
+                        index
+                            .columns
+                            .iter()
+                            .map(|column| {
+                                Some(IndexColumn {
+                                    name: tidb_ast::CiString::new(column.name.clone()),
+                                    offset: column.offset as i64,
+                                    length: column.length,
+                                    ..IndexColumn::default()
+                                })
+                            })
+                            .collect(),
+                    ),
+                    state: if index.is_public {
+                        SchemaState::PUBLIC
+                    } else {
+                        SchemaState::NONE
+                    },
+                    unique: index.unique,
+                    primary: index.primary,
+                    invisible: !index.is_visible,
+                    mv_index: index.is_multi_valued,
+                    ..IndexInfo::default()
+                }))
+            })
+            .collect();
+        self.db_info = Some(db_info);
+        self.table_info = Some(GoShared::new(TableInfo {
+            id: self.table_id,
+            name: tidb_ast::CiString::new(self.table_name.clone()),
+            columns: GoSharedPointerSlice::from_handles(columns),
+            indices: GoSharedPointerSlice::from_handles(indices),
+            state: SchemaState::PUBLIC,
+            pk_is_handle: self.pk_is_handle,
+            is_common_handle: self.is_common_handle,
+            tiflash_replica: self.has_tiflash_replica.then(|| {
+                GoShared::new(tidb_model::TiFlashReplicaInfo {
+                    available: true,
+                    ..tidb_model::TiFlashReplicaInfo::default()
+                })
+            }),
+            ..TableInfo::default()
+        }));
+    }
+
     /// Go `HandleCols.IsInt()`: an int handle is a single-column,
     /// non-common-handle handle.
     #[must_use]
@@ -245,6 +345,12 @@ pub trait TableSource {
     /// Go `is.SchemaByName(dbName) != nil`, so an unknown DATABASE reports
     /// `ErrBadDB` rather than `ErrNoSuchTable`.
     fn database_exists(&self, db_name: &str) -> bool;
+
+    /// Go `domain.GetDomain(ctx).InfoSchema()`, snapshotted at the statement
+    /// boundary. Test/internal sources without a session have no domain.
+    fn latest_index_schema(&self) -> Option<&crate::domain_misc::LatestIndexSchema> {
+        None
+    }
 
     /// Go `tableInfo.IsView()` plus `tableInfo.View`
     /// (`logical_plan_builder.go:5047`): the stored definition

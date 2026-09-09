@@ -332,6 +332,8 @@ pub enum ShowCreateKind {
     PlacementPolicy,
     /// `SHOW CREATE RESOURCE GROUP`.
     ResourceGroup,
+    /// `SHOW CREATE IMPORT` (the parser's semantic command kind).
+    Import,
 }
 
 /// TiDB's `SHOW WARNINGS` grammar form.
@@ -1301,6 +1303,7 @@ impl crate::Visitable for ShowCreateKind {
             Self::Procedure => {}
             Self::PlacementPolicy => {}
             Self::ResourceGroup => {}
+            Self::Import => {}
         }
         visitor.leave(self)
     }

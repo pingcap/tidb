@@ -50,7 +50,8 @@ pub(crate) fn dispatch(
         "UTC_TIMESTAMP" => utc_timestamp(vals, cols),
         "CURDATE" | "CURRENT_DATE" => current_date(vals, cols),
         "UTC_DATE" => utc_date(vals, cols),
-        "CURTIME" | "CURRENT_TIME" => current_time(vals, cols),
+        "CURTIME" => current_time(vals, "curtime", cols),
+        "CURRENT_TIME" => current_time(vals, "current_time", cols),
         "UTC_TIME" => utc_time(vals, cols),
         "DATE" => date(vals, cols),
         "MICROSECOND" => microsecond(vals),
@@ -64,6 +65,7 @@ pub(crate) fn dispatch(
         "WEEK" => week(vals, cols.default_week_format()),
         "WEEKOFYEAR" => week_of_year_builtin(vals),
         "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
+        "TIDB_BOUNDED_STALENESS" => tidb_bounded_staleness(vals, cols),
         "TIDB_CURRENT_TSO" => current_tso(vals, cols),
         "GET_FORMAT" => get_format_value(vals),
         "YEARWEEK" => yearweek(vals),
@@ -116,6 +118,53 @@ fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     Ok(Datum::Int(cols.current_tso()))
 }
 
+/// Go `builtinTiDBBoundedStalenessSig.evalTime`: choose a read timestamp from
+/// the requested inclusive window and the statement's SafeTS. The storage
+/// layer publishes the already timezone-adjusted SafeTS through
+/// `Columns::bounded_staleness_safe_time`; a context without storage has no
+/// value and therefore uses the lower bound (the same outcome as a zero
+/// SafeTS for normal post-epoch datetimes). The result is always a DATETIME
+/// with millisecond precision, matching `setDecimalAndFlenForDatetime(3)`.
+fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    let [left, right] = vals else {
+        return Err(EvalError::WrongParameterCount("tidb_bounded_staleness"));
+    };
+    let (Datum::Time(left), Datum::Time(right)) = (left, right) else {
+        return if vals.iter().any(Datum::is_null) {
+            Ok(Datum::Null)
+        } else {
+            Err(EvalError::Unsupported(
+                "TIDB_BOUNDED_STALENESS arguments reached the signature without ETDatetime casts",
+            ))
+        };
+    };
+    // `builtinTiDBBoundedStalenessSig` runs `InvalidZero` through
+    // `handleInvalidTimeError` before converting either endpoint to Go time.
+    // Keep that check here, after the signature cast has produced typed
+    // values, so zero/zero-in-date inputs cannot accidentally become a valid
+    // lower-bound read timestamp.
+    for value in [left, right] {
+        if value.invalid_zero() {
+            cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+            return Ok(Datum::Null);
+        }
+    }
+    if left.compare(*right).is_gt() {
+        return Ok(Datum::Null);
+    }
+    let mut result = match cols.bounded_staleness_safe_time() {
+        Some(safe) if safe.compare(*left).is_lt() => *left,
+        Some(safe) if safe.compare(*right).is_gt() => *right,
+        Some(safe) => safe,
+        None => *left,
+    };
+    result.set_kind(tidb_datatype::TimeType::DateTime);
+    result
+        .set_fsp(3)
+        .map_err(|_| EvalError::Unsupported("invalid bounded-staleness result precision"))?;
+    Ok(Datum::Time(result))
+}
+
 /// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced
 /// a typed temporal value. The function applies its own zero-date SQL-mode
 /// checks, clears the clock, and changes the result domain to `DATE`.
@@ -159,7 +208,7 @@ fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// (`time_zone`-adjusted) statement time, always truncating fractional
 /// seconds. `CURRENT_TIMESTAMP` is the same function class.
 fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals, "now")?.unwrap_or(0);
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs + i64::from(tz_offset),
@@ -172,7 +221,7 @@ fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinUTCTimestampWithArgSig` / `builtinUTCTimestampWithoutArgSig`:
 /// raw UTC statement time, always rounding fractional seconds half-up.
 fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals, "utc_timestamp")?.unwrap_or(0);
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs, nanos, fsp, true,
@@ -203,8 +252,12 @@ fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinCurrentTime0ArgSig` / `builtinCurrentTime1ArgSig`: local
 /// statement time. The zero-argument signature truncates; an explicit FSP,
 /// including zero, rounds half-up. `CURTIME` and `CURRENT_TIME` are aliases.
-fn current_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?;
+fn current_time(
+    vals: &[Datum],
+    function: &'static str,
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    let fsp = parse_fsp_with_null_as_zero(vals, function)?;
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     // builtinCurrentTime1ArgSig first renders TimeFSPFormat (six digits,
     // truncating sub-microsecond nanoseconds) and only then ParseDuration
@@ -226,7 +279,7 @@ fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if matches!(vals, [Datum::Null]) {
         return Ok(Datum::Null);
     }
-    let fsp = parse_fsp(vals)?;
+    let fsp = parse_fsp_for(vals, "utc_time")?;
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     // builtinUTCTimeWithArgSig has the identical TimeFSPFormat-then-parse
     // conversion as CURRENT_TIME's explicit signature.
@@ -271,7 +324,10 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     match duration_parse::parse_duration(&value, fsp) {
         Ok(duration) => Ok(Datum::new_string(duration.format())),
         Err(_) => {
-            cols.handle_truncate(&format!("Truncated incorrect time value: '{value}'"))?;
+            cols.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&value)
+            ))?;
             Ok(Datum::new_string("00:00:00".to_owned()))
         }
     }
@@ -282,24 +338,33 @@ fn no_clock_err() -> EvalError {
 }
 
 /// Parses the source family's optional 0-6 fractional-seconds precision.
-/// `None` means the zero-argument signature and remains distinguishable from
-/// an explicit zero for CURRENT_TIME/UTC_TIME rounding.
-fn parse_fsp(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
+fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
     match vals {
         [] => Ok(None),
         [Datum::Int(i)] if (0..=6).contains(i) => Ok(Some(*i as u32)),
         [Datum::UInt(i)] if *i <= 6 => Ok(Some(*i as u32)),
+        // Go `types.ErrTooBigPrecision` (1426), raised at evaluation time by
+        // the clock signatures themselves
+        // (`pkg/expression/builtin_time.go:2730` and siblings).
+        [Datum::Int(i)] if *i > 6 => Err(EvalError::TooBigFsp { fsp: *i, function }),
+        [Datum::UInt(i)] => Err(EvalError::TooBigFsp {
+            fsp: *i as i64,
+            function,
+        }),
         _ => Err(EvalError::Unsupported(
             "bad fractional-seconds-precision argument",
         )),
     }
 }
 
-fn parse_fsp_with_null_as_zero(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
+fn parse_fsp_with_null_as_zero(
+    vals: &[Datum],
+    function: &'static str,
+) -> Result<Option<u32>, EvalError> {
     if matches!(vals, [Datum::Null]) {
         Ok(Some(0))
     } else {
-        parse_fsp(vals)
+        parse_fsp_for(vals, function)
     }
 }
 
@@ -911,9 +976,7 @@ fn parse_duration_diff_value(text: &str) -> Option<TimeDiffValue> {
     let hour = fields.next()?.parse::<i64>().ok()?;
     let minute = fields.next()?.parse::<u32>().ok()?;
     let second_part = fields.next()?;
-    let (second_part, fraction) = second_part
-        .split_once('.')
-        .map_or((second_part, ""), |pair| pair);
+    let (second_part, fraction) = second_part.split_once('.').unwrap_or((second_part, ""));
     let second = second_part.parse::<u32>().ok()?;
     if minute > 59 || second > 59 || fraction.len() > 6 || !fraction.is_ascii() {
         return None;
@@ -1025,11 +1088,12 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     // Go reaches this text through `fmt.Sprintf("%v", second)` followed by
     // `ParseDuration`, whose fraction rounding works on the DECIMAL DIGITS
     // and carries half-up at the requested precision
-    // (`Duration.RoundFrac`: Go's time.Round is half-away-from-zero).
+    // (`Duration.RoundFrac`: Go's time.Round rounds nearest values and sends
+    // exact ties toward positive infinity).
     // Doing the arithmetic in f64 first re-derives 30.0000005 as
     // ...4999996µs and loses the digit -- so round off the SHORTEST decimal
     // rendering instead.
-        // Go formats the REAL second value with %v (shortest repr): 30.1 stays
+    // Go formats the REAL second value with %v (shortest repr): 30.1 stays
     // "30.1", 30.0000005 stays "30.0000005".
     let digits = format!("{seconds}");
     let mut digits_fraction = match digits.split_once('.') {
@@ -1038,8 +1102,7 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     };
     // Round half-up at the requested precision off the FIRST DISCARDED
     // digit, carrying into the whole part when the fraction overflows.
-    let round_up = digits_fraction.len() > fsp
-        && digits_fraction.as_bytes()[fsp] >= b'5';
+    let round_up = digits_fraction.len() > fsp && digits_fraction.as_bytes()[fsp] >= b'5';
     digits_fraction.truncate(fsp);
     while digits_fraction.len() < fsp {
         digits_fraction.push('0');
@@ -1085,7 +1148,7 @@ fn maketime(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let (Some(hour), Some(minute), Some(second)) = (
+    let (Some(mut hour), Some(minute), Some(second)) = (
         int_arg(&vals[0])?,
         int_arg(&vals[1])?,
         number_arg(&vals[2])?,
@@ -1095,9 +1158,23 @@ fn maketime(vals: &[Datum]) -> Result<Datum, EvalError> {
     if !(0..60).contains(&minute) || !(0.0..60.0).contains(&second) {
         return Ok(Datum::Null);
     }
+    // Go's `makeTime` checks the argument FieldType's UnsignedFlag before it
+    // interprets the signed value.  A UInt datum carrying a wrapped negative
+    // hour (for example `CAST(-1 AS UNSIGNED)`) therefore clamps to the
+    // positive TIME limit instead of producing a negative duration.  The
+    // value-level evaluator has no separate FieldType parameter, so Datum::UInt
+    // is the equivalent type signal here.
+    let hour_unsigned = matches!(vals[0], Datum::UInt(_));
+    let mut overflow = false;
+    if hour < 0 && hour_unsigned {
+        hour = 838;
+        overflow = true;
+    }
     let negative = hour < 0;
     let hour_abs = hour.unsigned_abs();
-    let overflow = hour_abs > 838 || (hour_abs == 838 && minute == 59 && second > 59.0);
+    if hour_abs > 838 || (hour_abs == 838 && minute == 59 && second > 59.0) {
+        overflow = true;
+    }
     let total = if overflow {
         838.0 * 3600.0 + 59.0 * 60.0 + 59.0
     } else {
@@ -1127,10 +1204,11 @@ fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if !valid_period(period) {
-        // TiDB returns ER_WRONG_ARGUMENTS (1210). EvalError intentionally has
-        // no server error-code payload, so retain the error boundary without
-        // inventing a diagnostic string.
-        return Err(EvalError::Unsupported("invalid PERIOD_ADD period"));
+        // TiDB returns ER_WRONG_ARGUMENTS (1210). EvalError carries the
+        // source-facing message but not the server code prefix.
+        return Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to period_add".to_owned(),
+        ));
     }
     let sum = (period_to_month(period as u64) as i64).wrapping_add(months);
     Ok(Datum::Int(month_to_period(sum as u64) as i64))
@@ -1146,7 +1224,9 @@ fn period_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if !valid_period(period1) || !valid_period(period2) {
-        return Err(EvalError::Unsupported("invalid PERIOD_DIFF period"));
+        return Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to period_diff".to_owned(),
+        ));
     }
     // Go subtracts the uint64 month totals before converting to int64.
     Ok(Datum::Int(
@@ -1268,6 +1348,36 @@ mod clock_source_tests {
 
     fn string(value: &str) -> Datum {
         Datum::new_string(value.to_owned())
+    }
+
+    /// Go raises `types.ErrTooBigPrecision` (1426) at EVALUATION time for an
+    /// fsp above `MaxFsp` (`builtin_time.go:2730` and siblings) -- a coded
+    /// diagnostic, not the generic fallback, and NULL args still mean fsp 0.
+    #[test]
+    fn clock_fsp_above_max_reports_coded_1426() {
+        let ctx = WarningContext::default();
+        let err = source_eval("NOW", &[Datum::Int(7)], &ctx).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                EvalError::TooBigFsp {
+                    fsp: 7,
+                    function: "now"
+                }
+            ),
+            "{err:?}"
+        );
+        let err = source_eval("CURTIME", &[Datum::Int(8)], &ctx).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                EvalError::TooBigFsp {
+                    fsp: 8,
+                    function: "curtime"
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     /// Exact Go `TestClock`: HOUR, MINUTE, SECOND, MICROSECOND and TIME over

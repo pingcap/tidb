@@ -10,9 +10,13 @@ description = "Go pkg/ddl/schemaver: the etcd and in-memory schema-version synce
 [lints]
 workspace = true
 
+[features]
+nextgen = ["tidb-config/nextgen"]
+
 [dependencies]
 # `EtcdOps` is this tier's etcd seam; `ServerInfo`/`join_host_port` stand in
 # for Go's `infosync`/`disttaskutil` imports of the MDL wait path.
 tidb-domain = { path = "../tidb-domain" }
+tidb-config = { path = "../tidb-config" }
 # Go `variable.EnableMDL`.
 tidb-vardef = { path = "../tidb-vardef" }

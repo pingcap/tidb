@@ -71,9 +71,8 @@
 //!
 //! Two further Go packages build directly on `pkg/timer/api` and live here as
 //! their own module trees, each with its own header stating its completeness:
-//! - [`table_store`] <- `pkg/timer/tablestore` (SEED: `sql.go` and `store.go`
-//!   are complete; the etcd watch notifier in `notifier.go` is named and
-//!   deferred).
+//! - [`table_store`] <- `pkg/timer/tablestore` (complete, including its etcd
+//!   watch notifier in [`crate::notifier`]).
 //! - [`runtime`] <- `pkg/timer/runtime` (complete package).
 
 pub mod client;
@@ -82,6 +81,7 @@ pub mod error;
 pub mod go_time;
 pub mod hook;
 pub mod mem_store;
+pub mod notifier;
 pub mod runtime;
 pub mod store;
 pub mod table_store;
@@ -101,6 +101,7 @@ pub use mem_store::{
     get_mem_store_time_zone_loc, new_mem_timer_watch_event_notifier, new_memory_timer_store,
     normalize_time_fields, MemTimerWatchEventNotifier, MemoryStoreCore,
 };
+pub use notifier::{new_etcd_timer_watch_event_notifier, EtcdTimerNotifier};
 pub use store::{
     and, not, or, Cond, Context, Operator, OperatorTp, OptionalVal, TimerCond, TimerStore,
     TimerStoreCore, TimerUpdate, TimerWatchEventNotifier, WatchTimerChan, WatchTimerEvent,

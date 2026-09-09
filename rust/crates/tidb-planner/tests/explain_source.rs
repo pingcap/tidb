@@ -11,6 +11,7 @@
 //! the real PlanBuilder, physical optimizer, and FlattenPhysicalPlan bridge.
 
 use tidb_ast::{DmlStmt, Stmt};
+use tidb_planner::access::{AccessObject, IndexAccess, ScanAccessObject};
 use tidb_planner::explain::{
     new_line_fields_info, Explain, ExplainContext, ExplainFormat, ExplainOperator, ExplainTask,
 };
@@ -54,13 +55,24 @@ fn plan_tree_renderer_leaf() {
     };
     let mut build = ExplainOperator::new("IndexRangeScan", 2)
         .with_task(task.clone())
-        .with_access_object("table:t, index:idx(a)")
+        .with_access_object(AccessObject::Scan(ScanAccessObject {
+            table: "t".to_owned(),
+            indexes: vec![IndexAccess {
+                name: "idx".to_owned(),
+                cols: vec!["a".to_owned()],
+                is_clustered_index: false,
+            }],
+            ..ScanAccessObject::default()
+        }))
         .with_operator_info("range:[5,5], keep order:false, stats:pseudo")
         .with_children([ExplainOperator::new("IndexScan", 4)]);
     build.label = "(Build)".to_owned();
     let mut probe = ExplainOperator::new("TableRowIDScan", 3)
         .with_task(task)
-        .with_access_object("table:t")
+        .with_access_object(AccessObject::Scan(ScanAccessObject {
+            table: "t".to_owned(),
+            ..ScanAccessObject::default()
+        }))
         .with_operator_info("keep order:false, stats:pseudo");
     probe.label = "(Probe)".to_owned();
     let root = ExplainOperator::new("IndexLookUp", 1).with_children([build, probe]);

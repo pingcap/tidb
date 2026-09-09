@@ -14,8 +14,8 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    copy_index, index_is_all_evicted, index_stats_validity, Bucket, CmsSketch, FmSketch, Histogram,
-    Index, IndexInfo, IndexValidityContext, StatsLoadedStatus, TopN, ALL_EVICTED,
+    copy_index, index_is_all_evicted, Bucket, CmsSketch, FmSketch, Histogram, Index, IndexInfo,
+    StatsLoadedStatus, TopN, ALL_EVICTED,
 };
 
 fn populated_index(version: i64) -> Index {
@@ -48,7 +48,6 @@ fn populated_index(version: i64) -> Index {
         stats_loaded_status: StatsLoadedStatus::full_load(),
         stats_version: version,
         physical_id: 12,
-        histogram_memory_usage: 11,
     }
 }
 
@@ -118,60 +117,39 @@ fn source_drop_and_test_only_evict_match_status_boundaries() {
     assert_eq!(index.evicted_status(), ALL_EVICTED);
 }
 
+#[deny(unused_must_use)]
 #[test]
-fn source_memory_excludes_fm_sketch() {
+fn go_index_returns_can_be_ignored() {
     let index = populated_index(1);
-    let usage = index.memory_usage();
-    assert_eq!(usage.index_id, 9);
-    assert_eq!(usage.histogram_mem_usage, 11);
-    assert_eq!(usage.cmsketch_mem_usage, 32);
-    assert_eq!(usage.topn_mem_usage, 67);
-    assert_eq!(usage.total_mem_usage, 110);
+    index.copy();
+    index.item_id();
+    index.is_all_evicted();
+    index.evicted_status();
+    index.stats_version();
+    index.is_cms_exist();
+    index.is_evicted();
+    index.is_full_load();
+    index.total_row_count();
+    index.memory_usage();
+    index.query_bytes(b"x", 1);
+    index.increase_factor(10);
+    index.histogram();
+    let _ = index.top_n();
+    index.is_analyzed();
+    index_is_all_evicted(Some(&index));
 }
 
 #[test]
-fn source_invalidity_queues_load_without_short_circuiting() {
-    let base = IndexValidityContext {
-        physical_id: 12,
-        ..IndexValidityContext::default()
-    };
-    let missing = index_stats_validity(None, base, 9);
-    assert!(missing.invalid);
-    assert!(missing.load_request.is_some());
-
-    let mut index = populated_index(1);
-    let valid = index_stats_validity(Some(&index), base, 9);
-    assert!(!valid.invalid);
-    assert!(valid.load_request.is_none());
-
-    index.stats_loaded_status = StatsLoadedStatus::all_evicted();
-    let partial = index_stats_validity(Some(&index), base, 9);
-    assert!(!partial.invalid);
-    assert!(partial.load_request.is_some());
-
-    for context in [
-        IndexValidityContext {
-            restricted_sql: true,
-            ..base
-        },
-        IndexValidityContext {
-            cannot_trigger_load: true,
-            ..base
-        },
-    ] {
-        assert!(index_stats_validity(None, context, 9)
-            .load_request
-            .is_none());
-    }
-    assert!(
-        index_stats_validity(
-            Some(&populated_index(1)),
-            IndexValidityContext {
-                pseudo: true,
-                ..base
-            },
-            9,
-        )
-        .invalid
+fn source_memory_excludes_fm_sketch() {
+    let index = populated_index(1);
+    let histogram_memory = index.histogram.memory_usage();
+    let usage = index.memory_usage();
+    assert_eq!(usage.index_id, 9);
+    assert_eq!(usage.histogram_mem_usage, histogram_memory);
+    assert_eq!(usage.cmsketch_mem_usage, 32);
+    assert_eq!(usage.topn_mem_usage, 67);
+    assert_eq!(
+        usage.total_mem_usage,
+        histogram_memory + usage.cmsketch_mem_usage + usage.topn_mem_usage
     );
 }

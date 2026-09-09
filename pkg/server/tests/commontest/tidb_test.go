@@ -335,6 +335,7 @@ func TestStatusPort(t *testing.T) {
 
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 	err = server.Run(ts.Domain)
 	require.Error(t, err)
 }
@@ -1109,6 +1110,7 @@ func TestGracefulShutdown(t *testing.T) {
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
@@ -1189,6 +1191,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
 	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
@@ -3600,6 +3603,116 @@ func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, t
 	require.Equal(t, 0, cnt)
 }
 
+func TestClientDisconnectKillsExplicitTxn(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	for _, txnSetup := range []string{"autocommit_off", "begin"} {
+		for _, prepared := range []bool{false, true} {
+			protocol := "query"
+			if prepared {
+				protocol = "prepared"
+			}
+			name := txnSetup + "/" + protocol
+			t.Run(name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue68682_" + txnSetup + "_" + protocol
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (id int primary key, v int)")
+					dbt.MustExec("insert into " + tableName + " values (1, 0), (2, 0)")
+					runClientDisconnectExplicitTxn(t, dbt, tableName, txnSetup, prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectExplicitTxn(t *testing.T, dbt *testkit.DBTestKit, tableName, txnSetup string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	blockedSQL := fmt.Sprintf("update %s set v = 2 where id = 2", tableName)
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), blockedSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+
+	_, err = conn.ExecContext(context.Background(), "set tidb_txn_mode = 'pessimistic'")
+	require.NoError(t, err)
+	if txnSetup == "autocommit_off" {
+		_, err = conn.ExecContext(context.Background(), "set autocommit = 0")
+	} else {
+		_, err = conn.ExecContext(context.Background(), "begin pessimistic")
+	}
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "update "+tableName+" set v = 1 where id = 1")
+	require.NoError(t, err)
+
+	blocker, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_, _ = blocker.ExecContext(context.Background(), "rollback")
+		_ = blocker.Close()
+	}()
+	_, err = blocker.ExecContext(context.Background(), "begin pessimistic")
+	require.NoError(t, err)
+	_, err = blocker.ExecContext(context.Background(), "update "+tableName+" set v = 3 where id = 2")
+	require.NoError(t, err)
+
+	netConn := getRawNetConn(t, conn)
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), blockedSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("update %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = dbt.GetDB().ExecContext(ctx, "update "+tableName+" set v = 2 where id = 1")
+	require.NoError(t, err)
+
+	var row1, row2 int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)) from "+tableName).Scan(&row1, &row2)
+	require.NoError(t, err)
+	require.Equal(t, 2, row1)
+	require.Equal(t, 0, row2)
+}
+
 func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
 	var netConn net.Conn
 	err := conn.Raw(func(driverConn any) error {
@@ -4130,5 +4243,52 @@ func TestLoadDataLocalRetryDesyncExplicitTxn(t *testing.T) {
 		err = conn.QueryRowContext(ctx, "SELECT 1").Scan(&val)
 		require.NoError(t, err, "connection should be usable after failed explicit txn")
 		require.Equal(t, 1, val)
+	})
+}
+
+// TestLoadDataLocalPessimisticRetryDesync verifies that a retryable
+// single-statement deadlock does not re-execute LOAD DATA LOCAL INFILE.
+// The client file stream is a one-shot resource, so reopening LoadDataExec
+// would send a second LOCAL_INFILE_REQUEST and desynchronize the connection.
+func TestLoadDataLocalPessimisticRetryDesync(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "pessimistic_retry_desync.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("1,one\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "CREATE TABLE t_pessimistic_retry (id INT PRIMARY KEY, v VARCHAR(16))")
+		testserverclient.MustExec(ctx, t, conn, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+		testserverclient.MustExec(ctx, t, conn, "BEGIN PESSIMISTIC")
+
+		// Return a retryable single-statement deadlock for the first LockKeys
+		// request after the local file has been consumed.
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock",
+			`1*return(true)->return(false)`)
+
+		loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		_, loadErr := conn.ExecContext(loadCtx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_pessimistic_retry FIELDS TERMINATED BY ','",
+			filePath))
+		require.Error(t, loadErr)
+		var mysqlErr *mysql.MySQLError
+		require.ErrorAs(t, loadErr, &mysqlErr, "the original deadlock should be returned")
+		require.Equal(t, uint16(tmysql.ErrLockDeadlock), mysqlErr.Number)
+
+		// No row is committed and the connection protocol remains synchronized.
+		var count int
+		err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_pessimistic_retry").Scan(&count)
+		require.NoError(t, err, "connection should be usable after the deadlock")
+		require.Equal(t, 0, count)
 	})
 }

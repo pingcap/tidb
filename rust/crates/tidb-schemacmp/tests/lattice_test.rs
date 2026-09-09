@@ -19,13 +19,15 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use tidb_datatype::GoString;
+use tidb_model::go_any::GoAny;
 use tidb_mysql::types::{
     TypeBlob, TypeInt24, TypeLong, TypeLongBlob, TypeLonglong, TypeMediumBlob, TypeSet, TypeShort,
     TypeTiny, TypeTinyBlob,
 };
 use tidb_schemacmp::{
-    equality_singleton, field_tp, map_lattice, maybe, singleton, BitSet, Bool, Byte, Equality,
-    IncompatibleError, Int64, Lattice, LatticeMap, StringList, Tuple, Uint, Value,
+    equality_singleton, field_tp, map_lattice, maybe, maybe_singleton_interface,
+    maybe_singleton_string, singleton, BitSet, Bool, Byte, Equality, IncompatibleError, Int64,
+    Lattice, LatticeMap, StringList, Tuple, Uint, Value,
 };
 
 /// Go `eqBytes`: a sample type used for testing `EqualitySingleton`.
@@ -42,6 +44,16 @@ impl Equality for EqBytes {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn go_format(&self) -> String {
+        let values = self
+            .0
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("[{values}]")
     }
 }
 
@@ -123,6 +135,21 @@ fn string_list(values: &[&str]) -> Box<dyn Lattice> {
     Box::new(StringList(
         values.iter().map(|v| GoString::from(*v)).collect(),
     ))
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn go_lattice_api_returns_may_be_ignored_like_go() {
+    let nil = GoAny::nil();
+    Value::Nil.go_format();
+    Value::from_go_any(&nil);
+    singleton(Value::Int(1));
+    equality_singleton(eq_bytes("value"));
+    field_tp(TypeLong);
+    maybe(None);
+    maybe_singleton_interface(&nil);
+    maybe_singleton_string("");
+    map_lattice(Box::new(UintMap::default()));
 }
 
 struct Case {
@@ -705,4 +732,33 @@ fn test_compatibilities() {
             assert!(cmp >= 0);
         }
     }
+
+    let error = singleton(Value::Float64(1_000_000.0))
+        .compare(singleton(Value::Float64(2_000_000.0)).as_ref())
+        .unwrap_err();
+    assert_eq!(error.to_string(), "distinct singletons (1e+06 vs 2e+06)");
+
+    let error = equality_singleton(eq_bytes("abcdef"))
+        .compare(equality_singleton(eq_bytes("ABCDEF")).as_ref())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "distinct singletons ([97 98 99 100 101 102] vs [65 66 67 68 69 70])"
+    );
+
+    let error = string_list(&["\u{200b}"])
+        .compare(string_list(&["x"]).as_ref())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"at string list index 0: distinct values ("\u200b" vs "x")"#
+    );
+
+    let left = StringList(vec![GoString::from(vec![0xff])]);
+    let right = StringList(vec![GoString::from("x")]);
+    let error = left.compare(&right).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"at string list index 0: distinct values ("\xff" vs "x")"#
+    );
 }

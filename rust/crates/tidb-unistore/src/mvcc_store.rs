@@ -12,22 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/store/mockstore/unistore/tikv/mvcc.go` — the MVCC store, OPTIMISTIC
-//! slice.
+//! Go `pkg/store/mockstore/unistore/tikv/mvcc.go` — the MVCC store.
 //!
-//! SEED of `tikv` (`mvcc.go` is 2,182 lines): what lands here is the
-//! optimistic-transaction core with Go's bodies — `prewriteOptimistic` with
-//! its three-stage conflict protocol, `Commit` with the lock-not-found
-//! recovery, `Rollback`'s two-phase status scan, and the read path's lock
-//! check. What does not, each named at its refusal or absence:
+//! (`mvcc.go` is 2,182 lines.) Landed with Go's bodies: the optimistic core
+//! (`prewriteOptimistic` with its three-stage conflict protocol, `Commit`
+//! with the lock-not-found recovery, `Rollback`'s two-phase status scan, the
+//! read path's lock check) AND the pessimistic suite — `PessimisticLock`
+//! (duplicate-command and already-rollback detection, the `Force` value arm,
+//! the `ReturnValues`/`CheckExistence` answers), `prewritePessimistic`,
+//! `PessimisticRollback`, `TxnHeartBeat`, `CheckTxnStatus`,
+//! `CheckSecondaryLocks`, and `ResolveLock` — with Go's tests transcreated
+//! beside them (`tests_mockstore_part1_go_parity` and the `#[cfg(test)]`
+//! module). What does not, each named at its refusal or absence:
 //!
-//! * the PESSIMISTIC path (`prewritePessimistic`, `PessimisticLock`,
-//!   `PessimisticRollback`, TTL/minCommitTS updates, lock waiting and
-//!   deadlock detection) — a later course; `Prewrite` REFUSES a request with
-//!   `for_update_ts > 0` by name;
 //! * async commit and 1PC (`req.UseAsyncCommit` / `TryOnePc`, which need
 //!   `pdClient.GetTS`) — refused by name;
-//! * `CheckTxnStatus` / `ResolveLock` / scans — later courses.
+//! * `Flush` (`mvcc.go:986`, the bulk-load op) — unported;
+//! * pessimistic lock WAITING: `lockWaiterManager`, `normalizeWaitTime`,
+//!   `handleCheckPessimisticErr`'s wake-up path, and
+//!   `PessimisticLockWakeUpMode::WakeUpModeForceLock`'s per-key `Results`
+//!   (with `LockedWithConflictTs`) — a conflicted pessimistic lock returns
+//!   its error immediately instead of parking on a waiter. Go's no-wait
+//!   outcome is the same error; the parked-then-retry behavior is absent.
 //!
 //! # The engine
 //!
@@ -43,10 +49,9 @@
 //! `regCtx.AcquireLatches` / `ReleaseLatches` (region latches),
 //! `lockWaiterManager.WakeUp`, `DeadlockDetectCli.CleanUp`, and
 //! `atomic.AddInt64(regCtx.Diff(), ..)` guard multi-writer interleavings and
-//! pessimistic waiters. This slice is single-writer (`&mut self`), which the
+//! pessimistic waiters. This store is single-writer (`&mut self`), which the
 //! borrow checker enforces more strongly than the latches do; the calls are
-//! therefore absent rather than stubbed. They return with the pessimistic
-//! course, whose semantics need them.
+//! therefore absent rather than stubbed.
 //!
 //! `reqCtx.buf` (Go's per-request lock-buffer reuse) is an allocation
 //! detail with no observable content.
@@ -195,6 +200,10 @@ pub enum KvError {
     LockTypeNotMatch,
     /// A refusal: the named Go symbol is a later course of this port.
     Unported(&'static str),
+    /// Go raises `errors.Errorf` with a formatted message; the rendered text
+    /// rides here (e.g. the for-update-ts constraint range check,
+    /// `mvcc.go:857`).
+    Message(String),
 }
 
 /// The `PrewriteRequest` fields the optimistic path reads.
@@ -373,7 +382,8 @@ impl MvccStore {
             if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
                 // Write nothing as if PessimisticRollback is called.
             } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
-                self.engine.set(&mutation.key, min_commit_ts, &lock.value, meta);
+                self.engine
+                    .set(&mutation.key, min_commit_ts, &lock.value, meta);
             } else if mutation.key == lock.primary {
                 let status_key = encode_extra_txn_status_key(&mutation.key, req.start_version);
                 self.engine.set(&status_key, req.start_version, &[], meta);
@@ -456,7 +466,11 @@ impl MvccStore {
         let (req, min_commit_ts) = self.effective_prewrite_req(req)?;
         // Go `reqCtx.asyncMinCommitTS` (`mvcc.go:947`), published as the
         // response's MinCommitTs.
-        let async_min_commit_ts = if req.use_async_commit { min_commit_ts } else { 0 };
+        let async_min_commit_ts = if req.use_async_commit {
+            min_commit_ts
+        } else {
+            0
+        };
         let mut outcome = PrewriteOutcome {
             async_min_commit_ts,
             one_pc_commit_ts: 0,
@@ -731,7 +745,28 @@ impl MvccStore {
         key: &[u8],
         version: u64,
     ) -> Result<Option<Vec<u8>>, KvError> {
+        Ok(self.get_with_commit_ts(ctx, key, version, false)?.0)
+    }
+
+    /// Go `GetPair` (`mvcc.go:1826`) under `requestCtx.returnCommitTS`
+    /// (`server.go:215`): the answered pair carries the version's commit ts,
+    /// and the committed-lock shortcut is DISABLED — Go nils
+    /// `committedLocks` "to make sure all KvPair has CommitTS", so a lock
+    /// only the shortcut knew about errors instead of answering a value
+    /// whose commit ts cannot be known.
+    pub fn get_with_commit_ts(
+        &self,
+        ctx: &ReadContext,
+        key: &[u8],
+        version: u64,
+        need_commit_ts: bool,
+    ) -> Result<(Option<Vec<u8>>, u64), KvError> {
         if ctx.is_snapshot_isolation() {
+            let committed_locks: &[u64] = if need_commit_ts {
+                &[]
+            } else {
+                &ctx.committed_locks
+            };
             let buf = self.lock_bytes(key);
             if !buf.is_empty() {
                 if let Some(lock) = check_lock(
@@ -739,9 +774,11 @@ impl MvccStore {
                     key,
                     version,
                     &ctx.resolved_locks,
-                    &ctx.committed_locks,
+                    committed_locks,
                 )? {
-                    return Ok(value_from_lock(&lock).map(<[u8]>::to_vec));
+                    // A lock-shortcut pair carries no commit ts (`GetPair`
+                    // returns the lock's value with CommitTs unset).
+                    return Ok((value_from_lock(&lock).map(<[u8]>::to_vec), 0));
                 }
             }
         } else if ctx.is_rc_check_ts() {
@@ -756,10 +793,12 @@ impl MvccStore {
         // caller's ts.
         if ctx.is_rc_check_ts() {
             return match self.engine.get_at(key, u64::MAX) {
-                None => Ok(None),
+                None => Ok((None, 0)),
                 Some((value, meta)) => {
                     check_write_meta_rc_check_ts(version, meta)?;
-                    Ok(Some(value.to_vec()).filter(|value| !value.is_empty()))
+                    let value = Some(value.to_vec()).filter(|value| !value.is_empty());
+                    let commit_ts = if need_commit_ts { meta.commit_ts() } else { 0 };
+                    Ok((value, commit_ts))
                 }
             };
         }
@@ -768,8 +807,14 @@ impl MvccStore {
         Ok(self
             .engine
             .get_at(key, version)
-            .map(|(value, _)| value.to_vec())
-            .filter(|value| !value.is_empty()))
+            .map(|(value, meta)| {
+                let commit_ts = if need_commit_ts { meta.commit_ts() } else { 0 };
+                (
+                    (Some(value.to_vec()).filter(|value| !value.is_empty())),
+                    commit_ts,
+                )
+            })
+            .unwrap_or((None, 0)))
     }
 
     /// Go `MVCCStore.MvccGetByKey` (`mvcc.go:1727`): the standing lock, the
@@ -882,6 +927,9 @@ pub struct KvPair {
     /// Go `Error *kvrpcpb.KeyError`, carried as the store error it converts
     /// from — a blocking lock under SI, an `RcCheckTs` conflict otherwise.
     pub error: Option<Box<KvError>>,
+    /// The version's commit ts, answered only when the request sets
+    /// `NeedCommitTs` (Go `requestCtx.returnCommitTS`).
+    pub commit_ts: u64,
 }
 
 /// The `ScanRequest` fields Go's `Scan` reads.
@@ -1061,11 +1109,30 @@ impl MvccStore {
     /// Go's `len(value) != 0` guard.
     #[must_use]
     pub fn batch_get_with(&self, ctx: &ReadContext, keys: &[Vec<u8>], version: u64) -> Vec<KvPair> {
+        self.batch_get_with_commit_ts(ctx, keys, version, false)
+    }
+
+    /// Go `BatchGet` (`mvcc.go:1866`) under `requestCtx.returnCommitTS`
+    /// (`server.go:533`): every answered pair carries its version's commit
+    /// ts, and the committed-lock shortcut is disabled exactly as
+    /// [`MvccStore::get_with_commit_ts`] documents.
+    pub fn batch_get_with_commit_ts(
+        &self,
+        ctx: &ReadContext,
+        keys: &[Vec<u8>],
+        version: u64,
+        need_commit_ts: bool,
+    ) -> Vec<KvPair> {
         let mut pairs = Vec::with_capacity(keys.len());
         let mut remain = Vec::with_capacity(keys.len());
         for key in keys {
             if ctx.is_snapshot_isolation() {
                 let buf = self.lock_bytes(key);
+                let committed_locks: &[u64] = if need_commit_ts {
+                    &[]
+                } else {
+                    &ctx.committed_locks
+                };
                 let checked = if buf.is_empty() {
                     Ok(None)
                 } else {
@@ -1074,11 +1141,12 @@ impl MvccStore {
                         key,
                         version,
                         &ctx.resolved_locks,
-                        &ctx.committed_locks,
+                        committed_locks,
                     )
                 };
                 match checked {
                     Err(err) => pairs.push(KvPair {
+                        commit_ts: 0,
                         key: key.clone(),
                         value: Vec::new(),
                         error: Some(Box::new(err)),
@@ -1087,6 +1155,7 @@ impl MvccStore {
                         // Go appends only when `getValueFromLock` is non-nil.
                         if let Some(value) = value_from_lock(&lock) {
                             pairs.push(KvPair {
+                                commit_ts: 0,
                                 key: key.clone(),
                                 value: value.to_vec(),
                                 error: None,
@@ -1104,6 +1173,7 @@ impl MvccStore {
                 };
                 match checked {
                     Err(err) => pairs.push(KvPair {
+                        commit_ts: 0,
                         key: key.clone(),
                         value: Vec::new(),
                         error: Some(Box::new(err)),
@@ -1133,6 +1203,7 @@ impl MvccStore {
                         None
                     };
                     pairs.push(KvPair {
+                        commit_ts: if need_commit_ts { meta.commit_ts() } else { 0 },
                         key: key.clone(),
                         value: value.to_vec(),
                         error,
@@ -1205,6 +1276,7 @@ impl MvccStore {
                 }
             }
             scanned.push(KvPair {
+                commit_ts: 0,
                 key: key.to_vec(),
                 value: value.to_vec(),
                 error: None,
@@ -1229,6 +1301,7 @@ impl MvccStore {
                 if ctx.is_rc_check_ts() {
                     if let Err(err) = check_write_meta_rc_check_ts(req.version, meta) {
                         return vec![KvPair {
+                            commit_ts: 0,
                             key: Vec::new(),
                             value: Vec::new(),
                             error: Some(Box::new(err)),
@@ -1295,6 +1368,7 @@ impl MvccStore {
                     &ctx.committed_locks,
                 ) {
                     Ok(Some(lock)) => pairs.push(KvPair {
+                        commit_ts: 0,
                         key: it.key().to_vec(),
                         // A deleted key's value is nil (Go's comment, kept).
                         value: value_from_lock(&lock)
@@ -1304,6 +1378,7 @@ impl MvccStore {
                     }),
                     Ok(None) => {}
                     Err(err) => pairs.push(KvPair {
+                        commit_ts: 0,
                         key: it.key().to_vec(),
                         value: Vec::new(),
                         error: Some(Box::new(err)),
@@ -1314,6 +1389,7 @@ impl MvccStore {
                     check_lock_rc_check_ts(&lock, it.key(), start_ts, &ctx.resolved_locks)
                 {
                     pairs.push(KvPair {
+                        commit_ts: 0,
                         key: it.key().to_vec(),
                         value: Vec::new(),
                         error: Some(Box::new(err)),
@@ -1631,8 +1707,9 @@ impl MvccStore {
         }
         let start_ts = req.start_version;
         if req.lock_only_if_exists && !req.return_values {
+            // Go's literal contract error (`mvcc.go:251`).
             return Err(KvError::Unported(
-                "LockOnlyIfExists without ReturnValues: Go errors here by contract",
+                "LockOnlyIfExists is set for LockKeys but ReturnValues is not set",
             ));
         }
         let mut dup = false;
@@ -1729,9 +1806,11 @@ impl MvccStore {
             std::collections::BTreeMap::new();
         for (index, expected) in &req.for_update_ts_constraints {
             if *index >= mutations.len() {
-                return Err(KvError::Unported(
-                    "prewrite request invalid: for_update_ts constraint index out of range",
-                ));
+                return Err(KvError::Message(format!(
+                    "prewrite request invalid: for_update_ts constraint set for index {} while {} mutations were given",
+                    index,
+                    mutations.len()
+                )));
             }
             expected_for_update.insert(*index, *expected);
         }
@@ -1848,9 +1927,8 @@ impl MvccStore {
             let mut lock = decode_lock(&buf);
             if lock.hdr.start_ts == start_ts {
                 if lock.primary != primary {
-                    return Err(KvError::Unported(
-                        "heartbeat on non-primary key: Go errors here by contract",
-                    ));
+                    // Go's literal `errors.New` text (`mvcc.go:473`).
+                    return Err(KvError::Unported("heartbeat on non-primary key"));
                 }
                 if u64::from(lock.hdr.ttl) < advise_ttl {
                     lock.hdr.ttl = u32::try_from(advise_ttl).unwrap_or(u32::MAX);
@@ -1859,9 +1937,8 @@ impl MvccStore {
                 return Ok(u64::from(lock.hdr.ttl));
             }
         }
-        Err(KvError::Unported(
-            "lock doesn't exists: Go errors here by contract",
-        ))
+        // Go's literal `errors.New` text (`mvcc.go:486`).
+        Err(KvError::Unported("lock doesn't exists"))
     }
 
     /// Go `getLatestExtraMetaForKey` (`mvcc.go`): the newest extra-status
@@ -2436,6 +2513,76 @@ mod tests {
             ..PrewriteReq::default()
         });
         assert!(matches!(refuse, Err(KvError::Unported(_))));
+    }
+
+    #[test]
+    fn lock_only_if_exists_without_return_values_keeps_go_error_text() {
+        // Go `pessimisticLockInner` (`mvcc.go:251`): the contract error is
+        // raised before any key is examined.
+        let mut store = MvccStore::new();
+        let refuse = store.pessimistic_lock(&PessimisticLockReq {
+            lock_only_if_exists: true,
+            return_values: false,
+            ..PessimisticLockReq::default()
+        });
+        match refuse {
+            Err(KvError::Unported(message)) => {
+                assert_eq!(
+                    message,
+                    "LockOnlyIfExists is set for LockKeys but ReturnValues is not set"
+                );
+            }
+            other => panic!("expected the Go contract error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn txn_heart_beat_rejections_keep_go_error_texts() {
+        // Go `TxnHeartBeat` (`mvcc.go:465-487`): both rejections are Go's
+        // literal `errors.New` texts.
+        let mut store = MvccStore::new();
+        assert_eq!(
+            store.txn_heart_beat(b"pk", 5, 6_000).unwrap_err(),
+            KvError::Unported("lock doesn't exists")
+        );
+        let key = b"hbk".as_slice();
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: b"other".to_vec(),
+                start_version: 5,
+                for_update_ts: 5,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+        assert_eq!(
+            store.txn_heart_beat(key, 5, 6_000).unwrap_err(),
+            KvError::Unported("heartbeat on non-primary key")
+        );
+    }
+
+    #[test]
+    fn prewrite_constraint_range_error_keeps_go_text() {
+        // Go `prewritePessimistic` (`mvcc.go:856-858`): the formatted range
+        // check carries the offending index and the mutation count.
+        let mut store = MvccStore::new();
+        let refuse = store.prewrite(&PrewriteReq {
+            mutations: vec![put(b"ck", b"v")],
+            for_update_ts: 10,
+            for_update_ts_constraints: vec![(3, 10)],
+            ..PrewriteReq::default()
+        });
+        match refuse {
+            Err(KvError::Message(message)) => assert_eq!(
+                message,
+                "prewrite request invalid: for_update_ts constraint set for index 3 while 1 mutations were given"
+            ),
+            other => panic!("expected the Go range error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -4290,7 +4437,10 @@ mod tests {
             })
             .expect("the 1PC prewrite lands");
         assert!(outcome.one_pc_commit_ts > 1, "the drawn ts commits");
-        assert_eq!(outcome.async_min_commit_ts, 0, "1PC alone publishes no async ts");
+        assert_eq!(
+            outcome.async_min_commit_ts, 0,
+            "1PC alone publishes no async ts"
+        );
         must_unlocked(&store, pk);
         must_get_val(&store, pk, val, u64::MAX);
         // A reader at or past the commit sees it; one before does not.
@@ -4312,7 +4462,10 @@ mod tests {
             })
             .expect("the fallback prewrite lands");
         assert_eq!(fallback.one_pc_commit_ts, 0, "the store declined 1PC");
-        assert!(!store.lock_bytes(fk).is_empty(), "a lock stands for two-phase");
+        assert!(
+            !store.lock_bytes(fk).is_empty(),
+            "a lock stands for two-phase"
+        );
         must_get_none(&store, fk, u64::MAX);
     }
 
@@ -4716,5 +4869,59 @@ mod tests {
         assert_eq!(res4.writes.len(), 4);
         assert_eq!(res4.writes[1].start_ts, start_ts3);
         assert_eq!(res4.writes[1].commit_ts, start_ts3);
+    }
+
+    #[test]
+    fn get_answers_commit_ts_only_when_requested() {
+        let mut store = MvccStore::new();
+        must_load(&mut store, 10, 20, &["t0:v0"]);
+        let ctx = ReadContext::default();
+        let key = b"t0";
+        let (value, commit_ts) = store
+            .get_with_commit_ts(&ctx, key, 40, true)
+            .expect("reads");
+        assert_eq!(value.as_deref(), Some(b"v0".as_slice()));
+        assert_eq!(commit_ts, 20);
+        let (value, commit_ts) = store
+            .get_with_commit_ts(&ctx, key, 40, false)
+            .expect("reads");
+        assert_eq!(value.as_deref(), Some(b"v0".as_slice()));
+        assert_eq!(commit_ts, 0);
+    }
+
+    #[test]
+    fn need_commit_ts_disables_the_committed_lock_shortcut() {
+        let mut store = MvccStore::new();
+        let key = b"t1";
+        must_prewrite_op(&mut store, key, mutation(KvrpcOp::Put, key, b"v1"), 50);
+        let ctx = ReadContext {
+            committed_locks: vec![50],
+            ..ReadContext::default()
+        };
+        // The shortcut answers the lock's own value, without a commit ts.
+        let (value, commit_ts) = store
+            .get_with_commit_ts(&ctx, key, 60, false)
+            .expect("committed lock answers");
+        assert_eq!(value.as_deref(), Some(b"v1".as_slice()));
+        assert_eq!(commit_ts, 0);
+        // Go nils committedLocks when commit ts is needed (`mvcc.go:1829`):
+        // the lock stops being shortcut and reports as locked, since a
+        // commit ts cannot be known for a value only the shortcut saw.
+        let err = store
+            .get_with_commit_ts(&ctx, key, 60, true)
+            .expect_err("the shortcut cannot answer a commit ts");
+        assert!(matches!(err, KvError::Locked(_)));
+    }
+
+    #[test]
+    fn batch_get_answers_commit_ts_when_requested() {
+        let mut store = MvccStore::new();
+        must_load(&mut store, 10, 20, &["t0:v0"]);
+        let ctx = ReadContext::default();
+        let keys = [b"t0".to_vec()];
+        let pairs = store.batch_get_with_commit_ts(&ctx, &keys, 40, true);
+        assert_eq!(pairs[0].commit_ts, 20);
+        let pairs = store.batch_get_with_commit_ts(&ctx, &keys, 40, false);
+        assert_eq!(pairs[0].commit_ts, 0);
     }
 }

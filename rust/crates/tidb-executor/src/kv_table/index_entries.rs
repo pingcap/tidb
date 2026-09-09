@@ -32,9 +32,9 @@ use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
 use tidb_tablecodec::{
-    cut_index_key, decode_handle_in_index_value, generate_index_value, index_kv_is_unique,
-    IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
-    TableInfo as CodecTableInfo,
+    cut_index_key, decode_handle_in_index_value, generate_index_key, generate_index_value,
+    index_kv_is_unique, IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo,
+    TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
 };
 use tidb_txnkv::Key;
 
@@ -132,7 +132,12 @@ impl KvTable {
         };
         let common = !self.common_handle_offsets().is_empty();
         let mut entries = Vec::new();
-        for physical_id in self.record_physical_ids() {
+        let physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            self.record_physical_ids()
+        };
+        for physical_id in physical_ids {
             let (low, high) = crate::admin_check::index_key_bounds(physical_id, index_id);
             let mut iterator = self
                 .store
@@ -246,27 +251,32 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let values = self.index_values(index, row);
-        let distinct = index.unique && !values.contains(&Datum::Null);
-        let encoder = Encoder::new(self.use_new_collation);
-        let mut encoded = encoder
-            .encode_key_in_timezone(zone, &values)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        if !distinct {
-            // Go appends the handle so non-distinct entries stay unique.
-            match handle {
-                TableHandle::Int(value) => encoded.extend_from_slice(
-                    &encoder
-                        .encode_key(&[Datum::Int(*value)])
-                        .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
-                ),
-                TableHandle::Common(bytes) => encoded.extend_from_slice(bytes),
-            }
-        }
-        Ok((
-            encode_index_seek_key(physical_id, index.id, &encoded),
-            distinct,
-        ))
+        let mut values = self.index_values(index, row);
+        let handle = match handle {
+            TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
+            TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
+                .into(),
+        };
+        let handle = if index.global && index.global_index_version >= 1 {
+            tidb_txnkv::PartitionHandle::new(physical_id, Some(handle)).into()
+        } else {
+            handle
+        };
+        generate_index_key(
+            Encoder::new(self.use_new_collation),
+            Some(zone),
+            &self.codec_table_info(),
+            &self.codec_index_info(index),
+            if index.global {
+                self.table_id
+            } else {
+                physical_id
+            },
+            &mut values,
+            Some(&handle),
+        )
+        .map_err(|error| KvTableError::Encode(format!("{error:?}")))
     }
 
     /// The `tidb-tablecodec` projection of this table's metadata, which is
@@ -345,10 +355,8 @@ impl KvTable {
                 })
                 .collect(),
             unique: index.unique,
-            // A global index only exists on a partitioned table's index that
-            // spans partitions, which this tier does not yet build.
-            global: false,
-            global_index_version: 0,
+            global: index.global,
+            global_index_version: index.global_index_version,
             primary: index.name.eq_ignore_ascii_case("PRIMARY"),
         }
     }
@@ -413,6 +421,7 @@ impl KvTable {
         row: &[Datum],
         handle: &TableHandle,
         distinct: bool,
+        physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<u8>, KvTableError> {
         let handle = match handle {
@@ -434,8 +443,7 @@ impl KvTable {
             false,
             &self.index_values(index, row),
             &handle,
-            // A partition id is only carried by a global index.
-            0,
+            if index.global { physical_id } else { 0 },
             &self.handle_restored_data(row),
         )
         .map_err(|e| KvTableError::Encode(format!("{e:?}")))
@@ -458,8 +466,11 @@ impl KvTable {
             if index.clustered_primary {
                 continue;
             }
+            if !self.index_condition_holds(index, row, zone)? {
+                continue;
+            }
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
-            let value = self.index_entry_value(index, row, handle, distinct, zone)?;
+            let value = self.index_entry_value(index, row, handle, distinct, physical_id, zone)?;
             let key = Key::from_bytes(key);
             if distinct {
                 self.check_insert_key(
@@ -489,6 +500,9 @@ impl KvTable {
             // A clustered PRIMARY's key IS the record handle; deleting the
             // row already removed it.
             if index.clustered_primary {
+                continue;
+            }
+            if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
@@ -529,15 +543,75 @@ impl KvTable {
             if index.clustered_primary {
                 continue;
             }
+            let old_holds = self.index_condition_holds(index, old_row, zone)?;
+            let new_holds = self.index_condition_holds(index, new_row, zone)?;
+            match (old_holds, new_holds) {
+                (false, false) => continue,
+                (false, true) => {
+                    let (new_key, new_distinct) =
+                        self.index_key(index, new_row, handle, physical_id, zone)?;
+                    let value = self.index_entry_value(
+                        index,
+                        new_row,
+                        handle,
+                        new_distinct,
+                        physical_id,
+                        zone,
+                    )?;
+                    let key = Key::from_bytes(new_key);
+                    if new_distinct && self.store.get(&key).is_ok() {
+                        return Err(KvTableError::DuplicateEntry {
+                            value: duplicate_value_text(&self.index_values(index, new_row)),
+                            key: self.qualified_key(&index.name),
+                        });
+                    }
+                    self.store
+                        .set(key, value)
+                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                    continue;
+                }
+                (true, false) => {
+                    let (old_key, _) = self.index_key(index, old_row, handle, physical_id, zone)?;
+                    self.store
+                        .delete(Key::from_bytes(old_key))
+                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                    continue;
+                }
+                (true, true) => {}
+            }
+            // If none of the indexed columns changed, the entry key and its
+            // payload (which only carries indexed/restored values plus the
+            // unchanged handle) cannot change either.  Avoid encoding both
+            // keys and values in this common non-index UPDATE path; Go's
+            // `SkipWriteUntouchedIndices` makes the same early decision.
+            if index
+                .column_offsets
+                .iter()
+                .all(|offset| old_row.get(*offset) == new_row.get(*offset))
+            {
+                continue;
+            }
             let (old_key, old_distinct) =
                 self.index_key(index, old_row, handle, physical_id, zone)?;
             let (new_key, new_distinct) =
                 self.index_key(index, new_row, handle, physical_id, zone)?;
             if old_key == new_key && old_distinct == new_distinct {
-                let old_value =
-                    self.index_entry_value(index, old_row, handle, old_distinct, zone)?;
-                let new_value =
-                    self.index_entry_value(index, new_row, handle, new_distinct, zone)?;
+                let old_value = self.index_entry_value(
+                    index,
+                    old_row,
+                    handle,
+                    old_distinct,
+                    physical_id,
+                    zone,
+                )?;
+                let new_value = self.index_entry_value(
+                    index,
+                    new_row,
+                    handle,
+                    new_distinct,
+                    physical_id,
+                    zone,
+                )?;
                 if old_value == new_value {
                     // Byte-identical entry: Go's untouched-index skip.
                     continue;
@@ -549,7 +623,8 @@ impl KvTable {
                     .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
                 continue;
             }
-            let value = self.index_entry_value(index, new_row, handle, new_distinct, zone)?;
+            let value =
+                self.index_entry_value(index, new_row, handle, new_distinct, physical_id, zone)?;
             let key = Key::from_bytes(new_key);
             if new_distinct && self.store.get(&key).is_ok() {
                 return Err(KvTableError::DuplicateEntry {
@@ -599,12 +674,20 @@ impl KvTable {
         let encoded = Encoder::new(self.use_new_collation)
             .encode_key_in_timezone(zone, values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        for physical_id in self.record_physical_ids() {
+        let physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            self.record_physical_ids()
+        };
+        for physical_id in physical_ids {
             let key = Key::from_bytes(encode_index_seek_key(physical_id, index.id, &encoded));
             match self.store.get(&key) {
                 Ok(entry) => {
                     let handle = decode_handle_in_index_value(&entry)
                         .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                    let handle = handle.ok_or_else(|| {
+                        KvTableError::Decode("index value contains no handle".to_owned())
+                    })?;
                     return Ok(Some(convert_handle(&handle)));
                 }
                 Err(StorageError::NotFound) => {}
@@ -612,6 +695,82 @@ impl KvTable {
             }
         }
         Ok(None)
+    }
+
+    /// Resolves several distinct unique-index keys through one storage
+    /// `BatchGet`, preserving the requested key order and returning `None`
+    /// for a missing entry. This is Go `BatchPointGetExec.initialize`'s first
+    /// read; its second read batch-gets the returned record handles.
+    pub(crate) fn lookup_unique_batched(
+        &mut self,
+        index_id: i64,
+        values: &[Vec<Datum>],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Option<TableHandle>>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        if !index.unique || index.has_prefix() {
+            return Err(KvTableError::Decode(
+                "batch point lookup requires a non-prefix unique index".to_owned(),
+            ));
+        }
+        let physical_ids = if index.global {
+            vec![self.table_id]
+        } else {
+            self.record_physical_ids()
+        };
+        let [physical_id] = physical_ids.as_slice() else {
+            return Err(KvTableError::Decode(
+                "batch unique lookup requires one retained physical table".to_owned(),
+            ));
+        };
+        let mut keys = Vec::with_capacity(values.len());
+        for values in values {
+            if values.len() != index.column_offsets.len() || values.contains(&Datum::Null) {
+                keys.push(None);
+                continue;
+            }
+            let encoded = Encoder::new(self.use_new_collation)
+                .encode_key_in_timezone(zone, values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+            keys.push(Some(Key::from_bytes(encode_index_seek_key(
+                *physical_id,
+                index.id,
+                &encoded,
+            ))));
+        }
+        let request = keys.iter().flatten().cloned().collect::<Vec<_>>();
+        let entries = if request.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            self.store
+                .batch_get(&request)
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+        };
+        keys.into_iter()
+            .map(|key| {
+                let Some(key) = key else {
+                    return Ok(None);
+                };
+                entries
+                    .get(&key)
+                    .map(|entry| {
+                        let handle = decode_handle_in_index_value(entry)
+                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+                            .ok_or_else(|| {
+                                KvTableError::Decode("index value contains no handle".to_owned())
+                            })?;
+                        Ok(convert_handle(&handle))
+                    })
+                    .transpose()
+            })
+            .collect()
     }
 
     pub(in crate::kv_table) fn stored_physical_id(
@@ -637,7 +796,7 @@ fn trailing_spaces(value: &Datum) -> usize {
 ///
 /// A distinct entry keeps the handle in its value; a non-distinct entry keeps
 /// it appended to its key, which is the same split Go's index reader makes.
-fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
+pub(in crate::kv_table) fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
     match handle.int_value() {
         Some(value) => TableHandle::Int(value),
         None => TableHandle::Common(handle.clone().encoded()),
@@ -659,6 +818,8 @@ pub(in crate::kv_table) fn index_entry_handle(
     if index.unique && index_kv_is_unique(value) {
         let handle = decode_handle_in_index_value(value)
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        let handle = handle
+            .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
         return Ok(convert_handle(&handle));
     }
     // The handle is appended to the key after the indexed values.

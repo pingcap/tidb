@@ -121,7 +121,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, GroupByItem, OrderItem, SelectStmt};
-use tidb_datatype::FieldName;
+use tidb_datatype::{FieldName, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{names as agg_names, AggFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
@@ -131,7 +131,9 @@ use tidb_expr::Columns;
 
 use super::catalog::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
-use super::{find_field_name, snapshot_schema_and_names, PlanBuilder, ProjectionField};
+use super::{
+    find_field_name, hide_rewrite_columns, snapshot_schema_and_names, PlanBuilder, ProjectionField,
+};
 use crate::expression_rewriter::ClauseCode;
 use crate::logical::aggregation::LogicalAggregation;
 use crate::logical::rule::flags;
@@ -155,6 +157,14 @@ pub fn visit_exprs(expr: &mut Expr, f: &mut impl FnMut(&mut Expr) -> bool) {
     }
     impl<F: FnMut(&mut Expr) -> bool> tidb_ast::Visitor for Walker<'_, F> {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            // Expression flags and extractors in Go are scoped to one query
+            // block: an Expr::Subquery carries HAS_SUBQUERY, but it does not
+            // inherit HAS_AGG/HAS_WINDOW from the query below it. Stop at the
+            // QueryStmt boundary while still visiting the left-hand value of
+            // IN/compare subqueries.
+            if node.is::<tidb_ast::QueryStmt>() {
+                return true;
+            }
             node.downcast_mut::<Expr>()
                 .is_some_and(|expr| (self.f)(expr))
         }
@@ -333,6 +343,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             clauses.push(&mut item.expr);
         }
 
+        let mut error_slot = None;
         for clause in clauses {
             visit_exprs(clause, &mut |node| {
                 // Only a SUBQUERY's interior is Go's concern here: an
@@ -342,10 +353,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return false;
                 };
                 let mut inner = (**subquery).clone();
-                lift_correlated_aggregates(&mut inner, names, &mut lifted);
+                let inner_names = match self.subquery_source_names(&inner) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        // The visitor API has no Result channel. Preserve the
+                        // first planner error and stop this subtree; it is
+                        // returned immediately after the walk.
+                        error_slot.get_or_insert(error);
+                        return true;
+                    }
+                };
+                lift_correlated_aggregates(&mut inner, names, &inner_names, &mut lifted);
                 **subquery = inner;
                 true
             });
+            if let Some(error) = error_slot.take() {
+                return Err(error);
+            }
         }
         for (index, expr) in field_exprs.into_iter().enumerate() {
             fields[index].expr = expr;
@@ -359,6 +383,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let position = fields.len();
             fields.push(ProjectionField {
                 expr: agg.clone(),
+                column_reference: false,
                 alias: Some(format!("sel_subq_agg_{position}")),
                 text: None,
                 hidden: true,
@@ -369,6 +394,36 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         Ok(appended)
     }
+
+    /// Builds only a scalar subquery's local FROM scope, matching the first
+    /// phase of Go `correlatedAggregateResolver.resolveSelect`. Aggregate
+    /// ownership cannot be inferred from spelling: an unqualified `a` in
+    /// `SELECT SUM(a) FROM t` is local when `t.a` exists, even if the outer
+    /// block also has an `a`.
+    fn subquery_source_names(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<Vec<FieldName>, PlanError> {
+        let tidb_ast::QueryStmt::Select(select) = query else {
+            return Ok(Vec::new());
+        };
+        let handle_depth = self.handle_helper.depth();
+        let cte_depth = self.outer_ctes.len();
+        let result = (|| {
+            if let Some(with) = &select.with {
+                self.build_with(with, &super::cte::cte_consumer_counts(query, with))?;
+            }
+            self.build_table_refs(select.from.as_ref())
+        })();
+        while self.handle_helper.depth() > handle_depth {
+            self.handle_helper.pop_map();
+        }
+        self.outer_ctes.truncate(cte_depth);
+        let plan = result?;
+        let names = plan.output_names().to_vec();
+        plan.dismantle();
+        Ok(names)
+    }
 }
 
 /// The interior half of `correlatedAggregateResolver.Enter` (`:3163`): inside
@@ -378,6 +433,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 fn lift_correlated_aggregates(
     subquery: &mut tidb_ast::QueryStmt,
     outer_names: &[FieldName],
+    inner_names: &[FieldName],
     lifted: &mut Vec<Expr>,
 ) {
     let tidb_ast::QueryStmt::Select(select) = subquery else {
@@ -398,7 +454,9 @@ fn lift_correlated_aggregates(
                 let Expr::Column(path) = inner else {
                     return false;
                 };
-                if find_field_name(outer_names, path).is_some() {
+                if find_field_name(inner_names, path).is_some() {
+                    reads_only_outer = false;
+                } else if find_field_name(outer_names, path).is_some() {
                     reads_outer = true;
                 } else {
                     reads_only_outer = false;
@@ -539,6 +597,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map(|item| self.rewrite_scalar(item, schema, names, markers))
             .collect()
     }
+
+    /// Plan-aware GROUP BY rewriting, retaining qualified columns hidden by a
+    /// coalesced `USING`/`NATURAL` join in its `FullSchema` lookup.
+    pub fn rewrite_gby_exprs_with_plan(
+        &mut self,
+        items: &[Expr],
+        plan: &LogicalPlan,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Vec<Expression>, PlanError> {
+        items
+            .iter()
+            .map(|item| self.rewrite_scalar_with_plan(item, plan, markers))
+            .collect()
+    }
 }
 
 /// Go `resolveFromSelectFields(v, fields, ignoreAsName)`
@@ -659,6 +731,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         having: &mut Expr,
         fields: &mut Vec<ProjectionField>,
         names: &[FieldName],
+        gby_exprs: &[Expr],
     ) -> Result<Vec<Expr>, PlanError> {
         self.cur_clause = ClauseCode::Having;
         let mut aggregates = Vec::new();
@@ -713,31 +786,70 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return true;
             };
             let path = path.clone();
+            // Go `havingWindowAndOrderbyExprResolver.Leave`'s GROUP BY check
+            // (`logical_plan_builder.go:2882`): when the name matches a GROUP
+            // BY item, `resolveFieldsFirst` becomes false, so the name is
+            // resolved through the SOURCE plan and `resolveFromPlan` appends
+            // an auxiliary select field for it. That is what keeps
+            // `select count(*) from t group by a having a > 1` working even
+            // though `a` is not selected: the aggregation carries it as a
+            // hidden `firstrow()` column.
+            let matches_group_by = gby_exprs.iter().any(
+                |item| matches!(item, Expr::Column(grouped) if column_paths_match(grouped, &path)),
+            );
+            if matches_group_by {
+                if let Some(source) = find_field_name(names, &path) {
+                    let name = &names[source];
+                    let mut canonical = Vec::with_capacity(3);
+                    if !name.names.database.original.is_empty() {
+                        canonical.push(name.names.database.original.clone());
+                    }
+                    if !name.names.table.original.is_empty() {
+                        canonical.push(name.names.table.original.clone());
+                    }
+                    canonical.push(name.names.column.original.clone());
+                    let canonical = Expr::Column(canonical);
+                    let index = match fields
+                        .iter()
+                        .position(|field| field.hidden && field.expr == canonical)
+                    {
+                        Some(position) => position,
+                        None => {
+                            fields.push(ProjectionField {
+                                expr: canonical,
+                                column_reference: true,
+                                alias: None,
+                                text: None,
+                                hidden: true,
+                            });
+                            fields.len() - 1
+                        }
+                    };
+                    marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                    return true;
+                }
+            }
             // `resolveFieldsFirst`: HAVING resolves the select list first.
             if let Some(index) = resolve_from_select_fields(&path, &fields[..old_len], false) {
                 marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
                 return true;
             }
             // `:2841` "For SQLs like: select a from t b having b.a" — a
-            // QUALIFIED name falls back to the source plan.
-            if find_field_name(names, &path).is_some() {
-                // The column is not projected, so it becomes a hidden extra
-                // field the trailing projection trims off, exactly as an
-                // unprojected ORDER BY column does.
-                let extra = fields[old_len..]
-                    .iter()
-                    .position(|field| field.expr == *node)
-                    .unwrap_or_else(|| {
-                        fields.push(ProjectionField {
-                            expr: node.clone(),
-                            alias: None,
-                            text: None,
-                            hidden: true,
-                        });
-                        fields.len() - 1 - old_len
-                    });
-                marker::substitute(node, PlanMarker::new(MarkerKind::Column, old_len + extra));
-                return true;
+            // QUALIFIED name the select list does not name may still resolve
+            // through the source plan, but Go then requires a SELECT FIELD
+            // holding that source column (`resolveFromPlan`'s final loop over
+            // `selectFields`). An UNQUALIFIED name never falls back, and a
+            // qualified source column the select list does not project is
+            // 1054.
+            if path.len() > 1 && find_field_name(names, &path).is_some() {
+                if let Some(index) = fields[..old_len].iter().position(|field| {
+                    !field.hidden
+                        && matches!(&field.expr, Expr::Column(candidate)
+                            if column_paths_match(candidate, &path))
+                }) {
+                    marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                    return true;
+                }
             }
             // `:2887` a name no scope knows may still be a CORRELATED column,
             // which the rewriter resolves against `outer_names`; only a name
@@ -747,10 +859,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .iter()
                 .any(|scope| find_field_name(scope, &path).is_some())
             {
-                error = Some(PlanError::internal(format!(
-                    "Unknown column '{}' in 'having clause'",
-                    path.last().cloned().unwrap_or_default()
-                )));
+                error = Some(PlanError::unknown_column_in_clause(
+                    path.join("."),
+                    "having clause",
+                ));
             }
             true
         });
@@ -801,7 +913,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// (`aggregation.NewAggFuncDesc`).
     pub fn build_aggregation(
         &mut self,
-        plan: LogicalPlan,
+        mut plan: LogicalPlan,
         agg_funcs: &[Expr],
         group_by_items: Vec<Expression>,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
@@ -817,7 +929,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.opt_flag |= flags::SKEW_DISTINCT_AGG;
         }
         // Rule 3 of [`super`]: both snapshots precede every move of `plan`.
-        let (schema, names) = snapshot_schema_and_names(&plan);
+        // They are refreshed when an aggregate argument lowers a subquery,
+        // because the lowering inserts an Apply into the child.
+        let (mut schema, mut names) = snapshot_schema_and_names(&plan);
         // `:280` a `ROLLUP` block's Expand supplies the extra group keys.
         let rollup_expand = self.current_block_expand.clone();
 
@@ -828,10 +942,47 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut all_aggs_first_row = true;
 
         for agg in agg_funcs {
-            let (name, args, distinct, order_by) = decompose_aggregate(agg)?;
-            let mut built_args = Vec::with_capacity(args.len());
+            let (name, args, distinct, order_by, separator) = decompose_aggregate(agg)?;
+            let mut built_args = Vec::with_capacity(args.len() + usize::from(separator.is_some()));
             for arg in args {
-                built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
+                // Go `rewriteWithPreprocess`: an aggregate argument is
+                // rewritten like any other expression, so a scalar subquery
+                // nested inside it inserts an Apply into the child plan and
+                // is replaced by the Apply's output column. Without this the
+                // subquery reached the executor's expression rewriter, which
+                // rejects it ("expression form is not yet supported").
+                let mut scratch = Self::clause_scratch(arg);
+                let plan_len = plan.schema().map_or(0, Schema::len);
+                let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                plan = next_plan;
+                if lowered {
+                    hide_rewrite_columns(&mut plan, plan_len);
+                    let (next_schema, next_names) = snapshot_schema_and_names(&plan);
+                    schema = next_schema;
+                    names = next_names;
+                    // The lowering substituted a `#col#<index>` marker for
+                    // the subquery node, so the rewrite needs the Column
+                    // marker bound to the refreshed child schema exactly as
+                    // the select-list path binds it.
+                    let mut current_markers = markers.clone();
+                    current_markers.insert(MarkerKind::Column, schema.columns.clone());
+                    built_args.push(self.rewrite_scalar_with_plan(
+                        &scratch,
+                        &plan,
+                        &current_markers,
+                    )?);
+                } else {
+                    built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
+                }
+            }
+            if let Some(separator) = separator {
+                let mut field_type = FieldType::parser(FieldTypeCode::VarString);
+                field_type.set_charset_name(separator.charset.clone());
+                field_type.set_collation_name(separator.collation.clone());
+                built_args.push(Expression::Constant(tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::new_string(separator.value.clone()),
+                    field_type,
+                )));
             }
             let mut descriptor = AggFuncDesc::new(self.ctx, &name, built_args, distinct)
                 .map_err(|error| PlanError::internal(format!("{error}")))?;
@@ -1065,7 +1216,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 /// `GROUP_CONCAT`'s separator is Go's LAST argument — which is exactly why
 /// `buildAggregation` writes `trueArgs := aggFunc.Args[:len(aggFunc.Args)-1]`
 /// before resolving the `ORDER BY` positions (`:295`).
-type DecomposedAggregate<'a> = (String, &'a [Expr], bool, &'a [OrderItem]);
+type DecomposedAggregate<'a> = (
+    String,
+    &'a [Expr],
+    bool,
+    &'a [OrderItem],
+    Option<&'a tidb_ast::TypedString>,
+);
 
 fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError> {
     match agg {
@@ -1073,17 +1230,18 @@ fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError>
             name,
             distinct,
             args,
-        } => Ok((name.to_ascii_lowercase(), args, *distinct, &[])),
+        } => Ok((name.to_ascii_lowercase(), args, *distinct, &[], None)),
         Expr::GroupConcat {
             distinct,
             args,
             order_by,
-            ..
+            separator,
         } => Ok((
             agg_names::GROUP_CONCAT.to_owned(),
             args,
             *distinct,
             order_by,
+            Some(separator),
         )),
         other => Err(PlanError::internal(format!(
             "not an aggregate function: {}",

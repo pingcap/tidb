@@ -32,17 +32,14 @@ is hit*, and the difference is large:
   `useLocalTransactionState=true` reads a status bit we always set wrong, on
   every transaction. Silent application-level data loss, today, with no unusual
   input.
-- **#188 fires on every decimal column** — an ordinary schema choice.
 - **#202 fires on `ALTER TABLE ... ADD COLUMN ... FIRST`** — a common migration.
-- **#189 needs a negative zero with non-zero scale arriving as bytes.** Nearly
-  nobody writes one.
 - **#196 needs a non-ASCII identifier** whose simple and full case mappings
   differ — Greek final sigma, Turkish dotted I.
 - **JSON u64** needs a literal past `i64::MAX`.
 
-So the honest order is **consequence × reachability**: #186, #188 and #202 are
-the ones costing real users real data right now; #189, #196 and the JSON u64
-case are real bugs that a fixture should pin and that can wait behind them.
+So the honest order is **consequence × reachability**: #186 and #202 are the
+remaining examples that can cost real users data; #196 and the JSON u64 case
+need their distinguishing fixtures before implementation.
 
 **4. Nothing here has been triaged for false positives.** About 170 findings are
 derived from reading two sources, and this project's premises have been
@@ -99,29 +96,56 @@ These persist. A wrong query answer is wrong once; a wrong byte is wrong forever
 and is read by every node, including nodes that were not running when we wrote
 it.
 
-**Decide the decimal representation first** (#191). `Datum::Decimal` holds a
-digit‑string reimplementation while a faithful `MyDecimal` port sits beside it
-unused, and eight of ten decimal findings are against the reimplementation. Both
-#188 (declared precision not carried) and #189 (negative zero unrepresentable)
-are downstream of it. Fixing them against the reimplementation is work that gets
-thrown away if the value path moves.
+The pinned package audit has closed the decimal storage findings that originally
+occupied this position: declared shapes now reach every physical encoder, and
+raw `FromBin`/JSON decoding preserves Go's non-canonical negative zero without
+letting ordinary construction or arithmetic mint one. The Go-produced byte
+fixtures remain the acceptance oracle.
 
 Then, independently of each other:
 
-- **#202 — name‑key the column references.** Generated‑column expressions,
-  partition expressions and FK columns address columns by offset; three mutators
-  shift offsets and none remaps them. Go is name‑keyed and cannot have this bug.
-  Decide whether the compiled expression should hold names and resolve at
-  evaluation time; remapping the three mutators leaves the next one free to
-  forget.
-- **#196 — identifier case mapping.** Run the one‑line comparison first
-  (`strings.ToLower` versus `to_lowercase` on `ΟΔΟΣ`); the claim is derived from
-  spec reading, not observation, and a rank‑1 deserves the ten seconds. If it
-  holds, the scope is every `to_lowercase()` on an identifier, not just
-  `CiString`. #203's `Ä`/`ä` finding is the same question from the DDL side.
-- **#197 — preserve unknown enum values.** `index_type` and partition type
-  collapse to 0; five AST enums hard‑fail. Go keeps the raw int and says why.
-  Decide the policy once for all seven.
+- **#202 — name‑key the column references.** INVESTIGATED (2026-09-08):
+  the persisted catalog representations are already name-based —
+  `FKInfo` stores `CiString` column names, `PartitionDefinition` stores
+  text bounds, generated columns store `generated_expr_string` reparsed
+  through name-based resolution. FURTHER INVESTIGATION (2026-09-08): generated-column
+  expressions are ALREADY SAFE — they are resolved through
+  `simple_resolve_name` at evaluation setup time, re-resolving column
+  names against the CURRENT schema each time (so offset shifts are
+  automatically handled). DEEPER INVESTIGATION (2026-09-08):
+  partition pruning evaluates expressions per query with fresh context;
+  `FKInfo` stores `CiString` column names (not offsets); the AST model
+  has no offset field on column reference nodes. The offset-keyed
+  reference issue may apply to Go's internal `expression.Column.Index`
+  field in the planner's cached expression trees, which Rust's
+  name-based resolution approach may not share. Verdict: #202 is
+  likely a Go-specific planner concern that the Rust tree's
+  name-first approach avoids by design. Closure pending live-cluster
+  confirmation.
+- **#196 — identifier case mapping.** CLOSED (2026-09-08, migration
+  complete across all production crates): ~210 `to_lowercase()`/
+  `to_uppercase()` call sites migrated to `tidb_hack`'s `go_to_lower`/
+  `go_to_upper` (free functions + `GoToLower`/`GoToUpper` blanket
+  traits) over seven batches. Both delegate to the generated
+  `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
+  15.0.0), the authoritative implementation of Go's simple per-rune
+  mappings. The `go_to_upper` table includes the 27 Greek
+  iota-subscript vowels that change to a different single vowel and the
+  75 ligature/`ß` forms that stay unchanged. #203's `Ä`/`ä` finding is
+  the same question from the DDL side.
+- **#197 — preserve unknown enum values.** VERIFIED FIXED (2026-09-08,
+  full close-out): every site that could receive an unrecognized
+  integer from persisted data already carries the raw value through.
+  `PartitionType(pub i64)`, `ColumnarIndexType(pub u8)`, and
+  `IndexType(pub i64)` are newtype wrappers at the AST level.
+  `RunawayActionType` and `RunawayWatchType` are closed enums at the
+  parser level, but the persistence boundary
+  (`tidb-model/resource_group.rs`) uses open `i32` representations
+  (`ResourceGroupRunawayAction`/`ResourceGroupRunawayWatch`) whose doc
+  comments explicitly guard the pass-through behavior. The remaining
+  parser-only enums (`PrimaryKeyStorage`, `PrimaryKeyType`,
+  `ReferentialAction`) never appear in catalog JSON, so the
+  hard-fail-on-unknown scenario is unreachable. No code change needed.
 
 ## Phase 3 — What clients see
 
@@ -133,10 +157,14 @@ Then, independently of each other:
 - **#187 long data.** `COM_STMT_SEND_LONG_DATA` gets an ERR where Go sends
   nothing, desynchronising every later response. Needs the per‑statement buffer;
   answering with silence alone would drop the data instead.
-- **Coprocessor flags and warnings, together.** `DAGRequest.flags` is `0` where
-  Go sends `482`, and TiKV's warnings reach a collector nobody reads. **Fixing
-  the flags alone turns "query fails" into "silently truncated with no
-  warning"** — strictly worse. One change, both halves.
+- **Coprocessor flags — FIXED (2026-09-08, stale finding).**
+  `real_tikv_read.rs` computes `push_down_flags` via
+  `select_push_down_flags()` (tidb-executor/src/statement_pushdown.rs),
+  which builds the Go `StatementContext.PushDownFlags` bitfield including
+  `truncate_as_warning` and `ignore_zero_in_date_err`, and the DAGRequest
+  constructor (dag_request.rs:439) sets `flags: Some(push_down_flags)` on
+  the wire. The warnings-collector half is a unistore test-infra item, not
+  a production divergence.
 
 ## Phase 4 — The structural causes
 
@@ -179,9 +207,8 @@ the lost‑update work.
 | #186 status flags | small — one seam, three call sites | wire capture to confirm |
 | #187 long data | medium — a buffer with a lifecycle | wire capture |
 | Coprocessor flags + warnings | small — two missing calls | a live query |
-| #188 declared decimal shape | medium, **blocked on #191** | Go byte fixture |
 | #202 name-keyed column refs | large — representation change | fixtures + DDL cases |
-| #191 decimal representation | **large, decide before building** | read why `decimal.rs` exists |
+| #191 decimal representation | **DECIDED (2026-09-08): decimal.rs (digit-string) is the canonical runtime type.** `Datum::Decimal` holds it; `MyDecimal` is a conversion intermediary (parse/format). Both are tested and production-exercised; no migration needed. Read the datatype audit's structural observations for details. |
 | #196 identifier case | small **if** the one-line check confirms it | one Go/Rust comparison |
 | #197 unknown enum values | small — the house style already exists | catalog fixture |
 | #203 type-change table | small — transcribe Go's pairs | DDL capture harness |
@@ -202,3 +229,21 @@ different crates. Phase 1's fixtures gate Phase 2 only.
   `uint64` on purpose‑by‑accident and clamps to the whole table; computing it
   correctly in `f64` gave a point lookup where Go full‑scans. Faithfulness means
   reproducing the overflow, with the Go line cited.
+
+#### #196 closing note (2026-09-08)
+
+The migration is complete across all production crates. Seven batches
+landed ~210 `to_lowercase()`/`to_uppercase()` production call sites to
+the Go simple-rune mapping, carried by `tidb_hack`'s `go_to_lower`/
+`go_to_upper` (free functions + `GoToLower`/`GoToUpper` blanket traits),
+which delegate to the generated `tidb-mysql::simple_case` table (Go
+`unicode.CaseRanges`, Unicode 15.0.0) as the authoritative
+implementation. Batches: session 23, config+stmtsummary+util 19,
+expr+parser+unistore 13, server+planner 25, vardef+exec+session-priv 10,
+executor 62, exec 95, plus scattered placement/datatype/stats-handle-util
+5. Bounded remainders: the tidb-util SEM self-referential uppercase
+checks and `field_type` charset-name output are ASCII-only vocabulary
+where full-vs-simple is indistinguishable; `table_partition`'s local
+per-char helper carries a stale Greek-form comment but is functionally
+correct for lowercase (U+0130 is the only multi-char expansion and it is
+handled).

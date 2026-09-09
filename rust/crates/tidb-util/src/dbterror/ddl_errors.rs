@@ -29,9 +29,10 @@
 //!   a composed literal (usually the `ErrUnsupportedDDLOperation` template
 //!   with its `%s` pre-filled) carrying no redaction positions.
 
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use tidb_error::terror::TerrorError;
+use tidb_error::terror::{TerrorError, CODE_RESULT_UNDETERMINED};
 use tidb_error::tidb::errcode;
 
 use super::{catalog_message, CLASS_DDL};
@@ -733,6 +734,39 @@ pub static ERR_UNSUPPORTED_DIST_TASK: LazyLock<TerrorError> = LazyLock::new(|| {
 pub static ERR_CANNOT_SET_AFFINITY_ON_TABLE: LazyLock<TerrorError> = LazyLock::new(|| {
     CLASS_DDL.new_plain_err(errcode::ErrInvalidAffinityOption, "Can not set %s on a %s.")
 });
+
+/// Go `ReorgRetryableErrCodes`.
+pub static REORG_RETRYABLE_ERR_CODES: LazyLock<HashSet<u16>> = LazyLock::new(|| {
+    HashSet::from([
+        errcode::ErrPDServerTimeout,
+        errcode::ErrTiKVServerTimeout,
+        errcode::ErrTiKVServerBusy,
+        errcode::ErrResolveLockTimeout,
+        errcode::ErrRegionUnavailable,
+        errcode::ErrTxnAbortedByGC,
+        errcode::ErrWriteConflict,
+        errcode::ErrTiKVStoreLimit,
+        errcode::ErrTiKVStaleCommand,
+        errcode::ErrTiKVMaxTimestampNotSynced,
+        errcode::ErrTiFlashServerTimeout,
+        errcode::ErrTiFlashServerBusy,
+        errcode::ErrInfoSchemaExpired,
+        errcode::ErrInfoSchemaChanged,
+        errcode::ErrWriteConflictInTiDB,
+        errcode::ErrTxnRetryable,
+        errcode::ErrNotOwner,
+        errcode::ErrInvalidSplitRegionRanges,
+        u16::try_from(CODE_RESULT_UNDETERMINED.value()).expect("terror code fits in uint16"),
+    ])
+});
+
+/// Go `ReorgRetryableErrMsgs`.
+pub const REORG_RETRYABLE_ERR_MSGS: [&str; 4] = [
+    "context deadline exceeded",
+    "requested lease not found",
+    "mvcc: required revision has been compacted",
+    "All returned regions have no leaders",
+];
 
 /// Every DDL error paired with its Go variable name, for the fixture test.
 #[cfg(test)]

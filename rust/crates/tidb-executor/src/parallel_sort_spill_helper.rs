@@ -30,10 +30,11 @@
 //! `spill`, `releaseMemory`, `spillTmpSpillChunk`, `initForSpill`, `spillImpl`
 //! -- are present. The file declares nothing else.
 //!
-//! `parallel_sort_worker.go` and the `parallelSortSpillAction` half of
-//! `sort_spill.go` are separate files and are still unported; this module
-//! stands in for the worker with the [`LocalSortWorker`] trait and for the
-//! action with [`ParallelSortSpillHelper::set_need_spill`].
+//! [`crate::sort`] wires this helper to its `ParallelSortWorker` through the
+//! [`LocalSortWorker`] boundary and installs the `parallelSortSpillAction`
+//! counterpart. Keeping the boundary as a trait lets this file retain its Go
+//! package boundary and unit-test spill rounds without constructing a full
+//! executor.
 //!
 //! Three members are NOT from this Go file and are named here so the claim
 //! above is not read as covering them:
@@ -53,16 +54,16 @@
 //!
 //! # Ordering and concurrency
 //!
-//! Go spills concurrently but the ROW ORDER ON DISK is fully determined, so
-//! this port runs the same work sequentially without changing what is
-//! observable:
+//! Go spills concurrently and the ROW ORDER ON DISK is fully determined. This
+//! port submits every local sort to the process-global executor pool, then
+//! restores results in worker-index order before building the same heap merge:
 //!
 //! * `spill` fans out one goroutine per worker, but each writes its result to
 //!   `sortedRowsIters[idx]` -- a slot indexed by the worker's own index, not an
 //!   append -- and `workerWaiter.Wait()` joins them all before the merge is
 //!   built. The merge input is therefore worker-index-ordered no matter how the
-//!   goroutines interleave. This port runs the workers in index order for the
-//!   same input.
+//!   goroutines interleave. [`crate::worker_pool::map`] preserves that indexed
+//!   result order even when tasks finish out of order.
 //! * `spillImpl` runs a SINGLE producer goroutine (`merger.next()` in a loop)
 //!   feeding a buffered channel that a SINGLE consumer (the `OuterLoop`) drains
 //!   in FIFO order. One producer plus one FIFO channel plus one consumer means
@@ -79,9 +80,9 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `sortExec *SortExec` is not a field here. `SortExec` is not ported at this
-//!   tier, and only three things are read through it, so they are held
-//!   directly: `sortExec.Parallel.workers` -> `workers`,
+//! * `sortExec *SortExec` is not a field here. Rust ownership keeps only the
+//!   three things this helper reads through it directly:
+//!   `sortExec.Parallel.workers` -> `workers`,
 //!   `sortExec.memTracker` -> `mem_tracker`, `sortExec.diskTracker` ->
 //!   `disk_tracker`.
 //! * `finishCh chan struct{}` -> a shared [`AtomicBool`]. Go only ever
@@ -93,8 +94,10 @@
 //! * `injectErrorForIssue59655`, `injectParallelSortRandomFail` and
 //!   `injectPanicForIssue63216` are failpoints, i.e. test-only fault injection;
 //!   they are not reproduced.
-//! * Go's `recover()` wrappers turn a panic into an error. Rust panics are not
-//!   caught here; every fallible step already returns [`ExecError`].
+//! * Go's `recover()` wrappers turn a panic into an error. The worker and
+//!   spill-body boundaries use [`crate::sort_util::recover_worker_panic`] for
+//!   the same result-channel contract; failpoint injection itself remains
+//!   unavailable in this Rust build.
 //! * Go's `spill` computes `totalRows` and never uses it. Dead in Go, dropped
 //!   here.
 //! * `storage: Arc<SpillStorage>` has no Go counterpart field. Go's
@@ -132,12 +135,13 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_chunk::row::OwnedRow;
 use tidb_datatype::FieldType;
-use tidb_util::disk::{self, SpillStorage};
+use tidb_util::disk;
 use tidb_util::memory::Tracker;
+use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
 use crate::multi_way_merge::{MemorySource, MultiWayMerger};
-use crate::sort_util::{RowWithError, SpillStatus, SPILL_CHUNK_SIZE};
+use crate::sort_util::{recover_worker_panic, RowWithError, SpillStatus, SPILL_CHUNK_SIZE};
 
 /// Go `spillInfo`: the message logged when a spill round starts.
 pub const SPILL_INFO: &str = "memory exceeds quota, spill to disk now.";
@@ -147,7 +151,7 @@ pub const SPILL_INFO: &str = "memory exceeds quota, spill to disk now.";
 ///
 /// Only the two things `parallel_sort_spill_helper.go` asks of a worker are in
 /// the trait.
-pub trait LocalSortWorker {
+pub trait LocalSortWorker: Send + 'static {
     /// Go `parallelSortWorker.sortLocalRows`: sorts the rows this worker holds
     /// and hands them over as ONE sorted run.
     ///
@@ -357,7 +361,7 @@ where
     /// stream becomes one new file in `sortedRowsInDisk`.
     pub fn spill(&mut self) -> Result<(), ExecError> {
         self.set_in_spilling();
-        let result = self.spill_body();
+        let result = recover_worker_panic(|| self.spill_body());
         // Go registers `defer p.cond.Broadcast()` BEFORE `defer
         // p.setNotSpilled()`, so the status is restored first and the waiters
         // are woken second -- otherwise a woken waiter could observe
@@ -374,11 +378,29 @@ where
             return Ok(());
         }
 
-        let mut sorted_runs = Vec::with_capacity(self.workers.len());
-        for worker in &mut self.workers {
-            // See the module note on error identity: Go returns whichever of
-            // several concurrent failures reached its channel first.
-            sorted_runs.push(worker.sort_local_rows()?);
+        let workers = std::mem::take(&mut self.workers);
+        let concurrency = workers.len();
+        let outcomes = crate::worker_pool::map(
+            workers.into_iter().map(|mut worker| {
+                move || {
+                    let result = recover_worker_panic(|| worker.sort_local_rows());
+                    (worker, result)
+                }
+            }),
+            concurrency,
+        );
+        let mut sorted_runs = Vec::with_capacity(outcomes.len());
+        let mut first_error = None;
+        for (worker, result) in outcomes {
+            self.workers.push(worker);
+            match result {
+                Ok(rows) => sorted_runs.push(rows),
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
         }
 
         let source = MemorySource::new(sorted_runs);
@@ -577,8 +599,8 @@ mod tests {
     use std::sync::mpsc::channel;
 
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     use tidb_util::memory::Tracker;
+    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
     use crate::sort_util::DataCursor;

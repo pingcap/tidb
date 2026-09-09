@@ -26,6 +26,7 @@
 use crate::account::{ssl_type_of, PasswordOrLockOptions};
 use crate::show::string_column_output;
 use crate::*;
+use tidb_util::stringutil::go_to_lower;
 
 impl Session {
     /// `ALTER USER [IF EXISTS] <account | USER()> [IDENTIFIED [WITH
@@ -651,7 +652,7 @@ impl Session {
                  Host={}",
                 crate::user_table::sql_str(&auth_string),
                 crate::user_table::sql_str(&user),
-                crate::user_table::sql_str(&host.to_lowercase()),
+                crate::user_table::sql_str(&go_to_lower(host)),
             );
             self.run_user_table_write(&sql)?;
         }

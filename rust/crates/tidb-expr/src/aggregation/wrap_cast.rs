@@ -42,14 +42,11 @@
 //!   whose cast signature is not ported; every wrapper below propagates that
 //!   error rather than silently returning the unwrapped expression, because
 //!   an unwrapped argument would make the aggregate read the WRONG eval type.
-//! - **`WrapWithCastAsDecimal`'s constant-refinement tail is dropped**
-//!   (`:2836`-`:2845`). Go evaluates the freshly built cast node
-//!   (`castExpr.EvalDecimal`) when it is `ConstStrict` and narrows the node's
-//!   flen/decimal to the actual precision of the result. It needs an
-//!   `EvalContext` and a decimal evaluation of a node this crate can only
-//!   evaluate through the full builtin dispatch; the result differs only in
-//!   the DISPLAY metadata of a constant argument, never in the value. It is
-//!   dropped, not approximated.
+//! - **`WrapWithCastAsDecimal`'s constant-refinement tail**
+//!   (`:2755`-`:2763`) evaluates a freshly built strict constant and narrows
+//!   the node's flen/decimal to the value's natural precision. Rust can run
+//!   the same value-only dispatch against [`crate::NoColumns`], which also
+//!   preserves the source value when the wrapper's scale is unspecified.
 //! - **`WrapWithCastAsString`'s `CoercibilityExplicit` branch reads the
 //!   argument's FIELD TYPE charset/collation** rather than a separate
 //!   `collationInfo`. Go's `expr.CharsetAndCollation()` returns the derived
@@ -66,7 +63,7 @@
 //!   aggregate path does.
 
 use crate::context::{Columns, EvalError};
-use crate::expression::Expression;
+use crate::expression::{ConstLevel, Expression};
 use crate::simple_expr::build_cast_function;
 use tidb_datatype::{
     EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
@@ -153,12 +150,16 @@ pub fn wrap_with_cast_as_int(
         None => tp.add_flags(source.flags() & FieldTypeFlags::UNSIGNED),
         Some(target) => tp.add_flags(target.flags() & FieldTypeFlags::UNSIGNED),
     }
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsReal` (`builtin_cast.go:2703`).
-pub fn wrap_with_cast_as_real(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_real(mut expr: Expression) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
+    let source_is_decimal = source.eval_type() == EvalType::Decimal;
+    if source_is_decimal {
+        crate::expression::propagate_type(&mut expr, EvalType::Real);
+    }
     if source.eval_type() == EvalType::Real {
         return Ok(expr);
     }
@@ -167,7 +168,7 @@ pub fn wrap_with_cast_as_real(expr: Expression) -> Result<Expression, EvalError>
     tp.set_decimal(UNSPECIFIED_LENGTH);
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `minimalDecimalLenForHoldingInteger` (`builtin_cast.go:2713`).
@@ -183,9 +184,9 @@ const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64 {
     }
 }
 
-/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`), without the
-/// constant-refinement tail (see the module header).
+/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`).
 pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
+    let strict_constant = expr.const_level() == ConstLevel::STRICT;
     let source = type_of(&expr);
     if source.eval_type() == EvalType::Decimal {
         return Ok(expr);
@@ -202,7 +203,25 @@ pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalErr
     }
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp)
+    let mut cast_expr = build_cast_function(expr, tp, false)?;
+    // Go's `ConstStrict` tail records the exact result shape on the cast node.
+    // This is observable through callers that inspect `GetType`, and it is
+    // also what lets a REAL/string wrapper retain 123.555 instead of treating
+    // the unresolved source scale as an explicit zero. The wrapper has no
+    // statement context, so the value-only `NoColumns` context is sufficient;
+    // any warning-bearing/non-constant expression is left untouched.
+    if strict_constant {
+        if let Ok(tidb_datatype::Datum::Decimal(value)) =
+            cast_expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+        {
+            let (precision, frac) = value.precision_and_frac();
+            if let Some(field_type) = ret_type_mut(&mut cast_expr) {
+                field_type.set_decimal_under_limit(i64::from(frac));
+                field_type.set_flen_under_limit(i64::from(precision));
+            }
+        }
+    }
+    Ok(cast_expr)
 }
 
 /// Go `WrapWithCastAsString` (`builtin_cast.go:2769`).
@@ -249,7 +268,7 @@ pub fn wrap_with_cast_as_string(
     }
     tp.set_flen(arg_len);
     tp.set_decimal(UNSPECIFIED_LENGTH);
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsTime` (`builtin_cast.go:2817`).
@@ -295,7 +314,7 @@ pub fn wrap_with_cast_as_time(
         _ => {}
     }
     set_bin_chs_cln_flag(&mut tp);
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsDuration` (`builtin_cast.go:2853`).
@@ -315,7 +334,7 @@ pub fn wrap_with_cast_as_duration(expr: Expression) -> Result<Expression, EvalEr
     if tp.decimal() > 0 {
         tp.set_flen(tp.flen() + 1 + tp.decimal());
     }
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsJSON` (`builtin_cast.go:2873`).
@@ -329,7 +348,7 @@ pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError>
     tp.set_flen(JSON_CAST_FLEN);
     tp.set_charset_name("utf8mb4");
     tp.set_collation_name("utf8mb4_bin");
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsVectorFloat32` (`builtin_cast.go:2883`).
@@ -337,14 +356,25 @@ pub fn wrap_with_cast_as_vector_float32(expr: Expression) -> Result<Expression, 
     if type_of(&expr).code() == FieldTypeCode::VectorFloat32 {
         return Ok(expr);
     }
-    build_cast_function(expr, FieldType::new(FieldTypeCode::VectorFloat32))
+    build_cast_function(expr, FieldType::new(FieldTypeCode::VectorFloat32), false)
 }
 
 /// Go `expression.BuildCastFunction(ctx, expr, tp)` for a target the caller
 /// already fully described. Exposed so `typeInfer4GroupConcat` can reproduce
 /// its literal `BuildCastFunction(ctx, a.Args[i], tp)` call.
 pub fn build_cast_to(expr: Expression, target: FieldType) -> Result<Expression, EvalError> {
-    build_cast_function(expr, target)
+    build_cast_function(expr, target, false)
+}
+
+/// Go `BuildCastFunction4Union` (`builtin_cast.go:2568`): the union
+/// derivation's cast, whose `inUnion = true` signature CLAMPS a negative
+/// result to 0 for unsigned targets instead of the unsigned wrap
+/// (`builtin_cast.go:998`).
+pub fn build_cast_to_in_union(
+    expr: Expression,
+    target: FieldType,
+) -> Result<Expression, EvalError> {
+    build_cast_function(expr, target, true)
 }
 
 /// The connection charset/collation pair a `BuildContext` supplies, defaulted

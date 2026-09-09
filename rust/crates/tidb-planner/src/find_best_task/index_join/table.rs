@@ -43,7 +43,7 @@ pub(super) fn build_table_task(
         .base
         .schema()
         .ok_or_else(|| PlanError::internal("IndexJoin datasource schema missing"))?;
-    let lookup = prop.index_join.as_ref().expect("IndexJoin property");
+    let lookup = prop.index_join_prop.as_ref().expect("IndexJoin property");
     let (ranges, filters, access, info, pk_column, max_one_row, keep_order) = if common {
         let settings = &ctx.index_join_ranger;
         let record_fallback = |quota| settings.range_fallbacks.borrow_mut().push(quota);
@@ -53,7 +53,7 @@ pub(super) fn build_table_task(
             lookup,
             inner_schema: schema,
             pushed_conditions: &ds.pushed_down_conds,
-            eval_constant: settings.eval_constant,
+            eval_expression: settings.eval_expression,
             range_max_size: settings.range_max_size,
             record_range_fallback: &record_fallback,
             regard_null_as_point: settings.regard_null_as_point,

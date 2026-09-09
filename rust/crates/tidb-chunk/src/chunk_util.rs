@@ -23,7 +23,7 @@
 //!
 //! The spill stack has both Go variants: checksum -> file for `plaintext`, and
 //! checksum -> AES-CTR -> file for `aes128-ctr`. The immutable
-//! [`tidb_util::disk::SpillStorage`] passed by the server owns that choice and
+//! [`tidb_util::spill_storage::SpillStorage`] passed by the server owns that choice and
 //! the directory lease for every file in one process.
 
 use crate::chunk::Chunk;
@@ -32,10 +32,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tidb_util::disjointset::Set;
-use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
-use tidb_util::layered_io::ReadAt;
+use tidb_util::layered_io::{CloseWrite, ReadAt};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage};
 use tidb_util::{checksum, encrypt};
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection
@@ -264,7 +264,7 @@ impl ColumnSwapHelper {
         for (&input_index, output_indexes) in &self.input_idx_to_output_idxes {
             let root = owners.find_root(input_index);
             let owner_index = owners
-                .find_value(root)
+                .find_val(root)
                 .expect("every disjoint-set root has an input index");
             merged
                 .entry(owner_index)
@@ -325,8 +325,7 @@ mod tests {
         let column_eval = ColumnSwapHelper::from_mapping(input_idx_to_output_idxes);
 
         let long_long = FieldType::new(FieldTypeCode::LongLong);
-        let mut input =
-            Chunk::new_empty(&[long_long.clone(), long_long.clone()]);
+        let mut input = Chunk::new_empty(&[long_long.clone(), long_long.clone()]);
         input.append_int64(0, 99);
         // The input chunk's columns 0 and 1 designate one owner.
         input.make_ref(0, 1);
@@ -542,10 +541,51 @@ mod tests {
     }
 }
 
+#[derive(Clone)]
+struct SharedEncryptWriter(Arc<Mutex<Option<encrypt::Writer<File>>>>);
+
+impl SharedEncryptWriter {
+    fn new(writer: encrypt::Writer<File>) -> Self {
+        Self(Arc::new(Mutex::new(Some(writer))))
+    }
+
+    fn lock(&self) -> io::Result<MutexGuard<'_, Option<encrypt::Writer<File>>>> {
+        self.0
+            .lock()
+            .map_err(|_| io::Error::other("encrypted spill writer lock poisoned"))
+    }
+}
+
+impl Write for SharedEncryptWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.lock()?
+            .as_mut()
+            .ok_or_else(|| io::Error::other("encrypted spill writer is closed"))?
+            .write(data)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.lock()?
+            .as_mut()
+            .ok_or_else(|| io::Error::other("encrypted spill writer is closed"))?
+            .flush()
+    }
+}
+
+impl CloseWrite for SharedEncryptWriter {
+    fn close(self) -> io::Result<()> {
+        self.lock()?
+            .take()
+            .ok_or_else(|| io::Error::other("encrypted spill writer is closed"))?
+            .close()
+    }
+}
+
 enum DiskWriter {
     Plaintext(checksum::Writer<File>),
     Aes128Ctr {
-        writer: checksum::Writer<encrypt::Writer<File>>,
+        writer: checksum::Writer<SharedEncryptWriter>,
+        cipher_writer: SharedEncryptWriter,
         cipher: encrypt::CtrCipher,
     },
     #[cfg(test)]
@@ -624,9 +664,11 @@ impl DiskFileReaderWriter {
         self.writer = Some(match cipher {
             None => DiskWriter::Plaintext(checksum::Writer::new(write_handle)),
             Some(cipher) => {
-                let encrypting = encrypt::Writer::new(write_handle, &cipher);
+                let cipher_writer =
+                    SharedEncryptWriter::new(encrypt::Writer::new(write_handle, &cipher));
                 DiskWriter::Aes128Ctr {
-                    writer: checksum::Writer::new(encrypting),
+                    writer: checksum::Writer::new(cipher_writer.clone()),
+                    cipher_writer,
                     cipher,
                 }
             }
@@ -713,8 +755,15 @@ impl DiskFileReaderWriter {
                 );
                 crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
             }
-            DiskWriter::Aes128Ctr { writer, cipher } => {
-                let encrypting = writer.underlying();
+            DiskWriter::Aes128Ctr {
+                cipher_writer,
+                cipher,
+                ..
+            } => {
+                let cipher_writer = cipher_writer.lock()?;
+                let encrypting = cipher_writer
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("encrypted spill writer is closed"))?;
                 let decrypted = encrypt::Reader::new(file, cipher);
                 let decrypted_with_cache = crate::row_in_disk::ReaderWithCache::new(
                     decrypted,

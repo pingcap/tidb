@@ -34,8 +34,7 @@ use crate::{
         configured_join_columns, ConfiguredInnerJoinError, ConfiguredInnerJoinRecordSet,
     },
     configured_topn::{
-        ConfiguredLimitEvidence, ConfiguredLimitStream, ConfiguredRowSource, ConfiguredTopN,
-        ConfiguredTopNError, ConfiguredTopNEvidence,
+        ConfiguredLimitStream, ConfiguredRowSource, ConfiguredTopN, ConfiguredTopNError,
     },
     recordset_lifecycle::RecordSetLifecycle,
     Row,
@@ -92,20 +91,6 @@ impl From<ConfiguredTopNError> for ConfiguredOrderedQueryError {
     fn from(error: ConfiguredTopNError) -> Self {
         Self::TopN(error)
     }
-}
-
-/// Immutable terminal accounting available after the tail has completed.
-///
-/// A bounded TopN is complete after it has consumed the joined stream and
-/// finalized its heap. A streaming LIMIT is complete once it has closed its
-/// exact upstream, either at the typed window boundary or during record-set
-/// finish/close.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConfiguredOrderedQueryEvidence {
-    /// Bounded TopN capacity, high-water mark, consumed, and emitted rows.
-    TopN(ConfiguredTopNEvidence),
-    /// Streaming LIMIT consumed, emitted, and upstream-close accounting.
-    Limit(ConfiguredLimitEvidence),
 }
 
 enum PreparedTailState {
@@ -166,7 +151,6 @@ impl PreparedConfiguredOrderedQueryTail {
             PreparedTailState::TopN(state) => OrderedTail::TopN {
                 state: Some(state),
                 rows: VecDeque::new(),
-                evidence: None,
             },
         };
         Ok(ConfiguredOrderedQueryRecordSet {
@@ -182,7 +166,6 @@ enum OrderedTail {
     TopN {
         state: Option<ConfiguredTopN>,
         rows: VecDeque<Row>,
-        evidence: Option<ConfiguredTopNEvidence>,
     },
 }
 
@@ -325,21 +308,6 @@ impl ConfiguredOrderedQueryRecordSet {
             .collect())
     }
 
-    /// Returns terminal accounting after the tail has genuinely completed.
-    #[must_use]
-    pub fn completed_evidence(&self) -> Option<ConfiguredOrderedQueryEvidence> {
-        match &self.tail {
-            OrderedTail::Empty => None,
-            OrderedTail::Limit(limit) => limit
-                .evidence()
-                .source_closed()
-                .then(|| ConfiguredOrderedQueryEvidence::Limit(limit.evidence())),
-            OrderedTail::TopN { evidence, .. } => {
-                evidence.map(ConfiguredOrderedQueryEvidence::TopN)
-            }
-        }
-    }
-
     /// Finishes the exact one underlying join record set.
     pub fn finish(&mut self) -> Result<(), ConfiguredOrderedQueryError> {
         self.close_limit_source();
@@ -383,11 +351,7 @@ impl ConfiguredOrderedQueryRecordSet {
             return Ok(());
         };
         if topn.is_empty() {
-            let result = topn.finish();
-            let OrderedTail::TopN { evidence, .. } = &mut self.tail else {
-                unreachable!("TopN state did not change while draining")
-            };
-            *evidence = Some(result.evidence);
+            let _ = topn.finish();
             self.close()?;
             return Ok(());
         }
@@ -406,11 +370,10 @@ impl ConfiguredOrderedQueryRecordSet {
             }
         }
         let result = topn.finish();
-        let OrderedTail::TopN { rows, evidence, .. } = &mut self.tail else {
+        let OrderedTail::TopN { rows, .. } = &mut self.tail else {
             unreachable!("TopN state did not change while draining")
         };
-        *rows = result.rows.into();
-        *evidence = Some(result.evidence);
+        *rows = result.into();
         Ok(())
     }
 

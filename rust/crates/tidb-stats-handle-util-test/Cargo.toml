@@ -1,0 +1,15 @@
+[package]
+name = "tidb-stats-handle-util-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Test support for TiDB statistics handle utility contexts."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-txnkv = { path = "../tidb-txnkv" }
+tikv-client.workspace = true

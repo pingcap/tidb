@@ -612,6 +612,7 @@ fn a_marker_numbered_out_of_source_order_is_rejected() {
         offset: 0,
         order: 7,
         in_execute: false,
+        value: None,
         projection_offset: 0,
     };
 

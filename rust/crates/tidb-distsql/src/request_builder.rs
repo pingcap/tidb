@@ -375,6 +375,24 @@ impl RequestBuilder {
         self
     }
 
+    /// Sets the source opt-in for merging batched child data into the main response.
+    pub fn set_allow_batch_task_data_merge(&mut self, allow: bool) -> &mut Self {
+        self.request.allow_batch_task_data_merge = allow;
+        self
+    }
+
+    /// Sets the source opt-in for serial execution of batched child tasks.
+    pub fn set_execute_batch_tasks_serially(&mut self, execute_serially: bool) -> &mut Self {
+        self.request.execute_batch_tasks_serially = execute_serially;
+        self
+    }
+
+    /// Sets the per-store batching limit. A non-positive value disables batching.
+    pub fn set_store_batch_size(&mut self, store_batch_size: isize) -> &mut Self {
+        self.request.store_batch_size = store_batch_size;
+        self
+    }
+
     /// Sets TiDB server identity.
     pub fn set_tidb_server_id(&mut self, server_id: u64) -> &mut Self {
         self.request.tidb_server_id = server_id;

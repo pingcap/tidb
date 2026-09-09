@@ -34,7 +34,7 @@ use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
 };
 use tidb_meta::key;
-use tidb_metadef::BOOTSTRAP_TABLES;
+use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 use tidb_txnkv::transaction::OptimisticMutationKind;
 
 /// One fixed environment, so every plan here is byte-for-byte reproducible.
@@ -114,8 +114,12 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
         .iter()
         .find(|database| database.info.name.lowercase() == "mysql")
         .expect("the bootstrap created the mysql database");
-    assert_eq!(database.tables.len(), BOOTSTRAP_TABLES.len());
-    for table in BOOTSTRAP_TABLES {
+    let all_tables = DDL_TABLE_VERSION_TABLES
+        .iter()
+        .flat_map(|version| version.tables)
+        .chain(BOOTSTRAP_TABLES);
+    assert_eq!(database.tables.len(), all_tables.clone().count());
+    for table in all_tables {
         assert!(
             database
                 .tables
@@ -125,6 +129,30 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
             table.name
         );
     }
+}
+
+#[test]
+fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
+    let mut store = bootstrapped();
+    assert_eq!(
+        tidb_exec::mysql_bootstrap::read_ddl_table_version(&mut store)
+            .expect("DDL table version reads"),
+        4
+    );
+    let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
+    let state = read_bootstrap_state(&mut store, &catalog).expect("bootstrap state reads");
+    assert!(state.already_bootstrapped());
+    let mysql = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "mysql")
+        .expect("mysql database");
+    let notifier = mysql
+        .tables
+        .iter()
+        .find(|table| table.name.lowercase() == "tidb_ddl_notifier")
+        .expect("DDL notifier table");
+    assert_eq!(notifier.id, tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
 }
 
 #[test]
@@ -170,6 +198,10 @@ fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
     assert_eq!(root.authentication_string, "");
     assert_eq!(root.plugin, "mysql_native_password");
     assert!(!root.account_locked);
+    assert!(
+        root.privileges.contains(&"OPERATE VIEW"),
+        "the bootstrap root row must include Go master's OPERATE VIEW grant"
+    );
 }
 
 #[test]
@@ -214,10 +246,22 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
         tidb_model::action_type::ActionType::ACTION_CREATE_TABLES
     );
     // Every created table is named in the diff, which is what makes a real
-    // TiDB's own reloader pick them all up at this one version.
+    // TiDB's own reloader pick them all up at this one version. The DDL-owned
+    // tables ride the same fresh bootstrap whenever the environment's
+    // `ddl_table_version` has not reached their group, so the count spans
+    // both lists.
+    let ddl_table_count = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        .iter()
+        .filter(|version| environment().ddl_table_version < version.version)
+        .map(|version| version.tables.len())
+        .sum::<usize>();
     let affected = &write.diff.affected_options;
     assert!(affected.is_allocated());
-    assert_eq!(affected.len(), BOOTSTRAP_TABLES.len());
+    assert_eq!(
+        affected.len(),
+        BOOTSTRAP_TABLES.len() + ddl_table_count,
+        "the diff names every mysql.* table the fresh bootstrap created"
+    );
     assert!(affected.iter_handles().all(|affected| affected.is_some()));
     apply(&mut store, &write);
     assert_eq!(store.pairs[&key::schema_version_kv_key()], b"61");

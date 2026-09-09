@@ -25,7 +25,7 @@ use tidb_expr::simple_expr::resolve_indices_in_place;
 use tidb_util::disjointset::SimpleIntSet;
 
 use super::{
-    BasePhysicalJoin, BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
+    BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
 };
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
@@ -161,80 +161,104 @@ fn bind_equalities(
     Ok(())
 }
 
-impl BasePhysicalJoin {
-    fn resolve_predicates_and_output(&mut self) -> Result<(), PlanError> {
-        let left = child_schema(&self.base, 0)?;
-        let right = child_schema(&self.base, 1)?;
-        bind_exprs(&mut self.left_conditions, left)?;
-        bind_exprs(&mut self.right_conditions, right)?;
-        let merged = merge_schema(Some(left), Some(right)).expect("both input schemas exist");
-        bind_exprs(&mut self.other_conditions, &merged)?;
-        let mut output = self
-            .base
-            .base
-            .schema()
-            .cloned()
-            .ok_or_else(|| PlanError::internal("join has no output schema"))?;
-        let indicator = matches!(
-            self.join_type,
-            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
-        );
-        let count = output
-            .len()
-            .checked_sub(usize::from(indicator))
-            .ok_or_else(|| PlanError::internal("outer semi join has no match column"))?;
-        let mut marked = vec![false; merged.len()];
-        for column in &mut output.columns[..count] {
-            let at = merged
-                .columns
-                .iter()
-                .enumerate()
-                .position(|(at, candidate)| candidate.unique_id == column.unique_id && !marked[at])
-                .ok_or_else(|| {
-                    PlanError::internal(format!(
-                        "Some columns of {} cannot find the reference from its child(ren)",
-                        self.base.base.explain_id(false)
-                    ))
-                })?;
-            column.index = at as i64;
-            marked[at] = true;
-        }
-        self.base.base.set_schema(Some(Schema::new(output.columns)));
-        Ok(())
+#[allow(clippy::too_many_arguments)]
+fn resolve_join_predicates_and_output(
+    base: &mut BasePhysicalPlan,
+    join_type: LogicalJoinType,
+    left_conditions: &mut [Expression],
+    right_conditions: &mut [Expression],
+    other_conditions: &mut [Expression],
+) -> Result<(), PlanError> {
+    let left = child_schema(base, 0)?;
+    let right = child_schema(base, 1)?;
+    bind_exprs(left_conditions, left)?;
+    bind_exprs(right_conditions, right)?;
+    let merged = merge_schema(Some(left), Some(right)).expect("both input schemas exist");
+    bind_exprs(other_conditions, &merged)?;
+    let mut output = base
+        .base
+        .schema()
+        .cloned()
+        .ok_or_else(|| PlanError::internal("join has no output schema"))?;
+    let indicator = matches!(
+        join_type,
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+    );
+    let count = output
+        .len()
+        .checked_sub(usize::from(indicator))
+        .ok_or_else(|| PlanError::internal("outer semi join has no match column"))?;
+    let mut marked = vec![false; merged.len()];
+    for column in &mut output.columns[..count] {
+        let at = merged
+            .columns
+            .iter()
+            .enumerate()
+            .position(|(at, candidate)| candidate.unique_id == column.unique_id && !marked[at])
+            .ok_or_else(|| {
+                PlanError::internal(format!(
+                    "Some columns of {} cannot find the reference from its child(ren)",
+                    base.base.explain_id(false)
+                ))
+            })?;
+        column.index = at as i64;
+        marked[at] = true;
     }
+    base.base.set_schema(Some(Schema::new(output.columns)));
+    Ok(())
 }
 
 impl PhysicalHashJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
-        let join = &mut self.join;
-        let left = child_schema(&join.base, 0)?;
-        let right = child_schema(&join.base, 1)?;
-        bind_equalities(
-            &mut self.equal_conditions,
-            &mut join.left_join_keys,
-            &mut join.right_join_keys,
-            left,
-            right,
-        )?;
-        bind_equalities(
-            &mut self.na_equal_conditions,
-            &mut join.left_na_join_keys,
-            &mut join.right_na_join_keys,
-            left,
-            right,
-        )?;
-        join.resolve_predicates_and_output()
+        let left = child_schema(&self.base, 0)?;
+        let right = child_schema(&self.base, 1)?;
+        if self.equal_conditions.is_empty() {
+            for column in &mut self.left_join_keys {
+                bind_column(column, left)?;
+            }
+            for column in &mut self.right_join_keys {
+                bind_column(column, right)?;
+            }
+        } else {
+            bind_equalities(
+                &mut self.equal_conditions,
+                &mut self.left_join_keys,
+                &mut self.right_join_keys,
+                left,
+                right,
+            )?;
+        }
+        for condition in &mut self.na_equal_conditions {
+            let [left_arg, right_arg] = condition.args.as_mut_slice() else {
+                return Err(PlanError::internal(
+                    "physical join equality requires two arguments",
+                ));
+            };
+            bind(left_arg, left)?;
+            bind(right_arg, right)?;
+        }
+        resolve_join_predicates_and_output(
+            &mut self.base,
+            self.join_type,
+            &mut self.left_conditions,
+            &mut self.right_conditions,
+            &mut self.other_conditions,
+        )
     }
 }
 
 impl PhysicalIndexJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
-        if self.join.inner_child_idx > 1 {
+        if self.inner_child_idx > 1 {
             return Err(PlanError::internal("invalid IndexJoin inner child index"));
         }
-        let outer = child_schema(&self.join.base, 1 - self.join.inner_child_idx)?;
-        let inner = child_schema(&self.join.base, self.join.inner_child_idx)?;
-        for col in self.outer_join_keys.iter_mut().chain(&mut self.outer_hash_keys) {
+        let outer = child_schema(&self.base, 1 - self.inner_child_idx)?;
+        let inner = child_schema(&self.base, self.inner_child_idx)?;
+        for col in self
+            .outer_join_keys
+            .iter_mut()
+            .chain(&mut self.outer_hash_keys)
+        {
             bind_column(col, outer)?;
         }
         for col in self
@@ -245,28 +269,25 @@ impl PhysicalIndexJoin {
             bind_column(col, inner)?;
         }
         if let Some(filters) = &mut self.compare_filters {
-            bind_exprs(&mut filters.op_args, outer)?;
-            for column in &mut filters.affected_col_schema.columns {
-                bind_column(column, outer)?;
-            }
+            bind_exprs(&mut filters.args, outer)?;
         }
         // Go resolves duplicate outputs as an ordered subsequence of L + R.
-        self.join.resolve_predicates_and_output()?;
+        resolve_join_predicates_and_output(
+            &mut self.base,
+            self.join_type,
+            &mut self.left_conditions,
+            &mut self.right_conditions,
+            &mut self.other_conditions,
+        )?;
         let merged = merge_schema(
-            Some(child_schema(&self.join.base, 0)?),
-            Some(child_schema(&self.join.base, 1)?),
+            Some(child_schema(&self.base, 0)?),
+            Some(child_schema(&self.base, 1)?),
         )
         .expect("both schemas exist");
-        let mut output = self
-            .join
-            .base
-            .base
-            .schema()
-            .cloned()
-            .expect("resolved above");
+        let mut output = self.base.base.schema().cloned().expect("resolved above");
         let count = output.len()
             - usize::from(matches!(
-                self.join.join_type,
+                self.join_type,
                 LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
             ));
         let mut next = 0;
@@ -281,14 +302,14 @@ impl PhysicalIndexJoin {
             column.index = offset as i64;
             next = offset + 1;
         }
-        self.join.base.base.set_schema(Some(output));
+        self.base.base.set_schema(Some(output));
         Ok(())
     }
 }
 
 impl PhysicalMergeJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
-        let join = &mut self.join;
+        let join = &mut *self;
         let left = child_schema(&join.base, 0)?;
         let right = child_schema(&join.base, 1)?;
         for key in &mut join.left_join_keys {
@@ -297,7 +318,13 @@ impl PhysicalMergeJoin {
         for key in &mut join.right_join_keys {
             bind_column(key, right)?;
         }
-        join.resolve_predicates_and_output()
+        resolve_join_predicates_and_output(
+            &mut join.base,
+            join.join_type,
+            &mut join.left_conditions,
+            &mut join.right_conditions,
+            &mut join.other_conditions,
+        )
     }
 }
 
@@ -313,16 +340,16 @@ impl PhysicalPlan {
                 bind_exprs(&mut op.exprs, input)?;
                 if let Some(Self::Projection(child)) = op.base.children().first() {
                     let mut first_output = BTreeMap::new();
-                    let mut union = SimpleIntSet::new(input.len());
+                    let mut union = SimpleIntSet::new(input.len() as isize);
                     for (index, expr) in child.exprs.iter().enumerate() {
                         if let Expression::Column(column) = expr {
                             let first = *first_output.entry(column.index).or_insert(index);
-                            union.union(first, index);
+                            union.union(first as isize, index as isize);
                         }
                     }
                     for expr in &mut op.exprs {
                         if let Expression::Column(column) = expr {
-                            column.index = union.find_root(column.index as usize) as i64;
+                            column.index = union.find_root(column.index as isize) as i64;
                         }
                     }
                 }
@@ -338,7 +365,12 @@ impl PhysicalPlan {
                 }
             }
             Self::Sort(op) => bind_by_items(&mut op.by_items, child_schema(&op.base, 0)?)?,
-            Self::NominalSort(op) => bind_by_items(&mut op.by_items, child_schema(&op.base, 0)?)?,
+            Self::NominalSort(op) => {
+                let input = child_schema(&op.base, 0)?;
+                for item in &mut op.by_items {
+                    bind_column(&mut item.col, input)?;
+                }
+            }
             Self::HashAgg(op) => bind_aggregation(
                 &mut op.agg_funcs,
                 &mut op.group_by_items,
@@ -355,9 +387,6 @@ impl PhysicalPlan {
                     bind_column(&mut item.col, input)?;
                 }
                 bind_inline_projection(&mut op.base)?;
-                if let Some(column) = &mut op.prefix_col {
-                    bind_column(column, child_schema(&op.base, 0)?)?;
-                }
             }
             Self::TopN(op) => {
                 let input = child_schema(&op.base, 0)?;
@@ -366,17 +395,14 @@ impl PhysicalPlan {
                     bind_column(&mut item.col, input)?;
                 }
                 bind_inline_projection(&mut op.base)?;
-                if let Some(column) = &mut op.prefix_col {
-                    bind_column(column, child_schema(&op.base, 0)?)?;
-                }
             }
             Self::HashJoin(op) => op.resolve_indices_itself()?,
             Self::MergeJoin(op) => op.resolve_indices_itself()?,
             Self::IndexJoin(op) => op.resolve_indices_itself()?,
             Self::Apply(op) => {
                 op.hash_join.resolve_indices_itself()?;
-                let left = child_schema(&op.hash_join.join.base, 0)?;
-                let right = child_schema(&op.hash_join.join.base, 1)?;
+                let left = child_schema(&op.hash_join.base, 0)?;
+                let right = child_schema(&op.hash_join.base, 1)?;
                 let mut dedup = BTreeMap::new();
                 for mut column in std::mem::take(&mut op.outer_schema) {
                     bind_column(&mut column.column, left)?;
@@ -400,6 +426,9 @@ impl PhysicalPlan {
                     for column in columns {
                         bind_column(column, input)?;
                     }
+                }
+                for column in op.tbl_id_to_phys_tbl_id_col.values_mut() {
+                    bind_column(column, input)?;
                 }
             }
             Self::TableReader(op) => {
@@ -459,7 +488,68 @@ impl PhysicalPlan {
                 }
                 op.base.base.set_schema(Some(schema));
             }
+            Self::Window(op) => {
+                let input = child_schema(&op.base, 0)?.clone();
+                let mut schema = op
+                    .base
+                    .base
+                    .schema()
+                    .cloned()
+                    .ok_or_else(|| PlanError::internal("Window has no output schema"))?;
+                let pass_through = schema
+                    .len()
+                    .checked_sub(op.window_func_descs.len())
+                    .ok_or_else(|| {
+                        PlanError::internal("Window schema is missing function columns")
+                    })?;
+                for column in &mut schema.columns[..pass_through] {
+                    bind_column(column, &input)?;
+                }
+                op.base.base.set_schema(Some(schema));
+                for item in op.partition_by.iter_mut().chain(&mut op.order_by) {
+                    bind_column(&mut item.col, &input)?;
+                }
+                for function in &mut op.window_func_descs {
+                    bind_exprs(&mut function.base.args, &input)?;
+                }
+                if let Some(frame) = &mut op.frame {
+                    for bound in frame.start.iter_mut().chain(frame.end.iter_mut()) {
+                        bind_exprs(&mut bound.calc_funcs, &input)?;
+                        bind_exprs(&mut bound.compare_cols, &input)?;
+                    }
+                }
+            }
+            Self::CTE(op) => {
+                op.seed_plan.resolve_indices()?;
+                if let Some(plan) = &mut op.recursive_plan {
+                    plan.resolve_indices()?;
+                }
+            }
+            Self::IndexMergeReader(op) => {
+                for plan in &mut op.partial_plans_raw {
+                    plan.resolve_indices()?;
+                }
+                if let Some(plan) = &mut op.table_plan {
+                    plan.resolve_indices()?;
+                }
+            }
+            Self::Dml(op) => {
+                if let Some(plan) = &mut op.select_plan {
+                    plan.resolve_indices()?;
+                    let schema = plan
+                        .schema()
+                        .ok_or_else(|| PlanError::internal("DML source has no schema"))?;
+                    for expression in op.update_expressions.iter_mut().flatten() {
+                        bind(expression, schema)?;
+                    }
+                }
+            }
             Self::IndexScan(_)
+            | Self::TableSample(_)
+            | Self::MemTable(_)
+            | Self::PointGet(_)
+            | Self::BatchPointGet(_)
+            | Self::LocalIndexLookUp(_)
             | Self::TableDual(_)
             | Self::MaxOneRow(_)
             | Self::CTETable(_)
@@ -467,12 +557,6 @@ impl PhysicalPlan {
             | Self::ShowDDLJobs(_)
             | Self::UnionAll(_)
             | Self::Sequence(_) => {}
-            Self::Todo(op) => {
-                return Err(PlanError::internal(format!(
-                    "{} does not implement ResolveIndices",
-                    op.go_operator
-                )))
-            }
         }
         Ok(())
     }

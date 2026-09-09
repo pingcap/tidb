@@ -33,16 +33,20 @@ fn cte_storage_obeys_the_session_spill_policy_and_quota() {
         std::env::temp_dir().join(format!("tidb-session-cte-storage-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     let storage = Arc::new(
-        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+        tidb_util::spill_storage::SpillStorage::open(tidb_util::spill_storage::SpillStorageSpec {
             path: path.clone(),
             quota_bytes: -1,
-            encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+            encryption: tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
         })
         .unwrap(),
     );
     let mut session = Session::new();
     session.set_spill_storage(Arc::clone(&storage));
-    session.run("SET @@tidb_mem_quota_query = 65536").unwrap();
+    // Keep the quota below even one stored chunk. Go's own CTE spill test
+    // forces the spill action rather than depending on allocator-size
+    // accidents; a one-byte quota gives this integration boundary the same
+    // deterministic trigger without a failpoint.
+    session.run("SET @@tidb_mem_quota_query = 1").unwrap();
     session
         .run("SET @@global.tidb_enable_tmp_storage_on_oom = 1")
         .unwrap();
@@ -441,6 +445,7 @@ fn recursive_block_restrictions_report_gos_errnos() {
         ),
     ];
     for (sql, want) in cases {
-        assert_eq!(wire_error(&mut session, sql).0, *want, "for {sql}");
+        let got = wire_error(&mut session, sql);
+        assert_eq!(got.0, *want, "for {sql}: {}", got.1);
     }
 }

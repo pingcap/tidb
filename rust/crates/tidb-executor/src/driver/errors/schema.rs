@@ -22,6 +22,9 @@ pub enum SchemaErrorKind {
     UnknownTable(String),
     /// Go `ErrTableExists` (1050).
     TableExists(String),
+    /// Go `dbterror.ErrWrongTableName` (1103): the identifier is empty or
+    /// ends in a space, as the CREATE SEQUENCE preprocessor checks.
+    WrongTableName(String),
     /// Go `ErrBadTable` (1051): `DROP TABLE` named a table that does not
     /// exist. MySQL uses a different code and message here than for a read.
     BadTable(String),

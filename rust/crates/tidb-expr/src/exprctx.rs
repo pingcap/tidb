@@ -14,15 +14,14 @@
 
 //! SEED of Go `pkg/expression/exprctx`, covering `optional.go` in full plus
 //! `context.go`'s plan-column-ID allocator and `param.go`'s
-//! `ErrParamIndexExceedParamCounts`.
+//! `ParamValues`/`EmptyParamValues` contract.
 //!
 //! This is a seed, not a completed package. `context.go`'s `EvalContext` and
-//! `BuildContext` umbrella interfaces and the `CtxWithHandleTruncateErrLevel`
-//! override built on them are NOT here: `EvalContext` requires
-//! `variable.UserVarsReader` from `pkg/sessionctx/variable`, which this
-//! workspace models only partially, so modeling the interfaces now would pin
-//! a shape the session port has not settled. What is here is closed and
-//! carries its own upstream tests.
+//! `BuildContext` umbrella interfaces remain outside this crate because
+//! `EvalContext` requires `variable.UserVarsReader` from
+//! `pkg/sessionctx/variable`; the static `exprstatic` package nevertheless
+//! carries the executable `CtxWithHandleTruncateErrLevel` wrapper used by the
+//! upstream test, without pretending to provide the entire umbrella trait.
 //!
 //! The optional-property machinery is how an `EvalContext` advertises which
 //! optional providers it carries: each property has a key, the keys index a
@@ -32,11 +31,55 @@
 //! needs, `GetOptionalPropProvider`, it declares there as a boundary trait
 //! until the umbrella interfaces above land here.
 
+use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
+
+use tidb_datatype::Datum;
 
 /// Go `ErrParamIndexExceedParamCounts` (`param.go`), an `errors.New` value
 /// whose message is its whole contract.
 pub const ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS: &str = "Param index exceed param counts";
+
+/// The error returned when a parameter index is outside a parameter list.
+///
+/// Go exposes this as the package-level `ErrParamIndexExceedParamCounts`
+/// value. Rust errors are values rather than mutable interface identities, so
+/// each failed lookup carries this zero-sized equivalent while preserving the
+/// exact source message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamIndexExceedParamCounts;
+
+impl fmt::Display for ParamIndexExceedParamCounts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS)
+    }
+}
+
+impl std::error::Error for ParamIndexExceedParamCounts {}
+
+/// Go `ParamValues`: read-only access to parameter values by index.
+pub trait ParamValues {
+    /// The error type used when a parameter cannot be read.
+    type Error;
+
+    /// Go `ParamValues.GetParamValue`.
+    fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error>;
+}
+
+/// Go `EmptyParamValues`: a parameter source containing no values.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmptyParamValues;
+
+/// The reusable empty parameter source, equivalent to Go's exported variable.
+pub const EMPTY_PARAM_VALUES: EmptyParamValues = EmptyParamValues;
+
+impl ParamValues for EmptyParamValues {
+    type Error = ParamIndexExceedParamCounts;
+
+    fn get_param_value(&self, _idx: usize) -> Result<Datum, Self::Error> {
+        Err(ParamIndexExceedParamCounts)
+    }
+}
 
 /// Go `OptionalEvalPropKey`: the key of one optional evaluation property.
 ///
@@ -50,24 +93,26 @@ pub enum OptionalEvalPropKey {
     CurrentUser = 0,
     /// Go `OptPropSessionVars`.
     SessionVars = 1,
+    /// Go `OptPropSessionContext`.
+    SessionContext = 2,
     /// Go `OptPropInfoSchema`.
-    InfoSchema = 2,
+    InfoSchema = 3,
     /// Go `OptPropKVStore`.
-    KvStore = 3,
+    KvStore = 4,
     /// Go `OptPropSQLExecutor`.
-    SqlExecutor = 4,
+    SqlExecutor = 5,
     /// Go `OptPropSequenceOperator`.
-    SequenceOperator = 5,
+    SequenceOperator = 6,
     /// Go `OptPropAdvisoryLock`.
-    AdvisoryLock = 6,
+    AdvisoryLock = 7,
     /// Go `OptPropDDLOwnerInfo`.
-    DdlOwnerInfo = 7,
+    DdlOwnerInfo = 8,
     /// Go `OptPropPrivilegeChecker`.
-    PrivilegeChecker = 8,
+    PrivilegeChecker = 9,
 }
 
 /// Go `OptPropsCnt`: the number of optional properties.
-pub const OPT_PROPS_CNT: usize = 9;
+pub const OPT_PROPS_CNT: usize = 10;
 
 /// Go's private `allOptPropsMask`.
 const ALL_OPT_PROPS_MASK: u64 = (1 << OPT_PROPS_CNT) - 1;
@@ -106,6 +151,10 @@ static OPTIONAL_PROPERTY_DESC_LIST: [OptionalEvalPropDesc; OPT_PROPS_CNT] = [
     OptionalEvalPropDesc {
         key: OptionalEvalPropKey::SessionVars,
         str: "OptPropSessionVars",
+    },
+    OptionalEvalPropDesc {
+        key: OptionalEvalPropKey::SessionContext,
+        str: "OptPropSessionContext",
     },
     OptionalEvalPropDesc {
         key: OptionalEvalPropKey::InfoSchema,
@@ -148,6 +197,7 @@ impl OptionalEvalPropKey {
     pub const ALL: [Self; OPT_PROPS_CNT] = [
         Self::CurrentUser,
         Self::SessionVars,
+        Self::SessionContext,
         Self::InfoSchema,
         Self::KvStore,
         Self::SqlExecutor,
@@ -308,6 +358,7 @@ mod tests {
         // Add all the other keys.
         let key_set4 = key_set3
             .add(OptionalEvalPropKey::SessionVars)
+            .add(OptionalEvalPropKey::SessionContext)
             .add(OptionalEvalPropKey::InfoSchema)
             .add(OptionalEvalPropKey::KvStore)
             .add(OptionalEvalPropKey::SqlExecutor)
@@ -390,5 +441,13 @@ mod tests {
         assert_eq!(allocator.alloc_plan_column_id(), 11);
         assert_eq!(allocator.alloc_plan_column_id(), 12);
         assert_eq!(allocator.last_plan_column_id(), 12);
+    }
+
+    #[test]
+    fn empty_param_values_report_the_source_error() {
+        let err = EmptyParamValues
+            .get_param_value(0)
+            .expect_err("the empty parameter list must reject every index");
+        assert_eq!(err.to_string(), ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS);
     }
 }

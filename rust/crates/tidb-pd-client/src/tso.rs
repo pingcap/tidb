@@ -22,7 +22,8 @@ use tonic::transport::Channel;
 use crate::{PdClientError, PdOperation};
 
 pub(crate) const MAX_TSO_RETRIES: usize = 20;
-pub(crate) const TSO_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+/// Go `constants.RetryInterval` (client-go constants/constants.go:39).
+pub(crate) const TSO_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 const PHYSICAL_SHIFT_BITS: u32 = 18;
 const MAX_LOGICAL: i64 = (1_i64 << PHYSICAL_SHIFT_BITS) - 1;
@@ -66,10 +67,12 @@ impl TsoBatch {
     }
 }
 
-/// Go boundary: `pd/client`'s `tsoutil.AddLogical` — the count is shifted by
-/// the suffix bits PD reserves for its local-TSO allocator suffix.
-fn add_logical(logical: i64, count: i64, suffix_bits: u32) -> i64 {
-    logical + (count << suffix_bits)
+/// The pinned client-go (`dispatcher.go:461,483`) composes batch timestamps
+/// in PLAIN arithmetic: `firstLogical = result.logical - count + 1`, then
+/// `firstLogical + idx`. Its proto's suffix_bits field is never read, so the
+/// shift is dropped here too; the parameter stays for the call-shape parity.
+fn add_logical(logical: i64, count: i64, _suffix_bits: u32) -> i64 {
+    logical + count
 }
 
 impl TimestampParts {
@@ -323,31 +326,10 @@ fn tso_request(cluster_id: u64, count: u32) -> pdpb::TsoRequest {
     }
 }
 
-pub(crate) fn is_retryable_tso_error(error: &PdClientError) -> bool {
-    let (code, message) = match error {
-        PdClientError::Transport { code, message, .. } => (Some(code.as_str()), message.as_str()),
-        PdClientError::HeaderError { message, .. } => (None, message.as_str()),
-        _ => return false,
-    };
-    let message = message.to_ascii_lowercase();
-    code.is_some_and(|code| matches!(code, "Unavailable" | "Cancelled"))
-        || [
-            "no leader",
-            "not leader",
-            "not served",
-            "not primary",
-            "mismatch callee id",
-        ]
-        .iter()
-        .any(|marker| message.contains(marker))
-}
-
-pub(crate) fn retry_delay(retry_index: usize) -> Duration {
-    if retry_index == 0 {
-        Duration::ZERO
-    } else {
-        TSO_RETRY_INTERVAL
-    }
+pub(crate) fn retry_delay(_retry_index: usize) -> Duration {
+    // Go's dispatcher waits `constants.RetryInterval` uniformly between
+    // attempts -- there is no free first retry.
+    TSO_RETRY_INTERVAL
 }
 
 pub(crate) fn remaining(deadline: Instant, endpoint: &str) -> Result<Duration, PdClientError> {
@@ -366,7 +348,7 @@ fn map_status(endpoint: &str, status: tonic::Status) -> PdClientError {
     }
 }
 
-fn timeout_error(endpoint: &str, timeout: Duration) -> PdClientError {
+pub(crate) fn timeout_error(endpoint: &str, timeout: Duration) -> PdClientError {
     PdClientError::Timeout {
         operation: PdOperation::Tso,
         endpoint: endpoint.to_owned(),
@@ -446,8 +428,11 @@ mod tests {
     /// the other, waiter `i` of a `count`-wide batch owns
     /// `last_logical - ((count - 1 - i) << suffixBits)`.
     fn go_model_logical(last_logical: i64, suffix_bits: u32, count: u32, index: u32) -> i64 {
+        // The pinned client-go (dispatcher.go:461,483) composes in plain
+        // arithmetic; its proto's suffix_bits field is never read.
+        let _ = suffix_bits;
         let steps_back = i64::from(count - 1 - index);
-        last_logical - (steps_back << suffix_bits)
+        last_logical - steps_back
     }
 
     /// `client-go`'s `oracle.ComposeTS`: `uint64((physical << 18) + logical)`.
@@ -469,14 +454,15 @@ mod tests {
     }
 
     #[test]
-    fn add_logical_is_gos_shift_before_add() {
-        // tsoutil.AddLogical: `return logical + count<<suffixBits`.
+    fn add_logical_is_plain_addition() {
+        // The pinned client-go (dispatcher.go:461,483) adds the count in
+        // plain arithmetic; the proto's suffix_bits field is never read.
         for suffix_bits in SUFFIX_WIDTHS {
             for logical in 0..64_i64 {
                 for count in -8..=8_i64 {
                     assert_eq!(
                         add_logical(logical, count, suffix_bits),
-                        logical + (count << suffix_bits),
+                        logical + count,
                         "add_logical({logical}, {count}, {suffix_bits})"
                     );
                 }
@@ -574,8 +560,9 @@ mod tests {
     /// would mean two allocators could hand out the same timestamp.
     #[test]
     fn only_the_reported_timestamp_coincides_across_suffix_widths() {
-        // Wide enough that the widest suffix (8 bits, 256 per step) still
-        // leaves the batch inside the logical field.
+        // With plain arithmetic the suffix width is irrelevant: batches with
+        // the same reported timestamp and count are slot-for-slot identical
+        // across every width.
         const LAST: i64 = 2_000;
         const COUNT: u32 = 5;
         for (a_index, a) in SUFFIX_WIDTHS.iter().enumerate() {
@@ -583,20 +570,11 @@ mod tests {
                 let left = batch(9, LAST, *a, COUNT);
                 let right = batch(9, LAST, *b, COUNT);
                 for i in 0..COUNT {
-                    for j in 0..COUNT {
-                        let collide = left.split(i) == right.split(j);
-                        let expected = go_model_logical(LAST, *a, COUNT, i)
-                            == go_model_logical(LAST, *b, COUNT, j);
-                        assert_eq!(
-                            collide, expected,
-                            "suffix {a} slot {i} vs suffix {b} slot {j}"
-                        );
-                    }
-                }
-                // Only the final slot is shared.
-                assert_eq!(left.split(COUNT - 1), right.split(COUNT - 1));
-                for i in 0..COUNT - 1 {
-                    assert_ne!(left.split(i), right.split(i));
+                    assert_eq!(
+                        left.split(i),
+                        right.split(i),
+                        "suffix {a} slot {i} vs suffix {b} slot {i}"
+                    );
                 }
             }
         }

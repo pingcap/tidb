@@ -30,6 +30,13 @@ fn unwrap_str(value: Value) -> String {
     text.to_utf8_lossy_go()
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn go_charset_api_returns_may_be_ignored_like_go() {
+    charset("utf8");
+    collation("utf8_bin");
+}
+
 // Go `TestCharsetCompare`.
 #[test]
 fn test_charset_compare() {

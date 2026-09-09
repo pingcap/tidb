@@ -29,10 +29,18 @@ use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
 use tidb_datatype::{
-    number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType, FieldTypeCode,
-    ScalarConversionEvent, JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,
-    JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP,
+    find_encoding, number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType,
+    FieldTypeCode, ScalarConversionEvent, TransformOp, JSON_TYPE_CODE_DATE,
+    JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_STRING,
+    JSON_TYPE_CODE_TIMESTAMP,
 };
+
+/// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
+/// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
+/// unsigned).  A wrapper cast with an unspecified scale must preserve the
+/// source value; mapping `-1` to the ordinary `0` scale would round every
+/// fractional value to an integer before Go's constant-refinement step.
+pub(crate) const UNSPECIFIED_CAST_SCALE: u32 = u32::MAX;
 
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
@@ -67,10 +75,71 @@ pub(crate) fn eval_cast(
         CastType::Signed => Ok(Datum::Int(to_i64_signed_with_warnings(&v, ctx)?)),
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
+            report_negative_string_unsigned(&v, ctx);
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
         }
-        CastType::Char { len, .. } => {
-            let text = string_source_text(&v, source)?;
+        CastType::UnsignedInUnion => {
+            // Every numeric/string `castAsInt` signature has an `inUnion`
+            // negative-to-zero branch in Go. Temporal signatures do not: a
+            // TIME/DATETIME value is first rendered as an integer and then
+            // reinterpreted by the ordinary unsigned path. Check the source
+            // eval family, not just the datum shape, before applying the
+            // branch so string warnings are not emitted for a value Go drops.
+            if union_unsigned_clamps_negative(&v, source) {
+                Ok(Datum::UInt(0))
+            } else {
+                report_int_truncation(&v, ctx)?;
+                report_negative_string_unsigned(&v, ctx);
+                Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
+            }
+        }
+        CastType::Char { len, charset } => {
+            // Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
+            // `ProduceStrWithSpecifiedTp` takes its `chs == CharsetBin`
+            // branch and truncates in BYTES, and `padZeroForBinaryType`
+            // never pads a `TypeVarString` target. The default (session)
+            // charset keeps character-oriented truncation.
+            if charset.as_deref() == Some("BINARY") {
+                let mut bytes = datum_binary_bytes(&v)?;
+                if let Some(n) = len {
+                    report_data_too_long(ctx, bytes.len(), *n as usize);
+                    bytes.truncate(*n as usize);
+                }
+                return Ok(Datum::new_bytes(bytes));
+            }
+            // `castAsStringFunctionClass` routes a BINARY-charset argument
+            // through Go's `HandleBinaryLiteral(..., explicitCast=true)`.
+            // Its `from_binary` signature decodes the raw bytes with
+            // `OpDecode`, publishes ErrCannotConvertString (3854) as a
+            // warning, and keeps the successfully decoded prefix in
+            // non-strict mode.  The generic stringifier used to reject an
+            // invalid UTF-8 byte before this boundary, which made
+            // `CAST(0x91 AS CHAR)` an execution error instead of the empty
+            // string plus one warning.
+            let target_charset = charset
+                .as_deref()
+                .unwrap_or_else(|| ctx.connection_charset_info().0);
+            let text = if source.is_some_and(FieldType::is_binary_string)
+                && !target_charset.eq_ignore_ascii_case("binary")
+            {
+                let bytes = datum_binary_bytes(&v)?;
+                let (decoded, error) = find_encoding(target_charset)
+                    .transform(&bytes, TransformOp::DECODE)
+                    .into_parts();
+                if error.is_some() {
+                    let hex = bytes
+                        .iter()
+                        .map(|byte| format!("{byte:02X}"))
+                        .collect::<String>();
+                    ctx.append_warning(
+                        3854,
+                        &format!("Cannot convert string '{hex}' from binary to {target_charset}"),
+                    );
+                }
+                String::from_utf8_lossy(&decoded).into_owned()
+            } else {
+                string_source_text(&v, source)?
+            };
             Ok(Datum::new_string(match len {
                 Some(n) => {
                     report_data_too_long(ctx, text.chars().count(), *n as usize);
@@ -118,7 +187,16 @@ pub(crate) fn eval_cast(
             }))
         }
         CastType::Decimal { flen, scale } => {
+            report_decimal_input_truncation(&v, ctx);
             let source = to_decimal_for_cast(&v);
+            // `WrapWithCastAsDecimal` leaves the target scale unspecified for
+            // REAL/string/temporal sources. Go's `ProduceDecWithSpecifiedTp`
+            // returns that value unchanged when either half of the target
+            // shape is unspecified, so do not reinterpret the internal
+            // sentinel as scale 0.
+            if *scale == UNSPECIFIED_CAST_SCALE {
+                return Ok(Datum::Decimal(source));
+            }
             let produced = source.cast_to_precision(*flen, *scale);
             report_decimal_production(ctx, &source, &produced, *flen, *scale);
             Ok(Datum::Decimal(produced))
@@ -131,7 +209,7 @@ pub(crate) fn eval_cast(
             tidb_datatype::TimeType::DateTime,
             i64::from(fsp.unwrap_or(0)),
         ),
-        CastType::Year => cast_to_year(&v),
+        CastType::Year => cast_to_year(&v, ctx),
         CastType::Double | CastType::Float => {
             let converted = str_to_real_for_cast(&v, ctx)?;
             Ok(Datum::Real(converted))
@@ -158,6 +236,37 @@ pub(crate) fn eval_cast(
     }
 }
 
+fn union_unsigned_clamps_negative(
+    value: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+) -> bool {
+    let source_eval_type = source.map(FieldType::eval_type);
+    match source_eval_type {
+        Some(EvalType::Int) => matches!(value, Datum::Int(number) if *number < 0),
+        Some(EvalType::Real) => {
+            matches!(value, Datum::Real(number) if *number < 0.0)
+                || matches!(value, Datum::Float32(number) if *number < 0.0)
+        }
+        Some(EvalType::Decimal) => {
+            matches!(value, Datum::Decimal(decimal) if decimal.round_to_i64_saturating() < 0)
+        }
+        Some(EvalType::String) | None => match value {
+            Datum::String(text) => text
+                .as_utf8()
+                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
+            Datum::Bytes(bytes) => std::str::from_utf8(bytes)
+                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
+            Datum::Int(number) => *number < 0,
+            Datum::Real(number) => *number < 0.0,
+            Datum::Float32(number) => *number < 0.0,
+            Datum::Decimal(decimal) => decimal.round_to_i64_saturating() < 0,
+            _ => false,
+        },
+        Some(EvalType::Datetime | EvalType::Timestamp | EvalType::Duration)
+        | Some(EvalType::VectorFloat32 | EvalType::Json) => false,
+    }
+}
+
 /// `CAST(expr AS TIME[(fsp)])` returns TiDB's elapsed-time datum, not a
 /// calendar string. The source type selects the Go signature: numeric inputs
 /// turn a truncation/overflow into `NULL`, while string inputs retain the
@@ -181,7 +290,10 @@ fn cast_to_duration(
                 | JSON_TYPE_CODE_DURATION
                 | JSON_TYPE_CODE_STRING
         ) {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             return Ok(Datum::Null);
         }
     }
@@ -215,14 +327,20 @@ fn cast_to_duration(
     match converted {
         Ok((value, None | Some(ScalarConversionEvent::RoundedToScale))) => Ok(value),
         Ok((value, Some(_))) => {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             Ok(if numeric { Datum::Null } else { value })
         }
         Err(DatumValueError::Unsupported(_, _)) => {
             Err(EvalError::Unsupported("CAST AS TIME source datum"))
         }
         Err(_) => {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             Ok(Datum::Null)
         }
     }
@@ -373,6 +491,7 @@ fn datum_binary_bytes(value: &Datum) -> Result<Vec<u8>, EvalError> {
     match value {
         Datum::String(value) => Ok(value.bytes().to_vec()),
         Datum::Bytes(value) => Ok(value.clone()),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(value.as_bytes().to_vec()),
         _ => Ok(datum_sql_string(value)?.into_bytes()),
     }
 }
@@ -489,7 +608,7 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
         // A real rounds half-to-even then converts across the full u64 range
         // (Go `ConvertFloatToUint`), so its own upper half is kept too -- and
         // its NEGATIVE half is kept as the low 64 bits rather than clamped.
-        Datum::Real(f) => real_to_u64_saturating(*f, ctx),
+        Datum::Real(f) | Datum::Float32(f) => real_to_u64_saturating(*f, ctx),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other
             .to_decimal()
@@ -500,9 +619,9 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
 /// `CAST(real AS UNSIGNED)`: round half to even (Go `RoundFloat` =
 /// `math.RoundToEven`, the same rounding the signed real path uses), then Go
 /// `ConvertFloatToUint` across the full `u64` range. A magnitude past
-/// `u64::MAX` saturates to `u64::MAX` (`ConvertFloatToUint`'s `upperBound`
-/// clamp). Routing through the signed path instead would lose the upper half
-/// of `UNSIGNED BIGINT` at `i64::MAX`.
+/// `u64::MAX` saturates to `u64::MAX` and reports overflow
+/// (`ConvertFloatToUint`'s `upperBound` clamp). Routing through the signed
+/// path instead would lose the upper half of `UNSIGNED BIGINT` at `i64::MAX`.
 ///
 /// A NEGATIVE rounded value takes Go's `AllowNegativeToUnsigned` arm
 /// (`convert.go:171-176`): `uint64(int64(val))`, the SAME low-64-bit
@@ -529,10 +648,22 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // landing on `i64::MIN`, which is what makes `cast(-1e300 as
         // unsigned)` 9223372036854775808 rather than 0.
         (rounded as i64) as u64
+    } else if !rounded.is_finite() || rounded >= (u64::MAX as f64) {
+        // Go's big.Float.Uint64 returns the upper bound and an overflow
+        // status for +Inf and every rounded value at or beyond 2^64.  The
+        // statement context turns that status into the 1690 warning used by
+        // `builtinCastRealAsIntSig`.
+        ctx.append_warning(
+            1690,
+            &format!(
+                "constant {} overflows bigint",
+                tidb_datatype::format_float_g_shortest(rounded)
+            ),
+        );
+        u64::MAX
     } else {
-        // Rust's float-to-int cast saturates: an in-range integral float is
-        // exact, a magnitude past `u64::MAX` clamps to `u64::MAX`, and `NaN`
-        // maps to 0 (already excluded by the caller's NULL guard).
+        // Rust's float-to-int cast is exact for the remaining in-range
+        // integral values, including the full upper half of UNSIGNED BIGINT.
         rounded as u64
     }
 }
@@ -676,10 +807,71 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
         {
             ctx.handle_truncate(&format!(
                 "Truncated incorrect INTEGER value: '{}'",
-                text.trim()
+                tidb_datatype::warning_subject_byte_cap(text.trim())
             ))
         }
         _ => Ok(()),
+    }
+}
+
+/// Reports Go's `ErrCastNegIntAsUnsigned` for a negative integer string.
+///
+/// `builtinCastStringAsIntSig` emits this advisory only after `StrToInt`
+/// succeeds. A malformed or out-of-range prefix therefore keeps the normal
+/// truncation/overflow warning and does not add a second 8031 event.
+fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return;
+    };
+    let trimmed = text.trim();
+    if trimmed.len() <= 1
+        || !trimmed.starts_with('-')
+        || !int_prefix_consumed_all(trimmed)
+        || trimmed.parse::<i64>().is_err()
+    {
+        return;
+    }
+    ctx.append_warning(
+        8031,
+        "Cast to unsigned converted negative integer to it's positive complement",
+    );
+}
+
+/// Maps `MyDecimal.FromString`'s non-overflow parse dispositions to the
+/// warning emitted by Go's string-to-decimal cast signature. The parsed value
+/// is still retained (including a valid prefix); only a completely invalid or
+/// truncated suffix contributes this statement warning.
+pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return;
+    };
+    let trimmed = text.trim();
+    let (_, parse_error) = Decimal::parse_mysql(trimmed);
+    if matches!(
+        parse_error,
+        Some(
+            tidb_datatype::DecimalParseError::Truncated
+                | tidb_datatype::DecimalParseError::BadNumber
+                | tidb_datatype::DecimalParseError::TruncatedWrongValue
+        )
+    ) {
+        ctx.append_warning(
+            1292,
+            &format!(
+                "Truncated incorrect DECIMAL value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(trimmed)
+            ),
+        );
     }
 }
 
@@ -739,17 +931,16 @@ fn to_decimal_for_cast(v: &Datum) -> Decimal {
         Datum::Decimal(d) => d.clone(),
         Datum::Int(i) => Decimal::from_int(*i),
         Datum::UInt(i) => Decimal::from_uint(*i),
-        // `f64`'s own `Display` never uses scientific notation (confirmed
-        // directly against `1e300`/`1e-300`), so this always lands on
-        // `decimal_prefix`'s exact, no-exponent path — never its lossy
-        // `f64`-round-trip fallback.
+        // `f64`'s own `Display` is accepted by the decimal prefix parser;
+        // scientific notation remains exact through the same parser used for
+        // string operands.
         Datum::Real(f) => decimal_prefix(&f.to_string()),
         Datum::String(s) => s
             .as_utf8()
-            .map(decimal_prefix)
+            .map(|text| Decimal::parse_mysql(text).0)
             .unwrap_or_else(|_| Decimal::from_int(0)),
         Datum::Bytes(s) => std::str::from_utf8(s)
-            .map(decimal_prefix)
+            .map(|text| Decimal::parse_mysql(text).0)
             .unwrap_or_else(|_| Decimal::from_int(0)),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other
@@ -758,18 +949,14 @@ fn to_decimal_for_cast(v: &Datum) -> Decimal {
     }
 }
 
-/// `to_f64_for_cast`/`to_decimal_for_cast`'s shared string scan: a FULLER
-/// numeric prefix than [`str_int_prefix`]'s own digit-run-only scan —
+/// `to_f64_for_cast`'s numeric prefix scan: a FULLER prefix than
+/// [`str_int_prefix`]'s own digit-run-only scan —
 /// optional whitespace, sign, digits, optional `.` + digits, optional
 /// exponent (confirmed via `goeval`: `CAST('3.5abc' AS DECIMAL)` sees
 /// `3.5abc`'s leading `3.5`, and `CAST('1e2' AS DECIMAL)` is `100`, both
 /// stopping at the first character that doesn't extend the number). Exact
-/// digit-string arithmetic when there's no exponent (the common case,
-/// covering every value this crate's `Decimal` itself can ever produce);
-/// an exponent suffix falls back to an `f64` round-trip — a narrow,
-/// accepted precision-loss divergence for that one sub-case (real MySQL's
-/// own decimal parser handles an exponent exactly; this crate's does
-/// not).
+/// digit-string arithmetic when there's no exponent (the common case);
+/// an exponent suffix falls back to an `f64` round-trip for REAL sources.
 fn decimal_prefix(s: &str) -> Decimal {
     let s = s.trim_start();
     let (negative, rest) = match s.strip_prefix('-') {
@@ -864,13 +1051,13 @@ fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, Eval
     if converted.event.is_some() {
         ctx.handle_truncate(&format!(
             "Truncated incorrect DOUBLE value: '{}'",
-            text.trim()
+            tidb_datatype::float_warning_input(&text)
         ))?;
     }
     Ok(converted.value)
 }
 
-fn to_f64_for_cast(v: &Datum) -> f64 {
+pub(crate) fn to_f64_for_cast(v: &Datum) -> f64 {
     match v {
         Datum::Int(i) => *i as f64,
         Datum::UInt(i) => *i as f64,
@@ -1050,12 +1237,28 @@ fn cast_to_time_value(
         modes.allow_invalid_dates,
         &ctx.time_zone(),
     );
-    let Ok((time, truncated)) = parsed else {
+    let Ok((time, truncated, dst_adjusted)) = parsed else {
         invalid_time_warning(ctx, &s);
         return Ok(None);
     };
     if truncated {
-        ctx.append_warning(1292, &format!("Truncated incorrect datetime value: '{s}'"));
+        ctx.append_warning(
+            1292,
+            &format!(
+                "Truncated incorrect datetime value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&s)
+            ),
+        );
+    }
+    if dst_adjusted {
+        ctx.append_warning(
+            8179,
+            &format!(
+                "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{:?}'",
+                s,
+                ctx.time_zone(),
+            ),
+        );
     }
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
@@ -1346,7 +1549,7 @@ fn parse_time_by_source(
     fsp: Option<i64>,
     allow_invalid: bool,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<(tidb_datatype::Time, bool), ()> {
+) -> Result<(tidb_datatype::Time, bool, bool), ()> {
     match v {
         Datum::Int(value) => tidb_datatype::parse_time_from_num(
             *value,
@@ -1354,9 +1557,10 @@ fn parse_time_by_source(
             fsp.unwrap_or(0),
             true,
             allow_invalid,
+            true,
             zone,
         )
-        .map(|parsed| (parsed.time, false))
+        .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
         .map_err(|_| ()),
         Datum::UInt(value) => {
             let signed = i64::try_from(*value).map_err(|_| ())?;
@@ -1366,9 +1570,10 @@ fn parse_time_by_source(
                 fsp.unwrap_or(0),
                 true,
                 allow_invalid,
+                true,
                 zone,
             )
-            .map(|parsed| (parsed.time, false))
+            .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
             .map_err(|_| ())
         }
         Datum::Decimal(value) => {
@@ -1378,24 +1583,24 @@ fn parse_time_by_source(
             match fsp {
                 Some(fsp) => time
                     .round_frac(fsp, zone)
-                    .map(|time| (time, false))
+                    .map(|time| (time, false, false))
                     .map_err(|_| ()),
-                None => Ok((time, false)),
+                None => Ok((time, false, false)),
             }
         }
         Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
-            .map(|time| (time, false)),
+            .map(|time| (time, false, false)),
         Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
-            .map(|time| (time, false)),
+            .map(|time| (time, false, false)),
         Datum::Time(value) => {
             let mut time = *value;
             time.set_kind(kind);
             match fsp {
                 Some(fsp) => time
                     .round_frac(fsp, zone)
-                    .map(|time| (time, false))
+                    .map(|time| (time, false, false))
                     .map_err(|_| ()),
-                None => Ok((time, false)),
+                None => Ok((time, false, false)),
             }
         }
         // STRING/BYTES and every other coercible source keep Go's
@@ -1421,7 +1626,7 @@ fn parse_time_by_source(
             allow_invalid,
             zone,
         )
-        .map(|parsed| (parsed.time, parsed.truncated))
+        .map(|parsed| (parsed.time, parsed.truncated, parsed.dst_adjusted))
         .map_err(|_| ()),
     }
 }
@@ -1451,13 +1656,30 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a
-/// date-shaped string (confirmed via `goeval`: `CAST('2021-01-01' AS
-/// YEAR)` is `2021`), else a plain `SIGNED`-style integer coercion
-/// (confirmed via `goeval`: `CAST('99' AS YEAR)` is `99` — NOT the
-/// two-digit-year century pivot the `YEAR` COLUMN TYPE applies at
-/// storage time, a genuinely separate rule this scalar CAST does not
-/// share).
-fn cast_to_year(v: &Datum) -> Result<Datum, EvalError> {
+/// date-shaped string (confirmed via `goeval`: `CAST('2021-01-01' AS YEAR)`
+/// is `2021`), else a plain `SIGNED`-style integer coercion (confirmed via
+/// `goeval`: `CAST('99' AS YEAR)` is `99` — NOT the two-digit-year century
+/// pivot the `YEAR` COLUMN TYPE applies at storage time, a genuinely separate
+/// rule this scalar CAST does not share).
+///
+/// A DURATION operand is the one exception to the datum-kind fallback. Go's
+/// `builtinCastDurationAsIntSig` calls `Duration.ConvertToYear`, which mixes
+/// the elapsed time into the statement clock's local calendar date. The
+/// previous Rust path treated the duration as its packed integer (`125959`),
+/// so it never observed either `ctx.now()` or the session time zone.
+fn cast_to_year(v: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    if let Datum::Duration(duration) = v {
+        let (utc_secs, nanos, _) = ctx
+            .now()
+            .ok_or(EvalError::Unsupported("no statement clock for a YEAR cast"))?;
+        let now = chrono::DateTime::<chrono::Utc>::from_timestamp(utc_secs, nanos)
+            .ok_or(EvalError::Unsupported("statement clock is out of range"))?
+            .with_timezone(&ctx.time_zone());
+        let year = duration
+            .convert_to_year(now, ctx.cast_time_to_year_through_concat())
+            .map_err(|_| EvalError::Unsupported("duration to YEAR conversion"))?;
+        return Ok(Datum::Int(year));
+    }
     if let Some(s) = coerce_str(v)? {
         if let Some((y, _, _)) = parse_date_ymd(&s) {
             return Ok(Datum::Int(y));
@@ -1559,6 +1781,46 @@ mod tests {
         }
     }
 
+    /// Go's `ErrTruncatedWrongVal` template truncates the quoted value at
+    /// 128 bytes (`"Truncated incorrect %-.64s value: '%-.128s'"`).
+    #[test]
+    fn double_cast_warning_value_truncates_at_128_bytes_like_go() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let long = format!("x{margin}", margin = "9".repeat(300));
+        let got = eval_cast(
+            &CastType::Double,
+            Datum::new_string(long.clone()),
+            None,
+            &ctx,
+        )
+        .expect("a truncated DOUBLE cast remains a successful read");
+        assert_eq!(got, Datum::Real(0.0));
+        let warnings = ctx.0.borrow();
+        let (code, text) = &warnings[0];
+        assert_eq!(*code, 1292);
+        // The quoted subject is the first 128 bytes of the input, not all 300.
+        assert!(
+            text.contains(&format!("value: '{}'", &long[..128])),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("value: '{}'", &long[..129])),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn double_cast_warning_subject_stops_at_nul_like_go() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let got = eval_cast(&CastType::Double, Datum::new_string("\0 12"), None, &ctx)
+            .expect("a truncated DOUBLE cast remains a successful read");
+        assert_eq!(got, Datum::Real(0.0));
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1292, "Truncated incorrect DOUBLE value: ''".to_owned())]
+        );
+    }
+
     #[test]
     fn cast_decimal_as_unsigned_keeps_the_upper_half_of_unsigned_bigint() {
         // The wired bug: routing a decimal through the signed path saturated the
@@ -1653,6 +1915,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn float32_unsigned_cast_reports_negative_overflow() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        assert_eq!(
+            eval_cast(&CastType::Unsigned, Datum::Float32(-1.5), None, &ctx).unwrap(),
+            Datum::UInt(18_446_744_073_709_551_614)
+        );
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1690, "constant -2 overflows bigint".to_owned())]
+        );
+    }
+
+    #[test]
+    fn real_unsigned_cast_reports_positive_overflow() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        assert_eq!(
+            eval_cast(&CastType::Unsigned, Datum::Real(1.0e30), None, &ctx).unwrap(),
+            Datum::UInt(u64::MAX)
+        );
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1690, "constant 1e+30 overflows bigint".to_owned())]
+        );
+    }
+
     /// `CAST(str AS DATETIME)` rounds in the SESSION zone, not in UTC.
     ///
     /// Go's `builtinCastStringAsTimeSig` passes `ctx.TypeCtx()`, whose
@@ -1717,6 +2005,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_string_cast_to_timestamp_adjusts_dst_gap_and_warns() {
+        struct ZonedWarnings {
+            zone: tidb_datatype::SessionTimeZone,
+            warnings: RefCell<Vec<(u16, String)>>,
+        }
+        impl crate::Columns for ZonedWarnings {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                self.zone.clone()
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+
+        let ctx = ZonedWarnings {
+            zone: tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles),
+            warnings: RefCell::new(Vec::new()),
+        };
+        let got = cast_to_time(
+            &Datum::new_string("2018-03-11 02:00:16".to_owned()),
+            None,
+            &ctx,
+            tidb_datatype::TimeType::Timestamp,
+            0,
+        )
+        .expect("DST-gap TIMESTAMP cast keeps Go's adjusted value");
+        assert_eq!(render_time(&got), "2018-03-11 03:00:00");
+        let warnings = ctx.warnings.borrow();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 8179);
+        assert!(warnings[0]
+            .1
+            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
     }
 
     fn render_time(v: &Datum) -> String {

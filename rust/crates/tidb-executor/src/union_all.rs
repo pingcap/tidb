@@ -84,38 +84,4 @@ impl Executor for UnionAllExec {
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
     }
-
-    fn row_count(&mut self) -> Result<Option<u64>, ExecError> {
-        let mut total = 0_u64;
-        for child in &mut self.children {
-            let count = match child.row_count()? {
-                Some(count) => count,
-                None => {
-                    // A UNION ALL count remains exact when a child does not
-                    // expose a structural shortcut: drain just that child
-                    // and continue asking later branches.  In Web3Bench the
-                    // point/index branch is tiny, while the join branch uses
-                    // JoinExec::row_count and never enters this fallback.
-                    let mut chunk = child.new_chunk();
-                    let mut count = 0_u64;
-                    loop {
-                        child.next(&mut chunk)?;
-                        let rows = chunk.num_rows();
-                        if rows == 0 {
-                            break;
-                        }
-                        count = count.checked_add(rows as u64).ok_or_else(|| {
-                            ExecError::unsupported("UNION ALL row count overflow")
-                        })?;
-                        chunk.reset();
-                    }
-                    count
-                }
-            };
-            total = total
-                .checked_add(count)
-                .ok_or_else(|| ExecError::unsupported("UNION ALL row count overflow"))?;
-        }
-        Ok(Some(total))
-    }
 }

@@ -47,7 +47,7 @@ use tidb_txnkv::rpc::{BatchCommandTag, TransactionBatchPublication, TransactionB
 use tidb_txnkv::transaction::{PublishedCommand, TransactionCommandClient};
 use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
-    UnaryCallContext,
+    SynchronousBatchRequestDispatcher, UnaryCallContext,
 };
 
 use crate::kv_handler::KvHandler;
@@ -116,6 +116,25 @@ impl Default for InProcessClient {
     }
 }
 
+/// Batch-commands dispatch contract over the in-process store: the request is
+/// answered by the local coprocessor handler, so physical address and
+/// forwarding are irrelevant; cancellation still short-circuits like the
+/// remote clients do.
+impl SynchronousBatchRequestDispatcher for InProcessClient {
+    fn send_batch_request_with_route(
+        &mut self,
+        _physical_address: &str,
+        _forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        self.dispatch(request)
+    }
+}
+
 impl DirectUnaryClient for InProcessClient {
     fn send_request(
         &mut self,
@@ -159,6 +178,16 @@ impl DirectUnaryClient for InProcessClient {
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         Ok(())
+    }
+}
+
+impl tidb_txnkv::LockWaitInfoClient for InProcessClient {
+    fn get_lock_wait_info(
+        &mut self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, DirectUnaryClientError> {
+        Ok(Vec::new())
     }
 }
 

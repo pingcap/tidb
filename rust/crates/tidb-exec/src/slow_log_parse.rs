@@ -36,10 +36,11 @@
 
 use std::collections::BTreeMap;
 
+use crate::slow_log_float::format_go_float64;
 use crate::slow_log_match::UNSET_CONNECTION_ID;
 use crate::slow_log_rules::{GlobalSlowLogRules, SlowLogCondition, SlowLogRule, SlowLogRules};
 use crate::slow_log_threshold::SlowLogValue;
-use tidb_util::sqlescape::format_go_float64;
+use tidb_hack::GoToLower;
 
 /// How one slow-log field's threshold text parses (the `Parse` member of Go
 /// `SlowLogFieldAccessor`).
@@ -193,7 +194,7 @@ pub fn parse_slow_log_field_value(
     field_name: &str,
     value: &str,
 ) -> Result<SlowLogValue, SlowLogParseError> {
-    let lowered = field_name.to_lowercase();
+    let lowered = field_name.go_to_lower();
     let Some(kind) = parse_kind_of(&lowered) else {
         return Err(SlowLogParseError::UnknownField(field_name.to_owned()));
     };
@@ -305,7 +306,7 @@ fn parse_slow_log_rule_entry(
     }
     let mut field_map: BTreeMap<String, SlowLogValue> = BTreeMap::new();
     for (raw_name, raw_value) in matches {
-        let field_name = raw_name.trim().to_lowercase();
+        let field_name = raw_name.trim().go_to_lower();
         let value = raw_value.trim();
         let trimmed = value.trim_matches(|c| c == '"' || c == '\'');
         let field_value = parse_slow_log_field_value(&field_name, trimmed).map_err(|error| {

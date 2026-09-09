@@ -20,8 +20,6 @@
 //! integration remain outside this leaf. Keeping those boundaries explicit is
 //! important: a row byte layout is not a substitute for a typed row codec.
 
-use std::fmt;
-
 use crate::{ROW_CODEC_VERSION, ROW_FLAG_LARGE};
 
 /// One source-owned row column entry for [`encode_raw_row`].
@@ -38,39 +36,6 @@ pub struct RawRowColumn<'a> {
     pub value: Option<&'a [u8]>,
 }
 
-/// Errors raised while constructing new-row metadata around opaque values.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RowEncodeError {
-    /// The u16 row header cannot represent this number of columns.
-    TooManyColumns {
-        /// Number of columns supplied by the caller.
-        count: usize,
-    },
-    /// The u32 offset table cannot represent the total payload length.
-    DataTooLarge {
-        /// Total opaque payload length supplied by the caller.
-        length: usize,
-    },
-}
-
-impl fmt::Display for RowEncodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooManyColumns { count } => {
-                write!(formatter, "row has {count} columns; u16 count overflows")
-            }
-            Self::DataTooLarge { length } => {
-                write!(
-                    formatter,
-                    "row payload has {length} bytes; u32 offset overflows"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for RowEncodeError {}
-
 /// Appends a source-compatible new-format row around opaque column payloads.
 ///
 /// Non-null and null IDs are sorted independently, with non-null IDs first.
@@ -79,40 +44,30 @@ impl std::error::Error for RowEncodeError {}
 /// `Encoder::appendColVal` and `Encoder::encodeRowCols`. This function never
 /// adds a checksum trailer; checksum version/handle policy remains owned by the
 /// higher-level encoder.
-pub fn encode_raw_row(
-    columns: &[RawRowColumn<'_>],
-    buffer: &mut Vec<u8>,
-) -> Result<(), RowEncodeError> {
+pub fn encode_raw_row(columns: &[RawRowColumn<'_>], buffer: &mut Vec<u8>) {
     if columns.len() > usize::from(u16::MAX) {
-        return Err(RowEncodeError::TooManyColumns {
-            count: columns.len(),
-        });
+        panic!("row column count overflows Go's uint16 metadata");
     }
 
     let mut not_null = Vec::with_capacity(columns.len());
     let mut null = Vec::new();
     let mut data_len = 0_usize;
-    let mut large = false;
+    let mut large_from_column_id = false;
     for column in columns {
-        large |= column.id > i64::from(u8::MAX);
+        large_from_column_id |= column.id > i64::from(u8::MAX);
         if let Some(value) = column.value {
-            data_len = data_len
-                .checked_add(value.len())
-                .ok_or(RowEncodeError::DataTooLarge { length: usize::MAX })?;
+            data_len += value.len();
             not_null.push((column.id, value));
         } else {
             null.push(column.id);
         }
     }
-    if data_len > u32::MAX as usize {
-        return Err(RowEncodeError::DataTooLarge { length: data_len });
-    }
-    large |= data_len > usize::from(u16::MAX);
+    let large = large_from_column_id || data_len > usize::from(u16::MAX);
 
     // Go uses sort.Sort on each partition. Unstable sorting preserves the
     // source's duplicate-ID behavior while keeping this metadata operation
     // independent of schema/typed values.
-    if large {
+    if large_from_column_id {
         not_null.sort_unstable_by_key(|(id, _)| *id as u32);
         null.sort_unstable_by_key(|id| *id as u32);
     } else {
@@ -128,10 +83,20 @@ pub fn encode_raw_row(
 
     if large {
         for (id, _) in &not_null {
-            buffer.extend_from_slice(&(*id as u32).to_le_bytes());
+            let id = if large_from_column_id {
+                *id as u32
+            } else {
+                u32::from(*id as u8)
+            };
+            buffer.extend_from_slice(&id.to_le_bytes());
         }
         for id in &null {
-            buffer.extend_from_slice(&(*id as u32).to_le_bytes());
+            let id = if large_from_column_id {
+                *id as u32
+            } else {
+                u32::from(*id as u8)
+            };
+            buffer.extend_from_slice(&id.to_le_bytes());
         }
     } else {
         for (id, _) in &not_null {
@@ -156,7 +121,6 @@ pub fn encode_raw_row(
     for (_, value) in not_null {
         buffer.extend_from_slice(value);
     }
-    Ok(())
 }
 
 /// Appends the compact little-endian signed payload used by rowcodec.

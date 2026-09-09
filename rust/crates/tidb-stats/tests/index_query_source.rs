@@ -36,3 +36,9 @@ fn source_index_query_allows_unmatched_topn_to_fall_through() {
     assert_eq!(query_index_bytes(None, Some(7), 10), 7);
     assert_eq!(query_index_bytes(None, None, 10), 10);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_index_query_return_can_be_ignored() {
+    query_index_bytes(None, None, 1);
+}

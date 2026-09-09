@@ -40,10 +40,12 @@ go_test(
     timeout = "short",
     srcs = ["permission_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":s3like",
         "//pkg/objstore/s3like/mock",
         "//pkg/objstore/storeapi",
+        "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_mock//gomock",

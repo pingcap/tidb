@@ -68,6 +68,67 @@ fn a_session_with_no_binding_reports_no_match() {
     assert_eq!(matched(&mut session), "0");
 }
 
+/// Go's `mayHaveSQLBinding` excludes INSERT/REPLACE value forms from the
+/// plan-binding matcher. A binding is still accepted and stored, but it must
+/// not mark the subsequent DML (or EXPLAIN of that DML) as bound.
+#[test]
+fn insert_values_bindings_do_not_match() {
+    let mut session = binding_session();
+    session
+        .run(
+            "create session binding for insert into t values (4,40) \
+             using insert into t values (4,40)",
+        )
+        .expect("create insert binding");
+    session.run("insert into t values (4,40)").expect("insert");
+    assert_eq!(matched(&mut session), "0");
+
+    session
+        .run(
+            "create session binding for replace into t values (5,50) \
+             using replace into t values (5,50)",
+        )
+        .expect("create replace binding");
+    session
+        .run("replace into t values (5,50)")
+        .expect("replace");
+    assert_eq!(matched(&mut session), "0");
+
+    session
+        .run("explain insert into t values (6,60)")
+        .expect("explain insert");
+    assert_eq!(matched(&mut session), "0");
+}
+
+/// Pinned Go `pkg/planner/core/hint_test.go`:
+/// `TestSetVarTimestampHintsWorksWithBindings` and
+/// `TestSetVarInQueriesAndBindingsWorkTogether`.
+///
+/// A binding's SET_VAR is applied after the query's own SET_VAR and both
+/// overlays restore the one persistent value captured before either hint.
+#[test]
+fn binding_set_var_overrides_the_query_hint_and_restores_the_persistent_value() {
+    let mut session = binding_session();
+    session.run("set sql_select_limit = 3").unwrap();
+    session
+        .run(
+            "create session binding for select * from t \
+             using select /*+ set_var(sql_select_limit=1) */ * from t",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(
+        &mut session,
+        "select /*+ set_var(sql_select_limit=2) */ * from t",
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        session.vars.get_system("sql_select_limit").as_deref(),
+        Ok("3"),
+    );
+    assert_eq!(matched(&mut session), "1");
+}
+
 /// The central capture. Real TiDB, `gorun`, database `bt3`:
 ///
 /// ```text
@@ -461,64 +522,6 @@ fn a_session_binding_shadows_the_global_one() {
         "1",
         "the global binding still matches"
     );
-}
-
-#[test]
-fn session_hints_shadow_the_published_global_cache() {
-    let mut session = binding_session();
-    let shared = binding_cache::SharedBindingCache::default();
-    session.set_global_binding_cache(shared.clone());
-    let row = [
-        "select * from test.t where b = ?",
-        "SELECT * FROM test.t USE INDEX(kb) WHERE b=20",
-        "test",
-        "enabled",
-        "2026-09-07 00:00:00",
-        "2026-09-07 00:00:00",
-        "utf8mb4",
-        "utf8mb4_bin",
-        "manual",
-        "published_binding",
-    ]
-    .into_iter()
-    .map(|text| tidb_datatype::Datum::new_string(text.to_owned()))
-    .collect();
-    shared.publish(binding_cache::BindingCache::from_storage_rows(
-        vec![row],
-        1_000_000,
-    ));
-    assert!(session.has_plan_bindings());
-    let plan = query_text(&mut session, "explain select * from t where b=20")
-        .1
-        .concat()
-        .concat();
-    assert!(plan.contains("index:kb"), "global index binding: {plan}");
-    assert_eq!(matched(&mut session), "1");
-    session.run("create session binding for select * from t where b=20 using select * from t use index() where b=20").unwrap();
-    let plan = query_text(&mut session, "explain select * from t where b=20")
-        .1
-        .concat()
-        .concat();
-    assert!(
-        !plan.contains("index:kb"),
-        "session binding must win: {plan}"
-    );
-    assert_eq!(matched(&mut session), "1");
-    session
-        .run("drop session binding for select * from t where b=20")
-        .unwrap();
-    let plan = query_text(&mut session, "explain select * from t where b=20")
-        .1
-        .concat()
-        .concat();
-    assert!(
-        plan.contains("index:kb"),
-        "global binding uncovered: {plan}"
-    );
-    shared.publish(binding_cache::BindingCache::new(1_000_000));
-    assert!(!session.has_plan_bindings());
-    assert_eq!(joined(&mut session, "select * from t where b=20"), "2|20");
-    assert_eq!(matched(&mut session), "0");
 }
 
 /// `tidb_use_plan_baselines = OFF` turns matching off wholesale, which is

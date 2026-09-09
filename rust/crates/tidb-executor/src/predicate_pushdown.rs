@@ -12,101 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Predicate pushdown into a base-table scan: Go's
-//! `rule_predicate_push_down.go` split, expressed for this tier's sources.
+//! Coprocessor Selection lowering for planner-owned physical conditions.
 //!
-//! # The split
-//!
-//! Go flattens the `WHERE` into conjuncts and gives each one to the deepest
-//! plan node whose schema covers its columns; `expression.PushDownExprs` then
-//! decides which of those the coprocessor can actually evaluate, and the rest
-//! stay in a root `Selection`. [`split_scan_predicates`] performs the same two
-//! steps at once, over the *predicate* shapes TiKV's own whitelist admits
-//! unconditionally (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`):
-//!
-//! * a comparison between one column of the scanned table and one constant, in
-//!   either operand order;
-//! * `column IS [NOT] NULL`;
-//! * `column [NOT] IN (constants)`;
-//! * `AND`, `OR`, and `NOT` over any of the above, to any depth;
-//! * a **comparison between two columns** of the scanned table, when the
-//!   coprocessor lowering can preserve both operands' declared types;
-//! * a **builtin function call** whose `tipb.ScalarFuncSig` the push-down
-//!   catalog resolves and whose signature that catalog says TiKV evaluates
-//!   ([`tidb_expr::pushdown_catalog`]) -- `sin(a)`, `mod(a, 7)`, `round(a)`
-//!   and the rest of the math family today. The catalog is the *only* thing
-//!   that answers either question, so widening the set is adding a row to its
-//!   table rather than a branch here.
-//!
-//! Every other conjunct -- an expression over a column (`b + 1 < 10`), a
-//! comparison whose operand types the wire cannot represent, `IS TRUE`,
-//! NULL-safe equality, a subquery, a
-//! call the catalog does not hold, anything referring to a second table -- is
-//! residual and is left for the `Selection` above the scan. Nested conjunctions
-//! are retained inside a described `OR` branch, matching TiKV's Selection
-//! expression tree; only the top-level `AND` is flattened into conjuncts.
-//!
-//! Note that the split is deliberately **type-agnostic** for the predicate
-//! shapes: it describes the conjunct, and the coprocessor lowering
-//! (`tidb_exec::wide_scan_selection`) applies the type gate that decides
-//! whether the description can actually travel. Keeping those two decisions
-//! apart is what lets an in-process source take a conjunct the wire cannot
-//! carry. A builtin call is not type-agnostic and cannot be: Go picks the
-//! signature *from* the argument types, so the description carries the
-//! resolved signature and the lowering re-checks that the scan descriptor's own
-//! declared column types are the ones it was resolved from.
-//!
-//! # Why pushing a builtin cannot make a query fail that used to work
-//!
-//! A pushed conjunct is evaluated by [`PushedScanFilter::matches`], which is
-//! the same [`Expression::eval`] and the same [`truthy_of`] that
-//! [`SelectionExec`](crate::selection::SelectionExec) applies to a residual
-//! conjunct, with the same [`crate::StmtContext`]. Moving a conjunct from the
-//! `Selection` into the scan therefore changes *where* it runs and nothing
-//! about what it means, including which values are NULL and which statement
-//! warnings it raises.
-//!
-//! Being a strict subset of what Go pushes is safe in the only direction that
-//! matters: a conjunct that stays above the scan is still applied, so the
-//! result set cannot change. Widening the set is a separate, verifiable step.
-//!
-//! # The subset is what EXPLAIN now shows
-//!
-//! `EXPLAIN` prints this split as Go prints its own: the conjuncts the scan
-//! took are the `Selection cop[tikv]` inside the read's coprocessor task, and
-//! the residual is the root `Selection` above the `TableReader`/`IndexReader`
-//! -- Go's `CopTask.RootTaskConds`
-//! (`pkg/planner/core/find_best_task.go:3205`,
-//! `pkg/planner/core/operator/physicalop/task.go:47`). So the width of the
-//! set above is now VISIBLE: wherever a recorded plan reads `Selection
-//! cop[tikv]` and this tier reads a root `Selection`, the missing piece is a
-//! row of [`tidb_expr::pushdown_catalog`], not the reader boundary. Reading
-//! it the other way -- printing `cop[tikv]` for a conjunct no source
-//! accepted -- would be a claim this tier cannot keep, which is why
-//! `driver::select_rows` gates the boundary on the source's own answer.
-//!
-//! # The staged-buffer obligation
-//!
-//! A pushed conjunct is *removed* from the `Selection` above the scan, so the
-//! scan becomes the only place it is ever applied. Over
-//! [`ClusterTableStorage`](crate::cluster_storage::ClusterTableStorage) the
-//! rows a scan produces are not only the snapshot's: the session's staged
-//! mutation buffer is merged into the same key-ordered stream, so a row this
-//! statement's own transaction wrote appears there and *never passed through
-//! any coprocessor*. If a source applied a pushed predicate to the snapshot
-//! half only, a staged row that fails the predicate would be returned and a
-//! staged row that satisfies it could be dropped.
-//!
-//! That is why [`TableAccess::accept_scan_filter`] is opt-in and defaults to
-//! refusing: a source may only return `true` when it applies every pushed
-//! conjunct to *every* row it emits, merged rows included. A future
-//! coprocessor-backed source that filters only the snapshot half must either
-//! keep applying the predicate to the merged staged rows itself, or refuse --
-//! in which case the driver leaves the whole `WHERE` in the `Selection` and
-//! nothing changes.
-//!
-//! [`TableAccess::accept_scan_filter`]: crate::table_access::TableAccess::accept_scan_filter
-
+//! Go decides predicate placement before `executorBuilder.build`. This module
+//! converts those retained expressions into the bounded scan description used
+//! by local/staged-row evaluation and TiKV request construction; it does not
+//! perform a second AST predicate-pushdown decision.
 use std::collections::HashSet;
 
 use tidb_chunk::chunk::Chunk;
@@ -134,22 +45,6 @@ pub enum ScanComparisonOp {
     Ge,
 }
 
-impl ScanComparisonOp {
-    /// The operator of a binary AST node, when it is one this filter accepts.
-    #[must_use]
-    pub const fn from_ast(op: tidb_ast::BinaryOp) -> Option<Self> {
-        Some(match op {
-            tidb_ast::BinaryOp::Eq => Self::Eq,
-            tidb_ast::BinaryOp::Ne => Self::Ne,
-            tidb_ast::BinaryOp::Lt => Self::Lt,
-            tidb_ast::BinaryOp::Le => Self::Le,
-            tidb_ast::BinaryOp::Gt => Self::Gt,
-            tidb_ast::BinaryOp::Ge => Self::Ge,
-            _ => return None,
-        })
-    }
-}
-
 /// One pushed conjunct, described independently of how it is evaluated.
 ///
 /// A description is what a coprocessor lowering reads; the paired
@@ -173,10 +68,8 @@ impl ScanComparisonOp {
 /// expression beside it; carrying it is what makes "the description and the
 /// expression agree" true by construction instead of by repetition.
 ///
-/// The value a constructor supplies is the column's, which is right whenever
-/// no argument is explicit; [`adopt_compiled_arguments`] replaces it with the
-/// built expression's for every conjunct that goes through
-/// `split_scan_predicates`.
+/// Each description is derived from the already-built physical expression,
+/// so this collation is the function collation the planner retained.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScanPredicate {
     /// A column compared with a constant, in either operand order.
@@ -360,43 +253,20 @@ enum FastScanFilter {
 }
 
 impl PushedScanFilter {
-/// Offers an already-compiled conjunction without rebuilding or evaluating
-    /// it. This description has immutable literals; context-dependent values
-    /// stay with the caller until protobuf lowering owns their execution context.
-    pub(crate) fn from_compiled_conditions(
-        filters: &[Expression],
+    /// Builds the exact conditions already selected by a physical reader.
+    ///
+    /// These expressions need no second AST pushdown decision.  They are
+    /// evaluated by the source for every local/staged row and translated to
+    /// the remote request when the expression has a TiKV representation.
+    #[must_use]
+    pub(crate) fn from_physical_conditions(
+        filters: Vec<Expression>,
         ctx: &crate::StmtContext,
-    ) -> Option<Self> {
+    ) -> Self {
         let predicates = filters
             .iter()
-            .map(|filter| {
-                if !immutable_scan_constants(filter)
-                    || !crate::pushdown_blacklist::compiled_blacklist_admits(
-                        filter,
-                        ctx,
-                        tidb_expr::infer_pushdown::PushDownStore::TiKv,
-                    )
-                {
-                    return None;
-                }
-                describe_compiled_condition(filter)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(Self::new(predicates, filters.to_vec()))
-    }
-
-    /// Pairs each described comparison with the expression that evaluates it.
-    ///
-    /// # Panics
-    /// If the two halves differ in length -- they describe the same conjuncts,
-    /// so a mismatch is a construction bug rather than a runtime condition.
-    #[must_use]
-    pub fn new(predicates: Vec<ScanPredicate>, filters: Vec<Expression>) -> Self {
-        assert_eq!(
-            predicates.len(),
-            filters.len(),
-            "every pushed conjunct has one description and one expression"
-        );
+            .filter_map(|filter| describe_execution_condition(filter, ctx).ok())
+            .collect();
         let fast_paths = filters
             .iter()
             .map(FastScanFilter::from_expression)
@@ -406,6 +276,15 @@ impl PushedScanFilter {
             filters,
             fast_paths,
         }
+    }
+
+    /// Whether every locally evaluated physical condition also has a remote
+    /// description. A backend can only report on the descriptions it was
+    /// sent; this receipt prevents an un-described condition from being
+    /// mistaken for one the coprocessor applied.
+    #[must_use]
+    pub(crate) fn fully_described(&self) -> bool {
+        self.predicates.len() == self.filters.len()
     }
 
     /// The pushed conjuncts in `WHERE` order, for a coprocessor lowering.
@@ -441,7 +320,7 @@ impl PushedScanFilter {
             .iter_mut()
             .map(|filter| filter.hash_code().to_vec())
             .collect();
-        for (predicate, filter) in additional.predicates.iter().zip(&additional.filters) {
+        for filter in &additional.filters {
             let mut filter = filter.clone();
             if !existing.insert(filter.hash_code().to_vec())
                 && !tidb_expr::expr_util::is_mutable_effects_expr(&filter)
@@ -450,7 +329,9 @@ impl PushedScanFilter {
             }
             self.fast_paths
                 .push(FastScanFilter::from_expression(&filter));
-            self.predicates.push(predicate.clone());
+            if let Some(predicate) = scan_predicate_from_expression(&filter) {
+                self.predicates.push(predicate);
+            }
             self.filters.push(filter);
         }
     }
@@ -818,56 +699,6 @@ impl FastScanFilter {
     }
 }
 
-/// Copies the compiled condition's literal and collation metadata into the
-/// legacy scan description. Expression construction owns conversion and
-/// refinement; this adapter must never evaluate or repair an argument.
-pub(crate) fn adopt_compiled_arguments(predicate: &mut ScanPredicate, filter: &Expression) {
-    let Expression::ScalarFunction(function) = filter else {
-        return;
-    };
-    match predicate {
-        ScanPredicate::Like { collation, .. }
-        | ScanPredicate::In { collation, .. }
-        | ScanPredicate::ScalarIn { collation, .. } => {
-            *collation = function.derived_collation();
-        }
-        ScanPredicate::Compare(comparison) => {
-            comparison.collation = function.derived_collation();
-            let Some(Expression::Constant(constant)) =
-                function.args.get(usize::from(comparison.column_on_left))
-            else {
-                return;
-            };
-            let Some(value) = constant.literal_value().filter(|value| !value.is_null()) else {
-                return;
-            };
-            let Some(field_type) = constant.ret_type.as_ref() else {
-                return;
-            };
-            comparison.literal = value.clone();
-            comparison.literal_type = field_type.clone();
-        }
-        ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
-            let arguments = match function.func_name.lowercase() {
-                "and" => tidb_expr::expr_util::split_cnf_items(filter),
-                "or" => tidb_expr::expr_util::split_dnf_items(filter),
-                _ => return,
-            };
-            if arguments.len() == branches.len() {
-                for (branch, argument) in branches.iter_mut().zip(&arguments) {
-                    adopt_compiled_arguments(branch, argument);
-                }
-            }
-        }
-        ScanPredicate::Not(inner) => {
-            if function.func_name.lowercase() == "not" && function.args.len() == 1 {
-                adopt_compiled_arguments(inner, &function.args[0]);
-            }
-        }
-        _ => {}
-    }
-}
-
 fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
     keep.iter()
         .position(|kept| *kept == offset as usize)
@@ -915,8 +746,18 @@ fn remap_pb_scalar(
             }
         }
         tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)
+        | tidb_expr::pushdown_catalog::PbScalar::NullLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::UIntLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::DecimalLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. } => {}
+        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::StringLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::BytesLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::BitLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::EnumLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::TimeLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::DurationLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::JsonLiteral { .. }
+        | tidb_expr::pushdown_catalog::PbScalar::VectorLiteral { .. } => {}
     }
     Some(())
 }
@@ -965,7 +806,7 @@ impl ScanFilterProbe {
         }
     }
 
-/// Adds a later accepted offer to the existing conjunction.
+    /// Adds a later accepted offer to the existing conjunction.
     ///
     /// The additional filter is compiled against the source's current row
     /// space, which is also the row space described by `scratch`.
@@ -997,6 +838,22 @@ impl ScanFilterProbe {
     pub(crate) fn predicates(&self) -> &[ScanPredicate] {
         self.filter.predicates()
     }
+
+    pub(crate) fn fully_described(&self) -> bool {
+        self.filter.fully_described()
+    }
+}
+
+/// Describes one already-resolved physical condition for TiKV.
+///
+/// Go performs this conversion after `findBestTask` has selected the reader;
+/// the executor receives that exact `expression.Expression`, not the original
+/// SQL AST. Keep comparisons in the explicit scan representation used by the
+/// local fakes, and use the shared scalar-signature catalog for every other
+/// expression family. A refusal leaves the physical expression in the local
+/// filter and is therefore semantic, not heuristic.
+pub(crate) fn scan_predicate_from_expression(expression: &Expression) -> Option<ScanPredicate> {
+    describe_compiled_condition(expression)
 }
 
 #[cfg(test)]
@@ -1007,7 +864,6 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_txnkv::Key;
 
-    use super::ScanComparisonOp;
     use crate::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
@@ -1043,250 +899,6 @@ mod tests {
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
-    }
-
-    #[test]
-    fn retained_scan_filters_read_current_values_after_column_remapping() {
-        use tidb_ast::CiString;
-        use tidb_expr::column::Column;
-        use tidb_expr::constant::{Constant, ParamMarker};
-        use tidb_expr::expression::Expression;
-        use tidb_expr::scalar_function::ScalarFunction;
-
-        let string_type = FieldType::new(FieldTypeCode::VarString);
-        for like in [false, true] {
-            for negated in [false, true] {
-                for deferred in [false, true] {
-                    let saved = if like { "old%" } else { "old" };
-                    let mut parameter =
-                        Constant::new(Datum::Bytes(saved.as_bytes().to_vec()), string_type.clone());
-                    parameter.param_marker = Some(ParamMarker { order: 0 });
-                    if deferred {
-                        let expression = Expression::Constant(parameter.clone());
-                        parameter.param_marker = None;
-                        parameter.deferred_expr = Some(Box::new(expression));
-                    }
-                    let mut column = Column::new(2, string_type.clone());
-                    column.index = 1;
-                    let mut arguments =
-                        vec![Expression::Column(column), Expression::Constant(parameter)];
-                    if like {
-                        arguments.push(Expression::Constant(Constant::new(Datum::Int(92), long())));
-                    }
-                    let mut expression = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(if like { "like" } else { "in" }),
-                        long(),
-                        arguments,
-                    ));
-                    let mut description = if like {
-                        super::ScanPredicate::Like {
-                            column_offset: 1,
-                            column_type: string_type.clone(),
-                            pattern: saved.as_bytes().to_vec(),
-                            escape: b'\\',
-                            collation: string_type.collation(),
-                        }
-                    } else {
-                        super::ScanPredicate::In {
-                            column_offset: 1,
-                            column_type: string_type.clone(),
-                            literals: vec![Datum::Bytes(saved.as_bytes().to_vec())],
-                            negated,
-                            collation: string_type.collation(),
-                        }
-                    };
-                    if negated {
-                        expression = Expression::ScalarFunction(ScalarFunction::new(
-                            CiString::new("not"),
-                            long(),
-                            vec![expression],
-                        ));
-                        if like {
-                            description = super::ScanPredicate::Not(Box::new(description));
-                        }
-                    }
-                    let filter = super::PushedScanFilter::new(vec![description], vec![expression]);
-                    assert!(
-                        super::PushedScanFilter::from_compiled_conditions(
-                            filter.filters(),
-                            &crate::StmtContext::for_query(),
-                        )
-                        .is_none(),
-                        "immutable descriptions must not capture current parameter values"
-                    );
-                    for remapped in [false, true] {
-                        let filter = if remapped {
-                            filter.remapped_columns(&[1]).unwrap()
-                        } else {
-                            filter.clone()
-                        };
-                        let column = usize::from(!remapped);
-                        let mut chunk =
-                            tidb_chunk::chunk::Chunk::new(&vec![string_type.clone(); column + 1], 1, 1);
-                        if !remapped {
-                            chunk.append_datum(0, &Datum::Bytes(b"unused".to_vec()));
-                        }
-                        chunk.append_datum(column, &Datum::Bytes(b"new".to_vec()));
-                        for (current, matches) in [
-                            (Some(if like { "new%" } else { "new" }), !negated),
-                            (Some(saved), negated),
-                            (None, false),
-                        ] {
-                            let value =
-                                current.map_or(Datum::Null, |v| Datum::Bytes(v.as_bytes().to_vec()));
-                            let ctx = crate::StmtContext::for_query()
-                                .with_prepared_params(vec![value].into());
-                            assert_eq!(filter.matches(&ctx, chunk.get_row(0)).unwrap(), matches,
-                                        "like={like}, negated={negated}, deferred={deferred}, remapped={remapped}, current={current:?}");
-                        }
-                        assert!(filter
-                            .matches(&crate::StmtContext::for_query(), chunk.get_row(0))
-                            .is_err());
-                        if like {
-                            // Go's scalar LIKE returns before reading the
-                            // pattern when the tested value is NULL.
-                            chunk.reset();
-                            for offset in 0..=column {
-                                chunk.append_datum(offset, &Datum::Null);
-                            }
-                            assert!(!filter
-                                .matches(&crate::StmtContext::for_query(), chunk.get_row(0))
-                                .unwrap());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn retained_like_escape_uses_current_value_and_go_null_semantics() {
-        use tidb_ast::CiString;
-        use tidb_expr::column::Column;
-        use tidb_expr::constant::{Constant, ParamMarker};
-        use tidb_expr::expression::Expression;
-        use tidb_expr::scalar_function::ScalarFunction;
-
-        let string_type = FieldType::new(FieldTypeCode::VarString);
-        let mut column = Column::new(1, string_type.clone());
-        column.index = 0;
-        let mut escape = Constant::new(Datum::Int(92), long());
-        escape.param_marker = Some(ParamMarker { order: 0 });
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("like"),
-            long(),
-            vec![
-                Expression::Column(column),
-                Expression::Constant(Constant::new(
-                    Datum::Bytes(b"new!_%".to_vec()),
-                    string_type.clone(),
-                )),
-                Expression::Constant(escape),
-            ],
-        ));
-        let Expression::ScalarFunction(like) = &expression else {
-            unreachable!()
-        };
-        let ilike = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("ilike"),
-            long(),
-            like.args.clone(),
-        ));
-        let filter = super::PushedScanFilter::new(
-            vec![super::ScanPredicate::Like {
-                column_offset: 0,
-                column_type: string_type.clone(),
-                pattern: b"new!_%".to_vec(),
-                escape: b'\\',
-                collation: string_type.collation(),
-            }],
-            vec![expression],
-        );
-        let mut chunk = tidb_chunk::chunk::Chunk::new(&[string_type], 1, 1);
-        chunk.append_datum(0, &Datum::Bytes(b"new_value".to_vec()));
-        // Go builtinLikeSig evaluates the current escape with EvalInt and
-        // uses byte(escape), including signed wrapping; NULL stays NULL.
-        for (escape, expected) in [
-            (Datum::Int(33), true),
-            (Datum::Int(289), true),
-            (Datum::Int(-223), true),
-            (Datum::UInt(289), true),
-            (Datum::Int(92), false),
-            (Datum::Null, false),
-        ] {
-            let ctx = crate::StmtContext::for_query().with_prepared_params(vec![escape.clone()].into());
-            let expected_value = if escape.is_null() {
-                Datum::Null
-            } else {
-                Datum::Int(i64::from(expected))
-            };
-            assert_eq!(
-                filter.filters()[0].eval(&ctx, chunk.get_row(0)).unwrap(),
-                expected_value,
-                "escape={escape:?}"
-            );
-            assert_eq!(
-                ilike.eval(&ctx, chunk.get_row(0)).unwrap(),
-                expected_value,
-                "ILIKE escape={escape:?}"
-            );
-            assert_eq!(
-                filter.matches(&ctx, chunk.get_row(0)).unwrap(),
-                expected,
-                "escape={escape:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn scan_filter_conjunction_preserves_distinct_parameter_identities() {
-        use tidb_ast::CiString;
-        use tidb_expr::column::Column;
-        use tidb_expr::constant::{Constant, ParamMarker};
-        use tidb_expr::expression::Expression;
-        use tidb_expr::scalar_function::ScalarFunction;
-
-        let string_type = FieldType::new(FieldTypeCode::VarString);
-        let filter = |order| {
-            let mut column = Column::new(1, string_type.clone());
-            column.index = 0;
-            let mut parameter = Constant::new(Datum::Bytes(b"old".to_vec()), string_type.clone());
-            parameter.param_marker = Some(ParamMarker { order });
-            super::PushedScanFilter::new(
-                vec![super::ScanPredicate::In {
-                    column_offset: 0,
-                    column_type: string_type.clone(),
-                    literals: vec![Datum::Bytes(b"old".to_vec())],
-                    negated: false,
-                    collation: string_type.collation(),
-                }],
-                vec![Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("in"),
-                    long(),
-                    vec![Expression::Column(column), Expression::Constant(parameter)],
-                ))],
-            )
-        };
-        let first = filter(0);
-        let second = filter(1);
-        let mut combined = first.clone();
-        combined.conjoin(&second);
-        combined.conjoin(&first);
-        // Same saved values do not mean the same compiled condition. The
-        // repeated first offer is identical, but the second parameter is not.
-        assert_eq!(combined.filters.len(), 2);
-        let mut chunk = tidb_chunk::chunk::Chunk::new(&[string_type], 1, 1);
-        chunk.append_datum(0, &Datum::Bytes(b"new".to_vec()));
-        for (second, expected) in [("new", true), ("different", false)] {
-            let ctx = crate::StmtContext::for_query().with_prepared_params(
-                vec![
-                    Datum::Bytes(b"new".to_vec()),
-                    Datum::Bytes(second.as_bytes().to_vec()),
-                ]
-                .into(),
-            );
-            assert_eq!(combined.matches(&ctx, chunk.get_row(0)).unwrap(), expected);
-        }
     }
 
     fn column(name: &str, id: i64) -> KvColumn {
@@ -1664,810 +1276,5 @@ mod tests {
                 "{sql}"
             );
         }
-    }
-
-    /// Physical planning can offer a leaf's original predicate and then a
-    /// parent join's derived predicate in separate passes. Accepting the
-    /// second offer must add to, rather than replace, the first one: the
-    /// Selection owning the first predicate has already been removed.
-    #[test]
-    fn repeated_scan_filter_offers_are_conjoined() {
-        use tidb_expr::column::Column;
-        use tidb_expr::schema::Schema;
-
-        use crate::driver::{split_scan_predicates, FromScope, FromTable, ScopeResolver};
-        use crate::executor::{Executor, ExecutorMeta};
-        use crate::mem_table::MemTableSourceExec;
-        use crate::table_access::TableAccess;
-
-        let columns = vec![("a".to_owned(), long()), ("b".to_owned(), long())];
-        let scope = FromScope {
-            tables: vec![FromTable {
-                name: "t".to_owned(),
-                database: None,
-                physical: None,
-                columns: columns.clone(),
-                offset: 0,
-                func_deps: Default::default(),
-            }],
-            ..FromScope::default()
-        };
-        let ctx = crate::StmtContext::for_query();
-        let pushed = |predicate: &str| {
-            let sql = format!("SELECT a, b FROM t WHERE {predicate}");
-            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
-                panic!("not a query")
-            };
-            let tidb_ast::QueryStmt::Select(select) = &*query else {
-                panic!("not a SELECT")
-            };
-            let (pushed, residual) = split_scan_predicates(
-                select.where_clause.as_ref().unwrap(),
-                &ScopeResolver { scope: &scope },
-                &ctx,
-            );
-            assert!(residual.is_none(), "the test predicate must push whole");
-            pushed
-        };
-
-        let schema = Schema::new(
-            columns
-                .iter()
-                .enumerate()
-                .map(|(offset, (_, field_type))| {
-                    let mut column = Column::new(offset as i64 + 1, field_type.clone());
-                    column.index = offset as i64;
-                    column
-                })
-                .collect(),
-        );
-        let mut source = MemTableSourceExec::new(
-            ExecutorMeta::new(schema, 0, 4, 4),
-            vec![
-                vec![Datum::Int(0), Datum::Int(10)],
-                vec![Datum::Int(2), Datum::Int(20)],
-                vec![Datum::Int(3), Datum::Int(40)],
-            ],
-        );
-        assert!(TableAccess::accept_scan_filter(
-            &mut source,
-            &pushed("a > 1"),
-            &ctx,
-        ));
-        assert!(TableAccess::accept_scan_filter(
-            &mut source,
-            &pushed("b < 30"),
-            &ctx,
-        ));
-
-        source.open().unwrap();
-        let mut output = source.new_chunk();
-        source.next(&mut output).unwrap();
-        assert_eq!(
-            (0..output.num_rows())
-                .map(|row| output.get_row(row).get_datum_row(source.ret_field_types()))
-                .collect::<Vec<_>>(),
-            vec![vec![Datum::Int(2), Datum::Int(20)]],
-            "the later offer must not erase the already-accepted `a > 1`",
-        );
-        source.close().unwrap();
-    }
-
-    #[test]
-    fn only_the_lowerable_comparison_operators_are_accepted() {
-        assert_eq!(
-            ScanComparisonOp::from_ast(tidb_ast::BinaryOp::Ge),
-            Some(ScanComparisonOp::Ge)
-        );
-        assert_eq!(ScanComparisonOp::from_ast(tidb_ast::BinaryOp::Plus), None);
-        // NULL-safe equality is not the same function as `eq` on the
-        // coprocessor side, so it stays residual.
-        assert_eq!(ScanComparisonOp::from_ast(tidb_ast::BinaryOp::NullEq), None);
-    }
-}
-
-/// The port of Go `TestExprPushDownToTiKV`
-/// (`pkg/expression/expr_to_pb_test.go:1547`): which expressions may be
-/// evaluated by the coprocessor.
-///
-/// # What the port can and cannot assert
-///
-/// Go's table is a list of scalar functions built over typed columns, each
-/// checked with `PushDownExprs(..., kv.TiKV)`. **Every row of it is a builtin
-/// function call** -- there is not one comparison, `AND`, `OR`, `IS NULL` or
-/// `IN` row in the table, which was confirmed against the Go source rather
-/// than assumed.
-///
-/// Reaching those rows needs a name-to-`ScalarFuncSig` resolution catalog and
-/// the cast-inserting type inference Go's `getFunction` performs, because
-/// [`ScanPredicate`] describes a *shape* and `ScalarFunction` in this tree
-/// carries no resolved signature at all. That catalog now exists
-/// ([`tidb_expr::pushdown_catalog`]) and is the single owner of both the
-/// signature and TiKV's verdict on it, so a row of Go's table moves here
-/// exactly when the catalog holds its family.
-///
-/// The table is therefore split in two, and the split is the honest statement
-/// of where this engine stands:
-///
-/// * [`GO_PUSHES_HERE_TOO`] -- the families the catalog holds, asserted
-///   *running* against Go's verdict, with the signature each resolves to
-///   pinned separately in [`tidb_expr::pushdown_catalog`]'s own tests and the
-///   rows-returned agreement proved against a real cluster by
-///   `rust/scripts/run-realtikv-scan-pushdown.sh`.
-/// * [`GO_PUSHES_NOT_HERE_YET`] -- the families it does not, each for a stated
-///   reason. Those keep Go's verdict in the `#[ignore]`d
-///   [`tikv_pushes_what_go_pushes`] and are pinned as still-refused by
-///   [`every_not_yet_pushable_expression_is_still_refused_here`], so a
-///   widening that starts pushing one of them fails a test rather than
-///   drifting silently.
-///
-/// The two directions of a disagreement with Go are not equally serious:
-///
-/// * **Correctness.** For the rows Go *refuses*, a push here would be a bug:
-///   the coprocessor would evaluate an expression TiDB deliberately keeps in
-///   the TiDB layer (`INET_ATON` and friends; `CONV` over a BIT column, Go
-///   issue 51877), and rows would silently differ. Those rows are asserted
-///   unconditionally and are live coverage for any future widening.
-/// * **Performance.** For the rows Go *pushes* and this engine does not,
-///   refusing them costs network and CPU but cannot change an answer, because
-///   the scan source applies every pushed conjunct itself regardless.
-#[cfg(test)]
-mod tests_push_down_verdict {
-    use tidb_datatype::{FieldType, FieldTypeCode};
-
-    use crate::driver::{split_scan_predicates, FromScope, FromTable, ScopeResolver};
-
-    /// Go's `genColumn` set from the test, one column per type it builds an
-    /// expression over.
-    fn scope() -> FromScope {
-        let column = |name: &str, code: FieldTypeCode| (name.to_owned(), FieldType::new(code));
-        FromScope {
-            tables: vec![FromTable {
-                name: "t".to_owned(),
-                database: None,
-                columns: vec![
-                    column("j", FieldTypeCode::Json),
-                    column("i", FieldTypeCode::LongLong),
-                    column("r", FieldTypeCode::Double),
-                    column("dec", FieldTypeCode::NewDecimal),
-                    column("s", FieldTypeCode::String),
-                    column("dt", FieldTypeCode::Datetime),
-                    // Go's `binaryStringColumn`, whose very next line is
-                    // `RetType.SetCollate(charset.CollationBin)` -- the only
-                    // thing that distinguishes it from `s`, and the whole
-                    // selector of the string family's binary spelling.
-                    (
-                        "bs".to_owned(),
-                        FieldType::new(FieldTypeCode::String).with_collation_name("binary"),
-                    ),
-                    column("d", FieldTypeCode::Date),
-                    column("bt", FieldTypeCode::Bit),
-                    column("tm", FieldTypeCode::Duration),
-                ],
-                offset: 0,
-                func_deps: Default::default(),
-                physical: None,
-            }],
-            ..FromScope::default()
-        }
-    }
-
-    /// Whether this engine pushes the single conjunct of `where_expr` into the
-    /// scan. `None` means the expression does not parse here at all, which is
-    /// a different (and larger) gap than a refused push.
-    fn pushes(where_expr: &str) -> Option<bool> {
-        let sql = format!("SELECT 1 FROM t WHERE {where_expr}");
-        let stmt = tidb_parser::parse(&sql).ok()?;
-        let tidb_ast::Stmt::Query(query) = &stmt else {
-            return None;
-        };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            return None;
-        };
-        let where_clause = select.where_clause.clone()?;
-        let scope = scope();
-        let (pushed, _) = split_scan_predicates(
-            &where_clause,
-            &ScopeResolver { scope: &scope },
-            &crate::StmtContext::default(),
-        );
-        Some(!pushed.is_empty())
-    }
-
-    /// The single builtin-call description `where_expr` pushes, when it pushes
-    /// one, so a test can read the signature the catalog resolved.
-    fn described_call(where_expr: &str) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
-        let sql = format!("SELECT 1 FROM t WHERE {where_expr}");
-        let tidb_ast::Stmt::Query(query) = tidb_parser::parse(&sql).ok()? else {
-            return None;
-        };
-        let tidb_ast::QueryStmt::Select(select) = &*query else {
-            return None;
-        };
-        let where_clause = select.where_clause.clone()?;
-        let scope = scope();
-        let (pushed, _) = split_scan_predicates(
-            &where_clause,
-            &ScopeResolver { scope: &scope },
-            &crate::StmtContext::default(),
-        );
-        match pushed.predicates() {
-            [super::ScanPredicate::Builtin(call)] => Some(call.clone()),
-            _ => None,
-        }
-    }
-
-    /// Every expression Go REFUSES to push to TiKV, in Go's order.
-    ///
-    /// The IP family is TiDB-only; `CONV` over a BIT column is refused
-    /// because the BIT-to-binary-string cast TiDB inserts is only handled in
-    /// TiDB (Go issue 51877) -- note that `CONV` over a plain string column
-    /// *is* pushed, and is in the pushed table below.
-    const GO_REFUSES: &[&str] = &[
-        "inet_aton(s)",
-        "inet_ntoa(s)",
-        "inet6_aton(s)",
-        "inet6_ntoa(s)",
-        "is_ipv4(s)",
-        "is_ipv6(s)",
-        "is_ipv4_compat(s)",
-        "is_ipv4_mapped(s)",
-        "conv(cast(bt as binary), i, i)",
-    ];
-
-    /// The rows of Go's pushed table this engine pushes too: the math family
-    /// whose signatures `tidb_expr::pushdown_catalog` holds.
-    ///
-    /// All twelve resolve one of Go's `ETReal`/`ETInt`/`ETDecimal` signatures
-    /// from the argument types alone, with no collation to derive and no
-    /// metadata to encode, which is why this is the family the catalog could
-    /// be completed for first.
-    const GO_PUSHES_HERE_TOO: &[&str] = &[
-        "sin(i)",
-        "asin(i)",
-        "cos(i)",
-        "acos(i)",
-        "atan(i)",
-        "cot(i)",
-        "atan2(i, i)",
-        "pi()",
-        "round(i)",
-        "mod(i, i)",
-        "pow(r, r)",
-        "power(r, r)",
-        // The string family. Each resolves its signature from
-        // `types.IsBinaryStr(args[0])` and its result collation from that same
-        // single argument (`deriveCollation`'s `ast.Upper`/`ast.Substr`
-        // cases), or -- for `CONV` -- from the connection charset the family's
-        // own `getFunction` sets. `s` is Go's non-binary `stringColumn`, so
-        // every row below is the UTF-8 spelling; the binary spellings over Go's
-        // `bs` are pinned by
-        // [`the_binary_spelling_travels_for_a_binary_collation`].
-        "conv(s, i, i)",
-        "substr(s, i, i)",
-        "substring(s, i, i)",
-        "mid(s, i, i)",
-        "char_length(s)",
-        "upper(s)",
-        "lower(s)",
-    ];
-
-    /// The rows of Go's pushed table this engine does not push yet, in Go's
-    /// order.
-    ///
-    /// Go's table has five further rows commented out in the source
-    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
-    /// and are deliberately absent here too.
-    ///
-    /// Each of these needs something neither the math nor the string family
-    /// did. The DATE family is the largest block, and it is a genuinely
-    /// separate seam rather than more of the same work: every one of its rows
-    /// takes a `d`, `dt` or `tm` argument, and Go's `getFunction` for it calls
-    /// `newBaseBuiltinFuncWithTp(..., types.ETDatetime)` or `ETDuration`, whose
-    /// implicit wrapper is `WrapWithCastAsTime`/`WrapWithCastAsDuration`.
-    /// Unlike `WrapWithCastAsReal`, that wrapper's target `FieldType` is not
-    /// fixed -- it carries an FSP the wrapper computes from the SOURCE type
-    /// (`builtin_cast.go`: `tp.SetDecimal(arg.GetType().GetDecimal())` and the
-    /// `MaxDatetimeWidthWithFsp` width that follows from it), and a `MysqlTime`
-    /// constant is encoded with `codec.EncodeMySQLTime` against the SESSION
-    /// TIME ZONE, which this scan path does not put in the DAG request at all.
-    /// Both are their own units; neither is unlocked by the collation seam the
-    /// string family needed.
-    ///
-    /// The remainder:
-    ///
-    /// * `DATE_FORMAT` additionally takes a string format argument, so it needs
-    ///   the temporal seam AND the string one;
-    /// * the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` family additionally
-    ///   sends the INTERVAL unit as a third string argument, and picks among
-    ///   more than twenty signatures by unit *and* argument type;
-    /// * the JSON family needs the `ETJson` TiPB field type and the implicit
-    ///   `CAST(... AS JSON)` wrappers;
-    /// * `FROM_UNIXTIME`, `UNIX_TIMESTAMP` and `TIMESTAMPDIFF` need the
-    ///   session time zone in the DAG request, which this scan path does not
-    ///   yet send.
-    const GO_PUSHES_NOT_HERE_YET: &[&str] = &[
-        // The `testcases` table, row for row.
-        "date_format(d, s)",
-        "hour(d)",
-        "minute(d)",
-        "second(d)",
-        "month(d)",
-        "microsecond(d)",
-        "date(d)",
-        "week(d)",
-        "datediff(d, d)",
-        "json_replace(j, s, j, s, j)",
-        "json_array_append(j, s, j, s, j)",
-        "json_merge_patch(j, j, j)",
-        "date_add(s, interval s second)",
-        "date_add(dec, interval r day)",
-        "date_add(dt, interval i year)",
-        "date_add(tm, interval s minute)",
-        "date_add(tm, interval s year_month)",
-        "date_sub(s, interval i microsecond)",
-        "date_sub(i, interval r day)",
-        "date_sub(dt, interval i quarter)",
-        "date_sub(tm, interval s hour)",
-        "date_sub(tm, interval s year_month)",
-        "adddate(tm, interval s week)",
-        "subdate(s, interval i hour)",
-        "from_unixtime(dec)",
-        "from_unixtime(dec, s)",
-        "timestampdiff(second, dt, dt)",
-        "timestampdiff(day, dt, dt)",
-        "timestampdiff(year, dt, dt)",
-        "unix_timestamp(dt)",
-        "unix_timestamp(s)",
-    ];
-
-    /// CORRECTNESS: nothing Go keeps in TiDB may be handed to the store.
-    #[test]
-    fn tikv_refuses_what_go_refuses() {
-        for expr in GO_REFUSES {
-            // `None` (unparsable here) is also a refusal to push, which is the
-            // safe direction; the missing builtin is a separate gap.
-            if let Some(pushed) = pushes(expr) {
-                assert!(
-                    !pushed,
-                    "{expr}: TiDB refuses to push this to TiKV, so pushing it here \
-                     would let the store evaluate what only TiDB evaluates correctly"
-                );
-            }
-        }
-    }
-
-    /// The predicate shapes this engine *does* push, over Go's own column set,
-    /// so the blanket refusal below cannot be mistaken for pushdown being off.
-    ///
-    /// These are the rows Go's table does not contain; they are on the same
-    /// TiKV whitelist (`infer_pushdown.go`'s `scalarExprSupportedByTiKV` lists
-    /// every comparison operator, `LogicAnd`/`LogicOr`/`UnaryNot`, `In` and
-    /// `IsNull` unconditionally), which is why widening to them was possible
-    /// without a function catalog and why it moves none of `GO_PUSHES`.
-    #[test]
-    fn the_integer_predicate_shapes_push_over_gos_own_columns() {
-        for expr in [
-            "i > 5",
-            "5 < i",
-            "i = 1",
-            "i <> 1",
-            "i >= -7",
-            "i IS NULL",
-            "i IS NOT NULL",
-            "i IN (1, 2, 3)",
-            "i NOT IN (4)",
-            "i = 1 OR i = 2",
-            "i = 1 OR i IS NULL",
-            "NOT i = 1",
-            "NOT (i IN (1, 2))",
-        ] {
-            assert_eq!(pushes(expr), Some(true), "{expr} is a pushed predicate");
-        }
-        // A scan-local column comparison pushes too: Go's
-        // `scalarExprSupportedByTiKV` admits EQ unconditionally and both
-        // operands are this table's own ColumnRefs, which `columnToPBExpr`
-        // encodes directly. The split describes it as a typed
-        // `ScanColumnComparison` (see the driver's own predicate tests).
-        assert_eq!(
-            pushes("i = r"),
-            Some(true),
-            "a scan-local column comparison is pushed"
-        );
-        // And the shapes the *split* keeps above the scan: functions with
-        // their own NULL semantics and their own signatures. Note what is
-        // deliberately not in this list -- `s = 'x'` and `dec > 1` DO pass
-        // the split, because the split is type-agnostic by design: it hands
-        // the source a description, and the coprocessor lowering applies the
-        // type gate (`tidb_exec::wide_scan_selection`). Refusing there costs
-        // wire volume only, because the source evaluates every pushed conjunct
-        // itself regardless.
-        for expr in ["i IS TRUE", "i <=> 1", "i + 1 = 2"] {
-            assert_eq!(pushes(expr), Some(false), "{expr} stays above the scan");
-        }
-    }
-
-    #[test]
-    fn constant_pattern_like_uses_gos_tikv_signature_boundary() {
-        for expr in [
-            "s LIKE '%pending%deposits%'",
-            "s NOT LIKE '%pending%deposits%'",
-            "s LIKE 'a#_%' ESCAPE '#'",
-        ] {
-            assert_eq!(pushes(expr), Some(true), "{expr} is pushed to TiKV");
-        }
-        assert_eq!(
-            pushes("s LIKE upper(s)"),
-            Some(false),
-            "a row-dependent pattern stays above the scan"
-        );
-        assert_eq!(
-            pushes("s ILIKE 'prefix%'"),
-            Some(false),
-            "TiKV has LikeSig but no ILIKE signature"
-        );
-    }
-
-    #[test]
-    fn literal_scan_fast_paths_keep_the_compiled_filter_semantics() {
-        let scope = scope();
-        let ctx = crate::StmtContext::for_query();
-        let fields = scope
-            .column_list()
-            .into_iter()
-            .map(|(_, field)| field)
-            .collect::<Vec<_>>();
-        for predicate in [
-            "s IN ('new', 'other')",
-            "s NOT IN ('new', 'other')",
-            "s LIKE 'n_w%'",
-            "s NOT LIKE 'n_w%'",
-            "s LIKE 'new#_%' ESCAPE '#'",
-        ] {
-            let statement = tidb_parser::parse(&format!("SELECT 1 FROM t WHERE {predicate}")).unwrap();
-            let tidb_ast::Stmt::Query(query) = statement else {
-                panic!("query")
-            };
-            let tidb_ast::QueryStmt::Select(select) = &*query else {
-                panic!("SELECT")
-            };
-            let (filter, residual) = split_scan_predicates(
-                select.where_clause.as_ref().unwrap(),
-                &ScopeResolver { scope: &scope },
-                &ctx,
-            );
-            assert!(residual.is_none(), "{predicate}");
-            assert!(
-                matches!(filter.fast_paths.as_slice(), [Some(_)]),
-                "{predicate}"
-            );
-            let compiled_offer =
-                super::PushedScanFilter::from_compiled_conditions(filter.filters(), &ctx)
-                    .expect("compiled literal conditions are pushable");
-            for value in [
-                Some("new"),
-                Some("NEW"),
-                Some("new_value"),
-                Some("other"),
-                None,
-            ] {
-                let mut chunk = tidb_chunk::chunk::Chunk::new(&fields, 1, 1);
-                for offset in 0..fields.len() {
-                    let datum = if offset == 4 {
-                        value.map_or(tidb_datatype::Datum::Null, |value| {
-                            tidb_datatype::Datum::Bytes(value.as_bytes().to_vec())
-                        })
-                    } else {
-                        tidb_datatype::Datum::Null
-                    };
-                    chunk.append_datum(offset, &datum);
-                }
-                let row = chunk.get_row(0);
-                let expected = tidb_expr::truthy_of(&filter.filters()[0].eval(&ctx, row).unwrap())
-                    .unwrap()
-                    == Some(true);
-                assert_eq!(
-                    filter.matches(&ctx, row).unwrap(),
-                    expected,
-                    "{predicate}; value={value:?}"
-                );
-                assert_eq!(
-                    compiled_offer.matches(&ctx, row).unwrap(),
-                    expected,
-                    "compiled offer: {predicate}; value={value:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn compiled_comparisons_own_literals_through_nested_boolean_conditions() {
-        use super::{PushedScanFilter, ScanPredicate};
-        use tidb_datatype::{Datum, Decimal};
-        fn literals(predicates: &[ScanPredicate], values: &mut Vec<Datum>) {
-            for predicate in predicates {
-                match predicate {
-                    ScanPredicate::Compare(comparison) => {
-                        assert_eq!(
-                            comparison.literal_type.eval_type(),
-                            match comparison.literal {
-                                Datum::Decimal(_) => tidb_datatype::EvalType::Decimal,
-                                Datum::Int(_) => tidb_datatype::EvalType::Int,
-                                _ => panic!("comparison literal has not been refined"),
-                            }
-                        );
-                        values.push(comparison.literal.clone());
-                    }
-                    ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
-                        literals(branches, values)
-                    }
-                    _ => panic!("expected comparisons"),
-                }
-            }
-        }
-        let statement =
-            tidb_parser::parse("SELECT 1 FROM t WHERE (dec > 24 AND i > '2x' AND i < 9) OR i = 1")
-                .unwrap();
-        let tidb_ast::Stmt::Query(query) = statement else {
-            panic!("query")
-        };
-        let tidb_ast::QueryStmt::Select(select) = &*query else {
-            panic!("SELECT")
-        };
-        let scope = scope();
-        let ctx = crate::StmtContext::for_query();
-        let (legacy, residual) = split_scan_predicates(
-            select.where_clause.as_ref().unwrap(),
-            &ScopeResolver { scope: &scope },
-            &ctx,
-        );
-        assert!(residual.is_none());
-        let _ = ctx.take_warnings();
-        let compiled = PushedScanFilter::from_compiled_conditions(legacy.filters(), &ctx).unwrap();
-        assert!(ctx.take_warnings().is_empty());
-        for offer in [&legacy, &compiled] {
-            let mut values = Vec::new();
-            literals(offer.predicates(), &mut values);
-            assert_eq!(
-                values,
-                vec![
-                    Datum::Decimal(Decimal::from_int(24)),
-                    Datum::Int(2),
-                    Datum::Int(9),
-                    Datum::Int(1)
-                ]
-            );
-        }
-    }
-
-    /// PERFORMANCE, the part already reached: every row of Go's pushed table
-    /// whose family the catalog holds pushes here, with Go's own verdict.
-    ///
-    /// This runs, unignored: these nineteen are a live claim, not a plan.
-    #[test]
-    fn tikv_pushes_the_math_family_go_pushes() {
-        for expr in GO_PUSHES_HERE_TOO {
-            assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
-        }
-    }
-
-    /// And the resolved signature is Go's own, not merely *some* signature: the
-    /// description each of the twelve produces lowers to the `ScalarFuncSig`
-    /// Go's `getFunction` sets, over Go's own column set.
-    ///
-    /// A push with the wrong signature is the one failure mode that returns
-    /// wrong rows rather than slow ones, so it is pinned by name here rather
-    /// than left to the shape assertion above.
-    #[test]
-    fn the_lowered_signature_is_the_one_gos_get_function_resolves() {
-        use tidb_expr::pushdown_catalog::ScalarFuncSig;
-        let cases: [(&str, ScalarFuncSig); 19] = [
-            ("sin(i)", ScalarFuncSig::Sin),
-            ("asin(i)", ScalarFuncSig::Asin),
-            ("cos(i)", ScalarFuncSig::Cos),
-            ("acos(i)", ScalarFuncSig::Acos),
-            ("atan(i)", ScalarFuncSig::Atan1Arg),
-            ("cot(i)", ScalarFuncSig::Cot),
-            ("atan2(i, i)", ScalarFuncSig::Atan2Args),
-            ("pi()", ScalarFuncSig::Pi),
-            // The argument is a signed BIGINT column, so `ROUND` keeps the
-            // integer domain and `MOD` takes the signed/signed signature.
-            ("round(i)", ScalarFuncSig::RoundInt),
-            ("mod(i, i)", ScalarFuncSig::ModIntSignedSigned),
-            ("pow(r, r)", ScalarFuncSig::Pow),
-            ("power(r, r)", ScalarFuncSig::Pow),
-            // `s` is Go's non-binary `stringColumn`, so each string family
-            // takes its UTF-8 spelling -- the answer that differs from the
-            // binary one by case-folding rules and by counting characters
-            // rather than bytes.
-            ("conv(s, i, i)", ScalarFuncSig::Conv),
-            ("substr(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
-            ("substring(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
-            ("mid(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
-            ("char_length(s)", ScalarFuncSig::CharLengthUtf8),
-            ("upper(s)", ScalarFuncSig::UpperUtf8),
-            ("lower(s)", ScalarFuncSig::LowerUtf8),
-        ];
-        for (expr, expected) in cases {
-            let described = described_call(expr)
-                .unwrap_or_else(|| panic!("{expr} is described as a builtin call"));
-            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = &described else {
-                panic!("{expr} describes a call");
-            };
-            assert_eq!(signature.sig, expected, "{expr}");
-        }
-    }
-
-    /// CORRECTNESS: the binary spelling travels for a binary-collation column
-    /// and the UTF-8 one for every other collation -- over Go's OWN two string
-    /// columns, which differ in nothing but `SetCollate(charset.CollationBin)`.
-    ///
-    /// This is the trap the string widening creates and the only reason it can
-    /// be trusted: `UpperUTF8` sent against binary bytes case-folds them as
-    /// UTF-8, and `CharLengthUTF8` counts characters where `CharLength` counts
-    /// bytes. Both return a WRONG answer rather than a slow one, and no local
-    /// pass afterwards can detect it, so the choice is pinned by signature.
-    #[test]
-    fn the_binary_spelling_travels_for_a_binary_collation() {
-        use tidb_expr::pushdown_catalog::ScalarFuncSig;
-        let cases: [(&str, &str, ScalarFuncSig, ScalarFuncSig); 6] = [
-            (
-                "char_length({})",
-                "char_length",
-                ScalarFuncSig::CharLengthUtf8,
-                ScalarFuncSig::CharLength,
-            ),
-            (
-                "upper({})",
-                "upper",
-                ScalarFuncSig::UpperUtf8,
-                ScalarFuncSig::Upper,
-            ),
-            (
-                "lower({})",
-                "lower",
-                ScalarFuncSig::LowerUtf8,
-                ScalarFuncSig::Lower,
-            ),
-            (
-                "substr({}, i, i)",
-                "substr/3",
-                ScalarFuncSig::Substring3ArgsUtf8,
-                ScalarFuncSig::Substring3Args,
-            ),
-            (
-                "substring({}, i)",
-                "substring/2",
-                ScalarFuncSig::Substring2ArgsUtf8,
-                ScalarFuncSig::Substring2Args,
-            ),
-            (
-                "mid({}, i, i)",
-                "mid/3",
-                ScalarFuncSig::Substring3ArgsUtf8,
-                ScalarFuncSig::Substring3Args,
-            ),
-        ];
-        let resolved = |expr: &str| {
-            let described =
-                described_call(expr).unwrap_or_else(|| panic!("{expr} describes a call"));
-            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = described else {
-                panic!("{expr} describes a call");
-            };
-            signature.sig
-        };
-        for (template, label, utf8, binary) in cases {
-            assert_eq!(
-                resolved(&template.replace("{}", "s")),
-                utf8,
-                "{label} over Go's non-binary stringColumn"
-            );
-            assert_eq!(
-                resolved(&template.replace("{}", "bs")),
-                binary,
-                "{label} over Go's binaryStringColumn"
-            );
-        }
-    }
-
-    /// CORRECTNESS: `CONV` alone is collation-blind, so both of Go's string
-    /// columns resolve the single `Conv` signature -- a second spelling here
-    /// would be an invention.
-    #[test]
-    fn conv_resolves_one_signature_for_either_string_column() {
-        use tidb_expr::pushdown_catalog::ScalarFuncSig;
-        for column in ["s", "bs"] {
-            let described = described_call(&format!("conv({column}, i, i)")).unwrap();
-            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = described else {
-                panic!("conv({column}, i, i) describes a call");
-            };
-            assert_eq!(signature.sig, ScalarFuncSig::Conv);
-        }
-    }
-
-    /// The string slot admits only an argument that is ALREADY `ETString`.
-    /// Go would insert `WrapWithCastAsString`; this tier does not build that
-    /// cast, so the whole conjunct stays above the scan -- a refusal, which
-    /// costs network and never an answer.
-    #[test]
-    fn a_string_family_over_a_non_string_column_stays_above_the_scan() {
-        for expr in [
-            "char_length(i)",
-            "upper(i)",
-            "lower(r)",
-            "substr(dec, i, i)",
-            "conv(i, i, i)",
-            // `j` is JSON and `bt` is BIT: Go casts both into the string slot,
-            // and `bt` is exactly the shape `scalarExprSupportedByTiKV`'s
-            // `ast.Conv` case refuses outright (Go issue 51877).
-            "upper(j)",
-            "char_length(bt)",
-        ] {
-            assert_eq!(
-                pushes(expr),
-                Some(false),
-                "{expr}: the implicit CAST into the string slot is not built here"
-            );
-        }
-    }
-
-    /// PERFORMANCE, the part not reached: Go's verdict on the families the
-    /// catalog does not hold, kept as the assertion it must eventually become.
-    #[test]
-    #[ignore = "the date, INTERVAL and JSON families need temporal cast targets with a source-derived FSP, the session time zone in the DAG request, INTERVAL metadata and the ETJson field type -- see GO_PUSHES_NOT_HERE_YET"]
-    fn tikv_pushes_what_go_pushes() {
-        for expr in GO_PUSHES_NOT_HERE_YET {
-            assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
-        }
-    }
-
-    /// The gap the `#[ignore]`d test above would otherwise hide: TODAY every
-    /// row of the not-yet half is refused. Pinning that keeps the count honest
-    /// -- if a widening starts pushing some of them, this test fails and the
-    /// ignored one must be re-checked, along with the live differential.
-    #[test]
-    fn every_not_yet_pushable_expression_is_still_refused_here() {
-        let pushed_here: Vec<&&str> = GO_PUSHES_NOT_HERE_YET
-            .iter()
-            .filter(|expr| pushes(expr) == Some(true))
-            .collect();
-        assert!(
-            pushed_here.is_empty(),
-            "these now push -- re-check them against Go's verdict: {pushed_here:?}"
-        );
-    }
-
-    /// The two halves of Go's pushed table are the whole of it, with no row
-    /// counted twice or lost while moving one across.
-    ///
-    /// Fifty is the row count of Go's pushed table as ported: the four
-    /// `CONV`/substring rows plus the forty-six live rows of `testcases`,
-    /// with Go's five commented-out rows excluded because they pin no verdict.
-    #[test]
-    fn the_two_halves_reconstruct_gos_pushed_table() {
-        assert_eq!(GO_PUSHES_HERE_TOO.len() + GO_PUSHES_NOT_HERE_YET.len(), 50);
-        for expr in GO_PUSHES_HERE_TOO {
-            assert!(
-                !GO_PUSHES_NOT_HERE_YET.contains(expr),
-                "{expr} is in both halves"
-            );
-        }
-    }
-
-    /// Every expression in Go's table parses here, in all three halves, so a
-    /// regression that lost one of these spellings from the grammar would fail
-    /// here rather than silently shrinking a table above.
-    #[test]
-    fn every_expression_in_gos_table_parses() {
-        let unparsable: Vec<&&str> = GO_REFUSES
-            .iter()
-            .chain(GO_PUSHES_HERE_TOO)
-            .chain(GO_PUSHES_NOT_HERE_YET)
-            .filter(|expr| pushes(expr).is_none())
-            .collect();
-        assert!(
-            unparsable.is_empty(),
-            "these rows of Go's push-down table do not parse here: {unparsable:?}"
-        );
     }
 }

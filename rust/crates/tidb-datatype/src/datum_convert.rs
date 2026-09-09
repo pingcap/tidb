@@ -343,15 +343,16 @@ impl Datum {
             )),
             Self::BinaryLiteral(value) | Self::Bit(value) => {
                 let literal = value.to_int();
-                let bounded = numeric_outcome(convert_uint_to_int(literal.value(), upper, target));
-                Converted {
-                    value: bounded.value,
-                    event: prefer_event(
-                        literal
-                            .is_truncated()
-                            .then_some(ScalarConversionEvent::Truncated),
-                        bounded.event,
-                    ),
+                if literal.is_truncated() {
+                    // Go's `toSignedInteger` returns immediately when
+                    // `BinaryLiteral.ToInt` reports the too-wide literal;
+                    // the value beside that error is the zero `int64`.
+                    Converted {
+                        value: 0,
+                        event: Some(ScalarConversionEvent::Truncated),
+                    }
+                } else {
+                    numeric_outcome(convert_uint_to_int(literal.value(), upper, target))
                 }
             }
             Self::Json(value) => json_to_int(value, false, target, flags),
@@ -506,12 +507,13 @@ impl Datum {
 
     /// Go `Datum.convertToMysqlTime` / `convertToMysqlTimestamp`.
     ///
-    /// The two date flags are read off `flags` rather than hardcoded, because
+    /// The three date flags are read off `flags` rather than hardcoded, because
     /// they are exactly what the SQL mode moves: Go's `Time.Check` takes
-    /// `IgnoreZeroInDate` for `NO_ZERO_IN_DATE` and `IgnoreInvalidDateErr`
-    /// for `ALLOW_INVALID_DATES`, so a `'2024-00-01'` or a `'2024-02-31'`
-    /// either parses into a real value or fails HERE depending on the mode
-    /// the statement runs under.
+    /// `IgnoreZeroDateErr` for `NO_ZERO_DATE`, `IgnoreZeroInDate` for
+    /// `NO_ZERO_IN_DATE`, and `IgnoreInvalidDateErr` for
+    /// `ALLOW_INVALID_DATES`, so an all-zero value, `'2024-00-01'`, or
+    /// `'2024-02-31'` either parses into a real value or fails HERE depending
+    /// on the mode the statement runs under.
     ///
     /// A failure returns [`DatumValueError::IncorrectTemporal`] carrying the
     /// zero value of the target type, which is what Go returns in the datum
@@ -534,6 +536,7 @@ impl Datum {
             target.decimal()
         };
         let zero_in_date = flags.ignore_zero_in_date_err();
+        let ignore_zero_date_err = flags.ignore_zero_date_err();
         let invalid_date = flags.ignore_invalid_date_err();
         // Go's fallback datum: `NewTime(ZeroCoreTime, tp, DefaultFsp)`.
         let zero = Time::new(CoreTime::default(), kind, 0).map_err(conversion_error)?;
@@ -545,7 +548,7 @@ impl Datum {
                     .convert_kind(kind, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?;
                 if adjusted {
-                    event = Some(ScalarConversionEvent::Truncated);
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
                 }
                 converted.round_frac(fsp, zone).map_err(wrong_value)?
             }
@@ -556,7 +559,7 @@ impl Datum {
                 .and_then(|time| time.round_frac(fsp, zone))
                 .map_err(wrong_value)?,
             Self::String(value) => {
-                parse_time(
+                let parsed = parse_time(
                     value.as_utf8()?,
                     kind,
                     fsp,
@@ -565,11 +568,14 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Bytes(value) => {
-                parse_time(
+                let parsed = parse_time(
                     std::str::from_utf8(value)?,
                     kind,
                     fsp,
@@ -578,18 +584,43 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Int(value) => {
-                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed = parse_time_from_num(
+                    *value,
+                    kind,
+                    fsp,
+                    zero_in_date,
+                    invalid_date,
+                    ignore_zero_date_err,
+                    zone,
+                )
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed = parse_time_from_num(
+                    *value as i64,
+                    kind,
+                    fsp,
+                    zero_in_date,
+                    invalid_date,
+                    ignore_zero_date_err,
+                    zone,
+                )
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Decimal(value) => {
                 let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, zone)
@@ -598,7 +629,7 @@ impl Datum {
                 time.round_frac(fsp, zone).map_err(wrong_value)?
             }
             Self::Json(value) => {
-                parse_time(
+                let parsed = parse_time(
                     &value.unquote()?,
                     kind,
                     fsp,
@@ -607,8 +638,11 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
         };
@@ -756,6 +790,11 @@ impl Datum {
         if matches!(self, Self::VectorFloat32(_)) {
             return Err(DatumValueError::Unsupported(self.kind(), "set"));
         }
+        // `convertToMysqlSet` leaves the zero SET beside a failed numeric
+        // `convertToUint` and wraps that failure as `ErrTruncated`.  Keep
+        // that event instead of letting a saturated numeric value of zero
+        // look like the valid SET zero (notably `INSERT ... VALUES (-1)`).
+        let mut numeric_conversion_failed = false;
         let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
                 parse_set(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
@@ -774,19 +813,31 @@ impl Datum {
             }
             Self::VectorFloat32(_) => unreachable!("vector returned before borrowing elements"),
             _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) => parse_set_value(elements, number.value).map_err(|_| ()),
-                Err(_) => Err(()),
+                Ok(number) if number.event.is_none() => {
+                    parse_set_value(elements, number.value).map_err(|_| ())
+                }
+                Ok(_) | Err(_) => {
+                    numeric_conversion_failed = true;
+                    Err(())
+                }
             },
         });
         // Go `convertToMysqlSet` wraps EVERY failure in `ErrTruncated` and
         // still calls `SetMysqlSet`, so the zero set is stored and the caller
         // decides between a 1265 warning and a strict error.
-        Ok(match parsed {
-            Ok(value) => exact(Self::new_set(value, target.collation())),
-            Err(()) => Converted {
+        Ok(if numeric_conversion_failed {
+            Converted {
                 value: Self::new_set(crate::MysqlSet::default(), target.collation()),
                 event: Some(ScalarConversionEvent::Truncated),
-            },
+            }
+        } else {
+            match parsed {
+                Ok(value) => exact(Self::new_set(value, target.collation())),
+                Err(()) => Converted {
+                    value: Self::new_set(crate::MysqlSet::default(), target.collation()),
+                    event: Some(ScalarConversionEvent::Truncated),
+                },
+            }
         })
     }
 
@@ -1736,6 +1787,37 @@ mod tests {
         ));
     }
 
+    /// Go's signed string conversion keeps the parse/truncation error when a
+    /// narrower integer target also reports a range clamp; unsigned conversion
+    /// deliberately retains the opposite precedence.
+    #[test]
+    fn signed_string_conversion_prefers_source_truncation_over_clamp() {
+        let signed_tiny = FieldType::new(FieldTypeCode::Tiny);
+        let unsigned_tiny =
+            FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED);
+
+        for input in [
+            Datum::new_string("999abc"),
+            Datum::new_bytes(b"999abc".to_vec()),
+        ] {
+            let signed = input
+                .clone()
+                .convert_to(&signed_tiny, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(signed.value, Datum::Int(127));
+            assert_eq!(signed.event, Some(ScalarConversionEvent::Truncated));
+
+            let unsigned = input
+                .convert_to(&unsigned_tiny, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(unsigned.value, Datum::UInt(255));
+            assert!(matches!(
+                unsigned.event,
+                Some(ScalarConversionEvent::Overflow(_))
+            ));
+        }
+    }
+
     /// Go `pkg/types/convert_test.go::TestGetValidIntPrefix` keeps the
     /// decimal/exponent prefix when `Context.HandleTruncate` returns an
     /// error. `strconv.ParseInt`/`ParseUint` then replaces the truncation
@@ -1922,6 +2004,28 @@ mod tests {
                 .unwrap(),
             "12:34:56"
         );
+    }
+
+    /// Go `Datum.ConvertTo` threads `FlagIgnoreZeroDateErr` into
+    /// `ParseTimeFromNum`: strict flags return the zero temporal value beside
+    /// `ErrTruncatedWrongVal`, while default statement flags keep it silently.
+    #[test]
+    fn numeric_zero_temporal_conversion_obeys_zero_date_flag() {
+        let datetime = FieldType::new(FieldTypeCode::Datetime);
+        let strict = Datum::Int(0)
+            .convert_to(&datetime, crate::STRICT_FLAGS)
+            .expect_err("strict numeric zero must be rejected by ParseTimeFromNum");
+        assert_eq!(
+            strict,
+            DatumValueError::IncorrectTemporal(
+                Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap()
+            )
+        );
+
+        let permissive = Datum::Int(0)
+            .convert_to(&datetime, crate::DEFAULT_STATEMENT_FLAGS)
+            .expect("DefaultStmtFlags ignore zero-date errors");
+        assert!(matches!(permissive.value, Datum::Time(time) if time.is_zero()));
     }
 
     /// Source: `pkg/types/datum_test.go::TestConvertToFloat`.

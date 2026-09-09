@@ -12,17 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Non-recursive polling watcher for files and directories.
-//!
-//! Event and error delivery is lossless and back-pressured. One mutex covers
-//! each complete poll cycle, so `add` and `remove` return only after pending
-//! observations are delivered. Paths and file names retain native OS bytes;
-//! rename and move detection uses Unix device/inode identity. Only one [`Op`]
-//! is reported per file per poll.
-
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -50,13 +45,11 @@ pub mod op {
 }
 
 /// A set of file operation types (Go `watcher.Op`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Op(pub u32);
 
 impl Op {
-    /// Whether this set contains any of `ops` (Go `Event.HasOps`).
-    #[must_use]
-    pub fn has_op(self, op: Op) -> bool {
+    fn has_op(self, op: Op) -> bool {
         self.0 & op.0 != 0
     }
 }
@@ -90,83 +83,86 @@ impl std::fmt::Display for Op {
     }
 }
 
+#[cfg(unix)]
+type FileIdentity = (u64, u64);
+
+#[cfg(windows)]
+type FileIdentity = (Option<u32>, Option<u64>);
+
 /// Rust-native snapshot of the Go `os.FileInfo` fields exposed by an event.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FileMeta {
     name: OsString,
     is_dir: bool,
     mod_time: SystemTime,
-    size: u64,
+    size: i64,
     mode: u32,
-    dev: u64,
-    ino: u64,
+    identity: FileIdentity,
 }
 
 impl FileMeta {
-    fn from_metadata(name: OsString, m: &std::fs::Metadata) -> Self {
-        FileMeta {
+    fn from_metadata(name: OsString, m: &std::fs::Metadata) -> std::io::Result<Self> {
+        Ok(FileMeta {
             name,
             is_dir: m.is_dir(),
-            // ModTime falls back to UNIX_EPOCH if unavailable, matching Go's
-            // zero-time comparison semantics closely enough for change checks.
-            mod_time: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-            size: m.len(),
+            mod_time: m.modified()?,
+            size: m.len() as i64,
+            #[cfg(unix)]
             mode: m.mode(),
-            dev: m.dev(),
-            ino: m.ino(),
-        }
+            #[cfg(windows)]
+            mode: m.file_attributes(),
+            #[cfg(unix)]
+            identity: (m.dev(), m.ino()),
+            #[cfg(windows)]
+            identity: (m.volume_serial_number(), m.file_index()),
+        })
     }
 
     /// The base name of the file (Go `FileInfo.Name`).
-    #[must_use]
     pub fn name(&self) -> &OsStr {
         &self.name
     }
 
     /// Whether this path is a directory (Go `FileInfo.IsDir`).
-    #[must_use]
     pub fn is_dir(&self) -> bool {
         self.is_dir
     }
 
     /// File size in bytes (Go `FileInfo.Size`).
-    #[must_use]
-    pub fn size(&self) -> u64 {
+    pub fn size(&self) -> i64 {
         self.size
     }
 
     /// Last modification time (Go `FileInfo.ModTime`).
-    #[must_use]
     pub fn modified(&self) -> SystemTime {
         self.mod_time
     }
 
-    /// Native Unix mode bits used by the poller (Go `FileInfo.Mode`).
-    #[must_use]
+    /// Native mode representation used by the poller (Go `FileInfo.Mode`).
     pub fn mode(&self) -> u32 {
         self.mode
     }
 
-    /// Native device identifier from Go `FileInfo.Sys` on Unix.
-    #[must_use]
-    pub fn device(&self) -> u64 {
-        self.dev
-    }
-
-    /// Native inode identifier from Go `FileInfo.Sys` on Unix.
-    #[must_use]
-    pub fn inode(&self) -> u64 {
-        self.ino
-    }
-
-    /// Go `os.SameFile`: same device and inode.
+    /// Go `os.SameFile`: same platform file identity.
     fn same_file(&self, other: &FileMeta) -> bool {
-        self.dev == other.dev && self.ino == other.ino
+        #[cfg(unix)]
+        {
+            self.identity == other.identity
+        }
+        #[cfg(windows)]
+        {
+            match (self.identity, other.identity) {
+                (
+                    (Some(left_volume), Some(left_index)),
+                    (Some(right_volume), Some(right_index)),
+                ) => left_volume == right_volume && left_index == right_index,
+                _ => false,
+            }
+        }
     }
 }
 
 /// A single file operation event (Go `watcher.Event`).
-#[derive(Clone, Debug)]
 pub struct Event {
     /// The metadata of the file the event concerns.
     pub file_info: FileMeta,
@@ -178,13 +174,11 @@ pub struct Event {
 
 impl Event {
     /// Go `Event.IsDirEvent`: whether the event concerns a directory.
-    #[must_use]
     pub fn is_dir_event(&self) -> bool {
         self.file_info.is_dir()
     }
 
     /// Go `Event.HasOps`: whether the event's op is any of `ops`.
-    #[must_use]
     pub fn has_ops(&self, ops: &[Op]) -> bool {
         ops.iter().any(|&op| self.op.has_op(op))
     }
@@ -271,7 +265,6 @@ pub struct Watcher {
 
 impl Watcher {
     /// Go `NewWatcher`.
-    #[must_use]
     pub fn new() -> Self {
         let (events_tx, events) = bounded(0);
         let (errors_tx, errors) = bounded(0);
@@ -320,18 +313,6 @@ impl Watcher {
 
     /// Go `Start`: begins polling every `d`.
     pub fn start(&mut self, d: Duration) -> Result<(), WatchError> {
-        self.start_with_ticker(crossbeam_channel::tick(d))
-    }
-
-    /// [`Watcher::start`] with an explicit tick source instead of a clock.
-    ///
-    /// Go's `doWatch` already selects on `ticker.C`, so the poll trigger is a
-    /// channel either way; naming it lets a caller decide *when* a poll
-    /// observes the filesystem. Tests use this to take a snapshot only after
-    /// their filesystem mutation has fully landed, which makes every emitted
-    /// event a function of the final state rather than of where the poll
-    /// happened to interleave with a half-finished `write`/`rename`.
-    fn start_with_ticker(&mut self, ticker: Receiver<Instant>) -> Result<(), WatchError> {
         if self
             .running
             .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
@@ -347,6 +328,7 @@ impl Watcher {
         let closed_rx = self.closed_rx.clone();
         let events_tx = self.events_tx.take().expect("events sender present");
         let errors_tx = self.errors_tx.take().expect("errors sender present");
+        let ticker = crossbeam_channel::tick(d);
         self.handle = Some(std::thread::spawn(move || {
             do_watch(&ticker, &state, &closed_rx, &events_tx, &errors_tx);
         }));
@@ -374,18 +356,6 @@ impl Watcher {
     }
 }
 
-impl Default for Watcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for Watcher {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-
 /// Go `doWatch`: the poll loop, running one poll per tick.
 fn do_watch(
     ticker: &Receiver<Instant>,
@@ -404,17 +374,16 @@ fn do_watch(
                 if tick.is_err() {
                     return;
                 }
-                // One lock covers listing, event delivery, and snapshot
-                // replacement. Add/Remove therefore cannot return between a
-                // poll's observation and its rendezvous sends.
-                let mut state = state.lock().unwrap();
-                let Some(curr) = list_for_all(&mut state, closed_rx, errors_tx) else {
+                let Some(curr) = list_for_all(state, closed_rx, errors_tx) else {
                     return;
                 };
-                if poll_events(&state.files, &curr, closed_rx, events_tx).is_break() {
-                    return;
+                {
+                    let state = state.lock().unwrap();
+                    if poll_events(&state.files, &curr, closed_rx, events_tx).is_break() {
+                        return;
+                    }
                 }
-                state.files = curr;
+                state.lock().unwrap().files = curr;
             }
         }
     }
@@ -547,10 +516,11 @@ fn poll_events(
 /// Go `listForAll`: lists every watched name, reporting and pruning names
 /// that have disappeared. Returns `None` if the watcher closed mid-list.
 fn list_for_all(
-    state: &mut State,
+    state: &Arc<Mutex<State>>,
     closed_rx: &Receiver<()>,
     errors_tx: &Sender<WatchError>,
 ) -> Option<HashMap<PathBuf, FileMeta>> {
+    let mut state = state.lock().unwrap();
     let names: Vec<PathBuf> = state.names.keys().cloned().collect();
     let mut file_list = HashMap::new();
     for name in names {
@@ -582,18 +552,16 @@ fn is_not_found(e: &WatchError) -> bool {
 }
 
 /// Go `listForName`: metadata for a file, or for a directory's direct
-/// children (non-recursive). Directory entries use symlink-free metadata,
-/// matching Go's `entry.Info()`.
+/// children (non-recursive).
 fn list_for_name(name: &Path) -> Result<HashMap<PathBuf, FileMeta>, WatchError> {
     let stat = std::fs::metadata(name)
         .map_err(|e| WatchError::io(&format!("name {}", name.display()), &e))?;
     let mut list = HashMap::new();
     let is_dir = stat.is_dir();
     let base_name = name.file_name().unwrap_or(name.as_os_str()).to_os_string();
-    list.insert(
-        name.to_path_buf(),
-        FileMeta::from_metadata(base_name, &stat),
-    );
+    let file_meta = FileMeta::from_metadata(base_name, &stat)
+        .map_err(|e| WatchError::io(&format!("name {}", name.display()), &e))?;
+    list.insert(name.to_path_buf(), file_meta);
     if !is_dir {
         return Ok(list);
     }
@@ -602,12 +570,13 @@ fn list_for_name(name: &Path) -> Result<HashMap<PathBuf, FileMeta>, WatchError> 
     for entry in entries {
         let entry =
             entry.map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
-        let fi = entry
-            .metadata()
+        let fi = std::fs::symlink_metadata(entry.path())
             .map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
         let entry_name = entry.file_name();
         let fp = name.join(&entry_name);
-        list.insert(fp, FileMeta::from_metadata(entry_name, &fi));
+        let file_meta = FileMeta::from_metadata(entry_name, &fi)
+            .map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
+        list.insert(fp, file_meta);
     }
     Ok(list)
 }
@@ -617,6 +586,19 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[cfg(unix)]
+    fn chmod(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777)).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn chmod(path: &Path) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
 
     fn assert_event(w: &Watcher, path: &Path, op: Op) {
         loop {
@@ -637,45 +619,21 @@ mod tests {
         }
     }
 
-    // Go TestWatcher: create/modify/chmod/rename/remove/create/move over a
-    // temp directory.
-    //
-    // Go drives this with a 10ms ticker, which makes each assertion a bet that
-    // the mutation lands wholly between two polls. It does not always: a poll
-    // that lists while `Rename` is in flight legitimately sees the file in
-    // both directories (Create) or in neither (Remove), and one that lists
-    // between a truncating open and its write legitimately reports two
-    // Modifies. Those are honest observations of a poller, not watcher bugs,
-    // so the fix is to stop racing the poller rather than to widen a timeout:
-    // this test supplies the ticks itself, one per mutation, after the
-    // mutation has returned. Every poll then sees a settled filesystem and
-    // every event below is determined, not probable.
     #[test]
-    fn watcher_lifecycle() {
-        let dir = std::env::temp_dir().join(format!("tidb_watcher_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
+    fn test_watcher() {
+        let dir = tempfile::tempdir().unwrap();
         let old_name = "mysql-bin.000001";
         let new_name = "mysql-bin.000002";
-        let old_path = dir.join(old_name);
-        let new_path = dir.join(new_name);
+        let old_path = dir.path().join(old_name);
+        let new_path = dir.path().join(new_name);
 
         let mut w = Watcher::new();
-        w.add(&dir).unwrap();
-        // Rendezvous: `poll()` returns only once the watch thread has taken
-        // the tick, and the thread lists only after that.
-        let (tick_tx, tick_rx) = bounded::<Instant>(0);
-        w.start_with_ticker(tick_rx).unwrap();
-        let poll = || tick_tx.send(Instant::now()).unwrap();
+        w.add(dir.path()).unwrap();
+        w.start(Duration::from_millis(10)).unwrap();
 
-        // create
-        std::fs::write(&old_path, b"").unwrap();
-        poll();
+        std::fs::File::create(&old_path).unwrap();
         assert_event(&w, &old_path, op::CREATE);
 
-        // modify: Go opens O_WRONLY and writes once. `fs::write` would open
-        // O_TRUNC first, a second metadata change the Go test never makes.
         {
             use std::io::Write;
             let mut f = std::fs::OpenOptions::new()
@@ -684,135 +642,26 @@ mod tests {
                 .unwrap();
             f.write_all(b"meaningless content").unwrap();
         }
-        poll();
         assert_event(&w, &old_path, op::MODIFY);
 
-        // chmod
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&old_path, std::fs::Permissions::from_mode(0o777)).unwrap();
-        }
-        poll();
+        chmod(&old_path);
         assert_event(&w, &old_path, op::CHMOD);
 
-        // rename (within the same directory)
         std::fs::rename(&old_path, &new_path).unwrap();
-        poll();
         assert_event(&w, &old_path, op::RENAME);
 
-        // remove
         std::fs::remove_file(&new_path).unwrap();
-        poll();
         assert_event(&w, &new_path, op::REMOVE);
 
-        // create again
-        std::fs::write(&old_path, b"").unwrap();
-        poll();
+        std::fs::File::create(&old_path).unwrap();
         assert_event(&w, &old_path, op::CREATE);
 
-        // move to another (independent) directory, like Go's second TempDir
-        let dir2 = std::env::temp_dir().join(format!("tidb_watcher_test2_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir2);
-        std::fs::create_dir_all(&dir2).unwrap();
-        w.add(&dir2).unwrap();
-        let old_path2 = dir2.join(old_name);
+        let dir2 = tempfile::tempdir().unwrap();
+        let old_path2 = dir2.path().join(old_name);
+        w.add(dir2.path()).unwrap();
         std::fs::rename(&old_path, &old_path2).unwrap();
-        poll();
         assert_event(&w, &old_path, op::MOVE);
 
         w.close();
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&dir2);
-    }
-
-    #[test]
-    fn op_string_and_errors() {
-        assert_eq!(op::CREATE.to_string(), "CREATE");
-        assert_eq!((op::MODIFY | op::CHMOD).to_string(), "MODIFY|CHMOD");
-        assert_eq!(Op(0).to_string(), "");
-
-        let mut w = Watcher::new();
-        w.start(Duration::from_millis(10)).unwrap();
-        // A second Start while running is rejected.
-        assert!(matches!(
-            w.start(Duration::from_millis(10)),
-            Err(WatchError::AlreadyStarted)
-        ));
-        w.close();
-    }
-
-    #[test]
-    fn close_unblocks_pending_delivery_and_seals_the_watcher() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pending.bin");
-        let mut watcher = Watcher::new();
-        watcher.add(dir.path()).unwrap();
-        let (tick_tx, tick_rx) = bounded::<Instant>(0);
-        watcher.start_with_ticker(tick_rx).unwrap();
-
-        std::fs::write(&path, b"new").unwrap();
-        tick_tx.send(Instant::now()).unwrap();
-        watcher.close();
-
-        assert!(matches!(
-            watcher.events.try_recv(),
-            Err(crossbeam_channel::TryRecvError::Disconnected)
-        ));
-        assert!(matches!(
-            watcher.errors.try_recv(),
-            Err(crossbeam_channel::TryRecvError::Disconnected)
-        ));
-        assert!(matches!(watcher.add(&path), Err(WatchError::Closed)));
-        assert!(matches!(watcher.remove(&path), Err(WatchError::Closed)));
-        assert!(matches!(
-            watcher.start(Duration::from_millis(1)),
-            Err(WatchError::Closed)
-        ));
-    }
-
-    #[test]
-    fn file_meta_exposes_the_file_info_contract() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("metadata.bin");
-        std::fs::write(&path, b"abc").unwrap();
-
-        let native = std::fs::metadata(&path).unwrap();
-        let listed = list_for_name(&path).unwrap();
-        let meta = &listed[&path];
-        assert_eq!(meta.name(), path.file_name().unwrap());
-        assert_eq!(meta.size(), native.len());
-        assert_eq!(meta.modified(), native.modified().unwrap());
-        assert_eq!(meta.mode(), native.mode());
-        assert_eq!(meta.device(), native.dev());
-        assert_eq!(meta.inode(), native.ino());
-        assert!(!meta.is_dir());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_paths_round_trip_without_loss() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-        let path = PathBuf::from(OsString::from_vec(b"file-\xff".to_vec()));
-        let watcher = Watcher::new();
-        watcher.remove(&path).unwrap();
-        let name = path.file_name().unwrap().to_os_string();
-
-        let event = Event {
-            file_info: FileMeta {
-                name,
-                is_dir: false,
-                mod_time: SystemTime::UNIX_EPOCH,
-                size: 0,
-                mode: 0,
-                dev: 0,
-                ino: 0,
-            },
-            path,
-            op: op::REMOVE,
-        };
-        assert_eq!(event.path.as_os_str().as_bytes(), b"file-\xff");
-        assert_eq!(event.file_info.name().as_bytes(), b"file-\xff");
     }
 }

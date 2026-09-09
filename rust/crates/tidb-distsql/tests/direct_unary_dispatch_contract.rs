@@ -241,7 +241,7 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
         observed
             .lock()
             .expect("lock event observation")
-            .as_ref(),
+            .as_deref(),
         Some(&lock)
     );
 }
@@ -290,7 +290,7 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
         liveness: RefCell::new(VecDeque::new()),
         batch_errors: RefCell::new(VecDeque::new()),
         batch_ready_immediately: RefCell::new(VecDeque::new()),
-        batch_completion_gate: None,
+        batch_begin_count: None,
     };
     let shared = SharedReadRuntime::new_injected(
         client,

@@ -27,6 +27,12 @@ fn source_cache_misses_before_insert() {
     assert_eq!(cache.get(b"missing"), None);
 }
 
+#[deny(unused_must_use)]
+#[test]
+fn go_datum_cache_constructor_can_be_ignored() {
+    DatumMapCache::new();
+}
+
 #[test]
 fn source_cache_put_returns_and_retrieves_decoded_value() {
     let mut cache = DatumMapCache::new();

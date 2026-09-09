@@ -1469,6 +1469,12 @@ impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
             (0, 0, None) => TransactionStatusKind::RolledBack,
             (ts, 0, None) => TransactionStatusKind::Committed(Timestamp::from_version(ts)),
             (0, ttl, Some(info)) => TransactionStatusKind::Locked(ttl, info),
+            // `LockInfo` is optional in the CheckTxnStatus protocol. In
+            // particular, client-go's mock TiKV reports a live transaction
+            // with only `lock_ttl`. Keep accepting that source-compatible
+            // response; LockResolver fills the request-known identity fields
+            // before using the lock.
+            (0, ttl, None) => TransactionStatusKind::Locked(ttl, Default::default()),
             _ => unreachable!(),
         }
     }
@@ -1654,6 +1660,15 @@ error_locks!(kvrpcpb::CheckSecondaryLocksResponse);
 impl HasLocks for kvrpcpb::ScanLockResponse {
     fn take_locks(&mut self) -> Vec<LockInfo> {
         std::mem::take(&mut self.locks)
+            .into_iter()
+            .flat_map(|lock| {
+                if lock.shared_lock_infos.is_empty() {
+                    vec![lock]
+                } else {
+                    lock.shared_lock_infos
+                }
+            })
+            .collect()
     }
 }
 
@@ -1662,6 +1677,13 @@ impl HasLocks for kvrpcpb::PessimisticRollbackResponse {
         self.errors
             .iter_mut()
             .filter_map(|error| error.locked.take())
+            .flat_map(|lock| {
+                if lock.shared_lock_infos.is_empty() {
+                    vec![lock]
+                } else {
+                    lock.shared_lock_infos
+                }
+            })
             .collect()
     }
 }
@@ -1671,6 +1693,13 @@ impl HasLocks for kvrpcpb::PessimisticLockResponse {
         self.errors
             .iter_mut()
             .filter_map(|error| error.locked.take())
+            .flat_map(|lock| {
+                if lock.shared_lock_infos.is_empty() {
+                    vec![lock]
+                } else {
+                    lock.shared_lock_infos
+                }
+            })
             .collect()
     }
 }

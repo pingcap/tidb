@@ -11,11 +11,11 @@ mod deadlock;
 mod mock;
 mod mvcc;
 
-pub use deadlock::{DeadlockDetector, DeadlockError};
+pub use deadlock::{DeadlockDetector, DeadlockError, WaitForEntry};
 pub use mock::{
-    Action, Assertion, AssertionLevel, IsolationLevel, LockInfo, LockRecord, MockEngine, MockError,
-    MvccInfo, MvccValue, MvccWrite, Op, Pair, PessimisticAction, PessimisticLockKeyResult,
-    PessimisticLockKeyResultType, PessimisticLockRequest, PessimisticWakeUpMode, PrewriteRequest,
-    TxnMutation, WriteRecord, WriteType,
+    Action, Assertion, AssertionLevel, ForUpdateTsConstraint, IsolationLevel, LockInfo, LockRecord,
+    MockEngine, MockError, MvccInfo, MvccValue, MvccWrite, Op, Pair, PessimisticAction,
+    PessimisticLockKeyResult, PessimisticLockKeyResultType, PessimisticLockRequest,
+    PessimisticWakeUpMode, PrewriteRequest, TxnMutation, WriteRecord, WriteType,
 };
 pub use mvcc::{Mutation, MvccError, MvccStore, Timestamp, VersionedValue};

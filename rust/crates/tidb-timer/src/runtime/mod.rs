@@ -411,16 +411,21 @@ impl TimerGroupRuntime {
 
     /// Go `(*TimerGroupRuntime).Start`.
     pub fn start(&self) {
-        {
-            let state = self.shared.ctx_state.lock().unwrap();
+        // Go holds `rt.mu` across the running check, `initCtx` and `wg.Run`;
+        // keeping check + ctx init under one lock acquisition preserves that
+        // atomicity so two concurrent `start` calls cannot both spawn a loop.
+        let ctx = {
+            let mut state = self.shared.ctx_state.lock().unwrap();
             if state.ctx.is_some() {
                 return;
             }
-        }
+            let (ctx, cancel) = Context::with_cancel();
+            state.ctx = Some(ctx.clone());
+            state.cancel = Some(cancel);
+            ctx
+        };
 
-        self.init_ctx();
         let runtime = self.clone();
-        let ctx = self.ctx();
         self.shared.wait_group.run(move || {
             with_recover_until(&ctx, |total_panic| runtime.timer_loop(total_panic));
         });

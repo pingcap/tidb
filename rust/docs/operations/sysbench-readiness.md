@@ -1022,8 +1022,10 @@ the unit's own fixtures as two columns over the same bytes — `s` under
 `utf8mb4_general_ci`, `b` under `utf8mb4_bin` — rows `(1,'A') (2,'a')
 (3,'aéb') (4,'B')`, with the Go server confirming `hex(s) = 61C3A962` for the
 accented row. Rows are compared against the Go `tidb-server` on the same TiKV;
-the wire counts come from `cluster-session-smoke --cop` as a second process,
-because a served node reports no coprocessor counters.
+the wire counts were captured by the then-current
+`cluster-session-smoke --cop` test receipt. That node-wide request history has
+since been removed from the production scan path; the table below records the
+historical live-cluster observation.
 
 **Every case the in-repo fake predicted is what real TiKV produced. The rust
 and Go row sets are identical in all six.**

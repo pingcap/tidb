@@ -17,6 +17,7 @@
 use std::fmt;
 
 use encoding_rs::{EncoderResult, GB18030, GBK};
+use tidb_mysql::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
 
 use crate::ascii_encoding::ASCII_ENCODING;
 use crate::charset::{CaseRange, GB18030_BY_BYTES, GB18030_BY_RUNE, GB18030_CASES, GBK_CASES};
@@ -241,7 +242,7 @@ impl Encoding {
         match self {
             Self::Gbk => map_case(source, GBK_CASES, Case::Upper),
             Self::Gb18030 => map_case(source, GB18030_CASES, Case::Upper),
-            _ => source.to_uppercase(),
+            _ => go_simple_uppercase(source),
         }
     }
 
@@ -250,7 +251,7 @@ impl Encoding {
         match self {
             Self::Gbk => map_case(source, GBK_CASES, Case::Lower),
             Self::Gb18030 => map_case(source, GB18030_CASES, Case::Lower),
-            _ => source.to_lowercase(),
+            _ => go_simple_lowercase(source),
         }
     }
 }
@@ -416,11 +417,13 @@ fn gbk_mb_len(source: &[u8]) -> usize {
 }
 
 fn gb18030_mb_len(source: &[u8]) -> usize {
+    if source.len() < 2 {
+        return 0;
+    }
     if gbk_mb_len(source) == 2 {
         return 2;
     }
-    if source.len() >= 4
-        && (0x81..=0xFE).contains(&source[0])
+    if (0x81..=0xFE).contains(&source[0])
         && (0x30..=0x39).contains(&source[1])
         && (0x81..=0xFE).contains(&source[2])
         && (0x30..=0x39).contains(&source[3])
@@ -449,8 +452,12 @@ enum Case {
 }
 
 fn map_case(source: &str, cases: &[CaseRange], requested: Case) -> String {
+    let default_mapped = match requested {
+        Case::Upper => go_simple_uppercase(source),
+        Case::Lower => go_simple_lowercase(source),
+    };
     let mut output = String::with_capacity(source.len());
-    for character in source.chars() {
+    for (character, default_character) in source.chars().zip(default_mapped.chars()) {
         let codepoint = u32::from(character);
         if let Some(range) = cases
             .iter()
@@ -465,10 +472,7 @@ fn map_case(source: &str, cases: &[CaseRange], requested: Case) -> String {
                     .expect("source special-case delta is a Unicode scalar"),
             );
         } else {
-            match requested {
-                Case::Upper => output.extend(character.to_uppercase()),
-                Case::Lower => output.extend(character.to_lowercase()),
-            }
+            output.push(default_character);
         }
     }
     output
@@ -532,5 +536,20 @@ mod tests {
         );
         assert_eq!(decoded.bytes(), "安�0�2".as_bytes());
         assert!(decoded.error().is_none());
+    }
+
+    #[test]
+    fn source_case_conversion_uses_go_simple_rune_mappings() {
+        assert_eq!(Encoding::Utf8.to_upper("straße"), "STRAßE");
+        assert_eq!(Encoding::Utf8.to_lower("İ"), "i");
+        assert_eq!(Encoding::Gbk.to_upper("straßeà"), "STRAßEà");
+        assert_eq!(Encoding::Gb18030.to_lower("İ"), "i");
+    }
+
+    #[test]
+    fn source_gb18030_mb_len_panics_for_truncated_four_byte_prefix() {
+        for source in [&[0x81, 0x30][..], &[0x81, 0x30, 0x81][..]] {
+            assert!(std::panic::catch_unwind(|| Encoding::Gb18030.mb_len(source)).is_err());
+        }
     }
 }

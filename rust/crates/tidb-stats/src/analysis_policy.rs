@@ -22,7 +22,6 @@
 pub const DEFAULT_AUTO_ANALYZE_MIN_COUNT: i64 = 1_000;
 
 /// Returns whether a table has a valid last-analyze timestamp.
-#[must_use]
 pub const fn table_is_analyzed(last_analyze_version: u64) -> bool {
     last_analyze_version > 0
 }
@@ -30,7 +29,6 @@ pub const fn table_is_analyzed(last_analyze_version: u64) -> bool {
 /// Returns whether an optional table has enough realtime rows for auto-analyze.
 ///
 /// `None` models the source's nil receiver, which returns false.
-#[must_use]
 pub fn meets_auto_analyze_min_count(
     realtime_count: Option<i64>,
     auto_analyze_min_count: i64,
@@ -39,7 +37,6 @@ pub fn meets_auto_analyze_min_count(
 }
 
 /// Returns whether an optional table is eligible for analysis.
-#[must_use]
 pub fn is_eligible_for_analysis(
     realtime_count: Option<i64>,
     pseudo: bool,

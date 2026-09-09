@@ -10,7 +10,7 @@ TiDB's global-connection package produces cluster-unique connection IDs and recy
 
 ## Progress
 
-- [x] (2026-08-12) Fixed the complete five-artifact Go inventory and accepted source pin `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`; current package bytes match the pin.
+- [x] (2026-08-12) Fixed the complete five-artifact Go inventory and accepted the then-current source pin `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`; current package bytes matched that pin.
 - [x] (2026-08-12) Confirmed there is no `doc.go`, generated input, fixture, testdata, platform file, fuzz target, example, `go:generate`, `go:embed`, or failpoint use; inventoried two Go benchmarks and the ldflag integration variant.
 - [x] (2026-08-12) Read all Go source, tests, Bazel metadata, both Rust owner modules, historical claims, and live `tidb-server` consumers.
 - [x] (2026-08-12) Ran the nine Go tests normally and under race and the ten Rust owner tests.
@@ -18,6 +18,9 @@ TiDB's global-connection package produces cluster-unique connection IDs and recy
 - [x] (2026-08-12) Proved the old Rust zero-capacity failure, replaced non-source subtraction with one wrapping ring mask, and passed the regression.
 - [x] (2026-08-12) Finished the public contract, executed both Go benchmarks once, and validated both live server consumers.
 - [x] (2026-08-12) Completed the compact receipt, Ready validation, and staged-diff self-review.
+- [x] (2026-09-02) Refreshed all five artifacts against Go `origin/master` `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the package remains unchanged and has 1,391 lines.
+- [x] (2026-09-02) Removed Rust-only `#[must_use]` diagnostics from `Gcid::to_conn_id` and `SimpleAllocator::new`; the deny-lint regression failed before the edit and passes with the ten focused owner tests.
+- [x] (2026-09-02) Re-ran the current and detached latest Go package tests, Rust owner tests, formatting, repository lint, and diff checks under the Ready profile.
 - [ ] Rebase one package commit onto a fresh target tip, repeat Ready if needed, push without force, and verify the fresh remote SHA.
 
 ## Surprises & Discoveries
@@ -55,9 +58,13 @@ TiDB's global-connection package produces cluster-unique connection IDs and recy
   Rationale: Rust uses `usize`, typed callable values, poison-aware mutexes, and atomics. All representable source outputs and live-consumer behavior remain covered; reproducing invalid or racy Go states would weaken the Rust interface.
   Date/Author: 2026-08-12 / Codex
 
+- Decision: Remove `#[must_use]` from `Gcid::to_conn_id` and `SimpleAllocator::new`.
+  Rationale: Go callers may discard both return values, and the new deny-lint regression reproduced that source contract; retaining the annotations would add Rust-only compile failures without a Go behavior equivalent.
+  Date/Author: 2026-09-02 / Codex
+
 ## Outcomes & Retrospective
 
-The package inventory, source pin, all owner reads, baselines, public probe, old-implementation failure, minimal arithmetic correction, four-test public contract, benchmark execution, live-consumer validation, receipt, Ready validation, and staged-diff self-review are complete. Publication and fresh-remote verification remain.
+The package inventory, current Go authority refresh, all owner reads, baselines, public probe, old-implementation failure, minimal arithmetic correction, return-diagnostic regression, benchmark execution, live-consumer validation, receipt, Ready validation, and staged-diff self-review are complete. Publication and fresh-remote verification remain.
 
 ## Context and Orientation
 
@@ -79,7 +86,7 @@ The publication milestone adds a compact receipt, completes Ready, fetches the t
 
 ## Plan of Work
 
-Keep the production correction confined to the ring's `uint32` index mask. Keep external public contracts in `rust/crates/tidb-util/tests/globalconn_contract.rs`; do not duplicate all private owner cases. Add `rust/crates/tidb-util/tests/globalconn.semantic.toml` that binds both owner files, the public contract, the server owner, and both TCP consumer tests to the accepted Go pin. Do not change Go, Bazel, Cargo manifests, optimizer, or transaction code.
+Keep the production correction confined to the ring's `uint32` index mask and source-level return diagnostics. Keep external public contracts in `rust/crates/tidb-util/tests/globalconn_contract.rs`; do not duplicate all private owner cases. Add `rust/crates/tidb-util/tests/globalconn.semantic.toml` that binds both owner files, the public contract, the server owner, and both TCP consumer tests to the accepted Go pin. Do not change Go, Bazel, Cargo manifests, optimizer, or transaction code.
 
 ## Concrete Steps
 
@@ -105,7 +112,7 @@ From repository root, run the semantic package gate, repository lint, and atomic
 
 ## Validation and Acceptance
 
-Go must list exactly nine tests and two benchmarks; normal, race, and one-iteration benchmark runs must pass. The public regression must fail before and pass after the wrapping correction. Rust must pass all owner and public tests, both targeted TCP consumers, the complete owning crate, fmt, owner/server Clippy, semantic gate, repository lint, and diff checks. The accepted five Go artifacts must remain byte-identical to the pin. Publication is accepted only after a normal push and a fresh explicit fetch show all three remote/local SHAs equal.
+Go must list exactly nine tests and two benchmarks; normal, race, and one-iteration benchmark runs must pass. The public regression must fail before and pass after the wrapping correction, and the `unused_must_use` return-contract regression must fail before and pass after removing the two annotations. Rust must pass all owner and public tests, both targeted TCP consumers, the complete owning crate, fmt, owner/server Clippy, semantic gate, repository lint, and diff checks. The accepted five Go artifacts must remain byte-identical to the `c6054025ed4c32ab3672a2a24ea46892714d21ec` authority. Publication is accepted only after a normal push and a fresh explicit fetch show all three remote/local SHAs equal.
 
 ## Idempotence and Recovery
 
@@ -125,12 +132,12 @@ Ready evidence:
 
     Go listed exactly 9 tests and 2 benchmarks; normal and race tests passed.
     Both benchmarks and every sub-benchmark executed successfully with benchtime=1x.
-    Rust owner tests: 10 passed; public contract: 4 passed.
+    Rust owner tests: 10 passed (including the return-diagnostic regression); public contract: 4 passed.
     Both targeted tidb-server TCP consumers passed.
     Complete tidb-util: 346 passed, 1 existing ignored; all integration and doc tests passed.
     cargo fmt, tidb-util Clippy, no-deps tidb-server Clippy, the five-command semantic package gate, and make lint passed.
     The accepted Go package remains exactly five artifacts and byte-identical to the source pin.
-    The staged diff contains one private production arithmetic helper, its public regression/variant contract, the compact receipt, and this plan; all source cap-minus-one paths use the helper.
+    The staged diff contains the two removed return diagnostics, their deny-lint regression, the compact receipt, and this plan; the earlier ring-mask correction remains unchanged.
 
 The temporary public probe was moved to the user's Trash as `tidb-globalconn-probe-20260812.go`.
 
@@ -138,7 +145,7 @@ The full Go integration harness under `tests/globalkilltest` requires external P
 
 ## Interfaces and Dependencies
 
-The public Rust interfaces remain `Gcid`, `parse_conn_id`, `Allocator`, `SimpleAllocator`, `GlobalAllocator`, `IdPool`, `AutoIncPool`, and `LockFreeCircularPool`. The only production change is a private `LockFreeCircularPool::ring_mask(&self) -> u32`. No dependency or manifest changes are planned.
+The public Rust interfaces remain `Gcid`, `parse_conn_id`, `Allocator`, `SimpleAllocator`, `GlobalAllocator`, `IdPool`, `AutoIncPool`, and `LockFreeCircularPool`. The production owner retains the private `LockFreeCircularPool::ring_mask(&self) -> u32`; `Gcid::to_conn_id(&self) -> u64` and `SimpleAllocator::new() -> Self` intentionally have no Rust-only `must_use` requirement. No dependency or manifest changes are planned.
 
 Plan revision note: created after full inventory, source pin, owner/consumer reads, baseline tests, public probing, and the fail-before-fix wrapping regression.
 
@@ -147,3 +154,8 @@ Plan revision note (2026-08-12): recorded completion of both benchmark artifacts
 Plan revision note (2026-08-12): recorded complete Ready evidence and recoverable cleanup of the temporary public probe.
 
 Plan revision note (2026-08-12): recorded staged-diff self-review and narrowed cache-cleanup guidance to the exact unused incremental directory.
+
+Plan revision note (2026-09-02): refreshed the complete package against Go
+`origin/master` `c6054025ed4c32ab3672a2a24ea46892714d21ec`, removed the two
+Rust-only return-value diagnostics, recorded the fail-before/fail-after
+regression, and updated the Ready evidence.

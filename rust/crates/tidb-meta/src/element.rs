@@ -79,7 +79,6 @@ pub struct Element {
 
 impl Element {
     /// Go `Element.EncodeElement`: the 5-byte type key then the id big-endian.
-    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = vec![0; ELEMENT_LEN];
         let copied = self.type_key.len().min(ELEMENT_KEY_LEN);
@@ -94,7 +93,6 @@ impl Element {
     /// lossless source contract. [`fmt::Display`] is exact for valid UTF-8 and
     /// uses Rust's replacement character only when a formatter cannot carry
     /// Go's invalid string bytes.
-    #[must_use]
     pub fn string_bytes(&self) -> Vec<u8> {
         let mut value = format!("ID:{},TypeKey:", self.id).into_bytes();
         value.extend_from_slice(&self.type_key);

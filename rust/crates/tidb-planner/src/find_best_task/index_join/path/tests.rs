@@ -36,15 +36,18 @@ fn plan_cache_for_index_join_range_fallback() {
         args.push(Expression::Constant(constant));
     }
     let conditions = [f("in", args)];
-    let evaluate = |values: &[&str], constant: &Constant| match &constant.param_marker {
-        Some(marker) => Ok(Datum::new_collation_string(
-            values[marker.order as usize],
-            Collation::Utf8Mb4Bin,
-        )),
-        None => constant.eval(),
+    let evaluate = |values: &[&str], expression: &Expression| match expression {
+        Expression::Constant(constant) => match &constant.param_marker {
+            Some(marker) => Ok(Datum::new_collation_string(
+                values[marker.order as usize],
+                Collation::Utf8Mb4Bin,
+            )),
+            None => constant.eval(),
+        },
+        _ => crate::ranger::points::evaluate_static(expression),
     };
-    let short = |constant: &Constant| evaluate(&["a", "b", "c"], constant);
-    let long = |constant: &Constant| evaluate(&["aaaaaa", "bbbbbb", "cccccc"], constant);
+    let short = |constant: &Expression| evaluate(&["a", "b", "c"], constant);
+    let long = |constant: &Expression| evaluate(&["aaaaaa", "bbbbbb", "cccccc"], constant);
     let fallback = std::cell::Cell::new(false);
     let record = |_: i64| fallback.set(true);
     let builder = IndexJoinPathRangeBuilder {
@@ -53,7 +56,7 @@ fn plan_cache_for_index_join_range_fallback() {
         lookup: &lookup,
         inner_schema: &schema,
         pushed_conditions: &conditions,
-        eval_constant: &short,
+        eval_expression: &short,
         range_max_size: 1260,
         record_range_fallback: &record,
         regard_null_as_point: true,
@@ -64,7 +67,7 @@ fn plan_cache_for_index_join_range_fallback() {
     assert_eq!(cached.ranges.len(), 3);
     assert_eq!(cached.used_columns(), 2);
     let normal_long = IndexJoinPathRangeBuilder {
-        eval_constant: &long,
+        eval_expression: &long,
         ..builder
     }
     .build(false)
@@ -188,7 +191,7 @@ fn build_with_fallback(
         lookup: &lookup,
         inner_schema: &schema,
         pushed_conditions: pushed,
-        eval_constant: &Constant::eval,
+        eval_expression: &crate::ranger::points::evaluate_static,
         range_max_size: quota,
         record_range_fallback: record,
         regard_null_as_point: true,

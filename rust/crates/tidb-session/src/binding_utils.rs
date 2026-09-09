@@ -58,9 +58,8 @@
 //!
 //! # Narrowings
 //!
-//! * **`hint.HintsSet` / `hint.BindHint`** resolve to [`crate::binding`]'s own
-//!   port of the same Go type, not to `pkg/util/hint` through `tidb-executor`.
-//!   Same function, closer at hand.
+//! * **`hint.HintsSet` / `hint.BindHint`** resolve to the canonical
+//!   [`tidb_hint`] package port rather than a session-owned copy.
 //! * **`RestoreDBForBinding` (`binding.go:464`)** is
 //!   [`crate::binding::restore_with_default_db`] -- already ported, reused
 //!   rather than duplicated. Go passes `node.Text()` so its `SimpleCases` fast
@@ -114,6 +113,7 @@ use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
 use crate::binding::{Binding, HintsSet, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `bindinfo.BuiltinPseudoSQL4BindLock` (`binding_handle.go:34`). Declared
 /// in another file of the package; inlined here because
@@ -376,7 +376,7 @@ pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
     Some(Binding {
         original_sql,
         // Go lowercases the schema on the way out of storage as well as in.
-        db: text(2)?.to_lowercase(),
+        db: go_to_lower(text(2)?),
         status,
         create_time: text(4).unwrap_or_default(),
         update_time: text(5).unwrap_or_default(),

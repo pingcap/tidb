@@ -1,0 +1,15 @@
+[package]
+name = "tidb-ddl-mock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generated-test-double parity for Go pkg/ddl/mock."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exec = { path = "../tidb-exec" }
+tidb-model = { path = "../tidb-model" }

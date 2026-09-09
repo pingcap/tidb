@@ -14,9 +14,8 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    column_is_all_evicted, column_stats_validity, copy_column, empty_column, Bucket, CmsSketch,
-    Column, ColumnInfo, ColumnValidityContext, FmSketch, Histogram, StatsLoadedStatus, TopN,
-    ALL_EVICTED, ALL_LOADED,
+    column_is_all_evicted, copy_column, empty_column, Bucket, CmsSketch, Column, ColumnInfo,
+    FmSketch, Histogram, StatsLoadedStatus, TopN, ALL_EVICTED, ALL_LOADED,
 };
 
 fn top_n(count: u64) -> TopN {
@@ -52,7 +51,6 @@ fn populated_column(stats_version: i64) -> Column {
         physical_id: 11,
         stats_version,
         is_handle: true,
-        histogram_memory_usage: 17,
     }
 }
 
@@ -96,19 +94,26 @@ fn source_v2_count_keeps_the_topn_precondition() {
 #[test]
 fn source_memory_usage_composes_every_optional_payload() {
     let column = populated_column(1);
+    let histogram_memory = column.histogram.memory_usage();
     let usage = column.memory_usage();
     assert_eq!(usage.column_id, 7);
-    assert_eq!(usage.histogram_mem_usage, 17);
+    assert_eq!(usage.histogram_mem_usage, histogram_memory);
     assert_eq!(usage.cmsketch_mem_usage, 32);
     assert_eq!(usage.topn_mem_usage, 65);
     assert_eq!(usage.fmsketch_mem_usage, 16);
-    assert_eq!(usage.total_mem_usage, 130);
+    assert_eq!(
+        usage.total_mem_usage,
+        histogram_memory
+            + usage.cmsketch_mem_usage
+            + usage.topn_mem_usage
+            + usage.fmsketch_mem_usage
+    );
 
     let mut minimal = column;
     minimal.cmsketch = None;
     minimal.top_n = None;
     minimal.fm_sketch = None;
-    assert_eq!(minimal.memory_usage().total_mem_usage, 17);
+    assert_eq!(minimal.memory_usage().total_mem_usage, histogram_memory);
 }
 
 #[test]
@@ -130,63 +135,6 @@ fn source_drop_preserves_v2_cms_but_not_v1_cms() {
     assert!(!uninitialized.is_stats_initialized());
     assert!(!uninitialized.is_all_evicted());
     assert_eq!(uninitialized.evicted_status(), ALL_EVICTED);
-}
-
-#[test]
-fn source_invalidity_truth_table_and_load_effect_match() {
-    let base = ColumnValidityContext {
-        has_plan_context: true,
-        has_statement_context: true,
-        physical_id: 12,
-        ..ColumnValidityContext::default()
-    };
-    let missing = column_stats_validity(None, base, 7);
-    assert!(missing.invalid);
-    assert_eq!(missing.load_request.unwrap().table_id, 12);
-
-    let mut column = populated_column(1);
-    let valid = column_stats_validity(Some(&column), base, 7);
-    assert!(!valid.invalid);
-    assert!(valid.load_request.is_none());
-
-    column.stats_loaded_status = StatsLoadedStatus::new(true, ALL_EVICTED);
-    let evicted = column_stats_validity(Some(&column), base, 7);
-    assert!(evicted.invalid);
-    assert!(evicted.load_request.is_some());
-
-    column.histogram.ndv = 0;
-    assert!(!column_stats_validity(Some(&column), base, 7).invalid);
-
-    for context in [
-        ColumnValidityContext {
-            restricted_sql: true,
-            ..base
-        },
-        ColumnValidityContext {
-            cannot_trigger_load: true,
-            ..base
-        },
-        ColumnValidityContext {
-            has_statement_context: false,
-            ..base
-        },
-    ] {
-        assert!(column_stats_validity(None, context, 7)
-            .load_request
-            .is_none());
-    }
-    assert!(column_stats_validity(None, base, -1).load_request.is_none());
-    assert!(
-        column_stats_validity(
-            Some(&populated_column(1)),
-            ColumnValidityContext {
-                pseudo: true,
-                ..base
-            },
-            7,
-        )
-        .invalid
-    );
 }
 
 #[test]
@@ -221,4 +169,28 @@ fn source_status_availability_and_empty_column_boundaries_match() {
     assert_eq!(empty.histogram.id, 5);
     assert!(empty.histogram.buckets.is_empty());
     assert!(empty.is_handle);
+}
+
+#[deny(unused_must_use)]
+#[test]
+fn go_column_returns_can_be_ignored() {
+    let column = populated_column(1);
+    column.copy();
+    column.total_row_count();
+    column.not_null_count();
+    column.increase_factor(10);
+    column.memory_usage();
+    column.item_id();
+    column.is_all_evicted();
+    column.evicted_status();
+    column.is_stats_initialized();
+    column.is_full_load();
+    column.stats_version();
+    column.is_cms_exist();
+    column.is_analyzed();
+    column.stats_available();
+    column.histogram();
+    let _ = column.top_n();
+    empty_column(1, false, ColumnInfo::default());
+    column_is_all_evicted(Some(&column));
 }

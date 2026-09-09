@@ -979,6 +979,7 @@ var defaultSysVars = []*SysVar{
 			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBColumnarStorageEnabled, Value: BoolToOnOff(vardef.DefTiDBColumnarStorageEnabled), Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBRestrictedReadOnly, Value: BoolToOnOff(vardef.DefTiDBRestrictedReadOnly), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
@@ -2290,8 +2291,16 @@ var defaultSysVars = []*SysVar{
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, vardef.DefDistSQLScanConcurrency)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBQueryCopStoreLimit, Value: strconv.Itoa(vardef.DefTiDBQueryCopStoreLimit), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
+		s.QueryCopStoreLimit = TidbOptInt(val, vardef.DefTiDBQueryCopStoreLimit)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(vardef.DefAnalyzeDistSQLScanConcurrency), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, vardef.DefAnalyzeDistSQLScanConcurrency)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeStoreBatchSize, Value: strconv.Itoa(vardef.DefTiDBAnalyzeStoreBatchSize), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxTiDBAnalyzeStoreBatchSize, SetSession: func(s *SessionVars, val string) error {
+		s.AnalyzeStoreBatchSize = TidbOptInt(val, vardef.DefTiDBAnalyzeStoreBatchSize)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptInSubqToJoinAndAgg, Value: BoolToOnOff(vardef.DefOptInSubqToJoinAndAgg), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -4040,6 +4049,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

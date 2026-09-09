@@ -16,18 +16,19 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
-use tidb_distsql::{WarningCollector, WarningLevel};
+use tidb_distsql::{ReplicaReadType, WarningCollector, WarningLevel};
 use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
-pub use tidb_util::context::MAX_WARNING_COUNT;
+
+const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;
-use tidb_util::disk::SpillStorage;
+use tidb_util::spill_storage::SpillStorage;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -222,6 +223,61 @@ impl RowIdShardGenerator {
     }
 }
 
+/// The live GLOBAL-variable reader Go exposes through
+/// `SessionVars.GlobalVarsAccessor`.
+pub trait GlobalSysvarAccessor: Send + Sync {
+    /// Reads the current GLOBAL value, or `None` when no session/global table
+    /// is attached to this evaluation context.
+    fn get_global_sysvar(&self, name: &str) -> Option<String>;
+}
+
+/// Plan-derived fields Go publishes on `sessmgr.ProcessInfo` when the
+/// ordinary executor is built.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProcessPlanInfo {
+    /// Go `ProcessInfo.BriefBinaryPlan`.
+    pub brief_binary_plan: String,
+    /// Go `StmtCtx.TableIDs`.
+    pub table_ids: Vec<i64>,
+    /// Go `StmtCtx.IndexNames`.
+    pub index_names: Vec<String>,
+    /// Go `physicalop.GetStatsInfo(ProcessInfo.Plan)`.
+    pub stats_info: std::collections::HashMap<String, u64>,
+}
+
+struct StatementRangeFallback {
+    tracker: Arc<tidb_util::context::PlanCacheTracker>,
+    handler: tidb_util::context::RangeFallbackHandler,
+    cache_started: AtomicBool,
+}
+
+struct PlannerWarningAppender {
+    warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+}
+
+impl tidb_util::context::WarnAppender for PlannerWarningAppender {
+    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+        self.append(WarningLevel::Warning, err);
+    }
+
+    fn append_note(&self, err: tidb_util::context::WarnErr) {
+        self.append(WarningLevel::Note, err);
+    }
+}
+
+impl PlannerWarningAppender {
+    fn append(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
+        let code = match &err {
+            tidb_util::context::WarnErr::Terror(error) => error.code().value() as u16,
+            tidb_util::context::WarnErr::Message(_) => 1105,
+        };
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((level, code, err.to_string()));
+    }
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -234,30 +290,6 @@ impl RowIdShardGenerator {
 /// DEFERRED (documented): the rest of `StatementContext` -- the remaining
 /// error groups (bad NULL, no default), the resource tracker and runtime
 /// stats.
-/// One prepared statement's committed access path for ONE named leaf --
-/// Go's prepared plan cache reduced to the decision this tier reuses safely.
-///
-/// Go caches a whole physical plan and rebinds its ranges per execute. This
-/// tier keeps every range, constant fold and residual split freshly derived
-/// from the CURRENT parameters, and pins only the SHAPE decision -- which
-/// access path won the cost race at the statement's first execution -- so a
-/// later execution whose literals would flip that race replays the original
-/// winner instead, exactly as a cache hit does in Go. Correctness never
-/// depends on the pin: every candidate is built from the same pushed
-/// conditions with the same residual handling, so forcing one changes only
-/// what it costs, never what it reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PinnedLeafAccess {
-    /// The whole-table handle scan won (`TableFullScan`/`TableRangeScan`).
-    TableScan,
-    /// An index read won, by catalog index id (stable within one schema
-    /// version; a DDL that drops or recreates the index fails the pin and
-    /// the statement replans freely).
-    IndexId(i64),
-}
-
-type GlobalSysvarReader = dyn Fn(&str) -> Option<String> + Send + Sync;
-
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -268,6 +300,9 @@ pub struct StmtContext {
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
     warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    /// Go's `StatementContext.LastMessage`, which UPDATE publishes for the
+    /// OK packet's length-encoded info field.
+    message: Arc<Mutex<String>>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`Self::enter_cop_eval`]).
     ///
@@ -283,6 +318,12 @@ pub struct StmtContext {
     /// How many coprocessor-equivalent evaluations are open on this thread.
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
+    /// Shared by every rebuilt executor of one statement attempt. Go emits
+    /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
+    /// lock retries use their separate after-retry breakpoint.
+    before_executor_first_run: Arc<AtomicBool>,
+    /// The exact Go `func(string)` value copied from the session context.
+    breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     division_by_zero: ErrorLevel,
     /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
     /// by the same statement-level policy as column NOT NULL failures.
@@ -314,27 +355,46 @@ pub struct StmtContext {
     string_type_flags: tidb_datatype::ConversionFlags,
     current_db: Option<String>,
     version: Option<String>,
-    /// Immutable process identity returned by `TIDB_VERSION()`.
-    tidb_info: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
-    /// Reads through the global table selected for this statement, including
-    /// scratch account-validation tables, without copying unused values.
-    global_sysvar_reader: Option<Arc<GlobalSysvarReader>>,
-    /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
-    current_role: Option<String>,
+    /// Go `SessionVars.GlobalVarsAccessor`, consulted by the expression
+    /// builtins that need live GLOBAL state.
+    global_sysvars: Option<Arc<dyn GlobalSysvarAccessor>>,
+    /// Go `SessionVars.ActiveRoles`; `CURRENT_ROLE()` renders this only when
+    /// the builtin is evaluated.
+    active_roles: Option<Arc<Vec<(String, String)>>>,
     connection_id: Option<u64>,
     /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
     tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
-    /// Go `StatementContext`'s fixed statement time as
-    /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
-    /// statement reads the same instant.
-    now: Option<(i64, u32, i32)>,
+    /// Go `StmtCtx.StmtNowTsCacheKey`: absent when there is no session clock,
+    /// otherwise initialized once when an expression first reads `NOW()`.
+    statement_clock: Option<Arc<OnceLock<(i64, u32, i32)>>>,
+    /// Non-zero `@@timestamp`, parsed with the statement-variable image and
+    /// consumed only if the lazy statement clock is initialized.
+    statement_timestamp: Option<f64>,
     sysdate_is_now: bool,
     time_zone: Option<tidb_expr::SessionTimeZone>,
+    /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
+    /// is present, otherwise the connection's selected resource group.
+    resource_group_name: String,
+    /// Go `SessionVars.GetReplicaRead()` for this statement.
+    replica_read: ReplicaReadType,
+    /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
+    /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
+    /// `ResetContextOfStmt` copies off the AST and
+    /// `RequestBuilder.getKVPriority` turns into the KV request priority.
+    /// `NoPriority` and `Delayed` both send `kv.PriorityNormal`.
+    statement_priority: tidb_ast::StatementPriority,
+    /// Go `StmtCtx.NotFillCache`: a SELECT's `SQL_NO_CACHE` modifier, which
+    /// `ResetContextOfStmt` sets as `!SelectStmtOpts.SQLCache` and
+    /// `SetFromSessionVars` copies to every KV request.
+    not_fill_cache: bool,
+    /// Go `SessionVars.IsolationReadEngines`, in the session variable's
+    /// canonical comma-separated spelling.
+    isolation_read_engines: String,
     /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
@@ -355,6 +415,12 @@ pub struct StmtContext {
     /// Typed execute-time values. Clones within one execution share this
     /// immutable snapshot; later executions install a different snapshot.
     prepared_params: Option<Arc<[Datum]>>,
+    /// Go `SessionVars.CurrInsertValues`, the candidate row visible to a
+    /// `VALUES(col)` expression while an INSERT/ON DUPLICATE assignment is
+    /// evaluated. The DML path currently substitutes these references before
+    /// evaluation; keeping the session slot here also gives the expression
+    /// layer the same runtime carrier as Go's builtin signature.
+    current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
     /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
     /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
@@ -383,6 +449,9 @@ pub struct StmtContext {
     /// Go `SessionVars.LastFoundRows`, the count published when the previous
     /// result set reached EOF.
     last_found_rows: Option<u64>,
+    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: UPDATE and
+    /// duplicate-key UPDATE count successfully matched unchanged rows.
+    client_found_rows: bool,
     /// The session transaction timestamp. Unlike ordinary statement
     /// snapshots, this handle may be published after the context is built
     /// when an autocommit statement performs its first storage read.
@@ -419,6 +488,10 @@ pub struct StmtContext {
     /// functional-dependency `ONLY_FULL_GROUP_BY` checker, gating the checks
     /// Go runs only under it.
     new_only_full_group_by_check: bool,
+    /// Go `SessionVars.RemoveOrderbyInSubquery`
+    /// (`@@tidb_remove_orderby_in_subquery`, default ON): a derived table's
+    /// `ORDER BY` is dropped unless the query is top level or has a `LIMIT`.
+    remove_orderby_in_subquery: bool,
     /// Go `SessionVars`'s `default_week_format` and `div_precision_increment`,
     /// which `EvalContext::GetDefaultWeekFormatMode` and
     /// `GetDivPrecisionIncrement` hand to `WEEK()` and to the `/` operator's
@@ -430,6 +503,18 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
+    /// Go's process-wide `vardef.EnableCheckConstraint`, updated by the
+    /// GLOBAL-only `@@tidb_enable_check_constraint` variable. DDL builders
+    /// read this value when deciding whether CHECK declarations are discarded
+    /// with a warning or persisted and enforced.
+    enable_check_constraint: bool,
+    /// Go's session `EnableMView` (the `tidb_mview_enable` sysvar): gates the
+    /// materialized-view DDL admission checks.
+    enable_mview: bool,
+    /// Go's query-scoped `kv.QueryCopStoreLimiter`, created once per
+    /// statement when `tidb_query_cop_store_limit` is positive and shared by
+    /// all coprocessor scans in that statement.
+    query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
     /// Go `txn.IsPessimistic()` half of `optimizeDupKeyCheckForNormalInsert`
     /// (`pkg/executor/insert.go:331-337`), resolved for the current or
     /// implicit statement transaction. On a user connection this transaction
@@ -455,38 +540,64 @@ pub struct StmtContext {
     /// (`@@tidb_opt_join_reorder_threshold`, default `0`): the largest join
     /// group the DP join-reorder solver is allowed to enumerate. At the
     /// default no group qualifies for DP, so a stock session uses greedy
-    /// reorder -- see [`crate::driver::join_reorder`].
+    /// reorder in the shared logical planner.
     join_reorder_threshold: i32,
+    /// Go `SessionVars.AllowAggPushDown`
+    /// (`@@tidb_opt_agg_push_down`, default `OFF`): gates the
+    /// aggregation-push-down rule's join and union arms.
+    allow_agg_push_down: bool,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
     /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
     /// join reorder uses the advanced framework. Its greedy solver compares
     /// the two cheapest starting leaves; the legacy framework uses only one.
     advanced_join_reorder: bool,
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    cartesian_join_order_threshold: f64,
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    advanced_join_hint: bool,
     /// Go `SessionVars.OptOrderingIdxSelRatio`
     /// (`@@tidb_opt_ordering_index_selectivity_ratio`, default `0.01`): the
     /// fraction of an order-preserving access range expected to be scanned
     /// before the first LIMIT row is found.
     ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.AllowProjectionPushDown`
+    /// (`@@tidb_opt_projection_push_down`, default `ON`).
+    allow_projection_push_down: bool,
+    /// Go `SessionVars.LimitPushDownThreshold`
+    /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
+    limit_push_down_threshold: u64,
     /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
     ///
     /// Keeping the parsed map on the context makes planner decisions consume
     /// the same value that the session writer validated, including a
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
     optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
+    /// The statement snapshot consumed by Go's
+    /// `checkIndexLookUpPushDownSupported` and system-variable policy.
+    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
+    /// Go `domain.GetDomain(ctx).InfoSchema()` narrowed to the metadata read
+    /// by `planner/util/domainmisc.GetLatestIndexInfo`.
+    latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     /// The statement snapshot of every session value read by cost model v2.
-    optimizer_cost_env: Option<Arc<tidb_planner::candidate_cost::CostEnv>>,
-    /// Resolved `tidb_hash_join_concurrency` for physical hash-join costing.
-    hash_join_concurrency: f64,
+    optimizer_cost_env: Option<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
+    /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
+    /// do not have a more specific concurrency variable, including Sort.
+    executor_concurrency: usize,
+    /// Go `SessionVars.HashAggPartialConcurrency()` and
+    /// `HashAggFinalConcurrency()`, resolved from their deprecated per-
+    /// operator variables or `tidb_executor_concurrency` at the statement
+    /// boundary.
+    hashagg_partial_concurrency: usize,
+    hashagg_final_concurrency: usize,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
-    /// and take that join's own leaves into the group -- see
-    /// [`crate::driver::join_reorder`]'s inlining section.
+    /// and take that join's own leaves into the group.
     join_reorder_through_proj: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThroughSel`
     /// (`@@tidb_opt_join_reorder_through_sel`, default `OFF`): whether
     /// `extractJoinGroupImpl` may look THROUGH a `Selection` sitting on a
-    /// join -- see [`crate::driver::join_reorder`]'s barrier section.
+    /// join.
     join_reorder_through_sel: bool,
     /// Go `SessionVars.EnableOuterJoinReorder`
     /// (`@@tidb_enable_outer_join_reorder`, default `ON`): whether an outer
@@ -501,13 +612,9 @@ pub struct StmtContext {
     /// prepared-statement layer that reads it is outside the driver that
     /// knows.
     planned_apply: Arc<AtomicBool>,
-    /// Prepared plan cache, the reusable half: this execution's pins
-    /// (apply) and/or its capture sink, installed by
-    /// [`crate::Session::begin_prepared_path_pins`]. `None` outside the
-    /// prepared funnel leaves planning exactly as before.
-    prepared_path_pins: Option<Arc<HashMap<String, PinnedLeafAccess>>>,
-    prepared_pin_capture:
-        Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>>,
+    /// The session-owned publication cell for the plan-derived fields Go
+    /// stores on `ProcessInfo` while building the ordinary executor.
+    process_plan_info: Option<Arc<Mutex<ProcessPlanInfo>>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -554,6 +661,26 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// The complete numeric `SessionVars.SQLMode` captured for DDL jobs.
+    ///
+    /// The lexer projection above intentionally contains only six scanning
+    /// flags. Go persists the complete bitset in `model.Job.SQLMode`, so the
+    /// submission path must not reconstruct it from that lossy projection.
+    ddl_sql_mode: i64,
+    /// Original DDL text persisted in Go `model.Job.Query` before submission.
+    ddl_query: String,
+    /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
+    ddl_cdc_write_source: u64,
+    /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
+    ddl_reorg_priority: i64,
+    /// Go `TraceInfo.SessionAlias`, captured when the DDL job is submitted.
+    ddl_session_alias: String,
+    /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
+    ddl_trace_id: Vec<u8>,
+    /// Go `SessionVars` snapshot for `AddMViewExecutionSessionVarsToJob`:
+    /// the MV-execution session variables captured for the DDL job envelope.
+    /// `None` means the defaults are used (matching a default session).
+    session_vars_image: std::collections::BTreeMap<String, String>,
     /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
     /// not scanning, so it is kept beside the lexer's compact mode.
     no_unsigned_subtraction: bool,
@@ -565,6 +692,61 @@ pub struct StmtContext {
     /// TopN-assisted string-match estimation; any non-zero value disables it
     /// and becomes the fallback estimate.
     default_string_match_selectivity: f64,
+    /// Go `SessionVars.SelectivityFactor`, the fallback estimate for
+    /// predicates that have no usable statistics.
+    selectivity_factor: f64,
+    /// Go `SessionVars.EnablePseudoForOutdatedStats`: whether this statement
+    /// may replace stale analyzed distributions with pseudo statistics.
+    enable_pseudo_for_outdated_stats: bool,
+    /// Go `SessionVars.StatsLoadSyncWait`, in milliseconds.
+    stats_load_sync_wait_ms: u64,
+    /// Go `vardef.StatsLoadPseudoTimeout`.
+    stats_load_pseudo_timeout: bool,
+    /// Go `SessionVars.OptIndexPruneThreshold`.
+    opt_index_prune_threshold: i32,
+    range_max_size: i64,
+    /// Go `RangerContext.OptPrefixIndexSingleScan`.
+    opt_prefix_index_single_scan: bool,
+    /// Go `SessionVars.AlwaysKeepJoinKey`.
+    always_keep_join_key: bool,
+    /// Go `SessionVars.EnableUnsafeSubstitute`.
+    enable_unsafe_substitute: bool,
+    /// Go `SessionVars.EnableSemiJoinRewrite`.
+    enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
+    allow_in_subq_to_join_and_agg: bool,
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
+    enable_no_decorrelate_in_select: bool,
+    /// Go `SessionVars.EnableSkewDistinctAgg`.
+    enable_skew_distinct_agg: bool,
+    /// Go `SessionVars.GetMaxExecutionTime()`, in milliseconds.
+    max_execution_time_ms: u64,
+    /// Go `StmtCtx.IsSyncStatsFailed`.
+    sync_stats_failed: Arc<AtomicBool>,
+    /// Go `StmtCtx.OperatorNum`, populated by
+    /// `CollectPredicateColumnsPoint` before later optimizer phases.
+    operator_num: Arc<AtomicU64>,
+    /// Go session `SessionStatsItem.statsUsage`, shared by every statement
+    /// context built for this session.
+    column_stats_usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    /// Go `StmtCtx.IndexUsageCollector`, allocated for one statement from
+    /// the session-local collector when execution-info collection is on.
+    index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
+    /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
+    table_delta: Option<Arc<tidb_stats_handle_usage::TableDeltaMap>>,
+    /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
+    plan_replayer_capture_enabled: bool,
+    /// Go `StmtCtx.TableStats`, populated while predicate columns are
+    /// collected so a plan-replayer dump uses the same runtime snapshot.
+    table_runtime_statistics:
+        Arc<Mutex<HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>>>>,
+    /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
+    skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
+    range_fallback: Arc<OnceLock<StatementRangeFallback>>,
+    /// Go `StmtCtx.StatsLoad`: requests are started by
+    /// `CollectPredicateColumnsPoint` and consumed later by
+    /// `SyncWaitStatsLoadPoint`.
+    pending_statistics_load: Arc<Mutex<Option<PendingStatisticsLoad>>>,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -606,6 +788,9 @@ pub struct StmtContext {
 pub struct SequenceSnapshot {
     /// Every sequence in the catalog, keyed by lowercase `db.name`.
     by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+    /// Every table/view/sequence name in the same catalog snapshot. A name
+    /// present here but absent from `by_name` is Go's 1347 wrong-object case.
+    object_names: std::collections::HashSet<String>,
     /// The schema an unqualified name resolves in.
     current_db: String,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
@@ -623,8 +808,27 @@ impl SequenceSnapshot {
         current_db: &str,
         last_values: Arc<Mutex<HashMap<String, i64>>>,
     ) -> Self {
+        Self::new_with_objects(
+            by_name,
+            std::collections::HashSet::new(),
+            current_db,
+            last_values,
+        )
+    }
+
+    /// Builds a snapshot with the complete catalog-name set needed to
+    /// distinguish Go's `ErrWrongObject` (1347) from `ErrTableNotExists`
+    /// (1146) for sequence builtins.
+    #[must_use]
+    pub fn new_with_objects(
+        by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+        object_names: std::collections::HashSet<String>,
+        current_db: &str,
+        last_values: Arc<Mutex<HashMap<String, i64>>>,
+    ) -> Self {
         SequenceSnapshot {
             by_name,
+            object_names,
             current_db: current_db.to_ascii_lowercase(),
             last_values,
         }
@@ -650,8 +854,8 @@ impl SequenceSnapshot {
         }
     }
 
-    /// The allocator `path` names, or 1146 -- which is what Go reports for a
-    /// name that is not a sequence, whether it is absent or is a table.
+    /// The allocator `path` names, or Go's 1146 for an absent name / 1347 for
+    /// an existing table or view that is not a sequence.
     fn resolve(
         &self,
         path: &[String],
@@ -659,10 +863,20 @@ impl SequenceSnapshot {
         let key = self.key(path);
         match self.by_name.get(&key) {
             Some(allocator) => Ok((key, allocator)),
+            None if self.object_names.contains(&key) => Err(tidb_expr::EvalError::Sequence(
+                tidb_expr::SequenceEvalError::WrongObject(key),
+            )),
             None => Err(tidb_expr::EvalError::Sequence(
                 tidb_expr::SequenceEvalError::NotASequence(key),
             )),
         }
+    }
+
+    /// Resolves `path` without touching the allocator or session `LASTVAL`
+    /// state. This is the plan-build counterpart to the value-consuming
+    /// sequence methods below.
+    pub fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+        self.resolve(path).map(|_| ())
     }
 }
 
@@ -678,8 +892,11 @@ impl StmtContext {
     ) -> Self {
         Self {
             warnings: Arc::default(),
+            message: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
+            before_executor_first_run: Arc::new(AtomicBool::new(false)),
+            breakpoint_notify_func: None,
             division_by_zero,
             bad_null: if strict {
                 ErrorLevel::Error
@@ -694,28 +911,35 @@ impl StmtContext {
             string_type_flags: tidb_datatype::ConversionFlags::default(),
             current_db: None,
             version: None,
-            tidb_info: None,
             current_user: None,
-            current_role: None,
+            active_roles: None,
             login_user: None,
-            global_sysvar_reader: None,
+            global_sysvars: None,
             connection_id: None,
             tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
             selected_lock_keys: None,
-            now: None,
+            statement_clock: None,
+            statement_timestamp: None,
             sysdate_is_now: false,
             time_zone: None,
+            resource_group_name: "default".to_owned(),
+            replica_read: ReplicaReadType::Leader,
+            statement_priority: tidb_ast::StatementPriority::None,
+            not_fill_cache: false,
+            isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
             user_vars: None,
             prepared_params: None,
+            current_insert_values: Arc::default(),
             rand_seeded: Arc::default(),
             last_insert_id: Arc::default(),
             prev_last_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: None,
+            client_found_rows: false,
             current_tso: CurrentTso::default(),
             given_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
@@ -726,8 +950,13 @@ impl StmtContext {
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
             new_only_full_group_by_check: false,
+            // Go `DefTiDBRemoveOrderbyInSubquery = true`.
+            remove_orderby_in_subquery: true,
             default_week_format: 0,
             foreign_key_checks: true,
+            enable_check_constraint: false,
+            enable_mview: false,
+            query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
@@ -735,11 +964,23 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            allow_agg_push_down: tidb_vardef::defaults::DEF_OPT_AGG_PUSH_DOWN,
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
+            cartesian_join_order_threshold:
+                tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
+            advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             ordering_index_selectivity_ratio: 0.01,
+            allow_projection_push_down: true,
+            limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
+                as u64,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
+            index_lookup_push_down_session:
+                tidb_planner::access_path::IndexLookupPushDownSession::default(),
+            latest_index_schema: None,
             optimizer_cost_env: None,
-            hash_join_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
+            executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
+            hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
+            hashagg_final_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -749,8 +990,7 @@ impl StmtContext {
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
             planned_apply: Arc::default(),
-            prepared_path_pins: None,
-            prepared_pin_capture: None,
+            process_plan_info: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -759,9 +999,43 @@ impl StmtContext {
             sequences: Arc::default(),
             memory,
             sql_mode: tidb_parser::SqlMode::default(),
+            ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
+                .map_or(0, |mode| mode.0),
+            ddl_query: String::new(),
+            ddl_cdc_write_source: 0,
+            // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
+            ddl_reorg_priority: 1,
+            ddl_session_alias: String::new(),
+            ddl_trace_id: Vec::new(),
+            session_vars_image: std::collections::BTreeMap::new(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
+            selectivity_factor: tidb_planner::selectivity_greedy::DEF_OPT_SELECTIVITY_FACTOR,
+            enable_pseudo_for_outdated_stats: false,
+            stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
+            stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
+            opt_index_prune_threshold: 20,
+            range_max_size: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE,
+            opt_prefix_index_single_scan: true,
+            always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
+            enable_unsafe_substitute: false,
+            enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            allow_in_subq_to_join_and_agg: true,
+            enable_no_decorrelate_in_select:
+                tidb_vardef::defaults::DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
+            enable_skew_distinct_agg: tidb_vardef::defaults::DEF_TIDB_SKEW_DISTINCT_AGG,
+            max_execution_time_ms: 0,
+            sync_stats_failed: Arc::default(),
+            operator_num: Arc::default(),
+            column_stats_usage: None,
+            index_usage_collector: None,
+            table_delta: None,
+            plan_replayer_capture_enabled: false,
+            table_runtime_statistics: Arc::default(),
+            skip_plan_cache_reason: Arc::default(),
+            range_fallback: Arc::default(),
+            pending_statistics_load: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -811,7 +1085,8 @@ impl StmtContext {
     /// Records the same physical-reader fact Go records by appending to
     /// `StmtCtx.TableIDs` in `executorBuilder`.
     pub(crate) fn mark_physical_table_reader(&self) {
-        self.has_physical_table_reader.store(true, Ordering::Relaxed);
+        self.has_physical_table_reader
+            .store(true, Ordering::Relaxed);
     }
 
     /// The sink a coprocessor request must be given so the warnings TiKV
@@ -977,6 +1252,36 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the complete session SQL mode that Go persists in DDL jobs.
+    #[must_use]
+    pub const fn with_ddl_sql_mode(mut self, sql_mode: i64) -> Self {
+        self.ddl_sql_mode = sql_mode;
+        self
+    }
+
+    /// Captures the original DDL text that Go stores in `model.Job.Query`.
+    #[must_use]
+    pub fn with_ddl_query(mut self, query: impl Into<String>) -> Self {
+        self.ddl_query = query.into();
+        self
+    }
+
+    /// Captures the remaining session fields Go persists with a DDL job.
+    #[must_use]
+    pub fn with_ddl_job_context(
+        mut self,
+        cdc_write_source: u64,
+        reorg_priority: i64,
+        session_alias: impl Into<String>,
+        trace_id: Vec<u8>,
+    ) -> Self {
+        self.ddl_cdc_write_source = cdc_write_source;
+        self.ddl_reorg_priority = reorg_priority;
+        self.ddl_session_alias = session_alias.into();
+        self.ddl_trace_id = trace_id;
+        self
+    }
+
     /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
     #[must_use]
     pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
@@ -999,6 +1304,103 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's general predicate selectivity factor.
+    #[must_use]
+    pub fn with_selectivity_factor(mut self, value: f64) -> Self {
+        self.selectivity_factor = value;
+        self
+    }
+
+    /// Sets `@@tidb_enable_pseudo_for_outdated_stats` for this statement.
+    #[must_use]
+    pub fn with_pseudo_for_outdated_stats(mut self, enabled: bool) -> Self {
+        self.enable_pseudo_for_outdated_stats = enabled;
+        self
+    }
+
+    /// Attaches Go's synchronous statistics-load policy.
+    #[must_use]
+    pub fn with_stats_load_policy(
+        mut self,
+        wait_ms: u64,
+        pseudo_timeout: bool,
+        max_execution_time_ms: u64,
+    ) -> Self {
+        self.stats_load_sync_wait_ms = wait_ms;
+        self.stats_load_pseudo_timeout = pseudo_timeout;
+        self.max_execution_time_ms = max_execution_time_ms;
+        self
+    }
+
+    /// Sets the range-building memory quota; zero means unlimited.
+    #[must_use]
+    pub const fn with_range_max_size(mut self, bytes: i64) -> Self {
+        self.range_max_size = bytes;
+        self
+    }
+
+    /// Go `SessionVars.RangeMaxSize`.
+    #[must_use]
+    pub const fn range_max_size(&self) -> i64 {
+        self.range_max_size
+    }
+
+    /// Sets `@@tidb_opt_index_prune_threshold` for this statement.
+    #[must_use]
+    pub const fn with_opt_index_prune_threshold(mut self, threshold: i32) -> Self {
+        self.opt_index_prune_threshold = threshold;
+        self
+    }
+
+    /// Sets `@@tidb_opt_prefix_index_single_scan` for this statement.
+    #[must_use]
+    pub const fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
+        self.opt_prefix_index_single_scan = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
+    #[must_use]
+    pub const fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
+        self.always_keep_join_key = always_keep;
+        self
+    }
+
+    /// Sets `@@tidb_enable_unsafe_substitute` for this statement.
+    #[must_use]
+    pub const fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
+        self.enable_unsafe_substitute = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
+    #[must_use]
+    pub const fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
+        self.enable_semi_join_rewrite = enable;
+        self
+    }
+
+    /// Sets Go `SessionVars.GetAllowInSubqToJoinAndAgg()` for this statement.
+    #[must_use]
+    pub const fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
+        self.allow_in_subq_to_join_and_agg = allow;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
+    #[must_use]
+    pub const fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
+        self.enable_no_decorrelate_in_select = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
+    #[must_use]
+    pub const fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
+        self.enable_skew_distinct_agg = enable;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -1010,6 +1412,66 @@ impl StmtContext {
     #[must_use]
     pub fn sql_mode(&self) -> tidb_parser::SqlMode {
         self.sql_mode
+    }
+
+    /// The complete numeric SQL mode captured for a persisted DDL job.
+    #[must_use]
+    pub const fn ddl_sql_mode(&self) -> i64 {
+        self.ddl_sql_mode
+    }
+
+    /// Original DDL text for the persisted job envelope.
+    #[must_use]
+    pub fn ddl_query(&self) -> &str {
+        &self.ddl_query
+    }
+
+    /// CDC write-source identifier captured for a persisted DDL job.
+    #[must_use]
+    pub const fn ddl_cdc_write_source(&self) -> u64 {
+        self.ddl_cdc_write_source
+    }
+
+    /// Reorganization priority captured for ADD CHECK.
+    #[must_use]
+    pub const fn ddl_reorg_priority(&self) -> i64 {
+        self.ddl_reorg_priority
+    }
+
+    /// Connection identifier captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_connection_id(&self) -> u64 {
+        self.connection_id.unwrap_or(0)
+    }
+
+    /// Session alias captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_session_alias(&self) -> &str {
+        &self.ddl_session_alias
+    }
+
+    /// Trace identifier captured in Go `TraceInfo`.
+    #[must_use]
+    pub fn ddl_trace_id(&self) -> &[u8] {
+        &self.ddl_trace_id
+    }
+
+    /// Sets a session-variable image for `AddMViewExecutionSessionVarsToJob`
+    /// to snapshot into the DDL job envelope. The session tier calls this
+    /// with the live values of `tidb_mview_maintain_mem_quota`,
+    /// `tidb_mview_maintain_isolation_read_engines`, etc.
+    pub fn set_session_vars_image(&mut self, image: std::collections::BTreeMap<String, String>) {
+        self.session_vars_image = image;
+    }
+
+    /// Returns a cloned session-variable image, or `None` if not set.
+    #[must_use]
+    pub fn session_vars_image(&self) -> Option<std::collections::BTreeMap<String, String>> {
+        if self.session_vars_image.is_empty() {
+            None
+        } else {
+            Some(self.session_vars_image.clone())
+        }
     }
 
     /// Whether subtraction must use a signed result domain.
@@ -1034,6 +1496,287 @@ impl StmtContext {
     #[must_use]
     pub fn default_string_match_selectivity(&self) -> f64 {
         self.default_string_match_selectivity
+    }
+
+    /// Go `SessionVars.SelectivityFactor` captured for this statement.
+    #[must_use]
+    pub fn selectivity_factor(&self) -> f64 {
+        self.selectivity_factor
+    }
+
+    /// Go `SessionVars.GetEnablePseudoForOutdatedStats`.
+    #[must_use]
+    pub fn enable_pseudo_for_outdated_stats(&self) -> bool {
+        self.enable_pseudo_for_outdated_stats
+    }
+
+    /// Go `SessionVars.StatsLoadSyncWait`, in milliseconds.
+    #[must_use]
+    pub const fn stats_load_sync_wait_ms(&self) -> u64 {
+        self.stats_load_sync_wait_ms
+    }
+
+    /// Go `vardef.StatsLoadPseudoTimeout`.
+    #[must_use]
+    pub const fn stats_load_pseudo_timeout(&self) -> bool {
+        self.stats_load_pseudo_timeout
+    }
+
+    /// Go `SessionVars.OptIndexPruneThreshold`.
+    #[must_use]
+    pub const fn opt_index_prune_threshold(&self) -> i32 {
+        self.opt_index_prune_threshold
+    }
+
+    /// Returns `@@tidb_opt_prefix_index_single_scan`.
+    #[must_use]
+    pub const fn opt_prefix_index_single_scan(&self) -> bool {
+        self.opt_prefix_index_single_scan
+    }
+
+    /// Returns `@@tidb_opt_always_keep_join_key`.
+    pub const fn always_keep_join_key(&self) -> bool {
+        self.always_keep_join_key
+    }
+
+    /// Returns `@@tidb_enable_unsafe_substitute`.
+    pub const fn enable_unsafe_substitute(&self) -> bool {
+        self.enable_unsafe_substitute
+    }
+
+    /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
+    pub const fn enable_semi_join_rewrite(&self) -> bool {
+        self.enable_semi_join_rewrite
+    }
+
+    /// Returns Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
+    pub const fn allow_in_subq_to_join_and_agg(&self) -> bool {
+        self.allow_in_subq_to_join_and_agg
+    }
+
+    /// Returns `@@tidb_opt_enable_no_decorrelate_in_select`.
+    pub const fn enable_no_decorrelate_in_select(&self) -> bool {
+        self.enable_no_decorrelate_in_select
+    }
+
+    /// Returns `@@tidb_opt_skew_distinct_agg`.
+    pub const fn enable_skew_distinct_agg(&self) -> bool {
+        self.enable_skew_distinct_agg
+    }
+
+    /// Go caps synchronous statistics loading by `max_execution_time` when
+    /// that statement limit is non-zero.
+    #[must_use]
+    pub const fn stats_load_wait_ms(&self) -> u64 {
+        if self.max_execution_time_ms > 0
+            && self.max_execution_time_ms < self.stats_load_sync_wait_ms
+        {
+            self.max_execution_time_ms
+        } else {
+            self.stats_load_sync_wait_ms
+        }
+    }
+
+    /// Records Go `StmtCtx.IsSyncStatsFailed`.
+    pub fn report_sync_stats_failed(&self) {
+        self.sync_stats_failed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.IsSyncStatsFailed`.
+    #[must_use]
+    pub fn sync_stats_failed(&self) -> bool {
+        self.sync_stats_failed
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Records Go `StmtCtx.OperatorNum`.
+    pub fn set_operator_num(&self, count: u64) {
+        self.operator_num.store(count, Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.OperatorNum`.
+    #[must_use]
+    pub fn operator_num(&self) -> u64 {
+        self.operator_num.load(Ordering::Relaxed)
+    }
+
+    /// Attaches Go's per-session predicate-column usage collector.
+    #[must_use]
+    pub fn with_column_stats_usage(
+        mut self,
+        usage: Option<Arc<tidb_stats_handle_usage::SessionStatsItem>>,
+    ) -> Self {
+        self.column_stats_usage = usage;
+        self
+    }
+
+    /// Installs Go `StmtCtx.IndexUsageCollector`.
+    #[must_use]
+    pub fn with_index_usage_collector(
+        mut self,
+        collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
+    ) -> Self {
+        self.index_usage_collector = collector;
+        self
+    }
+
+    /// Returns the statement-local index-usage collector, when enabled.
+    #[must_use]
+    pub fn index_usage_collector(
+        &self,
+    ) -> Option<&Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>> {
+        self.index_usage_collector.as_ref()
+    }
+
+    /// Go `session.UpdateColStatsUsage`: all items from one planning pass get
+    /// the same timestamp before the session collector is unlocked.
+    pub fn update_col_stats_usage(&self, items: impl IntoIterator<Item = tidb_model::TableItemID>) {
+        let Some(usage) = &self.column_stats_usage else {
+            return;
+        };
+        usage.update_col_stats_usage(items, std::time::SystemTime::now());
+    }
+
+    /// Installs Go `SessionVars.TxnCtx.TableDeltaMap`.
+    #[must_use]
+    pub fn with_table_delta(mut self, delta: Arc<tidb_stats_handle_usage::TableDeltaMap>) -> Self {
+        self.table_delta = Some(delta);
+        self
+    }
+
+    /// Go `TransactionContext.UpdateDeltaForTable`.
+    pub fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
+        if let Some(table_delta) = &self.table_delta {
+            table_delta.update(physical_table_id, delta, count);
+        }
+    }
+
+    /// Sets Go `SessionVars.IsPlanReplayerCaptureEnabled()` for this statement.
+    #[must_use]
+    pub fn with_plan_replayer_capture(mut self, enabled: bool) -> Self {
+        self.plan_replayer_capture_enabled = enabled;
+        self
+    }
+
+    /// Whether Go's plan-replayer table-statistics capture is enabled.
+    #[must_use]
+    pub const fn plan_replayer_capture_enabled(&self) -> bool {
+        self.plan_replayer_capture_enabled
+    }
+
+    /// Go `recordTableRuntimeStats`: retain one entry for every visited
+    /// logical table, including `None` when the table has no loaded stats.
+    pub fn record_table_runtime_statistics(
+        &self,
+        table_ids: impl IntoIterator<Item = i64>,
+        mut get: impl FnMut(i64) -> Option<Arc<crate::access_cost::TableStatistics>>,
+    ) {
+        if !self.plan_replayer_capture_enabled {
+            return;
+        }
+        let mut captured = self
+            .table_runtime_statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        captured.extend(
+            table_ids
+                .into_iter()
+                .map(|table_id| (table_id, get(table_id))),
+        );
+    }
+
+    /// Snapshot of Go `StmtCtx.TableStats` for plan-replayer dumping.
+    #[must_use]
+    pub fn table_runtime_statistics(
+        &self,
+    ) -> HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>> {
+        self.table_runtime_statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn install_pending_statistics_load(
+        &self,
+        receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
+        items: Vec<tidb_model::StatsLoadItem>,
+        timeout: std::time::Duration,
+    ) {
+        *self
+            .pending_statistics_load
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PendingStatisticsLoad {
+            receivers,
+            items,
+            timeout,
+        });
+    }
+
+    pub(crate) fn take_pending_statistics_load(&self) -> Option<PendingStatisticsLoad> {
+        self.pending_statistics_load
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    fn statement_range_fallback(&self) -> &StatementRangeFallback {
+        self.range_fallback.get_or_init(|| {
+            let warnings = Arc::new(PlannerWarningAppender {
+                warnings: Arc::clone(&self.warnings),
+            });
+            let tracker = Arc::new(tidb_util::context::PlanCacheTracker::new(warnings.clone()));
+            let handler =
+                tidb_util::context::RangeFallbackHandler::new(Arc::clone(&tracker), warnings);
+            StatementRangeFallback {
+                tracker,
+                handler,
+                cache_started: AtomicBool::new(false),
+            }
+        })
+    }
+
+    pub(crate) fn start_prepared_range_tracking(&self) {
+        let state = self.statement_range_fallback();
+        if !state.cache_started.swap(true, Ordering::AcqRel) {
+            state
+                .tracker
+                .set_cache_type(tidb_util::context::PlanCacheType::SessionPrepared);
+            state.tracker.set_force_plan_cache(
+                self.optimizer_fix_control
+                    .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false),
+            );
+            state.tracker.enable_plan_cache();
+        }
+    }
+
+    pub(crate) fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+        &self.statement_range_fallback().handler
+    }
+
+    /// Go `StmtCtx.SetSkipPlanCache`.
+    pub fn set_skip_plan_cache(&self, reason: impl Into<String>) {
+        let mut current = self
+            .skip_plan_cache_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current.is_none() {
+            *current = Some(reason.into());
+        }
+    }
+
+    /// Whether this statement must not publish a prepared-plan cache entry.
+    #[must_use]
+    pub fn skip_plan_cache(&self) -> bool {
+        if self.range_fallback.get().is_some_and(|state| {
+            state.cache_started.load(Ordering::Acquire) && !state.tracker.use_cache()
+        }) {
+            return true;
+        }
+        self.skip_plan_cache_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
     }
 
     /// The connection charset/collation used while building expressions.
@@ -1148,6 +1891,13 @@ impl StmtContext {
         self
     }
 
+    /// Validates a sequence name without consuming or otherwise mutating its
+    /// allocator. Go resolves sequence builtins while building the expression
+    /// tree, before an executor can evaluate an earlier projection item.
+    pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+        self.sequences.validate_path(path)
+    }
+
     /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps
     /// to `0`, which refuses the very first recursive round.
     #[must_use]
@@ -1182,6 +1932,32 @@ impl StmtContext {
         self.ordering_index_selectivity_ratio
     }
 
+    /// Sets `@@tidb_opt_projection_push_down` for this statement.
+    #[must_use]
+    pub fn with_projection_push_down(mut self, allow: bool) -> Self {
+        self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Go `SessionVars.AllowProjectionPushDown`.
+    #[must_use]
+    pub fn allow_projection_push_down(&self) -> bool {
+        self.allow_projection_push_down
+    }
+
+    /// Sets `@@tidb_opt_limit_push_down_threshold` for this statement.
+    #[must_use]
+    pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
+        self.limit_push_down_threshold = threshold;
+        self
+    }
+
+    /// Go `SessionVars.LimitPushDownThreshold`.
+    #[must_use]
+    pub fn limit_push_down_threshold(&self) -> u64 {
+        self.limit_push_down_threshold
+    }
+
     /// Attaches the validated statement snapshot of
     /// `@@tidb_opt_fix_control`.
     #[must_use]
@@ -1199,35 +1975,100 @@ impl StmtContext {
         &self.optimizer_fix_control
     }
 
+    /// Attaches the session and transaction facts used by index-lookup
+    /// pushdown planning.
+    #[must_use]
+    pub const fn with_index_lookup_push_down_session(
+        mut self,
+        session: tidb_planner::access_path::IndexLookupPushDownSession,
+    ) -> Self {
+        self.index_lookup_push_down_session = session;
+        self
+    }
+
+    /// The statement snapshot used by index-lookup pushdown planning.
+    #[must_use]
+    pub const fn index_lookup_push_down_session(
+        &self,
+    ) -> tidb_planner::access_path::IndexLookupPushDownSession {
+        self.index_lookup_push_down_session
+    }
+
+    /// Attaches the statement's latest-domain index metadata.
+    #[must_use]
+    pub fn with_latest_index_schema(
+        mut self,
+        schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
+    ) -> Self {
+        self.latest_index_schema = Some(schema);
+        self
+    }
+
+    /// Returns the latest-domain index metadata captured for this statement.
+    #[must_use]
+    pub fn latest_index_schema(&self) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+        self.latest_index_schema.clone()
+    }
+
     /// Attaches the resolved statement snapshot used by cost model v2.
     #[must_use]
     pub fn with_optimizer_cost_env(
         mut self,
-        env: impl Into<Arc<tidb_planner::candidate_cost::CostEnv>>,
-        hash_join_concurrency: f64,
+        env: impl Into<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
     ) -> Self {
-        self.optimizer_cost_env = Some(env.into());
-        self.hash_join_concurrency = hash_join_concurrency;
+        let env = env.into();
+        self.executor_concurrency = env.session.union_concurrency.max(1.0) as usize;
+        self.optimizer_cost_env = Some(env);
         self
     }
 
     /// The statement's cost-model-v2 environment.
     #[must_use]
-    pub fn optimizer_cost_env(&self) -> &tidb_planner::candidate_cost::CostEnv {
+    pub fn optimizer_cost_env(&self) -> &tidb_planner::find_best_task::coster::CostEnv {
         // Standalone contexts share defaults only if costing is requested;
         // session contexts attach their resolved snapshot without allocating
         // and immediately discarding a default environment.
-        static DEFAULT: std::sync::OnceLock<tidb_planner::candidate_cost::CostEnv> =
+        static DEFAULT: std::sync::OnceLock<tidb_planner::find_best_task::coster::CostEnv> =
             std::sync::OnceLock::new();
-        self.optimizer_cost_env
-            .as_deref()
-            .unwrap_or_else(|| DEFAULT.get_or_init(tidb_planner::candidate_cost::CostEnv::default))
+        self.optimizer_cost_env.as_deref().unwrap_or_else(|| {
+            DEFAULT.get_or_init(tidb_planner::find_best_task::coster::CostEnv::default)
+        })
     }
 
-    /// Resolved `tidb_hash_join_concurrency`.
+    /// Resolved `tidb_executor_concurrency` for this statement.
     #[must_use]
-    pub const fn hash_join_concurrency(&self) -> f64 {
-        self.hash_join_concurrency
+    pub const fn executor_concurrency(&self) -> usize {
+        self.executor_concurrency
+    }
+
+    /// Attaches Go's two resolved HashAgg worker counts.
+    ///
+    /// Go's cost model reads `HashAggFinalConcurrency()` directly from the
+    /// session, so the optimizer cost environment has to see the same value;
+    /// otherwise a serial statement would still be costed as if five final
+    /// workers were running and would pick a HashAgg over the StreamAgg Go
+    /// chooses.
+    #[must_use]
+    pub fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
+        self.hashagg_partial_concurrency = partial;
+        self.hashagg_final_concurrency = final_;
+        let env = self
+            .optimizer_cost_env
+            .get_or_insert_with(|| Arc::new(Default::default()));
+        if env.session.hashagg_final_concurrency != final_ as f64 {
+            Arc::make_mut(env).session.hashagg_final_concurrency = final_ as f64;
+        }
+        self
+    }
+
+    /// Go `SessionVars.HashAggPartialConcurrency()` and
+    /// `HashAggFinalConcurrency()` for this statement.
+    #[must_use]
+    pub const fn hashagg_concurrency(&self) -> (usize, usize) {
+        (
+            self.hashagg_partial_concurrency,
+            self.hashagg_final_concurrency,
+        )
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`
@@ -1235,6 +2076,19 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
+    }
+
+    /// Sets `@@tidb_opt_agg_push_down` for this statement.
+    #[must_use]
+    pub fn with_allow_agg_push_down(mut self, enabled: bool) -> Self {
+        self.allow_agg_push_down = enabled;
+        self
+    }
+
+    /// Go `SessionVars.AllowAggPushDown`.
+    #[must_use]
+    pub fn allow_agg_push_down(&self) -> bool {
+        self.allow_agg_push_down
     }
 
     /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.
@@ -1249,6 +2103,32 @@ impl StmtContext {
     #[must_use]
     pub fn advanced_join_reorder(&self) -> bool {
         self.advanced_join_reorder
+    }
+
+    /// Sets `@@tidb_opt_cartesian_join_order_threshold` for this statement.
+    #[must_use]
+    pub fn with_cartesian_join_order_threshold(mut self, threshold: f64) -> Self {
+        self.cartesian_join_order_threshold = threshold;
+        self
+    }
+
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    #[must_use]
+    pub fn cartesian_join_order_threshold(&self) -> f64 {
+        self.cartesian_join_order_threshold
+    }
+
+    /// Sets `@@tidb_opt_advanced_join_hint` for this statement.
+    #[must_use]
+    pub fn with_advanced_join_hint(mut self, enabled: bool) -> Self {
+        self.advanced_join_hint = enabled;
+        self
+    }
+
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    #[must_use]
+    pub fn advanced_join_hint(&self) -> bool {
+        self.advanced_join_hint
     }
 
     /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.
@@ -1329,45 +2209,53 @@ impl StmtContext {
     /// Records that this statement's plan contains an Apply (Go
     /// `PhysicalApply`), which `isPhysicalPlanCacheable` refuses to cache.
     pub fn report_planned_apply(&self) {
-        self.planned_apply.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.planned_apply
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Installs this execution's access-path pins (Go's cached plan, read
-    /// side). A pin names the access path a leaf committed to on an earlier
-    /// execution of the same prepared statement.
+    /// Installs the current session's process-plan publication cell.
     #[must_use]
-    pub fn with_prepared_path_pins(
-        mut self,
-        pins: Arc<HashMap<String, PinnedLeafAccess>>,
-    ) -> Self {
-        self.prepared_path_pins = Some(pins);
+    pub fn with_process_plan_info_sink(mut self, sink: Arc<Mutex<ProcessPlanInfo>>) -> Self {
+        self.process_plan_info = Some(sink);
         self
     }
 
-    /// Installs the capture sink this execution records its winners into
-    /// (Go's cache STORE side): the session reads it back after the
-    /// statement succeeds and keeps it as the statement's pins.
+    /// Installs the session value and the statement-attempt latch used by
+    /// Go's executor-first-run breakpoint.
+    #[doc(hidden)]
     #[must_use]
-    pub fn with_prepared_pin_capture(
+    pub fn with_executor_first_run_breakpoint(
         mut self,
-        sink: Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>,
+        latch: Arc<AtomicBool>,
+        notify: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     ) -> Self {
-        self.prepared_pin_capture = Some(sink);
+        self.before_executor_first_run = latch;
+        self.breakpoint_notify_func = notify;
         self
     }
 
-    /// The pin recorded for THIS named leaf on the statement's first
-    /// execution, when the current execution replays it.
-    #[must_use]
-    pub fn prepared_path_pin_for(&self, leaf: &str) -> Option<PinnedLeafAccess> {
-        self.prepared_path_pins.as_ref()?.get(leaf).cloned()
+    /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
+    /// `openExecutor`. Rebuilt pessimistic executors share the latch.
+    pub(crate) fn notify_before_executor_first_run(&self) {
+        if self.before_executor_first_run.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        tidb_util::breakpoint::inject_stored_value(
+            self.breakpoint_notify_func
+                .as_ref()
+                .map(|notify| notify as &(dyn std::any::Any + Send + Sync)),
+            "beforeExecutorFirstRun",
+        );
     }
 
-    /// The capture sink, when this execution records pins.
-    pub(crate) fn prepared_pin_capture(
-        &self,
-    ) -> Option<Arc<Mutex<Option<HashMap<String, PinnedLeafAccess>>>>> {
-        self.prepared_pin_capture.clone()
+    /// Publishes the fields derived from the retained physical tree before
+    /// executor construction.
+    pub fn publish_process_plan_info(&self, plan: ProcessPlanInfo) {
+        if let Some(sink) = &self.process_plan_info {
+            *sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = plan;
+        }
     }
 
     /// Installs the two published blacklists. See
@@ -1460,6 +2348,21 @@ impl StmtContext {
         self.new_only_full_group_by_check
     }
 
+    /// Sets `@@tidb_remove_orderby_in_subquery` for this statement.
+    #[must_use]
+    pub fn with_remove_orderby_in_subquery(mut self, remove: bool) -> Self {
+        self.remove_orderby_in_subquery = remove;
+        self
+    }
+
+    /// Whether a derived table's `ORDER BY` is dropped
+    /// (`@@tidb_remove_orderby_in_subquery`, default ON as Go's
+    /// `DefTiDBRemoveOrderbyInSubquery`).
+    #[must_use]
+    pub fn remove_orderby_in_subquery(&self) -> bool {
+        self.remove_orderby_in_subquery
+    }
+
     /// Sets `@@foreign_key_checks` for this statement.
     #[must_use]
     pub fn with_foreign_key_checks(mut self, foreign_key_checks: bool) -> Self {
@@ -1471,6 +2374,50 @@ impl StmtContext {
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
+    }
+
+    /// Sets Go's session `EnableMView` switch for this statement
+    /// (`tidb_mview_enable`, default `OFF`).
+    #[must_use]
+    pub fn with_enable_mview(mut self, enabled: bool) -> Self {
+        self.enable_mview = enabled;
+        self
+    }
+
+    /// Whether materialized-view DDL is enabled for this statement.
+    #[must_use]
+    pub fn enable_mview(&self) -> bool {
+        self.enable_mview
+    }
+
+    /// Attaches Go's query-scoped per-store coprocessor limiter to this
+    /// statement. All remote scans cloned from the context share this Arc.
+    #[must_use]
+    pub fn with_query_cop_store_limiter(
+        mut self,
+        limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    ) -> Self {
+        self.query_cop_store_limiter = limiter;
+        self
+    }
+
+    /// Returns the query-scoped per-store coprocessor limiter, if enabled.
+    #[must_use]
+    pub fn query_cop_store_limiter(&self) -> Option<Arc<tidb_txnkv::QueryCopStoreLimiter>> {
+        self.query_cop_store_limiter.clone()
+    }
+
+    /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.
+    #[must_use]
+    pub fn with_enable_check_constraint(mut self, enabled: bool) -> Self {
+        self.enable_check_constraint = enabled;
+        self
+    }
+
+    /// Whether CHECK declarations are persisted and enforced.
+    #[must_use]
+    pub fn enable_check_constraint(&self) -> bool {
+        self.enable_check_constraint
     }
 
     /// Marks this statement's INSERT a lazy duplicate check (Go
@@ -1527,12 +2474,23 @@ impl StmtContext {
         mut self,
         current_db: Option<String>,
         version: Option<String>,
-        tidb_info: Option<String>,
     ) -> Self {
         self.current_db = current_db;
         self.version = version;
-        self.tidb_info = tidb_info;
         self
+    }
+
+    /// Attaches Go `SessionVars.IsolationReadEngines` to physical planning.
+    #[must_use]
+    pub fn with_isolation_read_engines(mut self, engines: String) -> Self {
+        self.isolation_read_engines = engines;
+        self
+    }
+
+    /// Returns the statement snapshot of `tidb_isolation_read_engines`.
+    #[must_use]
+    pub fn isolation_read_engines(&self) -> &str {
+        &self.isolation_read_engines
     }
 
     /// The database in which this statement resolves unqualified object
@@ -1546,15 +2504,7 @@ impl StmtContext {
     /// `TIDB_VERSION()`.
     #[must_use]
     pub fn tidb_info_len(&self) -> usize {
-        self.tidb_info.as_ref().map_or_else(
-            || {
-                tidb_util::printer::get_tidb_info(
-                    &tidb_util::versioninfo::VersionInfo::build_default(),
-                )
-                .len()
-            },
-            String::len,
-        )
+        tidb_util::printer::get_tidb_info().len()
     }
 
     /// Attaches the authenticated identity, which Go keeps on
@@ -1566,23 +2516,17 @@ impl StmtContext {
         self
     }
 
-    /// Binds Go's live GlobalVarsAccessor without making the executor depend
-    /// on the session's variable-table implementation. Cloned contexts retain
-    /// the selected owner; values are read only when an expression needs them.
+    /// Attaches the live GLOBAL-variable reader used by expression builtins.
     #[must_use]
-    pub fn with_global_sysvar_reader<F>(mut self, reader: F) -> Self
-    where
-        F: Fn(&str) -> Option<String> + Send + Sync + 'static,
-    {
-        self.global_sysvar_reader = Some(Arc::new(reader));
+    pub fn with_global_sysvar_accessor(mut self, accessor: Arc<dyn GlobalSysvarAccessor>) -> Self {
+        self.global_sysvars = Some(accessor);
         self
     }
 
-    /// Attaches the rendered `CURRENT_ROLE()` text, which Go derives from
-    /// `SessionVars.ActiveRoles`.
+    /// Attaches Go's typed `SessionVars.ActiveRoles` authority.
     #[must_use]
-    pub fn with_current_role(mut self, current_role: Option<String>) -> Self {
-        self.current_role = current_role;
+    pub fn with_active_roles(mut self, active_roles: Option<Arc<Vec<(String, String)>>>) -> Self {
+        self.active_roles = active_roles;
         self
     }
 
@@ -1632,15 +2576,57 @@ impl StmtContext {
         self
     }
 
-    /// Fixes the statement's clock, which Go does once per statement so
-    /// every `NOW()` in it agrees.
+    /// Installs the candidate row exposed to `VALUES(col)` while an insert
+    /// assignment is evaluated. Clones of this context share the same row,
+    /// matching Go's session-owned `CurrInsertValues` slot.
+    #[must_use]
+    pub fn with_current_insert_values(self, values: Vec<Datum>) -> Self {
+        self.set_current_insert_values(values);
+        self
+    }
+
+    /// Replaces the session's current insert row for the next expression
+    /// evaluation. An empty vector means the Go empty `chunk.Row`, which
+    /// makes `VALUES(col)` return SQL NULL.
+    pub fn set_current_insert_values(&self, values: Vec<Datum>) {
+        *self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(values);
+    }
+
+    /// Clears the current insert row after an insert candidate finishes.
+    pub fn clear_current_insert_values(&self) {
+        *self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Fixes the statement's clock for tests and callers that already own an
+    /// exact instant.
     #[must_use]
     pub fn with_clock(
         mut self,
         now: (i64, u32, i32),
         time_zone: tidb_expr::SessionTimeZone,
     ) -> Self {
-        self.now = Some(now);
+        self.statement_clock = Some(Arc::new(OnceLock::from(now)));
+        self.statement_timestamp = None;
+        self.time_zone = Some(time_zone);
+        self
+    }
+
+    /// Attaches Go's lazy statement clock. The first time expression fixes
+    /// one instant in the shared cell; cloned worker contexts read it back.
+    #[must_use]
+    pub fn with_lazy_clock(
+        mut self,
+        timestamp: Option<f64>,
+        time_zone: tidb_expr::SessionTimeZone,
+    ) -> Self {
+        self.statement_clock = Some(Arc::new(OnceLock::new()));
+        self.statement_timestamp = timestamp;
         self.time_zone = Some(time_zone);
         self
     }
@@ -1663,6 +2649,62 @@ impl StmtContext {
     pub fn with_time_zone(mut self, time_zone: tidb_expr::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
         self
+    }
+
+    /// Attaches Go `StmtCtx.ResourceGroupName` to every storage request this
+    /// statement creates.
+    #[must_use]
+    pub fn with_resource_group_name(mut self, name: impl Into<String>) -> Self {
+        self.resource_group_name = name.into();
+        self
+    }
+
+    /// Sets Go `SessionVars.GetReplicaRead()` for this statement.
+    #[must_use]
+    pub const fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
+        self.replica_read = replica_read;
+        self
+    }
+
+    /// Sets Go `StmtCtx.Priority` from the statement's own priority modifier.
+    #[must_use]
+    pub const fn with_statement_priority(
+        mut self,
+        statement_priority: tidb_ast::StatementPriority,
+    ) -> Self {
+        self.statement_priority = statement_priority;
+        self
+    }
+
+    /// Sets Go `StmtCtx.NotFillCache` from a SELECT's `SQL_NO_CACHE`.
+    #[must_use]
+    pub const fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
+        self.not_fill_cache = not_fill_cache;
+        self
+    }
+
+    /// Go `StmtCtx.Priority` for this statement.
+    #[must_use]
+    pub const fn statement_priority(&self) -> tidb_ast::StatementPriority {
+        self.statement_priority
+    }
+
+    /// Go `StmtCtx.NotFillCache` for this statement.
+    #[must_use]
+    pub const fn not_fill_cache(&self) -> bool {
+        self.not_fill_cache
+    }
+
+    /// The resource group selected for this statement.
+    #[must_use]
+    pub fn resource_group_name(&self) -> &str {
+        &self.resource_group_name
+    }
+
+    /// Returns Go `SessionVars.GetReplicaRead()`.
+    #[must_use]
+    pub const fn replica_read(&self) -> ReplicaReadType {
+        self.replica_read
     }
 
     /// Attaches the connection charset/collation captured for this statement.
@@ -2050,6 +3092,19 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the connection's negotiated `CLIENT_FOUND_ROWS` bit.
+    #[must_use]
+    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
+        self.client_found_rows = enabled;
+        self
+    }
+
+    /// Whether unchanged matched update rows count as affected.
+    #[must_use]
+    pub const fn client_found_rows(&self) -> bool {
+        self.client_found_rows
+    }
+
     /// Attaches the session's live transaction timestamp authority.
     #[must_use]
     pub fn with_current_tso(mut self, current_tso: CurrentTso) -> Self {
@@ -2131,6 +3186,25 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
+    }
+
+    /// Publishes the statement's human-readable info string for the protocol
+    /// layer. The value is shared because executor helpers receive the context
+    /// by reference, just like Go's `StatementContext`.
+    pub fn set_message(&self, message: impl Into<String>) {
+        *self
+            .message
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = message.into();
+    }
+
+    /// Returns the statement info string that Go exposes as `LastMessage`.
+    #[must_use]
+    pub fn message(&self) -> String {
+        self.message
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Go `StmtCtx.TruncateWarnings(warnCnt)` + `AppendWarnings`: rewrites
@@ -2230,9 +3304,9 @@ impl StmtContext {
             // message) pair and drops the rest, so a cast that fails once per
             // row of a whole scan reports once.
             if batch.len() < MAX_WARNING_COUNT
-                && !batch
-                    .iter()
-                    .any(|(_, seen_code, seen_message)| *seen_code == code && seen_message == message)
+                && !batch.iter().any(|(_, seen_code, seen_message)| {
+                    *seen_code == code && seen_message == message
+                })
             {
                 batch.push((level, code, message.to_owned()));
             }
@@ -2249,6 +3323,12 @@ impl StmtContext {
     }
 }
 
+pub(crate) struct PendingStatisticsLoad {
+    pub(crate) receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
+    pub(crate) items: Vec<tidb_model::StatsLoadItem>,
+    pub(crate) timeout: std::time::Duration,
+}
+
 /// The open [`StmtContext::enter_cop_eval`] scope. Closing it returns warning
 /// routing to the statement buffer.
 #[must_use]
@@ -2258,10 +3338,43 @@ pub struct CopEvalGuard<'a> {
 
 impl Drop for CopEvalGuard<'_> {
     fn drop(&mut self) {
-        self.context
-            .cop_eval_depth
-            .fetch_sub(1, Ordering::Relaxed);
+        self.context.cop_eval_depth.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+fn resolve_statement_clock(
+    timestamp: Option<f64>,
+    zone: &tidb_expr::SessionTimeZone,
+) -> (i64, u32, i32) {
+    use chrono::TimeZone;
+    use tidb_expr::SessionTimeZone;
+
+    let utc = chrono::Utc::now();
+    let (seconds, nanos) = match timestamp {
+        #[expect(clippy::cast_possible_truncation, reason = "Go's int64(seconds)")]
+        #[expect(clippy::cast_sign_loss, reason = "@@timestamp's MinValue is 0")]
+        Some(timestamp) => (
+            timestamp.trunc() as i64,
+            (timestamp.fract() * 1e9) as u32 % 1_000_000_000,
+        ),
+        None => (utc.timestamp(), utc.timestamp_subsec_nanos()),
+    };
+    let offset = match zone {
+        SessionTimeZone::Local => {
+            let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                .unwrap_or(utc)
+                .naive_utc();
+            chrono::Offset::fix(&chrono::Local.offset_from_utc_datetime(&at)).local_minus_utc()
+        }
+        SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
+        SessionTimeZone::Named(zone) => {
+            let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                .unwrap_or(utc)
+                .naive_utc();
+            chrono::Offset::fix(&zone.offset_from_utc_datetime(&at)).local_minus_utc()
+        }
+    };
+    (seconds, nanos, offset)
 }
 
 impl Columns for StmtContext {
@@ -2275,7 +3388,31 @@ impl Columns for StmtContext {
             .unwrap_or_default()
             .get(order)
             .cloned()
-            .ok_or(tidb_expr::EvalError::Unsupported("unbound prepared parameter"))
+            .ok_or(tidb_expr::EvalError::Unsupported(
+                "unbound prepared parameter",
+            ))
+    }
+
+    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_expr::EvalError> {
+        let values = self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(values) = values.as_ref() else {
+            return Ok(None);
+        };
+        if values.is_empty() {
+            return Ok(None);
+        }
+        values.get(offset).cloned().map_or_else(
+            || {
+                Err(tidb_expr::EvalError::IncorrectArguments(format!(
+                    "Session current insert values len {} and column's offset {offset} don't match",
+                    values.len()
+                )))
+            },
+            |value| Ok(Some(value)),
+        )
     }
 
     fn connection_charset_info(&self) -> (&str, &str) {
@@ -2287,7 +3424,15 @@ impl Columns for StmtContext {
     }
 
     fn now(&self) -> Option<(i64, u32, i32)> {
-        self.now
+        let clock = self.statement_clock.as_ref()?;
+        Some(*clock.get_or_init(|| {
+            resolve_statement_clock(
+                self.statement_timestamp,
+                self.time_zone
+                    .as_ref()
+                    .expect("a statement clock has a zone"),
+            )
+        }))
     }
 
     fn sysdate_is_now(&self) -> bool {
@@ -2316,7 +3461,20 @@ impl Columns for StmtContext {
     }
 
     fn current_role(&self) -> Option<String> {
-        self.current_role.clone()
+        let roles = self.active_roles.as_ref()?;
+        if roles.is_empty() {
+            return Some("NONE".to_owned());
+        }
+        let mut rendered = roles
+            .iter()
+            .map(|(role, host)| format!("`{role}`@`{host}`"))
+            .collect::<Vec<_>>();
+        rendered.sort_unstable();
+        Some(rendered.join(","))
+    }
+
+    fn current_resource_group(&self) -> Option<String> {
+        Some(self.resource_group_name.clone())
     }
 
     fn connection_id(&self) -> Option<u64> {
@@ -2376,9 +3534,7 @@ impl Columns for StmtContext {
     }
 
     fn tidb_info(&self) -> String {
-        self.tidb_info.clone().unwrap_or_else(|| {
-            tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
-        })
+        tidb_util::printer::get_tidb_info()
     }
 
     fn block_encryption_mode(&self) -> tidb_expr::BlockEncryptionMode {
@@ -2445,10 +3601,10 @@ impl Columns for StmtContext {
         }
         if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
             return self
-                .global_sysvar_reader
+                .global_sysvars
                 .as_ref()
-                .and_then(|read| read(name))
-                .map(|value| Datum::Bytes(value.into_bytes()));
+                .and_then(|accessor| accessor.get_global_sysvar(name))
+                .map(|value| Datum::Bytes(value.as_bytes().to_vec()));
         }
         None
     }
@@ -2595,173 +3751,51 @@ impl Columns for StmtContext {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn range_fallback_honors_force_plan_cache() {
+        let (control, _) =
+            tidb_planner::fix_control::OptimizerFixControl::parse("49736:ON").unwrap();
+        let context = super::StmtContext::for_query().with_optimizer_fix_control(control);
+        context.start_prepared_range_tracking();
+        for _ in 0..2 {
+            context.range_fallback_handler().record_range_fallback(1);
+        }
+        assert!(!context.skip_plan_cache());
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 3);
+    }
+
+    #[test]
+    fn range_fallback_shares_statement_warnings_and_cache_admission() {
+        let context = super::StmtContext::default();
+        context.start_prepared_range_tracking();
+        let clone = context.clone();
+        clone.range_fallback_handler().record_range_fallback(1);
+        assert!(context.skip_plan_cache());
+        context.start_prepared_range_tracking();
+        context.range_fallback_handler().record_range_fallback(1);
+        assert!(clone.skip_plan_cache());
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 2);
+        let fresh = super::StmtContext::default();
+        assert!(!fresh.skip_plan_cache());
+        assert!(fresh.take_warnings().is_empty());
+    }
+
     use super::*;
 
     #[test]
-    fn default_cost_environment_is_shared_and_custom_snapshots_stay_separate() {
-        let query = StmtContext::for_query();
-        let dml = StmtContext::for_dml(false, false, false);
-        assert!(std::ptr::eq(
-            query.optimizer_cost_env(),
-            dml.optimizer_cost_env()
-        ));
-        let default_concurrency = query.optimizer_cost_env().session.distsql_scan_concurrency;
-        let mut custom = query.optimizer_cost_env().clone();
-        custom.session.distsql_scan_concurrency = default_concurrency + 1.0;
-        let attached = query.clone().with_optimizer_cost_env(custom, 7.0);
-        assert_eq!(
-            attached
-                .optimizer_cost_env()
-                .session
-                .distsql_scan_concurrency,
-            default_concurrency + 1.0
-        );
-        assert_eq!(attached.hash_join_concurrency(), 7.0);
-        assert_eq!(
-            query.optimizer_cost_env().session.distsql_scan_concurrency,
-            default_concurrency
-        );
-        assert!(std::ptr::eq(
-            attached.optimizer_cost_env(),
-            attached.clone().optimizer_cost_env()
-        ));
-    }
+    fn stats_load_wait_is_capped_and_failure_state_is_shared_by_clones() {
+        let ctx = StmtContext::for_query().with_stats_load_policy(100, true, 7);
+        let clone = ctx.clone();
+        assert_eq!(ctx.stats_load_wait_ms(), 7);
+        assert!(!clone.sync_stats_failed());
+        assert!(!clone.skip_plan_cache());
 
-    #[test]
-    fn global_values_are_read_only_when_an_expression_needs_them() {
-        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let observed = Arc::clone(&reads);
-        let ctx = StmtContext::for_query().with_global_sysvar_reader(move |name| {
-            assert_eq!(name, "validate_password.enable");
-            observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Some("OFF".to_owned())
-        });
-        let copied = ctx.clone();
-        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
-        let catalog = crate::Catalog::default();
-        assert_eq!(
-            crate::driver::run_select_on("SELECT 1", &catalog, &ctx).unwrap(),
-            vec![vec![Datum::Int(1)]]
-        );
-        assert_eq!(
-            crate::driver::run_select_on(
-                "SELECT VALIDATE_PASSWORD_STRENGTH(NULL), VALIDATE_PASSWORD_STRENGTH('a')",
-                &catalog,
-                &copied,
-            )
-            .unwrap(),
-            vec![vec![Datum::Null, Datum::Int(0)]]
-        );
-        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert_eq!(
-            crate::driver::run_select_on(
-                "SELECT VALIDATE_PASSWORD_STRENGTH('abcd')",
-                &catalog,
-                &copied,
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(0)]]
-        );
-        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn supplied_memory_keeps_query_and_dml_policies_and_ownership() {
-        let session = crate::SessionMemory::new(1024, crate::OomAction::Cancel, 7);
-        let memory = session.statement();
-        let query = StmtContext::for_query_with_memory(memory.clone());
-        assert_eq!(
-            query.push_down_flags(),
-            StmtContext::for_query().push_down_flags()
-        );
-        assert!(Arc::ptr_eq(
-            query.memory.stmt_tracker(),
-            memory.stmt_tracker()
-        ));
-        assert!(Arc::ptr_eq(
-            query.memory.session_tracker(),
-            memory.session_tracker()
-        ));
-        assert_eq!(query.memory.session_tracker().get_bytes_limit(), 1024);
-
-        for division in [false, true] {
-            for strict in [false, true] {
-                for ignore in [false, true] {
-                    let expected = StmtContext::for_dml(division, strict, ignore);
-                    let actual =
-                        StmtContext::for_dml_with_memory(division, strict, ignore, memory.clone());
-                    assert_eq!(actual.push_down_flags(), expected.push_down_flags());
-                    assert_eq!(actual.strict_sql_mode, expected.strict_sql_mode);
-                    assert_eq!(actual.strict(), expected.strict());
-                    assert_eq!(actual.ignore_err(), expected.ignore_err());
-                    assert!(Arc::ptr_eq(
-                        actual.memory.stmt_tracker(),
-                        memory.stmt_tracker()
-                    ));
-                    assert!(Arc::ptr_eq(
-                        actual.memory.session_tracker(),
-                        memory.session_tracker()
-                    ));
-                }
-            }
-        }
-        let operator = memory.operator_tracker(917);
-        operator.consume(128);
-        assert_eq!(query.memory.bytes_consumed(), 128);
-        drop(query);
-        assert_eq!(
-            memory.bytes_consumed(),
-            128,
-            "the remaining owner still accounts"
-        );
-        operator.consume(-128);
-        drop(operator);
-        drop(memory);
-        assert_eq!(session.bytes_consumed(), 0);
-    }
-
-    #[test]
-    #[ignore = "isolated timing evidence; no timing assertion"]
-    fn supplied_statement_memory_construction_benchmark() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        const ITERATIONS: u32 = 50_000;
-        let session = crate::SessionMemory::new(1024, crate::OomAction::Cancel, 7);
-        for dml in [false, true] {
-            for round in 0..5 {
-                for direct in if round % 2 == 0 {
-                    [false, true]
-                } else {
-                    [true, false]
-                } {
-                    let started = Instant::now();
-                    for _ in 0..ITERATIONS {
-                        let context = if direct {
-                            let memory = session.statement();
-                            if dml {
-                                StmtContext::for_dml_with_memory(true, true, false, memory)
-                            } else {
-                                StmtContext::for_query_with_memory(memory)
-                            }
-                        } else {
-                            // The removed production builder allocated default memory,
-                            // then replaced it with the session's statement trackers.
-                            let mut context = if dml {
-                                StmtContext::for_dml(true, true, false)
-                            } else {
-                                StmtContext::for_query()
-                            };
-                            context.memory = session.statement();
-                            context
-                        };
-                        drop(black_box(context));
-                    }
-                    println!("context-memory dml={dml} round={round} direct={direct} iterations={ITERATIONS} ns_per_context={}", started.elapsed().as_nanos() / u128::from(ITERATIONS));
-                    assert_eq!(session.bytes_consumed(), 0);
-                }
-            }
-        }
+        ctx.report_sync_stats_failed();
+        ctx.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
+        assert!(clone.sync_stats_failed());
+        assert!(clone.skip_plan_cache());
     }
 
     #[test]
@@ -2889,6 +3923,27 @@ mod tests {
         assert_eq!(StmtContext::for_query().connection_id(), None);
     }
 
+    #[test]
+    fn lazy_statement_clock_initializes_once_across_clones() {
+        let ctx = StmtContext::for_query().with_lazy_clock(
+            Some(1_700_000_000.654_321),
+            tidb_expr::SessionTimeZone::Fixed {
+                name: "+00:00".to_owned(),
+                offset_secs: 0,
+            },
+        );
+        let shared = ctx.statement_clock.as_ref().unwrap();
+        assert!(shared.get().is_none());
+
+        let worker = ctx.clone();
+        assert_eq!(Columns::now(&ctx), Some((1_700_000_000, 654_320_955, 0)));
+        assert_eq!(Columns::now(&worker), Columns::now(&ctx));
+        assert!(Arc::ptr_eq(
+            ctx.statement_clock.as_ref().unwrap(),
+            worker.statement_clock.as_ref().unwrap()
+        ));
+    }
+
     /// Go's `StaticWarnHandler` stops appending at `math.MaxUint16`, so a
     /// non-strict bulk write that converts millions of values retains the
     /// first 65,535 rather than one entry per value.
@@ -2910,6 +3965,36 @@ mod tests {
     fn connection_id_reports_the_attached_value() {
         let ctx = StmtContext::for_query().with_connection_id(Some(7));
         assert_eq!(ctx.connection_id(), Some(7));
+    }
+
+    /// Go `builtinCurrentResourceGroupSig` reads the effective
+    /// `StmtCtx.ResourceGroupName`, which is the value storage requests also
+    /// receive after statement-hint activation.
+    #[test]
+    fn current_resource_group_evaluates_from_statement_context() {
+        let stmt = tidb_parser::parse("SELECT CURRENT_RESOURCE_GROUP()")
+            .expect("the information builtin parses");
+        let tidb_ast::Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+            panic!("not an expression field")
+        };
+        let expression =
+            tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+                .expect("CURRENT_RESOURCE_GROUP rewrites");
+        let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        dual.set_num_virtual_rows(1);
+        let ctx = StmtContext::for_query().with_resource_group_name("rg1");
+        assert_eq!(
+            expression
+                .eval(&ctx, dual.get_row(0))
+                .expect("CURRENT_RESOURCE_GROUP evaluates"),
+            Datum::new_string(b"rg1".to_vec())
+        );
     }
 
     #[test]

@@ -108,8 +108,50 @@ impl Expr {
                 value.format_into(out);
                 out.push(')');
             }
-            Self::Position { .. } | Self::WeightString { .. } | Self::Trim { .. } => {
-                panic!("Format is not implemented for this special function")
+            Self::Position { substr, str } => {
+                out.push_str("position(");
+                substr.format_into(out);
+                out.push_str(", ");
+                str.format_into(out);
+                out.push(')');
+            }
+            Self::WeightString { expr, as_type } => {
+                out.push_str("weight_string(");
+                expr.format_into(out);
+                if let Some((ty, len)) = as_type {
+                    out.push_str(", ");
+                    format_double_quoted_string(
+                        match ty {
+                            WeightStringType::Char => "CHAR",
+                            WeightStringType::Binary => "BINARY",
+                        },
+                        out,
+                    );
+                    out.push_str(", ");
+                    out.push_str(&len.to_string());
+                }
+                out.push(')');
+            }
+            Self::Trim {
+                expr,
+                remstr,
+                direction,
+            } => {
+                out.push_str("trim(");
+                expr.format_into(out);
+                if let Some(remstr) = remstr {
+                    out.push_str(", ");
+                    remstr.format_into(out);
+                }
+                if let Some(direction) = direction {
+                    out.push_str(", ");
+                    out.push_str(match direction {
+                        TrimDirection::Both => "BOTH",
+                        TrimDirection::Leading => "LEADING",
+                        TrimDirection::Trailing => "TRAILING",
+                    });
+                }
+                out.push(')');
             }
             Self::TimestampAdd {
                 unit,
@@ -229,7 +271,17 @@ impl Expr {
                 out.push_str(" END");
             }
             Self::Cast(cast) => format_cast(cast, out),
-            Self::ConvertUsing { .. } => panic!("Format is not implemented for CONVERT USING"),
+            Self::ConvertUsing { expr, charset } => {
+                // Go stores CONVERT(expr USING charset) as a generic
+                // FuncCallExpr for Format, so it emits the lowercase function
+                // name and the two formatted arguments rather than restoring
+                // the USING syntax.
+                out.push_str("convert(");
+                expr.format_into(out);
+                out.push_str(", ");
+                format_double_quoted_string(charset, out);
+                out.push(')');
+            }
             Self::Collate { expr, collation } => {
                 expr.format_into(out);
                 out.push_str(" COLLATE ");
@@ -261,7 +313,15 @@ impl Expr {
                 }
                 out.push(')');
             }
-            Self::MemberOf { .. } => panic!("Format is not implemented for MEMBER OF"),
+            Self::MemberOf { expr, array } => {
+                // Go's specialFormatArgs intentionally leaves two spaces
+                // before the opening parenthesis (`" MEMBER OF "` followed
+                // by `" ("`); preserve that observable Format output.
+                expr.format_into(out);
+                out.push_str(" MEMBER OF  (");
+                array.format_into(out);
+                out.push(')');
+            }
         }
     }
 

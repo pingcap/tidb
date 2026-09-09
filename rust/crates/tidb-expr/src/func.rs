@@ -21,9 +21,10 @@ use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
-    concat_ws_with_context, elt, field, format_num, from_base64, hex, locate, locate_collation,
-    make_set, oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring,
-    substring_index, unhex,
+    concat_ws_with_context, elt, export_set, field, format_num, from_base64,
+    from_base64_with_packet_limit, hex, locate, locate_collation, locate_with_position, make_set,
+    oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring, substring_index,
+    unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
@@ -37,6 +38,21 @@ pub(crate) fn eval_func(
     function_key: Option<usize>,
 ) -> Result<Datum, EvalError> {
     let name = name.to_ascii_uppercase();
+    // The AST evaluator is also an expression-construction entry point for
+    // session execution, so it must enforce the same function-class arity as
+    // `new_function_impl`. DATE_ADD/SUB and ADDDATE/SUBDATE retain their
+    // interval unit inside one Rust AST argument, while Go's function class
+    // counts that unit as the third argument.
+    let arity_count = if matches!(
+        name.as_str(),
+        "DATE_ADD" | "DATE_SUB" | "ADDDATE" | "SUBDATE"
+    ) && matches!(args, [_, Expr::Interval { .. }])
+    {
+        3
+    } else {
+        args.len()
+    };
+    crate::builtin_registry::verify_args_by_count(&name, arity_count)?;
     // `DATE_ADD`/`DATE_SUB`'s second argument is an `Expr::Interval` (a
     // value *and* a unit keyword), not a plain expression `eval_in` can
     // evaluate on its own — handled here, before every other function's
@@ -172,7 +188,7 @@ pub(crate) fn eval_func(
         // may stay untyped; every other build error remains observable.
         let rewrite_argument = |argument| match crate::rewriter::rewrite_expr(argument) {
             Ok(rewritten) => Ok(Some(rewritten)),
-            Err(EvalError::UnknownColumn(_)) => Ok(None),
+            Err(EvalError::UnknownColumn(_) | EvalError::UnknownColumnInClause(..)) => Ok(None),
             Err(error) => Err(error),
         };
         let rewritten_count = rewrite_argument(count)?;
@@ -357,6 +373,14 @@ fn eval_session_state(
             }
             Err(e) => Err(e),
         },
+        // `CURRENT_RESOURCE_GROUP()` is a zero-argument session builtin just
+        // like the other information functions.  Keep it in the shared
+        // session-state table so the AST/value evaluator returns the same
+        // effective statement group as the rewritten/chunk evaluator.
+        ("CURRENT_RESOURCE_GROUP", []) => Ok(match cols.current_resource_group() {
+            Some(group) => Datum::new_string(group.into_bytes()),
+            None => Datum::Null,
+        }),
         ("ROW_COUNT" | "LAST_INSERT_ID", _) => Err(EvalError::Unsupported("bad function arity")),
         // The sequence builtins. The first argument is the sequence's name
         // path, substituted for the column reference the parser produced (see
@@ -425,6 +449,14 @@ pub(crate) fn eval_func_values_in(
     vals: &[Datum],
     cols: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // Go's `builtinFromBase64Sig` checks the estimated decoded length against
+    // `max_allowed_packet` before decoding and routes an over-limit result
+    // through the statement warning policy. Keep this context-sensitive arm
+    // ahead of the values-only table so AST and chunk evaluation agree.
+    if name == "FROM_BASE64" {
+        return Some(from_base64_with_packet_limit(vals, Some(cols)));
+    }
+
     // The session-state builtins: pure functions of their argument VALUES
     // plus the session, which `cols` supplies. They live here rather than in
     // `eval_func_values` (values alone) so the row path and the chunk path
@@ -476,10 +508,173 @@ pub(crate) fn eval_func_values(
     vals: &[Datum],
     ctx: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
+    // negative result to 0 (`builtin_cast.go:998`).
+    if name == "cast_unsigned_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let res = crate::cast::to_i64_signed_with_warnings(value, ctx).ok()?;
+        return Some(Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 })));
+    }
+    // Go `builtinCastDecimalAsRealSig.evalReal`
+    // (`builtin_cast.go:1650-1661`): a DECIMAL source with an in-union
+    // unsigned target clamps a negative to Real(0).
+    // Go `castAsRealToDecimalSig` (`builtin_cast.go:1405-1420`): NOT
+    // in-union, or a non-negative value, yields FromFloat64; in-union and
+    // negative yields the ZERO decimal.
+    if name == "cast_real_to_decimal_in_union" {
+        let value = vals.first()?;
+        let f = match value {
+            Datum::Real(x) => *x,
+            Datum::Int(i) => *i as f64,
+            Datum::UInt(u) => *u as f64,
+            _ => return Some(Ok(Datum::Null)),
+        };
+        if f < 0.0 {
+            // in-union + negative → the ZERO decimal.
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::from_f64(0.0)
+                    .unwrap_or_else(|| tidb_datatype::Decimal::parse_mysql("0").0),
+            )));
+        }
+        // Non-negative: FromFloat64.
+        let Some(dec) = tidb_datatype::Decimal::from_f64(f) else {
+            return Some(Ok(Datum::Null));
+        };
+        return Some(Ok(Datum::Decimal(dec)));
+    }
+    // Go `builtinCastIntAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1050-1070`): an in-union signed integer source maps a
+    // negative value to the zero decimal before the target shape is applied.
+    if name == "cast_int_to_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        return Some(Ok(match value {
+            Datum::Int(value) if *value < 0 => {
+                Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+            }
+            Datum::Int(value) => Datum::Decimal(tidb_datatype::Decimal::from_int(*value)),
+            Datum::UInt(value) => Datum::Decimal(tidb_datatype::Decimal::from_uint(*value)),
+            _ => return None,
+        }));
+    }
+    // Go `builtinCastStringAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1877-1901`): an in-union UNSIGNED target discards a
+    // negative textual value before parsing it, so no truncation warning is
+    // emitted for that branch. Positive text follows the ordinary decimal
+    // prefix parser and keeps its source warning disposition.
+    if name == "cast_string_to_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let text = match value {
+            Datum::String(value) => value.as_utf8().ok()?.to_owned(),
+            Datum::Bytes(value) => std::str::from_utf8(value).ok()?.to_owned(),
+            _ => return None,
+        };
+        let trimmed = text.trim();
+        if trimmed.len() > 1 && trimmed.starts_with('-') {
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::parse_mysql("0").0,
+            )));
+        }
+        crate::cast::report_decimal_input_truncation(value, ctx);
+        return Some(Ok(Datum::Decimal(
+            tidb_datatype::Decimal::parse_mysql(trimmed).0,
+        )));
+    }
+    // Go `builtinCastDecimalAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1538-1551`): an in-union unsigned-target cast of a
+    // negative source yields the ZERO decimal (the `res = &MyDecimal{}`
+    // default is kept); otherwise the source decimal passes through.
+    if name == "cast_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let negative = matches!(value, Datum::Decimal(dec) if dec.is_negative());
+        if negative {
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::parse_mysql("0").0,
+            )));
+        }
+        return Some(Ok(value.clone()));
+    }
+    // Go `castAsRealToIntSig.evalReal` (`builtin_cast.go:1370-1380`): a
+    // real source with an in-union unsigned int target CLAMPS a negative
+    // to 0 instead of the unsigned wrap.
+    if name == "cast_real_int_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let f = match value {
+            Datum::Real(x) => *x,
+            other => crate::cast::to_f64_for_cast(other),
+        };
+        return Some(Ok(Datum::Int(if f < 0.0 { 0 } else { f as i64 })));
+    }
+    if name == "cast_real_in_union" {
+        // Go `builtinCastRealAsRealSig.evalReal`
+        // (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
+        // clamps a negative to 0.
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let res = match value {
+            Datum::Real(f) => *f,
+            Datum::Int(i) => *i as f64,
+            Datum::UInt(u) => *u as f64,
+            Datum::Decimal(dec) => {
+                let mut text = dec.to_string();
+                if text.starts_with('-') {
+                    text.remove(0);
+                }
+                text.parse::<f64>().unwrap_or(0.0)
+            }
+            _ => 0.0,
+        };
+        return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
+    }
     if let Some(result) = crate::math_fn::dispatch_values(name, vals, ctx) {
         return Some(result);
     }
     let result = match name {
+        // Go `builtinGetParamStringSig.evalString` reads the integer selector
+        // from the plan-cache parameter list and stringifies the selected
+        // datum. An unset/out-of-range selector returns the exact
+        // `ErrParamIndexExceedParamCounts` identity; a datum that cannot be
+        // rendered by `ToString` becomes NULL without another error.
+        "GETPARAM" if vals.len() == 1 => {
+            let index = match vals[0] {
+                Datum::Null => return Some(Ok(Datum::Null)),
+                Datum::Int(index) => {
+                    usize::try_from(index).map_err(|_| EvalError::ParamIndexExceedParamCounts)
+                }
+                Datum::UInt(index) => {
+                    usize::try_from(index).map_err(|_| EvalError::ParamIndexExceedParamCounts)
+                }
+                _ => Err(EvalError::Unsupported("GETPARAM index is not an integer")),
+            };
+            let index = match index {
+                Ok(index) => index,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = match ctx.get_param_value(index) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            return Some(Ok(match value.sql_string() {
+                Ok(text) => Datum::new_string(text.into_bytes()),
+                Err(_) => Datum::Null,
+            }));
+        }
         // Go's `in` builtin: args[0] is the tested value and the rest are the
         // list. Three-valued: a match is 1; no match with a NULL anywhere
         // (including the tested value) is NULL; otherwise 0.
@@ -507,6 +702,12 @@ pub(crate) fn eval_func_values(
         "ISTRUE" if vals.len() == 1 => {
             truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(true))))
         }
+        // Go's filter wrapper uses `builtinIntIsTrueSig{keepNull:true}` for
+        // predicates whose NULL result must survive a NOT/OR rewrite.  This
+        // is the value-preserving sibling of ISTRUE: NULL stays NULL, while
+        // every other datum follows the same Datum.ToBool truthiness rule.
+        "ISTRUE_WITH_NULL" if vals.len() == 1 => truthy_of(&vals[0])
+            .map(|t| t.map_or(Datum::Null, |truthy| Datum::Int(i64::from(truthy)))),
         // Go `builtinIntIsFalseSig`: 1 only for a non-NULL zero.
         "ISFALSE" if vals.len() == 1 => {
             truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(false))))
@@ -564,6 +765,9 @@ pub(crate) fn eval_func_values(
         "LOCATE" if vals.len() == 2 => {
             locate(&vals[0], &vals[1], locate_collation(&vals[0], &vals[1]))
         }
+        "LOCATE" if vals.len() == 3 => {
+            locate_with_position(vals, locate_collation(&vals[0], &vals[1]))
+        }
         "INSTR" if vals.len() == 2 => {
             locate(&vals[1], &vals[0], locate_collation(&vals[0], &vals[1]))
         }
@@ -574,6 +778,7 @@ pub(crate) fn eval_func_values(
         "BIT_LENGTH" => bit_length(vals),
         "FIELD" if vals.len() >= 2 => field(vals, ctx),
         "ELT" if vals.len() >= 2 => elt(vals),
+        "EXPORT_SET" => export_set(vals),
         "CONCAT_WS" if vals.len() >= 2 => concat_ws_with_context(vals, ctx),
         "SUBSTRING_INDEX" if vals.len() == 3 => substring_index(vals),
         // The parser renames `INSERT(...)` to `INSERT_FUNC` to avoid the
@@ -835,6 +1040,54 @@ pub(crate) fn negate_if(v: Datum, neg: bool) -> Datum {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn d(s: &str) -> Datum {
+        Datum::new_string(s.to_string())
+    }
+
+    /// Go `builtinCastRealAsRealSig.evalReal`
+    /// (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
+    /// clamps a negative to 0.
+    #[test]
+    fn cast_real_in_union_clamps_negatives_to_zero() {
+        let ctx = PacketLimit::default();
+        let result = eval_func_values("cast_real_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(0.0));
+    }
+
+    /// Go `builtinCastDecimalAsRealSig.evalReal`
+    /// (`builtin_cast.go:1650-1661`): a DECIMAL source with an in-union
+    /// unsigned target clamps a negative to Real(0).
+    #[test]
+    fn cast_decimal_in_union_clamps_negatives_to_zero() {
+        let ctx = PacketLimit::default();
+        let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("-2.5"));
+        let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
+    }
+
+    #[test]
+    fn cast_decimal_in_union_keeps_positives() {
+        let ctx = PacketLimit::default();
+        let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("2.5"));
+        let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("2.5"))
+        );
+    }
+
+    #[test]
+    fn cast_real_in_union_keeps_non_negatives() {
+        let ctx = PacketLimit::default();
+        let result = eval_func_values("cast_real_in_union", &[Datum::Real(7.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(7.5));
+    }
+
     use std::cell::RefCell;
 
     use super::*;
@@ -911,5 +1164,52 @@ mod tests {
                 "Result of insert() was larger than max_allowed_packet (3) - truncated".to_owned(),
             )]
         );
+    }
+}
+
+#[cfg(test)]
+mod cast_real_int_in_union_tests {
+    use super::*;
+
+    /// Go `castAsRealToIntSig` (`builtin_cast.go:1370-1380`): a real source
+    /// with an in-union unsigned int target clamps a negative to 0.
+    #[test]
+    fn cast_real_int_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Int(0));
+    }
+
+    #[test]
+    fn cast_real_int_in_union_keeps_non_negatives() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(7.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Int(7));
+    }
+}
+
+#[cfg(test)]
+mod cast_real_to_decimal_in_union_tests {
+    use super::*;
+
+    /// Go `castAsRealToDecimalSig` (`builtin_cast.go:1405-1420`): NOT
+    /// in-union, or a non-negative value, yields FromFloat64; in-union and
+    /// negative yields the ZERO decimal.
+    #[test]
+    fn cast_real_to_decimal_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
+    }
+
+    #[test]
+    fn cast_real_to_decimal_in_union_keeps_non_negatives_like_go() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(7.5)], &ctx);
+        let expected = tidb_datatype::Decimal::from_f64(7.5).unwrap();
+        assert_eq!(result.unwrap().unwrap(), Datum::Decimal(expected));
     }
 }

@@ -20,6 +20,59 @@ use tidb_ast::{
 use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_mode, SqlMode};
 
 #[test]
+fn test_parentheses_depth_limit() {
+    let sql = format!("SELECT {}1{}", "(".repeat(10_001), ")".repeat(10_001));
+    let error = parse(&sql).expect_err("deeply nested parentheses must be rejected");
+    assert!(
+        error
+            .message
+            .contains("parentheses nesting depth exceeds maximum 10000"),
+        "unexpected error: {error:?}"
+    );
+    let multi_error = parse_multi(&sql).expect_err("multi-statement parsing shares the guard");
+    assert!(multi_error
+        .message
+        .contains("parentheses nesting depth exceeds maximum 10000"));
+}
+
+#[test]
+fn test_ast_depth_limit_for_binary_chain() {
+    let sql = format!("SELECT {}1", "1+".repeat(11_000));
+    match parse(&sql) {
+        Err(error) => assert!(
+            error
+                .message
+                .contains("AST nesting depth exceeds maximum 10064"),
+            "unexpected error: {error:?}"
+        ),
+        Ok(statement) => {
+            std::mem::forget(statement);
+            panic!("an over-depth AST must be rejected");
+        }
+    }
+}
+
+#[test]
+fn test_ast_depth_limit_for_recursive_expression_forms() {
+    for sql in [
+        format!("SELECT {}1", "!".repeat(11_000)),
+        format!(
+            "SELECT {}1{}",
+            "CASE WHEN true THEN ".repeat(11_000),
+            " ELSE 0 END".repeat(11_000)
+        ),
+    ] {
+        let error = parse(&sql).expect_err("an over-depth recursive expression must be rejected");
+        assert!(
+            error
+                .message
+                .contains("AST nesting depth exceeds maximum 10064"),
+            "unexpected error: {error:?}"
+        );
+    }
+}
+
+#[test]
 fn test_insert_statement_memory_allocation() {
     let sql = format!("insert t values (1){}", ",(1)".repeat(1000));
     let Stmt::Dml(statement) = parse(&sql).expect("the 1,001-row INSERT parses") else {
@@ -282,9 +335,57 @@ fn test_error_msg() {
             "select 1 collate some_unknown_collation",
             "[ddl:1273]Unknown collation: 'some_unknown_collation'",
         ),
+        (
+            "SELECT CAST(1 AS FLOAT(54))",
+            "[expression:1426]Too-big precision 54 specified for 'CAST'. Maximum is 53.",
+        ),
+        (
+            "ALTER TABLE t ALGORITHM = FOO",
+            "[parser:1800]Unknown ALGORITHM 'FOO'",
+        ),
     ] {
         let error = parse(sql).unwrap_err();
         assert_eq!(error.compatibility_message(sql), expected, "{sql}");
+    }
+}
+
+/// Go `pkg/parser/ast/functions_test.go::{TestConvert,TestChar}`.
+///
+/// These cases execute in the parser package in Go even though the source
+/// tests live beside the AST restore tests: the grammar action validates and
+/// canonicalizes the charset argument before constructing the AST node.
+#[test]
+fn test_function_charset_arguments_match_ast_source() {
+    let cases = [
+        (r#"SELECT CONVERT("abc" USING "latin1")"#, Some("latin1"), None),
+        (r#"SELECT CONVERT("abc" USING laTiN1)"#, Some("latin1"), None),
+        (r#"SELECT CONVERT("abc" USING "binary")"#, Some("binary"), None),
+        (r#"SELECT CONVERT("abc" USING biNaRy)"#, Some("binary"), None),
+        (r#"SELECT CONVERT(a USING a)"#, None, Some("a")),
+        (r#"SELECT CONVERT("abc" USING CONCAT("utf", "8"))"#, None, Some("CONCAT")),
+        (r#"SELECT CHAR("abc" USING "latin1")"#, Some("latin1"), None),
+        (r#"SELECT CHAR("abc" USING laTiN1)"#, Some("latin1"), None),
+        (r#"SELECT CHAR("abc" USING "binary")"#, Some("binary"), None),
+        (r#"SELECT CHAR("abc" USING binary)"#, Some("binary"), None),
+        (r#"SELECT CHAR(a USING a)"#, None, Some("a")),
+        (r#"SELECT CHAR("abc" USING CONCAT("utf", "8"))"#, None, Some("CONCAT")),
+    ];
+    for (sql, expected_charset, expected_error) in cases {
+        match (parse(sql), expected_charset, expected_error) {
+            (Ok(statement), Some(charset), None) => {
+                let restored = statement.restore();
+                assert!(restored.contains(&format!("'{charset}'")), "{sql}: {restored}");
+            }
+            (Err(error), None, Some(charset)) => {
+                assert_eq!(
+                    error.compatibility_message(sql),
+                    format!("[parser:1115]Unknown character set: '{charset}'")
+                );
+            }
+            (other, expected, expected_error) => panic!(
+                "{sql}: expected charset {expected:?}/error {expected_error:?}, got {other:?}"
+            ),
+        }
     }
 }
 
@@ -1635,4 +1736,51 @@ fn test_dml_stmt() {
             result => panic!("source SQL: {source}; valid={valid}; result={result:?}"),
         }
     }
+}
+
+// ***************************************************************************
+// Go `parseInfixExpr`'s two latches (`expr_parser.go:39`/`:45`): a predicate
+// result can never be the left operand of another predicate, and `IS` never
+// chains after `IS [NOT] TRUE/FALSE/UNKNOWN`.
+// ***************************************************************************
+
+#[test]
+fn chained_predicates_are_rejected_like_go() {
+    for sql in [
+        "SELECT 'a' LIKE 'b' LIKE 'c'",
+        "SELECT 1 IN (1) IN (0)",
+        "SELECT 'a' NOT LIKE 'b' NOT LIKE 'c'",
+    ] {
+        // Go leaves the second operator unconsumed, so the statement parser
+        // reports it as a syntax error at/near that operator.
+        let error = parse(sql).expect_err(sql);
+        assert!(!error.message.is_empty(), "chained predicate: {sql}");
+    }
+}
+
+#[test]
+fn chained_is_truth_is_rejected_but_is_null_chains_like_go() {
+    let error = parse("SELECT 1 IS TRUE IS TRUE").expect_err("IS TRUE must not chain");
+    assert!(!error.message.is_empty());
+    let error = parse("SELECT 1 IS TRUE IS FALSE").expect_err("IS FALSE must not chain");
+    assert!(!error.message.is_empty());
+    // `IS [NOT] NULL` chains at boolean_primary level (`expr_parser.go:716`).
+    let statement = parse("SELECT 'a' IS NULL IS NOT NULL").expect("IS NULL chains");
+    std::mem::forget(statement);
+    // BETWEEN's HIGH side parses at `precPredicate` with a FRESH latch
+    // (`parseBetweenExpr:637`), so a BETWEEN chain through the HIGH side is
+    // Go-legal — only a chain through the finished predicate is refused.
+    let statement = parse("SELECT 1 BETWEEN 0 AND 2 BETWEEN 0 AND 2")
+        .expect("BETWEEN chains through its high side");
+    std::mem::forget(statement);
+}
+
+/// Divergence item 4: Go's expression-prefix fallback admits ANY token above
+/// `identifier` that is not one of the 13 reserved clause-introducing
+/// keywords (`expr_prefix_parser.go:222-235`) — `rows` is a bare column
+/// reference, not a ParseError.
+#[test]
+fn reserved_keyword_as_bare_column_matches_go_clause_gate() {
+    let statement = parse("SELECT rows FROM t").expect("rows parses as a column reference");
+    std::mem::forget(statement);
 }

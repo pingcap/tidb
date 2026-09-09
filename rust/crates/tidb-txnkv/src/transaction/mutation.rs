@@ -50,6 +50,14 @@ pub enum OptimisticMutationKind {
     /// Delete one catalog meta key. Go `structure.HDel` performs a plain
     /// `txn.Delete` with no assertion, and only for a field it just observed.
     MetaDelete,
+    /// Replace an unindexed clustered system-table row with no existence
+    /// assertion. Go SQL `REPLACE` uses a plain mem-buffer `Set`: the row may
+    /// be absent on the first phase or present when a preceding best-effort
+    /// cleanup failed.
+    SystemRowPut,
+    /// Delete an unindexed clustered system-table row with no existence
+    /// assertion. SQL `DELETE` succeeds when the row is already absent.
+    SystemRowDelete,
     /// Prewrite a key this transaction locked but never wrote (`Op_Lock`).
     ///
     /// Go `twoPhaseCommitter.initKeysAndMutations` (`2pc.go`) emits exactly
@@ -134,6 +142,27 @@ impl OptimisticMutation {
         Self::new(OptimisticMutationKind::MetaDelete, key.into(), Vec::new())
     }
 
+    /// Creates a system-row `Op_Put` with no existence assertion.
+    pub fn system_row_put(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, MutationSetError> {
+        Self::new(
+            OptimisticMutationKind::SystemRowPut,
+            key.into(),
+            value.into(),
+        )
+    }
+
+    /// Creates a system-row `Op_Del` with no existence assertion.
+    pub fn system_row_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        Self::new(
+            OptimisticMutationKind::SystemRowDelete,
+            key.into(),
+            Vec::new(),
+        )
+    }
+
     /// Creates an `Op_Lock` mutation for a locked-but-unwritten key.
     ///
     /// Go `2pc.go` `initKeysAndMutations`: `} else if it.Flags().HasLocked() {
@@ -182,6 +211,8 @@ impl OptimisticMutation {
             OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
             OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
             OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
+            OptimisticMutationKind::SystemRowPut => (KvrpcOp::Put, KvrpcAssertion::None),
+            OptimisticMutationKind::SystemRowDelete => (KvrpcOp::Del, KvrpcAssertion::None),
             OptimisticMutationKind::LockOnly => (KvrpcOp::Lock, KvrpcAssertion::None),
         };
         KvrpcMutation {
@@ -393,6 +424,21 @@ mod tests {
             sorted[0].to_proto().assertion,
             KvrpcAssertion::NotExist as i32
         );
+    }
+
+    #[test]
+    fn system_row_replace_and_delete_have_no_existence_assertion() {
+        let replace = OptimisticMutation::system_row_put(b"row".to_vec(), b"value".to_vec())
+            .expect("system row replacement is valid")
+            .to_proto();
+        assert_eq!(replace.op, KvrpcOp::Put as i32);
+        assert_eq!(replace.assertion, KvrpcAssertion::None as i32);
+
+        let delete = OptimisticMutation::system_row_delete(b"row".to_vec())
+            .expect("system row deletion is valid")
+            .to_proto();
+        assert_eq!(delete.op, KvrpcOp::Del as i32);
+        assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
     }
 
     #[test]

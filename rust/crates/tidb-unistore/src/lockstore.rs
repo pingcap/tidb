@@ -427,6 +427,12 @@ impl MemStore {
             let next_addr = node_next(&self.arena, old, i);
             node_set_next(&mut self.arena, x, i, next_addr);
             hint.next[i] = next_addr;
+            // Go indexes the nil prev and panics here; stale hints past the
+            // recomputed height are unreachable with valid hints.
+            assert!(
+                !hint.prev[i].is_null(),
+                "lockstore replace: null prev at level {i}"
+            );
             node_set_next(&mut self.arena, hint.prev[i], i, x);
             hint.prev[i] = x;
         }
@@ -541,6 +547,12 @@ impl MemStore {
             // at any point.
             let addr = node_next(&self.arena, key_node, i);
             hint.next[i] = addr;
+            // Go indexes the nil prev and panics; same unreachable-with-
+            // valid-hints guard as replace.
+            assert!(
+                !hint.prev[i].is_null(),
+                "lockstore delete: null prev at level {i}"
+            );
             node_set_next(&mut self.arena, hint.prev[i], i, addr);
         }
         self.arena.free(key_node);

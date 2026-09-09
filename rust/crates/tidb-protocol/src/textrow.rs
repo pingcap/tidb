@@ -528,7 +528,11 @@ pub fn format_datum_text(
             column,
             TextScalar::Float {
                 value: *value,
-                bit_size: if column.type_code == TYPE_FLOAT { 32 } else { 64 },
+                bit_size: if column.type_code == TYPE_FLOAT {
+                    32
+                } else {
+                    64
+                },
             },
         ),
         Datum::Float32(value) => format_text_value(

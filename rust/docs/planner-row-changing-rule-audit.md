@@ -53,7 +53,7 @@ them is on the live query path**.
   generated tables (`tidb-datatype`'s `charset_data/*`, `encoding_labels.rs`),
   Cargo's own auto-discovered `src/bin/*` targets, and a fuzz target.
 * `topn_push_down.rs:31` likewise wraps `rule_topn_push_down.go` and delegates.
-* `max_min_elimination.rs`, `column_pruning.rs`, `condition_to_dual.rs`,
+* `column_pruning.rs`, `condition_to_dual.rs`,
   `rule_set.rs` model the *legality classification* over caller-supplied
   normalised metadata; no caller supplies it.
 * `predicate_partition.rs::partition_predicates` has **zero callers outside
@@ -351,7 +351,7 @@ Grep-verified absent from `rust/crates` (only the sysvar *names* exist):
 | `rule_join_elimination.go` | No. An un-eliminated join produces the same multiset; elimination is the risky direction. |
 | `rule_join_reorder*.go` | No. |
 | `rule_aggregation_elimination.go` | No. |
-| `rule_max_min_eliminate.go` | No — `max_min_elimination.rs` classifies eligibility but nothing consumes it. |
+| `rule_max_min_eliminate.go` | Yes — `logical/rule_max_min_elimination.rs` is registered in the ordinary logical optimizer. |
 | `expression/constant_propagation.go` | No. See §4. |
 
 ## 4. Settling the constant-propagation question

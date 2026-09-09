@@ -18,6 +18,7 @@
 //! Each test cites its Go file and function; golden strings are byte-exact.
 
 use tidb_datatype::Datum;
+use tidb_stats::analyze_version_matches;
 use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::{
@@ -29,7 +30,6 @@ use tidb_stats::sample_collector::{
 };
 use tidb_stats::sorted_builder::SortedHistogramBuilder;
 use tidb_stats::topn_decoded_string;
-use tidb_stats::analyze_version_matches;
 use tidb_txnkv::{Handle, IntHandle};
 
 // ---------------------------------------------------------------------------
@@ -273,14 +273,31 @@ fn build_sample_full_ndv() {
 
 #[test]
 fn build_hist_and_topn_uses_analyze_default_globals() {
+    use std::sync::atomic::Ordering;
+
+    struct RestoreDefaults {
+        buckets: u64,
+        top_n: u64,
+    }
+
+    impl Drop for RestoreDefaults {
+        fn drop(&mut self) {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(self.buckets, Ordering::SeqCst);
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(self.top_n, Ordering::SeqCst);
+        }
+    }
+
     // Go stores the session defaults into vardef globals; the Rust entrypoint
-    // receives them explicitly through BuildOptions, which is where the
-    // caller-owned global read landed.
+    // reads those same process globals.
+    let _restore = RestoreDefaults {
+        buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(Ordering::SeqCst),
+        top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(Ordering::SeqCst),
+    };
+    tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(4, Ordering::SeqCst);
+    tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(4, Ordering::SeqCst);
     let options = |num_buckets: isize, num_topn: isize| BuildOptions {
         num_buckets,
         num_topn,
-        default_num_buckets: 4,
-        default_num_topn: 4,
     };
     let mut samples = Vec::new();
     let mut ordinal = 0_isize;
@@ -328,8 +345,12 @@ fn weighted_sampling() {
     const LOOP_CNT: u32 = 1000;
     let mut item_cnt = vec![0_u64; ROW_NUM as usize];
     for loop_index in 0..LOOP_CNT {
-        let mut collector =
-            RowSampleCollector::new(1, SamplePolicy::Reservoir { max_sample_size: SAMPLE_NUM });
+        let mut collector = RowSampleCollector::new(
+            1,
+            SamplePolicy::Reservoir {
+                max_sample_size: SAMPLE_NUM,
+            },
+        );
         let mut rng = StepRng((loop_index as u64) | 1);
         for row in 0..ROW_NUM {
             offer_int(&mut collector, row, &mut rng);
@@ -515,11 +536,7 @@ fn sample_serial_merge_sample_collector() {
     assert_eq!(destination[0].null_count, 1000);
     assert_eq!(destination[0].count, 19000);
     assert_eq!(
-        destination[0]
-            .cmsketch
-            .as_ref()
-            .expect("cms")
-            .total_count(),
+        destination[0].cmsketch.as_ref().expect("cms").total_count(),
         destination[0].count as u64
     );
 }
@@ -537,9 +554,12 @@ fn sample_serial_collector_proto_conversion() {
         collated_columns: vec![false, false],
     };
     let collectors = builder
-        .collect_column_stats([suite_chunk(2)], None, |_, datum, _| {
-            Ok::<_, std::convert::Infallible>(datum)
-        }, encode_for_fm)
+        .collect_column_stats(
+            [suite_chunk(2)],
+            None,
+            |_, datum, _| Ok::<_, std::convert::Infallible>(datum),
+            encode_for_fm,
+        )
         .expect("collection succeeds");
     for collector in &collectors {
         let proto = legacy_sample_collector_to_proto(collector).expect("proto encoding");
@@ -559,102 +579,48 @@ fn sample_serial_collector_proto_conversion() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// go-parity gaps: behavior the Rust workspace has not ported yet
-// ---------------------------------------------------------------------------
-
-// pkg/statistics/histogram_test.go — TestValueToString4InvalidKey.
+#[deny(unused_must_use)]
 #[test]
-#[ignore = "go-parity-gap: statistics::ValueToString is not ported to the Rust workspace yet"]
-fn value_to_string_4_invalid_key() {
-}
+fn go_statistics_scalar_returns_can_be_ignored() {
+    tidb_stats::analysis_policy::table_is_analyzed(1);
+    tidb_stats::analysis_policy::meets_auto_analyze_min_count(Some(1), 1);
+    tidb_stats::analysis_policy::is_eligible_for_analysis(Some(1), false, 1);
+    tidb_stats::go_zero_time();
 
-// pkg/statistics/histogram_test.go — TestNewPseudoHistogramReuseChunk.
-#[test]
-#[ignore = "go-parity-gap: NewPseudoHistogram (shared Bounds chunk instance) is not ported yet"]
-fn new_pseudo_histogram_reuse_chunk() {
-}
+    let progress = tidb_stats::AnalyzeProgress::default();
+    progress.get_delta_count();
+    progress.get_last_dump_time();
 
-// pkg/statistics/statistics_test.go — TestPruneTopN.
-#[test]
-#[ignore = "go-parity-gap: pruneTopNItem is crate-private in the Rust port and not exposed for testing"]
-fn prune_top_n() {
-}
+    let id = tidb_stats::AnalyzeTableId::new(10, -1);
+    id.statistics_id();
+    id.is_partition_table();
+    id.display_string();
+    id.equals(id);
+    tidb_stats::AnalyzeTableId::equals_optional(Some(&id), Some(&id));
+    tidb_stats::analyze_version_matches(Some(2), false, 2);
+    tidb_stats::avg_count_per_not_null_value(100, 10.0, 8.0, 4.0);
+    tidb_stats::calc_correlation(2, 1.0);
 
-// pkg/statistics/integration_test.go — TestExpBackoffEstimation.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack; no Rust integration harness owns this yet"]
-fn exp_backoff_estimation() {
-}
+    tidb_stats::estimate_ndv_by_gee(1, 1, 1, 1);
+    let sketches = vec![Some(tidb_stats::FmSketch::new(1))];
+    tidb_stats::estimate_global_singleton_by_sketches(&sketches, &sketches);
+    tidb_stats::left_overlap_percent(0.0, 1.0, 0.0, 0.5, 1.0);
+    tidb_stats::right_overlap_percent(0.0, 1.0, 0.5, 1.0, 1.0);
+    tidb_stats::default_row_est(1.0);
+    tidb_stats::calculate_skew_ratio_counts(1.0, 2.0, 0.5);
 
-// pkg/statistics/integration_test.go — TestNULLOnFullSampling.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn null_on_full_sampling() {
-}
-
-// pkg/statistics/integration_test.go — TestAnalyzeSnapshot.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn analyze_snapshot() {
-}
-
-// pkg/statistics/integration_test.go — TestOutdatedStatsCheck.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn outdated_stats_check() {
-}
-
-// pkg/statistics/integration_test.go — TestShowHistogramsLoadStatus.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit plus SHOW executor"]
-fn show_histograms_load_status() {
-}
-
-// pkg/statistics/integration_test.go — TestSingleColumnIndexNDV.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn single_column_index_ndv() {
-}
-
-// pkg/statistics/integration_test.go — TestColumnStatsLazyLoad.
-#[test]
-#[ignore = "go-parity-gap: needs the Go statistics handle and lazy-load path"]
-fn column_stats_lazy_load() {
-}
-
-// pkg/statistics/integration_test.go — TestUpdateNotLoadIndexFMSketch.
-#[test]
-#[ignore = "go-parity-gap: needs the Go statistics handle update path"]
-fn update_not_load_index_fm_sketch() {
-}
-
-// pkg/statistics/integration_test.go — TestIssue44369.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn issue44369() {
-}
-
-// pkg/statistics/integration_test.go — TestTableLastAnalyzeVersion.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit/session/storage stack"]
-fn table_last_analyze_version() {
-}
-
-// pkg/statistics/integration_test.go — TestGlobalIndexWithHistoricalStats.
-#[test]
-#[ignore = "go-parity-gap: needs the Go testkit, global indexes, and historical stats"]
-fn global_index_with_historical_stats() {
-}
-
-// pkg/statistics/integration_test.go — TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad.
-#[test]
-#[ignore = "go-parity-gap: needs the Go async stats-load session path"]
-fn last_analyze_version_not_changed_with_async_stats_load() {
-}
-
-// pkg/statistics/integration_test.go — TestSaveMetaToStorage.
-#[test]
-#[ignore = "go-parity-gap: needs the Go meta/storage persistence stack"]
-fn save_meta_to_storage() {
+    tidb_stats::sample_value_is_usable(1);
+    tidb_stats::calc_total_size(&[1, 2]);
+    tidb_stats::scalar_geometry::calc_fraction(0.0, 1.0, 0.5);
+    tidb_stats::scalar_geometry::common_prefix_length(&[b"a", b"ab"]);
+    tidb_stats::scalar_geometry::convert_bytes_to_scalar(b"a");
+    tidb_stats::scalar_geometry::convert_datum_to_scalar(&Datum::Int(1), 0);
+    tidb_stats::scalar_geometry::calc_fraction_from_datums(
+        &Datum::Int(0),
+        &Datum::Int(2),
+        &Datum::Int(1),
+    );
+    tidb_stats::is_analyzed(1);
+    tidb_stats::is_column_analyzed_or_synthesized(0, 1, 0);
+    tidb_stats::query_index_bytes(None, None, 1);
 }

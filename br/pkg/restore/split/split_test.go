@@ -490,8 +490,8 @@ func newCodecV2PDClientForSplitTest(t *testing.T, mockClient *MockPDClientForSpl
 	codecPDClient, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, &codecAwareMockPDClient{
 		MockPDClientForSplit: mockClient,
 		keyspaceMeta: &keyspacepb.KeyspaceMeta{
-			Id:   42,
-			Name: "test_keyspace",
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+			Name:     "test_keyspace",
 		},
 	}, "test_keyspace")
 	require.NoError(t, err)

@@ -29,6 +29,7 @@ use tidb_executor::{Catalog, DriverError};
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode, TxnErrorKind};
+use tidb_util::stringutil::go_to_lower;
 
 /// An open transaction's state.
 ///
@@ -83,6 +84,10 @@ pub(crate) struct Transaction {
 }
 
 impl Transaction {
+    pub(crate) const fn is_stale_read(&self) -> bool {
+        self.stale_read_ts.is_some()
+    }
+
     /// Opens a transaction over `catalog`: the ONE place a [`Transaction`] is
     /// built.
     ///
@@ -231,6 +236,45 @@ impl TemporaryTableOverlay {
     }
 }
 
+/// Runs a statement for a session that does not yet own a temporary-table
+/// overlay, returning one when the shared catalog already contains GLOBAL
+/// temporary metadata or the statement creates its first temporary table.
+///
+/// The metadata-version check keeps the ordinary OLTP path at one memoized
+/// GLOBAL-table check: row statements cannot create temporary metadata, so
+/// they do not need the post-statement catalog sweep.
+fn run_discovering_temporary_overlay<T>(
+    catalog: &mut Catalog,
+    body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+) -> (Result<T, DriverError>, Option<TemporaryTableOverlay>) {
+    if !catalog.global_temporary_table_ids_memo().is_empty() {
+        let mut overlay = TemporaryTableOverlay {
+            local: Vec::new(),
+            global: std::collections::HashMap::new(),
+        };
+        let value = overlay.run(catalog, body);
+        return (value, Some(overlay));
+    }
+
+    let metadata_version = catalog.metadata_version();
+    let value = body(catalog);
+    if catalog.metadata_version() == metadata_version {
+        return (value, None);
+    }
+
+    // A metadata-changing statement may have created the session's first
+    // LOCAL or GLOBAL temporary table. Detach it exactly as the ordinary
+    // overlay path would have done around the statement.
+    let mut overlay = TemporaryTableOverlay {
+        local: Vec::new(),
+        global: std::collections::HashMap::new(),
+    };
+    overlay.swap_global_storage(catalog);
+    overlay.local = catalog.take_local_temporary_tables();
+    let discovered = (!overlay.local.is_empty() || !overlay.global.is_empty()).then_some(overlay);
+    (value, discovered)
+}
+
 /// The image of the catalog a statement started from, restored on ANY exit
 /// that is not an explicit disarm -- an `Err` returned by the statement, and
 /// a panic unwinding out of it (see [`Session::with_staged_catalog`]).
@@ -260,7 +304,7 @@ impl Session {
     /// answer rather than a second copy that can disagree.
     #[must_use]
     pub fn is_autocommit(&self) -> bool {
-        self.vars.get_system("autocommit").as_deref() != Ok("OFF")
+        self.vars.is_autocommit()
     }
 
     /// Go's lazy transaction start: with autocommit OFF, a statement that
@@ -332,6 +376,11 @@ impl Session {
         // Go publishes `TxnCtx.StartTS` the moment the transaction
         // activates; `@@tidb_current_ts` reads exactly that.
         self.current_tso().publish(txn.start_ts);
+        if let Some(process) = &self.process {
+            process
+                .registry()
+                .transaction_started(process.id(), txn.start_ts);
+        }
         self.txn = Some(txn);
         Ok(())
     }
@@ -420,6 +469,9 @@ impl Session {
             local_temporary_at_open,
         });
         self.current_tso().publish(ts);
+        if let Some(process) = &self.process {
+            process.registry().transaction_started(process.id(), ts);
+        }
         Ok(())
     }
 
@@ -430,6 +482,9 @@ impl Session {
     pub(crate) fn discard_stale_statement_transaction(&mut self) {
         if let Some(txn) = self.txn.take() {
             self.set_last_txn_info_started(txn.start_ts);
+        }
+        if let Some(process) = &self.process {
+            process.registry().transaction_finished(process.id());
         }
         self.current_tso().clear();
     }
@@ -542,12 +597,20 @@ impl Session {
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
                 if let Some(txn) = self.txn.take() {
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_state(process.id(), "RollingBack");
+                    }
                     // Go `setLastTxnInfoBeforeTxnEnd`: an activated
                     // transaction that ends without a commit leaves the
                     // start-only record.
                     self.set_last_txn_info_started(txn.start_ts);
                     self.current_tso().clear();
                     self.restore_local_temporary_rows(txn.local_temporary_at_open);
+                    if let Some(process) = &self.process {
+                        process.registry().transaction_finished(process.id());
+                    }
                 }
                 Ok(Some(false))
             }
@@ -587,7 +650,7 @@ impl Session {
         let Some(txn) = &mut self.txn else {
             return Ok(());
         };
-        let name = name.to_lowercase();
+        let name = go_to_lower(name);
         let image = txn.working.clone();
         txn.savepoints.retain(|savepoint| savepoint.name != name);
         txn.savepoints.push(Savepoint {
@@ -611,7 +674,7 @@ impl Session {
     /// With no transaction open Go's `txn.Valid()` is false and the error is
     /// the same 1305 an unknown name gets.
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = name.to_lowercase();
+        let lowered = go_to_lower(name);
         let txn = self
             .txn
             .as_mut()
@@ -634,7 +697,7 @@ impl Session {
     /// plus `TxnCtx.ReleaseSavepoint`: drops the named savepoint AND every
     /// savepoint taken after it (`Savepoints[:i]`), touching no data.
     fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = name.to_lowercase();
+        let lowered = go_to_lower(name);
         let index = self
             .txn
             .as_ref()
@@ -659,16 +722,36 @@ impl Session {
             // COMMIT with no open transaction is a no-op, as in MySQL.
             return Ok(());
         };
+        if let Some(process) = &self.process {
+            process
+                .registry()
+                .transaction_state(process.id(), "Committing");
+        }
         if txn.stale_read_ts.is_some() {
             // Go's stale transaction is read-only by construction; its
             // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
             // leaves the start-only record (`pkg/session/session.go:1056`).
             self.set_last_txn_info_started(txn.start_ts);
             self.current_tso().clear();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
             return Ok(());
         }
-        let mut shared = self.lock_catalog()?;
+        let mut shared = match self.lock_catalog() {
+            Ok(shared) => shared,
+            Err(error) => {
+                if let Some(process) = &self.process {
+                    process.registry().transaction_finished(process.id());
+                }
+                return Err(error);
+            }
+        };
         if shared.version() != txn.base_version {
+            drop(shared);
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
             return Err(DriverError::Txn(TxnErrorKind::WriteConflict));
         }
         *shared = txn.working;
@@ -680,6 +763,9 @@ impl Session {
         drop(shared);
         self.set_last_txn_info_committed(txn.start_ts, commit_ts);
         self.current_tso().clear();
+        if let Some(process) = &self.process {
+            process.registry().transaction_finished(process.id());
+        }
         Ok(())
     }
 
@@ -699,6 +785,33 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        // A session that already owns temporary state always takes the full
+        // attach/detach path. This is the uncommon branch.
+        //
+        // An empty session still has to ask the catalog whether GLOBAL
+        // temporary metadata exists: another session may have created it,
+        // and its rows must never use the shared table storage. The memoized
+        // lookup is an epoch comparison in the common no-temporary-table
+        // case. `run_discovering_temporary_overlay` also captures a LOCAL or
+        // GLOBAL table created by this very statement, closing the gap where
+        // the old early return left the first temporary table shared.
+        if self.local_temporary_tables.is_empty() && self.global_temporary_data.is_empty() {
+            let (value, discovered) = match &mut self.txn {
+                Some(txn) => run_discovering_temporary_overlay(&mut txn.working, body),
+                None => {
+                    let mut catalog = self
+                        .catalog
+                        .lock()
+                        .map_err(|_| DriverError::CatalogPoisoned)?;
+                    run_discovering_temporary_overlay(&mut catalog, body)
+                }
+            };
+            if let Some(discovered) = discovered {
+                self.local_temporary_tables = discovered.local;
+                self.global_temporary_data = discovered.global;
+            }
+            return value;
+        }
         // Go wraps every statement's infoschema in a
         // `SessionExtendedInfoSchema` (`temptable.AttachLocalTemporaryTable
         // InfoSchema`) and installs a snapshot interceptor for the temporary
@@ -795,7 +908,18 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        // Cluster sessions keep statement writes in the outer
+        // `MutationBuffer`/`BufferCheckpoint` owned by `ClusterServerSession`.
+        // Their catalog contains only KV-backed tables, so taking a deep image
+        // here duplicates schema maps on every prepared DML without adding a
+        // rollback capability.  The in-process backend still has to retain
+        // the image (and an internal Session transaction must always retain
+        // it), hence the deliberately narrow fast path.
+        let cluster_catalog = self.txn.is_none();
         self.with_catalog_mut(|catalog| {
+            if cluster_catalog && catalog.all_tables_have_external_statement_rollback() {
+                return body(catalog);
+            }
             let mut guard = CatalogStage {
                 stage: Some(catalog.clone()),
                 catalog,
@@ -808,19 +932,68 @@ impl Session {
         })
     }
 
+    /// Runs a DML statement over its target table without taking a catalog
+    /// image when the target is cluster-backed. Cluster sessions keep row
+    /// mutations in the outer statement savepoint, while standalone and
+    /// pipeline sessions (whose `KvTable`s use `MemTableStorage`) still need
+    /// the image even though their table entry is not a `MemTable`.
+    pub(crate) fn with_staged_catalog_for_table<T>(
+        &mut self,
+        database: &str,
+        table_name: &str,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let cluster_catalog = self.txn.is_none();
+        self.with_catalog_mut(|catalog| {
+            let has_external_rollback =
+                catalog.table_has_external_statement_rollback(database, table_name);
+            if cluster_catalog && has_external_rollback {
+                return body(catalog);
+            }
+            let mut guard = CatalogStage {
+                stage: Some(catalog.clone()),
+                catalog,
+            };
+            let value = body(guard.catalog)?;
+            guard.stage = None;
+            Ok(value)
+        })
+    }
+
+    /// Path-resolving wrapper for [`Self::with_staged_catalog_for_table`].
+    /// Invalid/empty paths keep the original staged behavior so the executor
+    /// remains responsible for returning the canonical schema error.
+    pub(crate) fn with_staged_catalog_for_path<T>(
+        &mut self,
+        path: &[String],
+        current_database: &str,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let target = match path {
+            [table] if !current_database.is_empty() => Some((current_database, table.as_str())),
+            [database, table] => Some((database.as_str(), table.as_str())),
+            _ => None,
+        };
+        match target {
+            Some((database, table_name)) => {
+                self.with_staged_catalog_for_table(database, table_name, body)
+            }
+            None => self.with_staged_catalog(body),
+        }
+    }
+
     /// Go `serverStatus2Str` over this session's status bits: the `State`
     /// column of `SHOW PROCESSLIST`.
     ///
-    /// This tier's connections are always autocommit and set no other status
-    /// bit, so the text is `in transaction; autocommit` inside an explicit
-    /// transaction and `autocommit` outside one -- exactly the order Go's
-    /// `ascServerStatus` produces for those bits.
+    /// The typed autocommit state and transaction presence are the two status
+    /// bits this tier owns, in the same order as Go's `ascServerStatus`.
     #[must_use]
     pub fn status_text(&self) -> String {
-        if self.txn.is_some() {
-            "in transaction; autocommit".to_owned()
-        } else {
-            "autocommit".to_owned()
+        match (self.txn.is_some(), self.is_autocommit()) {
+            (true, true) => "in transaction; autocommit".to_owned(),
+            (true, false) => "in transaction".to_owned(),
+            (false, true) => "autocommit".to_owned(),
+            (false, false) => String::new(),
         }
     }
 }

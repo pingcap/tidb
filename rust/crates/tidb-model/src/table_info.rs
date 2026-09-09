@@ -38,9 +38,10 @@ use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
 use crate::table::{
-    ConstraintInfo, ExchangePartitionInfo, FKInfo, SequenceInfo, SoftdeleteInfo, StatsOptions,
-    TTLInfo, TableAffinityInfo, TableCacheStatusType, TableLockInfo, TempTableType,
-    TiFlashReplicaInfo, ViewInfo,
+    ConstraintInfo, ExchangePartitionInfo, FKInfo, MaterializedViewBaseInfo, MaterializedViewInfo,
+    MaterializedViewLogInfo, SequenceInfo, SoftdeleteInfo, StatsOptions, TTLInfo,
+    TableAffinityInfo, TableCacheStatusType, TableLockInfo, TempTableType, TiFlashReplicaInfo,
+    ViewInfo,
 };
 use crate::table_mode::TableMode;
 
@@ -189,6 +190,28 @@ pub struct TableInfo {
     /// The view metadata, if this is a view.
     #[serde(rename = "view", default)]
     pub view: Option<GoShared<ViewInfo>>,
+    /// The materialized-view base-table metadata, if this base table has
+    /// materialized view(s) and/or a materialized view log.
+    #[serde(
+        rename = "materialized_view_base",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view_base: Option<GoShared<MaterializedViewBaseInfo>>,
+    /// The materialized-view metadata, if this is a materialized view.
+    #[serde(
+        rename = "materialized_view",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view: Option<GoShared<MaterializedViewInfo>>,
+    /// The materialized-view log metadata, if this is an MV log table.
+    #[serde(
+        rename = "materialized_view_log",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view_log: Option<GoShared<MaterializedViewLogInfo>>,
     /// The sequence metadata, if this is a sequence.
     #[serde(rename = "sequence", default)]
     pub sequence: Option<GoShared<SequenceInfo>>,
@@ -339,6 +362,18 @@ impl TableInfo {
                 .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             compression: self.compression.clone(),
             view: self.view.clone(),
+            materialized_view_base: self
+                .materialized_view_base
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
+            materialized_view: self
+                .materialized_view
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
+            materialized_view_log: self
+                .materialized_view_log
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             sequence: self.sequence.clone(),
             lock: self.lock.clone(),
             version: self.version,
@@ -432,7 +467,6 @@ impl TableInfo {
     }
 
     /// Go `GetPartitionInfo`: the partition info when partitioning is enabled.
-    #[must_use]
     pub fn get_partition_info(&self) -> Option<GoShared<PartitionInfo>> {
         self.partition
             .as_ref()
@@ -447,13 +481,11 @@ impl TableInfo {
     }
 
     /// Go `GetUpdateTime`: the last-update time (from the `update_ts` TSO).
-    #[must_use]
     pub fn get_update_time(&self) -> GoTime {
         GoTime::from_tso(self.update_ts)
     }
 
     /// Go `GetPkColInfo`: the primary-key column (by the PRI-KEY flag).
-    #[must_use]
     pub fn get_pk_col_info(&self) -> Option<GoShared<ColumnInfo>> {
         self.columns
             .iter_deref()
@@ -466,21 +498,18 @@ impl TableInfo {
     }
 
     /// Go `GetPkName`: the primary-key column name (empty when none).
-    #[must_use]
     pub fn get_pk_name(&self) -> CiString {
         self.get_pk_col_info()
             .map_or_else(CiString::default, |column| column.read().name.clone())
     }
 
     /// Go `ContainsAutoRandomBits`: whether `AUTO_RANDOM` is configured.
-    #[must_use]
     pub fn contains_auto_random_bits(&self) -> bool {
         self.auto_random_bits != 0
     }
 
     /// Go `IsAutoRandomBitColUnsigned`: whether the auto-random handle column
     /// is unsigned.
-    #[must_use]
     pub fn is_auto_random_bit_col_unsigned(&self) -> bool {
         if !self.pk_is_handle || self.auto_random_bits == 0 {
             return false;
@@ -496,7 +525,6 @@ impl TableInfo {
     /// Go `Cols`: the public columns in offset-indexed slots. A transient DDL
     /// gap is retained as `None`, exactly matching the nil element Go leaves
     /// in its returned slice.
-    #[must_use]
     pub fn cols(&self) -> GoSharedPointerSlice<ColumnInfo> {
         let mut slots = vec![None; self.columns.len()];
         let mut max_offset: i64 = -1;
@@ -520,14 +548,12 @@ impl TableInfo {
     }
 
     /// Compatibility spelling for callers that already named the Go gap.
-    #[must_use]
     pub fn cols_with_gaps(&self) -> GoSharedPointerSlice<ColumnInfo> {
         self.cols()
     }
 
     /// Present public columns, used by Rust callers that explicitly do not
     /// consume Go's nil-gap invariant.
-    #[must_use]
     pub fn present_cols(&self) -> Vec<GoShared<ColumnInfo>> {
         self.cols().handles().into_iter().flatten().collect()
     }
@@ -539,7 +565,6 @@ impl TableInfo {
 
     /// Go `FindPublicColumnByName`: the public column named `col_name_l`
     /// (already lower-cased).
-    #[must_use]
     pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<GoShared<ColumnInfo>> {
         self.cols()
             .iter_deref()
@@ -556,7 +581,6 @@ impl TableInfo {
 
     /// Go `GetPrimaryKey`: the explicit primary index, else an implicit one
     /// (a unique index over only non-null, non-hidden public columns).
-    #[must_use]
     pub fn get_primary_key(&self) -> Option<GoShared<IndexInfo>> {
         let mut implicit_pk = None;
         for key in self.indices.iter_deref() {
@@ -612,7 +636,6 @@ impl TableInfo {
     }
 
     /// Go `FindColumnByID`: the column with `id` (any state).
-    #[must_use]
     pub fn find_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
         self.columns
             .iter_deref()
@@ -625,7 +648,6 @@ impl TableInfo {
     }
 
     /// Go `GetColumnByID`: the public column with `id`.
-    #[must_use]
     pub fn get_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
         self.columns.iter_deref().find(|column| {
             let column = column.read();
@@ -639,7 +661,6 @@ impl TableInfo {
     }
 
     /// Go `FindIndexByName`: the index named `idx_name` (already lower-cased).
-    #[must_use]
     pub fn find_index_by_name(&self, idx_name: &str) -> Option<GoShared<IndexInfo>> {
         self.indices
             .iter_deref()
@@ -652,7 +673,6 @@ impl TableInfo {
     }
 
     /// Go `FindIndexByID`: the index with `id`.
-    #[must_use]
     pub fn find_index_by_id(&self, id: i64) -> Option<GoShared<IndexInfo>> {
         self.indices
             .iter_deref()
@@ -666,7 +686,6 @@ impl TableInfo {
 
     /// Go `FindConstraintInfoByName`: the CHECK constraint named `constr_name`
     /// (case-insensitive).
-    #[must_use]
     pub fn find_constraint_info_by_name(
         &self,
         constr_name: &str,
@@ -686,7 +705,6 @@ impl TableInfo {
     }
 
     /// Go `GetAutoIncrementColInfo`: the auto-increment column, if any.
-    #[must_use]
     pub fn get_auto_increment_col_info(&self) -> Option<GoShared<ColumnInfo>> {
         self.columns.iter_deref().find(|column| {
             column.read().get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0
@@ -699,7 +717,6 @@ impl TableInfo {
     }
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
-    #[must_use]
     pub fn column_is_in_index(&self, column: Option<&ColumnInfo>) -> bool {
         self.indices.iter_deref().any(|index| {
             let index = index.read();
@@ -714,13 +731,11 @@ impl TableInfo {
     }
 
     /// Go `HasClusteredIndex`: whether the table has a clustered index.
-    #[must_use]
     pub fn has_clustered_index(&self) -> bool {
         self.pk_is_handle || self.is_common_handle
     }
 
     /// Go `IsAutoIncColUnsigned`: whether the auto-increment column is unsigned.
-    #[must_use]
     pub fn is_auto_inc_col_unsigned(&self) -> bool {
         self.get_auto_increment_col_info().is_some_and(|column| {
             column.read().get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0
@@ -728,7 +743,6 @@ impl TableInfo {
     }
 
     /// Go `FindColumnNameByID`: the (lower-cased) name of column `id`, or "".
-    #[must_use]
     pub fn find_column_name_by_id(&self, id: i64) -> String {
         self.find_column_by_id(id)
             .map_or_else(String::new, |column| {
@@ -737,7 +751,6 @@ impl TableInfo {
     }
 
     /// Go `FindIndexNameByID`: the (lower-cased) name of index `id`, or "".
-    #[must_use]
     pub fn find_index_name_by_id(&self, id: i64) -> String {
         self.indices
             .iter_deref()
@@ -751,7 +764,6 @@ impl TableInfo {
     /// column's origin column excluded. Keyed by lower-cased name; the remove
     /// key is the changing column's origin name (Go's original-case
     /// `GetChangingOriginName`), matching Go's map behavior.
-    #[must_use]
     pub fn get_non_temp_columns(&self) -> GoSharedPointerSlice<ColumnInfo> {
         use std::collections::BTreeMap;
         let mut col_map = BTreeMap::new();
@@ -796,13 +808,11 @@ impl TableInfo {
 
     /// Go `SepAutoInc`: whether the table uses a separate auto-increment
     /// allocator (version >= 5 and an auto-ID cache of 1).
-    #[must_use]
     pub fn sep_auto_inc(&self) -> bool {
         self.version >= TABLE_INFO_VERSION5 && self.auto_id_cache == 1
     }
 
     /// Go `StorageClassString`: the JSON string describing the storage class.
-    #[must_use]
     pub fn storage_class_string(&self) -> String {
         build_storage_class_string(
             &self.storage_class_tier,
@@ -887,25 +897,21 @@ impl TableInfo {
     }
 
     /// Go `IsView`.
-    #[must_use]
     pub fn is_view(&self) -> bool {
         self.view.is_some()
     }
 
     /// Go `IsSequence`.
-    #[must_use]
     pub fn is_sequence(&self) -> bool {
         self.sequence.is_some()
     }
 
     /// Go `IsBaseTable`: neither a view nor a sequence.
-    #[must_use]
     pub fn is_base_table(&self) -> bool {
         self.sequence.is_none() && self.view.is_none()
     }
 
     /// Go `IsLocked`: whether the table lock is held by a session.
-    #[must_use]
     pub fn is_locked(&self) -> bool {
         self.lock
             .as_ref()
@@ -1111,6 +1117,42 @@ mod tests {
         t.view = None;
         t.sequence = Some(GoShared::new(SequenceInfo::default()));
         assert!(t.is_sequence());
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_table_info_returns_may_be_ignored_like_go() {
+        let table = TableInfo::default();
+
+        table.get_partition_info();
+        table.get_update_time();
+        table.get_pk_col_info();
+        table.get_pk_name();
+        table.contains_auto_random_bits();
+        table.is_auto_random_bit_col_unsigned();
+        table.cols();
+        table.cols_with_gaps();
+        table.present_cols();
+        table.find_public_column_by_name("");
+        table.get_primary_key();
+        table.find_column_by_id(0);
+        table.get_column_by_id(0);
+        table.find_index_by_name("");
+        table.find_index_by_id(0);
+        table.find_constraint_info_by_name("");
+        table.get_auto_increment_col_info();
+        table.column_is_in_index(None);
+        table.has_clustered_index();
+        table.is_auto_inc_col_unsigned();
+        table.find_column_name_by_id(0);
+        table.find_index_name_by_id(0);
+        table.get_non_temp_columns();
+        table.sep_auto_inc();
+        table.storage_class_string();
+        table.is_view();
+        table.is_sequence();
+        table.is_base_table();
+        table.is_locked();
     }
 
     #[test]

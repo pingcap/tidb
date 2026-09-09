@@ -51,13 +51,11 @@ pub struct MutRow {
 
 impl MutRow {
     /// Go `ToRow`: read the mutable row as an ordinary [`Row`].
-    #[must_use]
     pub fn to_row(&self) -> Row<'_> {
         self.chunk.get_row(0)
     }
 
     /// Go `Len`: the number of columns.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.chunk.num_cols()
     }
@@ -70,13 +68,11 @@ impl MutRow {
 
     /// Go `MutRowFromDatums` (and `MutRowFromValues`, which differs only in
     /// taking Go's `any` where this takes the same value as a [`Datum`]).
-    #[must_use]
     pub fn from_datums(datums: &[Datum]) -> MutRow {
         MutRow::from_columns(datums.iter().map(make_mut_row_column).collect())
     }
 
     /// Go `MutRowFromTypes`: every column initialized to its type's zero value.
-    #[must_use]
     pub fn from_types(field_types: &[FieldType]) -> MutRow {
         MutRow::from_columns(field_types.iter().map(zero_column_for_type).collect())
     }
@@ -334,9 +330,7 @@ fn prepare_shallow_column(source: &mut Column, row_idx: usize) -> PreparedShallo
 /// Go `cleanColOfMutRow`: zero every offset and clear the null bit, so the
 /// cell reads back as an empty NULL until something writes it.
 fn clean_col_of_mut_row(column: &mut Column) {
-    for offset in &mut column.offsets {
-        *offset = 0;
-    }
+    column.offsets.fill(0);
     column.null_bitmap[0] = 0;
 }
 
@@ -384,14 +378,11 @@ fn make_mut_row_bytes_column(bytes: &[u8]) -> Column {
 ///
 /// The datum carries the value-layer `Decimal`, so it is converted directly to
 /// the raw layout -- the same route [`crate::chunk::Chunk::append_datum`] takes.
+/// Values wider than Go's fixed nine-word cell use its prefix/truncation result;
+/// `MutRow` does not introduce a new overflow panic at this boundary.
 ///
-/// # Panics
-/// Panics on a value too large for a `MyDecimal` buffer, rather than
-/// truncating it silently into the cell.
 fn my_decimal_of(decimal: &tidb_datatype::Decimal) -> MyDecimal {
-    decimal.to_chunk_my_decimal().unwrap_or_else(|error| {
-        panic!("MutRow: decimal {decimal} does not fit a MyDecimal cell ({error:?})")
-    })
+    decimal.to_chunk_my_decimal_lossy()
 }
 
 /// Go `makeMutRowColumn`: a one-row column holding `value`.
@@ -1085,11 +1076,8 @@ mod tests {
         // raw cell as `Chunk.AppendDuration`.
         let ret_types = vec![ft(C::Duration)];
         let mut chk = Chunk::new(&ret_types, 1, 1);
-        let dur = MySqlDuration::from_nanoseconds(
-            (1 * 3_600 + 23 * 60 + 45) * 1_000_000_000,
-            0,
-        )
-        .expect("01:23:45");
+        let dur = MySqlDuration::from_nanoseconds((1 * 3_600 + 23 * 60 + 45) * 1_000_000_000, 0)
+            .expect("01:23:45");
         chk.append_duration(0, dur);
         let mut mut_row = MutRow::from_types(&ret_types);
         mut_row.set_value(0, &Datum::Duration(dur));
@@ -1127,7 +1115,10 @@ mod tests {
         mut_row.shallow_copy_partial_row(0, &mut row_chunk, 0);
         let copied = mut_row.to_row();
         let row = row_chunk.get_row(0);
-        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(
+            copied.get_string(0).as_bytes(),
+            row.get_string(0).as_bytes()
+        );
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
 
@@ -1151,7 +1142,10 @@ mod tests {
         assert_eq!(copied.get_string(0).as_bytes(), b"dfg");
         assert_eq!(copied.get_int64(1), 567);
         let row = row_chunk.get_row(0);
-        assert_eq!(copied.get_string(0).as_bytes(), row.get_string(0).as_bytes());
+        assert_eq!(
+            copied.get_string(0).as_bytes(),
+            row.get_string(0).as_bytes()
+        );
         assert_eq!(copied.get_int64(1), row.get_int64(1));
         assert_eq!(copied.get_time(2), row.get_time(2));
     }
@@ -1172,8 +1166,9 @@ mod tests {
             (data, elem_buf)
         }
 
-        let before: Vec<(Vec<u8>, Option<Vec<u8>>)> =
-            (0..mut_row.len()).map(|index| snapshot(&mut_row, index)).collect();
+        let before: Vec<(Vec<u8>, Option<Vec<u8>>)> = (0..mut_row.len())
+            .map(|index| snapshot(&mut_row, index))
+            .collect();
 
         for index in 0..mut_row.len() {
             mut_row.set_datum(index, &Datum::Null);

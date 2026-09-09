@@ -199,6 +199,26 @@ fn last_insert_id_argument_form_publishes_for_the_next_statement() {
     assert_eq!(session_scalar(&mut session, "SELECT @@identity"), "9");
 }
 
+/// Transcreated from Go `TestLastInsertID`: the session getter starts at zero,
+/// follows the previous-statement publication, and preserves the full
+/// unsigned 64-bit value exposed by the `@@last_insert_id` native type.
+#[test]
+fn last_insert_id_sysvar_preserves_unsigned_publication() {
+    let mut session = Session::new();
+    assert_eq!(session_scalar(&mut session, "SELECT @@last_insert_id"), "0");
+    session
+        .run("SELECT LAST_INSERT_ID(9223372036854775809)")
+        .unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT @@last_insert_id"),
+        "9223372036854775809"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT @@identity"),
+        "9223372036854775809"
+    );
+}
+
 /// Constant folding runs left-to-right during rewriting, so its session side
 /// effects survive a later resolution error but never an earlier one.
 #[test]

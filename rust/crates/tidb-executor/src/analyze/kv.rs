@@ -43,6 +43,7 @@
 //! one case that has no position to map to.
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_stats::cmsketch::TopN;
@@ -53,6 +54,29 @@ use crate::analyze::{
     AnalyzedIndex,
 };
 use crate::kv_table::{KvTable, RowDecodeContext};
+
+/// Go `handleutil.IsSpecialGlobalIndex`: these indexes cannot be rebuilt from
+/// the ordinary column sample and therefore own an independent ordered index
+/// task.
+#[must_use]
+pub fn is_special_global_index(table: &KvTable, index: &crate::kv_table::KvIndex) -> bool {
+    index.global
+        && index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .any(|(position, offset)| {
+                index
+                    .prefix_lengths
+                    .get(position)
+                    .is_some_and(|length| *length != crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+                    || table
+                        .columns()
+                        .get(*offset)
+                        .and_then(|column| column.generated.as_ref())
+                        .is_some_and(|generated| !generated.stored)
+            })
+}
 
 /// Runs one `ANALYZE TABLE` over a table's stored rows.
 ///
@@ -69,8 +93,20 @@ pub fn analyze_kv_table(
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
 ) -> Result<TableStatistics, AnalyzeError> {
+    analyze_kv_table_columns(table, options, realtime_count, ctx, None)
+}
+
+/// Runs ANALYZE over the selected column IDs. `None` means all columns.
+pub fn analyze_kv_table_columns(
+    table: &mut KvTable,
+    options: &AnalyzeOptions,
+    realtime_count: Option<i64>,
+    ctx: &crate::StmtContext,
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<TableStatistics, AnalyzeError> {
     let decode_context = RowDecodeContext::for_analyze(ctx);
-    let plan = kv_analyze_plan(table, &decode_context)?;
+    let (plan, source_positions, source_indexes) =
+        kv_analyze_plan(table, &decode_context, selected_column_ids)?;
     let rows = table
         .scan_rows_with_handles_recomputed(&decode_context)
         .map_err(|error| {
@@ -79,29 +115,32 @@ pub fn analyze_kv_table(
                 table.name
             ))
         })?;
-    let analyzed_columns = plan.columns().len();
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     for (_, row) in &rows {
-        run.push(&row[..analyzed_columns])?;
+        let selected = source_positions
+            .iter()
+            .map(|position| row[*position].clone())
+            .collect::<Vec<_>>();
+        run.push(&selected)?;
     }
     let analyzed = run.finish()?;
 
     let visible = table.visible_columns();
     let mut columns = BTreeMap::new();
     for (position, built) in analyzed.columns.into_iter().enumerate() {
-        let unsigned = visible[position].field_type.is_unsigned();
+        let unsigned = visible[source_positions[position]].field_type.is_unsigned();
         columns.insert(built.id, column_statistics(built, unsigned));
     }
     let mut indexes = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
-        let stored = &table.indexes()[position];
+        let stored = &table.indexes()[source_indexes[position]];
         indexes.insert(
             built.id,
             index_statistics(built, stored.column_offsets.len(), stored.unique),
         );
     }
 
-    Ok(TableStatistics::new(
+    let mut statistics = TableStatistics::new(
         analyzed.scanned_rows,
         // A fresh `ANALYZE` describes exactly the rows it just read, so
         // nothing has been modified since. `tidb_exec::cluster_analyze` stores
@@ -110,13 +149,82 @@ pub fn analyze_kv_table(
         0,
         columns,
         indexes,
-    )
-    // Go stamps the writing transaction's start TS into both
-    // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
-    // TSO, so the stamp is this process's clock in Go's TSO shape -- the
-    // physical half in the high bits, exactly what
-    // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
-    .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+    );
+    // Go stores an analyzed empty table as a real cache object and only marks
+    // the planner's per-query copy pseudo because its realtime count is zero.
+    // This function knows zero came from an actual ANALYZE scan.
+    statistics.cache_pseudo = false;
+    Ok(statistics
+        // Go stamps the writing transaction's start TS into both
+        // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
+        // TSO, so the stamp is this process's clock in Go's TSO shape -- the
+        // physical half in the high bits, exactly what
+        // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
+        .with_stats_ver(2))
+}
+
+/// Runs Go's independent stats-v2 task for one special global index.
+///
+/// The encoded index columns are consumed directly and in key order. This is
+/// essential for prefix and virtual-generated indexes: reconstructing their
+/// keys from a table-row sample is not the same operation.
+pub fn analyze_kv_table_independent_index(
+    table: &mut KvTable,
+    index_id: i64,
+    options: &AnalyzeOptions,
+) -> Result<TableStatistics, AnalyzeError> {
+    let index = table
+        .indexes()
+        .iter()
+        .find(|index| index.id == index_id)
+        .cloned()
+        .ok_or_else(|| AnalyzeError::Unsupported(format!("no such index id {index_id}")))?;
+    if !is_special_global_index(table, &index) {
+        return Err(AnalyzeError::Unsupported(format!(
+            "index `{}` is not a special global index",
+            index.name
+        )));
+    }
+    let bucket_count = usize::try_from(options.num_buckets)
+        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE bucket count".to_owned()))?;
+    let topn_count = usize::try_from(options.num_topn)
+        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE TopN count".to_owned()))?;
+    let mut processor = tidb_stats::IndependentIndexAnalyze::new(
+        index.id,
+        index.column_offsets.len(),
+        bucket_count,
+        topn_count,
+    );
+    for entry in table
+        .index_entry_records_for_check(index.id)
+        .map_err(|error| AnalyzeError::Unsupported(format!("{error:?}")))?
+    {
+        let (encoded_columns, _) =
+            tidb_tablecodec::cut_index_key(&entry.key, index.column_offsets.len())
+                .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+        processor
+            .push(&encoded_columns)
+            .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+    }
+    let built = processor
+        .finish()
+        .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+    let mut indexes = BTreeMap::new();
+    indexes.insert(
+        index.id,
+        IndexStats {
+            histogram: built.histogram,
+            topn: Some(built.topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: index.column_offsets.len(),
+            unique: index.unique,
+        },
+    );
+    Ok(TableStatistics::new(0, 0, BTreeMap::new(), indexes)
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
+        .with_stats_ver(2))
 }
 
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted
@@ -180,15 +288,22 @@ fn index_statistics(built: AnalyzedHistogram, num_columns: usize, unique: bool) 
 fn kv_analyze_plan(
     table: &KvTable,
     context: &RowDecodeContext,
-) -> Result<AnalyzePlan, AnalyzeError> {
+    selected_column_ids: Option<&HashSet<i64>>,
+) -> Result<(AnalyzePlan, Vec<usize>, Vec<usize>), AnalyzeError> {
     let visible = table.visible_columns();
     let mut columns = Vec::with_capacity(visible.len());
-    for column in visible {
+    let mut source_positions = Vec::with_capacity(visible.len());
+    let mut remapped = BTreeMap::new();
+    for (source_position, column) in visible.iter().enumerate() {
+        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
+            continue;
+        }
         let qualified = format!("`{}`.`{}`", table.name, column.name);
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
         columns.push(AnalyzedColumn {
             id: column.id,
             name: column.name.to_ascii_lowercase(),
+            field_type: column.field_type.clone(),
             collation,
             // A row written before an `ADD COLUMN` carries no entry for it and
             // reads back as the column's `OriginDefaultValue`. This tier's row
@@ -203,10 +318,16 @@ fn kv_analyze_plan(
                     ))
                 })?,
         });
+        remapped.insert(source_position, columns.len() - 1);
+        source_positions.push(source_position);
     }
 
     let mut indexes = Vec::with_capacity(table.indexes().len());
-    for index in table.indexes() {
+    let mut source_indexes = Vec::with_capacity(table.indexes().len());
+    for (source_index, index) in table.indexes().iter().enumerate() {
+        if is_special_global_index(table, index) {
+            continue;
+        }
         let mut column_positions = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
             if *offset >= visible.len() {
@@ -216,14 +337,25 @@ fn kv_analyze_plan(
                     index.name, table.name
                 )));
             }
-            column_positions.push(*offset);
+            let Some(position) = remapped.get(offset).copied() else {
+                continue;
+            };
+            column_positions.push(position);
+        }
+        if column_positions.len() != index.column_offsets.len() {
+            continue;
         }
         indexes.push(AnalyzedIndex {
             id: index.id,
-            single_column_unique: index.unique && column_positions.len() == 1,
+            single_column_unique: index.unique
+                && column_positions.len() == 1
+                && !index.has_prefix(),
             column_positions,
+            prefix_lengths: index.prefix_lengths.clone(),
         });
+        source_indexes.push(source_index);
     }
 
     AnalyzePlan::new(columns, indexes, &table.name)
+        .map(|plan| (plan, source_positions, source_indexes))
 }

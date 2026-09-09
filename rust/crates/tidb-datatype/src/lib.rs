@@ -98,8 +98,8 @@ pub use binary_json::{
     JSON_TYPE_CODE_TIMESTAMP, JSON_TYPE_CODE_UINT64,
 };
 pub use binary_json_ops::{
-    contains_binary_json, merge_binary_json, merge_patch_binary_json, overlaps_binary_json,
-    peek_binary_json_len, JSONModifyType, JSONSearchMode,
+    contains_binary_json, like_matches, merge_binary_json, merge_patch_binary_json,
+    overlaps_binary_json, peek_binary_json_len, JSONModifyType, JSONSearchMode,
 };
 pub use binary_literal::{
     parse_bit_str, parse_hex_str, BinaryLiteral, BinaryLiteralIntOutcome, BinaryLiteralParseError,
@@ -111,7 +111,7 @@ pub use charset::{
     get_collation_by_id, get_collation_by_name, get_default_charset_and_collate,
     get_default_collation, get_default_collation_legacy, get_supported_charsets,
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
-    CharsetInfo, CharsetName, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
+    CharsetInfo, CharsetName, Collation, CollationInfo, PAD_NONE, PAD_SPACE, TIFLASH_SUPPORTED_CHARSETS,
 };
 pub use collation::{
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
@@ -131,12 +131,13 @@ pub use conversion_context::{
 pub use convert::{
     convert_decimal_str_to_uint, convert_decimal_to_uint, convert_float_to_int,
     convert_float_to_uint, convert_int_to_int, convert_int_to_uint, convert_scientific_notation,
-    convert_uint_to_int, convert_uint_to_uint, float_string_to_integer_string,
+    convert_uint_to_int, convert_uint_to_uint, float_string_to_integer_string, float_warning_input,
     integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
     json_to_decimal, json_to_float, json_to_int, json_to_int64, number_to_duration,
     round_integer_string, scalar_to_string, str_to_datetime, str_to_duration, str_to_float,
-    str_to_int, str_to_uint, valid_float_prefix, valid_integer_prefix, Converted, DurationOrTime,
-    NumericPrefix, ScalarConversionError, ScalarConversionEvent, ScalarStringValue,
+    str_to_int, str_to_uint, valid_float_prefix, valid_integer_prefix, warning_subject_byte_cap,
+    Converted, DurationOrTime, NumericPrefix, ScalarConversionError, ScalarConversionEvent,
+    ScalarStringValue,
 };
 pub use core_time::{
     calc_daynr, calc_days_in_year, calc_weekday, get_date_from_daynr, get_last_day, is_leap_year,
@@ -154,8 +155,8 @@ pub use datum_convert::{
 };
 pub use datum_eval::{compute_plus, DatumArithmeticError};
 pub use decimal::{
-    decimal_bin_size, Decimal, DecimalCodecError, DecimalCodecWarning, DecimalIntegerWarning,
-    DecimalParseError,
+    decimal_bin_size, Decimal, DecimalCodecError, DecimalCodecFailure, DecimalCodecWarning,
+    DecimalIntegerWarning, DecimalParseError,
 };
 pub use duration::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
@@ -179,7 +180,7 @@ pub use eval_type::{
 pub use explain_format::{
     EXPLAIN_FORMATS, EXPLAIN_FORMAT_BINARY, EXPLAIN_FORMAT_BRIEF, EXPLAIN_FORMAT_COST_TRACE,
     EXPLAIN_FORMAT_DOT, EXPLAIN_FORMAT_HINT, EXPLAIN_FORMAT_JSON, EXPLAIN_FORMAT_PLAN_CACHE,
-    EXPLAIN_FORMAT_PLAN_TREE, EXPLAIN_FORMAT_ROW, EXPLAIN_FORMAT_TIDB_JSON,
+    EXPLAIN_FORMAT_PLAN_TREE, EXPLAIN_FORMAT_ROW, EXPLAIN_FORMAT_RU, EXPLAIN_FORMAT_TIDB_JSON,
     EXPLAIN_FORMAT_TRADITIONAL, EXPLAIN_FORMAT_TRUE_CARD_COST, EXPLAIN_FORMAT_VERBOSE,
 };
 pub use field_name::{
@@ -205,7 +206,9 @@ pub use multibyte_encoding::{
     count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
     is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
 };
-pub use mydecimal::{format_float_g_shortest, MyDecimal, MYDECIMAL_STRUCT_SIZE};
+pub use mydecimal::{
+    format_float_g_shortest, DecimalError, MyDecimal, RoundMode, MYDECIMAL_STRUCT_SIZE,
+};
 pub use mysql_time::{
     core_time_from_datetime, date_fsp, format_int_width, get_frac_index, get_fsp, get_timezone,
     round_datetime_fraction, truncate_datetime_fraction, Time, TimeError, TimeType, TimezoneSuffix,
@@ -237,7 +240,7 @@ pub use parser_types_errors::{
 };
 pub use session_time_zone::{SessionTimeZone, SessionTimeZoneOffset};
 pub use source_string::{HackedStr, PlainStr, SourceString};
-pub use str_to_date::get_format_type;
+pub use str_to_date::{get_format_type, is_go_punctuation};
 pub use time_parse::{
     adjust_year, extract_datetime_num, extract_duration_num, extract_duration_value, is_clock_unit,
     is_date_format, is_date_unit, is_microsecond_unit, parse_date_format, parse_datetime,

@@ -52,8 +52,32 @@ pub fn derive_constant_null_flag(expr: &mut Expression) {
 /// recursively evaluating them here would duplicate warnings and side effects.
 pub fn fold_constant_in_mode(
     expr: &mut Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
     mode: ConstantFoldMode,
+) {
+    fold_constant_in_mode_inner(expr, ctx, mode, false);
+}
+
+/// Folds a planner expression while retaining constant coercions whose
+/// evaluation can emit a statement warning. Go builds those casts and
+/// charset conversions with the live statement context, so a planner-side
+/// `NoColumns` fold would otherwise replace them with a value and permanently
+/// lose the warning at execution. The flag is deliberately opt-in: DDL and
+/// expression-unit callers that use an actual warning context retain the
+/// ordinary Go construction-time fold.
+pub fn fold_constant_in_mode_preserving_warning_casts(
+    expr: &mut Expression,
+    ctx: &dyn crate::Columns,
+    mode: ConstantFoldMode,
+) {
+    fold_constant_in_mode_inner(expr, ctx, mode, true);
+}
+
+fn fold_constant_in_mode_inner(
+    expr: &mut Expression,
+    ctx: &dyn crate::Columns,
+    mode: ConstantFoldMode,
+    preserve_warning_casts: bool,
 ) {
     if mode == ConstantFoldMode::Disabled {
         return;
@@ -62,7 +86,7 @@ pub fn fold_constant_in_mode(
     // Build a replacement without changing the original function, so rejecting
     // a warning-producing fold needs neither a tree copy nor a rollback.
     let warning_bookmark = (mode == ConstantFoldMode::Try).then(|| ctx.warning_count());
-    let replacement = fold_current_value_in(expr, ctx);
+    let replacement = fold_current_value_in(expr, ctx, preserve_warning_casts);
     if let Some(bookmark) = warning_bookmark {
         if ctx.warning_count() > bookmark {
             ctx.truncate_warnings(bookmark);
@@ -82,15 +106,19 @@ pub fn fold_constant_in_mode(
 
 fn fold_current_value_in(
     expr: &Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
+    preserve_warning_casts: bool,
 ) -> Option<(crate::constant::Constant, bool)> {
+    if preserve_warning_casts && (has_runtime_warning_cast(expr) || has_runtime_warning_in(expr)) {
+        return None;
+    }
     // Go foldConstant's ordinary scalar arm inspects the already-built args;
     // it does not recursively revisit every descendant at each parent.
     let func = match expr {
         Expression::ScalarFunction(func) => func,
         _ => return None,
     };
-    if is_unfoldable(func.func_name.lowercase()) {
+    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
         return None;
     }
     let mut has_null_arg = false;
@@ -108,6 +136,13 @@ fn fold_current_value_in(
     if !all_const_arg {
         return None;
     }
+    // Go `expression_rewriter.go:3016-3029`: a deferred function (the clock
+    // family) folds into a Constant that carries the function as
+    // `DeferredExpr`, so a cached plan re-evaluates it on every execution
+    // instead of serving the folding-time value. `UNIX_TIMESTAMP` with
+    // arguments is explicitly excluded (it is a normal expression of its
+    // argument).
+    let deferred_self = is_deferred_function(func.func_name.lowercase(), func.args.len());
     let value = crate::eval_expression_once(expr, ctx).ok()?;
     let mut ret_type = expr.static_type()?.clone();
     if !has_null_arg {
@@ -120,7 +155,104 @@ fn fold_current_value_in(
     let mut folded = crate::constant::Constant::new(value, ret_type);
     // Go FoldConstant preserves the expression's collation on replacement.
     folded.collation = func.collation.clone();
-    Some((folded, is_deferred_const))
+    Some((folded, is_deferred_const || deferred_self))
+}
+
+/// Constant integer casts, builtins that wrap their arguments in Go's
+/// `WrapWithCastAsInt`, and `CHAR(... USING charset)` use the statement context
+/// to report truncation, out-of-range, or invalid-byte diagnostics. A
+/// no-column planner context cannot retain those diagnostics, so callers that
+/// are preparing an executable plan keep these nodes unfolded for runtime.
+///
+/// String/byte inputs always go through Go's prefix scanner and may report
+/// truncation.  Real, float32, and decimal inputs are retained too: their
+/// range checks report overflow through the same statement context, and
+/// deciding whether a particular value is in range here would duplicate the
+/// type-specific conversion rules.  Keeping the numeric carriers unfolded is
+/// value-preserving and makes the runtime warning owner unambiguous.
+fn has_runtime_warning_cast(expr: &Expression) -> bool {
+    let Expression::ScalarFunction(function) = expr else {
+        return false;
+    };
+    let name = function.func_name.lowercase();
+    let indexes: &[usize] = match name {
+        "cast_signed"
+        | "cast_unsigned"
+        | "cast_unsigned_in_union"
+        | "cast_real"
+        | "cast_decimal"
+        | "cast_datetime"
+        | "cast_timestamp"
+        | "cast_date"
+        | "cast_duration"
+        | "vitess_hash"
+        | "tidb_shard" => &[0],
+        // `FORMAT(number, decimals)` wraps its second argument to ETInt.
+        "format" => &[1],
+        // `builtinCharSig.evalString` appends ErrInvalidCharacterString
+        // (1300) while decoding the bytes produced by CHAR's numeric
+        // arguments. The final constant is NULL for the no-USING form, which
+        // uses the binary signature and has no decode warning to preserve.
+        "char_func" => {
+            return function.args.last().is_some_and(|charset| {
+                matches!(
+                    charset,
+                    Expression::Constant(constant) if !constant.value.is_null()
+                )
+            });
+        }
+        _ => return false,
+    };
+    if !indexes.iter().any(|&index| {
+        matches!(
+            function.args.get(index),
+            Some(Expression::Constant(constant))
+                if matches!(
+                    constant.value,
+                    Datum::String(_)
+                        | Datum::Bytes(_)
+                        | Datum::Real(_)
+                        | Datum::Float32(_)
+                        | Datum::Decimal(_)
+                )
+        )
+    }) {
+        return false;
+    }
+    true
+}
+
+/// A numeric `IN` signature casts every list member to the first argument's
+/// eval type. Go performs those casts while building the signature with the
+/// live statement context, so a string such as `'abc'` still contributes its
+/// 1292 warning even when an earlier candidate already matched. A planner
+/// `NoColumns` fold cannot retain that warning; keep this mixed-domain shape
+/// executable for the real statement context instead.
+fn has_runtime_warning_in(expr: &Expression) -> bool {
+    let Expression::ScalarFunction(function) = expr else {
+        return false;
+    };
+    if function.func_name.lowercase() != "in" || function.args.len() < 2 {
+        return false;
+    }
+    let Some(first_type) = function.args[0].static_type().map(|ty| ty.eval_type()) else {
+        return false;
+    };
+    if !matches!(
+        first_type,
+        tidb_datatype::EvalType::Int
+            | tidb_datatype::EvalType::Real
+            | tidb_datatype::EvalType::Decimal
+    ) {
+        return false;
+    }
+    function.args[1..].iter().any(|argument| {
+        matches!(
+            argument,
+            Expression::Constant(constant)
+                if matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
+        )
+    })
 }
 
 /// One node of Go's `foldConstant`: folds bottom up, returning the constant
@@ -136,7 +268,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
         Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
         Expression::ScalarFunction(func) => func,
     };
-    if is_unfoldable(func.func_name.lowercase()) {
+    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
         // Go still folds this node's ARGUMENTS -- `foldConstant` recurses
         // through `NewFunction` as each level is built -- it only refuses to
         // fold the unfoldable node itself.
@@ -205,7 +337,8 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
         Expression::Constant(_) => true,
         Expression::Column(_) | Expression::CorrelatedColumn(_) => false,
         Expression::ScalarFunction(func) => {
-            !is_unfoldable(func.func_name.lowercase()) && func.args.iter().all(folds_to_constant)
+            !is_unfoldable_call(func.func_name.lowercase(), func.args.len())
+                && func.args.iter().all(folds_to_constant)
         }
     }
 }
@@ -234,7 +367,7 @@ pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go`): the
 /// functions whose result is not a property of their arguments -- a clock, a
 /// counter, a random source, a session variable, or a side effect.
-fn is_unfoldable(name: &str) -> bool {
+pub fn is_unfoldable(name: &str) -> bool {
     // Go's `GetVar` is one name; this rewriter encodes the signature the
     // session's current value picked into the name (`getvar_int`,
     // `getvar_string`, ...), so a bare `"getvar"` arm below would never match
@@ -257,6 +390,22 @@ fn is_unfoldable(name: &str) -> bool {
             | "getparam"
             | "benchmark"
             | "dayname"
+            // Information functions read session properties in Go. The
+            // planner fold has only `NoColumns`, where their Rust evaluators
+            // otherwise return NULL instead of Go's missing-property error;
+            // retaining the function lets the live session supply the value.
+            | "database"
+            | "schema"
+            | "current_user"
+            | "current_role"
+            | "current_resource_group"
+            | "user"
+            | "session_user"
+            | "system_user"
+            | "connection_id"
+            | "row_count"
+            | "version"
+            | "tidb_version"
             // Reads the SESSION transaction context at evaluation: folding
             // it at plan time would freeze the zero the statement had before
             // its first read opened a snapshot.
@@ -266,4 +415,323 @@ fn is_unfoldable(name: &str) -> bool {
             | "setval"
             | "any_value"
     )
+}
+
+/// Go does not classify `LAST_INSERT_ID` in `unFoldableFunctions`: the
+/// one-argument form is folded by `NewFunction`, and that construction-time
+/// evaluation publishes its value through `SessionVars`. Only the zero-
+/// argument reader must remain runtime-bound because its result comes from
+/// the previous statement. Keep that arity distinction at the fold gate while
+/// leaving [`is_unfoldable`] as the source-name table used by other callers.
+fn is_unfoldable_call(name: &str, arg_count: usize) -> bool {
+    if name == "last_insert_id" {
+        return arg_count == 0;
+    }
+    is_unfoldable(name)
+}
+
+/// Go `IsDeferredFunctions` (`pkg/expression/function_traits.go:159-171`),
+/// with the caller's `UNIX_TIMESTAMP`-with-arguments exception
+/// (`expression_rewriter.go:3021`): these foldable clock functions must be
+/// re-evaluated per execution when a plan cache reuses the built tree.
+fn is_deferred_function(name: &str, arg_count: usize) -> bool {
+    let clock = matches!(
+        name,
+        "now"
+            | "random_bytes"
+            | "current_timestamp"
+            | "utc_time"
+            | "curtime"
+            | "current_time"
+            | "utc_timestamp"
+            | "unix_timestamp"
+            | "curdate"
+            | "current_date"
+            | "utc_date"
+    );
+    clock && (name != "unix_timestamp" || arg_count == 0)
+}
+
+#[cfg(test)]
+mod deferred_function_tests {
+    use super::super::context::Columns;
+    use super::*;
+    use crate::context::NoColumns;
+    use crate::expression::{Constant, Expression, ScalarFunction};
+    use tidb_ast::CiString;
+    use tidb_datatype::FieldType;
+
+    /// A context whose statement clock the test pins, so NOW() evaluations
+    /// are deterministic and two executions can observe the difference.
+    struct WarningCollector(std::cell::RefCell<Vec<(u16, String)>>);
+
+    impl Columns for WarningCollector {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+        fn now(&self) -> Option<(i64, u32, i32)> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+        fn warning_count(&self) -> usize {
+            self.0.borrow().len()
+        }
+    }
+
+    struct Clock(u64);
+
+    impl Columns for Clock {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+        fn now(&self) -> Option<(i64, u32, i32)> {
+            Some((self.0 as i64, 0, 0))
+        }
+    }
+
+    /// Go `TryFoldFunctions` includes `ast.Interval` (function_traits.go:81):
+    /// INTERVAL's arguments are try-folded, and a warning during that fold
+    /// keeps the function UNFOLDED with no warning raised at build time. The
+    /// walk therefore must not descend into INTERVAL's arguments.
+    #[test]
+    fn interval_scope_does_not_raise_child_warnings_during_fold() {
+        // INTERVAL(1, 0, <cast that warns 1292>): the cast child must not be
+        // folded, so the fold itself must not append the 1292 warning.
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("interval"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(0),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("intdiv"),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    vec![
+                        Expression::Constant(crate::constant::Constant::new(
+                            Datum::Int(1),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )),
+                        Expression::Constant(crate::constant::Constant::new(
+                            Datum::Int(0),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )),
+                    ],
+                )),
+            ],
+        ));
+        let warnings = WarningCollector(std::cell::RefCell::new(Vec::new()));
+        fold_constant_in_mode(&mut expr, &warnings, ConstantFoldMode::Normal);
+        assert!(
+            warnings.0.borrow().is_empty(),
+            "child warnings leaked into the fold: {:?}",
+            warnings.0.borrow()
+        );
+    }
+
+    /// Go's zero-argument LAST_INSERT_ID reads `SessionVarsPropReader`.
+    /// Folding in a planner scope without session properties must therefore
+    /// leave that reader runtime-bound rather than freezing NULL.
+    #[test]
+    fn last_insert_id_requires_runtime_session_state() {
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![],
+        ));
+        fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+        assert!(matches!(expr, Expression::ScalarFunction(_)));
+    }
+
+    /// Go's one-argument LAST_INSERT_ID is intentionally absent from
+    /// `unFoldableFunctions`: `NewFunction` folds it immediately and the fold
+    /// publishes the value through the live statement context. Keep that
+    /// side effect when the generic folder is called with a session context.
+    #[test]
+    fn last_insert_id_argument_folds_and_publishes_during_construction() {
+        struct RecordingColumns(std::cell::Cell<Option<u64>>);
+
+        impl Columns for RecordingColumns {
+            fn get(&self, _path: &[String]) -> Option<Datum> {
+                None
+            }
+
+            fn set_last_insert_id(&self, value: u64) {
+                self.0.set(Some(value));
+            }
+        }
+
+        let int_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            int_type.clone(),
+            vec![Expression::Constant(crate::constant::Constant::new(
+                Datum::Int(42),
+                int_type,
+            ))],
+        ));
+        let context = RecordingColumns(std::cell::Cell::new(None));
+        fold_constant_in_mode(&mut expr, &context, ConstantFoldMode::Normal);
+
+        assert!(matches!(expr, Expression::Constant(_)));
+        assert_eq!(context.0.get(), Some(42));
+    }
+
+    /// Go's information builtins carry `CurrentDB`, `CurrentUserPropReader`,
+    /// or `SessionVarsPropReader` even though they are absent from
+    /// `unFoldableFunctions`. A planner scope has no such properties, so the
+    /// Rust fold must retain each call until a live session evaluates it.
+    #[test]
+    fn session_information_functions_require_runtime_context() {
+        for name in [
+            "database",
+            "schema",
+            "current_user",
+            "current_role",
+            "current_resource_group",
+            "user",
+            "session_user",
+            "system_user",
+            "connection_id",
+            "row_count",
+            "version",
+            "tidb_version",
+        ] {
+            let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                vec![],
+            ));
+            fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+            assert!(
+                matches!(expr, Expression::ScalarFunction(_)),
+                "{name} was frozen during the no-session fold"
+            );
+        }
+    }
+
+    /// Go's numeric `IN` signatures cast every string/byte candidate against
+    /// the first argument and report conversion warnings for all candidates,
+    /// including those after an earlier match. A planner `NoColumns` fold
+    /// cannot own that statement warning, so mixed-domain lists stay deferred.
+    #[test]
+    fn mixed_numeric_in_literals_stay_runtime_bound_for_warning_preservation() {
+        let int_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let string_type = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("in"),
+            int_type.clone(),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(Datum::Int(0), int_type)),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::new_string("0"),
+                    string_type.clone(),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::new_string("abc"),
+                    string_type,
+                )),
+            ],
+        ));
+        fold_constant_in_mode_preserving_warning_casts(
+            &mut expr,
+            &NoColumns,
+            ConstantFoldMode::Normal,
+        );
+        assert!(
+            matches!(expr, Expression::ScalarFunction(_)),
+            "mixed-domain IN was folded before runtime warning ownership"
+        );
+    }
+
+    #[test]
+    fn benchmark_scope_keeps_its_subtree_unfolded() {
+        // BENCHMARK(1, CAST('x' AS SIGNED)): the inner cast folds only if the
+        // walk descends into the unfoldable parent's children.
+        let inner = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(2),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("benchmark"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                inner,
+            ],
+        ));
+        fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+
+        // The benchmark's cast argument must still be a scalar function.
+        match &expr {
+            Expression::ScalarFunction(benchmark) => match &benchmark.get_args()[1] {
+                Expression::ScalarFunction(_) => {}
+                other => panic!("the cast argument was folded: {other:?}"),
+            },
+            other => panic!("benchmark itself was folded: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_function_fold_re_evaluates_per_execution() {
+        let now_node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("now"),
+            FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
+            vec![],
+        ));
+
+        // Fold once under clock 1000.
+        let mut expr = now_node.clone();
+        fold_constant_in_mode(&mut expr, &Clock(1000), ConstantFoldMode::Try);
+
+        // The folded constant must carry the deferred provenance: evaluating
+        // the SAME folded node under a LATER statement clock must serve the
+        // fresh value, not the folding-time one (Go `Constant.DeferredExpr`,
+        // expression_rewriter.go:3016-3029).
+        // Re-executing under a LATER statement clock must re-evaluate: the
+        // folding-time value (00:16:40) must not be served again.
+        let later_value = expr
+            .eval(
+                &Clock(5000),
+                tidb_chunk::chunk::Chunk::new(&[], 1, 1).get_row(0),
+            )
+            .unwrap();
+        let later = later_value.sql_string().unwrap();
+        assert!(
+            later.contains("01:23:20"),
+            "clock 5000 must render 01:23:20, got {later}"
+        );
+        // And the first execution's own value stayed at its own clock.
+        let first_value = expr
+            .eval(
+                &Clock(1000),
+                tidb_chunk::chunk::Chunk::new(&[], 1, 1).get_row(0),
+            )
+            .unwrap();
+        let first = first_value.sql_string().unwrap();
+        assert!(
+            first.contains("00:16:40"),
+            "clock 1000 must render 00:16:40, got {first}"
+        );
+    }
 }

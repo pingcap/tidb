@@ -55,20 +55,179 @@
 //! * **`BIT`**: converting `BIT` to a blob formats it as a decimal integer,
 //!   so the blob is parsed back as one.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, RwLock};
 
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode,
+    UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 use tidb_model::table_info::TableInfo;
-use tidb_stats::cmsketch::{decode_cmsketch_and_topn, CmsSketch, TopN};
+use tidb_stats::cmsketch::{
+    decode_cmsketch, decode_cmsketch_and_topn, decode_topn_rows, CmsSketch, TopN,
+};
 use tidb_stats::histogram::{Bucket, Histogram};
+use tidb_stats::{
+    ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus,
+    Table, VERSION_2,
+};
+use tidb_stats_handle_cache::StatsMetaRow;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
-    scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
+    scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, SystemRow,
+    SystemTableError, SystemTableView,
 };
+
+/// One `mysql.stats_meta` row consumed by the information-schema size reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableRowCount {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Persisted row count.
+    pub count: u64,
+}
+
+/// One non-index `mysql.stats_histograms` row consumed by the information-schema size reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColumnLength {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Column histogram ID.
+    pub histogram_id: i64,
+    /// Persisted total column size. Negative values are clamped to zero.
+    pub total_size: i64,
+}
+
+/// Per-query row counts and variable-width column sizes used by the
+/// information-schema `TABLES` and `PARTITIONS` readers.
+///
+/// Go's `TableSizeStats` is deliberately not process-global: every statement
+/// reads `stats_meta`, and optionally `stats_histograms`, into a fresh value.
+#[derive(Clone, Debug, Default)]
+pub struct TableSizeStats {
+    table_rows: BTreeMap<i64, u64>,
+    column_lengths: BTreeMap<(i64, i64), u64>,
+}
+
+impl TableSizeStats {
+    /// Builds one statement-local value from the two restricted reads.
+    #[must_use]
+    pub fn from_rows(rows: Vec<TableRowCount>, lengths: Vec<ColumnLength>) -> Self {
+        Self {
+            table_rows: rows
+                .into_iter()
+                .map(|row| (row.table_id, row.count))
+                .collect(),
+            column_lengths: lengths
+                .into_iter()
+                .map(|row| {
+                    (
+                        (row.table_id, row.histogram_id),
+                        u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits in u64"),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Go `TableSizeStats.GetTableRows`.
+    #[must_use]
+    pub fn get_table_rows(&self, table_id: i64) -> u64 {
+        self.table_rows.get(&table_id).copied().unwrap_or_default()
+    }
+
+    /// Go `TableSizeStats.GetColLength`.
+    #[must_use]
+    fn get_column_length(&self, table_id: i64, histogram_id: i64) -> u64 {
+        self.column_lengths
+            .get(&(table_id, histogram_id))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Go `TableSizeStats.EstimateDataLength`.
+    #[must_use]
+    pub fn estimate_data_length(&self, table: &TableInfo) -> (u64, u64, u64, u64) {
+        let mut row_count = self.get_table_rows(table.id);
+        let (mut data_length, mut index_length) =
+            self.get_data_and_index_length(table, table.id, row_count);
+        if let Some(partition) = table.get_partition_info() {
+            row_count = 0;
+            data_length = 0;
+            for definition in partition.read().definitions.snapshot() {
+                let partition_rows = self.get_table_rows(definition.id);
+                row_count = row_count.wrapping_add(partition_rows);
+                let (partition_data, partition_index) =
+                    self.get_data_and_index_length(table, definition.id, partition_rows);
+                data_length = data_length.wrapping_add(partition_data);
+                index_length = index_length.wrapping_add(partition_index);
+            }
+        }
+        let average_row_length = if row_count == 0 {
+            0
+        } else {
+            data_length / row_count
+        };
+        if table.is_sequence() {
+            row_count = 1;
+        }
+        (row_count, average_row_length, data_length, index_length)
+    }
+
+    /// Go `TableSizeStats.GetDataAndIndexLength`.
+    #[must_use]
+    pub fn get_data_and_index_length(
+        &self,
+        table: &TableInfo,
+        physical_id: i64,
+        row_count: u64,
+    ) -> (u64, u64) {
+        let mut column_lengths = vec![0_u64; table.columns.len()];
+        let mut data_length = 0_u64;
+        for (offset, column) in table.columns.iter_deref().enumerate() {
+            let column = column.read();
+            if column.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            let storage_length = column.field_type.storage_length();
+            let length = if storage_length == VAR_STORAGE_LEN {
+                self.get_column_length(physical_id, column.id)
+            } else {
+                row_count.wrapping_mul(storage_length as u64)
+            };
+            data_length = data_length.wrapping_add(length);
+            column_lengths[offset] = length;
+        }
+
+        let partitioned = table.get_partition_info().is_some();
+        let mut index_length = 0_u64;
+        for index in table.indices.iter_deref() {
+            let index = index.read();
+            if index.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            if partitioned {
+                if index.global && table.id != physical_id {
+                    continue;
+                }
+                if !index.global && table.id == physical_id {
+                    continue;
+                }
+            }
+            for index_column in index.columns.iter_deref() {
+                let index_column = index_column.read();
+                let length = if index_column.length == UNSPECIFIED_LENGTH {
+                    column_lengths[index_column.offset as usize]
+                } else {
+                    row_count.wrapping_mul(index_column.length as u64)
+                };
+                index_length = index_length.wrapping_add(length);
+            }
+        }
+        (data_length, index_length)
+    }
+}
 
 /// Go `statistics.UTCWithAllowInvalidDateCtx`, as conversion flags.
 ///
@@ -93,6 +252,9 @@ pub struct ClusterStatsItem {
     pub stats_ver: i64,
     /// `flag`, Go's `statistics.AnalyzeFlag` bitset.
     pub flag: i64,
+    /// Go `StatsLoadedStatus`: whether the item has its full payload or only
+    /// histogram metadata resident.
+    pub load_status: StatsLoadedStatus,
     /// The histogram, with its buckets in ascending bound order and its
     /// counts made cumulative the way Go's in-memory `Bucket.Count` is.
     pub histogram: Histogram,
@@ -100,6 +262,8 @@ pub struct ClusterStatsItem {
     pub topn: Option<TopN>,
     /// `mysql.stats_histograms.cm_sketch`, when it holds one.
     pub cms: Option<CmsSketch>,
+    /// `mysql.stats_fm_sketch`, loaded only for partition-global merging.
+    pub fm_sketch: Option<tidb_stats::FmSketch>,
 }
 
 /// Everything one cluster snapshot says about one table's statistics.
@@ -109,26 +273,44 @@ pub struct ClusterTableStats {
     pub table_id: i64,
     /// `mysql.stats_meta.version`, the TSO the stats were last written at.
     pub version: u64,
+    /// `mysql.stats_meta.snapshot`, the snapshot TSO whose rows ANALYZE read.
+    pub snapshot: u64,
     /// `mysql.stats_meta.modify_count`: rows changed since that write.
     pub modify_count: i64,
     /// `mysql.stats_meta.count`: the table's estimated row count.
     pub row_count: u64,
-    /// `mysql.stats_meta.last_stats_histograms_version`: the TSO of the last
-    /// write that filled this table's histograms, which is Go's
-    /// `statistics.Table.LastAnalyzeVersion`. Zero means never analyzed; the
-    /// writer (`pkg/statistics/handle/storage/save.go:200`) stamps it with the
-    /// same start TS as `version`, and a GC pass re-stamps both when it drops
-    /// dead histogram rows (`gc.go:144`).
+    /// Go `statistics.Table.LastAnalyzeVersion`: initialized from the analyze
+    /// snapshot and advanced by analyzed column/index histogram versions.
     pub last_analyze_version: u64,
+    /// `mysql.stats_meta.last_stats_histograms_version`, Go's independent
+    /// table-level histogram refresh marker.
+    pub last_stats_hist_version: u64,
     /// Column histograms, in `hist_id` order.
     pub columns: Vec<ClusterStatsItem>,
     /// Index histograms, in `hist_id` order.
     pub indexes: Vec<ClusterStatsItem>,
-    /// Full-load residency shared by every planner built from this snapshot.
-    pub load_state: Arc<tidb_executor::access_cost::StatsLoadState>,
 }
 
 impl ClusterTableStats {
+    fn analyzed_histogram_version(&self) -> u64 {
+        self.columns
+            .iter()
+            .chain(&self.indexes)
+            .filter(|item| item.stats_ver != 0)
+            .map(|item| item.histogram.last_update_version)
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn refresh_last_analyze_version(&self, current: u64) -> u64 {
+        let result = current.max(self.analyzed_histogram_version());
+        if result == 0 {
+            self.snapshot
+        } else {
+            result
+        }
+    }
+
     /// The column histogram for one column ID.
     #[must_use]
     pub fn column(&self, id: i64) -> Option<&ClusterStatsItem> {
@@ -139,6 +321,123 @@ impl ClusterTableStats {
     #[must_use]
     pub fn index(&self, id: i64) -> Option<&ClusterStatsItem> {
         self.indexes.iter().find(|item| item.id == id)
+    }
+
+    /// Converts the storage row image into Go's canonical `statistics.Table`.
+    /// Planner-specific views must be derived from this full table rather
+    /// than cached independently.
+    #[must_use]
+    pub fn to_statistics_table(&self, table_info: &TableInfo) -> Arc<Table> {
+        let row_count = stats_meta_count_as_go_int64(self.row_count);
+        let stats_version = self
+            .columns
+            .iter()
+            .chain(&self.indexes)
+            .map(|item| item.stats_ver)
+            .max()
+            .unwrap_or_default();
+        let mut hist_coll = HistColl::new(
+            self.table_id,
+            row_count,
+            self.modify_count,
+            self.columns.len(),
+            self.indexes.len(),
+        );
+        hist_coll.stats_version = i32::try_from(stats_version).unwrap_or_else(|_| {
+            if stats_version.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
+        });
+        let mut existence = ColAndIdxExistenceMap::new(self.columns.len(), self.indexes.len());
+
+        for item in &self.columns {
+            let Some(column) = item.to_column(self.table_id, table_info) else {
+                continue;
+            };
+            existence.insert_column(
+                item.id,
+                item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0,
+            );
+            hist_coll.set_column(item.id, column);
+        }
+        for item in &self.indexes {
+            let Some(index) = item.to_index(self.table_id, table_info) else {
+                continue;
+            };
+            existence.insert_index(item.id, item.stats_ver != 0);
+            hist_coll.set_index(item.id, index);
+        }
+
+        Arc::new(Table {
+            existence_map: Some(Arc::new(RwLock::new(existence))),
+            hist_coll,
+            version: self.version,
+            last_analyze_version: self
+                .last_analyze_version
+                .max(self.analyzed_histogram_version()),
+            last_stats_hist_version: self.last_stats_hist_version.max(self.snapshot),
+            table_info_update_ts: table_info.update_ts,
+            is_pk_handle: table_info.pk_is_handle,
+        })
+    }
+}
+
+impl ClusterStatsItem {
+    pub(crate) fn to_column(&self, table_id: i64, table_info: &TableInfo) -> Option<Column> {
+        let (metadata, is_handle) = table_info.cols().iter_deref().find_map(|column| {
+            let column = column.read();
+            (column.id == self.id).then(|| {
+                let primary_key =
+                    column.field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0;
+                (
+                    ColumnInfo {
+                        id: column.id,
+                        name: column.name.lowercase().to_owned(),
+                        primary_key,
+                    },
+                    table_info.pk_is_handle && primary_key,
+                )
+            })
+        })?;
+        Some(Column {
+            cmsketch: self.cms.clone(),
+            top_n: self.topn.clone(),
+            info: Some(metadata),
+            histogram: self.histogram.clone(),
+            stats_loaded_status: self.load_status,
+            physical_id: table_id,
+            stats_version: self.stats_ver,
+            is_handle,
+            ..Column::default()
+        })
+    }
+
+    pub(crate) fn to_index(&self, table_id: i64, table_info: &TableInfo) -> Option<Index> {
+        let metadata = table_info.indices.iter_deref().find_map(|index| {
+            let index = index.read();
+            (index.id == self.id).then(|| IndexInfo {
+                id: index.id,
+                name: index.name.lowercase().to_owned(),
+                columns: index
+                    .columns
+                    .iter_deref()
+                    .map(|column| column.read().name.lowercase().to_owned())
+                    .collect(),
+                mv_index: index.mv_index,
+            })
+        })?;
+        Some(Index {
+            cmsketch: self.cms.clone(),
+            top_n: self.topn.clone(),
+            info: Some(metadata),
+            histogram: self.histogram.clone(),
+            stats_loaded_status: self.load_status,
+            stats_version: self.stats_ver,
+            physical_id: table_id,
+            ..Index::default()
+        })
     }
 }
 
@@ -172,6 +471,7 @@ pub struct ClusterStatsLoader {
     histograms: SystemTableView,
     buckets: SystemTableView,
     topn: SystemTableView,
+    fm_sketches: SystemTableView,
 }
 
 impl ClusterStatsLoader {
@@ -184,6 +484,7 @@ impl ClusterStatsLoader {
                 &[
                     "table_id",
                     "version",
+                    "snapshot",
                     "modify_count",
                     "count",
                     // Go stamps this with the same start TS as `version` on
@@ -232,38 +533,116 @@ impl ClusterStatsLoader {
                 "stats_top_n",
                 &["table_id", "is_index", "hist_id", "value", "count"],
             )?,
+            fm_sketches: SystemTableView::locate(
+                catalog,
+                "stats_fm_sketch",
+                &["table_id", "is_index", "hist_id", "value"],
+            )?,
         })
     }
 
-    /// Go `stats_meta`'s rows, ONE range scan: `(table_id, version, modify_count,
-    /// count)` for every table that has one.
+    /// Go `StatsCacheImpl.Update`'s one ordered `stats_meta` range scan.
     ///
     /// This is the cheap half of Go's `Handle.Update`
     /// (`pkg/statistics/handle/update.go`): a tick first reads only this table
     /// and compares versions against its cache, and touches histograms,
     /// buckets and top-n for a table ONLY when that table's version moved. A
     /// pass whose versions all match costs exactly this one scan.
-    pub fn load_all_meta<S: MetaSnapshot>(
+    pub fn load_stats_meta_rows<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
-    ) -> Result<BTreeMap<i64, (u64, i64, u64)>, SystemTableError> {
-        let mut result = BTreeMap::new();
+    ) -> Result<Vec<StatsMetaRow>, SystemTableError> {
+        let mut result = Vec::new();
         for (key, value) in scan_system_table(snapshot, &self.meta)? {
             let row = SystemRow::parse(&self.meta, &key, &value)?;
             let Some(table_id) = row.i64("table_id")? else {
                 continue;
             };
-            result.insert(
-                table_id,
-                (
-                    row.u64("version")?.unwrap_or_default(),
-                    row.i64("modify_count")?.unwrap_or_default(),
-                    row.u64("count")?.unwrap_or_default(),
-                ),
-            );
+            result.push(StatsMetaRow {
+                version: row.u64("version")?.unwrap_or_default(),
+                physical_id: table_id,
+                modify_count: row.i64("modify_count")?.unwrap_or_default(),
+                count: stats_meta_count_as_go_int64(row.u64("count")?.unwrap_or_default()),
+                snapshot: row.u64("snapshot")?.unwrap_or_default(),
+                latest_histogram_version: row
+                    .u64("last_stats_histograms_version")?
+                    .unwrap_or_default(),
+            });
         }
         Ok(result)
-}
+    }
+
+    /// Pinned `getRowCountTables`: reads unsigned row counts for all IDs, or
+    /// for the requested physical IDs when the slice is non-empty.
+    pub fn load_table_row_counts<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        physical_ids: &[i64],
+    ) -> Result<Vec<TableRowCount>, SystemTableError> {
+        let mut result = Vec::new();
+        let rows = if physical_ids.is_empty() {
+            scan_system_table(snapshot, &self.meta)?
+        } else {
+            let mut rows = Vec::new();
+            for physical_id in physical_ids.iter().copied().collect::<BTreeSet<_>>() {
+                rows.extend(scan_system_table_prefixed(
+                    snapshot,
+                    &self.meta,
+                    &[Datum::Int(physical_id)],
+                )?);
+            }
+            rows
+        };
+        for (key, value) in rows {
+            let row = SystemRow::parse(&self.meta, &key, &value)?;
+            let Some(table_id) = row.i64("table_id")? else {
+                continue;
+            };
+            result.push(TableRowCount {
+                table_id,
+                count: row.u64("count")?.unwrap_or_default(),
+            });
+        }
+        Ok(result)
+    }
+
+    /// Pinned `getColLengthTables`: reads non-index histogram sizes for all
+    /// IDs, or for the requested physical IDs when the slice is non-empty.
+    pub fn load_column_lengths<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        physical_ids: &[i64],
+    ) -> Result<Vec<ColumnLength>, SystemTableError> {
+        let mut result = Vec::new();
+        let rows = if physical_ids.is_empty() {
+            scan_system_table(snapshot, &self.histograms)?
+        } else {
+            let mut rows = Vec::new();
+            for physical_id in physical_ids.iter().copied().collect::<BTreeSet<_>>() {
+                rows.extend(scan_system_table_prefixed(
+                    snapshot,
+                    &self.histograms,
+                    &[Datum::Int(physical_id), Datum::Int(0)],
+                )?);
+            }
+            rows
+        };
+        for (key, value) in rows {
+            let row = SystemRow::parse(&self.histograms, &key, &value)?;
+            if row.i64("is_index")?.unwrap_or_default() != 0 {
+                continue;
+            }
+            let Some(table_id) = row.i64("table_id")? else {
+                continue;
+            };
+            result.push(ColumnLength {
+                table_id,
+                histogram_id: row.i64("hist_id")?.unwrap_or_default(),
+                total_size: row.i64("tot_col_size")?.unwrap_or_default(),
+            });
+        }
+        Ok(result)
+    }
 
     /// Reads every histogram one table has, at one snapshot.
     ///
@@ -277,23 +656,447 @@ impl ClusterStatsLoader {
         table_id: i64,
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
-        let Some((version, modify_count, row_count, last_analyze_version)) =
+        self.load_table_with_payload(snapshot, table_id, column_types, true, true, false)
+    }
+
+    /// Go `tableStatsFromStorage(..., loadAll=true)` for global-stat merging:
+    /// load ordinary payload plus partition-only FM sketches.
+    pub fn load_table_with_fm<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, true, true, true)
+    }
+
+    /// Go's leased `tableStatsFromStorage(..., loadAll=false)` initialization:
+    /// read histogram metadata but leave buckets, TopN, and CMSketch evicted.
+    pub fn load_table_lite<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload(snapshot, table_id, column_types, false, false, false)
+    }
+
+    /// Go `Handle.InitStats`: fully load index statistics while retaining
+    /// column histogram metadata in the `allEvicted` state. Predicate-column
+    /// demand loads those column payloads after startup.
+    pub fn load_table_for_init_stats<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            true,
+            true,
+            true,
+            false,
+        )
+    }
+
+    /// Go `initStatsHistogramsConcurrently`: load index histogram metadata
+    /// and CMSketch while leaving TopN and buckets evicted.
+    pub fn load_table_for_init_stats_histograms<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+        )
+    }
+
+    /// Go `initStatsTopNConcurrently`: add index TopN but do not load
+    /// buckets. An index is complete at this stage only when its table has no
+    /// stored index bucket rows.
+    pub fn load_table_for_init_stats_topn<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        let prefix = [Datum::Int(table_id), Datum::Int(1)];
+        let has_index_buckets =
+            !scan_system_table_prefixed(snapshot, &self.buckets, &prefix)?.is_empty();
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            false,
+            true,
+            true,
+            false,
+            !has_index_buckets,
+            false,
+        )
+    }
+
+    /// Pinned async-global-stats `CheckSkipPartition`: whether this physical
+    /// table has any histogram row of the requested item kind.
+    pub fn has_histogram_rows<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+    ) -> Result<bool, SystemTableError> {
+        let prefix = [Datum::Int(table_id), Datum::Int(i64::from(is_index))];
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.histograms, &prefix)? {
+            let row = SystemRow::parse(&self.histograms, &key, &value)?;
+            if row.i64("table_id")?.unwrap_or_default() == table_id
+                && (row.i64("is_index")?.unwrap_or_default() != 0) == is_index
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Pinned async-global-stats `FMSketchFromStorage` for one item.
+    pub fn load_fm_sketch<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<tidb_stats::FmSketch>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.fm_sketches, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.fm_sketches, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        let encoded = row.bytes("value")?;
+        tidb_stats::decode_fm_sketch(encoded.as_deref()).map_err(|error| SystemTableError::Decode {
+            name: self.fm_sketches.name().to_owned(),
+            detail: format!("{error:?}"),
+        })
+    }
+
+    /// Pinned async-global-stats `CMSketchFromStorage` for one item.
+    pub fn load_item_cmsketch<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<CmsSketch>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.histograms, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        decode_cmsketch(row.bytes("cm_sketch")?.as_deref().unwrap_or_default()).map_err(|error| {
+            SystemTableError::Decode {
+                name: self.histograms.name().to_owned(),
+                detail: error.to_string(),
+            }
+        })
+    }
+
+    /// Pinned async-global-stats `LoadHistogram` for one item.
+    pub fn load_item_histogram<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+        column_type: Option<&FieldType>,
+    ) -> Result<Option<Histogram>, SystemTableError> {
+        let Some(mut item) =
+            self.load_item(snapshot, table_id, is_index, id, column_type, false)?
+        else {
+            return Ok(None);
+        };
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let column_types = column_type
+            .map(|field_type| BTreeMap::from([(id, field_type.clone())]))
+            .unwrap_or_default();
+        item.histogram.buckets = self
+            .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+            .remove(&(is_index, id))
+            .unwrap_or_default();
+        Ok(Some(item.histogram))
+    }
+
+    /// Pinned async-global-stats `TopNFromStorage` for one item.
+    pub fn load_item_topn<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<TopN>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let rows = self.load_topn_prefixed(snapshot, &prefix)?;
+        Ok(decode_topn_rows(
+            rows.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
+        ))
+    }
+
+    /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache
+    /// update. Metadata-only refreshes preserve resident payload, while a
+    /// newer histogram is reloaded in full only when its old item was already
+    /// resident. Items that were evicted remain metadata-only.
+    pub fn load_statistics_table_for_update<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        physical_id: i64,
+        table_info: &TableInfo,
+        column_types: &BTreeMap<i64, FieldType>,
+        current: Option<&Table>,
+    ) -> Result<Option<Arc<Table>>, SystemTableError> {
+        let table_id = physical_id;
+        let Some(lite) = self.load_table_lite(snapshot, table_id, column_types)? else {
+            return Ok(None);
+        };
+        let Some(current) = current else {
+            let mut table = lite.to_statistics_table(table_info).as_ref().clone();
+            table.last_analyze_version = lite.refresh_last_analyze_version(0);
+            table.last_stats_hist_version = lite.last_stats_hist_version;
+            return Ok(Some(Arc::new(table)));
+        };
+
+        let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
+        updated.version = lite.version;
+        updated.hist_coll.realtime_count = stats_meta_count_as_go_int64(lite.row_count);
+        updated.hist_coll.modify_count = lite.modify_count;
+        updated.last_analyze_version =
+            lite.refresh_last_analyze_version(current.last_analyze_version);
+        updated.last_stats_hist_version = lite.last_stats_hist_version;
+        updated.table_info_update_ts = table_info.update_ts;
+
+        for metadata in lite.columns.into_iter().chain(lite.indexes) {
+            if metadata.is_index {
+                let current_item = current.hist_coll.get_index(metadata.id);
+                let replacement = match current_item {
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .histogram
+                            .last_update_version
+                            >= metadata.histogram.last_update_version =>
+                    {
+                        Some(
+                            item.read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone(),
+                        )
+                    }
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .is_full_load() =>
+                    {
+                        self.load_item(snapshot, table_id, true, metadata.id, None, true)?
+                            .and_then(|item| item.to_index(table_id, table_info))
+                    }
+                    Some(_) => metadata.to_index(table_id, table_info),
+                    None => None,
+                };
+                if let Some(existence) = &updated.existence_map {
+                    existence
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert_index(metadata.id, metadata.stats_ver != 0);
+                }
+                if metadata.stats_ver != 0 {
+                    updated.hist_coll.stats_version =
+                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
+                }
+                if let Some(replacement) = replacement {
+                    updated.hist_coll.set_index(metadata.id, replacement);
+                }
+            } else {
+                let current_item = current.hist_coll.get_column(metadata.id);
+                let replacement = match current_item {
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .histogram
+                            .last_update_version
+                            >= metadata.histogram.last_update_version =>
+                    {
+                        let mut item = item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone();
+                        item.histogram.tot_col_size = metadata.histogram.tot_col_size;
+                        Some(item)
+                    }
+                    Some(item)
+                        if item
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .is_full_load() =>
+                    {
+                        self.load_item(
+                            snapshot,
+                            table_id,
+                            false,
+                            metadata.id,
+                            column_types.get(&metadata.id),
+                            true,
+                        )?
+                        .and_then(|item| item.to_column(table_id, table_info))
+                    }
+                    Some(_) => metadata.to_column(table_id, table_info),
+                    None => None,
+                };
+                if let Some(existence) = &updated.existence_map {
+                    existence
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert_column(
+                            metadata.id,
+                            metadata.stats_ver != 0
+                                || metadata.histogram.ndv > 0
+                                || metadata.histogram.null_count > 0,
+                        );
+                }
+                if metadata.stats_ver != 0 {
+                    updated.hist_coll.stats_version =
+                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
+                }
+                if let Some(replacement) = replacement {
+                    updated.hist_coll.set_column(metadata.id, replacement);
+                }
+            }
+        }
+        Ok(Some(Arc::new(updated)))
+    }
+
+    fn load_table_with_payload<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+        load_columns: bool,
+        load_indexes: bool,
+        load_fm: bool,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        self.load_table_with_payload_parts(
+            snapshot,
+            table_id,
+            column_types,
+            load_columns,
+            load_indexes,
+            load_indexes,
+            load_indexes,
+            load_indexes,
+            load_fm,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_table_with_payload_parts<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_types: &BTreeMap<i64, FieldType>,
+        load_columns: bool,
+        load_index_cms: bool,
+        load_index_topn: bool,
+        load_index_buckets: bool,
+        mark_index_full: bool,
+        load_fm: bool,
+    ) -> Result<Option<ClusterTableStats>, SystemTableError> {
+        let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
             self.load_meta(snapshot, table_id)?
         else {
             return Ok(None);
         };
-        let buckets = self.load_buckets(snapshot, table_id, column_types)?;
-        let topn = self.load_topn(snapshot, table_id)?;
+        let bucket_prefix = match (load_columns, load_index_buckets) {
+            (true, true) => vec![Datum::Int(table_id)],
+            (true, false) => vec![Datum::Int(table_id), Datum::Int(0)],
+            (false, true) => vec![Datum::Int(table_id), Datum::Int(1)],
+            (false, false) => Vec::new(),
+        };
+        let buckets = if bucket_prefix.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.load_buckets_prefixed(snapshot, &bucket_prefix, column_types)?
+        };
+        let topn_prefix = match (load_columns, load_index_topn) {
+            (true, true) => vec![Datum::Int(table_id)],
+            (true, false) => vec![Datum::Int(table_id), Datum::Int(0)],
+            (false, true) => vec![Datum::Int(table_id), Datum::Int(1)],
+            (false, false) => Vec::new(),
+        };
+        let topn = if topn_prefix.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.load_topn_prefixed(snapshot, &topn_prefix)?
+        };
+        let fm_sketches = if load_fm {
+            self.load_fm_sketches(snapshot, table_id)?
+        } else {
+            BTreeMap::new()
+        };
 
         let mut stats = ClusterTableStats {
             table_id,
             version,
+            snapshot: snapshot_ts,
             modify_count,
             row_count,
-            last_analyze_version,
+            last_analyze_version: snapshot_ts,
+            last_stats_hist_version,
             columns: Vec::new(),
             indexes: Vec::new(),
-            load_state: Arc::default(),
         };
         let key_prefix = [Datum::Int(table_id)];
         for (key, value) in scan_system_table_prefixed(snapshot, &self.histograms, &key_prefix)? {
@@ -302,6 +1105,16 @@ impl ClusterStatsLoader {
                 continue;
             }
             let is_index = row.i64("is_index")?.unwrap_or_default() != 0;
+            let full_load = if is_index {
+                mark_index_full
+            } else {
+                load_columns
+            };
+            let decode_payload = if is_index {
+                load_index_cms || load_index_topn
+            } else {
+                load_columns
+            };
             let id = row.i64("hist_id")?.unwrap_or_default();
             let mut histogram = Histogram {
                 id,
@@ -318,22 +1131,49 @@ impl ClusterStatsLoader {
                 histogram.tot_col_size = 0;
                 histogram.correlation = 0.0;
             }
-            let (cms, top) = decode_cmsketch_and_topn(
-                row.bytes("cm_sketch")?.as_deref(),
-                topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice),
-            )
-            .map_err(|error| SystemTableError::Decode {
-                name: self.histograms.name().to_owned(),
-                detail: error.to_string(),
-            })?;
+            let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
+            let (cms, top) = if decode_payload {
+                let cms_bytes = (stats_ver <= 1 && (!is_index || load_index_cms))
+                    .then(|| row.bytes("cm_sketch"))
+                    .transpose()?
+                    .flatten();
+                decode_cmsketch_and_topn(
+                    cms_bytes.as_deref(),
+                    if !is_index || load_index_topn {
+                        topn.get(&(is_index, id)).map_or(&[][..], Vec::as_slice)
+                    } else {
+                        &[]
+                    },
+                )
+                .map_err(|error| SystemTableError::Decode {
+                    name: self.histograms.name().to_owned(),
+                    detail: error.to_string(),
+                })?
+            } else {
+                (None, None)
+            };
+            let initialized = if is_index {
+                stats_ver != 0
+            } else {
+                stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+            };
+            let load_status = if !initialized {
+                StatsLoadedStatus::default()
+            } else if full_load {
+                StatsLoadedStatus::full_load()
+            } else {
+                StatsLoadedStatus::all_evicted()
+            };
             let item = ClusterStatsItem {
                 id,
                 is_index,
-                stats_ver: row.i64("stats_ver")?.unwrap_or_default(),
+                stats_ver,
                 flag: row.i64("flag")?.unwrap_or_default(),
+                load_status,
                 histogram,
                 topn: top,
                 cms,
+                fm_sketch: fm_sketches.get(&(is_index, id)).cloned(),
             };
             if is_index {
                 stats.indexes.push(item);
@@ -346,16 +1186,246 @@ impl ClusterStatsLoader {
         Ok(Some(stats))
     }
 
+    /// Go `readStatsForOneItem`: load one column or index from its exact
+    /// histogram/bucket/TopN key ranges. `full_load=false` is the metadata-only
+    /// request used by asynchronous initialization.
+    pub fn load_item<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+        column_type: Option<&FieldType>,
+        full_load: bool,
+    ) -> Result<Option<ClusterStatsItem>, SystemTableError> {
+        let Some(mut item) = self.load_item_meta_row(snapshot, table_id, is_index, id)? else {
+            return Ok(None);
+        };
+        if full_load {
+            self.load_item_payload(snapshot, table_id, &mut item, column_type)?;
+        }
+        Ok(Some(item))
+    }
+
+    /// Reads one column's distribution as Go
+    /// `storage.ReadColumnDistributionStats` does: metadata, TopN, and
+    /// histogram payload all come from the caller's one snapshot.  Analyze
+    /// V1 metadata intentionally does not read the V2 payload tables, while
+    /// the returned value is marked fully loaded just like Go's temporary
+    /// `statistics.Column`.
+    pub fn load_column_distribution_stats<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        column_id: i64,
+        table_info: &TableInfo,
+        column_type: &FieldType,
+    ) -> Result<Option<Column>, SystemTableError> {
+        let Some(mut item) = self.load_item(
+            snapshot,
+            table_id,
+            false,
+            column_id,
+            Some(column_type),
+            false,
+        )?
+        else {
+            return Ok(None);
+        };
+        if item.histogram.null_count < 0 {
+            return Err(SystemTableError::Decode {
+                name: self.histograms.name().to_owned(),
+                detail: format!(
+                    "negative null count {} for physical table {}, column {}({})",
+                    item.histogram.null_count,
+                    table_id,
+                    table_info
+                        .cols()
+                        .iter_deref()
+                        .find_map(|column| {
+                            let column = column.read();
+                            (column.id == column_id).then(|| column.name.lowercase().to_owned())
+                        })
+                        .unwrap_or_default(),
+                    column_id,
+                ),
+            });
+        }
+        if item.stats_ver == VERSION_2 {
+            let prefix = [Datum::Int(table_id), Datum::Int(0), Datum::Int(column_id)];
+            // Go reads TopN before histogram buckets and returns immediately
+            // on that error, so a failed TopN read must not spend the bucket
+            // scan or expose a partially populated column.
+            let topn = self.load_topn_prefixed(snapshot, &prefix)?;
+            item.topn =
+                decode_topn_rows(topn.get(&(false, column_id)).map_or(&[][..], Vec::as_slice));
+            let column_types = BTreeMap::from([(column_id, column_type.clone())]);
+            item.histogram.buckets = self
+                .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+                .remove(&(false, column_id))
+                .unwrap_or_default();
+        }
+        item.load_status = StatsLoadedStatus::full_load();
+        Ok(item.to_column(table_id, table_info))
+    }
+
+    /// Go asynchronous item loading's payload phase after
+    /// `HistMetaFromStorageWithHighPriority` has succeeded and current schema
+    /// metadata has been revalidated.
+    pub fn load_item_payload<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        item: &mut ClusterStatsItem,
+        column_type: Option<&FieldType>,
+    ) -> Result<(), SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(item.is_index)),
+            Datum::Int(item.id),
+        ];
+        let column_types = column_type
+            .map(|field_type| BTreeMap::from([(item.id, field_type.clone())]))
+            .unwrap_or_default();
+        item.histogram.buckets = self
+            .load_buckets_prefixed(snapshot, &prefix, &column_types)?
+            .remove(&(item.is_index, item.id))
+            .unwrap_or_default();
+        let topn = self.load_topn_prefixed(snapshot, &prefix)?;
+        let cms_bytes = if item.stats_ver <= 1 {
+            let row = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+                .into_iter()
+                .next()
+                .map(|(key, value)| SystemRow::parse(&self.histograms, &key, &value))
+                .transpose()?;
+            row.map(|row| row.bytes("cm_sketch")).transpose()?.flatten()
+        } else {
+            None
+        };
+        let (cms, topn) = decode_cmsketch_and_topn(
+            cms_bytes.as_deref(),
+            topn.get(&(item.is_index, item.id))
+                .map_or(&[][..], Vec::as_slice),
+        )
+        .map_err(|error| SystemTableError::Decode {
+            name: self.histograms.name().to_owned(),
+            detail: error.to_string(),
+        })?;
+        item.cms = cms;
+        item.topn = topn;
+        let initialized = if item.is_index {
+            item.stats_ver != 0
+        } else {
+            item.stats_ver != 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0
+        };
+        if initialized {
+            item.load_status = StatsLoadedStatus::full_load();
+        }
+        Ok(())
+    }
+
+    fn load_item_meta_row<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+        is_index: bool,
+        id: i64,
+    ) -> Result<Option<ClusterStatsItem>, SystemTableError> {
+        let prefix = [
+            Datum::Int(table_id),
+            Datum::Int(i64::from(is_index)),
+            Datum::Int(id),
+        ];
+        let Some((key, value)) = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let row = SystemRow::parse(&self.histograms, &key, &value)?;
+        if row.i64("table_id")?.unwrap_or_default() != table_id
+            || (row.i64("is_index")?.unwrap_or_default() != 0) != is_index
+            || row.i64("hist_id")?.unwrap_or_default() != id
+        {
+            return Ok(None);
+        }
+        let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
+        let mut histogram = Histogram {
+            id,
+            ndv: row.i64("distinct_count")?.unwrap_or_default(),
+            null_count: row.i64("null_count")?.unwrap_or_default(),
+            last_update_version: row.u64("version")?.unwrap_or_default(),
+            tot_col_size: row.i64("tot_col_size")?.unwrap_or_default(),
+            correlation: row.f64("correlation")?.unwrap_or_default(),
+            buckets: Vec::new(),
+        };
+        if is_index {
+            histogram.tot_col_size = 0;
+            histogram.correlation = 0.0;
+        }
+        let initialized = if is_index {
+            stats_ver != 0
+        } else {
+            stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+        };
+        let load_status = if initialized {
+            StatsLoadedStatus::all_evicted()
+        } else {
+            StatsLoadedStatus::default()
+        };
+        Ok(Some(ClusterStatsItem {
+            id,
+            is_index,
+            stats_ver,
+            flag: row.i64("flag")?.unwrap_or_default(),
+            load_status,
+            histogram,
+            topn: None,
+            cms: None,
+            fm_sketch: None,
+        }))
+    }
+
+    fn load_fm_sketches<S: MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        table_id: i64,
+    ) -> Result<BTreeMap<(bool, i64), tidb_stats::FmSketch>, SystemTableError> {
+        let mut sketches = BTreeMap::new();
+        for (key, value) in
+            scan_system_table_prefixed(snapshot, &self.fm_sketches, &[Datum::Int(table_id)])?
+        {
+            let row = SystemRow::parse(&self.fm_sketches, &key, &value)?;
+            if row.i64("table_id")?.unwrap_or_default() != table_id {
+                continue;
+            }
+            let is_index = row.i64("is_index")?.unwrap_or_default() != 0;
+            let id = row.i64("hist_id")?.unwrap_or_default();
+            let encoded = row.bytes("value")?;
+            let sketch = tidb_stats::decode_fm_sketch(encoded.as_deref()).map_err(|error| {
+                SystemTableError::Decode {
+                    name: self.fm_sketches.name().to_owned(),
+                    detail: format!("{error:?}"),
+                }
+            })?;
+            if let Some(sketch) = sketch {
+                sketches.insert((is_index, id), sketch);
+            }
+        }
+        Ok(sketches)
+    }
+
     /// Go `StatsMetaCountAndModifyCount`.
-    /// One table's `(version, modify_count, count, last_analyze_version)`,
+    /// One table's `(version, snapshot, modify_count, count,
+    /// last_stats_histograms_version)`,
     /// or `None` for a table with no row -- the public single-table form of
-    /// [`Self::load_all_meta`], and the read behind
+    /// [`Self::load_stats_meta_rows`], and the read behind
     /// [`Self::load_table`]'s presence check.
     pub fn load_meta<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,
-    ) -> Result<Option<(u64, i64, u64, u64)>, SystemTableError> {
+    ) -> Result<Option<(u64, u64, i64, u64, u64)>, SystemTableError> {
         // `mysql.stats_meta` declares `PRIMARY KEY (table_id) CLUSTERED`, so
         // this prefix is the row's exact key: one point read, not a scan.
         let rows = scan_system_table_prefixed(snapshot, &self.meta, &[Datum::Int(table_id)])?;
@@ -366,20 +1436,20 @@ impl ClusterStatsLoader {
             }
             return Ok(Some((
                 row.u64("version")?.unwrap_or_default(),
+                row.u64("snapshot")?.unwrap_or_default(),
                 row.i64("modify_count")?.unwrap_or_default(),
                 row.u64("count")?.unwrap_or_default(),
-                row.u64("last_stats_histograms_version")?.unwrap_or_default(),
+                row.u64("last_stats_histograms_version")?
+                    .unwrap_or_default(),
             )));
         }
         Ok(None)
     }
 
-    /// Reads one table's buckets, grouped by `(is_index, hist_id)` and left in
-    /// `bucket_id` order with cumulative counts.
-    fn load_buckets<S: MetaSnapshot>(
+    fn load_buckets_prefixed<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
-        table_id: i64,
+        prefix: &[Datum],
         column_types: &BTreeMap<i64, FieldType>,
     ) -> Result<BTreeMap<(bool, i64), Vec<Bucket>>, SystemTableError> {
         // `(bucket_id, lower, upper, repeats, ndv, per-bucket count)` keyed by
@@ -387,8 +1457,11 @@ impl ClusterStatsLoader {
         // `order by bucket_id`, which is what makes the running total below
         // reproduce Go's cumulative `Bucket.Count`.
         let mut collected: BTreeMap<(bool, i64), Vec<(i64, Bucket)>> = BTreeMap::new();
-        let key_prefix = [Datum::Int(table_id)];
-        for (key, value) in scan_system_table_prefixed(snapshot, &self.buckets, &key_prefix)? {
+        let table_id = match prefix.first() {
+            Some(Datum::Int(table_id)) => *table_id,
+            _ => 0,
+        };
+        for (key, value) in scan_system_table_prefixed(snapshot, &self.buckets, prefix)? {
             let row = SystemRow::parse(&self.buckets, &key, &value)?;
             if row.i64("table_id")?.unwrap_or_default() != table_id {
                 continue;
@@ -443,20 +1516,17 @@ impl ClusterStatsLoader {
             .collect())
     }
 
-    /// Reads one table's TopN rows, grouped by `(is_index, hist_id)`.
-    fn load_topn<S: MetaSnapshot>(
+    fn load_topn_prefixed<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
-        table_id: i64,
+        prefix: &[Datum],
     ) -> Result<TopNRowsByHistogram, SystemTableError> {
-        // `mysql.stats_top_n` has no clustered handle — only a secondary
-        // `INDEX tbl(table_id, is_index, hist_id)` — so its record range
-        // cannot be narrowed by key here and every row is read and filtered.
-        // That is a real cost on a cluster with many analyzed tables, and the
-        // honest fix is an index read, not a narrower prefix that does not
-        // exist.
+        let table_id = match prefix.first() {
+            Some(Datum::Int(table_id)) => *table_id,
+            _ => 0,
+        };
         let mut collected = TopNRowsByHistogram::new();
-        for (key, value) in scan_system_table(snapshot, &self.topn)? {
+        for (key, value) in scan_system_table_index_prefixed(snapshot, &self.topn, "tbl", prefix)? {
             let row = SystemRow::parse(&self.topn, &key, &value)?;
             if row.i64("table_id")?.unwrap_or_default() != table_id {
                 continue;
@@ -470,6 +1540,13 @@ impl ClusterStatsLoader {
         }
         Ok(collected)
     }
+}
+
+fn stats_meta_count_as_go_int64(count: u64) -> i64 {
+    // Go's chunk.Row.GetInt64 reads the same eight-byte slot that its unsigned
+    // SQL decoder populated. Preserve that two's-complement result rather
+    // than adding a Rust-only saturation policy.
+    count as i64
 }
 
 /// Go `read.go::convertBoundFromBlob`, plus the `is_index`/string-type
@@ -533,7 +1610,9 @@ fn decode_bound(
 
 #[cfg(test)]
 mod tests {
+    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
+    use tidb_model::{GoShared, GoSharedPointerSlice};
 
     use super::*;
 
@@ -543,6 +1622,135 @@ mod tests {
     /// this module claims to know the encoding rather than assume it.
     fn field_type(code: FieldTypeCode) -> FieldType {
         FieldType::new(code)
+    }
+
+    #[test]
+    fn storage_image_builds_the_canonical_full_statistics_table() {
+        let mut primary_type = FieldType::new(FieldTypeCode::LongLong);
+        primary_type.set_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let table_info = TableInfo {
+            id: 7,
+            update_ts: 55,
+            pk_is_handle: true,
+            columns: GoSharedPointerSlice::from_handles(vec![Some(GoShared::new(
+                tidb_model::column::ColumnInfo {
+                    id: 1,
+                    name: CiString::new("A"),
+                    field_type: primary_type,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::column::ColumnInfo::default()
+                },
+            ))]),
+            ..TableInfo::default()
+        };
+        let stats = ClusterTableStats {
+            table_id: 7,
+            version: 42,
+            snapshot: 40,
+            modify_count: 3,
+            row_count: 100,
+            last_analyze_version: 40,
+            last_stats_hist_version: 43,
+            columns: vec![
+                ClusterStatsItem {
+                    id: 1,
+                    is_index: false,
+                    stats_ver: 2,
+                    flag: 1,
+                    load_status: StatsLoadedStatus::full_load(),
+                    histogram: Histogram {
+                        id: 1,
+                        ndv: 10,
+                        last_update_version: 41,
+                        ..Histogram::default()
+                    },
+                    topn: Some(TopN::new(0)),
+                    cms: None,
+                    fm_sketch: None,
+                },
+                // A dropped column's stale mysql.stats_histograms row is not
+                // retained in Go's statistics.Table.
+                ClusterStatsItem {
+                    id: 99,
+                    is_index: false,
+                    stats_ver: 2,
+                    flag: 0,
+                    load_status: StatsLoadedStatus::all_evicted(),
+                    histogram: Histogram {
+                        id: 99,
+                        ..Histogram::default()
+                    },
+                    topn: None,
+                    cms: None,
+                    fm_sketch: None,
+                },
+            ],
+            indexes: Vec::new(),
+        };
+
+        let table = stats.to_statistics_table(&table_info);
+        assert_eq!(table.hist_coll.physical_id, 7);
+        assert_eq!(table.hist_coll.realtime_count, 100);
+        assert_eq!(table.hist_coll.modify_count, 3);
+        assert_eq!(table.hist_coll.stats_version, 2);
+        assert_eq!(table.version, 42);
+        assert_eq!(table.last_analyze_version, 41);
+        assert_eq!(table.last_stats_hist_version, 43);
+        assert_eq!(table.table_info_update_ts, 55);
+        assert!(table.is_pk_handle);
+        let column = table.hist_coll.get_column(1).unwrap();
+        let column = column.read().unwrap();
+        assert_eq!(column.info.as_ref().unwrap().name, "a");
+        assert!(column.is_handle);
+        assert!(column.is_full_load());
+        assert!(table.hist_coll.get_column(99).is_none());
+        let existence = table.existence_map.as_ref().unwrap().read().unwrap();
+        assert!(existence.has_analyzed(1, false));
+        assert!(!existence.has(99, false));
+    }
+
+    #[test]
+    fn refresh_keeps_last_analyze_separate_from_the_histogram_refresh_marker() {
+        let stats = ClusterTableStats {
+            table_id: 7,
+            version: 80,
+            snapshot: 50,
+            modify_count: 0,
+            row_count: 1,
+            last_analyze_version: 50,
+            last_stats_hist_version: 70,
+            columns: vec![ClusterStatsItem {
+                id: 1,
+                is_index: false,
+                stats_ver: 2,
+                flag: 0,
+                load_status: StatsLoadedStatus::all_evicted(),
+                histogram: Histogram {
+                    id: 1,
+                    last_update_version: 37,
+                    ..Histogram::default()
+                },
+                topn: None,
+                cms: None,
+                fm_sketch: None,
+            }],
+            indexes: Vec::new(),
+        };
+
+        assert_eq!(stats.refresh_last_analyze_version(23), 37);
+        assert_eq!(stats.last_stats_hist_version, 70);
+
+        let mut no_histograms = stats.clone();
+        no_histograms.columns.clear();
+        assert_eq!(no_histograms.refresh_last_analyze_version(23), 23);
+        assert_eq!(no_histograms.refresh_last_analyze_version(0), 50);
+    }
+
+    #[test]
+    fn stats_meta_unsigned_count_uses_go_get_int64_bits() {
+        assert_eq!(stats_meta_count_as_go_int64(i64::MAX as u64), i64::MAX);
+        assert_eq!(stats_meta_count_as_go_int64(i64::MAX as u64 + 1), i64::MIN);
+        assert_eq!(stats_meta_count_as_go_int64(u64::MAX), -1);
     }
 
     #[test]
@@ -559,6 +1767,18 @@ mod tests {
         // Read as a datum-codec value instead, `0x31 0x31` would be a
         // nonsense flag byte — which is exactly the silent misread this
         // fixture exists to rule out.
+    }
+
+    #[test]
+    fn a_corrupted_integer_bound_uses_go_conversion_flags() {
+        let bound = decode_bound(
+            b"who knows what it is".to_vec(),
+            false,
+            Some(&field_type(FieldTypeCode::LongLong)),
+            "stats_buckets",
+        )
+        .expect("Go converts the corrupt bound with its statement flags");
+        assert_eq!(bound, Datum::Int(0));
     }
 
     #[test]
@@ -583,6 +1803,31 @@ mod tests {
         )
         .expect("the bound converts");
         assert_eq!(bound.sql_string().unwrap(), "2024-05-05 05:05:05");
+    }
+
+    /// Go `pkg/statistics/handle/handletest/handle_test.go::
+    /// TestLoadStatsForBitColumn`. ANALYZE stores a BIT bound as the decimal
+    /// text of its value; quoted input contributes its byte value before that
+    /// conversion (`"0"` is 48 and `"a"` is 97).
+    #[test]
+    fn bit_column_bounds_load_from_the_four_go_decimal_storage_cases() {
+        let cases = [
+            (1, b"0".as_slice(), 0_u8, b"1".as_slice(), 1_u8),
+            (2, b"2".as_slice(), 2_u8, b"3".as_slice(), 3_u8),
+            (6, b"48".as_slice(), 48_u8, b"49".as_slice(), 49_u8),
+            (7, b"97".as_slice(), 97_u8, b"98".as_slice(), 98_u8),
+        ];
+
+        for (flen, lower, expected_lower, upper, expected_upper) in cases {
+            let mut bit = field_type(FieldTypeCode::Bit);
+            bit.set_flen(flen);
+            let lower = decode_bound(lower.to_vec(), false, Some(&bit), "stats_buckets")
+                .expect("lower BIT bound converts");
+            let upper = decode_bound(upper.to_vec(), false, Some(&bit), "stats_buckets")
+                .expect("upper BIT bound converts");
+            assert_eq!(lower, Datum::Bit(BinaryLiteral::from(vec![expected_lower])));
+            assert_eq!(upper, Datum::Bit(BinaryLiteral::from(vec![expected_upper])));
+        }
     }
 
     #[test]

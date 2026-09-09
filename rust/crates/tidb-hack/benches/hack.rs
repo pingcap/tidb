@@ -17,8 +17,7 @@
 
 #![allow(non_snake_case)]
 
-use hashbrown::HashMap;
-use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 use tidb_hack::MemAwareMap;
@@ -39,7 +38,7 @@ fn mem_aware_int_map(size: usize) -> usize {
 }
 
 fn native_int_map(size: usize) -> usize {
-    let mut map = HashMap::<usize, usize, RandomState>::with_hasher(RandomState::new());
+    let mut map = HashMap::<usize, usize>::new();
     for value in 0..size {
         map.insert(value, value);
     }

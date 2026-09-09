@@ -35,6 +35,7 @@ use tidb_server::{
 use tidb_util::globalconn::parse_conn_id;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
+const CLIENT_FOUND_ROWS: u32 = 1 << 1;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
 const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
 const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
@@ -95,6 +96,24 @@ fn handshake_salt(initial: &[u8]) -> [u8; 20] {
     salt
 }
 
+fn handshake_capabilities(initial: &[u8]) -> u32 {
+    assert_eq!(initial[0], 10);
+    let version_end = initial[1..]
+        .iter()
+        .position(|byte| *byte == 0)
+        .map(|offset| offset + 1)
+        .unwrap();
+    let lower_offset = version_end + 1 + 4 + 8 + 1;
+    let upper_offset = lower_offset + 2 + 1 + 2;
+    u32::from(u16::from_le_bytes([
+        initial[lower_offset],
+        initial[lower_offset + 1],
+    ])) | (u32::from(u16::from_le_bytes([
+        initial[upper_offset],
+        initial[upper_offset + 1],
+    ])) << 16)
+}
+
 fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
     let stage_one = Sha1::digest(password);
     let stage_two = Sha1::digest(stage_one);
@@ -110,14 +129,28 @@ fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
 }
 
 fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) {
+    authenticate_with_capabilities(client, reader, 0);
+}
+
+fn authenticate_with_capabilities(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    additional_capabilities: u32,
+) {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
+    assert_eq!(
+        handshake_capabilities(&initial) & additional_capabilities,
+        additional_capabilities,
+        "the server must advertise every requested optional capability"
+    );
     let salt = handshake_salt(&initial);
     let capabilities = CLIENT_PROTOCOL_41
         | CLIENT_SECURE_CONNECTION
         | CLIENT_PLUGIN_AUTH
         | CLIENT_CONNECT_ATTRS
-        | CLIENT_DEPRECATE_EOF;
+        | CLIENT_DEPRECATE_EOF
+        | additional_capabilities;
     let mut response = Vec::new();
     response.extend_from_slice(&capabilities.to_le_bytes());
     response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
@@ -206,6 +239,36 @@ fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     let affected = packet[1];
     assert!(affected < 0xfb, "test writes report small counts");
     u64::from(affected)
+}
+
+/// Sends one small COM_QUERY write and returns its affected-row count and the
+/// length-encoded info string from the OK packet.
+fn run_write_with_info(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> (u64, String) {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(packet[0], 0x00, "a write answers with an OK packet: {packet:?}");
+    assert!(packet[1] < 0xfb, "test writes report small counts");
+    assert!(packet[2] < 0xfb, "test writes report small ids");
+    // header | affected | last_insert_id | status(2) | warnings(2) |
+    // length-encoded info.
+    let info = match packet.get(7).copied() {
+        None => Vec::new(),
+        Some(info_len) => packet
+            .get(8..8 + usize::from(info_len))
+            .expect("complete length-encoded OK info")
+            .to_vec(),
+    };
+    (
+        u64::from(packet[1]),
+        String::from_utf8(info).expect("Go's update info is UTF-8"),
+    )
 }
 
 /// Sends one write and returns the OK packet's `last_insert_id`, the field a
@@ -1505,6 +1568,76 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     worker.join().unwrap();
+}
+
+/// Go advertises `CLIENT_FOUND_ROWS` and stores the negotiated bit on the
+/// session. An UPDATE then reports every successfully matched row, including
+/// rows already holding the assigned value; an unchanged duplicate-key UPDATE
+/// similarly reports one instead of zero.
+#[test]
+fn client_found_rows_reports_matched_updates_over_the_mysql_wire() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_configured_store(&store),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate_with_capabilities(&mut client, &mut reader, CLIENT_FOUND_ROWS);
+
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE found_rows_t (id BIGINT PRIMARY KEY, v BIGINT)"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "INSERT INTO found_rows_t VALUES (1, 10), (2, 20)"
+        ),
+        2
+    );
+    let (affected, info) = run_write_with_info(
+        &mut client,
+        &mut reader,
+        "UPDATE found_rows_t SET v = 10",
+    );
+    assert_eq!(affected, 2, "one changed row plus one unchanged matched row");
+    assert_eq!(info, "Rows matched: 2  Changed: 1  Warnings: 0");
+    let (_, set_info) = run_write_with_info(&mut client, &mut reader, "SET sql_mode = ''");
+    assert!(set_info.is_empty(), "a later SET must not reuse UPDATE info");
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "INSERT INTO found_rows_t VALUES (1, 10) ON DUPLICATE KEY UPDATE v = VALUES(v)"
+        ),
+        1,
+        "an unchanged duplicate-key update reports its matched row"
+    );
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
 /// Source: `pkg/planner/core/tests/rewriter.TestVariableRewritter`.

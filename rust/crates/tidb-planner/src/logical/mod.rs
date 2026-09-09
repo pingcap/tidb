@@ -68,10 +68,8 @@
 //! * [`table_dual::LogicalTableDual`] — `logical_table_dual.go`
 //!
 //! That is the WHOLE of `pkg/planner/core/operator/logicalop`'s operator set:
-//! no operator is skeletal and none is a [`TodoLogicalOp`] any more. The
-//! variant is kept because the enum's rule is that an unmodelled operator must
-//! be a distinct arm rather than a default one, and a later Go operator lands
-//! against it rather than against a `_ =>`.
+//! no operator is skeletal. There is no placeholder variant; a later Go
+//! operator must add a typed arm and update every exhaustive match.
 //!
 //! Four of those operators have an identity leaf elsewhere in this crate —
 //! [`crate::logical_mem_table`], [`crate::logical_show`],
@@ -167,9 +165,9 @@ pub const APPLY_GEN_FROM_XF_DECORRELATE_RULE_FLAG: u64 = 1 << 0;
 ///   `(planIDsHash, prop) -> Task` table. `base.Task` is not transcreated, so
 ///   the table is absent rather than typed against a placeholder;
 ///   `roll_back_task_map` keeps its signature and is a `todo`.
-/// * `fdSet`. Native extraction uses `tidb_funcdep` and statement-owned
-///   column IDs. Go's cached per-node FD lifecycle is not represented yet;
-///   extraction currently returns a fresh dependency set.
+/// * `fdSet`. Rust derives the same value through [`LogicalPlan::extract_fd`]
+///   and returns an owned set, so the mutable pointer cache embedded in Go's
+///   base plan is unnecessary state here.
 #[derive(Clone, Debug, Default)]
 pub struct BaseLogicalPlan {
     /// Go's embedded `baseimpl.Plan`.
@@ -228,11 +226,10 @@ impl BaseLogicalPlan {
 
     /// Go `SetChild(i, child)` (`<19th>`).
     ///
-    /// Go panics on an out-of-range index; this returns the previous child so
-    /// a caller can neither lose it nor silently write past the end.
+    /// Go panics on an out-of-range index; indexing the child vector preserves
+    /// that contract instead of adding a Rust-only refusal path.
     pub fn set_child(&mut self, i: usize, child: LogicalPlan) -> Option<LogicalPlan> {
-        let slot = self.children.get_mut(i)?;
-        Some(std::mem::replace(slot, child))
+        Some(std::mem::replace(&mut self.children[i], child))
     }
 
     /// Go `ChildLen()` (`base_logical_plan.go:389`).
@@ -345,15 +342,36 @@ pub mod limit;
 pub mod lock;
 pub mod max_one_row;
 pub mod mem_table;
+pub mod possible_properties;
 pub mod projection;
 pub mod rewrite;
 pub mod rule;
+pub mod rule_aggregation_elimination;
+pub mod rule_aggregation_push_down;
+pub mod rule_aggregation_skew_rewrite;
+pub mod rule_collect_plan_stats;
+pub mod rule_constant_propagation;
+pub mod rule_decorrelate;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
+pub mod rule_generate_column_substitute;
+pub mod rule_join_elimination;
+pub mod rule_join_key_type_cast;
+pub mod rule_join_reorder;
+pub mod rule_max_min_elimination;
+pub mod rule_order_aware_join_reorder;
+pub mod rule_outer_join_to_semi_join;
+pub mod rule_outer_to_inner_join;
+pub mod rule_partition_processor;
+pub mod rule_predicate_simplification;
+pub mod rule_projection_elimination;
+pub mod rule_prune_indexes;
 pub mod rule_push_down_sequence;
 pub mod rule_resolve_expand;
 pub mod rule_result_reorder;
+pub mod rule_semi_join_rewrite;
+pub mod rule_util;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
@@ -379,6 +397,7 @@ pub use limit::LogicalLimit;
 pub use lock::{LogicalLock, SelectLockType};
 pub use max_one_row::LogicalMaxOneRow;
 pub use mem_table::LogicalMemTable;
+pub use possible_properties::prepare_possible_properties;
 pub use projection::LogicalProjection;
 pub use selection::LogicalSelection;
 pub use sequence::LogicalSequence;
@@ -392,20 +411,6 @@ pub use topn::LogicalTopN;
 pub use union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
 pub use union_scan::LogicalUnionScan;
 pub use window::LogicalWindow;
-
-/// A logical operator whose own port is a later batch.
-///
-/// This is the SEED's honest placeholder: it names the Go operator it stands
-/// for so a `match` arm reads as "not yet ported", never as "handled". It is
-/// deliberately a distinct variant rather than a default arm, so filling the
-/// operator set is a mechanical, checkable change.
-#[derive(Clone, Debug, Default)]
-pub struct TodoLogicalOp {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// The Go type this node stands in for, e.g. `"logicalop.LogicalWindow"`.
-    pub go_operator: String,
-}
 
 /// The return of [`LogicalPlan::get_join_child_stats_and_schema`]: both
 /// children's stats and schemas, in Go's `(stats0, stats1, schema0, schema1)`
@@ -474,8 +479,6 @@ pub enum LogicalPlan {
     Show(LogicalShow),
     /// Go `logicalop.LogicalShowDDLJobs`.
     ShowDDLJobs(LogicalShowDDLJobs),
-    /// An operator whose port is a later batch; see [`TodoLogicalOp`].
-    Todo(TodoLogicalOp),
 }
 
 impl LogicalPlan {
@@ -509,7 +512,6 @@ impl LogicalPlan {
             Self::MemTable(op) => &op.base,
             Self::Show(op) => &op.base,
             Self::ShowDDLJobs(op) => &op.base,
-            Self::Todo(op) => &op.base,
         }
     }
 
@@ -542,7 +544,6 @@ impl LogicalPlan {
             Self::MemTable(op) => &mut op.base,
             Self::Show(op) => &mut op.base,
             Self::ShowDDLJobs(op) => &mut op.base,
-            Self::Todo(op) => &mut op.base,
         }
     }
 
@@ -601,16 +602,41 @@ impl LogicalPlan {
 
     /// Go `BaseLogicalPlan.Schema()` (`base_logical_plan.go:102`): the
     /// operator's own schema when it produces one, otherwise the first
-    /// child's.
+    /// child's. `LogicalSequence` overrides Go's base method and uses its last
+    /// child (the main query) instead.
     ///
-    /// Go indexes `p.children[0]` unconditionally and panics on a leaf with no
-    /// schema of its own; this returns `None` there instead.
+    /// The enum keeps the crate's optional-schema representation for a
+    /// schema-producer leaf that has not materialized its schema yet.
     #[must_use]
     pub fn schema(&self) -> Option<&Schema> {
+        if let Self::Sequence(_) = self {
+            let child = self
+                .children()
+                .last()
+                .expect("LogicalSequence.Schema requires a child");
+            return child.schema();
+        }
         if let Some(schema) = self.base().base.schema() {
             return Some(schema);
         }
-        self.base().children().first().and_then(Self::schema)
+        self.children().first().and_then(Self::schema)
+    }
+
+    /// Go's LAZY schema getter for schema producers
+    /// (`logical_schema_producer.go:80-88`): when neither this operator nor a
+    /// child materialized a schema, Go assigns `expression.NewSchema()` — an
+    /// EMPTY but valid schema — and returns it, so a producer's `Schema()` is
+    /// never nil. The FROM-less `TableDual` a `SELECT (subquery)` outer plan
+    /// is built over is the canonical case.
+    ///
+    /// The crate's `None` (the not-yet-materialized representation) maps to
+    /// that empty schema here; callers that must distinguish an
+    /// unmaterialized leaf still use [`Self::schema`].
+    #[must_use]
+    pub fn schema_or_empty(&self) -> Schema {
+        self.schema()
+            .cloned()
+            .unwrap_or_else(|| Schema::new(Vec::new()))
     }
 
     /// Go `BaseLogicalPlan.OutputNames()` (`base_logical_plan.go:107`), with
@@ -621,18 +647,54 @@ impl LogicalPlan {
         if !own.is_empty() {
             return own;
         }
-        self.base()
-            .children()
-            .first()
-            .map_or(&[][..], Self::output_names)
+        self.children().first().map_or(&[][..], Self::output_names)
     }
 
     /// Go `BaseLogicalPlan.SetOutputNames(names)` (`base_logical_plan.go:112`),
-    /// which forwards to `children[0]`. With no child the names land here.
+    /// which forwards to `children[0]`; a schema-producing leaf stores the
+    /// names locally, matching Go's `LogicalSchemaProducer` override.
     pub fn set_output_names(&mut self, names: Vec<tidb_datatype::FieldName>) {
-        match self.base_mut().children_mut().first_mut() {
-            Some(child) => child.set_output_names(names),
-            None => self.base_mut().base.set_output_names(names),
+        if matches!(
+            self,
+            Self::Projection(_)
+                | Self::Join(_)
+                | Self::Apply(_)
+                | Self::Aggregation(_)
+                | Self::Limit(_)
+                | Self::TopN(_)
+                | Self::UnionAll(_)
+                | Self::PartitionUnionAll(_)
+                | Self::Window(_)
+                | Self::CTE(_)
+                | Self::CTETable(_)
+                | Self::DataSource(_)
+                | Self::TableScan(_)
+                | Self::IndexScan(_)
+                | Self::Expand(_)
+                | Self::MemTable(_)
+                | Self::Show(_)
+                | Self::ShowDDLJobs(_)
+                | Self::TiKVSingleGather(_)
+                | Self::TableDual(_)
+        ) {
+            self.base_mut().base.set_output_names(names);
+            return;
+        }
+        if self.children().is_empty() {
+            self.base_mut().base.set_output_names(names);
+            return;
+        }
+        let child = &mut self.base_mut().children_mut()[0];
+        match child {
+            // These operators inherit BaseLogicalPlan.SetOutputNames and
+            // continue forwarding down their first child.
+            Self::Selection(_)
+            | Self::Sort(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_) => child.set_output_names(names),
+            _ => child.set_output_names(names),
         }
     }
 
@@ -721,12 +783,26 @@ impl LogicalPlan {
             Self::Projection(op) => op.build_key_info(self_schema, child_schema),
             Self::Join(op) => op.build_key_info(self_schema, child_schema),
             Self::Aggregation(op) => op.build_key_info(self_schema, child_schema),
-            // `DataSource::build_key_info` needs the index definitions, which
-            // the catalogue owns; call it directly with them.
-            // `LogicalTableScan` delegates to the source and `LogicalIndexScan`
-            // needs `ruleutil.CheckIndexCanBeKey`; both take the index
-            // definitions the catalogue owns, so call them directly with them.
-            Self::DataSource(_) | Self::TableScan(_) | Self::IndexScan(_) => {}
+            Self::DataSource(op) => {
+                let (index_keys, nullable_unique_keys) = op.index_keys(self_schema);
+                op.build_key_info(self_schema, index_keys);
+                self_schema.nullable_uk = nullable_unique_keys;
+            }
+            Self::TableScan(op) => {
+                let (index_keys, nullable_unique_keys) = op.source.as_ref().map_or_else(
+                    || (Vec::new(), Vec::new()),
+                    |source| source.index_keys(self_schema),
+                );
+                op.build_key_info(self_schema, index_keys);
+                self_schema.nullable_uk = nullable_unique_keys;
+            }
+            Self::IndexScan(op) => {
+                let (index_keys, nullable_unique_keys) = op.source.as_ref().map_or_else(
+                    || (Vec::new(), Vec::new()),
+                    |source| source.index_keys(self_schema),
+                );
+                op.build_key_info(self_schema, index_keys, nullable_unique_keys);
+            }
             Self::Limit(op) => op.build_key_info(self_schema, child_schema),
             Self::TopN(op) => op.build_key_info(self_schema, child_schema),
             Self::TiKVSingleGather(_) => {
@@ -756,8 +832,7 @@ impl LogicalPlan {
             | Self::UnionScan(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => {
+            | Self::ShowDDLJobs(_) => {
                 schema_producer::propagate_child_keys(self_schema, child_schema);
             }
         }
@@ -772,17 +847,22 @@ impl LogicalPlan {
     pub fn push_down_topn_with(
         self,
         builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+        allocator: &crate::plan_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
-        rewrite::push_down_topn_with_builder(builder, self, topn)
+        rewrite::push_down_topn_with_builder(builder, allocator, self, topn)
     }
 
     /// Test-only convenience over [`LogicalPlan::push_down_topn_with`] using
     /// the preserving test builder.
     #[cfg(test)]
     #[must_use]
-    pub fn push_down_topn(self, topn: Option<LogicalTopN>) -> Self {
-        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, topn)
+    pub fn push_down_topn(
+        self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+        topn: Option<LogicalTopN>,
+    ) -> Self {
+        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, allocator, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
@@ -821,8 +901,36 @@ impl LogicalPlan {
     pub fn pull_up_constant_predicates(&self) -> Vec<Expression> {
         match self {
             Self::Selection(op) => op.pull_up_constant_predicates(),
-            Self::Projection(_)
-            | Self::Join(_)
+            Self::Projection(projection) => {
+                if !projection.can_be_eliminated_loose() {
+                    return Vec::new();
+                }
+                let Some(child) = projection.base.children().first() else {
+                    return Vec::new();
+                };
+                let Some(schema) = projection.base.base.schema() else {
+                    return Vec::new();
+                };
+                let replace = projection
+                    .exprs
+                    .iter()
+                    .zip(&schema.columns)
+                    .map(|(expression, column)| {
+                        let mut expression = expression.clone();
+                        (expression.hash_code().to_vec(), column.clone())
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                child
+                    .pull_up_constant_predicates()
+                    .into_iter()
+                    .filter(|predicate| {
+                        let mut columns = tidb_expr::simple_expr::extract_columns(predicate);
+                        columns.len() == 1 && replace.contains_key(columns[0].hash_code())
+                    })
+                    .map(|predicate| rule_util::resolve_expr_and_replace(&predicate, &replace))
+                    .collect()
+            }
+            Self::Join(_)
             | Self::Aggregation(_)
             | Self::DataSource(_)
             | Self::Sort(_)
@@ -845,8 +953,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -869,6 +976,19 @@ impl LogicalPlan {
     ) -> Result<(StatsInfo, bool), PlanError> {
         let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
         let (plan, result) = rewrite::recursive_derive_stats(plan, col_groups.to_vec(), 0);
+        *self = plan;
+        result
+    }
+
+    /// Derives statistics with the same session context as the logical rules.
+    pub fn recursive_derive_stats_with_context(
+        &mut self,
+        col_groups: &[Vec<Column>],
+        context: &rule::RuleContext<'_>,
+    ) -> Result<(StatsInfo, bool), PlanError> {
+        let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
+        let (plan, result) =
+            rewrite::recursive_derive_stats_with_context(plan, col_groups.to_vec(), context);
         *self = plan;
         result
     }
@@ -919,26 +1039,104 @@ impl LogicalPlan {
     /// Go `ExtractColGroups(colGroups)` (`<11th>`). The base body returns
     /// `nil`, which is Go's answer, not a `todo`.
     ///
-    /// `LogicalAggregation` DISCARDS the parent's groups and asks only for its
-    /// own group-by columns; that override is dispatched here. The
-    /// `LogicalProjection` and `LogicalJoin` overrides need
-    /// `Schema.ExtractColGroups`, which `tidb-expr` lists as deferred, so they
-    /// fall through to the base answer rather than to a guess.
+    /// Operator overrides either translate groups into the child's schema or
+    /// introduce the join/grouping keys whose combined NDV they estimate.
     #[must_use]
-    pub fn extract_col_groups(&self, _col_groups: &[Vec<Column>]) -> Vec<Vec<Column>> {
+    pub fn extract_col_groups(&self, col_groups: &[Vec<Column>]) -> Vec<Vec<Column>> {
         match self {
             Self::Aggregation(op) => op.extract_col_groups(),
+            Self::Projection(op) => {
+                let Some(schema) = self.schema() else {
+                    return Vec::new();
+                };
+                let (groups, _) = schema.extract_col_groups(col_groups);
+                groups
+                    .into_iter()
+                    .filter_map(|indices| {
+                        let mut columns = indices
+                            .into_iter()
+                            .map(|index| match op.exprs.get(index) {
+                                Some(Expression::Column(column)) => Some(column.clone()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()?;
+                        columns.sort_by_key(|column| column.unique_id);
+                        Some(columns)
+                    })
+                    .collect()
+            }
+            Self::Join(op) => {
+                let (mut left_keys, mut right_keys, _, _) = op.get_join_keys();
+                let mut extracted = Vec::new();
+                if left_keys.len() > 1
+                    && matches!(
+                        op.join_type,
+                        crate::find_best_task::LogicalJoinType::Inner
+                            | crate::find_best_task::LogicalJoinType::LeftOuter
+                            | crate::find_best_task::LogicalJoinType::RightOuter
+                    )
+                {
+                    left_keys.sort_by_key(|column| column.unique_id);
+                    right_keys.sort_by_key(|column| column.unique_id);
+                    extracted.push(left_keys);
+                    extracted.push(right_keys);
+                }
+                // Go indexes the outer child unconditionally
+                // (`p.Children()[0].Schema()` / `p.Children()[1].Schema()`);
+                // only the schema itself may be absent.
+                let outer_schema = match op.join_type {
+                    crate::find_best_task::LogicalJoinType::LeftOuter
+                    | crate::find_best_task::LogicalJoinType::LeftOuterSemi
+                    | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi => {
+                        self.children()[0].schema()
+                    }
+                    crate::find_best_task::LogicalJoinType::RightOuter => {
+                        self.children()[1].schema()
+                    }
+                    _ => None,
+                };
+                if let Some(schema) = outer_schema {
+                    let (_, offsets) = schema.extract_col_groups(col_groups);
+                    extracted.extend(offsets.into_iter().map(|offset| col_groups[offset].clone()));
+                }
+                extracted
+            }
+            Self::Apply(op) => {
+                if !op.col_groups_outer_side() {
+                    return Vec::new();
+                }
+                // Go `LogicalApply.ExtractColGroups` indexes `la.Children()[0]`.
+                let Some(schema) = self.children()[0].schema() else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
+            Self::Window(_) => {
+                // Go checks `len(colGroups) == 0` BEFORE indexing
+                // `p.Children()[0].Schema()` (`logical_window.go:427`).
+                if col_groups.is_empty() {
+                    return Vec::new();
+                }
+                let Some(schema) = self.children()[0].schema() else {
+                    return Vec::new();
+                };
+                let (_, offsets) = schema.extract_col_groups(col_groups);
+                offsets
+                    .into_iter()
+                    .map(|offset| col_groups[offset].clone())
+                    .collect()
+            }
             Self::Selection(_)
-            | Self::Projection(_)
-            | Self::Join(_)
             | Self::DataSource(_)
             | Self::Sort(_)
             | Self::Limit(_)
-            | Self::Apply(_)
             | Self::TopN(_)
             | Self::UnionAll(_)
             | Self::PartitionUnionAll(_)
-            | Self::Window(_)
             | Self::CTE(_)
             | Self::CTETable(_)
             | Self::MaxOneRow(_)
@@ -952,8 +1150,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -1023,8 +1220,7 @@ impl LogicalPlan {
             | Self::TableDual(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => Vec::new(),
+            | Self::ShowDDLJobs(_) => Vec::new(),
         }
     }
 
@@ -1064,8 +1260,7 @@ impl LogicalPlan {
             | Self::Expand(_)
             | Self::MemTable(_)
             | Self::Show(_)
-            | Self::ShowDDLJobs(_)
-            | Self::Todo(_) => BaseLogicalPlan::explain_info().to_owned(),
+            | Self::ShowDDLJobs(_) => BaseLogicalPlan::explain_info().to_owned(),
         }
     }
 
@@ -1104,14 +1299,6 @@ impl LogicalPlan {
         false // todo: logicalop.CanPushToCopImpl
     }
 
-    /// Go ExtractFD over resolved logical expressions and table metadata.
-    pub fn extract_fd(
-        &self,
-        context: &functional_dependencies::FdContext<'_>,
-    ) -> Result<tidb_funcdep::FdSet, PlanError> {
-        functional_dependencies::extract(self, context)
-    }
-
     /// Go `ConvertOuterToInnerJoin(predicates)` (`<22nd>`).
     #[must_use]
     pub fn convert_outer_to_inner_join(self, _predicates: &[Expression]) -> Self {
@@ -1130,26 +1317,27 @@ impl LogicalPlan {
     }
 
     /// Go `GetChildStatsAndSchema()` (`<26th>`): the first child's stats and
-    /// schema. Go indexes `Children()[0]` and panics on a leaf; this returns
-    /// `None`.
+    /// schema. Go indexes `Children()[0]` and panics on a leaf; callers must
+    /// provide a child rather than relying on a Rust-only `None` fallback.
     #[must_use]
     pub fn get_child_stats_and_schema(&self) -> Option<(Option<&StatsInfo>, Option<&Schema>)> {
-        let child = self.children().first()?;
+        let child = &self.children()[0];
         Some((child.stats_info(), child.schema()))
     }
 
     /// Go `GetJoinChildStatsAndSchema()` (`<27th>`): both children's stats and
-    /// schemas. Go's base body PANICS, so only a two-child operator may
-    /// answer; `None` is that refusal without the panic.
+    /// schemas. Go's base body panics for non-join operators and the join
+    /// implementation indexes both children; preserve those failure
+    /// boundaries instead of returning a Rust-only `None`.
     #[must_use]
     pub fn get_join_child_stats_and_schema(&self) -> Option<JoinChildStatsAndSchema<'_>> {
         // Go's override lives on `LogicalJoin` (`logical_join.go:775`), and
         // `LogicalApply` PROMOTES it through the embedding.
         if !matches!(self, Self::Join(_) | Self::Apply(_)) {
-            return None;
+            panic!("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.");
         }
         let children = self.children();
-        let (left, right) = (children.first()?, children.get(1)?);
+        let (left, right) = (&children[0], &children[1]);
         Some((
             left.stats_info(),
             right.stats_info(),
@@ -1210,10 +1398,6 @@ impl LogicalPlan {
             Self::MemTable(op) => Self::MemTable(op.clone_shallow()),
             Self::Show(op) => Self::Show(op.clone_shallow()),
             Self::ShowDDLJobs(op) => Self::ShowDDLJobs(op.clone_shallow()),
-            Self::Todo(op) => Self::Todo(TodoLogicalOp {
-                base: op.base.shell(),
-                go_operator: op.go_operator.clone(),
-            }),
         }
     }
 

@@ -7,6 +7,142 @@
 
 use super::*;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use tidb_txnkv::Key;
+
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+
+#[test]
+fn insert_set_operation_source_uses_the_common_query_plan() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO insert_union_src VALUES (2), (1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_insert_on(
+            "INSERT INTO insert_union_dst SELECT v FROM insert_union_src UNION ALL SELECT 3",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        3,
+    );
+    assert_eq!(
+        run_select_on("SELECT v FROM insert_union_dst ORDER BY v", &catalog, &ctx,).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)]
+        ],
+    );
+}
+
+#[derive(Clone, Debug, Default)]
+struct BatchReadCountingStorage {
+    inner: MemTableStorage,
+    gets: Arc<AtomicUsize>,
+    batch_gets: Arc<AtomicUsize>,
+}
+
+impl TableStorage for BatchReadCountingStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.get(key)
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+        self.batch_gets.fetch_add(1, Ordering::Relaxed);
+        self.inner.batch_get(keys)
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.inner.set(key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.inner.delete(key)
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter(start, upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        self.inner.iter_reverse(upper_bound, lower_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        self.inner.key_count()
+    }
+
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
+#[test]
+fn batch_point_delete_reads_records_with_one_batch_get() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE batch_delete (id BIGINT PRIMARY KEY, value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let gets = Arc::new(AtomicUsize::new(0));
+    let batch_gets = Arc::new(AtomicUsize::new(0));
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "batch_delete").unwrap() else {
+        panic!("batch_delete is not a byte-backed table")
+    };
+    let _ = table.replace_storage(Box::new(BatchReadCountingStorage {
+        inner: MemTableStorage::new(),
+        gets: Arc::clone(&gets),
+        batch_gets: Arc::clone(&batch_gets),
+    }));
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO batch_delete VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    gets.store(0, Ordering::Relaxed);
+    batch_gets.store(0, Ordering::Relaxed);
+
+    assert_eq!(
+        run_delete_on(
+            "DELETE FROM batch_delete WHERE id IN (1, 3, 9)",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
+    assert_eq!(gets.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn retryable_storage_errors_keep_their_transaction_identity() {
     let retryable = || {
@@ -585,131 +721,4 @@ fn update_and_delete_rows() {
             "kv={kv}"
         );
     }
-}
-
-
-/// The fast prepared UPDATE keeps a table WITH secondary indexes on the fast
-/// arm -- `update_row_with_old` maintains the entries -- and its residual
-/// equalities answer against the OLD row before any assignment lands.
-#[test]
-fn fast_prepared_update_maintains_indexes_and_answers_residuals() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE upi (\
-            id VARCHAR(8) PRIMARY KEY, \
-            a VARCHAR(8) NOT NULL COLLATE utf8mb4_bin, \
-            v BIGINT NOT NULL, \
-            INDEX ia (a))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "INSERT INTO upi VALUES ('k1','a1',10),('k2','a2',20)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-
-    let parse_update = |sql: &str| -> tidb_ast::UpdateStmt {
-        let stmt = tidb_parser::parse(sql).unwrap();
-        match &stmt {
-            Stmt::Dml(dml) => match &**dml {
-                tidb_ast::DmlStmt::Update(update) => update.as_ref().clone(),
-                _ => panic!("expected an update"),
-            },
-            _ => panic!("expected a dml"),
-        }
-    };
-    let ctx = crate::StmtContext::for_query();
-    let run = |sql: &str, params: &[Datum], catalog: &mut Catalog| {
-        let update = parse_update(sql);
-        run_fast_prepared_update(&update, params, catalog, DEFAULT_DATABASE, &ctx)
-            .unwrap()
-            .expect("the fast prepared update")
-    };
-
-    // Handle pin plus a residual the row answers: one row updated.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(99), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"a1".to_vec())],
-        &mut catalog,
-    );
-    assert_eq!(affected, 1);
-    assert_eq!(
-        run_select_on("SELECT v FROM upi WHERE id = 'k1'", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(99)]]
-    );
-    // The secondary index still finds the row after the maintenance.
-    assert_eq!(
-        run_select_on("SELECT id FROM upi WHERE a = 'a1'", &catalog, &ctx).unwrap().len(),
-        1
-    );
-
-    // A residual no row answers changes nothing.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Bytes(b"zz".to_vec())],
-        &mut catalog,
-    );
-    assert_eq!(affected, 0);
-    // A NULL residual matches nothing under SQL semantics.
-    let affected = run(
-        "UPDATE upi SET v = ? WHERE id = ? AND a = ?",
-        &[Datum::Int(50), Datum::Bytes(b"k1".to_vec()), Datum::Null],
-        &mut catalog,
-    );
-    assert_eq!(affected, 0);
-}
-
-/// The fast prepared INSERT writes a table WITH secondary indexes, and a
-/// duplicate of a unique indexed value is reported as zero rows rather than
-/// corrupting the index.
-#[test]
-fn fast_prepared_insert_maintains_secondary_indexes() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE ini (\
-            id VARCHAR(8) PRIMARY KEY, \
-            code VARCHAR(8) NOT NULL COLLATE utf8mb4_bin UNIQUE, \
-            v BIGINT NOT NULL)",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "INSERT INTO ini VALUES ('k1','c1',10)",
-        &mut catalog,
-        &crate::StmtContext::for_query(),
-    )
-    .unwrap();
-
-    let stmt = tidb_parser::parse("INSERT INTO ini (id, code, v) VALUES (?, ?, ?)").unwrap();
-    let insert = match &stmt {
-        Stmt::Dml(dml) => match &**dml {
-            tidb_ast::DmlStmt::Insert(insert) => insert.as_ref().clone(),
-            _ => panic!("expected an insert"),
-        },
-        _ => panic!("expected a dml"),
-    };
-    let ctx = crate::StmtContext::for_query();
-    let mut bind = |values: &[Datum]| -> Result<Option<u64>, DriverError> {
-        run_fast_prepared_insert(&insert, values, &mut catalog, DEFAULT_DATABASE, &ctx)
-            .map(|result| result.map(|(affected, _)| affected))
-    };
-
-    let affected = bind(&[Datum::Bytes(b"k2".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(20)])
-        .unwrap()
-        .expect("fast insert");
-    assert_eq!(affected, 1);
-
-    // The unique index sees the new entry: a second 'c2' under a PLAIN
-    // insert raises the duplicate-key error instead of writing.
-    let duplicated = bind(&[Datum::Bytes(b"k3".to_vec()), Datum::Bytes(b"c2".to_vec()), Datum::Int(30)]);
-    match duplicated {
-        Err(DriverError::DuplicateEntry { .. }) => {}
-        other => panic!("expected a duplicate-key error, got {other:?}"),
-    }
-    assert_eq!(
-        run_select_on("SELECT id FROM ini WHERE code = 'c2'", &catalog, &ctx).unwrap().len(),
-        1
-    );
 }

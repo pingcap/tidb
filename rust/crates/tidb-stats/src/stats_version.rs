@@ -28,14 +28,12 @@ pub const VERSION_1: i64 = 1;
 pub const VERSION_2: i64 = 2;
 
 /// Returns whether a non-zero statistics version is analyzed.
-#[must_use]
 pub const fn is_analyzed(stats_version: i64) -> bool {
     stats_version != VERSION_0
 }
 
 /// Returns whether column statistics are analyzed or synthesized from a
 /// default value's NDV/null-count metadata.
-#[must_use]
 pub const fn is_column_analyzed_or_synthesized(
     stats_version: i64,
     ndv: i64,

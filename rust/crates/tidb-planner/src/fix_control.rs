@@ -74,38 +74,32 @@ impl OptimizerFixControl {
     }
 
     /// The raw source-shaped map, in numeric-key order.
-    #[must_use]
     pub fn as_map(&self) -> &BTreeMap<u64, String> {
         &self.values
     }
 
     /// Fetches a raw string value and preserves key absence.
-    #[must_use]
     pub fn get_str(&self, key: u64) -> Option<&str> {
         self.values.get(&key).map(String::as_str)
     }
 
     /// Fetches a raw string value or the caller's default.
-    #[must_use]
     pub fn get_str_with_default<'a>(&'a self, key: u64, default: &'a str) -> &'a str {
         self.get_str(key).unwrap_or(default)
     }
 
     /// Fetches a boolean value; only case-insensitive `ON` and exact `1` are true.
-    #[must_use]
     pub fn get_bool(&self, key: u64) -> Option<bool> {
         self.get_str(key)
             .map(|value| value.eq_ignore_ascii_case("ON") || value == "1")
     }
 
     /// Fetches a boolean value or the caller's default when the key is absent.
-    #[must_use]
     pub fn get_bool_with_default(&self, key: u64, default: bool) -> bool {
         self.get_bool(key).unwrap_or(default)
     }
 
     /// Fetches a signed decimal integer as Go's `(value, exists, parseErr)` triple.
-    #[must_use]
     pub fn get_int(&self, key: u64) -> (i64, bool, Option<IntParseError>) {
         let Some(raw) = self.get_str(key) else {
             return (0, false, None);
@@ -115,7 +109,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches an integer or the caller's default on absence or parse failure.
-    #[must_use]
     pub fn get_int_with_default(&self, key: u64, default: i64) -> i64 {
         let (value, exists, error) = self.get_int(key);
         if exists && error.is_none() {
@@ -126,7 +119,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches a float as Go's `(value, exists, parseErr)` triple.
-    #[must_use]
     pub fn get_float(&self, key: u64) -> (f64, bool, Option<FloatParseError>) {
         let Some(raw) = self.get_str(key) else {
             return (0.0, false, None);
@@ -136,7 +128,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches a float or the caller's default on absence or parse failure.
-    #[must_use]
     pub fn get_float_with_default(&self, key: u64, default: f64) -> f64 {
         let (value, exists, error) = self.get_float(key);
         if exists && error.is_none() {
@@ -393,6 +384,14 @@ fn parse_go_hex_float(
     else {
         return (0.0, Some(float_error(input, false)));
     };
+    // Go validates the entire exponent before classifying range errors. Rust's
+    // integer parser can stop at overflow without examining an invalid suffix.
+    let exponent_digits = exponent_text
+        .strip_prefix(['+', '-'])
+        .unwrap_or(&exponent_text);
+    if !exponent_digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return (0.0, Some(float_error(input, false)));
+    }
     enum Exponent {
         Finite(i64),
         PositiveOverflow,
@@ -701,6 +700,26 @@ mod tests {
     }
 
     #[test]
+    fn hex_float_rejects_invalid_suffix_after_exponent_overflow() {
+        for source in [
+            "0x1p18446744073709551616x",
+            "0x1p-18446744073709551616x",
+            "0x0p18446744073709551616x",
+            "-0x1p-18446744073709551616x",
+        ] {
+            let control = OptimizerFixControl::from(BTreeMap::from([(1, source.to_owned())]));
+            let (value, exists, error) = control.get_float(1);
+            assert!(exists);
+            assert_eq!(value.to_bits(), 0.0_f64.to_bits(), "{source}");
+            assert_eq!(
+                error.unwrap().to_string(),
+                format!("strconv.ParseFloat: parsing \"{source}\": invalid syntax")
+            );
+            assert_eq!(control.get_float_with_default(1, 1234.5), 1234.5);
+        }
+    }
+
+    #[test]
     fn integer_getter_reports_go_parse_int_errors() {
         for (source, expected) in [("+7", 7), ("-8", -8), ("0", 0)] {
             let (control, _) =
@@ -809,5 +828,20 @@ mod tests {
             warnings,
             ["repeated assignment for fix control: 1. existing value: \"\\u0085\". new value: \"\\u200b\"."]
         );
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        let (control, _) = OptimizerFixControl::parse("1:ON").unwrap();
+        control.as_map();
+        control.get_str(1);
+        control.get_str_with_default(1, "default");
+        control.get_bool(1);
+        control.get_bool_with_default(1, false);
+        control.get_int(1);
+        control.get_int_with_default(1, 0);
+        control.get_float(1);
+        control.get_float_with_default(1, 0.0);
     }
 }

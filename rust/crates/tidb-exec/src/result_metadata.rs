@@ -21,7 +21,7 @@
 //! Wiring this leaf into the connected server path belongs to the executor
 //! steward after typed expression metadata is available.
 
-use tidb_datatype::{Collation, FieldTypeCode};
+use tidb_datatype::{Charset, Collation, FieldTypeCode};
 pub use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
 use tidb_protocol::{ColumnDefault, ColumnInfo, TYPE_VAR_STRING};
 
@@ -211,7 +211,7 @@ pub fn convert_result_field(field: &ResultFieldMetadata) -> ColumnInfo {
         name: field.name.clone(),
         org_name,
         column_length: column_length(&field.field_type),
-        charset: collation_id(field.field_type.collation),
+        charset: charset_default_collation_id(field.field_type.collation),
         flag: field.field_type.flags,
         decimal: decimal_places(&field.field_type),
         type_code,
@@ -277,8 +277,24 @@ fn max_bytes_per_character(collation: Collation) -> u32 {
     }
 }
 
-fn collation_id(collation: Collation) -> u16 {
-    u16::try_from(collation.id()).expect("supported collation IDs fit u16")
+/// Returns the protocol ID Go emits for a field's character set.
+///
+/// `ConvertColumnInfo` calls `mysql.CharsetNameToID`, so a column declared
+/// with `utf8mb4_general_ci` still carries `utf8mb4_bin` (46) in the wire
+/// column definition. The protocol field is the charset's default collation,
+/// not the column's selected collation. Keep this mapping independent of the
+/// new-collation compatibility switch: Go's charset constants do not change
+/// when that switch changes.
+fn charset_default_collation_id(collation: Collation) -> u16 {
+    match collation.charset() {
+        Charset::Binary => 63,
+        Charset::Ascii => 65,
+        Charset::Latin1 => 47,
+        Charset::Utf8 => 83,
+        Charset::Utf8Mb4 => 46,
+        Charset::Gbk => 28,
+        Charset::Gb18030 => 248,
+    }
 }
 
 fn default_field_length(code: FieldTypeCode) -> u32 {

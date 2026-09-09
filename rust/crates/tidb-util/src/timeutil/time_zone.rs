@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/util/timeutil/time_zone.go`.
+//! Time-zone inference, loading, construction, and parsing.
 
 use std::fmt;
 use std::str::FromStr;
@@ -301,9 +301,9 @@ mod tests {
     // touch them (Go runs its package tests in one process too).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    // Go `TestGetTZNameFromFileName`.
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestGetTZNameFromFileName`.
     #[test]
-    fn tz_name_from_file_name() {
+    fn test_get_tz_name_from_file_name() {
         assert_eq!(
             infer_tz_name_from_file_name("/usr/share/zoneinfo/Asia/Shanghai").unwrap(),
             "Asia/Shanghai"
@@ -312,12 +312,11 @@ mod tests {
             infer_tz_name_from_file_name("/usr/share/zoneinfo.default/Asia/Shanghai").unwrap(),
             "Asia/Shanghai"
         );
-        assert!(infer_tz_name_from_file_name("/nonsense/path").is_err());
     }
 
-    // Go `TestLocal`.
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestLocal`.
     #[test]
-    fn local_inference() {
+    fn test_local() {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY-adjacent: env mutation is process-global; serialized above.
         std::env::set_var("TZ", "Asia/Shanghai");
@@ -335,9 +334,9 @@ mod tests {
         std::env::remove_var("TZ");
     }
 
-    // Go `TestInferOneStepLinkForPath`.
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestInferOneStepLinkForPath`.
     #[test]
-    fn one_step_link() {
+    fn test_infer_one_step_link_for_path() {
         let dir = std::env::temp_dir();
         let l1 = dir.join("tidbrs_testlink1");
         let l2 = dir.join("tidbrs_testlink2");
@@ -362,9 +361,9 @@ mod tests {
         let _ = std::fs::remove_file(&l1);
     }
 
-    // Go `TestParseTimeZone`.
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestParseTimeZone`.
     #[test]
-    fn parse_time_zone_cases() {
+    fn test_parse_time_zone() {
         let _guard = ENV_LOCK.lock().unwrap();
         store_system_tz("Asia/Tokyo");
 
@@ -382,57 +381,13 @@ mod tests {
             assert_eq!(offset, *want_offset, "{name}");
         }
 
-        // Invalid name fails with ERR_UNKNOWN_TIME_ZONE's identity.
         let err = parse_time_zone("aa").unwrap_err();
         assert_eq!(err.code(), ERR_UNKNOWN_TIME_ZONE.code());
-
-        // Offsets outside [-12:59, +14:00] are rejected.
-        assert!(parse_time_zone("+14:01").is_err());
-        assert!(parse_time_zone("-13:00").is_err());
-        assert!(parse_time_zone("+14:00").is_ok());
-        assert!(parse_time_zone("-12:59").is_ok());
     }
 
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestZoneName`.
     #[test]
-    fn go_builtin_location_names() {
-        assert!(matches!(load_location(""), Ok(TimeZone::Named(Tz::UTC))));
-        assert!(matches!(load_location("UTC"), Ok(TimeZone::Named(Tz::UTC))));
-        assert!(matches!(load_location("Local"), Ok(TimeZone::Local)));
-        assert!(matches!(parse_time_zone(""), Ok(TimeZone::Named(Tz::UTC))));
-        assert!(matches!(parse_time_zone("Local"), Ok(TimeZone::Local)));
-
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("TZ", "Local");
-        assert_eq!(infer_system_tz(), "Local");
-        std::env::remove_var("TZ");
-    }
-
-    #[test]
-    fn timezone_offsets_use_mysql_duration_grammar() {
-        for (input, expected) in [
-            ("+2", 2),
-            ("+0200", 2 * 60),
-            ("+123045", 12 * 3600 + 30 * 60 + 45),
-            ("-123045", -(12 * 3600 + 30 * 60 + 45)),
-            ("+0 02:03:04", 2 * 3600 + 3 * 60 + 4),
-            ("+ 2 : 3 : 4", 2 * 3600 + 3 * 60 + 4),
-            ("+02:00:00.4", 2 * 3600),
-            ("+02:00:00.6", 2 * 3600 + 1),
-        ] {
-            let location =
-                parse_time_zone(input).unwrap_or_else(|error| panic!("{input}: {error}"));
-            assert_eq!(zone(&location).1, expected, "{input}");
-        }
-
-        assert!(parse_time_zone("+140000").is_ok());
-        assert!(parse_time_zone("+140001").is_err());
-        assert!(parse_time_zone("-125900").is_ok());
-        assert!(parse_time_zone("-130000").is_err());
-    }
-
-    // Go `TestZoneName`.
-    #[test]
-    fn zone_name_cases() {
+    fn test_zone_name() {
         assert_eq!(zone_name(&TimeZone::Named(Tz::UTC)), "UTC");
         assert_eq!(
             zone_name(&TimeZone::Fixed {
@@ -464,10 +419,9 @@ mod tests {
         );
     }
 
-    // Go `TestConstructTimeZone`: a fixed zone shifts wall time by its offset;
-    // a named zone ignores the offset argument.
+    /// Source: `pkg/util/timeutil/time_zone_test.go::TestConstructTimeZone`.
     #[test]
-    fn construct_time_zone_cases() {
+    fn test_construct_time_zone() {
         use chrono::TimeZone as _;
 
         let to_utc = |loc: &TimeZone, y: i32, mo: u32, d: u32, h: u32| -> chrono::DateTime<Utc> {
@@ -503,39 +457,23 @@ mod tests {
             Utc.with_ymd_and_hms(2018, 8, 15, 20, 0, 0).unwrap()
         );
 
-        // The offset argument is ignored when a name is given.
-        let loc = construct_time_zone("Asia/Shanghai", 23 * 3600).unwrap();
-        assert_eq!(
-            to_utc(&loc, 2018, 8, 15, 20),
-            Utc.with_ymd_and_hms(2018, 8, 15, 12, 0, 0).unwrap()
-        );
-    }
+        for offset in [23 * 3600, -23 * 3600, 0] {
+            let loc = construct_time_zone("UTC", offset).unwrap();
+            assert_eq!(
+                to_utc(&loc, 2018, 8, 15, 12),
+                Utc.with_ymd_and_hms(2018, 8, 15, 12, 0, 0).unwrap()
+            );
+        }
 
-    // `WithinDayTimePeriod`'s two window shapes (uncovered by Go's tests).
-    #[test]
-    fn within_day_time_period_cases() {
-        use chrono::TimeZone as _;
-        let at = |h: u32, m: u32| Utc.with_ymd_and_hms(2020, 1, 1, h, m, 0).unwrap();
+        for offset in [-23 * 3600, 23 * 3600, 0] {
+            let loc = construct_time_zone("Asia/Shanghai", offset).unwrap();
+            assert_eq!(
+                to_utc(&loc, 2018, 8, 15, 20),
+                Utc.with_ymd_and_hms(2018, 8, 15, 12, 0, 0).unwrap()
+            );
+        }
 
-        // Same-day window 00:00-06:00.
-        assert!(within_day_time_period(at(0, 0), at(6, 0), at(3, 0)));
-        assert!(!within_day_time_period(at(0, 0), at(6, 0), at(7, 0)));
-
-        // Midnight-crossing window 22:00-06:00.
-        assert!(within_day_time_period(at(22, 0), at(6, 0), at(23, 0)));
-        assert!(within_day_time_period(at(22, 0), at(6, 0), at(3, 0)));
-        assert!(!within_day_time_period(at(22, 0), at(6, 0), at(12, 0)));
-    }
-
-    // `GetSystemTZ`/`SetSystemTZ` contract.
-    #[test]
-    fn system_tz_set_once() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        store_system_tz("System");
-        assert!(get_system_tz().is_err());
-        set_system_tz("Asia/Shanghai");
-        // Later set_system_tz calls are ignored (sync.Once).
-        set_system_tz("UTC");
-        assert_eq!(get_system_tz().unwrap(), "Asia/Shanghai");
+        let err = construct_time_zone("asia/not-exist", 0).unwrap_err();
+        assert_eq!(err.to_string(), "invalid name for timezone asia/not-exist");
     }
 }

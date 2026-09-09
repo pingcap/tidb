@@ -55,11 +55,10 @@ pub const GBK_DEFAULT_COLLATION_ID: u16 = 28;
 pub const GB18030_DEFAULT_COLLATION_ID: u16 = 248;
 
 /// Errors for result charset state that is outside the currently ported
-/// registry boundary.
+/// column/data registry boundary. Unknown session charset names follow Go's
+/// binary fallback and therefore are not errors here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResultEncoderError {
-    /// A session result charset name is not registered by the datatype leaf.
-    UnsupportedCharsetName(String),
     /// A column collation ID is not registered by the datatype leaf.
     UnsupportedCollationId(u16),
     /// Data encoding was requested before `update_data_encoding` supplied a
@@ -70,6 +69,10 @@ pub enum ResultEncoderError {
 /// Character sets that can be emitted by the result protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCharset {
+    /// An unregistered result-charset spelling. Go's charset lookup falls
+    /// back to its binary encoder while retaining the spelling for the
+    /// metadata lookup, which returns charset number zero.
+    Unknown,
     /// Byte-oriented binary result data.
     Binary,
     /// Seven-bit ASCII result data.
@@ -103,9 +106,6 @@ impl ResultCharset {
 impl fmt::Display for ResultEncoderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedCharsetName(name) => {
-                write!(f, "unsupported result charset '{name}'")
-            }
             Self::UnsupportedCollationId(id) => write!(f, "unsupported result collation id {id}"),
             Self::DataEncodingUnset => f.write_str("result data charset was not initialized"),
         }
@@ -147,19 +147,27 @@ impl ResultEncoder {
         }
     }
 
-    /// Creates an encoder from a registered session charset name.
+    /// Creates an encoder from a session charset name.
     ///
-    /// The empty string is the source null-result state.  Charset aliases
-    /// such as `utf8mb3` are resolved through the datatype registry.
+    /// The empty string is the source null-result state. Charset aliases such
+    /// as `utf8mb3` are resolved through the datatype registry. An unknown
+    /// spelling follows Go's `FindEncodingTakeUTF8AsNoop` binary fallback and
+    /// is retained as [`ResultCharset::Unknown`] for its metadata number.
     pub fn new(result_charset: &str) -> Result<Self, ResultEncoderError> {
         let result_charset = if result_charset.is_empty() {
             None
         } else {
-            Some(ResultCharset::from_datatype(
-                Charset::from_name(result_charset).ok_or_else(|| {
-                    ResultEncoderError::UnsupportedCharsetName(result_charset.to_owned())
-                })?,
-            ))
+            // Go's FindEncodingTakeUTF8AsNoop returns the binary encoder for
+            // an unknown name instead of refusing construction. Keep that
+            // fallback distinct from an explicit `binary` result charset:
+            // ColumnCharsetID still asks CharsetNameToID and therefore emits
+            // zero for an unknown spelling, while binary data uses the
+            // column's own charset.
+            Some(
+                Charset::from_name(result_charset)
+                    .map(ResultCharset::from_datatype)
+                    .unwrap_or(ResultCharset::Unknown),
+            )
         };
         Ok(Self {
             result_charset,
@@ -178,7 +186,8 @@ impl ResultEncoder {
     ///
     /// This is the source `ColumnCharsetID` rule: null/empty results,
     /// non-string columns, and binary columns retain `dump_charset`; otherwise
-    /// the session result charset's default collation is advertised.
+    /// the session result charset's default collation is advertised. An
+    /// unknown session spelling produces Go's zero charset number.
     pub fn column_charset_id(&self, dump_charset: u16, is_string_col: bool) -> u16 {
         let Some(result_charset) = self.result_charset else {
             return dump_charset;
@@ -254,6 +263,7 @@ impl ResultEncoder {
 
 fn charset_default_collation_id(charset: ResultCharset) -> u16 {
     match charset {
+        ResultCharset::Unknown => 0,
         ResultCharset::Utf8Mb4 => UTF8MB4_DEFAULT_COLLATION_ID,
         ResultCharset::Latin1 => LATIN1_DEFAULT_COLLATION_ID,
         ResultCharset::Ascii => ASCII_DEFAULT_COLLATION_ID,
@@ -277,7 +287,10 @@ fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
     match charset {
         // Go's FindEncodingTakeUTF8AsNoop deliberately uses the binary
         // encoder for UTF-8. Keep these paths allocation-only.
-        ResultCharset::Binary | ResultCharset::Utf8 | ResultCharset::Utf8Mb4 => src.to_vec(),
+        ResultCharset::Unknown
+        | ResultCharset::Binary
+        | ResultCharset::Utf8
+        | ResultCharset::Utf8Mb4 => src.to_vec(),
         // Go's Latin-1 encoder is ALSO a byte-preserving NOP — because Go's
         // internal bytes under a latin1 connection ARE the raw latin1 bytes.
         // This stack's internal text is UTF-8 (the wire decodes latin1 input
@@ -311,7 +324,10 @@ fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
 
 fn encode_with_charset_owned(src: Vec<u8>, charset: ResultCharset) -> Vec<u8> {
     match charset {
-        ResultCharset::Binary | ResultCharset::Utf8 | ResultCharset::Utf8Mb4 => src,
+        ResultCharset::Unknown
+        | ResultCharset::Binary
+        | ResultCharset::Utf8
+        | ResultCharset::Utf8Mb4 => src,
         ResultCharset::Latin1 => match std::str::from_utf8(&src) {
             Ok(text) => text
                 .chars()

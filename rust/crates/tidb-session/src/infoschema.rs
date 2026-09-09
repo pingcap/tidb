@@ -26,10 +26,8 @@
 //! `CHARACTER_OCTET_LENGTH`, `NUMERIC_PRECISION` 19 for bigint) are computed
 //! in ways that reading the table definitions would not reveal.
 //!
-//! NOT MODELLED (documented): the statistics columns are reported as TiDB
-//! reports them for a table it has not analyzed -- `TABLE_ROWS`,
-//! `DATA_LENGTH` and friends are 0 and `CREATE_TIME` is NULL rather than a
-//! fabricated timestamp; the other `information_schema` tables; and the
+//! NOT MODELLED (documented): `CREATE_TIME` is NULL rather than a fabricated
+//! timestamp; the other `information_schema` tables; and the
 //! contents of `mysql`, which is a real schema OBJECT in the
 //! catalog (see `Catalog::default`) holding none of its 61 bootstrap tables,
 //! so `SCHEMATA` lists it as TiDB does while `TABLES` reports it empty and
@@ -182,6 +180,79 @@ fn visible_tables(
         }
     }
     pairs
+}
+
+/// Go `memtableRetriever.setDataFromIndexUsage`: one row for every index of
+/// every table visible to the current account, joined with the Domain's
+/// node-global usage counters. Integer primary-key handles use synthetic
+/// index ID zero because Go does not keep them in `TableInfo.Indices`.
+pub(crate) fn tidb_index_usage_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    collector: &tidb_stats_handle_usage_indexusage::Collector,
+) -> Vec<Vec<Datum>> {
+    use chrono::{DateTime, Local};
+    use tidb_datatype::{core_time_from_datetime, Time, TimeType};
+
+    fn usage_row(
+        schema: &str,
+        table: &str,
+        index: &str,
+        usage: tidb_stats_handle_usage_indexusage::Sample,
+    ) -> Vec<Datum> {
+        let last_access = if usage.last_used_at
+            == tidb_stats_handle_usage_indexusage::Sample::default().last_used_at
+        {
+            Datum::Null
+        } else {
+            let local: DateTime<Local> = usage.last_used_at.with_timezone(&Local);
+            let core = core_time_from_datetime(local);
+            Datum::new_time(
+                Time::new(core, TimeType::Timestamp, 0)
+                    .expect("fsp 0 is valid for TIDB_INDEX_USAGE timestamps"),
+            )
+        };
+        let mut row = vec![
+            text(schema),
+            text(table),
+            text(index),
+            Datum::Int(usage.query_total as i64),
+            Datum::Int(usage.kv_req_total as i64),
+            Datum::Int(usage.row_access_total as i64),
+        ];
+        row.extend(
+            usage
+                .percentage_access
+                .into_iter()
+                .map(|value| Datum::Int(value as i64)),
+        );
+        row.push(last_access);
+        row
+    }
+
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        if table.pk_handle_offset().is_some() {
+            rows.push(usage_row(
+                &schema,
+                &table.name,
+                "primary",
+                collector.get_index_usage(table.table_id, 0),
+            ));
+        }
+        for index in table.indexes() {
+            rows.push(usage_row(
+                &schema,
+                &table.name,
+                &index.name.to_ascii_lowercase(),
+                collector.get_index_usage(table.table_id, index.id),
+            ));
+        }
+    }
+    rows
 }
 
 /// The rows of one `information_schema` table, computed from `catalog` and
@@ -612,6 +683,8 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
         };
         let catalog_value = || Datum::Bytes(b"def".to_vec());
         let Some(partition) = table.partition() else {
+            let (row_count, average_row_length, data_length, index_length) =
+                table.storage_statistics();
             rows.push(vec![
                 catalog_value(),
                 Datum::Bytes(schema.clone().into_bytes()),
@@ -626,11 +699,11 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
+                Datum::UInt(row_count),
+                Datum::UInt(average_row_length),
+                Datum::UInt(data_length),
                 Datum::Null,
-                Datum::Int(0),
+                Datum::UInt(index_length),
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
@@ -660,6 +733,8 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             other => (other.sql().to_owned(), partition.expr_text.clone()),
         };
         for (ordinal, definition) in partition.definitions.iter().enumerate() {
+            let (row_count, average_row_length, data_length, index_length) =
+                table.partition_storage_statistics(definition.id);
             // Go's `PARTITION_DESCRIPTION`: the RANGE bounds joined by commas,
             // or the LIST tuples with multi-column ones parenthesised.
             let description = match &partition.kind {
@@ -712,11 +787,11 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::Bytes(expression.clone().into_bytes()),
                 Datum::Null,
                 description,
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
+                Datum::UInt(row_count),
+                Datum::UInt(average_row_length),
+                Datum::UInt(data_length),
                 Datum::Null,
-                Datum::Int(0),
+                Datum::UInt(index_length),
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
@@ -905,6 +980,7 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             }
             _ => continue,
         };
+        let (row_count, average_row_length, data_length, index_length) = table.storage_statistics();
         rows.push(vec![
             text(CATALOG),
             text(&schema),
@@ -913,12 +989,11 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             text("InnoDB"),
             Datum::Int(10),
             text("Compact"),
-            // Statistics TiDB reports as 0 until the table is analyzed.
+            Datum::UInt(row_count),
+            Datum::UInt(average_row_length),
+            Datum::UInt(data_length),
             Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
-            Datum::Int(0),
+            Datum::UInt(index_length),
             Datum::Int(0),
             Datum::Int(0),
             // CREATE_TIME is NULL rather than a fabricated timestamp.

@@ -1,0 +1,225 @@
+# `pkg/planner/core` non-prepared plan cache parity receipt
+
+Pinned source: the repository Go tree tip (2026-09-06). Owner:
+`rust/crates/tidb-session/src/non_prepared_plan_cache.rs` (826 lines), the
+container at `access.rs` (`PreparedSelectPlan.cached_plans`), and the session
+funnel in `tidb-session/src/dispatch.rs`.
+
+## Verified face: SELECT admission and parameterization
+
+The port mirrors, function for function, the SELECT half of Go
+`plan_cacheable_checker.go` and `getPlanFromNonPreparedPlanCache`:
+
+- `parameterize_select` = `NonPreparedPlanCacheableWithCtx`'s SELECT arm plus
+  `isSelectStmtNonPrepCacheableFastCheck` (`fast_check`): clause-level
+  refusals before the visitor, at-most-two tables, the fixed node admission
+  list (`nonPreparedPlanCacheableChecker.Enter`), the filter-depth-scoped
+  column-type rule, the IN-list summed-length refusal ordered ahead of the
+  general literal cap, `GROUPING`/uncacheable-function list, aggregate and
+  window refusals, and the per-statement literal cap with Go's
+  `FIX_44823`-overridable `PlanCacheMaxParamNum` (200).
+- `extract_table_names`/`table_names_cacheable` reproduce Go's table-name
+  extraction against the temp-and-system filters.
+- The retained marker-bearing statement, its restored-text cache key
+  (`current_db | <restored parameterized statement>`), and repeated execution
+  through `bind_non_prepared_select` (parameter-type compatibility, schema and
+  statistics version invalidation, recursive range rebuild, partial-rebuild
+  discard) match `getPlanFromNonPreparedPlanCache`'s contract through the same
+  `PreparedSelectPlan` object SQL and binary PREPARE use.
+- `@@last_plan_from_cache` reflects non-prepared hits (`prev_found_in_plan_cache`),
+  capacity tracks `tidb_non_prepared_plan_cache_size`, and the runtime gate is
+  `tidb_enable_non_prepared_plan_cache`.
+
+Regression coverage lives in `tidb-session/src/tests_non_prepared_plan_cache.rs`
+(admission, parameterization, hits, invalidation, refusal reasons).
+
+## Former divergence: DML admission — IMPLEMENTED (2026-09-06)
+
+Go `NonPreparedPlanCacheableWithCtx` admits UPDATE / INSERT (values and
+insert-select) / DELETE statements under
+`tidb_enable_non_prepared_plan_cache_for_dml` (default ON). The port now
+mirrors that: `parameterize_dml` runs Go's fast checks (table hints,
+multi-table UPDATE/DELETE, insert-select source kind, the
+rows-times-columns parameter cap), lowers the DML target table like a
+SELECT reference, and walks SET values, VALUES rows, ON DUPLICATE values,
+and the WHERE predicate through the shared checker and replacer — leaving
+ORDER BY and LIMIT literals verbatim per Go's replacer skip list
+(pkg/planner/core/plan_cache_param.go:57-77). The session holds
+`NonPreparedDmlCache` (key → `PreparedDmlPlan`), the funnel binds through
+`bind_cached_for_statement`/`bind_for_statement`, and execution shares the
+prepared path's `execute_cached_prepared_dml` — privilege checks, metadata
+locks, statement context, and the DML executor stay common. Regressions:
+`dml_statements_cache_and_rebind_like_go` (UPDATE/INSERT/DELETE hit
+sequences, the gate-off refusal, hinted and multi-table refusals); the
+previously-marked flip-test now asserts the hit.
+
+## Container: `plan_cache_lru.go` — PORTED (2026-09-06)
+
+Go's `LRUPlanCache` (280 lines) is now ported as
+`tidb-planner::plan_cache_lru::LruPlanCache<V: PlanCacheValue>`: capacity
+with the below-1 → 100 default, per-key buckets of plans differing by
+parameter-type signature, replace-compatible/move-to-front semantics,
+capacity eviction with the `onEvict` hook, `SetCapacity` (below 1 refused),
+`MemoryUsage`/`Close`/`DeleteAll`. The memory-quota loop (`memoryControl`:
+evict oldest while `memory.InstanceMemUsed() > quota × (1 - guard)`) is
+portable via an injected `memory_used` probe, so tests can drive it and the
+session wiring can supply the instance probe. The instance prometheus
+gauges (`PlanCacheInstanceMemoryUsage`/`NumCounter`) remain a recorded
+metrics-face item. The session-wide container is wired into the
+prepared/non-prepared funnels by the execplan owner's unification work; the
+container itself is complete with Go-pinned behavior tests (8/8 green).
+
+
+
+Go `plan_cache_lru.go` (`LRUPlanCache`, 280 lines) is a session-wide,
+cross-statement LRU with bucket maps, a memory guard and quota, an on-evict
+callback, and `SetCapacity`/`Close`. The port keeps the retained entries on
+each `PreparedSelectPlan` (per prepared handle) and sizes the NON-PREPARED
+cache with a simple bounded map (`resize`/`get`/`put`). Client-visible plan
+answers are identical; the deltas are cross-statement sharing within a session
+and the memory-guard accounting, both covered by the same queued DML/container
+batch under `rust/docs/go-physical-plan-parity-execplan.md`.
+
+### Container audit detail: plan_cache_lru.go (280 lines)
+
+Function-level mapping of Go's `LRUPlanCache` to the port's owners:
+
+| Go function | Port owner | Note |
+| --- | --- | --- |
+| `NewLRUPlanCache` (capacity guard: <1 → 100) | `NonPreparedPlanCache::resize` / `PreparedSelectPlan.cached_plans` | per-handle Vec stands in for the session-wide LRU |
+| `Get` + `pickFromBucket` (paramTypes compatibility) | `prepared_parameter_types_compatible` lookup in `bind_inner`/`bind_cached_for_statement` | one key may hold several plans keyed by parameter-type signature |
+| `Put` (replace-compatible / push-new, evict-oldest at capacity) | the cached-plans `retain` + `push` + miss rebuild | capacity unbounded per handle (Go bounds per session) |
+| `Delete` / `DeleteAll` / `Size` / `SetCapacity` / `Close` | `invalidate_on_fresh_stats` schema-version filtering; no explicit capacity setter | SetCapacity <1 errors in Go |
+| `memoryControl` (quota × guard via `memory.InstanceMemUsed`) | not ported | the port has no session-plan memory quota loop |
+| `MemoryUsage` / `updateInstanceMetric` / `updateInstancePlanNum` (grafana instance gauges) | not ported | prometheus instance-metric face absent |
+| `onEvict` (test-only) | n/a | |
+
+The unported slice is exactly the session-wide sharing, memory-quota loop,
+and instance metrics; statement answers are unaffected. It stays queued with
+the DML/container follow-up under `rust/docs/go-physical-plan-parity-execplan.md`.
+
+## Validation
+
+    cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib non_prepared_plan_cache
+    # 26 passed; 0 failed (2026-09-06). The fixes this round closed the last
+    # five tip failures:
+    # - go_refuses_tables_in_every_system_schema_owned_by_filter panicked
+    #   because rule_collect_plan_stats.rs passed DataSource.db_name (the
+    #   session's spelling, e.g. "DM_HEARTBEAT") into
+    #   filter::is_system_schema, whose Go contract receives the lowered
+    #   CIStr.L form (plan_cacheable_checker.go:516 uses node.Schema.L); the
+    #   two call sites now lower it like Go.
+    # - a_schema_change_invalidates_the_entries_built_before_it panicked at
+    #   rowcodec.rs:651 indexing handle_column_ids[0] on an empty id list (a
+    #   rowid table projects no handle column); the Int guard now mirrors Go
+    #   tryDecodeHandle (IsPKHandle / ExtraHandleID, no indexing).
+    # - The last three (go_admits_custom_restore_func_call_shapes,
+    #   a_set_var_hint_breaks_the_cache,
+    #   go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions)
+    #   all failed inside CachedSelectPlan::bind's rebuild for a marker
+    #   inside a scalar-function argument (`a = ABS(?)`). Two causes, both
+    #   fixed: buildFromBinOp's Rust-only ConstLevel::STRICT pre-gate refused
+    #   ConstOnlyInExecution operands before the unconditional eval Go
+    #   performs (points.rs; Go pkg/util/ranger/points.go:326 evals with no
+    #   const-level check), and CachedPlanRebuildContext never carried a
+    #   deferred evaluator, so any deferred constant failed the rebuild
+    #   closed. The bind call sites now evaluate deferred expressions via
+    #   eval_expression_once over NoColumns: deterministic functions of
+    #   installed markers rebind like Go's rebuild ranger, while
+    #   session-bound functions (the statement clock) fail closed and force
+    #   a replan — exactly the previous fail-closed behavior.
+    # Companion fix: rowcodec decode_handle_column empty-id-list crash (the
+    # schema-change test above). The executor lib failure set is a subset of
+    # the pristine tip's sibling-in-flight cluster, with the point-get and
+    # prepared-rebind families this batch repaired removed (verified by
+    # stash-diff against the tip: 15 tip-only failures fixed, 0 new).
+
+No Go file changed; the Bazel gate is not required.
+
+## Lookup-duration observation — aligned to Go's hit-only funnel (2026-09-06)
+
+Go `lookupPlanCache` (`plan_cache.go:309-312`, pinned bytes) observes
+`core_metrics.GetPlanCacheLookupDuration(useInstanceCache)` from a defer
+guarded by `if hit` — a miss/re-plan records the MISS COUNTER and nothing on
+the duration histogram, for the prepared and non-prepared paths alike (they
+share the one funnel).
+
+The Rust wiring had diverged in two directions, both fixed:
+
+1. `bind_non_prepared_select` observed on the MISS arm too (Rust-only
+   behavior — removed).
+2. The prepared SELECT/DML funnels and the non-prepared DML funnel never
+   observed (missing Go behavior — the hit-arm observation added to all
+   three, with the session-label `false` histogram Go uses for the
+   session plan cache).
+
+Regression split by determinism: `the_plan_cache_lookup_duration_histogram_observes_on_hits`
+(runs by default; lower-bound assertion — parallel-safe) and
+`the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial`
+(`#[ignore]`, exact-equality miss/hit pinning; deterministic under
+`cargo test --offline --locked -p tidb-session --lib
+the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial --
+--ignored --test-threads=1`, verified passing). Fail-before: the removed
+miss-arm observation makes the strict miss assertion fail by construction,
+and the DML/prepared hit arms could not observe at all.
+
+Pre-existing failures noted (verified identical on stashed tip, sibling
+in-flight cluster, not this batch): `tests_binding` (7),
+`tests_prepared_plan_cache::expression_and_aggregate_parameters_rebuild_on_cache_hits`
+(chunk panic from the expr-lowering batch),
+`vars::tests::prepared_plan_cache_switch_uses_go_typed_state`.
+
+## Post-optimization cacheability gate — BOUNDARY, blocked on the physical plan (2026-09-06)
+
+Go's `generateNewPlan` runs `isPlanCacheable(sctx, p, paramNum, limitParamNum,
+hasSubQuery)` on the OPTIMIZED plan before putting it into the cache
+(`plan_cache.go:384-391`, checker at `plan_cacheable_checker.go:565`). The
+gate reads:
+
+1. `tidb_enable_plan_cache_for_param_limit` (when LIMIT was parameterized);
+2. `tidb_enable_plan_cache_for_subquery` (when the statement has subqueries);
+3. `tidb_plan_cache_max_plan_size` (`pp.MemoryUsage()` cap);
+4. `isPhysicalPlanCacheable` — a recursive physical-tree walk: non-cacheable
+   reasons attached to operators, TableDual-with-params, TiFlash
+   PhysicalTableReader, Shuffle, MemTable, IndexMerge over multi-valued
+   indexes (unless `tidb_enable_plan_cache_for_generated_cols`), full-scan
+   arms under IndexMerge, and PhysicalApply.
+
+A refusal records `SetSkipPlanCache(reason)` and the plan EXECUTES but is not
+cached. The Rust funnel puts the retained plan unconditionally after a
+successful build: the three sysvar NAMES exist in `tidb-vardef` (constants
+only), but no Rust code consumes them as a cache gate, and the retained-plan
+architecture has no `MemoryUsage`/physical-shape walker.
+
+Porting this gate faithfully requires the retained physical plan tree
+(`tidb-executor` `physical_builder.rs` — sibling executor owner) and is
+logged in `PROGRESS-zcode.md` under the same blocked cluster as the instance
+plan-cache wiring. Until then this receipt's admission face (AST-level fast
+checks + checker walk) is the complete ported half; plans whose OPTIMIZED
+shape Go would refuse can be cached here, which is a known, bounded divergence
+owned by the physical-plan batch.
+
+## Capacity resolution — aligned to Go's unified variable (2026-09-06)
+
+An earlier round read the deprecated `tidb_non_prepared_plan_cache_size`
+FIRST for compatibility with this port's own pinned tests, falling back to
+`tidb_session_plan_cache_size`. Go master's funnel has no such fallback:
+the stmt cache is sized from `s.SessionPlanCacheSize` alone
+(`session.go:2927`, lazily at first `AddNonPreparedPlanCacheStmt`), and the
+deprecated name's SET handler writes an ORPHAN field (zero readers) plus
+warning 1287 (`sysvar.go:1634-1641`). Reading the deprecated name first was
+therefore Rust-only behavior.
+
+Fixed: `non_prepared_plan_cache_capacity` reads only
+`tidb_session_plan_cache_size` (default 100 = `DefTiDBSessionPlanCacheSize`
+kept as the defensive fallback); the bound test now sets the unified name.
+The deprecated SET → warning-1287 → readable-value contract is untouched
+(`tests_session_var_hooks` 23/23). Known sub-boundary: Go snapshots the size
+when the LRU is first created, while the Rust funnel reads the variable per
+statement — observable only for a mid-session resize AFTER cached statements
+exist, pinned tests set the size before any statement.
+
+Regression: `the_cache_is_bounded_by_its_size_variable` (now on the unified
+name) fails-before by construction — under the deprecated-first resolution
+the unified-name SET could not drive eviction. Suite 26 passed + 1 ignored;
+`tests_session_var_hooks` 23 passed.

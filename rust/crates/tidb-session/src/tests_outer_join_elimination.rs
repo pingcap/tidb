@@ -90,6 +90,16 @@ fn tables_read(session: &mut Session, sql: &str) -> Vec<String> {
     out
 }
 
+fn table_scan_count(session: &mut Session, sql: &str) -> usize {
+    match session.run(&format!("EXPLAIN {sql}")).unwrap() {
+        StmtResult::Rows(rows) => rows
+            .iter()
+            .filter(|row| cell_text(&row[3]).starts_with("table:"))
+            .count(),
+        other => panic!("expected rows from EXPLAIN, got {other:?}"),
+    }
+}
+
 /// `e1`/`e2` are `explain_easy`'s own two tables, and `n1`/`n2` add the
 /// nullable-unique-key case `explain_easy` has no example of.
 fn eliminable_session() -> Session {
@@ -213,6 +223,72 @@ fn distinct_over_a_non_unique_key_eliminates_the_inner_table() {
     let sql = "select distinct d1.a, d1.b from d1 left outer join d2 on d1.a = d2.a";
     assert_eq!(rows(&mut session, sql), ["1|1", "2|2", "NULL|3"]);
     assert_eq!(tables_read(&mut session, sql), ["d1"]);
+}
+
+#[test]
+fn original_outer_join_eliminator_matrix_matches_the_pinned_go_plans() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a int not null primary key, b int not null)")
+        .unwrap();
+    for (sql, expected_scans) in [
+        ("select count(*) from t t1 left outer join t t2 on t1.a = t2.a", 1),
+        ("select 1 from t t1 left outer join t t2 on t1.a = t2.a", 1),
+        ("select count(*) from t t1 right outer join t t2 on t1.a = t2.a", 1),
+        ("select 2 from t t1 right outer join t t2 on t1.a = t2.a", 1),
+        ("select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b", 1),
+        ("select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b", 1),
+        ("select max(t1.a), min(test.t1.b) from t t1 left join t t2 on t1.b = t2.b", 1),
+        ("select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b", 1),
+        ("select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b", 1),
+        ("select approx_count_distinct(t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b", 1),
+        ("select t1.b from t t1 left outer join t t2 on t1.a = t2.a", 1),
+        ("select t2.b from t t1 right outer join t t2 on t1.a = t2.a", 1),
+        ("select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b", 1),
+        ("select t1.a ta, t1.b tb from t t1 left join t t2 on t1.a = t2.a", 1),
+        ("select t1.a, t1.b from t t1 left join t t2 on t1.a = t2.a order by t2.a", 2),
+        ("select a.a from t a natural left join t b natural left join t c", 1),
+    ] {
+        assert_eq!(
+            table_scan_count(&mut session, sql),
+            expected_scans,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_inner_side_becomes_a_typed_null_projection() {
+    let mut session = Session::new();
+    for sql in [
+        "create table z1(a int not null primary key)",
+        "create table z2(a int, b varchar(8))",
+        "insert into z1 values (1),(2)",
+        "insert into z2 values (1,'x')",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select z1.a, z2.b from z1 left join z2 on false";
+    assert_eq!(rows(&mut session, sql), ["1|NULL", "2|NULL"]);
+    assert_eq!(tables_read(&mut session, sql), ["z1"]);
+}
+
+#[test]
+fn row_number_one_makes_the_inner_partition_unique() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1_window(a int, b int, c int, key idx_a(a))",
+        "create table t2_window(a int, b int, c int, key(a))",
+        "insert into t1_window values (1,10,100),(2,20,200)",
+        "insert into t2_window values (1,10,1),(1,10,2),(2,20,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select t1.a from t1_window t1 use index(idx_a) left join \
+        (select a, row_number() over(partition by a order by c desc) as rn from t2_window) t2 \
+        on t1.a = t2.a and t2.rn = 1 where t1.a = 1";
+    assert_eq!(rows(&mut session, sql), ["1"]);
+    assert_eq!(tables_read(&mut session, sql), ["t1"]);
 }
 
 /// Go's default positive, uncorrelated IN rewrite and its row semantics.

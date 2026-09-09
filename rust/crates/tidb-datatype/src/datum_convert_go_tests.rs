@@ -882,7 +882,7 @@ fn out_of_range_enum_and_set_keep_the_empty_value() {
 
     let set_type = FieldType::new(FieldTypeCode::Set).with_elems(["a", "b", "c"]);
     let collation = set_type.collation();
-    for input in [Datum::Int(9), Datum::new_string("d")] {
+    for input in [Datum::Int(9), Datum::Int(-1), Datum::new_string("d")] {
         let row = format!("set {input:?}");
         let value = convert_err(&input, &set_type, &row)
             .expect("Go returns the zero Set beside ErrTruncated");

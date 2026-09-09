@@ -1,0 +1,183 @@
+# `pkg/parser/mysql` — Go-master `OPERATE VIEW` parity boundary receipt
+
+Status: implemented as a coordinated Rust batch across the parser, lexer,
+privilege registry, bootstrap, executor account bridge, and metadata owners.
+The Go package inventory is complete, and the executable `OPERATE VIEW`
+privilege path now preserves one bit, spelling, scope mask, persisted column,
+and `GRANT`/`REVOKE` parser form. This is not a claim that the broader Go
+session package or materialized-view maintenance scheduler has been
+transcreated; those remain explicit integration boundaries below.
+
+Comparison source: Go `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), with the privilege
+change from `8cde78af3c` (`session, parser, privilege, executor: add OPERATE
+VIEW privilege`) and the materialized-view metadata change from
+`d6afc7d991`.
+
+## Complete Go inventory
+
+The package has exactly 15 tracked artifacts and 4,847 Go lines at the
+Go-master comparison commit. There is no
+`doc.go`, fixture/testdata tree, generated Go source, platform variant, or
+benchmark outside the listed files. The adjacent Go `pkg/meta/metadef` owner
+was also inventoried in full for the reserved materialized-view IDs and SQL:
+seven artifacts (`BUILD.bazel`, `OWNERS`, `db.go`, `db_test.go`, `system.go`,
+`system_tables_def.go`, and `system_test.go`) totaling 1,347 lines, with no
+generated or platform variant.
+
+| Artifact | Lines | Role |
+| --- | ---: | --- |
+| `BUILD.bazel` | 39 | library and test target metadata |
+| `charset.go` | 598 | charset, collation, and Unicode tables |
+| `const.go` | 725 | protocol, SQL mode, command, and server constants |
+| `const_test.go` | 129 | SQL mode/version regression tests |
+| `errcode.go` | 980 | MySQL/TiDB error-code constants |
+| `errname.go` | 985 | error messages and redaction metadata |
+| `error.go` | 74 | typed SQL error helpers |
+| `error_test.go` | 34 | SQL error tests |
+| `locale_format.go` | 277 | locale-aware numeric formatting |
+| `privs.go` | 334 | privilege bits, names, scope lists, and catalog maps |
+| `privs_test.go` | 94 | privilege map and scope consistency tests |
+| `state.go` | 268 | server state and status constants |
+| `type.go` | 173 | MySQL field-type and flag helpers |
+| `type_test.go` | 35 | field-type flag tests |
+| `util.go` | 102 | field-length and authentication helpers |
+
+All 15 parser/mysql files were read in full, including 75 function
+declarations (11 package test functions). The
+Go delta is confined to `privs.go` in this package: `OperateViewPriv` is added
+to string/set/user-column maps, global/database/table privilege lists, and the
+bit enum. The seven metadef files, their tests, and build/ownership metadata
+were likewise read before adding the five target-master table definitions and
+reserved IDs.
+
+The hparser branch was still missing the Go-side `OperateViewPriv` registry
+delta. `TestOperateViewPrivilegeRegistry` failed before the fix because the
+symbol was undefined; it now verifies bit 33, all string/set/column reverse
+maps, and global/database/table scope membership.
+
+## Rust ownership and comparison
+
+The nearest Rust owners are:
+
+- `tidb-lexer/src/keywords.rs` and `keyword_catalog/*`, generated from Go
+  `misc.go`/`parser.y`; these now contain the generated unreserved `OPERATE`
+  token and count assertions.
+- `tidb-parser/src/privilege.rs`, whose hand-written privilege parser now
+  restores `OPERATE VIEW` as a static two-word privilege (the AST stores
+  canonical names as strings).
+- `tidb-session/src/privilege/privs.rs`, whose `GlobalPriv` enum and
+  `ALL_GLOBAL_PRIVS`/`ALL_DB_PRIVS`/`ALL_TABLE_PRIVS` masks now carry the
+  `OperateView` variant.
+- `tidb-session/src/privilege/registry_ops.rs`, `table_privilege.rs`, and
+  bootstrap/user-table code, which consume those masks and column names.
+- `tidb-exec/src/cluster_privilege_load.rs`, `cluster_account_write.rs`, and
+  `mysql_bootstrap/rows.rs`, which read/write the persisted `mysql.user` and
+  `mysql.db` columns; their source-derived table-info JSON fixture was
+  regenerated so the inserted column keeps every later offset aligned.
+- `tidb-metadef/src/system.rs` and `system_tables_def.rs`, which own the
+  target-master materialized-view/log reserved IDs and bootstrap `CREATE
+  TABLE` strings alongside the privilege-column additions.
+
+Adding just a `GlobalPriv::OperateView` variant would not parse the new grant,
+would assign no lexer token, and would leave `mysql.user`/`mysql.db` loading and
+`SHOW GRANTS` behavior inconsistent. The batch therefore synchronizes the
+generated/source-derived keyword catalogs, parser restoration, privilege masks
+and maps, bootstrap root row, executor account load/write columns, and the
+metadef SQL/ID owners. Focused parser, privilege, metadata, and source-catalog
+regressions cover those seams. No Rust-only privilege behavior was removed;
+the existing native registry remains the ordinary execution path.
+
+## Validation
+
+Profile: Ready for this code batch. The package-complete claim is limited to
+the implemented privilege/metadata seams; session versioned upgrade code and
+materialized-view execution remain unverified integration boundaries.
+
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 tools/check/failpoint-go-test.sh ./pkg/parser/mysql -run '^(TestOperateViewPrivilegeRegistry|TestPrivAllConsistency|TestPrivColumn|TestPrivSetString)$' -count=1` — passed after the fix (pre-fix compile failure recorded above).
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 tools/check/failpoint-go-test.sh ./pkg/parser/mysql -count=1` — passed.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-parser --lib operate_view_privilege_restores_as_a_static_privilege -- --test-threads=1` — passed after the fix; the same test failed before the parser branch was restored (`expected a privilege`).
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-mysql --test parser_mysql_package_source -- --test-threads=1` — 17 passed, including bit 33, map, set, and scope assertions.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-lexer --test all -- --test-threads=1` — passed, including the target 689-keyword catalog length after the Go-master keyword refresh.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-metadef --test metadef_contract -- --test-threads=1` — 3 passed, including the five materialized-view table shapes and baseline contract.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-exec --test all operate_view_table_grant_round_trips_through_the_table_priv_set -- --test-threads=1` — passed; this exercises the persisted SET writer and loader together.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-exec --test all the_seeded_root_account_loads_back_as_an_unlocked_superuser -- --test-threads=1` — passed with the added bootstrap `OPERATE VIEW` privilege.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-exec --test all mysql_bootstrap_tableinfo_source -- --test-threads=1` — 6 passed after regenerating the source-derived table-info fixture.
+- `OPENSSL_DIR=... DYLD_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib privilege -- --test-threads=1` — 48 passed, 3 ignored; the pre-existing `tests_grants::static_grants::infoschema_privileges_tables_are_header_only` assertion still fails because the current result exposes `Column#N` names instead of expected headers. This is unrelated and remains unverified.
+- `rustup run nightly-2026-08-22 rustfmt --edition 2021 --check` on all touched Rust sources — passed.
+- `make lint` — Ready gate; passed after the final receipt/plan edits.
+- `git diff --check` — passed.
+
+Go production and test sources changed, so `make bazel_prepare` was required
+and attempted; it is blocked locally because the `bazel` executable is not
+installed. No Bazel metadata could be regenerated.
+
+## Risks and unverified surfaces
+
+- Correctness risk is concentrated in bit compatibility, scope masks, and
+  bootstrap column ordering: a missing column shifts every following `mysql.user`
+  value.
+- Compatibility risk spans generated parser/lexer inputs, `GRANT`/`REVOKE`,
+  `SHOW GRANTS`, information-schema visibility, and materialized-view checks.
+- The inserted `mysql.user`/`mysql.db` column shifts later TableInfo offsets;
+  the regenerated fixture and bootstrap source tests cover the shape, but a
+  live mixed-version cluster upgrade was not run.
+- Performance impact is limited to one additional privilege bit/column in
+  existing linear maps and row projections.
+- Rust does not yet implement Go's versioned `version285` schema upgrade or
+  materialized-view refresh/log purge scheduling and execution; those are
+  intentionally not fabricated in this batch.
+- The scoped Rust session gate retains the unrelated infoschema header failure
+  described above.
+
+## Follow-up: Go discardable-return contract
+
+The complete `tidb-mysql` owner also carried 34 explicit Rust `#[must_use]`
+annotations (49 public APIs after expanding the flag-predicate macro). Go
+callers may discard every one of these helper results, so the annotations were
+removed from `locale`, `charset`, Unicode-category, type-flag, constant,
+utility, and privilege helpers. This changes compile-time diagnostics only;
+all source values and runtime behavior remain unchanged.
+
+`parser_mysql_package_source::return_values_may_be_ignored_like_go` invokes
+the affected helper families under `#[deny(unused_must_use)]`. In a detached
+pre-fix worktree it failed with 49 compiler errors; after the cleanup it passes.
+The package inventory and ownership decision above remain the atomic scope for
+this follow-up.
+
+Follow-up validation:
+
+- Focused discard regression:
+  `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-mysql --test parser_mysql_package_source return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- Full `tidb-mysql` source carrier and `--all-targets` test gates — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --package tidb-mysql -- --check`, `make lint`, and `git diff --check` — passed.
+
+## Follow-up: SQL-error constructor return contract (`2026-09-06`)
+
+The complete `pkg/parser/mysql` inventory above remains the authority for
+this package batch: all 15 Go production, test, generated, fixture, and build
+artifacts were read before editing. The direct Go constructors `NewErr` and
+`NewErrf` return errors that callers may ignore. Their Rust counterparts
+`tidb-error::mysql::SqlError::new` and `SqlError::new_f` therefore no longer
+carry Rust-only `#[must_use]` annotations. Nearby `FormatArg`, catalog,
+redaction, and state helpers remain annotated because they are Rust adapter
+APIs rather than direct Go constructor boundaries.
+
+The active `tidb-mysql` source carrier now includes
+`sql_error_constructors_return_may_be_ignored_like_go`, which discards both
+constructor results under `#[deny(unused_must_use)]`. In detached pre-fix
+worktree `9be5bb19833f7c8de9e0efcc0b198ca08643216b`, the focused test failed
+with exactly two diagnostics (one for each constructor); after the removal it
+passes.
+
+Follow-up validation:
+
+- Focused constructor discard regression — passed after the fix; pre-fix
+  failure recorded above.
+- Full active `tidb-mysql` parser/mysql source carrier — 19 passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-error -p tidb-mysql --all-targets --offline --locked` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `make lint`, and `git diff --check` — passed.
+
+No Go source, Bazel metadata, Cargo manifest, generated input, fixture, or
+platform variant changed in this Rust-only follow-up; `make bazel_prepare` was
+not required.

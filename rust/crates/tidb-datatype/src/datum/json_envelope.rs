@@ -247,7 +247,7 @@ fn decode_base64(text: &str) -> Result<Vec<u8>, DatumValueError> {
         ));
     }
     let mut output = Vec::with_capacity(text.len() / 4 * 3);
-    for chunk in text.as_bytes().chunks_exact(4) {
+    for chunk in text.as_bytes().as_chunks::<4>().0 {
         let a = base64_digit(chunk[0])?;
         let b = base64_digit(chunk[1])?;
         let c = if chunk[2] == b'=' {

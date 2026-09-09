@@ -48,6 +48,7 @@ impl Parser {
         }
         let sample = self.parse_table_sample_opt()?;
         Ok(TableRef {
+            identity: Default::default(),
             name,
             partitions,
             alias,

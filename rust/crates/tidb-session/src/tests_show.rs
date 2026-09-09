@@ -19,6 +19,21 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Pinned Go `TestShowStatsExtendedRemoved`: the parser still accepts the
+/// statement, but execution returns the feature-removal error verbatim.
+#[test]
+fn show_stats_extended_reports_the_go_removal_error() {
+    let mut session = Session::new();
+    let error = session
+        .run("SHOW STATS_EXTENDED")
+        .expect_err("removed extended statistics must not return rows")
+        .to_mysql_error();
+    assert_eq!(
+        error.message,
+        "Extended statistics feature has been removed"
+    );
+}
+
 /// SHOW DATABASES and SHOW TABLES, with Go's column naming and ordering.
 #[test]
 fn show_databases_and_tables() {
@@ -2144,4 +2159,311 @@ fn match_against_rewrites_to_ilike_under_the_gate() {
     assert!(session
         .run("SELECT MATCH(title) AGAINST('MySQL') FROM articles")
         .is_err());
+}
+
+/// Pinned Go `ShowExec.fetchShowStatsMeta` asks the session whether dynamic
+/// partition pruning is enabled and fetches only non-pseudo physical stats.
+#[test]
+fn show_stats_meta_honors_prune_mode_and_skips_pseudo_statistics() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(11)").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    session.run("CREATE TABLE e (a INT)").unwrap();
+    session.run("ANALYZE TABLE e").unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    let rows = row_text(session.run("SHOW STATS_META"));
+    let targets = rows
+        .iter()
+        .filter(|row| row[1] == "t" || row[1] == "e")
+        .map(|row| (row[1].as_str(), row[2].as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(targets, vec![("t", "p0"), ("t", "p1")]);
+}
+
+/// Pinned Go `ShowExec.fetchShowStatsHealthy` emits analyzed, non-pseudo
+/// physical statistics and reports an unmodified table as 100 percent healthy.
+#[test]
+fn show_stats_healthy_reads_the_production_statistics_cache() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1),(2)").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE TABLE e (a INT)").unwrap();
+    session.run("ANALYZE TABLE e").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_HEALTHY WHERE Table_name IN ('t', 'e')")),
+        vec![vec!["test", "t", "", "100"]]
+    );
+}
+
+/// Pinned Go `fetchShowColumnStatsUsage` always visits the logical/global ID
+/// and every partition ID, even under static pruning, and keeps the two
+/// timestamps independently nullable.
+#[test]
+fn show_column_stats_usage_reads_global_and_partition_ids() {
+    struct Usage(
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+    );
+    impl ColumnStatsUsageProvider for Usage {
+        fn load_column_stats_usage(
+            &self,
+            _location: &tidb_datatype::SessionTimeZone,
+            _resource_group: &str,
+        ) -> Result<
+            std::collections::HashMap<
+                tidb_model::TableItemID,
+                (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+            >,
+            String,
+        > {
+            Ok(self.0.clone())
+        }
+    }
+
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a INT, b INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    let (table_id, p0_id, a_id, b_id) = session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("table exists")
+            };
+            Ok((
+                table.table_id,
+                table.partition().unwrap().definitions[0].id,
+                table.columns()[0].id,
+                table.columns()[1].id,
+            ))
+        })
+        .unwrap();
+    let used = tidb_datatype::Time::from_date_checked(
+        2026,
+        8,
+        29,
+        1,
+        2,
+        3,
+        0,
+        tidb_datatype::TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let analyzed = tidb_datatype::Time::from_date_checked(
+        2026,
+        8,
+        30,
+        4,
+        5,
+        6,
+        0,
+        tidb_datatype::TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
+    let item = |table_id, id| tidb_model::TableItemID {
+        table_id,
+        id,
+        is_index: false,
+        is_sync_load_failed: false,
+    };
+    session.set_column_stats_usage_provider(std::sync::Arc::new(Usage(
+        [
+            (item(table_id, a_id), (Some(used), None)),
+            (item(p0_id, b_id), (None, Some(analyzed))),
+        ]
+        .into_iter()
+        .collect(),
+    )));
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW COLUMN_STATS_USAGE WHERE Table_name = 't'")),
+        vec![
+            vec!["test", "t", "global", "a", "2026-08-29 01:02:03", "NULL"],
+            vec!["test", "t", "p0", "b", "NULL", "2026-08-30 04:05:06"],
+        ]
+    );
+}
+
+/// Pinned `tests/integrationtest/r/statistics/integration.result`: TopN rows
+/// use the table/index names, decoded values, and counts produced by ANALYZE.
+#[test]
+fn show_stats_topn_matches_the_pinned_go_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, INDEX idx_a(a), UNIQUE INDEX uidx_b(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(1,2),(2,3)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_TOPN WHERE table_name = 't'")),
+        vec![
+            vec!["test", "t", "", "a", "0", "1", "2"],
+            vec!["test", "t", "", "a", "0", "2", "1"],
+            vec!["test", "t", "", "idx_a", "1", "1", "2"],
+            vec!["test", "t", "", "idx_a", "1", "2", "1"],
+        ]
+    );
+}
+
+/// Pinned Go `show stats_buckets` row shape for a one-value column histogram.
+#[test]
+fn show_stats_buckets_matches_the_pinned_go_row() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1111)").unwrap();
+    session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW STATS_BUCKETS WHERE table_name = 't' AND is_index = 0")),
+        vec![vec![
+            "test", "t", "", "a", "0", "0", "1", "1", "1111", "1111", "0"
+        ]]
+    );
+}
+
+/// Pinned Go `ShowExec.fetchShowStatsHistogram`: initialized columns and
+/// indexes share the normal statistics cache, report load state, and expose
+/// the four resident-memory components.
+#[test]
+fn show_stats_histograms_matches_the_pinned_go_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT, b INT, INDEX idx_a(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1, NULL),(2, 2)")
+        .unwrap();
+    session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+
+    let rows = row_text(
+        session
+            .run("SHOW STATS_HISTOGRAMS WHERE table_name = 't' AND column_name IN ('a', 'idx_a')"),
+    );
+    assert_eq!(rows.len(), 2);
+    assert_eq!(&rows[0][0..5], ["test", "t", "", "a", "0"]);
+    assert_eq!(&rows[1][0..5], ["test", "t", "", "idx_a", "1"]);
+    assert_eq!(rows[0][6], "2");
+    assert_eq!(rows[0][7], "0");
+    assert_eq!(rows[0][10], "allLoaded");
+    assert_eq!(rows[1][8], "0");
+    assert_eq!(rows[1][10], "allLoaded");
+    for row in &rows {
+        let total = row[11].parse::<i64>().unwrap();
+        let histogram = row[12].parse::<i64>().unwrap();
+        let topn = row[13].parse::<i64>().unwrap();
+        let cms = row[14].parse::<i64>().unwrap();
+        assert!(histogram > 0);
+        assert_eq!(total, histogram + topn + cms);
+    }
+}
+
+/// Pinned Go `fetchShowHistogramsInFlight` always emits its one counter row,
+/// even when the global needed-item set is empty.
+#[test]
+fn show_histograms_in_flight_emits_the_shared_queue_count() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SHOW HISTOGRAMS_IN_FLIGHT")),
+        vec![vec!["0"]]
+    );
+    assert!(
+        row_text(session.run("SHOW HISTOGRAMS_IN_FLIGHT WHERE HistogramsInFlight > 0")).is_empty()
+    );
+}
+
+/// Pinned Go `LOCK STATS` / `SHOW STATS_LOCKED`: a table-level lock persists
+/// the logical and partition IDs in one internal transaction, duplicate locks
+/// warn, and SHOW sorts the selected physical IDs.
+#[test]
+fn stats_lock_statements_and_show_locked_share_the_persisted_store() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t(a INT) PARTITION BY RANGE(a) (\
+             PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+
+    assert!(row_text(session.run("SHOW STATS_LOCKED")).is_empty());
+    session.run("BEGIN").unwrap();
+    session.run("LOCK STATS t").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED")),
+        vec![
+            vec!["test", "t", "global", "locked"],
+            vec!["test", "t", "p0", "locked"],
+            vec!["test", "t", "p1", "locked"],
+        ]
+    );
+
+    session.run("LOCK STATS t").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec!["Warning", "1105", "skip locking locked table: test.t"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED WHERE Partition_name = 'p0'")),
+        vec![vec!["test", "t", "p0", "locked"]]
+    );
+
+    session.run("UNLOCK STATS t").unwrap();
+    assert!(row_text(session.run("SHOW STATS_LOCKED")).is_empty());
+}
+
+/// Pinned Go's whole-table gate: a partition cannot be unlocked while its
+/// logical table is locked, and STATIC prune mode exposes only partition IDs.
+#[test]
+fn stats_partition_unlock_obeys_the_whole_table_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a INT) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session.run("LOCK STATS t").unwrap();
+    session.run("UNLOCK STATS t PARTITION(p0)").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1105",
+            "skip unlocking partitions of locked table: test.t"
+        ]]
+    );
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW STATS_LOCKED")),
+        vec![
+            vec!["test", "t", "p0", "locked"],
+            vec!["test", "t", "p1", "locked"],
+        ]
+    );
 }

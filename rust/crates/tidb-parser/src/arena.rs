@@ -40,7 +40,6 @@ pub struct Arena;
 
 impl Arena {
     /// Creates an empty generic allocation context.
-    #[must_use]
     pub const fn new() -> Self {
         Self
     }
@@ -54,7 +53,6 @@ impl Arena {
 
 /// Allocates a zero/default-initialized value through the source generic
 /// fallback.
-#[must_use]
 pub fn alloc<T: Default>(_arena: &Arena) -> Box<T> {
     Box::default()
 }
@@ -63,7 +61,6 @@ pub fn alloc<T: Default>(_arena: &Arena) -> Box<T> {
 ///
 /// `None` preserves the source's observable nil-slice result instead of
 /// silently collapsing it into an empty, non-null collection.
-#[must_use]
 pub fn alloc_slice<T: Default>(_: &Arena, len: usize) -> Option<Vec<T>> {
     (len != 0).then(|| std::iter::repeat_with(T::default).take(len).collect())
 }
@@ -99,7 +96,6 @@ impl<T> SlabHandle<T> {
     }
 
     /// Returns a stable identity pointer for diagnostics and source tests.
-    #[must_use]
     pub fn as_ptr(&self) -> *mut T {
         self.batch[self.index].as_ptr()
     }

@@ -19,6 +19,7 @@ use tidb_stats::{
     Bucket, ColAndIdxExistenceMap, Column, ColumnInfo, CopyIntent, HistColl, Histogram, Index,
     IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, QueryColumn, QueryIndexInfo,
     QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    RATIO_OF_PSEUDO_ESTIMATE,
 };
 
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
@@ -190,7 +191,6 @@ fn source_table_memory_aggregates_components_and_tracking() {
     {
         let column = table.hist_coll.get_column(2).unwrap();
         let mut column = column.write().unwrap();
-        column.histogram_memory_usage = 11;
         let mut top_n = TopN::new(1);
         top_n.append(&[1], 1);
         column.top_n = Some(top_n);
@@ -198,7 +198,6 @@ fn source_table_memory_aggregates_components_and_tracking() {
     {
         let index = table.hist_coll.get_index(3).unwrap();
         let mut index = index.write().unwrap();
-        index.histogram_memory_usage = 13;
         let mut top_n = TopN::new(1);
         top_n.append(&[2], 1);
         index.top_n = Some(top_n);
@@ -561,8 +560,12 @@ fn source_health_outdated_analysis_and_mv_scaling_match() {
     let table = table();
     assert_eq!(table.hist_coll.analyze_row_count(), 80.0);
     assert_eq!(table.stats_healthy(), (75, true));
-    assert!(!table.is_outdated(0.25));
-    assert!(table.is_outdated(0.249));
+    let original = RATIO_OF_PSEUDO_ESTIMATE.load();
+    RATIO_OF_PSEUDO_ESTIMATE.store(0.25);
+    assert!(!table.is_outdated());
+    RATIO_OF_PSEUDO_ESTIMATE.store(0.249);
+    assert!(table.is_outdated());
+    RATIO_OF_PSEUDO_ESTIMATE.store(original);
     assert!(table.is_initialized());
     assert!(table.is_analyzed());
     assert!(table.is_eligible_for_analysis(100));
@@ -597,4 +600,32 @@ fn source_health_outdated_analysis_and_mv_scaling_match() {
             .item_id(),
         2
     );
+}
+
+#[deny(unused_must_use)]
+#[test]
+fn go_table_returns_can_be_ignored() {
+    let coll = HistColl::new(1, 10, 0, 1, 1);
+    coll.analyze_row_count();
+    coll.scaled_realtime_and_modify_count(None);
+    coll.id_to_unique_id(&[]);
+    coll.generate_from_column_info(&QueryTableInfo::default(), &[], |_, _| None);
+    tidb_stats::pseudo_hist_coll(1, false);
+
+    let table = table();
+    table.memory_usage();
+    table.copy_as(CopyIntent::MetaOnly);
+    table.is_analyzed();
+    table.meets_auto_analyze_min_count(1);
+    table.is_eligible_for_analysis(1);
+    table.stats_healthy();
+    table.column_load_needed(2, true);
+    table.index_load_needed(3);
+    table.is_initialized();
+    table.is_outdated();
+
+    let usage = table.memory_usage();
+    usage.total_index_tracking_mem_usage();
+    usage.total_column_tracking_mem_usage();
+    usage.total_tracking_mem_usage();
 }

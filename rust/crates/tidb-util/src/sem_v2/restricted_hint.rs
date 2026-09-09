@@ -23,7 +23,7 @@ use super::{load_global_sem, SemImpl};
 ///
 /// The variable names are Go's `vardef.TiDBMemQuotaQuery`,
 /// `vardef.TiDBReplicaRead`, and `vardef.MaxExecutionTime`, inlined.
-pub const HINT_GUARD_VARS: &[(&str, &str)] = &[
+const HINT_GUARD_VARS: &[(&str, &str)] = &[
     ("memory_quota", "tidb_mem_quota_query"),
     ("read_consistent_replica", "tidb_replica_read"),
     ("max_execution_time", "max_execution_time"),
@@ -47,7 +47,7 @@ fn hint_guard_var(hint_name_lower: &str) -> Option<&'static str> {
 pub fn is_restricted_hint(hint_name_lower: &str) -> Result<(), String> {
     match load_global_sem() {
         None => Ok(()),
-        Some(sem) => is_restricted_hint_impl(&sem, hint_name_lower),
+        Some(sem) => sem.is_restricted_hint(hint_name_lower),
     }
 }
 

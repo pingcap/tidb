@@ -37,6 +37,18 @@ fn grant_privileges_restore_with_typed_account_authentication() {
 }
 
 #[test]
+fn operate_view_privilege_restores_as_a_static_privilege() {
+    assert_eq!(
+        r("grant operate view on db.t to u"),
+        "GRANT OPERATE VIEW ON `db`.`t` TO `u`@`%`"
+    );
+    assert_eq!(
+        r("revoke operate view on db.t from u"),
+        "REVOKE OPERATE VIEW ON `db`.`t` FROM `u`@`%`"
+    );
+}
+
+#[test]
 fn mariadb_binlog_monitor_alias_is_mode_gated() {
     let sql = "GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'";
     assert_eq!(

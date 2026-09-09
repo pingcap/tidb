@@ -12,24 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! How a single base table is read: which access path is committed, and what
-//! work the driver then hands down to it.
+//! How physical reads are lowered and what work the driver hands down to
+//! them.
 //!
-//! This is the whole decision, in one file, in the order it happens:
+//! The shared planner owns ordinary access-path enumeration and selection.
+//! This module retains two executor concerns:
 //!
-//! 1. [`commit_fast_path_source`] -- Go's `TryFastPlan`. A single-table
-//!    `SELECT` whose `WHERE` pins the handle or a whole unique index reads
-//!    those rows directly ([`try_batch_point_get`], [`try_point_get`]);
-//!    otherwise the cheapest access path [`crate::access_cost`] enumerates
-//!    supplies ranges ([`choose_index_range_path`]), which may be the full
-//!    scan itself. Each fast path installs a *streaming*
-//!    source over the narrowed path. A complete Go-style point plan consumes
-//!    its exact key predicate and simple select list; a merely narrowed path
-//!    leaves the `WHERE` in the pipeline above.
-//! 2. [`prune_scan_columns`] -- the kept-column offer.
-//! 3. [`negotiate_scan_filter`] -- the pushed-conjunct offer, and the residual
-//!    `WHERE` left above.
-//! 4. [`offer_scan_limit`] -- the row-cap offer, gated by [`scan_limit_cap`].
+//! 1. Go's statement-level `TryFastPlan`, represented by
+//!    [`try_batch_point_get`] and [`try_point_get`].
+//! 2. Mechanical offers to the selected reader: [`prune_scan_columns`],
+//!    [`negotiate_scan_filter`], and [`offer_scan_limit`].
 //!
 //! Steps 2-4 are offers, not commands: [`crate::table_access`] holds the
 //! contract, every method of it is fail-closed, and the source alone decides.
@@ -38,93 +30,9 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
-//! # Why this is its own file
-//!
-//! The path choice is Go's cost-based one ([`crate::access_cost`] holds the
-//! enumeration, the estimates and the cost formula); this file is where that
-//! choice meets the executor it commits to and the negotiation that follows
-//! it. Keeping the two together is what keeps a costed path and a runnable
-//! path from drifting apart.
-
-use super::point_get_key::{names_no_rows, point_get_value};
+use super::point_get_key::{names_no_rows, point_get_value, point_get_value_overflowed};
 use super::*;
-use crate::access_path::{IndexMergeKind, IndexMergeSourceExec};
-use crate::predicate_pushdown::ScanColumnComparison;
 use std::sync::Arc;
-
-/// Diagnosis-only tracing for the prepared point-get cache admission. Enabled
-/// by setting `TIDB_RS_TRACE` to a value containing `decline`; every call is a
-/// relaxed atomic load after the first, and the formal gates run with the
-/// variable unset so the cost is one branch per statement.
-pub(crate) fn trace_decline(reason: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static ENABLED: AtomicBool = AtomicBool::new(false);
-    static CHECKED: AtomicBool = AtomicBool::new(false);
-    if !CHECKED.load(Ordering::Relaxed) {
-        ENABLED.store(
-            std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")),
-            Ordering::Relaxed,
-        );
-        CHECKED.store(true, Ordering::Relaxed);
-    }
-    if ENABLED.load(Ordering::Relaxed) {
-        eprintln!("[pg-decline] {reason}");
-    }
-}
-
-/// The success twin of [`trace_decline`]: one line per accepted template.
-pub(crate) fn trace_accept(detail: &str) {
-    if std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline")) {
-        eprintln!("[pg-accept] {detail}");
-    }
-}
-
-/// What the single-table access-path decision committed.
-#[derive(Default)]
-pub(crate) struct AccessPathCommit {
-    /// The complete reader task costed by `access_cost`, for a parent physical
-    /// operator that compares alternatives with different child properties.
-    pub(crate) candidate: Option<tidb_planner::candidate_cost::Candidate>,
-    /// The order an index path establishes for the ordinary pipeline.
-    pub(crate) index_order: Option<IndexAccessOrder>,
-    /// Result metadata when a complete Go-style point plan absorbed the
-    /// simple select list and can be returned without root wrappers.
-    pub(crate) direct_output: Option<Vec<(String, FieldType)>>,
-    /// Source offsets for a range scan whose simple projection was pushed
-    /// into the coprocessor read. Point plans project in their own source and
-    /// therefore leave this `None`.
-    pub(crate) direct_output_offsets: Option<Vec<usize>>,
-    /// Source offsets for an exact range whose simple projection executes in
-    /// the cop task while a root operator (currently ORDER BY) remains above
-    /// the TableReader boundary.
-    pub(crate) cop_projection_offsets: Option<Vec<usize>>,
-    /// Source offsets for the same cop projection when a residual Selection
-    /// remains after the clustered-handle prefix. The driver installs the
-    /// Selection before it records this projection/reader boundary.
-    pub(crate) filtered_cop_projection_offsets: Option<Vec<usize>>,
-    /// Whether the chosen access ranges represent the complete WHERE rather
-    /// than a superset that still needs a residual Selection.
-    pub(crate) consumed_where: bool,
-    /// The conjuncts left after a clustered-handle range consumed its access
-    /// prefix, joined back in written order. This is the Selection Go places
-    /// above the range rather than the complete WHERE it started from.
-    pub(crate) handle_range_residual: Option<tidb_ast::Expr>,
-    /// The predicates left after the chosen secondary-index ranges. Go keeps
-    /// these as Build-side filters when the index covers them, or evaluates
-    /// them on Probe when table columns are required.
-    pub(crate) access_residual: Option<tidb_ast::Expr>,
-    /// The logical data source's estimated output rows after its complete
-    /// predicate, before physical access-path lower bounds are applied.
-    pub(crate) logical_rows: Option<f64>,
-    /// The retained logical input profile, including root-only Selection
-    /// scaling, for aggregate and DISTINCT parents. Physical row limits do
-    /// not overwrite this DataSource-derived NDV profile.
-    pub(crate) logical_stats: Option<tidb_planner::stats_info::StatsInfo>,
-    /// Whether a bare covering scan is ready to move below its root reader.
-    pub(crate) reader_ready: bool,
-    /// Whether the committed access order satisfies the written ORDER BY.
-    pub(crate) order_satisfied: bool,
-}
 
 #[derive(Clone, Debug)]
 struct FastPointOutput {
@@ -147,7 +55,7 @@ pub(crate) enum PointResidualBound {
 /// The immutable part of Go's cached `PointGetPlan` for one prepared handle
 /// lookup. Runtime cursor state and the execute-time handle are deliberately
 /// absent: both are rebuilt for every cache hit.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PreparedPointGetPlan {
     /// The catalog's KEY-DECODE METADATA version at resolve time — the
     /// counter DDL moves and DML never touches (`Catalog::metadata_version`).
@@ -162,14 +70,14 @@ pub struct PreparedPointGetPlan {
     table_id: i64,
     /// One marker order per PINNED key column, aligned with
     /// [`Self::pin_types`] — the full row handle for [`PreparedPointTarget::
-    /// RowHandle`], or the leading columns of a narrower key otherwise.
+    /// RowHandle`], or every column of a unique secondary index.
     /// `None` pins that column to the matching [`Self::handle_literals`]
     /// constant instead of an EXECUTE parameter.
     parameter_orders: Vec<Option<usize>>,
     /// The pinned columns' field types, in key order; `bind` moves each
     /// execute's value into this domain before encoding the key.
     pin_types: Vec<FieldType>,
-    /// The physical access path that owns these key pins.
+    /// Which key the pins name, and so which single read answers them all.
     pub(crate) target: PreparedPointTarget,
     /// The literal constants pinning handle columns, aligned with
     /// [`Self::parameter_orders`]; `None` where a marker pins instead. A NULL
@@ -191,6 +99,22 @@ pub struct PreparedPointGetPlan {
     contradiction: bool,
     output: FastPointOutput,
     row_decoder: crate::kv_table::PreparedPointGetRowDecoder,
+    cached_keys: std::sync::Mutex<Vec<PreparedPointCacheKey>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedPointCacheKey {
+    schema_version: u64,
+    environment: PreparedPlanCacheEnvironment,
+    parameter_types: Vec<PreparedParameterType>,
+}
+
+impl PreparedPointCacheKey {
+    fn matches(&self, actual: &Self) -> bool {
+        self.schema_version == actual.schema_version
+            && self.environment == actual.environment
+            && prepared_parameter_types_compatible(&self.parameter_types, &actual.parameter_types)
+    }
 }
 
 /// Builds the always-empty plan for a schema-contradicted WHERE: nothing is
@@ -227,24 +151,11 @@ fn contradiction_plan(
         )
         .ok()?,
         output,
+        cached_keys: std::sync::Mutex::new(Vec::new()),
     })
 }
 
 impl PreparedPointGetPlan {
-    /// Snapshot policy of this physical read, independent of cache reuse.
-    /// Go's `IsPointGetWithPKOrUniqueKeyByAutoCommit` excludes index double
-    /// reads and incomplete clustered keys from the MaxTS optimization.
-    #[must_use]
-    pub fn statement_read_shape(&self) -> crate::access_path::StatementReadShape {
-        use crate::access_path::StatementReadShape;
-        match self.target {
-            PreparedPointTarget::RowHandle => StatementReadShape::AutocommitPointGet,
-            PreparedPointTarget::IndexPrefix { .. } | PreparedPointTarget::ClusteredPrefix => {
-                StatementReadShape::Unknown
-            }
-        }
-    }
-
     /// The catalog version against which the point shape was resolved.
     #[must_use]
     pub const fn schema_version(&self) -> u64 {
@@ -263,6 +174,23 @@ impl PreparedPointGetPlan {
         (&self.database, &self.table)
     }
 
+    /// The transaction read policy this retained point plan can safely use.
+    /// A row-handle lookup performs one read and may use Go's autocommit
+    /// MaxTS optimization. A secondary-unique lookup reads the index entry
+    /// and then the row, so Go's `noSecondRead` guard keeps it on an ordinary
+    /// timestamped snapshot even though the point executor itself is reusable.
+    #[must_use]
+    pub const fn statement_read_shape(&self) -> crate::access_path::StatementReadShape {
+        match self.target {
+            PreparedPointTarget::RowHandle => {
+                crate::access_path::StatementReadShape::AutocommitPointGet
+            }
+            PreparedPointTarget::UniqueIndex { .. } => {
+                crate::access_path::StatementReadShape::Unknown
+            }
+        }
+    }
+
     /// Rebuilds the parameter-dependent handle and resolves every residual
     /// bound against this EXECUTE's parameters. A value that cannot be moved
     /// exactly into its column's domain declines the cache and must be
@@ -275,15 +203,49 @@ impl PreparedPointGetPlan {
         values: &[Datum],
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Option<PreparedPointGetExecution> {
+        self.bind_with_environment(values, zone, &PreparedPlanCacheEnvironment::default())
+    }
+
+    /// Rebuilds this point plan under Go's complete prepared-plan cache key.
+    #[must_use]
+    pub fn bind_with_environment(
+        self: &Arc<Self>,
+        values: &[Datum],
+        zone: &tidb_datatype::SessionTimeZone,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedPointGetExecution> {
+        let key = PreparedPointCacheKey {
+            schema_version: self.schema_version,
+            environment: environment.clone(),
+            parameter_types: values.iter().map(PreparedParameterType::of).collect(),
+        };
+        let cache_hit = self
+            .cached_keys
+            .lock()
+            .ok()
+            .is_some_and(|cached| cached.iter().any(|entry| entry.matches(&key)));
+        let execution = |handle, range_values, residuals| {
+            // Go inserts a generated plan before building or opening its
+            // executor. A runtime error therefore does not erase the plan or
+            // turn the next identical EXECUTE into another miss.
+            if !cache_hit {
+                let mut cached = self.cached_keys.lock().ok()?;
+                if !cached.iter().any(|entry| entry.matches(&key)) {
+                    cached.push(key.clone());
+                }
+            }
+            Some(PreparedPointGetExecution {
+                plan: Arc::clone(self),
+                handle,
+                range_values,
+                residuals,
+                cache_hit,
+            })
+        };
         if self.contradiction {
             // `NOT NULL col IS NULL` matched no rows at PLAN time; parameters
             // cannot change a schema fact.
-            return Some(PreparedPointGetExecution {
-                plan: Arc::clone(self),
-                handle: None,
-                range_values: None,
-                residuals: Vec::new(),
-            });
+            return execution(None, None, Vec::new());
         }
         let mut key_values = Vec::with_capacity(self.parameter_orders.len());
         for (index, handle_type) in self.pin_types.iter().enumerate() {
@@ -295,26 +257,22 @@ impl PreparedPointGetPlan {
             if value.is_null() {
                 // `handle = NULL` matches nothing; an empty result IS the
                 // answer, and no storage read may run for it.
-                return Some(PreparedPointGetExecution {
-                    plan: Arc::clone(self),
-                    handle: None,
-                    range_values: None,
-                    residuals: Vec::new(),
-                });
+                return execution(None, None, Vec::new());
             }
             key_values.push(match point_get_value(handle_type, value) {
                 Some(value) => value,
+                None if point_get_value_overflowed(handle_type, value) => {
+                    // Go `getNameValuePairs`'s `ErrOverflow` arm: a value
+                    // outside the column's domain can equal no stored row, so
+                    // the empty set IS the answer (Go plans a `TableDual`).
+                    return execution(None, None, Vec::new());
+                }
                 None if names_no_rows(handle_type, value) => {
                     // A parameter longer than the column's capacity compares
                     // equal to no stored value: the empty set IS the answer,
                     // the same observable result Go's re-optimized plan
                     // produces, served without re-planning.
-                    return Some(PreparedPointGetExecution {
-                        plan: Arc::clone(self),
-                        handle: None,
-                        range_values: None,
-                        residuals: Vec::new(),
-                    });
+                    return execution(None, None, Vec::new());
                 }
                 None => return None,
             });
@@ -328,33 +286,33 @@ impl PreparedPointGetPlan {
                     let value = values.get(*order)?;
                     if value.is_null() {
                         // `residual = NULL` never passes either.
-                        return Some(PreparedPointGetExecution {
-                            plan: Arc::clone(self),
-                            handle: None,
-                            range_values: None,
-                            residuals: Vec::new(),
-                        });
+                        return execution(None, None, Vec::new());
                     }
-                    ResidualCheck::Equal(match point_get_value(&self.output.columns[*position].1, value) {
-                        Some(value) => value,
-                        None
-                            if names_no_rows(&self.output.columns[*position].1, value) =>
-                        {
-                            return Some(PreparedPointGetExecution {
-                                plan: Arc::clone(self),
-                                handle: None,
-                                range_values: None,
-                                residuals: Vec::new(),
-                            });
-                        }
-                        None => return None,
-                    })
+                    ResidualCheck::Equal(
+                        match point_get_value(&self.output.columns[*position].1, value) {
+                            Some(value) => value,
+                            None if point_get_value_overflowed(
+                                &self.output.columns[*position].1,
+                                value,
+                            ) =>
+                            {
+                                // The residual equality can never hold, so
+                                // no row passes; Go's `ErrOverflow` arm plans
+                                // the same empty answer.
+                                return execution(None, None, Vec::new());
+                            }
+                            None if names_no_rows(&self.output.columns[*position].1, value) => {
+                                return execution(None, None, Vec::new());
+                            }
+                            None => return None,
+                        },
+                    )
                 }
             };
             residuals.push((*position, check));
         }
-        // A full-handle pin rebuilds the one record key; a narrower key
-        // carries its pinned values into the run as a closed point range.
+        // A full-handle pin rebuilds the one record key; a unique-index pin
+        // carries every index key value into the one closed point range.
         if matches!(self.target, PreparedPointTarget::RowHandle) {
             let first = key_values.first()?;
             let handle = if self.common_handle_offsets.is_empty() {
@@ -368,19 +326,9 @@ impl PreparedPointGetPlan {
                 let handle = tidb_txnkv::CommonHandle::new(encoded).ok()?;
                 Some(TableHandle::Common(handle.encoded().to_vec()))
             };
-            return Some(PreparedPointGetExecution {
-                plan: Arc::clone(self),
-                handle,
-                range_values: None,
-                residuals,
-            });
+            return execution(handle, None, residuals);
         }
-        Some(PreparedPointGetExecution {
-            plan: Arc::clone(self),
-            handle: None,
-            range_values: Some(key_values),
-            residuals,
-        })
+        execution(None, Some(key_values), residuals)
     }
 
     /// Whether the catalog still names the same unpartitioned physical table.
@@ -399,24 +347,21 @@ impl PreparedPointGetPlan {
     }
 }
 
-/// Which key a prepared plan's pins name: the full row handle, a leading
-/// prefix of one secondary
-/// index, or a leading prefix of the clustered primary key itself. Go's plan
-/// cache keeps whatever `IndexLookUp`/`TableRangeScan`/`PointGet` the
-/// optimizer chose; this enum is that choice, kept immutable per PREPARE.
+/// One cache hit after its execute-time parameter has been rebuilt into a
+/// handle. The executor itself is still created fresh by
+/// [`run_prepared_point_get`].
+/// Which key a prepared point plan's pins name, and so which single read
+/// answers them: the full row handle or every column of one non-prefix unique
+/// secondary index. These are exactly Go `tryPointGetPlan`'s two point-read
+/// families.
 #[derive(Clone, Debug)]
 pub(crate) enum PreparedPointTarget {
     /// The pins cover every handle column: ONE record-key read.
     RowHandle,
-    /// The pins cover a leading prefix of this secondary index: one closed
-    /// single-point index range, each entry's handle then fetched.
-    IndexPrefix { index_id: i64 },
-    /// The pins cover a leading prefix of the clustered primary key: closed
-    /// record-key ranges, walked like any narrowed table scan.
-    ClusteredPrefix,
+    /// The pins cover every column of this non-prefix unique secondary index.
+    UniqueIndex { index_id: i64 },
 }
 
-/// One cache hit with current key values and fresh execution state.
 #[derive(Clone, Debug)]
 pub struct PreparedPointGetExecution {
     plan: Arc<PreparedPointGetPlan>,
@@ -424,12 +369,601 @@ pub struct PreparedPointGetExecution {
     /// `None` here — or in [`Self::range_values`] on the other arms — binds a
     /// NULL pin, which matches no row and reads nothing.
     handle: Option<TableHandle>,
-    /// The narrower-key arms: this execute's pinned key values, already moved
-    /// into their columns' domains.
+    /// The unique-index arm's full key values, already moved into their
+    /// columns' domains.
     range_values: Option<Vec<Datum>>,
     /// This execute's residual predicates, parameters already resolved:
     /// `(offset into the output row, the check the decoded slot must pass)`.
     residuals: Vec<(usize, ResidualCheck)>,
+    cache_hit: bool,
+}
+
+/// The immutable half of a reusable SELECT plan.  This is the complete shared
+/// planner tree, not a hand-built executor shortcut: access paths, readers,
+/// joins, aggregation, sort, and every nested range-bearing physical node are
+/// retained together and rebuilt recursively on a cache hit.
+#[derive(Debug)]
+pub struct PreparedSelectPlan {
+    current_database: String,
+    table_names: Vec<(String, String)>,
+    parameter_count: usize,
+    limit_parameter_orders: Vec<usize>,
+    statement: tidb_ast::Stmt,
+    cached_plans: std::sync::Mutex<Vec<CachedSelectPlanEntry>>,
+}
+
+#[derive(Debug)]
+struct CachedSelectPlanEntry {
+    schema_version: u64,
+    stats_version_hash: u64,
+    environment: PreparedPlanCacheEnvironment,
+    parameter_types: Vec<PreparedParameterType>,
+    limit_values: Vec<u64>,
+    plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
+}
+
+/// Session facts in Go's prepared-plan cache key that can change physical
+/// planning without changing the statement, schema, or parameter types.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedPlanCacheEnvironment {
+    sql_mode: tidb_mysql::SqlMode,
+    /// Go's `EnableNoBackslashEscapesInLike` plan-cache key bit. The
+    /// statement's implicit LIKE escape changes both the rewritten expression
+    /// and any index range derived from it, so plans built under different
+    /// values must never share a cache entry.
+    enable_no_backslash_escapes_in_like: bool,
+    time_zone: String,
+    pushdown_blacklist_generation: u64,
+    connection_charset: String,
+    connection_collation: String,
+    partition_prune_mode: String,
+    isolation_read_engines: String,
+    sql_select_limit: String,
+    in_transaction: bool,
+    autocommit: bool,
+    invalidate_on_fresh_stats: bool,
+    binding_sql: String,
+    skip_stats_on_binding: bool,
+    plan_cache_max_plan_size: u64,
+    enable_generated_columns: bool,
+}
+
+impl Default for PreparedPlanCacheEnvironment {
+    fn default() -> Self {
+        Self::new(tidb_mysql::SqlMode::default(), String::new(), 0)
+    }
+}
+
+impl PreparedPlanCacheEnvironment {
+    /// Builds the non-schema portion of Go's plan-cache environment key.
+    #[must_use]
+    pub fn new(
+        sql_mode: tidb_mysql::SqlMode,
+        time_zone: String,
+        pushdown_blacklist_generation: u64,
+    ) -> Self {
+        Self {
+            sql_mode,
+            enable_no_backslash_escapes_in_like: true,
+            time_zone,
+            pushdown_blacklist_generation,
+            connection_charset: String::new(),
+            connection_collation: String::new(),
+            partition_prune_mode: String::new(),
+            isolation_read_engines: String::new(),
+            sql_select_limit: String::new(),
+            in_transaction: false,
+            autocommit: true,
+            invalidate_on_fresh_stats: true,
+            binding_sql: String::new(),
+            skip_stats_on_binding: false,
+            plan_cache_max_plan_size: tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE
+                as u64,
+            enable_generated_columns: true,
+        }
+    }
+
+    /// Adds the session switch that controls the implicit LIKE escape under
+    /// `NO_BACKSLASH_ESCAPES`, matching Go's `NewPlanCacheKey`.
+    #[must_use]
+    pub const fn with_no_backslash_escapes_in_like(mut self, enabled: bool) -> Self {
+        self.enable_no_backslash_escapes_in_like = enabled;
+        self
+    }
+
+    /// Adds the session facts that Go's `NewPlanCacheKey` hashes because they
+    /// can change access paths, partition expansion, expression semantics, or
+    /// whether a UnionScan/transactional reader is required.
+    #[must_use]
+    pub fn with_session_state(
+        mut self,
+        connection_charset: String,
+        connection_collation: String,
+        partition_prune_mode: String,
+        isolation_read_engines: String,
+        sql_select_limit: String,
+        in_transaction: bool,
+        autocommit: bool,
+        invalidate_on_fresh_stats: bool,
+    ) -> Self {
+        self.connection_charset = connection_charset;
+        self.connection_collation = connection_collation;
+        self.partition_prune_mode = partition_prune_mode;
+        self.isolation_read_engines = isolation_read_engines;
+        self.sql_select_limit = sql_select_limit;
+        self.in_transaction = in_transaction;
+        self.autocommit = autocommit;
+        self.invalidate_on_fresh_stats = invalidate_on_fresh_stats;
+        self
+    }
+
+    /// Adds the two post-optimization admission inputs read by Go's
+    /// `isPlanCacheable` / `isPhysicalPlanCacheable`.
+    #[must_use]
+    pub const fn with_cache_admission(
+        mut self,
+        plan_cache_max_plan_size: u64,
+        enable_generated_columns: bool,
+    ) -> Self {
+        self.plan_cache_max_plan_size = plan_cache_max_plan_size;
+        self.enable_generated_columns = enable_generated_columns;
+        self
+    }
+
+    /// Adds Go's matched `Binding.BindSQL` to the cache key. The stats-version
+    /// component is omitted only when a binding matched and
+    /// `tidb_plan_cache_skip_stats_on_binding` is enabled.
+    #[must_use]
+    pub fn with_binding_sql(mut self, binding_sql: Option<&str>, skip_stats: bool) -> Self {
+        self.binding_sql = binding_sql.unwrap_or_default().to_owned();
+        self.skip_stats_on_binding = !self.binding_sql.is_empty() && skip_stats;
+        self
+    }
+
+    pub(crate) const fn plan_cacheability(
+        &self,
+        parameter_count: usize,
+    ) -> tidb_planner::physical_plan_cache::PlanCacheabilityContext {
+        tidb_planner::physical_plan_cache::PlanCacheabilityContext {
+            parameter_count,
+            enable_generated_columns: self.enable_generated_columns,
+            max_plan_size: self.plan_cache_max_plan_size,
+        }
+    }
+
+    pub(crate) const fn hashes_fresh_statistics(&self) -> bool {
+        self.invalidate_on_fresh_stats && !self.skip_stats_on_binding
+    }
+}
+
+/// Go's prepared-plan cache keys physical plans by the current parameter
+/// types. Values with the same type rebuild one retained tree; a different
+/// type gets its own physical enumeration instead of inheriting a path chosen
+/// for an incompatible comparison domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PreparedParameterType {
+    Null,
+    Int,
+    UInt,
+    Decimal {
+        precision: i32,
+        scale: i32,
+    },
+    Real,
+    Float32,
+    String {
+        charset: tidb_datatype::Charset,
+        collation: tidb_datatype::Collation,
+    },
+    Bytes,
+    Raw,
+    BinaryLiteral,
+    Bit,
+    Duration,
+    Enum,
+    Set,
+    Date,
+    DateTime,
+    Timestamp,
+    Json,
+    VectorFloat32,
+    MinNotNull,
+    MaxValue,
+}
+
+/// One execution lease on a cache-owned, recursively rebuilt physical tree.
+/// The generation prevents another bind from silently changing the retained
+/// parameter values between admission and executor construction.
+#[derive(Debug)]
+pub struct PreparedSelectExecution {
+    parameters: Arc<[Datum]>,
+    plan: Arc<PreparedSelectPlan>,
+    schema_version: u64,
+    cache_hit: bool,
+    cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
+    generation: u64,
+    planning_warnings: std::sync::Mutex<Vec<(crate::WarnLevel, u16, String)>>,
+}
+
+impl PreparedSelectPlan {
+    /// The immutable statement retained at PREPARE time.
+    #[must_use]
+    pub const fn statement(&self) -> &tidb_ast::Stmt {
+        &self.statement
+    }
+
+    /// Qualified table names read by this plan, for transaction MDL tracking.
+    #[must_use]
+    pub fn table_names(&self) -> &[(String, String)] {
+        &self.table_names
+    }
+
+    /// On the first execution for a schema and parameter-type key, runs the
+    /// shared optimizer with the real parameter values and retains its entire
+    /// physical tree. A hit recursively rebuilds every parameter-dependent
+    /// range in place before extracting its lowering receipt.
+    #[must_use]
+    pub fn bind(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: &crate::StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_for_statement(
+            values,
+            catalog,
+            current_database,
+            ctx,
+            environment,
+            &self.statement,
+        )
+    }
+
+    /// Generates and retains a plan from the statement after a matched SQL
+    /// binding has replaced its hints. The binding SQL itself belongs to
+    /// `environment`, mirroring Go's prepared-plan cache key.
+    #[must_use]
+    pub fn bind_for_statement(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: &crate::StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(
+            values,
+            catalog,
+            current_database,
+            Some(ctx),
+            environment,
+            statement,
+        )
+    }
+
+    /// Rebuilds an existing cache entry without constructing a planner
+    /// statement context. A miss returns `None`; the caller can then build
+    /// the context and call [`Self::bind`] to enumerate and retain a plan.
+    #[must_use]
+    pub fn bind_cached(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_cached_for_statement(
+            values,
+            catalog,
+            current_database,
+            environment,
+            &self.statement,
+        )
+    }
+
+    /// Rebuilds an entry keyed by the currently matched binding and effective
+    /// statement, without allocating a planner context on a hit.
+    #[must_use]
+    pub fn bind_cached_for_statement(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(
+            values,
+            catalog,
+            current_database,
+            None,
+            environment,
+            statement,
+        )
+    }
+
+    fn bind_inner(
+        self: &Arc<Self>,
+        values: &[Datum],
+        catalog: &Catalog,
+        current_database: &str,
+        ctx: Option<&crate::StmtContext>,
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        if !self.current_database.eq_ignore_ascii_case(current_database) {
+            return None;
+        }
+        if !matches!(statement, tidb_ast::Stmt::Query(_)) {
+            return None;
+        }
+        let parameter_types = values
+            .iter()
+            .map(PreparedParameterType::of)
+            .collect::<Vec<_>>();
+        let limit_values = self
+            .limit_parameter_orders
+            .iter()
+            .map(|order| match values.get(*order) {
+                Some(Datum::Int(value)) if (0..=10_000).contains(value) => Some(*value as u64),
+                Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let schema_version = catalog.metadata_version();
+        let stats_version_hash = self.stats_version_hash(catalog, environment);
+        let mut cached_plans = self.cached_plans.lock().ok()?;
+        let cached = cached_plans.iter().position(|entry| {
+            entry.schema_version == schema_version
+                && entry.stats_version_hash == stats_version_hash
+                && entry.environment == *environment
+                && prepared_parameter_types_compatible(&entry.parameter_types, &parameter_types)
+                && entry.limit_values == limit_values
+        });
+        if cached.is_none() {
+            ctx?;
+        }
+        let parameters: Arc<[Datum]> = Arc::from(values);
+        let (cached_plan, generation, cache_hit) = match cached {
+            Some(index) => {
+                let plan = Arc::clone(&cached_plans[index].plan);
+                let generation = plan.lock().ok()?.bind(values);
+                match generation {
+                    Some(generation) => (plan, generation, true),
+                    None => {
+                        // Go rejects a cache entry whose in-place range rebuild
+                        // fails and generates a fresh plan. Do not leave a
+                        // partially rebuilt tree available to the next execute.
+                        cached_plans.remove(index);
+                        return None;
+                    }
+                }
+            }
+            None => {
+                let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
+                let statement = crate::bind_prepared_statement(statement, values).ok()?;
+                let tidb_ast::Stmt::Query(query) = statement else {
+                    return None;
+                };
+                let query = query.into_inner();
+                cached_plans.retain(|entry| {
+                    entry.schema_version == schema_version
+                        && entry.stats_version_hash == stats_version_hash
+                        && entry.environment == *environment
+                });
+                let (mut plan, cacheable) = super::planner_bridge::cached_query_plan(
+                    &query,
+                    catalog,
+                    current_database,
+                    &ctx,
+                    environment.plan_cacheability(self.parameter_count),
+                )?;
+                // A rejected cache candidate still executes its already-bound plan.
+                let generation = if cacheable { plan.bind(values)? } else { 0 };
+                let plan = Arc::new(std::sync::Mutex::new(plan));
+                if cacheable {
+                    cached_plans.push(CachedSelectPlanEntry {
+                        schema_version,
+                        stats_version_hash,
+                        environment: environment.clone(),
+                        parameter_types,
+                        limit_values,
+                        plan: Arc::clone(&plan),
+                    });
+                }
+                (plan, generation, false)
+            }
+        };
+        Some(PreparedSelectExecution {
+            parameters,
+            plan: Arc::clone(self),
+            schema_version,
+            cache_hit,
+            cached_plan,
+            generation,
+            planning_warnings: std::sync::Mutex::new(if cache_hit {
+                Vec::new()
+            } else {
+                ctx.map_or_else(Vec::new, crate::StmtContext::take_warnings)
+            }),
+        })
+    }
+
+    fn stats_version_hash(
+        &self,
+        catalog: &Catalog,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> u64 {
+        if !environment.invalidate_on_fresh_stats || environment.skip_stats_on_binding {
+            return 0;
+        }
+        self.table_names.iter().fold(0, |hash, (database, table)| {
+            let version = match catalog.get_in(database, table) {
+                Some(TableEntry::Kv(table)) => catalog
+                    .table_statistics(table.stats_physical_id())
+                    .map_or(0, |statistics| statistics.version),
+                _ => 0,
+            };
+            hash.wrapping_add(version)
+        })
+    }
+}
+
+impl PreparedParameterType {
+    pub(crate) fn of(value: &Datum) -> Self {
+        match value {
+            Datum::Null => Self::Null,
+            Datum::Int(_) => Self::Int,
+            Datum::UInt(_) => Self::UInt,
+            Datum::Decimal(value) => {
+                let (precision, scale) = value.precision_and_frac();
+                Self::Decimal { precision, scale }
+            }
+            Datum::Real(_) => Self::Real,
+            Datum::Float32(_) => Self::Float32,
+            Datum::String(value) => Self::String {
+                charset: value.charset(),
+                collation: value.collation(),
+            },
+            Datum::Bytes(_) => Self::Bytes,
+            Datum::Raw(_) => Self::Raw,
+            Datum::BinaryLiteral(_) => Self::BinaryLiteral,
+            Datum::Bit(_) => Self::Bit,
+            Datum::Duration(_) => Self::Duration,
+            Datum::Enum(_, _) => Self::Enum,
+            Datum::Set(_, _) => Self::Set,
+            Datum::Time(value) => match value.kind() {
+                tidb_datatype::TimeType::Date => Self::Date,
+                tidb_datatype::TimeType::DateTime => Self::DateTime,
+                tidb_datatype::TimeType::Timestamp => Self::Timestamp,
+            },
+            Datum::Json(_) => Self::Json,
+            Datum::VectorFloat32(_) => Self::VectorFloat32,
+            Datum::MinNotNull => Self::MinNotNull,
+            Datum::MaxValue => Self::MaxValue,
+        }
+    }
+
+    /// Go `checkTypesCompatibility4PC`: decimal precision and scale are
+    /// asymmetric. A plan generated for a wider decimal can serve a narrower
+    /// value, but the reverse must enumerate a new physical plan.
+    fn compatible_with(self, actual: Self) -> bool {
+        match (self, actual) {
+            (
+                Self::Decimal {
+                    precision: expected_precision,
+                    scale: expected_scale,
+                },
+                Self::Decimal {
+                    precision: actual_precision,
+                    scale: actual_scale,
+                },
+            ) => expected_precision >= actual_precision && expected_scale >= actual_scale,
+            _ => self == actual,
+        }
+    }
+}
+
+pub(crate) fn prepared_parameter_types_compatible(
+    expected: &[PreparedParameterType],
+    actual: &[PreparedParameterType],
+) -> bool {
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|(expected, actual)| expected.compatible_with(*actual))
+}
+
+impl PreparedSelectExecution {
+    /// Values owned by this execution, independent of later cache rebuilds.
+    #[must_use]
+    pub fn parameters(&self) -> Arc<[Datum]> {
+        Arc::clone(&self.parameters)
+    }
+    /// Takes warnings produced by this execution's cache-miss planning once.
+    pub fn take_planning_warnings(&self) -> Vec<(crate::WarnLevel, u16, String)> {
+        std::mem::take(
+            &mut *self
+                .planning_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// The immutable plan whose schema identity gates this execution.
+    #[must_use]
+    pub fn plan(&self) -> &PreparedSelectPlan {
+        &self.plan
+    }
+
+    /// Whether this execute rebuilt an existing physical plan rather than
+    /// generating the first plan for its schema and parameter-type key.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
+
+    /// The schema identity used when the retained physical tree was built.
+    /// The ordinary statement executor compares it with the catalog while
+    /// holding the catalog guard and plans normally if a DDL moved it.
+    #[must_use]
+    pub const fn schema_version(&self) -> u64 {
+        self.schema_version
+    }
+
+    /// Runs a callback while the cache-owned SELECT root is pinned to the
+    /// generation rebuilt for this execution. The callback is the ordinary
+    /// session statement funnel; this type does not own another executor.
+    pub fn with_plan<R>(
+        &self,
+        callback: impl FnOnce(&tidb_ast::Stmt, &mut tidb_planner::physical::PhysicalPlan) -> R,
+    ) -> Option<R> {
+        let mut cached = self.cached_plan.lock().ok()?;
+        let (statement, physical) = cached.execution_mut(self.generation)?;
+        Some(callback(statement, physical))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn run_prepared_select_for_test(
+    execution: &PreparedSelectExecution,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<SelectMeta, DriverError> {
+    let ctx = ctx.clone().with_prepared_params(execution.parameters());
+    if execution.schema_version() != catalog.metadata_version()
+        || !execution
+            .plan()
+            .current_database
+            .eq_ignore_ascii_case(current_database)
+    {
+        return Err(DriverError::unsupported(
+            "prepared SELECT test execution saw a moved schema",
+        ));
+    }
+    execution
+        .with_plan(|statement, physical| {
+            let tidb_ast::Stmt::Query(query) = statement else {
+                unreachable!("a prepared query owns a query statement")
+            };
+            super::run_query_meta_stmt_with_physical(
+                query,
+                Some(physical),
+                catalog,
+                current_database,
+                &ctx,
+            )
+        })
+        .ok_or_else(|| {
+            DriverError::unsupported(
+                "prepared SELECT test generation changed before executor construction",
+            )
+        })?
 }
 
 /// One residual predicate bound to an EXECUTE's parameters.
@@ -445,6 +979,13 @@ impl PreparedPointGetExecution {
     pub fn plan(&self) -> &PreparedPointGetPlan {
         &self.plan
     }
+
+    /// Whether this execution rebuilt a point plan under an existing complete
+    /// prepared-plan cache key.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
 }
 
 /// Recognizes the fail-closed subset of Go prepared plans that can reuse a
@@ -459,10 +1000,10 @@ pub fn build_prepared_point_get_plan(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<PreparedPointGetPlan> {
     let tidb_ast::Stmt::Query(query) = stmt else {
-        trace_decline("not_query"); return None;
+        return None;
     };
     let tidb_ast::QueryStmt::Select(select) = &**query else {
-        trace_decline("not_select"); return None;
+        return None;
     };
     if !crate::access_path::select_is_bare_point_read(select)
         || !select.hints.is_empty()
@@ -473,7 +1014,7 @@ pub fn build_prepared_point_get_plan(
         || select.sql_no_cache
         || select.straight_join
     {
-        trace_decline("bare_or_flags"); return None;
+        return None;
     }
     let table_ref = single_table_ref(&select.from)?;
     if !table_ref.partitions.is_empty()
@@ -481,20 +1022,16 @@ pub fn build_prepared_point_get_plan(
         || !prepared_primary_index_hint(table_ref)
         || table_ref.sample.is_some()
     {
-        trace_decline("no_single_table_ref"); return None;
+        return None;
     }
     let Ok((database, table_name)) = split_table_path(&table_ref.name, current_database) else {
-        trace_decline("split_table_path");
         return None;
     };
     let entry @ TableEntry::Kv(table) = catalog.get_in(database, table_name)? else {
-        trace_decline("table_opts"); return None;
-    };
-    if !table.all_columns_public() {
         return None;
-    }
+    };
     if table.partition().is_some() {
-        trace_decline("split_table_path"); return None;
+        return None;
     }
     let (handle_offset, common_handle_offsets) = if let Some(offset) = table.pk_handle_offset() {
         (Some(offset), Vec::new())
@@ -503,23 +1040,20 @@ pub fn build_prepared_point_get_plan(
         // A composite common handle encodes its prefix columns in order; the
         // walker below pins each of them exactly once, so any width works.
         if offsets.is_empty() {
-            trace_decline("entry_not_kv"); return None;
+            return None;
         }
         (None, offsets.to_vec())
     };
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(table_name);
-    let scope = PlanTrace::single_table_scope(
+    let scope = single_table_scope(
         visible,
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
     );
     let output = match fast_point_output(select, &scope) {
         Some(output) => output,
-        None => {
-            trace_decline("output_none");
-            return None;
-        }
+        None => return None,
     };
     // A generated output can evaluate expressions while its stored row is
     // decoded. Keep those plans on the full statement context; the cached
@@ -530,33 +1064,31 @@ pub fn build_prepared_point_get_plan(
             .get(*offset)
             .is_none_or(|column| column.generated.is_some())
     }) {
-        trace_decline("partitioned"); return None;
+        return None;
     }
     // One walk flattens the WHERE conjunction into resolved equalities; the
     // handle pins exactly one per handle column and everything else filters
     // the decoded row.
-    let conjuncts = match prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone)
-    {
+    let conjuncts = match prepared_point_eq_conjuncts(select.where_clause.as_ref()?, &scope, zone) {
         Some(conjuncts) => conjuncts,
-        None => {
-            trace_decline("conjuncts_none");
-            return None;
-        }
+        None => return None,
     };
-    let mut resolver = ScopeResolver { scope: &scope };
+    let resolver = ScopeResolver { scope: &scope };
     let mut resolved = Vec::with_capacity(conjuncts.len());
     for conjunct in conjuncts {
         match conjunct {
-            PreparedPointConjunct::Eq { path, order, literal } => {
+            PreparedPointConjunct::Eq {
+                path,
+                order,
+                literal,
+            } => {
                 let Some((offset, _, _)) = resolver.resolve(&path) else {
-                    trace_decline("resolve_eq");
                     return None;
                 };
                 resolved.push((offset, PreparedPointPredicate::Eq(order, literal)));
             }
             PreparedPointConjunct::IsNull { path } => {
                 let Some((offset, _, _)) = resolver.resolve(&path) else {
-                    trace_decline("resolve_isnull");
                     return None;
                 };
                 resolved.push((offset, PreparedPointPredicate::IsNull));
@@ -573,10 +1105,6 @@ pub fn build_prepared_point_get_plan(
                 .1
                 .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
     }) {
-        trace_accept(&format!(
-            "{}.{} target=Contradiction (NOT NULL IS NULL)",
-            database, table_name
-        ));
         return contradiction_plan(
             catalog.metadata_version(),
             current_database,
@@ -594,20 +1122,31 @@ pub fn build_prepared_point_get_plan(
         None => common_handle_offsets.to_vec(),
     };
     if handle_offsets.is_empty() {
-        trace_decline("output_none"); return None;
+        return None;
     }
-    // Which key do the pins name? A FULL handle keeps today's single-row
-    // read; anything less looks for a narrower key whose LEADING columns the
-    // pins still answer -- Go's plan cache would keep whatever access path
-    // the optimizer chose here, so this port caches that narrowed access
-    // instead of re-running resolve and cost model on every EXECUTE.
-    let (target, pin_offsets) =
-        match prepared_range_key(catalog, &table, &common_handle_offsets, &resolved) {
-            Some((target, pins)) if !handle_offsets.iter().all(|offset| column_pinned_once(*offset, &resolved)) => {
-                (target, pins)
-            }
-            _ => (PreparedPointTarget::RowHandle, handle_offsets.clone()),
-        };
+    // Go tries the full primary/common handle first, then the first public
+    // non-prefix UNIQUE index whose complete key is pinned. A partial key is
+    // an ordinary range plan and belongs to the general cached physical tree.
+    let (target, pin_offsets) = if handle_offsets
+        .iter()
+        .all(|offset| column_pinned_once(*offset, &resolved))
+    {
+        (PreparedPointTarget::RowHandle, handle_offsets.clone())
+    } else {
+        let index = table.plan_indexes().find(|index| {
+            index.unique
+                && !index.has_prefix()
+                && !index.column_offsets.is_empty()
+                && index
+                    .column_offsets
+                    .iter()
+                    .all(|offset| column_pinned_once(*offset, &resolved))
+        })?;
+        (
+            PreparedPointTarget::UniqueIndex { index_id: index.id },
+            index.column_offsets.clone(),
+        )
+    };
     let mut parameter_orders = Vec::with_capacity(pin_offsets.len());
     let mut handle_literals = Vec::with_capacity(pin_offsets.len());
     for offset in &pin_offsets {
@@ -615,22 +1154,19 @@ pub fn build_prepared_point_get_plan(
             .iter()
             .filter(|(pinned, kind)| *pinned == *offset && kind.eq_parts().is_some());
         let Some((_, predicate)) = hits.next() else {
-            trace_decline("generated_col"); return None;
+            return None;
         };
         let (marker_order, literal) = match predicate.eq_parts() {
             Some(parts) => parts,
-            None => {
-                trace_decline("pin_not_equality");
-                return None;
-            }
+            None => return None,
         };
         if hits.next().is_some() {
-            trace_decline("conjuncts_none"); return None;
+            return None;
         }
         // The pin value is encoded into a KEY, so its domain has to order
         // like its bytes; otherwise the cache declines to the planner.
         if !point_byte_safe(&columns[*offset].1) {
-            trace_decline("resolve_eq"); return None;
+            return None;
         }
         parameter_orders.push(marker_order);
         handle_literals.push(literal);
@@ -646,10 +1182,7 @@ pub fn build_prepared_point_get_plan(
         }
         let position = match output.offsets.iter().position(|o| o == offset) {
             Some(position) => position,
-            None => {
-                trace_decline("residual_not_in_output");
-                return None;
-            }
+            None => return None,
         };
         match kind {
             PreparedPointPredicate::IsNull => {
@@ -658,7 +1191,7 @@ pub fn build_prepared_point_get_plan(
             PreparedPointPredicate::Eq(marker_order, literal) => {
                 let column_type = &output.columns[position].1;
                 if !point_byte_safe(column_type) {
-                    trace_decline("residual_not_bytesafe"); return None;
+                    return None;
                 }
                 let bound = match marker_order {
                     Some(order) => PointResidualBound::Param(*order),
@@ -669,7 +1202,7 @@ pub fn build_prepared_point_get_plan(
                             // semantics; leave such statements to the ordinary
                             // planner rather than caching an always-empty
                             // answer.
-                            trace_decline("handle_empty"); return None;
+                            return None;
                         }
                         PointResidualBound::Literal(value.clone())
                     }
@@ -689,18 +1222,8 @@ pub fn build_prepared_point_get_plan(
         }))
         .max();
     if max_order.is_some_and(|order| order >= parameter_count) {
-        trace_decline("pin_missing"); return None;
+        return None;
     }
-
-    trace_accept(&format!(
-        "{}.{} target={:?} pins={} residuals={} params={:?}",
-        database,
-        table_name,
-        target,
-        pin_offsets.len(),
-        residuals.len(),
-        parameter_orders
-    ));
     Some(PreparedPointGetPlan {
         schema_version: catalog.metadata_version(),
         current_database: current_database.to_owned(),
@@ -725,7 +1248,145 @@ pub fn build_prepared_point_get_plan(
         residuals,
         contradiction: false,
         output,
+        cached_keys: std::sync::Mutex::new(Vec::new()),
     })
+}
+
+/// Builds the complete shared-planner tree retained by a prepared SELECT.
+#[must_use]
+pub fn build_prepared_select_plan(
+    stmt: &tidb_ast::Stmt,
+    parameter_count: usize,
+    _catalog: &Catalog,
+    current_database: &str,
+    _ctx: &crate::StmtContext,
+) -> Option<PreparedSelectPlan> {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return None;
+    };
+    if parsed_parameter_count(stmt) != parameter_count {
+        return None;
+    }
+    let mut table_names = Vec::new();
+    collect_prepared_table_names(query, current_database, &mut table_names);
+    let limit_parameter_orders = prepared_limit_parameter_orders(stmt);
+
+    Some(PreparedSelectPlan {
+        current_database: current_database.to_owned(),
+        table_names,
+        parameter_count,
+        limit_parameter_orders,
+        statement: stmt.clone(),
+        cached_plans: std::sync::Mutex::new(Vec::new()),
+    })
+}
+
+pub(super) fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
+    struct LimitMarkerCollector {
+        orders: Vec<usize>,
+    }
+
+    impl tidb_ast::Visitor for LimitMarkerCollector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(limit) = node.downcast_ref::<tidb_ast::Limit>() else {
+                return false;
+            };
+            for expression in std::iter::once(&limit.count).chain(limit.offset.as_ref()) {
+                if let tidb_ast::Expr::ParamMarker { order, .. } = expression {
+                    self.orders.push(*order);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = stmt.clone();
+    let mut collector = LimitMarkerCollector { orders: Vec::new() };
+    tidb_ast::Visitable::accept(&mut statement, &mut collector);
+    collector.orders.sort_unstable();
+    collector.orders.dedup();
+    collector.orders
+}
+
+fn collect_prepared_table_names(
+    query: &tidb_ast::QueryStmt,
+    current_database: &str,
+    names: &mut Vec<(String, String)>,
+) {
+    fn collect_query(
+        query: &tidb_ast::QueryStmt,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        match query {
+            tidb_ast::QueryStmt::Select(select) => {
+                collect_join(&select.from, current_database, names);
+            }
+            tidb_ast::QueryStmt::SetOpr(set) => collect_set(set, current_database, names),
+        }
+    }
+
+    fn collect_set(
+        set: &tidb_ast::SetOprStmt,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        for term in &set.terms {
+            match &term.body {
+                tidb_ast::SetOprTermBody::Select(select) => {
+                    collect_join(&select.from, current_database, names);
+                }
+                tidb_ast::SetOprTermBody::Nested(set) => {
+                    collect_set(set, current_database, names);
+                }
+            }
+        }
+    }
+
+    fn collect(
+        node: &tidb_ast::JoinNode,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        match node {
+            tidb_ast::JoinNode::Table(table) => {
+                if let Ok((database, name)) = split_table_path(&table.name, current_database) {
+                    let item = (database.to_owned(), name.to_owned());
+                    if !names.iter().any(|present| present == &item) {
+                        names.push(item);
+                    }
+                }
+            }
+            tidb_ast::JoinNode::Join(join) => {
+                collect(&join.left, current_database, names);
+                if let Some(right) = &join.right {
+                    collect(right, current_database, names);
+                }
+            }
+            tidb_ast::JoinNode::Derived { subquery, .. } => {
+                collect_query(subquery, current_database, names);
+            }
+        }
+    }
+
+    fn collect_join(
+        from: &Option<tidb_ast::Join>,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        if let Some(from) = from {
+            collect(&from.left, current_database, names);
+            if let Some(right) = &from.right {
+                collect(right, current_database, names);
+            }
+        }
+    }
+
+    collect_query(query, current_database, names);
 }
 
 /// One `column = ?`, `column = const`, or `column IS NULL` conjunct of a
@@ -737,7 +1398,9 @@ enum PreparedPointConjunct {
         order: Option<usize>,
         literal: Option<Datum>,
     },
-    IsNull { path: Vec<String> },
+    IsNull {
+        path: Vec<String>,
+    },
 }
 
 /// One WHERE conjunct RESOLVED to its column offset. `Eq` may pin a key;
@@ -826,7 +1489,9 @@ fn prepared_point_eq_conjuncts(
                     }
                 }
             }
-            Expr::Is { expr, target, not } if matches!(target, tidb_ast::IsTarget::Null) && !*not => {
+            Expr::Is { expr, target, not }
+                if matches!(target, tidb_ast::IsTarget::Null) && !*not =>
+            {
                 // `col IS NULL`: a row-level check (NULL never equals, so it
                 // can never pin a key), admitted beside the equalities.
                 let Expr::Column(path) = unparenthesized(expr) else {
@@ -874,15 +1539,12 @@ pub fn run_prepared_point_get(
     catalog: &mut Catalog,
     current_database: &str,
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
+    stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
     let plan = execution.plan();
     if !plan.matches_catalog(catalog, current_database) {
         return Ok(None);
     }
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in_for_read(&plan.database, &plan.table)
-    else {
-        return Ok(None);
-    };
     // A NULL key bound to an always-empty execution; no read may run.
     if execution.handle.is_none() && execution.range_values.is_none() {
         return Ok(Some((plan.output.columns.clone(), Vec::new())));
@@ -896,6 +1558,11 @@ pub fn run_prepared_point_get(
     let decode_error = |error: crate::kv_table::KvTableError| {
         ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
     };
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in_for_read(&plan.database, &plan.table)
+    else {
+        return Ok(None);
+    };
+    let before = table.point_rpc_counts();
     let rows = match plan.target {
         PreparedPointTarget::RowHandle => {
             let handle = execution.handle.as_ref().expect("row-handle arm binds one");
@@ -908,95 +1575,52 @@ pub fn run_prepared_point_get(
                 Some(_) => Vec::new(),
             }
         }
-        PreparedPointTarget::IndexPrefix { index_id } => {
+        PreparedPointTarget::UniqueIndex { index_id } => {
             let values = execution
                 .range_values
                 .as_deref()
                 .expect("index-prefix arm binds key values");
-            let range = crate::kv_table::IndexRange {
-                low: values.to_vec(),
-                high: values.to_vec(),
-                low_exclusive: false,
-                high_exclusive: false,
-            };
-            let mut cursor = table
-                .index_range_cursor(index_id, &range, ctx.zone())
+            let handle = table
+                .lookup_unique(index_id, values, ctx.zone())
                 .map_err(decode_error)?;
-            let mut handles = Vec::new();
-            loop {
-                let Some(handle) = cursor.next_handle().map_err(decode_error)? else {
-                    break;
-                };
-                handles.push(handle);
-                if handles.len() > PREPARED_RANGE_ROW_CAP {
-                    // A wider range than any estimate defended: give the
-                    // statement back to the cost model instead of fetching
-                    // an unbounded handle stream.
-                    return Ok(None);
-                }
-            }
-            drop(cursor);
-            // Go's index LOOKUP batches its handle fetches; a range holding
-            // more than a handful of entries pays far less through one
-            // batched read than one point read per entry.
-            const INLINE_HANDLES: usize = 4;
-            let fetched = if handles.len() <= INLINE_HANDLES {
-                let mut fetched = Vec::with_capacity(handles.len());
-                for handle in &handles {
-                    fetched.push(
-                        table
-                            .get_prepared_point_row(handle, &plan.row_decoder, ctx)
-                            .map_err(decode_error)?,
-                    );
-                }
-                fetched
-            } else {
-                table
-                    .get_prepared_point_rows(&handles, &plan.row_decoder, ctx)
+            match handle {
+                Some(handle) => match table
+                    .get_prepared_point_row(&handle, &plan.row_decoder, ctx)
                     .map_err(decode_error)?
-            };
-            let mut rows = Vec::with_capacity(fetched.len());
-            for row in fetched.into_iter().flatten() {
-                if matches_residuals(&row) {
-                    rows.push(row);
-                }
+                {
+                    Some(row) if matches_residuals(&row) => vec![row],
+                    _ => Vec::new(),
+                },
+                None => Vec::new(),
             }
-            rows
-        }
-        PreparedPointTarget::ClusteredPrefix => {
-            let values = execution
-                .range_values
-                .as_deref()
-                .expect("clustered-prefix arm binds key values");
-            let range = crate::kv_table::IndexRange {
-                low: values.to_vec(),
-                high: values.to_vec(),
-                low_exclusive: false,
-                high_exclusive: false,
-            };
-            let encoded =
-                crate::handle_range::record_key_ranges(table, std::slice::from_ref(&range), ctx.zone(), false)
-                    .map_err(|error| {
-                        ExecError::unsupported(format!(
-                            "prepared point read failed to encode its range: {error:?}"
-                        ))
-                    })?;
-            // An unencodable bound has no narrowed read; re-plan rather than
-            // guess at a fallback range here.
-            let Some(ranges) = encoded else {
-                return Ok(None);
-            };
-            let Some(rows) = table
-                .prepared_rows_in_record_ranges(&ranges, &plan.row_decoder, ctx, PREPARED_RANGE_ROW_CAP)
-                .map_err(decode_error)?
-            else {
-                return Ok(None);
-            };
-            let mut rows = rows;
-            rows.retain(|row| matches_residuals(row));
-            rows
         }
     };
+    let after = table.point_rpc_counts();
+    let report_table = table.clone();
+    let stats_id = report_table.stats_physical_id();
+    let index_id = match plan.target {
+        PreparedPointTarget::RowHandle => None,
+        PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
+    };
+    let kv_requests = after.0.wrapping_sub(before.0);
+    let stats = catalog.table_statistics(stats_id);
+    let reporter =
+        super::index_usage_reporter::IndexUsageReporter::new(stmt_ctx.index_usage_collector());
+    match index_id {
+        Some(index_id) => reporter.report_point_for_table(
+            &report_table,
+            stats.as_deref(),
+            index_id,
+            kv_requests,
+            rows.len() as u64,
+        ),
+        None => reporter.report_point_for_handle(
+            &report_table,
+            stats.as_deref(),
+            kv_requests,
+            rows.len() as u64,
+        ),
+    }
     Ok(Some((plan.output.columns.clone(), rows)))
 }
 
@@ -1045,132 +1669,102 @@ fn point_byte_safe(field_type: &FieldType) -> bool {
         )
 }
 
-/// The longest leading prefix of `key_offsets` whose every column is pinned
-/// exactly once by the resolved equalities and byte-order safe as a key.
-fn prepared_prefix_pins(
-    key_offsets: &[usize],
-    table: &crate::kv_table::KvTable,
-    resolved: &[ResolvedConjunct],
-) -> Vec<usize> {
-    let mut pins = Vec::with_capacity(key_offsets.len());
-    for offset in key_offsets {
-        if !column_pinned_once(*offset, resolved) {
-            break;
-        }
-        let Some(column) = table.visible_columns().get(*offset) else {
-            break;
-        };
-        if !point_byte_safe(&column.field_type) {
-            break;
-        }
-        pins.push(*offset);
-    }
-    pins
-}
-
-/// The estimated row count ONE closed point range over this pinned prefix
-/// reads. Loaded statistics decide it column by column against `key_len`,
-/// the full width of the key; a table without them admits only a FULL-key
-/// pin (every entry sharing those values is a duplicate of one logical key),
-/// because an estimate this port cannot defend must not replace the cost
-/// model. `None` declines the candidate.
-fn prepared_prefix_estimate(
-    catalog: &Catalog,
-    table: &crate::kv_table::KvTable,
-    pins: &[usize],
-    key_len: usize,
-) -> Option<f64> {
-    let stats = catalog.table_statistics(table.table_id);
-    let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        // Without defensible statistics the estimate cannot be made -- but a
-        // FULL-key pin is bounded by duplicate entries alone, and any other
-        // prefix is admitted PROVISIONALLY: the run caps its reads at
-        // [`PREPARED_RANGE_ROW_CAP`] and falls back to the planner the moment
-        // a range proves wider. Correctness never depended on the estimate;
-        // only the worst-case latency does, and the fallback keeps that at
-        // the ordinary path's own.
-        return Some(PREPARED_RANGE_ROW_CAP as f64);
-    };
-    let rows = stats.row_count as f64;
-    if rows <= 0.0 {
-        return Some(0.0);
-    }
-    let full_columns = stats.columns.keys().copied().collect::<std::collections::BTreeSet<_>>();
-    let full_indexes = stats.indexes.keys().copied().collect::<std::collections::BTreeSet<_>>();
-    let mut estimate = rows;
-    for offset in pins {
-        let column = table.visible_columns().get(*offset)?;
-        let ndv = stats.estimate_column_ndv(column.id, &full_columns, &full_indexes)?;
-        if ndv < 1.0 {
-            return None;
-        }
-        estimate /= ndv.min(rows);
-    }
-    (estimate <= PREPARED_RANGE_ROW_CAP as f64).then(|| estimate.max(1.0))
-}
-
-/// The row count one cached range may read before the arm gives up and lets
-/// the cost model answer instead (`Ok(None)` -> re-plan).
-const PREPARED_RANGE_ROW_CAP: usize = 4096;
-
-/// Finds the narrower key the WHERE's equalities answer best: one secondary
-/// index or the clustered primary key whose LEADING columns are all pinned
-/// exactly once, over at most [`prepared_prefix_estimate`]'s row cap. The
-/// cheapest candidate wins; `None` leaves the statement on the planner.
-fn prepared_range_key(
-    catalog: &Catalog,
-    table: &crate::kv_table::KvTable,
-    common_handle_offsets: &[usize],
-    resolved: &[ResolvedConjunct],
-) -> Option<(PreparedPointTarget, Vec<usize>)> {
-    let mut best: Option<(f64, PreparedPointTarget, Vec<usize>)> = None;
-    let mut consider =
-        |pins: Vec<usize>, key_len: usize, target: PreparedPointTarget| {
-            if pins.is_empty() {
-                return;
-            }
-            let Some(estimate) = prepared_prefix_estimate(catalog, table, &pins, key_len)
-            else {
-                return;
-            };
-            if best.as_ref().is_none_or(|(best_estimate, _, _)| estimate < *best_estimate) {
-                best = Some((estimate, target, pins));
-            }
-        };
-    for index in table.indexes() {
-        // A PREFIX key part changes what the entry MEANS (`'ab'` stored where
-        // the row holds `'abc'`), so its equality cannot be answered from the
-        // entry alone.
-        if index.has_prefix() || index.column_offsets.is_empty() {
-            continue;
-        }
-        let pins = prepared_prefix_pins(&index.column_offsets, table, resolved);
-        consider(
-            pins,
-            index.column_offsets.len(),
-            PreparedPointTarget::IndexPrefix { index_id: index.id },
-        );
-    }
-    consider(
-        prepared_prefix_pins(common_handle_offsets, table, resolved),
-        common_handle_offsets.len(),
-        PreparedPointTarget::ClusteredPrefix,
-    );
-    best.map(|(_, target, pins)| (target, pins))
-}
-
 /// Go `planner.optimize` calls `TryFastPlan` before constructing the ordinary
 /// logical plan. Keep that ordering for a complete point-read SELECT: only a
 /// source-column projection whose whole predicate is owned by the point key is
 /// returned here. Every residual operator or unsupported table shape declines
 /// to the ordinary planner below.
-pub(crate) fn try_fast_point_select(
+fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
+    let columns = output
+        .offsets
+        .iter()
+        .zip(&output.columns)
+        .enumerate()
+        .map(|(position, (offset, (name, field_type)))| {
+            let id = table
+                .columns
+                .get(*offset)
+                .map_or(tidb_model::column::EXTRA_HANDLE_ID, |column| column.id);
+            let mut column = Column::new(id, field_type.clone());
+            column.id = id;
+            column.index = position as i64;
+            column.orig_name.clone_from(name);
+            column
+        })
+        .collect();
+    Schema::new(columns)
+}
+
+fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_planner::ranger::types::Ranges {
+    keys.iter()
+        .map(|values| tidb_planner::ranger::types::Range {
+            low_val: values.clone(),
+            high_val: values.clone(),
+            collators: vec![tidb_datatype::Collation::Binary; values.len()],
+            low_exclude: false,
+            high_exclude: false,
+        })
+        .collect()
+}
+
+/// Go `TryFastPlan` for a query statement, producing the same complete
+/// physical root later consumed by `executorBuilder.build`. This is the
+/// optimizer stage; it never drains a source or constructs a separate
+/// executor pipeline.
+pub(crate) fn try_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    mut trace: Option<&mut PlanTrace>,
-) -> Result<Option<SelectMeta>, DriverError> {
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator(
+        select,
+        catalog,
+        current_db,
+        ctx,
+        &tidb_planner::plan_base::PlanIdAllocator::new(),
+    )
+}
+
+/// Go's fast-plan builder using the enclosing statement's plan-id counter.
+/// DML tries its point child before allocating the write root, while a plain
+/// query starts from a fresh counter; both call sites therefore share the
+/// same implementation without assigning fixed IDs by hand.
+pub(crate) fn try_fast_point_physical_plan_with_allocator(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator_mode(
+        select, catalog, current_db, ctx, plan_ids, false,
+    )
+}
+
+/// Go's `tryUpdatePointPlan` / `tryDeletePointPlan` retain the complete table
+/// row and its handle on the PointGet child instead of applying a SELECT-list
+/// projection.
+pub(crate) fn try_fast_dml_point_physical_plan_with_allocator(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    try_fast_point_physical_plan_with_allocator_mode(
+        select, catalog, current_db, ctx, plan_ids, true,
+    )
+}
+
+fn try_fast_point_physical_plan_with_allocator_mode(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    dml_source: bool,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
     if ctx
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
@@ -1182,8 +1776,6 @@ pub(crate) fn try_fast_point_select(
     let Some(table_ref) = single_table_ref(&select.from) else {
         return Ok(None);
     };
-    // The ordinary source builder owns these refusal diagnostics. A fast plan
-    // must not turn either unsupported clause into an ordinary current read.
     if table_ref.as_of.is_some() || table_ref.sample.is_some() || !table_ref.partitions.is_empty() {
         return Ok(None);
     }
@@ -1191,1397 +1783,150 @@ pub(crate) fn try_fast_point_select(
     let Some(entry @ TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
     };
-    let table = table.clone();
+    if table.partition().is_some() {
+        return Ok(None);
+    }
     let columns = entry.column_list();
     let visible = table_ref.alias.as_deref().unwrap_or(name);
-    let mut scope = PlanTrace::single_table_scope(
+    let mut scope = single_table_scope(
         visible,
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
     );
     scope.zone = ctx.session_zone();
-    let Some(output) = fast_point_output(select, &scope) else {
-        return Ok(None);
+    let output = if dml_source {
+        fast_dml_point_output(table)
+    } else {
+        let Some(output) = fast_point_output(select, &scope) else {
+            return Ok(None);
+        };
+        output
     };
+    let schema = fast_point_schema(table, &output);
 
-    // Go attempts BatchPointGet before PointGet. Its integer-handle arm
-    // returns before consulting index hints, while secondary and clustered
-    // indexes still pass through `indexIsAvailableByHints`.
-    let mut batch = fast_batch_partition_supported(&table)
-        .then(|| try_batch_point_get(select, &table, &columns, &scope.zone))
-        .transpose()?
-        .flatten();
+    let mut batch = try_batch_point_get(select, table, &columns, &scope.zone)?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
-        let hints = crate::index_hints::single_table_scan_hints(
-            select,
-            Some(table_ref),
-            &table,
-            current_db,
-            ctx,
-        )?;
-        batch = batch.filter(|batch| batch.allowed_by(&hints));
+        batch = batch.filter(|batch| {
+            let index_name = match batch.index.as_ref() {
+                Some((index_id, _)) => match table
+                    .plan_indexes()
+                    .find(|index| index.id == *index_id)
+                    .map(|index| index.name.as_str())
+                {
+                    Some(name) => Some(name),
+                    None => return false,
+                },
+                None => None,
+            };
+            tidb_planner::access_path::fast_index_is_available_by_hints(
+                current_db,
+                database,
+                visible,
+                index_name,
+                &select.hints,
+                &table_ref.hints,
+            )
+        });
     }
     if let Some(batch) = batch {
-        let BatchPointLookup {
-            handles,
-            index,
-            plan_rows,
-            ..
-        } = batch;
-        let exec = HandleSourceExec::new_projected_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&output.columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles.clone(),
-            output.offsets,
-            crate::kv_table::RowDecodeContext::for_query(ctx),
-        );
-        if let Some(trace) = trace.as_deref_mut() {
-            let partitions = table.handle_partition_names(&handles, &scope.zone, ctx);
-            match index {
-                Some((_, index)) => trace.push_fast_index_batch_point_get(
-                    source_table_name(&scope, &table.name),
-                    plan_rows,
-                    &partitions,
-                    &index,
-                    ctx.static_partition_prune(),
-                    &batch_point_branch_estimates(catalog, &table, &partitions, plan_rows),
-                ),
-                None => trace.push_fast_batch_point_get(
-                    source_table_name(&scope, &table.name),
-                    &table,
-                    &handles,
-                    plan_rows,
-                    &partitions,
-                ),
-            }
-            trace.set_scan_act_rows(exec.produced_rows());
-        }
-        crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
-        if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
-            return Ok(Some((output.columns, Vec::new())));
-        }
-        let types = output
-            .columns
-            .iter()
-            .map(|(_, field_type)| field_type.clone())
-            .collect::<Vec<_>>();
-        let rows = drain_executor_rows(Box::new(exec), &types, &ctx.statement_memory())?;
-        return Ok(Some((output.columns, rows)));
+        let mut base =
+            tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
+        base.base
+            .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(
+                batch.plan_rows as f64,
+                [],
+            )));
+        base.base.set_schema(Some(schema));
+        let ranges = closed_point_ranges(&batch.key_values);
+        return Ok(Some(tidb_planner::physical::PhysicalPlan::BatchPointGet(
+            tidb_planner::physical::PhysicalBatchPointGet {
+                base,
+                table_id: table.table_id,
+                index_id: batch.index.as_ref().map(|(id, _)| *id),
+                unsigned_handle: table.unsigned_pk_handle(),
+                ranges,
+                range_rebuild: None,
+                keep_order: false,
+                desc: false,
+            },
+        )));
     }
 
-    let hints = crate::index_hints::single_table_scan_hints(
-        select,
-        Some(table_ref),
-        &table,
-        current_db,
-        ctx,
-    )?;
-    if !hints.allows_table() {
-        return Ok(None);
-    }
-    let Some(handle) = try_point_get(
+    let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
-        &table,
+        table,
         &columns,
         &scope.zone,
     )?
     else {
+        if point_get_predicate_overflows(&PointPlanStmt::of_select(select), &columns, &scope.zone) {
+            // Go `tryPointGetPlan`'s `isTableDual` arm: the predicate can
+            // equal no stored row, so the answer is empty and no read runs.
+            let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            base.base
+                .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(0.0, [])));
+            base.base.set_schema(Some(schema));
+            return Ok(Some(tidb_planner::physical::PhysicalPlan::TableDual(
+                tidb_planner::physical::PhysicalTableDual::new(base, 0),
+            )));
+        }
         return Ok(None);
     };
-    if !point_get_consumes_where(select, &table, &columns, &scope.zone) {
+    if !point_get_consumes_where(select, table, &columns, &scope.zone) {
         return Ok(None);
     }
+    let index_name = point.index_id.and_then(|index_id| {
+        table
+            .plan_indexes()
+            .find(|index| index.id == index_id)
+            .map(|index| index.name.as_str())
+    });
+    if point.index_id.is_some() && index_name.is_none() {
+        return Ok(None);
+    }
+    if !tidb_planner::access_path::fast_index_is_available_by_hints(
+        current_db,
+        database,
+        visible,
+        index_name,
+        &select.hints,
+        &table_ref.hints,
+    ) {
+        return Ok(None);
+    }
+    let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
+    base.base
+        .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(1.0, [])));
+    base.base.set_schema(Some(schema));
+    Ok(Some(tidb_planner::physical::PhysicalPlan::PointGet(
+        tidb_planner::physical::PhysicalPointGet {
+            base,
+            table_id: table.table_id,
+            index_id: point.index_id,
+            ranges: closed_point_ranges(&[point.key_values]),
+            range_rebuild: None,
+        },
+    )))
+}
 
-    let exec = HandleSourceExec::new_projected_with_context(
-        ExecutorMeta::new(
-            Schema::new(source_schema_columns(&output.columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        ),
-        table.clone(),
-        handle.handle.clone().into_iter().collect(),
-        output.offsets,
-        crate::kv_table::RowDecodeContext::for_query(ctx),
-    );
-    if let Some(trace) = trace.as_deref_mut() {
-        trace.push_fast_point_get(
-            source_table_name(&scope, &table.name),
-            &table,
-            handle.handle.as_ref(),
-        );
-        trace.set_scan_act_rows(exec.produced_rows());
-    }
-    crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
-    if trace.as_deref().is_some_and(PlanTrace::is_plan_only) {
-        return Ok(Some((output.columns, Vec::new())));
-    }
-    let types = output
+fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
+    let mut offsets = (0..table.columns.len()).collect::<Vec<_>>();
+    let mut columns = table
         .columns
         .iter()
-        .map(|(_, field_type)| field_type.clone())
+        .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect::<Vec<_>>();
-    let rows = drain_executor_rows(Box::new(exec), &types, &ctx.statement_memory())?;
-    Ok(Some((output.columns, rows)))
+    if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+        offsets.push(table.columns.len());
+        columns.push((
+            tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        ));
+    }
+    FastPointOutput { offsets, columns }
 }
 
-/// Whether Rust can route Go's partitioned fast batch point plan from the
-/// handles retained after key lookup. Secondary-index values are no longer
-/// available at that point, so every partition dependency must be part of a
-/// clustered handle; other valid plans fall back to the ordinary index path.
-fn fast_batch_partition_supported(table: &KvTable) -> bool {
-    table.partition().is_none_or(|partition| {
-        let handle_offsets = table
-            .pk_handle_offset()
-            .into_iter()
-            .chain(table.common_handle_offsets().iter().copied())
-            .collect::<Vec<_>>();
-        !handle_offsets.is_empty()
-            && !partition.dependencies.is_empty()
-            && matches!(partition.expr, tidb_expr::expression::Expression::Column(_))
-            && partition.dependencies.iter().all(|dependency| {
-                handle_offsets
-                    .iter()
-                    .any(|offset| table.columns[*offset].name.eq_ignore_ascii_case(dependency))
-            })
-    })
-}
-
-/// Commits the narrowed access path a single-table `SELECT` qualifies for,
-/// replacing `from_source`, and reports the row order the committed path
-/// produces plus any complete point plan that absorbed the select list.
-///
-/// Go's `TryFastPlan` runs before the ordinary plan and this mirrors its
-/// order: the batch point get is tried first, then an index range when no
-/// point get applies, and finally the single point get -- which supersedes an
-/// index range already committed, and its ordering claim with it.
-///
-/// A complete point plan consumes its exact key predicate and simple select
-/// list, as Go does. A path with work the point plan cannot own keeps that
-/// work in the ordinary pipeline, so an unsatisfied extra condition still
-/// filters the row out. Each path installs a streaming source over the
-/// narrowed path (see [`crate::access_path`]), not a `Vec` of rows it already
-/// read, so an index range over a huge table costs one chunk of memory and a
-/// pushed `LIMIT` never reads past its cap.
-
-/// Go `rule_predicate_push_down.go`'s `(*PPDSolver).Name()`, the string an
-/// operator writes into `mysql.opt_rule_blacklist` to switch the rule off.
-const PREDICATE_PUSH_DOWN_RULE: &str = "predicate_push_down";
-
-/// Go `DataSource.PredicatePushDown`: `ds.PushedDownConds, predicates =
-/// expression.PushDownExprs(...)`, and every access path is derived from
-/// `PushedDownConds` alone.
-///
-/// Returns a `SELECT` whose `WHERE` is that subset, or `None` when it is the
-/// whole `WHERE` -- which is every session that never ran an `ADMIN RELOAD`,
-/// so the ordinary path neither clones nor re-resolves anything.
-///
-/// The full `WHERE` stays with the caller as Go's `AllConds`, and is what the
-/// residual `Selection` above the scan applies. That split is the point: a
-/// condition the blacklist refuses still filters correctly, it just stops
-/// bounding any scan, so the index whose leading column it constrained is no
-/// longer a candidate.
-fn pushed_down_conds(
-    select: &tidb_ast::SelectStmt,
-    scope: &FromScope,
-    ctx: &crate::StmtContext,
-) -> Option<tidb_ast::SelectStmt> {
-    let where_clause = select.where_clause.as_ref()?;
-    // Go `isLogicalRuleDisabled`: the rule does not run at all, so the
-    // `DataSource` is handed no predicate and every path is a full scan.
-    if ctx.logical_rule_disabled(PREDICATE_PUSH_DOWN_RULE) {
-        let mut filtered = select.clone();
-        filtered.where_clause = None;
-        return Some(filtered);
-    }
-    if ctx.expr_pushdown_blacklist().is_empty() {
-        return None;
-    }
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    let total = conjuncts.len();
-    let resolver = scope_resolver(scope);
-    let kept: Vec<&tidb_ast::Expr> = conjuncts
-        .into_iter()
-        .filter(|conjunct| {
-            crate::pushdown_blacklist::blacklist_admits(
-                conjunct,
-                &resolver,
-                ctx,
-                tidb_expr::infer_pushdown::PushDownStore::Unspecified,
-            )
-        })
-        .collect();
-    if kept.len() == total {
-        return None;
-    }
-    let mut filtered = select.clone();
-    filtered.where_clause = join_predicates(&kept);
-    Some(filtered)
-}
-
-/// Go `MaxMinEliminator.eliminateSingleMaxMin`
-/// (`pkg/planner/core/rule/rule_max_min_eliminate.go`), as the ACCESS view of
-/// the statement: the ungrouped single `MAX(col)`/`MIN(col)` is what
-/// `SELECT ... ORDER BY col [DESC] LIMIT 1` reads, so the path chooser is
-/// handed the statement with exactly that order and limit spliced in. The
-/// select list, `WHERE` and hints stay as written -- the demanded column set
-/// of `max(col)` IS `{col}`, and every non-costing consumer of the statement
-/// reads the original.
-///
-/// The gates are the rule's own, in its order (`eliminateMaxMin` +
-/// `eliminateSingleMaxMin`): no `GROUP BY`, exactly one aggregate which is
-/// `MAX`/`MIN`, a non-`ENUM`/`SET` argument. `checkColCanUseIndex` is NOT
-/// among them -- with a single aggregate Go transforms unconditionally
-/// ("this transformation won't be worse than previous") and lets the cost
-/// model decide, which is exactly what handing the rewritten view to the
-/// chooser does.
-///
-/// Arms of the Go rule this view does not carry, each still costed and
-/// executed as before (the executor-side rewrite in
-/// [`super::agg_select::single_max_min_elimination`] is independent of this
-/// view and keeps its own coverage):
-///
-/// * several `MAX`/`MIN` functions (`splitAggFuncAndCheckIndices` +
-///   `composeAggsByInnerJoin`): the split produces one cartesian join of
-///   single-aggregate blocks, a plan shape this tier does not build;
-/// * a NULLABLE argument: Go inserts `Selection(not(isnull(col)))` between
-///   the `Limit` and the source, and this view has no way to carry that
-///   extra conjunct without desynchronizing the caller's residual-`WHERE`
-///   accounting, so the rewrite fires only for a `NOT NULL` argument;
-/// * a non-column argument (`len(expression.ExtractColumns(f.Args[0])) > 0`
-///   arms): no access path can satisfy an order over an expression, so the
-///   view would change nothing the chooser reads;
-/// * an aggregate over a JOIN: Go's single-aggregate arm rewrites it too
-///   ("we don't need to guarantee that the child of it is a data source"),
-///   but this caller is the SINGLE-TABLE path chooser and a join's leaves
-///   are costed elsewhere, so the eliminated order never reaches them here.
-fn max_min_eliminated_access_select(
-    select: &tidb_ast::SelectStmt,
-    scope: &FromScope,
-    columns: &[(String, FieldType)],
-) -> Option<tidb_ast::SelectStmt> {
-    if !select.group_by.is_empty()
-        || select.distinct
-        || select.having.is_some()
-        || !select.order_by.is_empty()
-        || select.limit.is_some()
-        || crate::window::select_has_window(select)
-    {
-        return None;
-    }
-    let [SelectField::Expr { expr, .. }] = select.fields.fields() else {
-        return None;
-    };
-    let tidb_ast::Expr::Aggregate {
-        name,
-        distinct: false,
-        args,
-    } = expr
-    else {
-        return None;
-    };
-    let desc = if name.eq_ignore_ascii_case("max") {
-        true
-    } else if name.eq_ignore_ascii_case("min") {
-        false
-    } else {
-        return None;
-    };
-    let [argument] = args.as_slice() else {
-        return None;
-    };
-    let tidb_ast::Expr::Column(path) = argument else {
-        return None;
-    };
-    // The argument must be a column of THIS table: unqualified, or qualified
-    // by the sole table's scope name. A correlated outer column must not
-    // resolve here by name accident.
-    let column_name = match path.as_slice() {
-        [name] => name,
-        [qualifier, name] if scope.tables[0].name.eq_ignore_ascii_case(qualifier) => name,
-        _ => return None,
-    };
-    let (_, field_type) = columns
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(column_name))?;
-    // Go `eliminateMaxMin`: "Limit+Sort operators are sorted by value, but
-    // ENUM/SET field types are sorted by name."
-    if matches!(
-        field_type.code(),
-        tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
-    ) {
-        return None;
-    }
-    if !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
-        return None;
-    }
-    let mut rewritten = select.clone();
-    rewritten.order_by = vec![tidb_ast::OrderItem {
-        expr: argument.clone(),
-        desc,
-    }];
-    rewritten.limit = Some(tidb_ast::Limit {
-        offset: None,
-        count: tidb_ast::Expr::Int("1".to_owned()),
-    });
-    Some(rewritten)
-}
-
-pub(crate) fn commit_fast_path_source(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-    from_source: &mut Option<Box<dyn Executor>>,
-    mut trace: Option<&mut PlanTrace>,
-    ctx: &crate::StmtContext,
-    // Go `findBestTask`'s own `prop` when this SELECT is a child a parent
-    // asked for an ORDER of (a merge join's side, an index join's outer
-    // side): the required column sequence in this table's own offsets, or
-    // `None` for the empty property. `convertToIndexScan` /
-    // `convertToTableScan` both open with `if !prop.IsSortItemEmpty() &&
-    // !candidate.matchPropResult.Matched() { return invalidTask }` -- a path
-    // that does not walk in the required order is not a candidate AT ALL, so
-    // the ordered scan `build_from` already installed must not be replaced
-    // by a cheaper unordered one here.
-    required_order: Option<&[usize]>,
-) -> Result<AccessPathCommit, DriverError> {
-    // Go's `PlanBuilder` reads the zone off the same `sessionctx` every other
-    // decision here reads; taking it from `ctx` keeps the two from being
-    // separately supplied and separately wrong.
-    let zone = &ctx.session_zone();
-    let disable_point_get = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-    let mut index_order: Option<IndexAccessOrder> = None;
-    let mut direct_output = None;
-    let mut direct_output_offsets = None;
-    let mut cop_projection_offsets = None;
-    let mut filtered_cop_projection_offsets = None;
-    let mut consumed_where = false;
-    let mut handle_range_residual = None;
-    let mut access_residual = None;
-    let mut reader_ready = false;
-    let mut candidate = None;
-    let Some(table_ref) = sole_table_ref(&select.from) else {
-        return Ok(AccessPathCommit::default());
-    };
-    let Some(table) = sole_kv_table(&select.from, catalog, current_db) else {
-        return Ok(AccessPathCommit::default());
-    };
-    // Go's `PushedDownConds`, which is what the ranger sees. `select` stays
-    // the full `AllConds` for every residual and consumed-WHERE decision
-    // below.
-    let narrowed;
-    let (path_select, conds_narrowed) = match pushed_down_conds(select, scope, ctx) {
-        Some(filtered) => {
-            narrowed = filtered;
-            (&narrowed, true)
-        }
-        None => (select, false),
-    };
-    let table_name = table_ref
-        .name
-        .last()
-        .map(String::as_str)
-        .unwrap_or(table.name.as_str());
-    let mut table =
-        super::from::restricted_to_partitions(&table, &table_ref.partitions, table_name)?;
-    // Go's `PartitionProcessor` runs in LOGICAL optimization, so by the time
-    // `DeriveStats` asks for a histogram the `DataSource` is already the
-    // surviving partition and `ds.PhysicalTableID` names it -- that id is
-    // what `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)`
-    // is handed. Narrowing the handle here is that ordering: the pruning was
-    // applied further down, to the SOURCE only, so the statistics lookup
-    // above it still asked under the LOGICAL id. Static pruning stores a
-    // histogram per physical partition and no merged one, so the lookup
-    // missed and every pruned read was costed as `stats:pseudo` -- after
-    // `analyze table tint all columns` had computed the very histogram it
-    // wanted.
-    let pruned_partitions = pruned_partition_ids(select, &table, zone);
-    if let Some(ids) = pruned_partitions.as_ref() {
-        table.restrict_read_to_partitions(ids);
-    }
-    let table = table;
-    let statistics = catalog.table_statistics(table.stats_physical_id());
-    // Go deriveStats4DataSource derives StatsInfo once from PushedDownConds.
-    // AllConds can also contain root-only filters and must not be substituted
-    // for this estimate. Every physical candidate consumes the same value.
-    let logical_stats = crate::access_cost::data_source_statistics(
-        path_select.where_clause.as_ref(),
-        &table,
-        &scope_resolver(scope),
-        statistics.map(AsRef::as_ref),
-        ctx.default_string_match_selectivity(),
-    );
-    let mut logical_rows = Some(logical_stats.row_count());
-    // Go LogicalSelection.DeriveStats scales its child rather than running
-    // another DataSource selectivity pass, and does not retain GroupNDVs.
-    let logical_stats = if conds_narrowed {
-        logical_stats.scale(
-            tidb_planner::cost_factors::SELECTION_FACTOR,
-            tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
-        )
-            .with_group_ndvs(Vec::new())
-    } else {
-        logical_stats
-    };
-    let columns = scope.column_list();
-    // Go's `getPossibleAccessPaths`: the statement's own `USE`/`FORCE`/
-    // `IGNORE INDEX` decide which paths exist before any of them is costed.
-    // The names were already validated for every table of the `FROM`
-    // (`index_hints::validate_join_index_hints`), so this cannot be the site
-    // that raises 1176.
-    let hints = crate::index_hints::single_table_scan_hints(
-        select,
-        Some(table_ref),
-        &table,
-        current_db,
-        ctx,
-    )?;
-    let point_candidate = |rows, num_ranges| {
-        let needed = crate::driver::leaf_demand::LeafDemand::of_select(select)
-            .needed(&scope.tables[0].name, &columns);
-        let row_size = crate::access_cost::data_source_avg_row_size(
-            &table,
-            &needed,
-            statistics.map(AsRef::as_ref),
-        );
-        crate::access_cost::point_get_candidate(
-            rows,
-            row_size,
-            num_ranges,
-            ctx.optimizer_cost_env(),
-        )
-    };
-    // Go's `MaxMinEliminator` (`pkg/planner/core/rule/rule_max_min_eliminate.go`)
-    // runs in LOGICAL optimization, so by the time `findBestTask` costs this
-    // table's paths an ungrouped `MAX(col)`/`MIN(col)` has already become
-    // `Agg -> Limit 1 -> Sort col [desc] -> DataSource`, and the paths are
-    // priced under that sort property with `ExpectedCnt` 1. This tier runs
-    // the same rewrite in the executor pipeline
-    // (`super::agg_select::single_max_min_elimination` builds the
-    // TopN/Limit-over-source shape), but the path choice happens HERE, first
-    // -- so the eliminated ORDER/LIMIT is spliced into the ACCESS view alone.
-    // Only the costing questions read `path_select`'s order and limit
-    // (`costing_limit_cap`, `PushedLimit::satisfied_by`); every point-get,
-    // residual and consumed-`WHERE` decision keeps reading the statement as
-    // written, and no row cap is pushed into the executor from this view, so
-    // a fired rewrite can only change which path is committed.
-    let max_min_access = max_min_eliminated_access_select(path_select, scope, &columns);
-    let path_select = max_min_access.as_ref().unwrap_or(path_select);
-    // Go's `PredicateSimplification` plans a `TableDual rows:0` before any path
-    // is costed when the `WHERE` is provably contradictory on some column
-    // (`b = 1 AND b = 2`), which is index-independent: it reads no row whether
-    // or not `b` is indexed, and holds for a partition key over a partitioned
-    // table just the same. Committing the dual here supersedes every access
-    // path below, exactly as Go's whole-`DataSource`-to-dual replacement does.
-    if let Some(where_clause) = select.where_clause.as_ref() {
-        // Go's `EvaluateExprWithNull` (predicate pushdown over a zero-row
-        // child profile) replaces a scalar-subquery column whose subquery
-        // returned no row by NULL; a comparison against it is NULL for every
-        // row, so the WHERE admits nothing and the table plans as a Dual.
-        // The eager scalar evaluation already recorded that NULL here.
-        if null_scalar_comparison_contradiction(scope, where_clause) {
-            logical_rows = Some(
-                crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
-                    * stats_selectivity_with_default_string_match_selectivity(
-                        catalog,
-                        &table,
-                        scope,
-                        select.where_clause.as_ref(),
-                        ctx.default_string_match_selectivity(),
-                    )
-                    .unwrap_or(1.0),
-            );
-            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
-            return Ok(AccessPathCommit {
-                consumed_where: true,
-                logical_rows,
-                logical_stats: Some(logical_stats),
-                candidate: Some(contradiction_dual_candidate()),
-                ..AccessPathCommit::default()
-            });
-        }
-        // Go's `Conds2TableDual` (`expression_util.go:24`) via `AddSelection`:
-        // a predicate that constant folding has reduced to a false or NULL
-        // literal plans as a zero-row Dual, not as a Selection over the scan.
-        let resolver = ScopeResolver { scope };
-        if crate::index_range::where_is_constant_false(where_clause, &resolver)
-            || crate::index_range::where_is_unsatisfiable(&columns, where_clause, &resolver)
-        {
-            logical_rows = Some(
-                crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
-                    * stats_selectivity_with_default_string_match_selectivity(
-                        catalog,
-                        &table,
-                        scope,
-                        select.where_clause.as_ref(),
-                        ctx.default_string_match_selectivity(),
-                    )
-                    .unwrap_or(1.0),
-            );
-            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
-            return Ok(AccessPathCommit {
-                consumed_where: true,
-                logical_rows,
-                logical_stats: Some(logical_stats),
-                candidate: Some(contradiction_dual_candidate()),
-                ..AccessPathCommit::default()
-            });
-        }
-    }
-    // Go's `PartitionProcessor` prunes before any access path is costed, and
-    // so does this: an offer refused leaves the source reading every
-    // partition, which is a superset and still every row the statement
-    // admits.
-    // Go `getTableScanPenalty`'s `hasPartitionScan` reads
-    // `PlanPartInfo.PruningConds`, which the `PartitionProcessor` leaves
-    // behind whenever it had conditions to prune WITH -- exactly when
-    // `pruned_partition_ids` answers.
-    let partition_scan = pruned_partitions.is_some();
-    if let Some(ids) = pruned_partitions.as_ref() {
-        if let Some(access) = from_source
-            .as_mut()
-            .and_then(|source| source.table_access())
-        {
-            access.accept_partition_pruning(&ids);
-        }
-    }
-    // Go tries the batch point get before the single one.
-    //
-    // Go `newBatchPointGetPlan`'s partitioned gate: the plan is built only
-    // when `PartitionExpr().Expr` is a bare `*expression.Column`. Measured
-    // through gorun under dynamic pruning: `HASH(b)` and `RANGE(b)` answer
-    // `Batch_Point_Get`, while `KEY(b)` (whose partition expression is nil
-    // there and a placeholder Constant here) and `HASH(b+1)` (a scalar
-    // function) fall back to the index range path.
-    let batch = (!disable_point_get && fast_batch_partition_supported(&table))
-        .then(|| try_batch_point_get(select, &table, &columns, zone))
-        .transpose()?
-        .flatten()
-        .filter(|batch| batch.allowed_by(&hints));
-    // Go tries each point-plan family once. Keep the selected lookup,
-    // including an empty handle, instead of resolving it again after planning.
-    let point = if batch.is_none() && !disable_point_get && hints.allows_table() {
-        try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?
-    } else {
-        None
-    };
-    if let Some(batch) = batch {
-        let BatchPointLookup {
-            handles,
-            index,
-            plan_rows,
-            ..
-        } = batch;
-        let output = fast_point_output(select, scope);
-        let (handles, physical_ids, partitions) = if table.partition().is_some() {
-            let mut routed_handles = Vec::with_capacity(handles.len());
-            let mut physical_ids = Vec::with_capacity(handles.len());
-            let mut ordinals = Vec::new();
-            let routes = table.handle_partition_routes(&handles, zone, ctx);
-            for (handle, route) in handles.into_iter().zip(routes) {
-                let Some((ordinal, physical_id)) = route else {
-                    continue;
-                };
-                routed_handles.push(handle);
-                physical_ids.push(physical_id);
-                if !ordinals.contains(&ordinal) {
-                    ordinals.push(ordinal);
-                }
-            }
-            if routed_handles.is_empty() {
-                install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
-                return Ok(AccessPathCommit {
-                    consumed_where: true,
-                    logical_rows,
-                    logical_stats: Some(logical_stats),
-                    ..AccessPathCommit::default()
-                });
-            }
-            ordinals.sort_unstable();
-            let partitions = ordinals
-                .into_iter()
-                .filter_map(|ordinal| table.partition()?.definitions.get(ordinal))
-                .map(|definition| definition.name.clone())
-                .collect();
-            (routed_handles, Some(physical_ids), partitions)
-        } else {
-            (handles, None, Vec::new())
-        };
-        let output_offsets = output.as_ref().map(|output| output.offsets.clone());
-        logical_rows = Some(plan_rows as f64);
-        candidate = Some(point_candidate(plan_rows as f64, handles.len()));
-        let output_columns = output.as_ref().map_or(&columns, |output| &output.columns);
-        let meta = ExecutorMeta::new(
-            Schema::new(source_schema_columns(output_columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        );
-        let decode_context = crate::kv_table::RowDecodeContext::for_query(ctx);
-        let exec = match physical_ids {
-            Some(physical_ids) => HandleSourceExec::new_partitioned_projected_with_context(
-                meta,
-                table.clone(),
-                handles.clone(),
-                physical_ids,
-                output_offsets,
-                decode_context,
-            ),
-            None => match output_offsets {
-                Some(offsets) => HandleSourceExec::new_projected_with_context(
-                    meta,
-                    table.clone(),
-                    handles.clone(),
-                    offsets,
-                    decode_context,
-                ),
-                None => HandleSourceExec::new_with_context(
-                    meta,
-                    table.clone(),
-                    handles.clone(),
-                    decode_context,
-                ),
-            },
-        };
-        if let Some(trace) = trace.as_deref_mut() {
-            match index {
-                Some((_, index)) => trace.index_batch_point_get(
-                    source_table_name(scope, &table.name),
-                    plan_rows,
-                    &partitions,
-                    &index,
-                    ctx.static_partition_prune(),
-                    &batch_point_branch_estimates(catalog, &table, &partitions, plan_rows),
-                ),
-                None => trace.batch_point_get(
-                    source_table_name(scope, &table.name),
-                    &table,
-                    &handles,
-                    plan_rows,
-                    &partitions,
-                ),
-            }
-            // The rows are read lazily, so the count is the source's live one
-            // rather than a `Vec`'s length.
-            trace.set_scan_act_rows(exec.produced_rows());
-        }
-        direct_output = output.map(|output| output.columns);
-        *from_source = Some(Box::new(exec));
-    } else if let Some(handle) = point {
-        // A `None` handle is a WHERE that pins a handle no row can have: the
-        // plan is a point get over an empty handle list.
-        consumed_where = point_get_consumes_where(select, &table, &columns, zone);
-        let output = consumed_where
-            .then(|| fast_point_output(select, scope))
-            .flatten();
-        let exec = handle_source_exec(
-            &table,
-            handle.handle.clone().into_iter().collect(),
-            &columns,
-            output.as_ref(),
-            ctx,
-        );
-        // PointGet is a complete root task, not an absent cost model or a
-        // cop scan. Parent operators must cost this same task and must not
-        // attach a partial aggregate below a synthetic reader.
-        let rows = if handle.handle.is_some() { 1.0 } else { 0.0 };
-        logical_rows = Some(rows);
-        candidate = Some(point_candidate(rows, usize::from(handle.handle.is_some())));
-        if let Some(trace) = trace {
-            trace.point_get(
-                source_table_name(scope, &table.name),
-                &table,
-                handle.handle.as_ref(),
-                handle.index.as_ref(),
-            );
-            trace.set_scan_act_rows(exec.produced_rows());
-        }
-        direct_output = output.map(|output| output.columns);
-        *from_source = Some(Box::new(exec));
-    } else {
-        if !crate::index_hints::no_index_merge(select) {
-            if let Some(plan) = choose_index_merge_union(
-                select,
-                catalog,
-                scope,
-                &table,
-                &columns,
-                partition_scan,
-                current_db,
-            ) {
-                commit_index_merge_source(
-                    &table,
-                    scope,
-                    &columns,
-                    plan,
-                    from_source,
-                    trace.as_deref_mut(),
-                    ctx,
-                );
-                return Ok(AccessPathCommit {
-                    logical_rows,
-                    logical_stats: Some(logical_stats),
-                    ..AccessPathCommit::default()
-                });
-            }
-            if let Some(plan) = choose_index_merge_intersection(
-                select,
-                catalog,
-                scope,
-                &table,
-                &columns,
-                partition_scan,
-                current_db,
-            ) {
-                commit_index_merge_source(
-                    &table,
-                    scope,
-                    &columns,
-                    plan,
-                    from_source,
-                    trace.as_deref_mut(),
-                    ctx,
-                );
-                return Ok(AccessPathCommit {
-                    logical_rows,
-                    logical_stats: Some(logical_stats),
-                    ..AccessPathCommit::default()
-                });
-            }
-            if ctx.index_merge() {
-                let automatic = AutomaticIndexMergeContext {
-                    catalog,
-                    scope,
-                    table: &table,
-                    columns: &columns,
-                    partition_scan,
-                    hints: &hints,
-                    current_db,
-                    ordering_index_selectivity_ratio: ctx.ordering_index_selectivity_ratio(),
-                    default_string_match_selectivity: ctx.default_string_match_selectivity(),
-                };
-                if let Some(plan) = choose_automatic_index_merge_union(path_select, &automatic) {
-                    commit_index_merge_source(
-                        &table,
-                        scope,
-                        &columns,
-                        plan,
-                        from_source,
-                        trace.as_deref_mut(),
-                        ctx,
-                    );
-                    return Ok(AccessPathCommit {
-                        logical_rows,
-                        logical_stats: Some(logical_stats),
-                        ..AccessPathCommit::default()
-                    });
-                }
-            }
-        }
-        match choose_index_range_path(
-            path_select,
-            catalog,
-            scope,
-            &table,
-            &columns,
-            &hints,
-            partition_scan,
-            ctx,
-            logical_rows,
-            required_order,
-        ) {
-            // A chosen table path becomes a root point reader when every
-            // range pins a complete key. Otherwise offer its ranges to the
-            // existing scan and rename only after it accepts them.
-            Some(ChosenPath::HandleRange(built, estimate, planner_candidate, source_rows)) => {
-                let ranges = built.ranges;
-                logical_rows = Some(source_rows);
-                candidate = Some(planner_candidate);
-                let point_handles = point_handles_for_ranges(
-                    &table, &ranges, &table_ref.partitions, ctx,
-                )?;
-                let accepted = point_handles.is_some() || from_source
-                    .as_mut()
-                    .and_then(|source| source.table_access())
-                    .is_some_and(|access| access.accept_handle_ranges(&ranges));
-                if accepted {
-                    // Go convertToPointGet/convertToBatchPointGet cap access
-                    // rows by the number of point ranges and publish a root
-                    // task. Its executor and parent costing must agree: no
-                    // coprocessor partial aggregate can attach to this read.
-                    let converted_to_point_get = point_handles.is_some();
-                    if let Some(handles) = &point_handles {
-                        let cap = handles.len() as f64;
-                        logical_rows = Some(source_rows.min(cap));
-                        candidate = Some(point_candidate(estimate.rows.min(cap), handles.len()));
-                    } else if let Some(access) = from_source
-                        .as_mut()
-                        .and_then(|source| source.table_access())
-                    {
-                        access.accept_scan_estimate(estimate.rows);
-                    }
-                    // Go returns a PhysicalTableDual as soon as the chosen
-                    // path has no ranges. No residual predicate survives
-                    // above a source that is already known to return no row.
-                    // Never once the conditions were narrowed: the ones
-                    // `PushDownExprs` refused are not in `path_select` at
-                    // all, so nothing the ranger did can have accounted for
-                    // them and they MUST survive as the `Selection` above.
-                    // Go's `len(path.Ranges) == 0` short-circuit reads an
-                    // empty range set as "the predicate is contradictory";
-                    // here the emptiness can instead mean "there was no
-                    // predicate left to range", and dropping the filter on
-                    // that reading answered every row.
-                    consumed_where = !conds_narrowed
-                        && (ranges.is_empty()
-                            || (built.access_count > 0
-                                && built.residual.is_empty()
-                                && select.where_clause.as_ref().is_some_and(predicate_is_exact_range)));
-                    // Go carries TableFilters alongside the chosen ranges. Root-
-                    // only conditions excluded before ranging still belong to
-                    // the original WHERE, not this path's residual slice.
-                    if !conds_narrowed {
-                        handle_range_residual = join_predicates(&built.residual);
-                    }
-                    index_order = handle_range_order(&table, &columns, &ranges);
-                    if let Some(handles) = point_handles {
-                        // Install the root reader itself. Retain the full
-                        // schema for residual Selection/Projection above it.
-                        let exec = handle_source_exec(&table, handles.clone(), &columns, None, ctx);
-                        if let Some(trace) = trace.as_deref_mut() {
-                            if handles.len() == 1 {
-                                trace.point_get(
-                                    source_table_name(scope, &table.name), &table,
-                                    handles.first(), None,
-                                );
-                            } else {
-                                let partitions = table.handle_partition_names(&handles, zone, ctx);
-                                trace.batch_point_get(
-                                    source_table_name(scope, &table.name), &table, &handles,
-                                    handles.len(), &partitions,
-                                );
-                            }
-                            trace.set_scan_act_rows(exec.produced_rows());
-                        }
-                        *from_source = Some(Box::new(exec));
-                    } else if let Some(trace) = trace.as_deref_mut() {
-                        if ranges.is_empty() {
-                            trace.empty_range_table_dual();
-                        } else {
-                            trace.table_range_scan(
-                                source_table_name(scope, &table.name), &ranges, estimate,
-                            );
-                        }
-                    }
-                    if !converted_to_point_get && consumed_where && range_can_return_direct(select) {
-                        if let Some(output) = fast_point_output(select, scope) {
-                            direct_output_offsets = Some(output.offsets);
-                            direct_output = Some(output.columns);
-                        }
-                    } else if !converted_to_point_get && consumed_where {
-                        cop_projection_offsets =
-                            range_order_projection(select, scope, catalog, current_db);
-                    } else if !converted_to_point_get {
-                        filtered_cop_projection_offsets =
-                            range_order_projection(select, scope, catalog, current_db);
-                    }
-                }
-            }
-            Some(ChosenPath::Index(
-                index_id,
-                ranges,
-                estimate,
-                covering,
-                planner_candidate,
-                source_rows,
-            )) => {
-                logical_rows = Some(source_rows);
-                candidate = Some(planner_candidate);
-                // Go's empty-range task is the whole DataSource result, so it
-                // consumes the WHERE even when the ordinary index-detach
-                // check would leave that predicate as a residual.
-                // See the handle-range arm: an empty range set after
-                // narrowing is not a contradiction.
-                consumed_where = !conds_narrowed
-                    && (ranges.is_empty()
-                        || index_path_consumes_where(select, &table, index_id, zone));
-                reader_ready = covering && consumed_where;
-                let index_residual = crate::access_cost::index_residual_filters_for_path(
-                    &table,
-                    index_id,
-                    select.where_clause.as_ref(),
-                    &ScopeResolver { scope },
-                );
-                access_residual = index_residual.iter().cloned().reduce(|left, right| {
-                    tidb_ast::Expr::Binary(
-                        tidb_ast::BinaryOp::LogicAnd,
-                        Box::new(left),
-                        Box::new(right),
-                    )
-                });
-                // Go's point plans exist ONLY while every WHERE conjunct is a
-                // `column = constant` pair over the chosen key
-                // (`point_get_plan.go` getNameValuePairs: one non-pair
-                // conjunct makes `pairs == nil` and tryPointGetPlan bails).
-                // A leftover conjunct therefore prints the ordinary shape --
-                // `IndexRangeScan` inside an `IndexLookUp`, with the residual
-                // as its Probe-side `Selection` -- never a `Point_Get` or
-                // `Batch_Point_Get` carrying a filter.
-                let index_point_allowed = index_residual.is_empty();
-                commit_index_range_source(
-                    &table,
-                    catalog,
-                    scope,
-                    &columns,
-                    index_id,
-                    ranges,
-                    estimate,
-                    covering,
-                    index_point_allowed,
-                    hints.lookup_pushdown_hinted(index_id),
-                    from_source,
-                    trace.as_deref_mut(),
-                    &mut index_order,
-                    ctx,
-                );
-            }
-            Some(ChosenPath::FullTable(planner_candidate, source_rows)) => {
-                logical_rows = Some(source_rows);
-                // The full scan source is already installed. Keep the task
-                // receipt so a physical parent can still cost this child.
-                candidate = Some(planner_candidate);
-                // Go `matchProperty`: a scan over the clustered handle walks
-                // in handle order with no narrowing at all, so `ORDER BY`
-                // the handle prefix is discharged by the scan itself and a
-                // `LIMIT` becomes a pushed Limit rather than a TopN. One
-                // unbounded range is trivially a single range.
-                index_order = full_table_handle_order(&table, &columns);
-            }
-            None => {}
-        }
-    }
-    let order_satisfied = !select.order_by.is_empty()
-        && index_order
-            .as_ref()
-            .is_some_and(|order| order_is_index_order(select, order, &ScopeResolver { scope }));
-    Ok(AccessPathCommit {
-        index_order,
-        candidate,
-        direct_output,
-        direct_output_offsets,
-        cop_projection_offsets,
-        filtered_cop_projection_offsets,
-        consumed_where,
-        handle_range_residual,
-        access_residual,
-        logical_rows,
-        logical_stats: Some(logical_stats),
-        reader_ready,
-        order_satisfied,
-    })
-}
-
-struct IndexMergePlan {
-    kind: IndexMergeKind,
-    partials: Vec<(i64, Vec<IndexRange>)>,
-}
-
-fn choose_index_merge_union(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    scope: &FromScope,
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    partition_scan: bool,
-    current_db: &str,
-) -> Option<IndexMergePlan> {
-    if table.partition().is_some() {
-        return None;
-    }
-    let index_ids = crate::index_hints::single_table_index_merge_indexes(
-        select,
-        single_table_ref(&select.from),
-        table,
-        current_db,
-    );
-    if index_ids.len() < 2 {
-        return None;
-    }
-    let where_clause = select.where_clause.as_ref()?;
-    let mut branches = Vec::new();
-    collect_index_merge_disjuncts(where_clause, &mut branches);
-    if branches.len() < 2 {
-        return None;
-    }
-    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
-    let needed = demand.needed(&scope.tables[0].name, columns);
-    let resolver = ScopeResolver { scope };
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let stats = stats.as_ref().map(AsRef::as_ref);
-    let hints = crate::index_hints::AvailablePaths::index_merge_only(index_ids);
-    let mut partials = Vec::with_capacity(branches.len());
-    for branch in branches {
-        let candidates = crate::access_cost::enumerate_paths(
-            table,
-            columns,
-            Some(branch),
-            &needed,
-            &resolver,
-            None,
-            stats,
-            &hints,
-            false,
-            partition_scan,
-            true,
-            // A branch enumeration builds one IndexMerge PARTIAL, which Go's
-            // heuristic never runs through -- see `enumerate_paths`.
-            false,
-            None,
-            None,
-        )
-        .into_iter()
-        .filter(|candidate| !candidate.metrics.access_columns.is_empty())
-        .collect();
-        let path = crate::access_cost::choose_access_path(candidates, stats, false, false)?;
-        let (index_id, ranges) = path.index?;
-        partials.push((index_id, ranges));
-    }
-    Some(IndexMergePlan {
-        kind: IndexMergeKind::Union,
-        partials,
-    })
-}
-
-fn choose_index_merge_intersection(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    scope: &FromScope,
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    partition_scan: bool,
-    current_db: &str,
-) -> Option<IndexMergePlan> {
-    if table.partition().is_some() {
-        return None;
-    }
-    let index_ids = crate::index_hints::single_table_index_merge_indexes(
-        select,
-        single_table_ref(&select.from),
-        table,
-        current_db,
-    );
-    if index_ids.len() < 2 {
-        return None;
-    }
-    let where_clause = select.where_clause.as_ref()?;
-    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
-    let needed = demand.needed(&scope.tables[0].name, columns);
-    let resolver = ScopeResolver { scope };
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let stats = stats.as_ref().map(AsRef::as_ref);
-    let mut partials = Vec::new();
-    for index_id in index_ids {
-        let hints = crate::index_hints::AvailablePaths::index_merge_only(vec![index_id]);
-        let candidates = crate::access_cost::enumerate_paths(
-            table,
-            columns,
-            Some(where_clause),
-            &needed,
-            &resolver,
-            None,
-            stats,
-            &hints,
-            false,
-            partition_scan,
-            true,
-            // An IndexMerge partial; the heuristic never runs through one.
-            false,
-            None,
-            None,
-        )
-        .into_iter()
-        .filter(|candidate| !candidate.metrics.access_columns.is_empty())
-        .collect();
-        let Some(path) = crate::access_cost::choose_access_path(candidates, stats, false, false)
-        else {
-            continue;
-        };
-        let Some((index_id, ranges)) = path.index else {
-            continue;
-        };
-        partials.push((index_id, ranges));
-    }
-    (partials.len() >= 2).then_some(IndexMergePlan {
-        kind: IndexMergeKind::Intersection,
-        partials,
-    })
-}
-
-/// Inputs shared by automatic non-MV OR IndexMerge path generation.
-struct AutomaticIndexMergeContext<'a> {
-    catalog: &'a Catalog,
-    scope: &'a FromScope,
-    table: &'a KvTable,
-    columns: &'a [(String, FieldType)],
-    partition_scan: bool,
-    hints: &'a crate::index_hints::AvailablePaths,
-    current_db: &'a str,
-    ordering_index_selectivity_ratio: f64,
-    default_string_match_selectivity: f64,
-}
-
-fn choose_automatic_index_merge_union(
-    select: &tidb_ast::SelectStmt,
-    input: &AutomaticIndexMergeContext<'_>,
-) -> Option<IndexMergePlan> {
-    // Each partial must be able to return the integer row handle without a
-    // table lookup. Common handles need a distinct lowering and are declined.
-    let handle = input.table.pk_handle_offset()?;
-    if input.table.partition().is_some() {
-        return None;
-    }
-    if crate::index_hints::has_single_table_index_merge_hint(
-        select,
-        single_table_ref(&select.from),
-        input.current_db,
-    ) {
-        return None;
-    }
-    let where_clause = select.where_clause.as_ref()?;
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    let dnf = conjuncts
-        .iter()
-        .enumerate()
-        .find_map(|(index, candidate)| {
-            let mut branches = Vec::new();
-            collect_index_merge_disjuncts(candidate, &mut branches);
-            (branches.len() >= 2).then_some((index, branches))
-        })?;
-    if conjuncts.iter().enumerate().any(|(index, candidate)| {
-        index != dnf.0 && {
-            let mut branches = Vec::new();
-            collect_index_merge_disjuncts(candidate, &mut branches);
-            branches.len() >= 2
-        }
-    }) {
-        return None;
-    }
-    let common = conjuncts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, condition)| (index != dnf.0).then_some(*condition))
-        .collect::<Vec<_>>();
-    let resolver = ScopeResolver { scope: input.scope };
-    let stats = input
-        .catalog
-        .table_statistics(input.table.stats_physical_id());
-    let stats = stats.as_ref().map(AsRef::as_ref);
-    let branches = dnf
-        .1
-        .into_iter()
-        .map(|branch| combine_index_merge_conjuncts(&common, branch))
-        .collect::<Vec<_>>();
-    let mut paths = Vec::with_capacity(branches.len());
-    for branch in &branches {
-        let candidates = crate::access_cost::enumerate_paths(
-            input.table,
-            input.columns,
-            Some(branch),
-            &[handle],
-            &resolver,
-            None,
-            stats,
-            input.hints,
-            false,
-            input.partition_scan,
-            input.hints.has_forced_path(),
-            // An IndexMerge partial; the heuristic never runs through one.
-            false,
-            None,
-            None,
-        )
-        .into_iter()
-        .filter(|candidate| {
-            candidate.path.index.is_some()
-                && !candidate.metrics.access_columns.is_empty()
-                && candidate.path.index.as_ref().is_some_and(|(index_id, _)| {
-                    crate::access_cost::index_is_covering(input.table, *index_id, &[handle])
-                })
-        })
-        .collect();
-        paths.push(crate::access_cost::choose_access_path(
-            candidates, stats, false, false,
-        )?);
-    }
-    let index_ids = paths
-        .iter()
-        .filter_map(|path| path.index.as_ref().map(|(index_id, _)| *index_id))
-        .collect::<std::collections::BTreeSet<_>>();
-    if index_ids.len() < 2 {
-        return None;
-    }
-    let (regular, needed) = best_single_table_access_path(
-        select,
-        input.catalog,
-        input.scope,
-        input.table,
-        input.columns,
-        input.hints,
-        input.partition_scan,
-        input.ordering_index_selectivity_ratio,
-        None,
-        None,
-        None,
-    )?;
-    let rows = crate::access_cost::realtime_row_count(stats)
-        * crate::access_cost::selectivity_with_default_string_match_selectivity(
-            where_clause,
-            input.table,
-            &resolver,
-            stats,
-            input.default_string_match_selectivity,
-        );
-    if crate::access_cost::index_merge_cost(input.table, &needed, stats, rows, &paths)
-        >= regular.cost
-    {
-        return None;
-    }
-    let partials = paths.into_iter().filter_map(|path| path.index).collect();
-    Some(IndexMergePlan {
-        kind: IndexMergeKind::Union,
-        partials,
-    })
-}
-
-fn collect_index_merge_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => collect_index_merge_disjuncts(inner, out),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, left, right) => {
-            collect_index_merge_disjuncts(left, out);
-            collect_index_merge_disjuncts(right, out);
-        }
-        other => out.push(other),
-    }
-}
-
-fn combine_index_merge_conjuncts(
-    common: &[&tidb_ast::Expr],
-    branch: &tidb_ast::Expr,
-) -> tidb_ast::Expr {
-    common.iter().rev().fold(branch.clone(), |right, left| {
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new((*left).clone()),
-            Box::new(right),
-        )
-    })
-}
-
-fn commit_index_merge_source(
-    table: &KvTable,
-    scope: &FromScope,
-    columns: &[(String, FieldType)],
-    plan: IndexMergePlan,
-    from_source: &mut Option<Box<dyn Executor>>,
-    trace: Option<&mut PlanTrace>,
-    ctx: &crate::StmtContext,
-) {
-    let exec = IndexMergeSourceExec::new_with_context(
-        ExecutorMeta::new(
-            Schema::new(source_schema_columns(columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        ),
-        table.clone(),
-        plan.kind,
-        plan.partials.clone(),
-        crate::kv_table::RowDecodeContext::for_query(ctx),
-    );
-    if let Some(trace) = trace {
-        let indexes = plan
-            .partials
-            .iter()
-            .filter_map(|(id, _)| table.indexes().iter().find(|index| index.id == *id))
-            .map(|index| index.name.clone())
-            .collect::<Vec<_>>();
-        trace.index_merge(
-            source_table_name(scope, &table.name),
-            &indexes,
-            matches!(plan.kind, IndexMergeKind::Intersection),
-        );
-        trace.set_scan_act_rows(exec.produced_rows());
-    }
-    *from_source = Some(Box::new(exec));
-}
-
-fn join_predicates(predicates: &[&tidb_ast::Expr]) -> Option<tidb_ast::Expr> {
-    predicates.iter().cloned().cloned().reduce(|left, right| {
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new(left),
-            Box::new(right),
-        )
-    })
-}
-
-/// Builds the narrowed handle source. A simple select list is part of Go's
-/// point plan itself; every other field shape keeps the ordinary all-column
-/// source so the driver can build its real Selection and Projection above it.
-fn handle_source_exec(
-    table: &KvTable,
-    handles: Vec<TableHandle>,
-    columns: &[(String, FieldType)],
-    output: Option<&FastPointOutput>,
-    ctx: &crate::StmtContext,
-) -> HandleSourceExec {
-    // Go's extra handle column reports the record HANDLE, and nothing in the
-    // decoded row fills it, so a schema that names `_tidb_rowid` has a slot
-    // only the source can write. Both arms need it: the projected one's
-    // offsets are into the same source row, and one of them may BE the slot.
-    let extra_handle = crate::access_path::extra_handle_slot(columns);
-    match output {
-        Some(output) => HandleSourceExec::new_projected_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&output.columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles,
-            output.offsets.clone(),
-            crate::kv_table::RowDecodeContext::for_query(ctx),
-        )
-        .reporting_extra_handle_at(extra_handle),
-        None => HandleSourceExec::new_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles,
-            crate::kv_table::RowDecodeContext::for_query(ctx),
-        )
-        .reporting_extra_handle_at(extra_handle),
-    }
-}
-
-/// Go `buildSchemaFromFields` for a point plan: only source columns and
-/// wildcards can be owned by the lookup. Expressions decline the complete
-/// fast plan and leave the normal projection pipeline intact.
 fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
     let resolver = ScopeResolver { scope };
     let mut offsets = Vec::new();
@@ -2630,142 +1975,6 @@ fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option
     Some(FastPointOutput { offsets, columns })
 }
 
-/// A plain column projection over an exact range can be returned directly by
-/// the coprocessor read. Every clause that needs another root operator keeps
-/// the ordinary pipeline for that operator to be built in the right place.
-fn range_can_return_direct(select: &tidb_ast::SelectStmt) -> bool {
-    !select.distinct
-        && select.lock.is_none()
-        && select.group_by.is_empty()
-        && select.having.is_none()
-        && select.order_by.is_empty()
-        && select.limit.is_none()
-        && !crate::window::select_has_window(select)
-}
-
-/// The ordered-range shape whose only root work is sorting the same simple
-/// columns the statement returns. The source can therefore emit exactly the
-/// projected row from the cop task, while Sort remains above TableReader.
-fn range_order_projection(
-    select: &tidb_ast::SelectStmt,
-    scope: &FromScope,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<Vec<usize>> {
-    if select.distinct
-        || !select.group_by.is_empty()
-        || select.having.is_some()
-        || select.order_by.is_empty()
-        || select.limit.is_some()
-        || crate::window::select_has_window(select)
-    {
-        return None;
-    }
-    let output = fast_point_output(select, scope)?;
-    let resolver = ScopeResolver { scope };
-    for item in &select.order_by {
-        let tidb_ast::Expr::Column(path) = &item.expr else {
-            return None;
-        };
-        let (offset, _, _) = resolver.resolve(path)?;
-        if !output.offsets.contains(&offset) {
-            return None;
-        }
-    }
-    // SelectLock still consumes the physical identity after this projection.
-    // Preserve the SQL output prefix so the existing root projection can
-    // trim only the extra identity columns; ordinary reads stay unchanged.
-    let mut offsets = output.offsets;
-    if select.lock.as_ref().is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update) {
-        let mut locking = super::leaf_demand::LeafDemand::default();
-        locking.require_lock_handles(select, catalog, current_db);
-        for offset in locking.needed_scope(scope) {
-            if !offsets.contains(&offset) {
-                offsets.push(offset);
-            }
-        }
-    }
-    Some(offsets)
-}
-
-fn index_path_consumes_where(
-    select: &tidb_ast::SelectStmt,
-    table: &KvTable,
-    index_id: i64,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    let Some(where_clause) = select.where_clause.as_ref() else {
-        return false;
-    };
-    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
-        return false;
-    };
-    // A prefix range is a superset even when the detacher consumed the
-    // written condition; the whole value must still be checked above it.
-    if index.has_prefix() {
-        return false;
-    }
-    let range_columns: Vec<crate::index_range::RangeColumn> = index
-        .column_offsets
-        .iter()
-        .filter_map(|offset| {
-            let column = table.columns.get(*offset)?;
-            Some(crate::index_range::RangeColumn::whole(
-                column.name.clone(),
-                column.field_type.clone(),
-            ))
-        })
-        .collect();
-    if range_columns.len() != index.column_offsets.len() {
-        return false;
-    }
-    crate::index_range::detach_cond_and_build_range_for_index(
-        &range_columns, where_clause, &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-    )
-        .is_some_and(|built| {
-            predicate_is_exact_range(where_clause)
-                && built.access_count > 0
-                && built.residual.is_empty()
-        })
-}
-
-/// Whether a ranger-owned predicate describes exactly the rows in its ranges.
-///
-/// The ranger may report no residual for a lossy bound such as `LIKE 'abc%'.`
-/// That means the expression helped construct the access range, not that the
-/// range alone proves the predicate. Keep this proof deliberately closed over
-/// exact comparison shapes so every approximation retains its Selection.
-fn predicate_is_exact_range(predicate: &tidb_ast::Expr) -> bool {
-    match predicate {
-        tidb_ast::Expr::Paren(inner) => predicate_is_exact_range(inner),
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr,
-            left,
-            right,
-        ) => predicate_is_exact_range(left) && predicate_is_exact_range(right),
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::Eq
-            | tidb_ast::BinaryOp::NullEq
-            | tidb_ast::BinaryOp::Ge
-            | tidb_ast::BinaryOp::Gt
-            | tidb_ast::BinaryOp::Le
-            | tidb_ast::BinaryOp::Lt,
-            ..,
-        )
-        | tidb_ast::Expr::In { .. }
-        | tidb_ast::Expr::Between { .. }
-        | tidb_ast::Expr::Is {
-            target: tidb_ast::IsTarget::Null,
-            ..
-        } => true,
-        _ => false,
-    }
-}
-
-/// Whether every equality in a single-point `WHERE` is one of the key parts
-/// that produced the handle. `try_point_get` may also be used as a narrowed
-/// source when a common/unique key is pinned alongside an extra predicate;
-/// that shape must retain its Selection above the source.
 fn point_get_consumes_where(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
@@ -2822,7 +2031,7 @@ pub(crate) fn point_get_predicate_is_consumed(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         return true;
     }
@@ -2844,2357 +2053,6 @@ pub(crate) fn point_get_predicate_is_consumed(
 /// An unresolvable `PARTITION (p)` name answers the FULL list rather than
 /// failing here: the read has already raised 1735 for it, and this is only
 /// ever asked for a plan that got built.
-pub(crate) fn surviving_partitions(
-    select: &tidb_ast::SelectStmt,
-    table_ref: Option<&tidb_ast::TableRef>,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<(String, i64)> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    let selected = table_ref
-        .map(|table_ref| table_ref.partitions.as_slice())
-        .filter(|names| !names.is_empty())
-        .and_then(|names| {
-            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
-        });
-    let pruned = pruned_partition_ids(select, table, zone);
-    partition
-        .definitions
-        .iter()
-        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .filter(|def| pruned.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .map(|def| (def.name.clone(), def.id))
-        .collect()
-}
-
-/// The partitions ONE LEAF of a multi-table `FROM` reads, named as declared
-/// and in definition order.
-///
-/// Go's `PartitionProcessor.rewriteDataSource` walks the WHOLE logical plan
-/// and divides every `DataSource` it finds, so a partitioned table inside a
-/// join is fanned out exactly as a single-table `SELECT`'s is -- captured
-/// over `PARTITION BY LIST (ltype)` with a predicate on a non-partitioning
-/// column, where TiDB prints
-/// `TableFullScan table:tx2, partition:p1` and `... partition:p2` under a
-/// `PartitionUnion(Probe)`. Recognising only the single-table shape is what
-/// printed one partition-less `TableFullScan table:tx2` there.
-///
-/// This is [`surviving_partitions`] MINUS the `WHERE` narrowing: a join
-/// leaf's read is restricted by its `PARTITION (p, ...)` list alone
-/// (`restricted_to_partitions` at the leaf build site), so the list named
-/// here is exactly the set the leaf's executor walks. Go additionally prunes
-/// the leaf by its own pushed-down conditions; doing that here would have to
-/// narrow the leaf's READ in the same breath, which the index and lookup
-/// arms do not yet route through one restriction point. Naming more
-/// partitions than Go is a plan that over-describes the read, never one that
-/// reads too few rows.
-pub(crate) fn leaf_read_partitions(
-    table: &KvTable,
-    named_partitions: &[String],
-) -> Vec<(String, i64)> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    let selected = Some(named_partitions)
-        .filter(|names| !names.is_empty())
-        .and_then(|names| {
-            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
-        });
-    partition
-        .definitions
-        .iter()
-        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
-        .map(|def| (def.name.clone(), def.id))
-        .collect()
-}
-
-/// The estimate each surviving partition's own `DataSource` carries, in the
-/// order [`surviving_partitions`] lists them.
-///
-/// Go reads it from that partition's `PhysicalTableID`
-/// (`stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)`),
-/// which under static pruning is the only id `ANALYZE` ever stored a
-/// histogram under.
-pub(crate) fn surviving_partition_estimates(
-    catalog: &Catalog,
-    partitions: &[(String, i64)],
-) -> Vec<crate::access_cost::ScanEstimate> {
-    partitions
-        .iter()
-        .map(|(_, id)| {
-            let stats = catalog.table_statistics(*id);
-            crate::access_cost::ScanEstimate {
-                rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
-                pseudo: stats.is_none_or(|stats| stats.pseudo),
-            }
-        })
-        .collect()
-}
-
-/// Whether `expr` names a scalar-subquery plan column whose eager
-/// evaluation recorded a NULL (Go's `EvaluateExprWithNull` replacement).
-fn null_scalar_column(
-    scope: &super::from::FromScope,
-    expr: &tidb_ast::Expr,
-) -> bool {
-    let tidb_ast::Expr::Column(path) = expr else {
-        return false;
-    };
-    if path.first().map(String::as_str) != Some(super::from::SCALAR_QUERY_SCOPE) {
-        return false;
-    }
-    let Some(name) = path.get(1).map(String::as_str) else {
-        return false;
-    };
-    scope
-        .plan_columns
-        .iter()
-        .any(|column| column.name == name && column.value.as_ref().is_some_and(Datum::is_null))
-}
-
-/// Whether any comparison conjunct compares a column against an eagerly
-/// evaluated scalar-subquery column whose value is NULL. Such a comparison is
-/// NULL for every row -- never true -- so the WHERE admits nothing.
-fn null_scalar_comparison_contradiction(
-    scope: &super::from::FromScope,
-    where_clause: &tidb_ast::Expr,
-) -> bool {
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    conjuncts.iter().any(|conjunct| {
-        let tidb_ast::Expr::Binary(op, left, right) = conjunct else {
-            return false;
-        };
-        matches!(
-            op,
-            tidb_ast::BinaryOp::Gt
-                | tidb_ast::BinaryOp::Ge
-                | tidb_ast::BinaryOp::Lt
-                | tidb_ast::BinaryOp::Le
-                | tidb_ast::BinaryOp::Eq
-                | tidb_ast::BinaryOp::Ne
-                | tidb_ast::BinaryOp::NullEq
-        ) && [left.as_ref(), right.as_ref()]
-            .into_iter()
-            .any(|side| null_scalar_column(scope, side))
-    })
-}
-
-/// The physical task a contradictory `WHERE` becomes.
-///
-/// Go's `PhysicalTableDual` has no children and no `GetPlanCostVer2` of its
-/// own, so it falls to `BasePhysicalPlan.GetPlanCostVer2`
-/// (`base_physical_plan.go:180`), whose childless branch is
-/// `NewZeroCostVer2` -- a real operator that costs nothing and produces no
-/// rows. Reporting it as an ABSENT task instead would leave any parent that
-/// prices its children (a `UNION ALL`, a join) unable to cost the side at
-/// all, which is how a dual branch silently withdrew a union from index-join
-/// costing.
-fn contradiction_dual_candidate() -> tidb_planner::candidate_cost::Candidate {
-    tidb_planner::candidate_cost::Candidate::Fixed {
-        rows: 0.0,
-        row_size: 0.0,
-        cost: 0.0,
-        num_ranges: 0,
-    }
-}
-
-/// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and
-/// records the `TableDual rows:0` node in place of the scan `build_from` traced.
-///
-/// The `WHERE` stays in the pipeline above (as every fast path leaves it), so
-/// the `Selection` over this source is fed no rows and produces none -- the
-/// same answer the full scan gave, reached without reading the table.
-fn install_contradiction_dual(
-    columns: &[(String, FieldType)],
-    from_source: &mut Option<Box<dyn Executor>>,
-    trace: Option<&mut PlanTrace>,
-) {
-    let exec = crate::table_dual::TableDualExec::new(
-        ExecutorMeta::new(
-            Schema::new(source_schema_columns(columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        ),
-        0,
-    );
-    if let Some(trace) = trace {
-        trace.empty_range_table_dual();
-    }
-    *from_source = Some(Box::new(exec));
-}
-
-/// The clustered integer handle a single-point table range names, when the
-/// range list is exactly one non-null point -- Go's `IsPointNonNullable` over
-/// an `IsIntHandlePath` in `isPointGetPath`.
-///
-/// `None` for anything else: several ranges, an open bound, a NULL endpoint, or
-/// a non-integer bound. Callers must separately prove this range belongs to
-/// an integer-handle table: common-handle prefix ranges can have the same
-/// one-datum encoding without naming a complete row key.
-pub(crate) fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> {
-    let [range] = ranges else {
-        return None;
-    };
-    if range.low_exclusive || range.high_exclusive {
-        return None;
-    }
-    match (range.low.as_slice(), range.high.as_slice()) {
-        ([Datum::Int(low)], [Datum::Int(high)]) if low == high => Some(TableHandle::Int(*low)),
-        ([Datum::UInt(low)], [Datum::UInt(high)]) if low == high => {
-            Some(TableHandle::Int(*low as i64))
-        }
-        _ => None,
-    }
-}
-
-/// Go findBestTask's range-to-point eligibility, shared by reads and writes.
-/// The ranger already converted common-handle endpoints into index sort keys;
-/// encode those endpoints exactly as the table range reader does, without
-/// applying the column collation a second time.
-fn point_handles_for_ranges(
-    table: &KvTable,
-    ranges: &[IndexRange],
-    named_partitions: &[String],
-    ctx: &crate::StmtContext,
-) -> Result<Option<Vec<TableHandle>>, DriverError> {
-    if !table.all_columns_public() || ranges.is_empty() || ctx.optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-    {
-        return Ok(None);
-    }
-    let common = table.common_handle_offsets();
-    if table.partition().is_some() {
-        if ranges.len() > 1 && (!ctx.static_partition_prune() || !hash_or_key_partition_column(table)) {
-            return Ok(None);
-        }
-        if common.is_empty() && table.pk_handle_offset().is_none() && named_partitions.len() != 1 {
-            return Ok(None);
-        }
-    }
-    if !common.is_empty() {
-        let Some(primary) = crate::handle_range::clustered_primary_metadata(table) else {
-            return Ok(None);
-        };
-        if !primary.unique || primary.has_prefix() {
-            return Ok(None);
-        }
-    }
-    let key_width = common.len().max(1);
-    if ranges.iter().any(|range| range.low.len() != key_width || !range.is_point(false)) {
-        return Ok(None);
-    }
-    let mut handles = Vec::with_capacity(ranges.len());
-    for range in ranges {
-        let handle = if common.is_empty() {
-            let Some(handle) = single_point_handle(std::slice::from_ref(range)) else {
-                return Ok(None);
-            };
-            handle
-        } else {
-            let encoded = tidb_codec::Encoder::new(table.use_new_collation())
-                .encode_key_in_timezone(&ctx.session_zone(), &range.low)
-                .map_err(|error| DriverError::Parse(format!("common handle encode failed: {error:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|error| DriverError::Parse(format!("common handle build failed: {error:?}")))?;
-            TableHandle::Common(handle.encoded().to_vec())
-        };
-        handles.push(handle);
-    }
-    Ok(Some(handles))
-}
-
-/// Installs the streaming index-range source for a committed index path, and
-/// records the node `EXPLAIN` prints for it.
-#[allow(clippy::too_many_arguments)]
-fn commit_index_range_source(
-    table: &KvTable,
-    // For the per-partition statistics a fanned-out batch point get is
-    // estimated from; the scan estimate itself arrives precomputed.
-    catalog: &Catalog,
-    scope: &FromScope,
-    columns: &[(String, FieldType)],
-    index_id: i64,
-    ranges: Vec<IndexRange>,
-    estimate: crate::access_cost::ScanEstimate,
-    // Go's `path.IsSingleScan`; see [`ChosenPath::Index`].
-    covering: bool,
-    // Whether the WHERE left no conjunct unconsumed by this index's ranges,
-    // which is what gates Go's fast point shapes.
-    index_point_allowed: bool,
-    // Whether an `INDEX_LOOKUP_PUSHDOWN` hint elected this index's lookup
-    // for Go's `LocalIndexLookUp` execution (`AvailablePaths::
-    // lookup_pushdown_hinted`). Meaningless for a covering path, which
-    // builds no handle batch to push down.
-    lookup_pushdown: bool,
-    from_source: &mut Option<Box<dyn Executor>>,
-    trace: Option<&mut PlanTrace>,
-    index_order: &mut Option<IndexAccessOrder>,
-    ctx: &crate::StmtContext,
-) {
-    let mut exec = IndexRangeSourceExec::new_with_statement(
-        ExecutorMeta::new(
-            Schema::new(source_schema_columns(columns)),
-            0,
-            INIT_CAP,
-            MAX_CHUNK_SIZE,
-        ),
-        table.clone(),
-        index_id,
-        ranges.clone(),
-        crate::kv_table::RowDecodeContext::for_query(ctx),
-        crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
-    );
-    // The schema above may already be NARROWER than the table (the leaf
-    // demand prunes before the access path replaces the source), so the
-    // reader is told which stored column each slot is rather than assuming
-    // the first n. `_tidb_rowid` has no stored column at all -- it is the
-    // record HANDLE, which this reader already holds for every row it looks
-    // up -- so it is named separately.
-    let handle_slot = crate::access_path::extra_handle_slot(columns);
-    if let Some(slot) = handle_slot {
-        exec.read_extra_handle(slot);
-    }
-    let stored = handle_slot.map_or(columns, |slot| &columns[..slot]);
-    if let Some(offsets) = crate::access_path::stored_column_offsets(table, stored) {
-        exec.read_table_columns(offsets);
-    }
-    crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);
-    if covering {
-        exec.mark_covering();
-    }
-    // A covering path is Go's `PhysicalIndexReader`: the index answers on its
-    // own, no handle batch is ever built, and the rows leave in INDEX order.
-    // The remote TiKV path now emits the projected index row directly; local
-    // storage retains its byte-level fallback. The difference still has to be
-    // declared here so the executor can preserve the source's index order.
-    //
-    // A DIRTY table reaches the same answer by the other door: Go's
-    // `tableHasDirtyContent` (`pkg/planner/core/logical_plan_builder.go:5316`)
-    // puts a `UnionScanExec` above the reader, and its `compare()` orders on
-    // the index's own columns before the handle -- so a double read inside a
-    // transaction that has written this table answers in index order too.
-    if covering || table.has_dirty_content() {
-        exec.answer_in_index_order();
-    }
-    if lookup_pushdown && !covering {
-        // Go plans a `LocalIndexLookUp` for the hinted index and its
-        // executor truncates a pushed LIMIT per partition AFTER the handle
-        // sort, where the plain lookup truncates the index stream before
-        // it; see `IndexRangeSourceExec::lookup_pushdown`.
-        exec.mark_lookup_pushdown();
-    }
-    let index = table
-        .indexes()
-        .iter()
-        .find(|index| index.id == index_id)
-        .expect("the chosen path names an index of this table");
-    // An index entry always carries its table's handle in the key suffix --
-    // that is what makes `a` readable from an `idx_b(b)` entry of a
-    // clustered-PK table, and it is the same fact Go's `IsCoveringIndex`
-    // relies on when it counts `pkIsHandle` columns as covered
-    // (`pkg/planner/core/find_best_task.go`). The ORDER claim stays the
-    // index's own key order; the handle offsets ride along separately so a
-    // RESIDUAL over them is known to be answerable from the index source.
-    let mut order = IndexAccessOrder::from_ranges(index.ordered_column_offsets(), &ranges);
-    order.handle_covered_offsets = table
-        .pk_handle_offset()
-        .into_iter()
-        .chain(table.common_handle_offsets().iter().copied())
-        .collect();
-    *index_order = Some(order);
-    if let Some(trace) = trace {
-        let index_columns: Vec<String> = index
-            .column_offsets
-            .iter()
-            .map(|offset| index_key_part_name(table, *offset))
-            .collect();
-        let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
-        let point_ranges = index.unique
-            && !index.has_prefix()
-            && !ranges.is_empty()
-            && ranges.iter().all(|range| {
-                range.low.len() == index.column_offsets.len() && range.is_point(false)
-            });
-        let point_partitions = if point_ranges {
-            index_range_partition_names(table, index, &ranges, ctx)
-        } else {
-            Vec::new()
-        };
-        let clustered = index.name.eq_ignore_ascii_case("PRIMARY")
-            && index.column_offsets == table.common_handle_offsets();
-        // Go's `findBestTask` returns a `PhysicalTableDual` the moment a
-        // chosen path has NO ranges (`find_best_task.go`: `if
-        // len(path.Ranges) == 0`), so a contradictory `WHERE` prints no scan
-        // at all. Reached only through the `USE INDEX` cases in
-        // `tests/integrationtest/t/util/ranger.test`, where an UNSIGNED key
-        // part meets a negative bound.
-        if ranges.is_empty() {
-            trace.empty_range_table_dual();
-            trace.set_scan_act_rows(exec.produced_rows());
-            *from_source = Some(Box::new(exec));
-            return;
-        }
-        // Fix 52592 disables Go's fast point/batch plans (`tryFastPlan`
-        // returns early), so the SAME point ranges print as an ordinary
-        // index range scan while it is on.
-        let fast_point_allowed = table.all_columns_public() && !ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-        // A path the ranger narrowed nothing on reads the whole index, which
-        // Go names `IndexFullScan` and prints without a `range:`.
-        let fast_point_trace = point_ranges && fast_point_allowed && index_point_allowed;
-        // Go's NORMAL planner converts a multi-point path on a unique index
-        // into a `Batch_Point_Get` even when conjuncts REMAIN:
-        // `findBestTask`'s `canConvertPointGet` never asks whether the WHERE
-        // was consumed, and `convertToBatchPointGet` moves the leftover
-        // `IndexFilters`/`TableFilters` into a ROOT `Selection` above the
-        // batch read (`pkg/planner/core/find_best_task.go`). For a
-        // partitioned table with several point ranges that conversion
-        // additionally requires static pruning (dynamic refuses
-        // `len(path.Ranges) > 1`) and hash/key partitioning over one plain
-        // column (`getHashOrKeyPartitionColumnName`).
-        let residual_batch_point = point_ranges
-            && fast_point_allowed
-            && !index_point_allowed
-            && ranges.len() > 1
-            && ctx.static_partition_prune()
-            && hash_or_key_partition_column(table)
-            && !point_partitions.is_empty();
-        if fast_point_trace && ranges.len() == 1 {
-            trace.index_point_get(
-                source_table_name(scope, &table.name),
-                &point_partitions,
-                &format!(
-                    "{}index:{}({})",
-                    if clustered { "clustered " } else { "" },
-                    index.name,
-                    index_columns.join(", ")
-                ),
-            );
-        } else if fast_point_trace && ctx.static_partition_prune() || residual_batch_point {
-            trace.index_batch_point_get(
-                source_table_name(scope, &table.name),
-                ranges.len(),
-                &point_partitions,
-                &format!(
-                    "{}index:{}({})",
-                    if clustered { "clustered " } else { "" },
-                    index.name,
-                    index_columns.join(", ")
-                ),
-                true,
-                &batch_point_branch_estimates(catalog, table, &point_partitions, ranges.len()),
-            );
-        } else if ranges.len() == 1 && ranges[0].is_full() {
-            trace.index_full_scan(
-                source_table_name(scope, &table.name),
-                &index.name,
-                &index_columns,
-                estimate,
-                false,
-            );
-        } else {
-            trace.index_range_scan(
-                source_table_name(scope, &table.name),
-                &index.name,
-                &index_columns,
-                &ranges,
-                estimate,
-            );
-        }
-        trace.set_scan_act_rows(exec.produced_rows());
-        if !covering
-            && !fast_point_trace
-            && !residual_batch_point
-            && !trace.index_lookup(source_table_name(scope, &table.name), estimate)
-        {
-            trace.refuse("a non-covering index path did not produce an index scan");
-        }
-    }
-    *from_source = Some(Box::new(exec));
-}
-
-fn index_range_partition_names(
-    table: &KvTable,
-    index: &crate::kv_table::KvIndex,
-    ranges: &[IndexRange],
-    ctx: &impl tidb_expr::Columns,
-) -> Vec<String> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    let mut ordinals = Vec::new();
-    for range in ranges {
-        let mut row = vec![Datum::Null; table.columns.len()];
-        for (offset, value) in index.column_offsets.iter().zip(&range.low) {
-            row[*offset] = value.clone();
-        }
-        if let Ok(ordinal) = partition.locate_ordinal(&row, &table.columns, ctx) {
-            if !ordinals.contains(&ordinal) {
-                ordinals.push(ordinal);
-            }
-        }
-    }
-    ordinals.sort_unstable();
-    ordinals
-        .into_iter()
-        .filter_map(|ordinal| partition.definitions.get(ordinal))
-        .map(|definition| definition.name.clone())
-        .collect()
-}
-
-/// Go `getHashOrKeyPartitionColumnName`
-/// (`pkg/planner/core/point_get_plan.go:1440`): a partitioned
-/// `Batch_Point_Get` over SEVERAL ranges exists only when the table is HASH
-/// partitioned over a bare column or KEY partitioned over exactly one column
-/// -- the only routings `BatchPointGetExec::initialize`'s `getPhysID` can
-/// evaluate per handle.
-fn hash_or_key_partition_column(table: &KvTable) -> bool {
-    table.partition().is_some_and(|partition| match partition.kind {
-        crate::partition_routing::PartitionKind::Hash => {
-            matches!(partition.expr, Expression::Column(_))
-        }
-        crate::partition_routing::PartitionKind::Key => partition.dependencies.len() == 1,
-        _ => false,
-    })
-}
-
-/// The estimate each partition branch of a fanned-out batch point get
-/// carries, in the order `partitions` names them.
-///
-/// Go's static prune gives every partition its own `DataSource` whose
-/// `CountAfterAccess` comes from THAT partition's statistics:
-/// `getIndexRowCountForStatsV2` counts exactly one row per full-length
-/// non-null point range on a unique index and clamps the sum into
-/// `[1, realtimeRowCount]` (`pkg/planner/cardinality/row_count_index.go`),
-/// and `convertToBatchPointGet`'s `min(CountAfterAccess, len(ranges))` cap
-/// is already inside that clamp. A partition without analyzed statistics
-/// keeps the range count -- the pseudo estimator has no row count to clamp
-/// with.
-fn batch_point_branch_estimates(
-    catalog: &Catalog,
-    table: &KvTable,
-    partitions: &[String],
-    point_count: usize,
-) -> Vec<f64> {
-    let Some(partition) = table.partition() else {
-        return Vec::new();
-    };
-    partitions
-        .iter()
-        .map(|name| {
-            partition
-                .definitions
-                .iter()
-                .find(|definition| definition.name == *name)
-                .and_then(|definition| catalog.table_statistics(definition.id))
-                .filter(|stats| !stats.pseudo)
-                .map_or(point_count as f64, |stats| {
-                    let rows = crate::access_cost::realtime_row_count(Some(stats.as_ref()));
-                    (point_count as f64).min(rows).max(1.0)
-                })
-        })
-        .collect()
-}
-
-/// The schema a fast-path source emits: the scope's columns in scope order,
-/// each carrying the unique id the driver's resolver hands expressions.
-pub(crate) fn source_schema_columns(columns: &[(String, FieldType)]) -> Vec<Column> {
-    columns
-        .iter()
-        .enumerate()
-        .map(|(i, (_, ft))| {
-            let mut col = Column::new((i + 1) as i64, ft.clone());
-            col.index = i as i64;
-            col
-        })
-        .collect()
-}
-
-/// Offers the source only the columns the statement reads, narrowing `scope`
-/// with it when the source takes the offer (Go's `rule_column_pruning.go`).
-///
-/// This runs BEFORE any expression is built, which is the whole point: every
-/// offset below is resolved against the narrowed scope from the start, so no
-/// already-built index has to be renumbered. It also runs before the predicate
-/// push-down, so a pushed conjunct's `column_offset` is already in narrow
-/// space -- and the kept set contains the `WHERE`'s columns because the gate
-/// collected them.
-///
-/// No "was the source replaced?" flag is needed: `accept_column_prune`
-/// defaults to refusing, so a fast-path source that cannot project simply says
-/// no and the full-width path stands. Each source answers for itself,
-/// fail-closed -- the same rule the pushed filter and row cap follow.
-pub(crate) fn prune_scan_columns(
-    keep: &[usize],
-    scope: &mut FromScope,
-    from_source: &mut Option<Box<dyn Executor>>,
-) {
-    let Some(source) = from_source.as_mut() else {
-        return;
-    };
-    if keep.len() < scope.width()
-        && source
-            .table_access()
-            .is_some_and(|access| access.accept_column_prune(keep))
-    {
-        *scope = crate::column_prune::pruned_scope(scope, keep);
-    }
-}
-
-/// Offers the source the conjuncts it can apply itself, and reports both the
-/// `WHERE` that must still run above it (`None`: the source took all of it)
-/// and the physical Selection conditions the source accepted. Execution keeps
-/// the original built filters inside [`PushedScanFilter`]; the returned view
-/// uses the paired scan descriptions to expose Go's folded comparison
-/// constants and top-level CNF without repeating conversions or warnings.
-///
-/// Over a single base table every source below is a real streaming scan, so
-/// each answers for itself whether it can keep the promise
-/// [`crate::table_access`] describes -- an index range can (it tests every row
-/// it emits), a point get's handle source refuses. Only the residual then
-/// needs a `Selection`; when the scan takes the whole `WHERE` there is no
-/// `Selection` executor left, but the recorded plan is unchanged either way --
-/// Go prints one `Selection` over the scan for both halves (captured,
-/// `pkg/executor/zz_dump_pushdown_test.go`), and this tier prints no
-/// `TableReader`/`cop[tikv]` task to distinguish them.
-pub(crate) fn negotiate_scan_filter(
-    select: &tidb_ast::SelectStmt,
-    scope: &FromScope,
-    source: &mut Box<dyn Executor>,
-    ctx: &crate::StmtContext,
-    access_consumed_where: bool,
-    access_residual: Option<&tidb_ast::Expr>,
-    trace: Option<&mut PlanTrace>,
-) -> (
-    Option<tidb_ast::Expr>,
-    Vec<Expression>,
-    Option<Vec<Expression>>,
-) {
-    if access_consumed_where {
-        return (None, Vec::new(), None);
-    }
-    match (&select.where_clause, scope.tables.len()) {
-        (Some(predicate), 1) => {
-            let split = compile_scan_predicates(
-                predicate,
-                &scope_resolver(scope),
-                ctx,
-                trace.is_some() && access_residual.is_some(),
-            );
-            let pushed = &split.pushed;
-            let accepted = !pushed.is_empty()
-                && source
-                    .table_access()
-                    .is_some_and(|access| access.accept_scan_filter(pushed, ctx));
-            if accepted {
-                // The legacy ranger still names residuals with original
-                // conjuncts. Resolve that provenance against the expressions
-                // just compiled, without another rewrite or constant fold.
-                let compiled_access_residual =
-                    trace.as_ref().and(access_residual).map(|residual| {
-                        let mut conjuncts = Vec::new();
-                        collect_conjuncts(residual, &mut conjuncts);
-                        split
-                            .pushed_conjuncts
-                            .iter()
-                            .zip(pushed.filters())
-                            .filter(|(written, _)| conjuncts.contains(written))
-                            .flat_map(|(_, expression)| {
-                                tidb_expr::expr_util::split_cnf_items(expression)
-                            })
-                            .collect()
-                    });
-                // `TableFullScan`'s `actRows` counts rows read, not rows kept,
-                // so it is taken from the scan itself rather than from the
-                // (now filtered) chunks leaving it.
-                if let (Some(trace), Some(scanned)) = (
-                    trace,
-                    source
-                        .table_access()
-                        .and_then(|access| access.scanned_rows_counter()),
-                ) {
-                    trace.set_scan_act_rows(scanned);
-                }
-                (
-                    split.residual,
-                    pushed.selection_conditions(),
-                    compiled_access_residual,
-                )
-            } else {
-                (Some(predicate.clone()), Vec::new(), None)
-            }
-        }
-        (where_clause, _) => (where_clause.clone(), Vec::new(), None),
-    }
-}
-
-/// Offers the source the `LIMIT`'s row cap, when [`scan_limit_cap`] finds one
-/// is sound.
-///
-/// This must run before any wrapper goes over the source, because the cap is a
-/// promise only the source itself can keep.
-pub(crate) fn offer_scan_limit(
-    select: &tidb_ast::SelectStmt,
-    residual_where: Option<&tidb_ast::Expr>,
-    index_order: Option<&IndexAccessOrder>,
-    resolver: &ScopeResolver<'_>,
-    source: &mut Box<dyn Executor>,
-) -> bool {
-    let Some(cap) = scan_limit_cap(select, residual_where, index_order, resolver) else {
-        return false;
-    };
-    source
-        .table_access()
-        .is_some_and(|access| access.accept_scan_limit(cap))
-}
-
-/// Offers Go's `PhysicalIndexLookUpReader.PushedLimit` to a non-covering
-/// ordered access. The source skips the SQL offset in its index handle stream
-/// and never builds table tasks outside the requested window.
-pub(crate) fn offer_embedded_lookup_limit(
-    select: &tidb_ast::SelectStmt,
-    residual_where: Option<&tidb_ast::Expr>,
-    index_order: Option<&IndexAccessOrder>,
-    resolver: &ScopeResolver<'_>,
-    source: &mut Box<dyn Executor>,
-) -> Option<(u64, u64)> {
-    scan_limit_cap(select, residual_where, index_order, resolver)?;
-    let limit = select.limit.as_ref()?;
-    let count = eval_limit_bound(&limit.count).ok()?;
-    let offset = limit.offset.as_ref().map_or(Ok(0), eval_limit_bound).ok()?;
-    source
-        .table_access()?
-        .accept_embedded_lookup_limit(offset, count)
-        .then_some((offset, count))
-}
-
-/// Tells the source whether the order it walks in is the order the statement
-/// asked for -- Go's `keep order:true`, which for an `IndexLookUp` decides
-/// whether the handle batch is answered in index order or in handle order
-/// (see [`crate::table_access::TableAccess::accept_keep_order`]).
-///
-/// The condition is the SAME [`order_is_index_order`] the limit push-down
-/// asks, because it is the same question: Go derives both from one required
-/// physical property. It is asked here without the limit, since `keep order`
-/// is a property of the read and not of any cap on it.
-///
-/// Like `offer_scan_limit` this must run before any wrapper goes over the
-/// source, and unlike it, nothing above depends on the answer -- a source
-/// that refuses is still correct.
-pub(crate) fn offer_keep_order(
-    select: &tidb_ast::SelectStmt,
-    index_order: Option<&IndexAccessOrder>,
-    resolver: &ScopeResolver<'_>,
-    source: &mut Box<dyn Executor>,
-) -> bool {
-    let Some(order) = index_order else {
-        return false;
-    };
-    if select.order_by.is_empty() || !order_is_index_order(select, order, resolver) {
-        return false;
-    }
-    source.table_access().is_some_and(|access| {
-        access.accept_keep_order(select.order_by.first().is_some_and(|item| item.desc))
-    })
-}
-/// The index access path a `WHERE` should be read through, when an index
-/// beats the full table scan.
-///
-/// Go's `DetachCondAndBuildRangeForIndex` splits a predicate into access
-/// conditions, which become index ranges, and filter conditions, which stay
-/// above the read; `findBestTask` then costs every path that split produced
-/// and keeps the cheapest. This does the same through
-/// [`crate::access_cost`], and returns `None` when the winner is the full
-/// scan -- so a filter too broad to pay for an index simply leaves the scan
-/// in place, which is the case a "first index that fits" rule always got
-/// wrong.
-///
-/// The whole `WHERE` stays in the pipeline either way, so the filter half of
-/// the split is applied by the selection rather than dropped.
-/// The narrowed source [`choose_access_path`] committed to, when it narrowed
-/// one at all.
-///
-/// Go's `findBestTask` returns ONE path over a data source and the reader it
-/// lowers to follows from which; splitting the two here keeps the driver from
-/// having to ask an `Option<index>` what kind of scan it is holding.
-pub(crate) enum ChosenPath<'a> {
-    /// An index path: the index's id, the ranges of it to read, its
-    /// estimate, and Go's `path.IsSingleScan` -- whether the index alone
-    /// answers the statement (`PhysicalIndexReader`) or a row lookup follows
-    /// it (`PhysicalIndexLookUpReader`), which is what decides the row ORDER
-    /// (see [`crate::access_path::IndexRangeSourceExec`]).
-    Index(
-        i64,
-        Vec<IndexRange>,
-        crate::access_cost::ScanEstimate,
-        bool,
-        tidb_planner::candidate_cost::Candidate,
-        f64,
-    ),
-    /// A table path the ranger narrowed, over the clustered integer handle.
-    /// An EMPTY range list is the contradictory `WHERE` that reads nothing.
-    HandleRange(
-        crate::index_range::IndexRanges<'a>,
-        crate::access_cost::ScanEstimate,
-        tidb_planner::candidate_cost::Candidate,
-        f64,
-    ),
-    /// The whole-table path already installed by `build_from`. The executor
-    /// needs no replacement, but its complete scan/reader task must remain
-    /// available to parent physical candidates.
-    FullTable(tidb_planner::candidate_cost::Candidate, f64),
-}
-
-pub(crate) fn choose_index_range_path<'a>(
-    select: &'a tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    scope: &FromScope,
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    hints: &crate::index_hints::AvailablePaths,
-    // Go `getTableScanPenalty`'s `hasPartitionScan`, decided by the caller
-    // because it is the caller that ran the pruning.
-    partition_scan: bool,
-    ctx: &crate::StmtContext,
-    source_rows: Option<f64>,
-    required_order: Option<&[usize]>,
-) -> Option<ChosenPath<'a>> {
-    // Go RebuildPlan4CachedPlan rebuilds ranges on the cached path, without
-    // enumerating alternatives. If that path cannot meet the current hints
-    // or required order, perform ordinary selection with the original hints.
-    let visible_name = scope.tables.first().map(|table| table.name.as_str());
-    let pin = visible_name.and_then(|name| ctx.prepared_path_pin_for(name));
-    let choose = |cached_path| {
-        best_single_table_access_path(
-            select,
-            catalog,
-            scope,
-            table,
-            columns,
-            hints,
-            partition_scan,
-            ctx.ordering_index_selectivity_ratio(),
-            source_rows,
-            required_order,
-            cached_path,
-        )
-    };
-    let (best, needed) = pin
-        .as_ref()
-        .and_then(|pin| choose(Some(pin)))
-        .or_else(|| choose(None))?;
-    // Record the winner for this statement's next EXECUTE -- the capture
-    // half of the same contract, mirroring the join-leaf capture in
-    // `leaf_access`.
-    if let Some(name) = visible_name.as_deref() {
-        if let Some(sink) = ctx.prepared_pin_capture() {
-            if let Ok(mut slot) = sink.lock() {
-                let map = slot.get_or_insert_with(std::collections::HashMap::new);
-                map.entry(name.to_owned())
-                    .or_insert_with(|| match &best.index {
-                        Some((index_id, _)) => {
-                            crate::stmt_context::PinnedLeafAccess::IndexId(*index_id)
-                        }
-                        None => crate::stmt_context::PinnedLeafAccess::TableScan,
-                    });
-            }
-        }
-    }
-    let estimate = best.estimate;
-    let planner_candidate = best.planner_candidate;
-    let source_rows = best.source_rows;
-    match (best.index, best.table_ranges) {
-        (Some((index_id, ranges)), _) => {
-            let covering = crate::access_cost::index_is_covering(table, index_id, &needed);
-            Some(ChosenPath::Index(
-                index_id,
-                ranges,
-                estimate,
-                covering,
-                planner_candidate,
-                source_rows,
-            ))
-        }
-        (None, Some(ranges)) => Some(ChosenPath::HandleRange(
-            ranges,
-            estimate,
-            planner_candidate,
-            source_rows,
-        )),
-        (None, None) => Some(ChosenPath::FullTable(planner_candidate, source_rows)),
-    }
-}
-
-/// Returns the regular access-path candidate and the projected columns used
-/// to cost it. Automatic IndexMerge compares against this exact candidate so
-/// both alternatives share the same hints, order, limit, and skyline rules.
-fn best_single_table_access_path<'a>(
-    select: &'a tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    scope: &FromScope,
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    hints: &crate::index_hints::AvailablePaths,
-    partition_scan: bool,
-    ordering_index_selectivity_ratio: f64,
-    source_rows: Option<f64>,
-    required_order: Option<&[usize]>,
-    cached_path: Option<&crate::stmt_context::PinnedLeafAccess>,
-) -> Option<(crate::access_cost::AccessPath<'a>, Vec<usize>)> {
-    // No `WHERE` at all is not a reason to stop: a covering index is still a
-    // candidate, and reading the whole of a narrow index beats reading the
-    // whole table (Go's `path.IsSingleScan` arm of `keepIndex`).
-    let where_clause = select.where_clause.as_ref();
-    // The columns the statement reads, which decides whether an index path
-    // covers (Go `isCoveringIndex`) and therefore whether it pays for a
-    // double read.
-    //
-    // Go costs the schema produced by logical column pruning. Use the same
-    // demand as the later scan offer, including its full-width refusals and
-    // retained row column. A separate name walk here could declare an index
-    // covering while the executable source still requests absent columns.
-    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
-    let needed = crate::column_prune::prunable_columns(select, scope, &demand)
-        .unwrap_or_else(|| (0..columns.len()).collect());
-    let resolver = ScopeResolver { scope };
-    // The `LIMIT` an index path may be costed under. `scan_limit_cap`'s own
-    // refusals for things between the source and the LIMIT apply here too;
-    // the residual `WHERE` is the one it cannot know yet, because which
-    // conjuncts the source accepts is settled after the path is chosen. Go
-    // has the same ordering and resolves it through the physical property.
-    let cap = costing_limit_cap(select);
-    let satisfied_by = |offsets: &[usize], ranges: &[IndexRange]| {
-        select.order_by.is_empty()
-            || order_is_index_order(
-                select,
-                &IndexAccessOrder::from_ranges(offsets, ranges),
-                &resolver,
-            )
-    };
-    let limit = cap.map(|cap| crate::access_cost::PushedLimit {
-        cap,
-        has_order: !select.order_by.is_empty(),
-        ordering_selectivity_ratio: ordering_index_selectivity_ratio,
-        satisfied_by: &satisfied_by,
-    });
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let stats = stats.as_ref().map(AsRef::as_ref);
-    let mut paths = crate::access_cost::enumerate_paths(
-        table,
-        columns,
-        where_clause,
-        &needed,
-        &resolver,
-        limit.as_ref(),
-        stats,
-        hints,
-        !select.order_by.is_empty(),
-        partition_scan,
-        demand.statement_forces_an_index(),
-        // This IS a whole `DataSource`'s path selection, so Go's heuristic
-        // point-range pruning applies before skyline and cost.
-        true,
-        source_rows,
-        cached_path,
-    );
-    if let Some(wanted) = required_order {
-        // `matchProperty` as a FILTER over the enumeration, exactly as
-        // [`crate::driver::leaf_access::leaf_index_path`] applies it for a
-        // leaf of a multi-table `FROM`: a path that does not already walk in
-        // the parent-required order could only ever have become Go's
-        // `invalidTask`. Without this, pruning a wrapped relation to a
-        // covering set let the covering `IndexFullScan` REPLACE the ordered
-        // table scan under a merge join's key order -- a plan whose merge
-        // executor would silently interleave unsorted rows.
-        paths.retain(|candidate| match &candidate.path.index {
-            Some((index_id, _)) => table
-                .indexes()
-                .iter()
-                .find(|index| index.id == *index_id)
-                .is_some_and(|index| {
-                    crate::driver::leaf_access::leaf_index_order(table, index, columns)
-                        .starts_with(wanted)
-                }),
-            None => {
-                crate::driver::leaf_access::leaf_handle_order(table, columns).starts_with(wanted)
-            }
-        });
-    }
-    // Go `findBestTask`'s TWO LEGS under a required sort property with no row
-    // cap (`pkg/planner/core/find_best_task.go`):
-    //
-    //  * the UNENFORCED leg converts only candidates whose walk already
-    //    delivers the order (`convertToIndexScan`/`convertToTableScan` both
-    //    open with `if !prop.IsSortItemEmpty() &&
-    //    !candidate.matchPropResult.Matched() { return invalidTask }`), with
-    //    skyline pruning run under the ordered property;
-    //  * the ENFORCED leg re-enters `findBestTask` with the EMPTY property --
-    //    its own skyline pruning, where `preferRange` retains range paths
-    //    exactly as an orderless statement's would -- and wraps the winner in
-    //    the Sort enforcer (`EnforceProperty`). The Sort's price is the SAME
-    //    `PhysicalSort` `tidb_planner::enforce` builds for a merge join's
-    //    side, through the same `Candidate::Sort` cost node.
-    //
-    // `getTaskPlanCost` then compares the legs' totals; the min below is that
-    // comparison. Collapsing both legs into ONE ordered-property pruning pass
-    // was measured wrong on `expression/vitess_hash`: the ordered-property
-    // `preferRange` refuses to retain a non-matching range path, so full
-    // scans survived into the enforced comparison that Go's empty-property
-    // pruning would have removed.
-    //
-    // An ORDER BY with a LIMIT cap is Go's LogicalTopN exhaustion, which is
-    // TWO families compared by cost (`getPhysLimits` over `getPhysTopN`,
-    // `pkg/planner/core/operator/physicalop/physical_limit.go` and
-    // `physical_topn.go`); the capped branch below builds both. A
-    // parent-required order (`required_order`) already FILTERED above,
-    // modeling `matchProperty`'s invalid-task refusal; the parent prices its
-    // own enforcer (`driver::from::enforced_merge_sort`).
-    if !select.order_by.is_empty() && required_order.is_none() {
-        let full = [IndexRange::full()];
-        let delivers = |candidate: &crate::skyline::Candidate<crate::access_cost::AccessPath>| {
-            match &candidate.path.index {
-                Some((index_id, ranges)) => table
-                    .indexes()
-                    .iter()
-                    .find(|index| index.id == *index_id)
-                    .is_some_and(|index| {
-                        satisfied_by(
-                            &crate::driver::leaf_access::leaf_index_order(table, index, columns),
-                            ranges,
-                        )
-                    }),
-                None => satisfied_by(
-                    &crate::driver::leaf_access::leaf_handle_order(table, columns),
-                    candidate
-                        .path
-                        .table_ranges
-                        .as_ref()
-                        .map_or(&full[..], |built| built.ranges.as_slice()),
-                ),
-            }
-        };
-        if cap.is_some() {
-            // The LIMIT family: the source is planned under the ORDERED
-            // property whose ExpectedCnt is offset+count, where findBestTask
-            // converts only candidates whose walk already delivers that
-            // order (a non-matching scan is invalidTask there) and prices
-            // the survivors under the cap.
-            let mut matching: Vec<_> = paths
-                .iter()
-                .filter(|candidate| delivers(candidate))
-                .cloned()
-                .collect();
-            for candidate in &mut matching {
-                candidate.metrics.matches_property = true;
-            }
-            let best_limit =
-                crate::access_cost::choose_access_path(matching, stats, true, true);
-            // The TOPN family plans the same source under the EMPTY property
-            // with ExpectedCnt = MaxFloat64: no order to match, no cap to
-            // price under. A scan that does not walk in the requested order
-            // cannot stop at `limit` rows -- the TopN above it consumes every
-            // row before keeping count+offset -- so re-enumerate WITHOUT the
-            // cap rather than reuse the capped estimates, then price
-            // `PhysicalTopN` itself on top of the winner.
-            let uncapped = crate::access_cost::enumerate_paths(
-                table,
-                columns,
-                select.where_clause.as_ref(),
-                &needed,
-                &resolver,
-                None,
-                stats,
-                hints,
-                false,
-                partition_scan,
-                demand.statement_forces_an_index(),
-                true,
-                source_rows,
-                cached_path,
-            );
-            let (limit_count, limit_offset) = match select.limit.as_ref() {
-                Some(limit) => (
-                    eval_limit_bound(&limit.count).unwrap_or(0),
-                    limit
-                        .offset
-                        .as_ref()
-                        .and_then(|expr| eval_limit_bound(expr).ok())
-                        .unwrap_or(0),
-                ),
-                None => (0, 0),
-            };
-            let best_topn =
-                crate::access_cost::choose_access_path(uncapped, stats, false, false)
-                    .map(|mut best| {
-                        let child = best.planner_candidate.clone();
-                        let env = tidb_planner::candidate_cost::CostEnv::default();
-                        let costed = tidb_planner::candidate_cost::evaluate(
-                            &child,
-                            &env,
-                            tidb_planner::task_type::TaskType::Root,
-                        );
-                        let by_items: Vec<bool> = select
-                            .order_by
-                            .iter()
-                            .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
-                            .collect();
-                        let topn = tidb_planner::plan_cost_ver2::top_n_cost(
-                            None,
-                            costed.rows,
-                            (limit_count, limit_offset),
-                            tidb_planner::plan_cost_ver2::MIN_ROW_SIZE,
-                            &by_items,
-                            (&env.factors.tidb_cpu, &env.factors.tidb_mem, 1.0),
-                            &costed.cost,
-                        );
-                        best.cost = topn.value();
-                        best
-                    });
-            let best = match (best_limit, best_topn) {
-                (Some(limit), Some(topn)) => Some(if limit.cost <= topn.cost {
-                    limit
-                } else {
-                    topn
-                }),
-                (found, other) => found.or(other),
-            };
-            return best.map(|best| (best, needed));
-        }
-        // The unenforced leg: only matching candidates, under the ordered
-        // property.
-        let mut matching: Vec<_> = paths
-            .iter()
-            .filter(|candidate| delivers(candidate))
-            .cloned()
-            .collect();
-        for candidate in &mut matching {
-            candidate.metrics.matches_property = true;
-        }
-        let best_matching = crate::access_cost::choose_access_path(matching, stats, false, true);
-        // The enforced leg: every candidate, under the EMPTY property, each
-        // priced as its reader UNDER the Sort enforcer.
-        let by_items: Vec<bool> = select
-            .order_by
-            .iter()
-            .map(|item| !matches!(item.expr, tidb_ast::Expr::Column(_)))
-            .collect();
-        let best_enforced =
-            crate::access_cost::choose_access_path(paths, stats, false, false).map(|mut best| {
-                let child = best.planner_candidate.clone();
-                let costed = tidb_planner::candidate_cost::evaluate(
-                    &child,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
-                    tidb_planner::task_type::TaskType::Root,
-                );
-                let enforced = tidb_planner::candidate_cost::Candidate::Sort {
-                    child: Box::new(child),
-                    rows: costed.rows,
-                    row_size: tidb_planner::candidate_cost::RowSize::Fixed(costed.row_size),
-                    by_items,
-                };
-                best.cost = tidb_planner::candidate_cost::evaluate(
-                    &enforced,
-                    &tidb_planner::candidate_cost::CostEnv::default(),
-                    tidb_planner::task_type::TaskType::Root,
-                )
-                .est_cost();
-                best
-            });
-        let best = match (best_matching, best_enforced) {
-            (Some(matching), Some(enforced)) => Some(if matching.cost <= enforced.cost {
-                matching
-            } else {
-                enforced
-            }),
-            (matching, enforced) => matching.or(enforced),
-        };
-        return best.map(|best| (best, needed));
-    }
-    // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
-    // property is what disables Fix45132's row-ratio rule inside pruning.
-    crate::access_cost::choose_access_path(paths, stats, cap.is_some(), false)
-        .map(|best| (best, needed))
-}
-
-/// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,
-/// or `None` when nothing narrows them.
-///
-/// The ranges come from the crate's ONE range builder
-/// ([`crate::index_range::detach_cond_and_build_range_for_index`]), asked for
-/// the partition expression's column exactly as it would be asked for a
-/// single-column index on it. That reuse is the point: Go prunes with the
-/// same `ranger` machinery it builds index ranges with, and a second range
-/// implementation here would be a second answer to disagree with.
-///
-/// Pruning is declined -- reading everything -- in two cases, each a
-/// SUPERSET and so never a wrong answer:
-///
-/// * a table with no partitioning;
-/// * a partition expression that is not a bare COLUMN. Go prunes `year(a)`
-///   through `MakePartitionByFnCol`'s monotonicity analysis, which this tier
-///   does not port; a monotonicity claim that is wrong drops a partition
-///   holding matching rows;
-/// * a `SELECT` with no `WHERE`, which constrains nothing.
-fn pruned_partition_ids(
-    select: &tidb_ast::SelectStmt,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<Vec<i64>> {
-    let partition = table.partition()?;
-    let where_clause = select.where_clause.as_ref()?;
-    let tuple_partitioning = matches!(
-        partition.kind,
-        crate::PartitionKind::Key
-            | crate::PartitionKind::ListColumns { .. }
-            | crate::PartitionKind::RangeColumns { .. }
-    );
-    // A bare column is the one scalar partition expression whose own value a
-    // range over a column is. Tuple partitioning owns its named tuple.
-    let mut range_columns = Vec::with_capacity(partition.dependencies.len());
-    for dependency in &partition.dependencies {
-        let column = table
-            .columns
-            .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
-        if !tuple_partitioning && partition.expr_text != format!("`{}`", column.name) {
-            return None;
-        }
-        range_columns.push(crate::index_range::RangeColumn::whole(
-            column.name.clone(),
-            column.field_type.clone(),
-        ));
-    }
-    if range_columns.is_empty() {
-        return None;
-    }
-    // Go `PartitionProcessor.prune` runs its conditions through
-    // `applyPredicateSimplification` -- whose first act is
-    // `expression.PushDownNot` -- BEFORE handing them to the pruner, and its
-    // own comment gives the reason: a `not (a < 5)` the ranger cannot read
-    // yields no range at all, which reads here as "prune nothing" and leaves
-    // the `values less than (0)` partition in a plan TiDB prunes it out of.
-    let normalized = crate::partition_pruning::push_down_not(where_clause);
-    // Go `DetachCondAndBuildRangeForPartition`, which is the one ranger entry
-    // that does NOT convert its points to sort keys: a partition bound is a
-    // written value compared under the partition column's own collation, not
-    // an index's stored form.
-    let built = crate::index_range::detach_cond_and_build_range_for_partition(
-        &range_columns,
-        &normalized,
-        &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-    )?;
-    crate::partition_pruning::pruned_ids(partition, &built.ranges)
-}
-
-/// How `EXPLAIN` names one key part of an index.
-///
-/// An ordinary key part is the column's name. An expression index's key part
-/// is the EXPRESSION, not the hidden column the DDL rewrote it into: Go
-/// prints `` index:k1(`a` + 1, b) ``, and the hidden column's generated name
-/// appears in no user-visible output at all. The text is the one the column
-/// already stores, so the plan and `SHOW CREATE TABLE` cannot disagree.
-pub(crate) fn index_key_part_name(table: &KvTable, offset: usize) -> String {
-    let Some(column) = table.columns.get(offset) else {
-        return String::new();
-    };
-    match &column.generated {
-        Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
-        _ => column.name.clone(),
-    }
-}
-
-/// The `offset + count` an index path may be costed under, when nothing
-/// between the source and the `LIMIT` can drop or add a row.
-///
-/// This is [`scan_limit_cap`]'s rule minus the two halves that are not known
-/// until a path is committed: the residual `WHERE`, and which index supplies
-/// the order (the caller supplies that as `satisfied_by`).
-fn costing_limit_cap(select: &tidb_ast::SelectStmt) -> Option<f64> {
-    let limit = select.limit.as_ref()?;
-    let count = eval_limit_bound(&limit.count).ok()?;
-    let offset = match &limit.offset {
-        Some(expr) => eval_limit_bound(expr).ok()?,
-        None => 0,
-    };
-    if select.distinct
-        || select.having.is_some()
-        || !select.group_by.is_empty()
-        || crate::window::select_has_window(select)
-    {
-        return None;
-    }
-    Some(offset.checked_add(count)? as f64)
-}
-
-/// The estimate `EXPLAIN` prints for a table read that stayed a full scan.
-///
-/// This is the same [`crate::access_cost`] answer the path choice used, so
-/// the printed plan and the costed plan cannot disagree. A table with no
-/// loaded statistics is Go's `PseudoTable`, and the estimate says so.
-pub(crate) fn full_scan_estimate(
-    catalog: &Catalog,
-    entry: &TableEntry,
-) -> crate::access_cost::ScanEstimate {
-    let stats = match entry {
-        TableEntry::Kv(table) => catalog.table_statistics(table.stats_physical_id()),
-        // A memory table's rows are computed at query time and an
-        // INFORMATION_SCHEMA view has no `mysql.stats_*` row, so there is
-        // nothing to have analyzed; Go prints the pseudo constant for these
-        // too.
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    };
-    // The row count is real whenever a `mysql.stats_meta` row carries one,
-    // even when no histogram was ever analyzed -- and in that state Go prints
-    // the real count AND `stats:pseudo`. `realtime_row_count` owns the rule,
-    // so this row and the cost that chose it agree by construction.
-    crate::access_cost::ScanEstimate {
-        rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
-        pseudo: stats.is_none_or(|stats| stats.pseudo),
-    }
-}
-
-/// `cardinality.Selectivity` for a single base table's `WHERE`.
-///
-/// This is what makes a `Selection` over a full scan print the estRows Go
-/// prints. `None` means there is no `WHERE` to estimate, and nothing else:
-/// a table with no analyzed histograms is Go's `PseudoTable`, which
-/// `Selectivity` estimates through the SAME body using pseudo histograms
-/// (`pkg/statistics/table.go:1034-1061` fills one per column), so routing it
-/// anywhere else is what made `a = 1 and b = 2` print 10.00 against TiDB's
-/// 1.00. [`crate::access_cost::selectivity`] owns both arms, and the
-/// `stats:pseudo` flag stays where it was decided
-/// ([`full_scan_estimate`]) -- which statistics exist is unchanged here, only
-/// what is computed from them.
-
-/// Whether this scope carries Go's extra handle column, `_tidb_rowid`.
-///
-/// It is named rather than counted because it is the one scope column with no
-/// stored offset behind it; see [`crate::driver::from`]'s leaf, which appends
-/// it, and `TableAccess::accept_extra_handle`, which fills it.
-pub(crate) fn scope_carries_extra_handle(scope: &FromScope) -> bool {
-    scope.tables.iter().any(|table| {
-        table.columns.iter().any(|(name, _)| {
-            name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
-        })
-    })
-}
-
-/// Go LogicalAggregation.DeriveStats reads its child's existing profile.
-/// Resolving grouping columns is structural; no expression is rebuilt or
-/// evaluated just to ask for its NDV.
-pub(crate) fn grouped_source_rows(
-    profile: &tidb_planner::stats_info::StatsInfo,
-    expressions: &[&tidb_ast::Expr],
-    scope: &FromScope,
-) -> Option<f64> {
-    if expressions.is_empty() {
-        return None;
-    }
-    let resolver = scope_resolver(scope);
-    let mut columns = Vec::new();
-    for expression in expressions {
-        for path in super::join_reorder::column_paths(expression) {
-            columns.push(resolver.resolve(&path)?.2);
-        }
-    }
-    Some(
-        tidb_planner::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(
-            &columns, profile,
-        )
-        .0,
-    )
-}
-
-pub(crate) fn stats_selectivity(
-    catalog: &Catalog,
-    table: &KvTable,
-    scope: &FromScope,
-    where_clause: Option<&tidb_ast::Expr>,
-) -> Option<f64> {
-    stats_selectivity_with_default_string_match_selectivity(
-        catalog,
-        table,
-        scope,
-        where_clause,
-        0.0,
-    )
-}
-
-pub(crate) fn stats_selectivity_with_default_string_match_selectivity(
-    catalog: &Catalog,
-    table: &KvTable,
-    scope: &FromScope,
-    where_clause: Option<&tidb_ast::Expr>,
-    default_string_match_selectivity: f64,
-) -> Option<f64> {
-    let predicate = where_clause?;
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    Some(
-        crate::access_cost::selectivity_with_default_string_match_selectivity(
-            predicate,
-            table,
-            &scope_resolver(scope),
-            stats.as_ref().map(AsRef::as_ref),
-            default_string_match_selectivity,
-        ),
-    )
-}
-
-/// `cardinality.Selectivity` for a `SELECT`'s `WHERE` over a single base
-/// table, when that table has loaded statistics.
-pub(crate) fn select_stats_selectivity(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    select_predicate_stats_selectivity(
-        select,
-        select.where_clause.as_ref()?,
-        catalog,
-        current_db,
-        scope,
-    )
-    // A predicate spanning a join has no single DataSource statistics node.
-    // Go's `Selectivity` leaves it uncovered and charges the global
-    // `selectionFactor` once.
-    .or_else(|| (scope.tables.len() > 1).then_some(tidb_planner::cost_factors::SELECTION_FACTOR))
-}
-
-/// `cardinality.Selectivity` for one residual predicate of a single-table
-/// `SELECT`. Unlike [`select_stats_selectivity`], this deliberately does not
-/// re-price access conditions already represented by a range scan.
-/// The `KvTable` a scan of this `SELECT` will actually read: the catalog
-/// handle narrowed by an explicit `PARTITION (...)` clause and then by
-/// pruning.
-///
-/// Go runs `PartitionProcessor` during LOGICAL optimization, so by the time
-/// anything asks `Selectivity` or
-/// `stats.GetStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)` the
-/// `DataSource` IS the surviving partition and its id names that partition.
-/// Reading the catalog handle straight, as [`single_kv_table`] does, skips
-/// that step -- and static pruning stores a histogram per PHYSICAL partition
-/// and no merged one, so the lookup missed and a pruned scan printed
-/// `stats:pseudo` over 10000 rows after `ANALYZE` had just measured two.
-/// [`plan_access_path`] already narrows before its own lookup; this is the
-/// same narrowing for the estimate callers that build their own handle.
-fn pruned_single_kv_table(
-    select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<KvTable> {
-    let mut table = single_kv_table(&select.from, catalog, current_db)?;
-    if table.partition().is_none() {
-        return Some(table);
-    }
-    if let Some(table_ref) = single_table_ref(&select.from) {
-        if !table_ref.partitions.is_empty() {
-            let name = table_ref
-                .name
-                .last()
-                .map(String::as_str)
-                .unwrap_or(table.name.as_str());
-            table =
-                super::from::restricted_to_partitions(&table, &table_ref.partitions, name).ok()?;
-        }
-    }
-    if let Some(ids) = pruned_partition_ids(select, &table, zone) {
-        table.restrict_read_to_partitions(&ids);
-    }
-    Some(table)
-}
-
-pub(crate) fn select_predicate_stats_selectivity(
-    select: &tidb_ast::SelectStmt,
-    predicate: &tidb_ast::Expr,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    select_predicate_stats_selectivity_in_session(select, predicate, catalog, current_db, scope, 0.0)
-}
-
-/// [`select_predicate_stats_selectivity`] with the session's raw
-/// `tidb_default_string_match_selectivity`, which Go's `Selectivity` reads
-/// for every string-match conjunct it cannot cover with statistics
-/// (`pkg/planner/cardinality/selectivity.go`: `GetStrMatchDefaultSelectivity`).
-pub(crate) fn select_predicate_stats_selectivity_in_session(
-    select: &tidb_ast::SelectStmt,
-    predicate: &tidb_ast::Expr,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-    default_string_match_selectivity: f64,
-) -> Option<f64> {
-    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    stats_selectivity_with_default_string_match_selectivity(
-        catalog,
-        &table,
-        scope,
-        Some(predicate),
-        default_string_match_selectivity,
-    )
-}
-
-/// Estimates the physical condition list execution already owns. Go passes
-/// compiled Selection.Conditions to Selectivity; RootTaskConds and the cop
-/// subset use nil filled paths, independently of DataSource.StatsInfo.
-pub(crate) fn select_expression_stats_selectivity(
-    select: &tidb_ast::SelectStmt,
-    expressions: &[Expression],
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-    has_filled_paths: bool,
-    default_string_match_selectivity: f64,
-) -> Option<f64> {
-    if expressions.is_empty() {
-        return None;
-    }
-    if scope.tables.len() > 1 {
-        return Some(tidb_planner::cost_factors::SELECTION_FACTOR);
-    }
-    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    Some(crate::access_cost::selectivity_of_expressions(
-        expressions,
-        &table,
-        &scope_resolver(scope),
-        stats.as_ref().map(AsRef::as_ref),
-        has_filled_paths,
-        default_string_match_selectivity,
-    ))
-}
-
-/// The loaded-statistics row count for a single-table predicate.
-///
-/// A decorrelated `EXISTS`/`NOT EXISTS` is a separate logical semi join in Go;
-/// its preserved `DataSource` therefore owns only the ordinary local
-/// predicates.  Callers that still hold the original SELECT (which also
-/// contains the subquery) use this helper with the local conjuncts so the
-/// semi join does not charge its `0.8` factor twice.  `None` means the source
-/// is not one base table or statistics are unavailable.
-pub(crate) fn select_predicate_stats_rows(
-    select: &tidb_ast::SelectStmt,
-    predicate: Option<&tidb_ast::Expr>,
-    catalog: &Catalog,
-    current_db: &str,
-    scope: &FromScope,
-) -> Option<f64> {
-    let table = pruned_single_kv_table(select, catalog, current_db, &scope.zone)?;
-    let stats = catalog.table_statistics(table.stats_physical_id());
-    let realtime = crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref));
-    let selectivity = predicate
-        .map(|predicate| stats_selectivity(catalog, &table, scope, Some(predicate)).unwrap_or(1.0))
-        .unwrap_or(1.0);
-    Some(realtime * selectivity)
-}
-
-/// The full-scan estimate and stats-backed selectivity a single-table write's
-/// recorded read plan prints, resolved from the catalog by name.
-pub(crate) fn single_table_trace_estimate(
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    visible: &str,
-    columns: &[(String, FieldType)],
-    where_clause: Option<&tidb_ast::Expr>,
-) -> (crate::access_cost::ScanEstimate, Option<f64>) {
-    let Some(entry) = catalog.get_in(database, name) else {
-        return (
-            crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
-            None,
-        );
-    };
-    let estimate = full_scan_estimate(catalog, entry);
-    let TableEntry::Kv(table) = entry else {
-        return (estimate, None);
-    };
-    let scope = PlanTrace::single_table_scope(visible, None, columns.to_vec());
-    (
-        estimate,
-        stats_selectivity(catalog, table, &scope, where_clause),
-    )
-}
-
-/// How a single-table `UPDATE`/`DELETE` FETCHES the records it then filters.
-///
-/// The reader narrows which records are fetched. Predicate-consumption proof
-/// is retained separately so changing a scan into a batch never discards a
-/// residual filter -- see [`write_read_path`].
-pub(crate) struct WriteReadPath {
-    pub(crate) reader: WriteReader,
-    /// Proof from the selected access conditions, independent of reader kind.
-    /// A batch derived from ranges may still require a residual Selection.
-    pub(crate) predicate_consumed: bool,
-}
-
-pub(crate) enum WriteReader {
-    /// Go's `Point_Get`: one record, read by key -- carrying HOW it was
-    /// pinned, because the plan prints the pin (`AccessObject`). A `None`
-    /// handle is a key no row can carry, which Go also plans as a
-    /// `Point_Get` that reads nothing.
-    Point(PointGetPin),
-    /// Go's `Batch_Point_Get`: several records read directly by their
-    /// clustered or unique handles.
-    Batch(Vec<TableHandle>),
-    /// Go's `TableRangeScan`: the handle intervals the `WHERE` implies, and
-    /// the estimate `EXPLAIN` prints for them.
-    Ranges(Vec<IndexRange>, crate::access_cost::ScanEstimate),
-    /// Go's `IndexRangeScan`: the id of the index the chooser preferred, the
-    /// ranges of it the `WHERE` implies, and the estimate `EXPLAIN` prints. A
-    /// write fetches the candidate records through the index and still filters
-    /// per row above, so the ranges are a superset of the affected rows.
-    IndexRanges(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate),
-}
-
-/// The read a single-table `UPDATE`/`DELETE` performs to find its target
-/// rows; `None` when nothing narrows it and the write reads the whole table.
-///
-/// Go plans a write's read from the same predicate, with the same functions,
-/// as a read's. `tryUpdatePointPlan`/`tryDeletePointPlan`
-/// (`pkg/planner/core/point_get_plan.go`) synthesize an `ast.SelectStmt` out
-/// of the write's `TableRefs`/`Where`/`Order`/`Limit` and hand it to
-/// `tryPointGetPlan` -- the SAME function a `SELECT` reaches through
-/// `TryFastPlan` -- and only when that declines does the ordinary path plan a
-/// `DataSource` whose table path gets its ranges from `deriveTablePathStats`
-/// exactly as a `SELECT`'s does. This function is that order, and it calls
-/// the same two builders the read side calls: [`try_point_get`] and
-/// [`crate::handle_range`], the crate's single range algebra.
-///
-/// The point arm is what makes `WHERE id = 500` one key lookup instead of a
-/// scan over the degenerate range `[500,500]`. A single-key range still costs
-/// a range scan against storage; a key lookup does not, and that difference
-/// is the whole reason Go replaces the read rather than narrowing it.
-///
-/// Fast plans use typed constants that pin a complete key. When they decline,
-/// the shared ranger can still derive complete point ranges; those use the
-/// same point readers. The selected access conditions, not the reader kind,
-/// prove whether the WHERE was consumed. Remaining conditions are evaluated
-/// above the read, and absent keys simply contribute no row.
-pub(crate) fn write_read_path(
-    catalog: &Catalog,
-    database: &str,
-    name: &str,
-    stmt: &PointPlanStmt<'_>,
-    ctx: &crate::StmtContext,
-) -> Result<Option<WriteReadPath>, DriverError> {
-    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
-        return Ok(None);
-    };
-    // Go's order: the fast plan first, the table path only when it declines.
-    // The column list is the table's own, because `try_point_get` reads it at
-    // the offsets `pk_handle_offset`/`KvIndex::column_offsets` name, and those
-    // are offsets into `KvTable::columns`.
-    let columns: Vec<(String, FieldType)> = table
-        .columns
-        .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
-        .collect();
-    let zone = &ctx.session_zone();
-    let disable_point_get = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-    if let Some(batch) = (!disable_point_get)
-        .then(|| try_batch_point_get_stmt(stmt, table, &columns, zone))
-        .transpose()?
-        .flatten()
-    {
-        return Ok(Some(WriteReadPath {
-            reader: WriteReader::Batch(batch.into_handles()),
-            predicate_consumed: true,
-        }));
-    }
-    if let Some(handle) = (!disable_point_get)
-        .then(|| try_point_get(stmt, table, &columns, zone))
-        .transpose()?
-        .flatten()
-    {
-        return Ok(Some(WriteReadPath {
-            reader: WriteReader::Point(handle),
-            predicate_consumed: point_get_predicate_is_consumed(
-                stmt.where_clause, table, &columns, zone, stmt.named_partitions,
-            ),
-        }));
-    }
-    // Go's write plan uses the chosen DataSource path, including its ranges,
-    // filters and statistics. Do not discard a table winner and range it again.
-    let stats = catalog.table_statistics(table.stats_physical_id()).map(AsRef::as_ref);
-    let Some(best) = write_range_path(table, &columns, stmt.where_clause, name, ctx, stats) else {
-        return Ok(None);
-    };
-    if let Some((index_id, ranges)) = best.index {
-        return Ok(Some(WriteReadPath {
-            reader: WriteReader::IndexRanges(index_id, ranges, best.estimate),
-            predicate_consumed: false,
-        }));
-    }
-    let Some(built) = best.table_ranges else {
-        return Ok(None);
-    };
-    let predicate_consumed = built.access_count > 0
-        && built.residual.is_empty()
-        && stmt.where_clause.is_some_and(predicate_is_exact_range);
-    let ranges = built.ranges;
-    let reader = if let Some(mut handles) = point_handles_for_ranges(table, &ranges, stmt.named_partitions, ctx)? {
-        if handles.len() == 1 {
-            WriteReader::Point(PointGetPin { handle: handles.pop(), index: None })
-        } else {
-            WriteReader::Batch(handles)
-        }
-    } else {
-        WriteReader::Ranges(ranges, best.estimate)
-    };
-    Ok(Some(WriteReadPath {
-        reader,
-        predicate_consumed,
-    }))
-}
-
-/// Go's write plan reuses the read side's `findBestTask` and table statistics.
-/// Every column is needed because the write consumes the complete stored row.
-fn write_range_path<'a>(
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    where_clause: Option<&'a tidb_ast::Expr>,
-    table_name: &str,
-    ctx: &crate::StmtContext,
-    stats: Option<&crate::access_cost::TableStatistics>,
-) -> Option<crate::access_cost::AccessPath<'a>> {
-    let where_clause = where_clause?;
-    let resolver = TableResolver {
-        table_name,
-        columns,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-    };
-    let needed: Vec<usize> = (0..columns.len()).collect();
-    let hints = crate::index_hints::AvailablePaths::unrestricted();
-    let paths = crate::access_cost::enumerate_paths(
-        table,
-        columns,
-        Some(where_clause),
-        &needed,
-        &resolver,
-        None,
-        stats,
-        &hints,
-        false,
-        false,
-        // An `UPDATE`/`DELETE` carries no `FROM`-clause index hint in the
-        // grammar this tier accepts, so no path of it is `path.Forced`.
-        false,
-        // Go's write plan falls through to the ordinary `DataSource`, so its
-        // `DeriveStats` -- heuristic included -- runs exactly as a read's.
-        true,
-        None,
-        None,
-    );
-    crate::access_cost::choose_access_path(paths, stats, false, false)
-}
-
-/// Splits a `WHERE` over one base table into the conjuncts the scan can apply
-/// itself and the predicate that must stay above it.
-///
-/// This is Go's `rule_predicate_push_down` split narrowed to the shape the
-/// bounded TiKV Selection lowering already speaks -- see
-/// [`crate::predicate_pushdown`] for the rule and for why the pushed half may be
-/// removed from the `Selection` only when the source promises to apply it to
-/// every row, staged writes included.
-///
-/// The residual is the remaining conjuncts re-joined with `AND` in their
-/// original order, so what runs above the scan is the `WHERE` minus exactly
-/// what moved into it. `None` means every conjunct was pushed.
-/// Go `constructBinaryOpFunction` (`expression_rewriter.go:413`) for the
-/// one shape this tier's filter description still needs: a ROW comparison
-/// `(c1, .., cn) op (v1, .., vn)` with `op` one of `>`, `>=`, `<`, `<=`
-/// becomes the DNF whose `i`-th branch ANDs prefix equalities
-/// `c1 = v1 .. c(i-1) = v(i-1)` with ONE comparison on the i-th elements --
-/// degenerated to `>` / `<` for every branch but the last when `op` is
-/// `>=` / `<=`. The three-valued logic of the expansion reproduces the row
-/// comparison's own NULL semantics element for element.
-///
-/// `None` leaves the conjunct alone: either it is not a row comparison
-/// (single-element tuples and equalities included) or its two sides are not
-/// same-length element lists, which is the caller's residual path anyway.
-fn expand_row_comparison(conjunct: &tidb_ast::Expr) -> Option<tidb_ast::Expr> {
-    let tidb_ast::Expr::Binary(
-        op @ (tidb_ast::BinaryOp::Gt
-        | tidb_ast::BinaryOp::Ge
-        | tidb_ast::BinaryOp::Lt
-        | tidb_ast::BinaryOp::Le),
-        lhs,
-        rhs,
-    ) = conjunct
-    else {
-        return None;
-    };
-    let left = row_elements(lhs)?;
-    let right = row_elements(rhs)?;
-    if left.is_empty() || left.len() != right.len() || left.len() == 1 {
-        // A one-element "row" is spelled away by the parser already; anything
-        // else here is the ordinary comparison paths' conjunct.
-        return None;
-    }
-    let mut branches = Vec::with_capacity(left.len());
-    for index in 0..left.len() {
-        let mut conjuncts = Vec::with_capacity(index + 1);
-        // Step 1.1: every PREFIX element compares equal.
-        for earlier in 0..index {
-            conjuncts.push(tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::Eq,
-                Box::new(left[earlier].clone()),
-                Box::new(right[earlier].clone()),
-            ));
-        }
-        // Step 1.2: especially for GE/LE, every branch but the last carries
-        // the strict form.
-        let effective = if index < left.len() - 1 {
-            match op {
-                tidb_ast::BinaryOp::Ge => tidb_ast::BinaryOp::Gt,
-                tidb_ast::BinaryOp::Le => tidb_ast::BinaryOp::Lt,
-                other => *other,
-            }
-        } else {
-            *op
-        };
-        conjuncts.push(tidb_ast::Expr::Binary(
-            effective,
-            Box::new(left[index].clone()),
-            Box::new(right[index].clone()),
-        ));
-        // Step 1.3: AND the branch's sides.
-        branches.push(conjuncts.into_iter().reduce(|accumulated, next| {
-            tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::LogicAnd,
-                Box::new(accumulated),
-                Box::new(next),
-            )
-        }));
-    }
-    // Step 2: OR the branches.
-    branches
-        .into_iter()
-        .collect::<Option<Vec<_>>>()?
-        .into_iter()
-        .reduce(|accumulated, next| {
-            tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::LogicOr,
-                Box::new(accumulated),
-                Box::new(next),
-            )
-        })
-}
-
-/// The element list of a row value, through any parentheses. A bare
-/// parenthesised expression (`(a) > (1)`) is NOT a row: the parser models it
-/// as `Paren`, and only `(a, b)` builds [`tidb_ast::Expr::Row`].
-fn row_elements(expr: &tidb_ast::Expr) -> Option<&[tidb_ast::Expr]> {
-    match expr {
-        tidb_ast::Expr::Row(items) => Some(items),
-        _ => None,
-    }
-}
-pub(crate) fn split_scan_predicates(
-    where_clause: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-    ctx: &crate::StmtContext,
-) -> (PushedScanFilter, Option<tidb_ast::Expr>) {
-    let split = compile_scan_predicates(where_clause, resolver, ctx, false);
-    (split.pushed, split.residual)
-}
-
-struct CompiledScanPredicates<'a> {
-    pushed: PushedScanFilter,
-    residual: Option<tidb_ast::Expr>,
-    /// Optional trace-only provenance, before CNF lowering. Ordinary reads
-    /// and the earlier leaf offer leave this vector unallocated.
-    pushed_conjuncts: Vec<&'a tidb_ast::Expr>,
-}
-
-fn compile_scan_predicates<'a>(
-    where_clause: &'a tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-    ctx: &crate::StmtContext,
-    retain_origins: bool,
-) -> CompiledScanPredicates<'a> {
-    let mut conjuncts = Vec::new();
-    collect_conjuncts(where_clause, &mut conjuncts);
-    let mut predicates = Vec::new();
-    let mut filters = Vec::new();
-    let mut pushed_conjuncts = Vec::new();
-    let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
-    for conjunct in conjuncts {
-        // Go's expression rewriter lowers a row comparison
-        // `(c1, .., cn) op (v1, .., vn)` into the DNF of prefix equalities
-        // plus one degenerate comparison BEFORE pushdown decides what the
-        // coprocessor may run (`constructBinaryOpFunction`,
-        // `expression_rewriter.go:413`); this tier's ranger consumes the raw
-        // shape instead, but the filter description still needs the rewritten
-        // form, so expand it here. A conjunct that is not a row comparison
-        // keeps its own text.
-        let expanded = expand_row_comparison(conjunct);
-        let described = expanded.as_ref().unwrap_or(conjunct);
-        // Go `find_best_task.go`'s two `expression.PushDownExprs(pctx,
-        // ..., kv.TiKV)` calls, which split the index and table filters into
-        // what the coprocessor may run and what stays above it.
-        if !crate::pushdown_blacklist::blacklist_admits(
-            described,
-            resolver,
-            ctx,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
-        ) {
-            residual.push(conjunct);
-            continue;
-        }
-        match scan_predicate(described, resolver).and_then(|mut predicate| {
-            let mut filter = rewrite_expr_resolved(described, resolver).ok()?;
-            // Go `refineArgs`: `int column <cmp> non-int constant` folds the
-            // constant into the column's type ONCE here, so the filter this
-            // scan runs on every row compares int to int. Without it the
-            // string is re-coerced per row -- the same work, and the same
-            // 1292 truncation, once for each row scanned.
-            tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx).ok()?;
-            // ... and the DESCRIPTION beside it has to say the same thing:
-            // Go refines before it builds the comparison at all, so the
-            // constant it sends TiKV -- and prints -- is the refined one.
-            crate::predicate_pushdown::adopt_compiled_arguments(&mut predicate, &filter);
-            Some((predicate, filter))
-        }) {
-            Some((predicate, filter)) => {
-                predicates.push(predicate);
-                filters.push(filter);
-                if retain_origins {
-                    pushed_conjuncts.push(conjunct);
-                }
-            }
-            None => residual.push(conjunct),
-        }
-    }
-    let residual = residual.into_iter().cloned().reduce(|left, right| {
-        tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new(left),
-            Box::new(right),
-        )
-    });
-    CompiledScanPredicates {
-        pushed: PushedScanFilter::new(predicates, filters),
-        residual,
-        pushed_conjuncts,
-    }
-}
-
-/// One conjunct as a coprocessor-describable predicate, when it is one.
-///
-/// The describable shapes are a column-versus-constant comparison,
-/// `IS [NOT] NULL`, `[NOT] IN` over constants, and the `OR`/`NOT` composition
-/// of those -- exactly the set TiKV's whitelist admits unconditionally
-/// (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`). `AND` is absent
-/// because the caller already flattened the top-level `AND` into separate
-/// conjuncts, and a nested one inside an `OR` is described by recursing into
-/// the branch as its own conjunct list would not be.
-fn scan_predicate(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanPredicate> {
-    match conjunct {
-        tidb_ast::Expr::Paren(inner) => scan_predicate(inner, resolver),
-        // `NOT x` and `!x`; the arithmetic unary operators are not predicates.
-        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            Some(ScanPredicate::Not(Box::new(scan_predicate(
-                inner, resolver,
-            )?)))
-        }
-        // `x OR y`, flattened: the chain is left-associative, so flattening
-        // and re-folding preserves the same disjunction.
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, ..) => {
-            let mut branches = Vec::new();
-            collect_disjuncts(conjunct, &mut branches);
-            Some(ScanPredicate::Or(
-                branches
-                    .into_iter()
-                    .map(|branch| scan_predicate(branch, resolver))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
-        }
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, ..) => {
-            let mut branches = Vec::new();
-            collect_conjuncts(conjunct, &mut branches);
-            Some(ScanPredicate::And(
-                branches
-                    .into_iter()
-                    .map(|branch| scan_predicate(branch, resolver))
-                    .collect::<Option<Vec<_>>>()?,
-            ))
-        }
-        // Only `IS [NOT] NULL`. `IS TRUE`/`IS FALSE`/`IS UNKNOWN` are separate
-        // Go functions with their own signatures and their own NULL handling.
-        tidb_ast::Expr::Is {
-            expr,
-            target: tidb_ast::IsTarget::Null,
-            not,
-        } => {
-            let (offset, column_type) = resolve_column(expr, resolver)?;
-            Some(ScanPredicate::IsNull {
-                column_offset: offset,
-                column_type,
-                negated: *not,
-            })
-        }
-        tidb_ast::Expr::In { expr, list, not } => {
-            if list.is_empty() {
-                return None;
-            }
-            let mut literals = Vec::with_capacity(list.len());
-            for element in list {
-                let (literal, literal_type) =
-                    constant_value_and_type(element, &resolver.time_zone())?;
-                // A NULL member makes `IN` UNKNOWN rather than false for a
-                // non-matching row, and `NOT IN` UNKNOWN for every row; that
-                // is not the membership test this description promises.
-                if literal == Datum::Null {
-                    return None;
-                }
-                literals.push((literal, literal_type));
-            }
-            // Keep the existing integer-column description unchanged. Other
-            // column families continue to fail closed in the TiPB lowering.
-            if let Some((offset, column_type)) = resolve_column(expr, resolver) {
-                if column_type.eval_type() != tidb_datatype::EvalType::String {
-                    return Some(ScanPredicate::In {
-                        column_offset: offset,
-                        // A non-string column compares under `binary`, and
-                        // no `COLLATE` can change that; the adoption step
-                        // leaves it alone.
-                        collation: column_type.collation(),
-                        column_type,
-                        literals: literals.into_iter().map(|(value, _)| value).collect(),
-                        negated: *not,
-                    });
-                }
-            }
-
-            // Go `inFunctionClass.getFunction` selects `InString` from the
-            // tested expression, not from whether that expression is a bare
-            // column. Every list item is coerced to that same evaluation type.
-            let tested = scan_operand(expr, resolver)?;
-            if tested.eval_type() != tidb_datatype::EvalType::String
-                || literals.iter().any(|(value, field_type)| {
-                    field_type.eval_type() != tidb_datatype::EvalType::String
-                        || !matches!(value, Datum::String(_) | Datum::Bytes(_))
-                })
-            {
-                return None;
-            }
-            Some(ScanPredicate::ScalarIn {
-                // The tested expression's own collation, which is the derived
-                // one whenever no argument is explicit;
-                // `adopt_compiled_arguments` replaces it with the built
-                // expression's.
-                collation: match &tested {
-                    tidb_expr::pushdown_catalog::PbScalar::Column { field_type, .. } => {
-                        field_type.collation()
-                    }
-                    _ => tidb_datatype::Collation::Utf8Mb4Bin,
-                },
-                tested,
-                literals: literals.into_iter().map(|(value, _)| value).collect(),
-                negated: *not,
-            })
-        }
-        tidb_ast::Expr::Like {
-            expr,
-            pattern,
-            not,
-            ilike: false,
-            escape,
-        } => {
-            let (column_offset, column_type) = resolve_column(expr, resolver)?;
-            if column_type.eval_type() != tidb_datatype::EvalType::String {
-                return None;
-            }
-            let mut pattern_expr = &**pattern;
-            while let tidb_ast::Expr::Paren(inner) = pattern_expr {
-                pattern_expr = inner;
-            }
-            let pattern = match pattern_expr {
-                tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => {
-                    pattern.as_bytes().to_vec()
-                }
-                _ => return None,
-            };
-            let predicate = ScanPredicate::Like {
-                column_offset,
-                // The column's, which is the derived collation whenever no
-                // argument is explicit; `adopt_compiled_arguments` replaces it
-                // with the built expression's.
-                collation: column_type.collation(),
-                column_type,
-                pattern,
-                escape: escape.unwrap_or_else(|| resolver.like_default_escape()),
-            };
-            Some(if *not {
-                ScanPredicate::Not(Box::new(predicate))
-            } else {
-                predicate
-            })
-        }
-        tidb_ast::Expr::Between {
-            expr,
-            low,
-            high,
-            not: false,
-        } => {
-            let (column_offset, column_type) = resolve_column(expr, resolver)?;
-            let zone = resolver.time_zone();
-            let (low, low_type) = constant_value_and_type(low, &zone)?;
-            let (high, high_type) = constant_value_and_type(high, &zone)?;
-            Some(ScanPredicate::And(vec![
-                ScanPredicate::Compare(ScanComparison {
-                    column_offset,
-                    collation: column_type.collation(),
-                    column_type: column_type.clone(),
-                    literal_type: low_type,
-                    op: ScanComparisonOp::Ge,
-                    literal: low,
-                    column_on_left: true,
-                }),
-                ScanPredicate::Compare(ScanComparison {
-                    column_offset,
-                    collation: column_type.collation(),
-                    column_type,
-                    literal_type: high_type,
-                    op: ScanComparisonOp::Le,
-                    literal: high,
-                    column_on_left: true,
-                }),
-            ]))
-        }
-        // A builtin call, when the push-down catalog resolves a signature TiKV
-        // evaluates for it. The whole `WHERE sin(a)` conjunct is then the
-        // Selection condition, evaluated for truth exactly as a `Selection`
-        // above the scan would evaluate it.
-        _ => scan_column_comparison(conjunct, resolver)
-            .map(ScanPredicate::ColumnCompare)
-            .or_else(|| scan_comparison(conjunct, resolver).map(ScanPredicate::Compare))
-            .or_else(|| scan_operand_call(conjunct, resolver).map(ScanPredicate::Builtin)),
-    }
-}
-
-/// One argument of a described builtin call: a column of the scanned table, an
-/// already-folded integer constant, or a nested call the catalog also resolves.
-///
-/// Anything else -- a non-integer constant, a subquery, a call whose signature
-/// TiKV does not evaluate -- makes the whole conjunct residual, which is Go's
-/// own rule: `scalarFuncToPBExpr` returns nil as soon as one child does.
-fn scan_operand(
-    argument: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
-    use tidb_expr::pushdown_catalog::PbScalar;
-    if let tidb_ast::Expr::Paren(inner) = argument {
-        return scan_operand(inner, resolver);
-    }
-    if let tidb_ast::Expr::Column(_) = argument {
-        let (offset, field_type) = resolve_column(argument, resolver)?;
-        return Some(PbScalar::Column { offset, field_type });
-    }
-    // A constant subtree first, so a folded literal argument (`MOD(a, 3 + 1)`)
-    // is the constant Go would have folded rather than a `plus` call. Only an
-    // integer is describable: every other constant family needs the TiPB
-    // literal encoding this tier does not build.
-    if let Some(Datum::Int(value)) = constant_value(argument, &resolver.time_zone()) {
-        return Some(PbScalar::IntLiteral(value));
-    }
-    scan_operand_call(argument, resolver)
-}
-
-/// A builtin call as an operand, in either of the two spellings the parser
-/// produces for one: an explicit `Expr::Func`, and the operator form real TiDB
-/// also desugars to a named scalar function -- `MOD(a, b)` parses as the `%`
-/// binary operator, and Go's `ScalarFunction` for it is named `mod` either way.
-fn scan_operand_call(
-    argument: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
-    let (name, args): (String, Vec<&tidb_ast::Expr>) = match argument {
-        tidb_ast::Expr::Func { name, args, .. } => {
-            (name.to_ascii_lowercase(), args.iter().collect())
-        }
-        tidb_ast::Expr::Binary(op, lhs, rhs) => (
-            tidb_expr::scalar_function::binary_op_name(*op).to_owned(),
-            vec![lhs, rhs],
-        ),
-        // Go's parser lowers `candidate MEMBER OF (document)` into the plain
-        // builtin call `FuncCallExpr{FnName: json_memberof}`
-        // (`pkg/parser/expr_parser.go:200`), so `scan_predicate` sees it
-        // through the same fallthrough every other function takes -- which is
-        // why Go's cop Selection carries `json_memberof`. This tree keeps a
-        // distinct node; naming the call here restores that equivalence.
-        tidb_ast::Expr::MemberOf { expr, array } => (
-            "json_memberof".to_owned(),
-            vec![expr, array],
-        ),
-        _ => return None,
-    };
-    let operands = args
-        .into_iter()
-        .map(|nested| scan_operand(nested, resolver))
-        .collect::<Option<Vec<_>>>()?;
-    tidb_expr::pushdown_catalog::build_call(&name, operands)
-}
-
-/// Flattens an `OR` chain into its branches, in source order.
-fn collect_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => collect_disjuncts(inner, out),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
-            collect_disjuncts(lhs, out);
-            collect_disjuncts(rhs, out);
-        }
-        other => out.push(other),
-    }
-}
-
-/// The scan-input offset and declared type of `expr`, when it is a plain
-/// reference to a column of the scanned table.
-fn resolve_column(
-    expr: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<(u32, FieldType)> {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => resolve_column(inner, resolver),
-        tidb_ast::Expr::Column(path) => {
-            let (offset, column_type, _) = resolver.resolve(path)?;
-            Some((u32::try_from(offset).ok()?, column_type))
-        }
-        _ => None,
-    }
-}
-
-/// The already-evaluated value of `expr`, when it is a constant.
-///
-/// A negated integer literal is folded here rather than left as the unary
-/// minus the parser produced, because Go's expression rewriter folds it too
-/// (`foldConstant` over a deterministic function of constants) and the
-/// coprocessor is therefore sent the negative constant, not a `UnaryMinus`
-/// node. Without this, `WHERE a > -1` describes nothing at all.
-fn constant_value(expr: &tidb_ast::Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
-    constant_value_and_type(expr, zone).map(|(value, _)| value)
-}
-
-/// A constant expression's value and the exact type Go's expression builder
-/// assigns it. Evaluating the rewritten tree also admits folded arithmetic and
-/// `DATE_ADD`, rather than restricting this boundary to bare literal nodes.
-fn constant_value_and_type(
-    expr: &tidb_ast::Expr,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Option<(Datum, FieldType)> {
-    let resolver = tidb_expr::rewriter::ZonedNoResolver::new(zone.clone());
-    let rewritten = rewrite_expr_resolved(expr, &resolver).ok()?;
-    let field_type = rewritten.static_type()?.clone();
-    let value =
-        tidb_expr::eval_expression_once(&rewritten, &tidb_expr::ZonedNoColumns(zone.clone()))
-            .ok()?;
-    Some((value, field_type))
-}
-
-/// One conjunct as a column-versus-constant comparison, when it is one.
-fn scan_comparison(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanComparison> {
-    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
-        return None;
-    };
-    let op = ScanComparisonOp::from_ast(*op)?;
-    // Go accepts the constant on either side and the protobuf preserves the
-    // operand order it was written in, so the side is recorded rather than
-    // normalized away.
-    let (column, value, column_on_left) = match (&**lhs, &**rhs) {
-        (tidb_ast::Expr::Column(path), other) => (path, other, true),
-        (other, tidb_ast::Expr::Column(path)) => (path, other, false),
-        _ => return None,
-    };
-    // A second column reference on the "constant" side leaves the shape.
-    let (offset, column_type, _) = resolver.resolve(column)?;
-    let zone = resolver.time_zone();
-    let (literal, literal_type) = constant_value_and_type(value, &zone)?;
-    // A NULL constant makes the comparison unknown for every row; that is a
-    // whole-predicate property Go handles in the ranger, not a filter shape.
-    if literal == Datum::Null {
-        return None;
-    }
-    Some(ScanComparison {
-        column_offset: u32::try_from(offset).ok()?,
-        collation: column_type.collation(),
-        column_type,
-        literal_type,
-        op,
-        literal,
-        column_on_left,
-    })
-}
-
-/// One conjunct as a source-ordered comparison between two scan columns.
-///
-/// Go's `columnToPBExpr` sends both `ColumnRef` children when the comparison
-/// is supported by TiKV. The TiPB lowering applies the type-family gate;
-/// refusing there keeps a comparison local when the two declared types need a
-/// coercion this tier does not yet model.
-fn scan_column_comparison(
-    conjunct: &tidb_ast::Expr,
-    resolver: &impl ColumnResolver,
-) -> Option<ScanColumnComparison> {
-    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
-        return None;
-    };
-    let op = ScanComparisonOp::from_ast(*op)?;
-    let (tidb_ast::Expr::Column(left), tidb_ast::Expr::Column(right)) = (&**lhs, &**rhs) else {
-        return None;
-    };
-    let (left_offset, left_type, _) = resolver.resolve(left)?;
-    let (right_offset, right_type, _) = resolver.resolve(right)?;
-    Some(ScanColumnComparison {
-        left_offset: u32::try_from(left_offset).ok()?,
-        left_type,
-        right_offset: u32::try_from(right_offset).ok()?,
-        right_type,
-        op,
-    })
-}
-
-
-/// Flattens an `AND` chain into its conjuncts.
-fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => collect_conjuncts(inner, out),
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
-            collect_conjuncts(lhs, out);
-            collect_conjuncts(rhs, out);
-        }
-        other => out.push(other),
-    }
-}
-
-/// The single TiKV-backed table a `FROM` names, when it names exactly one.
-/// A point get applies only to that shape (Go `getSingleTableNameAndAlias`).
-/// The one plain table a `FROM` names, when it names exactly one.
-///
-/// Split out of [`single_kv_table`] because the access-path decision needs the
-/// REFERENCE, not just the table it resolves to: the `USE`/`FORCE`/`IGNORE
-/// INDEX` hints that decide which paths exist live on the reference.
 pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
     let table_ref = sole_table_ref(from)?;
     // A `PARTITION (...)` restriction is refused by `build_from`; declining
@@ -5224,39 +2082,6 @@ pub(crate) fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast:
     Some(table_ref)
 }
 
-/// [`single_kv_table`] over [`sole_table_ref`]: the stored table a `FROM`
-/// names even when a `PARTITION (...)` list narrowed it.
-pub(crate) fn sole_kv_table(
-    from: &Option<tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<KvTable> {
-    let table_ref = sole_table_ref(from)?;
-    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
-    match catalog.get_in(database, name)? {
-        TableEntry::Kv(kv) => Some(kv.clone()),
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    }
-}
-
-pub(crate) fn single_kv_table(
-    from: &Option<tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<KvTable> {
-    let table_ref = single_table_ref(from)?;
-    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
-    match catalog.get_in(database, name)? {
-        TableEntry::Kv(kv) => Some(kv.clone()),
-        // A view stores no rows, so there is no point get to try.
-        TableEntry::Mem(_) | TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
-            None
-        }
-    }
-}
-
 /// Go `tryWhereIn2BatchPointGet`: a single-table `SELECT` whose whole `WHERE`
 /// is `column IN (constants)` over the handle or a single-column unique index
 /// reads those rows directly instead of scanning.
@@ -5271,37 +2096,44 @@ pub(crate) fn single_kv_table(
 /// `Batch_Point_Get` when the tuples pin every column of a unique index or a
 /// clustered common handle.
 pub(crate) struct BatchPointLookup {
-    handles: Vec<TableHandle>,
     index: Option<(i64, String)>,
     common_handle: bool,
     plan_rows: usize,
+    key_values: Vec<Vec<Datum>>,
 }
 
 impl BatchPointLookup {
     fn handle(handles: Vec<TableHandle>, plan_rows: usize) -> Self {
+        let key_values = handles
+            .iter()
+            .filter_map(|handle| match handle {
+                TableHandle::Int(value) => Some(vec![Datum::Int(*value)]),
+                TableHandle::Common(_) => None,
+            })
+            .collect();
         Self {
-            handles,
             index: None,
             common_handle: false,
             plan_rows,
+            key_values,
         }
     }
 
-    fn common_handle(handles: Vec<TableHandle>, plan_rows: usize) -> Self {
+    fn common_handle(key_values: Vec<Vec<Datum>>, plan_rows: usize) -> Self {
         Self {
-            handles,
             index: None,
             common_handle: true,
             plan_rows,
+            key_values,
         }
     }
 
     fn index(
-        handles: Vec<TableHandle>,
         plan_rows: usize,
         table: &KvTable,
         columns: &[(String, FieldType)],
         index: &crate::kv_table::KvIndex,
+        key_values: Vec<Vec<Datum>>,
     ) -> Self {
         let index_columns = index
             .column_offsets
@@ -5315,28 +2147,54 @@ impl BatchPointLookup {
             .collect::<Vec<_>>()
             .join(", ");
         Self {
-            handles,
             index: Some((index.id, format!("index:{}({index_columns})", index.name))),
             common_handle: false,
             plan_rows,
+            key_values,
         }
     }
 
     fn ignores_hints(&self) -> bool {
         self.index.is_none() && !self.common_handle
     }
+}
 
-    fn allowed_by(&self, hints: &crate::index_hints::AvailablePaths) -> bool {
-        match &self.index {
-            Some((index_id, _)) => hints.allows_index(*index_id),
-            None if self.common_handle => hints.allows_common_primary(),
-            None => true,
-        }
+/// Resolve only clustered-handle batches for the locking-read prelock path.
+pub(crate) fn primary_batch_point_lookup(
+    predicate: &tidb_ast::Expr,
+    table_ref: &tidb_ast::TableRef,
+    table: &KvTable,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<Vec<TableHandle>>, DriverError> {
+    let statement = PointPlanStmt::of_write(Some(predicate), &[], None, table_ref);
+    let columns = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect::<Vec<_>>();
+    let Some(batch) = try_batch_point_get_stmt(&statement, table, &columns, zone)? else {
+        return Ok(None);
+    };
+    if batch.index.is_some() {
+        return Ok(None);
     }
-
-    pub(crate) fn into_handles(self) -> Vec<TableHandle> {
-        self.handles
-    }
+    Ok(batch
+        .key_values
+        .into_iter()
+        .map(|values| {
+            if batch.common_handle {
+                tidb_codec::encode_key_in_timezone(zone, &values)
+                    .ok()
+                    .map(TableHandle::Common)
+            } else {
+                match values.as_slice() {
+                    [Datum::Int(value)] => Some(TableHandle::Int(*value)),
+                    [Datum::UInt(value)] => Some(TableHandle::Int(*value as i64)),
+                    _ => None,
+                }
+            }
+        })
+        .collect())
 }
 
 pub(crate) fn try_batch_point_get(
@@ -5349,105 +2207,12 @@ pub(crate) fn try_batch_point_get(
     try_batch_point_get_stmt(&stmt, table, columns, zone)
 }
 
-/// Binds only record handles, without a storage read. Both BatchPointGet
-/// planning and pessimistic pre-locking must use the same column domains and
-/// record-key encoding; unique-index discovery needs a snapshot and stays in
-/// the ordinary planner below.
-pub(crate) fn primary_batch_point_lookup(
-    predicate: &tidb_ast::Expr,
-    table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<BatchPointLookup>, DriverError> {
-    if !table.all_columns_public() {
-        return Ok(None);
-    }
-    let tidb_ast::Expr::In { expr, list, not: false } = predicate else {
-        return Ok(None);
-    };
-    let integer_offset = table.pk_handle_offset().map(|offset| [offset]);
-    let offsets = integer_offset
-        .as_ref()
-        .map_or(table.common_handle_offsets(), |offset| offset.as_slice());
-    let (key_columns, row_form) = match expr.as_ref() {
-        tidb_ast::Expr::Row(columns) => (columns.as_slice(), true),
-        column @ tidb_ast::Expr::Column(_) => (std::slice::from_ref(column), false),
-        _ => return Ok(None),
-    };
-    if offsets.is_empty() || offsets.len() != key_columns.len() || list.is_empty() {
-        return Ok(None);
-    }
-    let mut positions = Vec::with_capacity(offsets.len());
-    for offset in offsets {
-        let Some(column) = table.columns.get(*offset) else {
-            return Ok(None);
-        };
-        let Some(position) = key_columns.iter().position(|key_column| {
-            matches!(key_column, tidb_ast::Expr::Column(path)
-                if path.last().is_some_and(|part| part.eq_ignore_ascii_case(&column.name)))
-        }) else {
-            return Ok(None);
-        };
-        positions.push(position);
-    }
-    let mut handles = Vec::with_capacity(list.len());
-    for candidate in list {
-        let values = if row_form {
-            let tidb_ast::Expr::Row(values) = candidate else {
-                return Ok(None);
-            };
-            values.as_slice()
-        } else {
-            std::slice::from_ref(candidate)
-        };
-        if values.len() != positions.len() {
-            return Ok(None);
-        }
-        let mut key_values = Vec::with_capacity(offsets.len());
-        for (offset, position) in offsets.iter().zip(&positions) {
-            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
-                &values[*position],
-                &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
-            ) else {
-                return Ok(None);
-            };
-            let Ok(value) = constant.eval() else {
-                return Ok(None);
-            };
-            let Some(value) = point_get_value(&table.columns[*offset].field_type, &value) else {
-                return Ok(None);
-            };
-            key_values.push(value);
-        }
-        let handle = if integer_offset.is_some() {
-            match key_values[0] {
-                Datum::Int(value) => TableHandle::Int(value),
-                Datum::UInt(value) => TableHandle::Int(value as i64),
-                _ => return Ok(None),
-            }
-        } else {
-            table.common_handle_from_values(&key_values, zone)
-                .map_err(|error| DriverError::Parse(format!("common handle encode failed: {error:?}")))?
-        };
-        if !handles.contains(&handle) {
-            handles.push(handle);
-        }
-    }
-    Ok(Some(if integer_offset.is_some() {
-        BatchPointLookup::handle(handles, list.len())
-    } else {
-        BatchPointLookup::common_handle(handles, list.len())
-    }))
-}
-
 pub(crate) fn try_batch_point_get_stmt(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<BatchPointLookup>, DriverError> {
-    if !table.all_columns_public() {
-        return Ok(None);
-    }
     if select.having.is_some()
         || !select.order_by.is_empty()
         || !select.group_by.is_empty()
@@ -5466,9 +2231,6 @@ pub(crate) fn try_batch_point_get_stmt(
     if *not || list.is_empty() {
         return Ok(None);
     }
-    if let Some(primary) = primary_batch_point_lookup(where_clause, table, zone)? {
-        return Ok(Some(primary));
-    }
     // The row form is Go's composite-key Batch_Point_Get. Each tuple value
     // is converted into the indexed column's domain before the key lookup;
     // any value that cannot round-trip exactly declines the fast path and
@@ -5484,7 +2246,72 @@ pub(crate) fn try_batch_point_get_stmt(
             };
             names.push(name);
         }
-        let mut table = table.clone();
+        // A clustered composite primary key is represented by the common
+        // handle offsets, not by a KvIndex. Its encoded datum key is the
+        // record handle itself, so it can use the same direct lookup source as
+        // a unique index without manufacturing a redundant index entry.
+        let common_offsets = table.common_handle_offsets().to_vec();
+        if common_offsets.len() == names.len() {
+            let mut positions = Vec::with_capacity(common_offsets.len());
+            for offset in &common_offsets {
+                let Some((column_name, _)) = columns.get(*offset) else {
+                    positions.clear();
+                    break;
+                };
+                let Some(position) = names
+                    .iter()
+                    .position(|name| column_name.eq_ignore_ascii_case(name))
+                else {
+                    positions.clear();
+                    break;
+                };
+                positions.push(position);
+            }
+            if positions.len() == common_offsets.len() {
+                let mut handles = Vec::with_capacity(list.len());
+                let mut all_key_values = Vec::with_capacity(list.len());
+                for candidate in list {
+                    let tidb_ast::Expr::Row(values) = candidate else {
+                        return Ok(None);
+                    };
+                    if values.len() != left.len() {
+                        return Ok(None);
+                    }
+                    let mut key_values = Vec::with_capacity(common_offsets.len());
+                    for (offset, position) in common_offsets.iter().zip(&positions) {
+                        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+                            &values[*position],
+                            &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+                        ) else {
+                            return Ok(None);
+                        };
+                        let Ok(value) = constant.eval() else {
+                            return Ok(None);
+                        };
+                        let Some(value) = point_get_value(&columns[*offset].1, &value) else {
+                            return Ok(None);
+                        };
+                        key_values.push(value);
+                    }
+                    let encoded =
+                        tidb_codec::encode_key_in_timezone(zone, &key_values).map_err(|e| {
+                            DriverError::Parse(format!("common handle encode failed: {e:?}"))
+                        })?;
+                    let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|e| {
+                        DriverError::Parse(format!("common handle build failed: {e:?}"))
+                    })?;
+                    let handle = TableHandle::Common(handle.encoded().to_vec());
+                    if !handles.contains(&handle) {
+                        handles.push(handle);
+                        all_key_values.push(key_values);
+                    }
+                }
+                return Ok(Some(BatchPointLookup::common_handle(
+                    all_key_values,
+                    list.len(),
+                )));
+            }
+        }
         for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
             if !index.unique || index.has_prefix() || index.column_offsets.len() != names.len() {
                 continue;
@@ -5507,7 +2334,7 @@ pub(crate) fn try_batch_point_get_stmt(
             if positions.len() != index.column_offsets.len() {
                 continue;
             }
-            let mut handles = Vec::with_capacity(list.len());
+            let mut index_values = Vec::with_capacity(list.len());
             for candidate in list {
                 let tidb_ast::Expr::Row(values) = candidate else {
                     return Ok(None);
@@ -5531,21 +2358,14 @@ pub(crate) fn try_batch_point_get_stmt(
                     };
                     key_values.push(value);
                 }
-                if let Some(handle) = table
-                    .lookup_unique(index.id, &key_values, zone)
-                    .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
-                {
-                    if !handles.contains(&handle) {
-                        handles.push(handle);
-                    }
-                }
+                index_values.push(key_values);
             }
             return Ok(Some(BatchPointLookup::index(
-                handles,
                 list.len(),
-                &table,
+                table,
                 columns,
                 &index,
+                index_values,
             )));
         }
         return Ok(None);
@@ -5572,8 +2392,37 @@ pub(crate) fn try_batch_point_get_stmt(
         values.push(value);
     }
 
+    // The handle path.
+    if let Some(offset) = table.pk_handle_offset() {
+        if columns[offset].0.eq_ignore_ascii_case(name) {
+            // Go `newBatchPointGetPlan` runs every list element through
+            // `getPointGetValue` and returns `nil` -- no batch plan at all --
+            // as soon as one of them is not exactly representable, so a list
+            // mixing `1.0` with `1.5` still answers from a scan rather than
+            // silently dropping the element it cannot key.
+            let mut handles = Vec::with_capacity(values.len());
+            for value in &values {
+                match point_get_value(&columns[offset].1, value) {
+                    Some(Datum::Int(v)) => {
+                        let handle = TableHandle::Int(v);
+                        if !handles.contains(&handle) {
+                            handles.push(handle);
+                        }
+                    }
+                    Some(Datum::UInt(v)) => {
+                        let handle = TableHandle::Int(v as i64);
+                        if !handles.contains(&handle) {
+                            handles.push(handle);
+                        }
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            return Ok(Some(BatchPointLookup::handle(handles, list.len())));
+        }
+    }
+
     // The unique-index path.
-    let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique || index.column_offsets.len() != 1 {
             continue;
@@ -5603,24 +2452,16 @@ pub(crate) fn try_batch_point_get_stmt(
             };
             converted.push(value);
         }
-        let values = converted;
-        let mut handles = Vec::new();
-        for value in &values {
-            if let Some(handle) = table
-                .lookup_unique(index.id, std::slice::from_ref(value), zone)
-                .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
-            {
-                if !handles.contains(&handle) {
-                    handles.push(handle);
-                }
-            }
-        }
+        let index_values = converted
+            .into_iter()
+            .map(|value| vec![value])
+            .collect::<Vec<_>>();
         return Ok(Some(BatchPointLookup::index(
-            handles,
             list.len(),
-            &table,
+            table,
             columns,
             &index,
+            index_values,
         )));
     }
     Ok(None)
@@ -5635,17 +2476,11 @@ pub(crate) fn convert_pairs_to_column_domain(
     pairs: &mut [NameValuePair],
     columns: &[(String, FieldType)],
 ) -> bool {
-    convert_pairs_to_types(pairs, |name| columns.iter()
-        .find(|(column, _)| column.eq_ignore_ascii_case(name))
-        .map(|(_, field_type)| field_type))
-}
-
-fn convert_pairs_to_types<'a>(
-    pairs: &mut [NameValuePair],
-    field_type: impl Fn(&str) -> Option<&'a FieldType>,
-) -> bool {
     for pair in pairs {
-        let Some(field_type) = field_type(&pair.column) else {
+        let Some((_, field_type)) = columns
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+        else {
             return false;
         };
         let Some(value) = point_get_value(field_type, &pair.value) else {
@@ -5672,6 +2507,16 @@ impl NameValuePair {
     /// domain by [`convert_pairs_to_column_domain`].
     pub(crate) const fn value(&self) -> &Datum {
         &self.value
+    }
+}
+
+fn index_key_part_name(table: &KvTable, offset: usize) -> String {
+    let Some(column) = table.columns.get(offset) else {
+        return String::new();
+    };
+    match &column.generated {
+        Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
+        _ => column.name.clone(),
     }
 }
 
@@ -5791,6 +2636,11 @@ pub(crate) struct PointPlanStmt<'a> {
     /// disables the conversion. What the `WHERE` happened to prune is NOT
     /// that list, which is why the restricted `KvTable` cannot answer this.
     named_partitions: &'a [String],
+    /// The single write target Go copies into the SELECT-shaped fast-plan
+    /// input. The ordinary write path uses the same table reference when it
+    /// enters the shared logical planner, preserving alias, partition, and
+    /// index-hint identity.
+    table_ref: Option<&'a tidb_ast::TableRef>,
 }
 
 impl<'a> PointPlanStmt<'a> {
@@ -5805,6 +2655,7 @@ impl<'a> PointPlanStmt<'a> {
             distinct: select.distinct,
             named_partitions: sole_table_ref(&select.from)
                 .map_or(&[][..], |table_ref| table_ref.partitions.as_slice()),
+            table_ref: sole_table_ref(&select.from),
         }
     }
 
@@ -5815,6 +2666,7 @@ impl<'a> PointPlanStmt<'a> {
         where_clause: Option<&'a tidb_ast::Expr>,
         order_by: &'a [tidb_ast::OrderItem],
         limit: Option<&'a tidb_ast::Limit>,
+        table_ref: &'a tidb_ast::TableRef,
     ) -> Self {
         PointPlanStmt {
             where_clause,
@@ -5823,16 +2675,107 @@ impl<'a> PointPlanStmt<'a> {
             having: None,
             group_by: &[],
             distinct: false,
-            // Go's synthesized statement for a write copies `TableRefs`, but
-            // the `_tidb_rowid` exception below belongs to the READ planner's
-            // `convertToPointGet`; `tryPointGetPlan` -- the only rule a write
-            // goes through -- refuses `_tidb_rowid` on a partitioned table
-            // outright (`point_get_plan.go`: "Partition table can't use
-            // `_tidb_rowid` to generate PointGet Plan"). An empty list is that
-            // refusal.
-            named_partitions: &[],
+            named_partitions: &table_ref.partitions,
+            table_ref: Some(table_ref),
         }
     }
+
+    /// The SELECT-shaped logical input used for an ordinary single-table
+    /// write. Go builds the write input directly as a DataSource rather than
+    /// maintaining a separate access chooser; the Rust shared planner exposes
+    /// SELECT as that same entry point, so copy the write clauses and request
+    /// the complete row through `*`.
+    pub(crate) fn write_select(&self) -> Option<tidb_ast::SelectStmt> {
+        let table_ref = self.table_ref?.clone();
+        let mut fields = tidb_ast::SelectFieldList::default();
+        fields.push(tidb_ast::SelectField::Wildcard(Vec::new()));
+        Some(tidb_ast::SelectStmt {
+            kind: Default::default(),
+            is_in_braces: false,
+            with: None,
+            hints: Vec::new(),
+            priority: Default::default(),
+            sql_small_result: false,
+            sql_big_result: false,
+            sql_buffer_result: false,
+            sql_no_cache: false,
+            straight_join: false,
+            calc_found_rows: false,
+            distinct: false,
+            all: false,
+            fields,
+            values: Vec::new(),
+            from: Some(tidb_ast::Join {
+                left: tidb_ast::JoinNode::Table(table_ref),
+                right: None,
+                tp: tidb_ast::JoinType::Cross,
+                straight: false,
+                on: None,
+                using: Vec::new(),
+                natural: false,
+                explicit_parens: false,
+            }),
+            where_clause: self.where_clause.cloned(),
+            group_by: Vec::new(),
+            rollup: false,
+            having: None,
+            windows: Vec::new(),
+            order_by: self.order_by.to_vec(),
+            limit: self.limit.cloned(),
+            lock: None,
+            into_outfile: None,
+            into_vars: Vec::new(),
+        })
+    }
+}
+
+/// Go `getNameValuePairs`'s `ErrOverflow` arm at the fast-plan boundary: a
+/// `WHERE` conjunct whose constant cannot be represented in its column's
+/// domain can equal no stored row, so the whole conjunction is unsatisfiable
+/// and Go plans a `TableDual` instead of reading. `name_value_pairs` only
+/// returns true for a pure conjunction of equalities, so every pair it yields
+/// is ANDed into the predicate.
+///
+/// The shape guards repeat `try_point_get`'s first three checks so this only
+/// fires where Go's `tryPointGetPlan` reaches `getNameValuePairs` at all: a
+/// statement with `HAVING`, `ORDER BY`, `GROUP BY`, or a removing `LIMIT` is
+/// left to the ordinary planner, exactly as Go leaves it.
+fn point_get_predicate_overflows(
+    select: &PointPlanStmt<'_>,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
+        return false;
+    }
+    if let Some(limit) = select.limit {
+        let Ok(count) = eval_limit_bound(&limit.count) else {
+            return false;
+        };
+        let offset = match &limit.offset {
+            Some(expr) => match eval_limit_bound(expr) {
+                Ok(offset) => offset,
+                Err(_) => return false,
+            },
+            None => 0,
+        };
+        if count == 0 || offset > 0 {
+            return false;
+        }
+    }
+    let Some(where_clause) = select.where_clause else {
+        return false;
+    };
+    let mut pairs = Vec::new();
+    if !name_value_pairs(where_clause, &mut pairs, zone) {
+        return false;
+    }
+    pairs.iter().any(|pair| {
+        columns
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+            .is_some_and(|(_, field_type)| point_get_value_overflowed(field_type, &pair.value))
+    })
 }
 
 /// The row a point get reads, when the statement qualifies for one.
@@ -5851,12 +2794,10 @@ impl<'a> PointPlanStmt<'a> {
 /// second, never both.
 #[derive(Clone, Debug)]
 pub(crate) struct PointGetPin {
-    /// The resolved record handle (`None` = a key no row can carry; Go still
-    /// plans the `Point_Get` and reads nothing).
-    pub(crate) handle: Option<TableHandle>,
-    /// The UNIQUE INDEX that pinned the row, when one did: its name and its
-    /// column names, in index order. `None` is the handle pin.
-    pub(crate) index: Option<(String, Vec<String>)>,
+    /// The exact handle or unique-index values retained by Go's point plan.
+    pub(crate) key_values: Vec<Datum>,
+    /// The selected unique-index id, or `None` for a record-handle lookup.
+    pub(crate) index_id: Option<i64>,
 }
 
 pub(crate) fn try_point_get(
@@ -5865,9 +2806,6 @@ pub(crate) fn try_point_get(
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<PointGetPin>, DriverError> {
-    if !table.all_columns_public() {
-        return Ok(None);
-    }
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
     }
@@ -5920,19 +2858,15 @@ pub(crate) fn try_point_get(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
+            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         let handle_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let Some(value) = point_get_value(&handle_type, &pairs[0].value) else {
             return Ok(None);
         };
         return Ok(Some(PointGetPin {
-            handle: match value {
-                Datum::Int(value) => Some(TableHandle::Int(value)),
-                Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
-                _ => return Ok(None),
-            },
-            index: None,
+            key_values: vec![value],
+            index_id: None,
         }));
     }
 
@@ -5951,15 +2885,8 @@ pub(crate) fn try_point_get(
         let handle_column = &columns[handle_offset].0;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
             return Ok(Some(PointGetPin {
-                handle: match &pairs[0].value {
-                    Datum::Int(value) => Some(TableHandle::Int(*value)),
-                    Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                    // Unreachable: the conversion above has already put the
-                    // value in the handle column's integer domain or refused
-                    // the plan.
-                    _ => return Ok(None),
-                },
-                index: None,
+                key_values: vec![pairs[0].value.clone()],
+                index_id: None,
             }));
         }
         // Go's `else if handlePair.value.Kind() != KindNull { return nil }`:
@@ -5999,54 +2926,17 @@ pub(crate) fn try_point_get(
             values.push(pair.value.clone());
         }
         if values.len() == table.common_handle_offsets().len() {
-            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
-                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
             // A clustered common handle IS the record key, so it prints as
             // a handle plan, not an index one.
             return Ok(Some(PointGetPin {
-                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
-                index: None,
-            }));
-        }
-    }
-
-    // A clustered common primary key is the record handle itself. Go's
-    // `tryPointGetPlan` accepts it when every handle column is pinned exactly
-    // once; unlike a secondary unique index this remains one storage read.
-    let common_offsets = table.common_handle_offsets();
-    if !common_offsets.is_empty() && common_offsets.len() == pairs.len() {
-        let mut values = Vec::with_capacity(common_offsets.len());
-        for offset in common_offsets {
-            let Some((column_name, _)) = columns.get(*offset) else {
-                values.clear();
-                break;
-            };
-            let Some(pair) = pairs
-                .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(column_name))
-            else {
-                values.clear();
-                break;
-            };
-            values.push(pair.value.clone());
-        }
-        if values.len() == common_offsets.len() {
-            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
-                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
-            let handle = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
-            return Ok(Some(PointGetPin {
-                handle: Some(TableHandle::Common(handle.encoded().to_vec())),
-                index: None,
+                key_values: values,
+                index_id: None,
             }));
         }
     }
 
     // The unique-index path: every column of some unique index is pinned.
-    let mut table = table.clone();
-    for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
+    for index in table.plan_indexes() {
         if !index.unique {
             continue;
         }
@@ -6084,130 +2974,12 @@ pub(crate) fn try_point_get(
         if values.len() != index.column_offsets.len() {
             continue;
         }
-        let handle = table
-            .lookup_unique(index.id, &values, zone)
-            .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?;
-        // Go `PointGetPlan.AccessObject` prints the pinning index --
-        // `table:t, index:idx(cols)` -- and no handle, even though execution
-        // resolved one through the index entry.
-        let index_columns = index
-            .column_offsets
-            .iter()
-            .filter_map(|offset| table.columns.get(*offset))
-            .map(|column| column.name.clone())
-            .collect();
         return Ok(Some(PointGetPin {
-            handle,
-            index: Some((index.name.clone(), index_columns)),
+            key_values: values,
+            index_id: Some(index.id),
         }));
     }
     Ok(None)
-}
-
-/// Prepared clustered-handle point-get admission using the table's borrowed
-/// column metadata.  The ordinary helper above serves the planner's tuple
-/// metadata shape; this variant is the binary YCSB hot path and deliberately
-/// avoids allocating/cloning a `(name, FieldType)` vector for every EXECUTE.
-pub(crate) fn try_prepared_common_handle_point_get_path(
-    select: &tidb_ast::SelectStmt,
-    table: &KvTable,
-    params: &[Datum],
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Option<TableHandle>, DriverError> {
-    if !table.all_columns_public() {
-        return Ok(None);
-    }
-    if table.plan_indexes().next().is_some() {
-        return Ok(None);
-    }
-    let Some(where_clause) = select.where_clause.as_ref() else {
-        return Ok(None);
-    };
-    let mut pairs = Vec::new();
-    if !prepared_name_value_pairs(where_clause, params, &mut pairs) || pairs.is_empty() {
-        return Ok(None);
-    }
-    let columns = table.visible_columns();
-    for pair in &mut pairs {
-        let Some(column) = columns
-            .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(&pair.column))
-        else {
-            return Ok(None);
-        };
-        let Some(value) = point_get_value(&column.field_type, &pair.value) else {
-            return Ok(None);
-        };
-        pair.value = value;
-    }
-    if let Some(handle_offset) = table.pk_handle_offset() {
-        let handle_column = &columns[handle_offset].name;
-        if pairs.len() != 1 || !pairs[0].column.eq_ignore_ascii_case(handle_column) {
-            return Ok(None);
-        }
-        let handle = match pairs[0].value {
-            Datum::Int(value) => TableHandle::Int(value),
-            Datum::UInt(value) => TableHandle::Int(value as i64),
-            _ => return Ok(None),
-        };
-        return Ok(Some(handle));
-    }
-    let common_offsets = table.common_handle_offsets();
-    if common_offsets.is_empty() || common_offsets.len() != pairs.len() {
-        return Ok(None);
-    }
-    let mut values = Vec::with_capacity(common_offsets.len());
-    for offset in common_offsets {
-        let Some(column) = columns.get(*offset) else {
-            return Ok(None);
-        };
-        let Some(pair) = pairs
-            .iter()
-            .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
-        else {
-            return Ok(None);
-        };
-        values.push(pair.value.clone());
-    }
-    let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
-        .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
-    let handle = tidb_txnkv::CommonHandle::new(encoded)
-        .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
-    Ok(Some(TableHandle::Common(handle.encoded().to_vec())))
-}
-
-fn prepared_name_value_pairs(
-    expr: &tidb_ast::Expr,
-    params: &[Datum],
-    pairs: &mut Vec<NameValuePair>,
-) -> bool {
-    use tidb_ast::{BinaryOp, Expr};
-    match expr {
-        Expr::Paren(inner) => prepared_name_value_pairs(inner, params, pairs),
-        Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
-            prepared_name_value_pairs(lhs, params, pairs)
-                && prepared_name_value_pairs(rhs, params, pairs)
-        }
-        Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
-            let (column, marker) = match (&**lhs, &**rhs) {
-                (Expr::Column(path), Expr::ParamMarker { order, .. }) => (path, *order),
-                (Expr::ParamMarker { order, .. }, Expr::Column(path)) => (path, *order),
-                _ => return false,
-            };
-            let Some(name) = column.last() else {
-                return false;
-            };
-            let Some(value) = params.get(marker) else {
-                return false;
-            };
-            pairs.push(NameValuePair {
-                column: name.clone(),
-                value: value.clone(),
-            });
-            true
-        }
-        _ => false,
-    }
 }
 
 /// The record keys one single-table point `UPDATE`/`DELETE` locks BEFORE it
@@ -6244,14 +3016,16 @@ pub(crate) fn point_write_prelock_keys(
     // domain conversion and the handle offsets below both index into it --
     // the same list [`super::access_path`] builds for a write's own read-path
     // decision (`write_read_path`).
-    let columns = &table.columns;
-    if !convert_pairs_to_types(&mut pairs, |name| columns.iter()
-        .find(|column| column.name.eq_ignore_ascii_case(name))
-        .map(|column| &column.field_type)) {
+    let columns: Vec<(String, tidb_datatype::FieldType)> = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
+    if !convert_pairs_to_column_domain(&mut pairs, &columns) {
         return Vec::new();
     }
     let handle = if let Some(handle_offset) = table.pk_handle_offset() {
-        let handle_column = &columns[handle_offset].name;
+        let handle_column = &columns[handle_offset].0;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
             match pairs[0].value {
                 Datum::Int(value) => Some(TableHandle::Int(value)),
@@ -6275,12 +3049,12 @@ pub(crate) fn point_write_prelock_keys(
         }
         let mut values = Vec::with_capacity(common_offsets.len());
         for offset in common_offsets {
-            let Some(column) = columns.get(*offset) else {
+            let Some((name, _)) = columns.get(*offset) else {
                 return Vec::new();
             };
             let Some(pair) = pairs
                 .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
+                .find(|pair| pair.column.eq_ignore_ascii_case(name))
             else {
                 return Vec::new();
             };
@@ -6291,676 +3065,12 @@ pub(crate) fn point_write_prelock_keys(
         };
         Some(TableHandle::Common(encoded))
     };
-    let Some(handle) = handle else { return Vec::new() };
+    let Some(handle) = handle else {
+        return Vec::new();
+    };
     table
         .record_physical_ids()
         .into_iter()
-        .map(|id| {
-            tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle())
-        })
+        .map(|id| tidb_codec::table_key::encode_row_key_with_handle(id, &handle.record_handle()))
         .collect()
-}
-
-/// The row order a committed index access path produces, for the `ORDER BY`
-/// half of the `LIMIT` push-down rule.
-pub(crate) struct IndexAccessOrder {
-    /// The unfixed key columns as offsets into the source row, in key order.
-    column_offsets: Vec<usize>,
-    /// Whether the walk over the ranges produces one total index order: a
-    /// single range, or several ranges that sort after one another without
-    /// overlapping (`IndexRange::precedes_in_key_order`), whose concatenation
-    /// the cursor walk delivers in key order. Interleaving ranges would need
-    /// a merge-sort this tier does not have and stay excluded.
-    single_range: bool,
-    /// Key positions fixed to one value by the single range. Go carries the
-    /// equivalent fact in `AccessPath.ConstCols` and skips those positions in
-    /// `matchProperty` Case 2.
-    constant_positions: Vec<bool>,
-    /// The table's handle column offsets. An index entry stores them in its
-    /// key suffix regardless of the indexed columns, so a residual filter may
-    /// read them straight off the index source; they are NOT part of the
-    /// order claim.
-    handle_covered_offsets: Vec<usize>,
-}
-
-impl IndexAccessOrder {
-    fn from_ranges(column_offsets: &[usize], ranges: &[IndexRange]) -> Self {
-        // Go `matchProperty` Case 2: a key part fixed to one value does not
-        // participate in the varying row order, so ORDER BY may start after
-        // it. Case 3 (different point values in several ranges) needs a
-        // merge-sort operator this tier does not have, and stays excluded --
-        // but only for ranges that INTERLEAVE. Ranges that sort after one
-        // another without overlapping are read one after another by the same
-        // cursor walk (`IndexRangeSourceExec::open` advances `next_range` in
-        // array order, backwards when descending), so their concatenation IS
-        // the index's total order: the taobench batch read's
-        // `(id1, id2, type) > (l,..) AND (id1, id2, type) < (h,..)` detaches
-        // to three such ranges on the leading column, and its ORDER BY over
-        // the whole key discharges against them exactly as go's keep-order
-        // scan does.
-        let single_range = ranges.len() == 1
-            || ranges
-                .iter()
-                .zip(ranges.iter().skip(1))
-                .all(|(current, next)| current.precedes_in_key_order(next));
-        let constant_positions = if let [range] = ranges {
-            column_offsets
-                .iter()
-                .enumerate()
-                .map(|(position, _)| {
-                    range
-                        .low
-                        .get(position)
-                        .zip(range.high.get(position))
-                        .is_some_and(|(low, high)| low == high)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Self {
-            column_offsets: column_offsets.to_vec(),
-            single_range,
-            constant_positions,
-            handle_covered_offsets: Vec::new(),
-        }
-    }
-
-    /// Maps the delivered key order through a compact scan projection. As in
-    /// Go's projection property propagation, only the consecutive surviving
-    /// prefix remains an order promise.
-    pub(crate) fn remap_columns(&mut self, keep: &[usize]) {
-        let remapped: Vec<_> = self
-            .column_offsets
-            .iter()
-            .enumerate()
-            .map_while(|(position, offset)| {
-                keep.iter().position(|kept| kept == offset).map(|mapped| {
-                    (
-                        mapped,
-                        self.constant_positions
-                            .get(position)
-                            .copied()
-                            .unwrap_or(false),
-                    )
-                })
-            })
-            .collect();
-        (self.column_offsets, self.constant_positions) = remapped.into_iter().unzip();
-        // Coverage is tested against the projected scope, not the physical
-        // index key. An omitted handle must not make the column now occupying
-        // its old slot appear index-covered and permit a premature LIMIT.
-        self.handle_covered_offsets = self
-            .handle_covered_offsets
-            .iter()
-            .filter_map(|offset| keep.iter().position(|kept| kept == offset))
-            .collect();
-    }
-
-    /// Whether a residual predicate can run against the index entry before
-    /// the handle stream is capped. Every referenced column must be present
-    /// in the chosen index, matching Go's Build-side Selection rule.
-    pub(crate) fn residual_uses_only_index(
-        &self,
-        predicate: &tidb_ast::Expr,
-        resolver: &ScopeResolver<'_>,
-    ) -> bool {
-        crate::column_prune::expr_column_offsets(predicate, resolver).is_some_and(|offsets| {
-            offsets.iter().all(|offset| {
-                self.column_offsets.contains(offset) || self.handle_covered_offsets.contains(offset)
-            })
-        })
-    }
-}
-
-/// The order a single clustered-handle range still provides after its equal
-/// leading columns have been fixed by the range.
-///
-/// A common handle `(w_id, d_id, o_id)` is the record key itself. The range
-/// `[1 1, 1 1]` therefore walks in `o_id` order, which is the TPC-C Delivery
-/// `ORDER BY o_id LIMIT 1` property. More than one range is declined for the
-/// same conservative reason as an index path: each range is ordered, but this
-/// layer does not promise that their concatenation is one total order.
-/// The order claim of a WHOLE-table scan: the clustered int handle, over the
-/// one unbounded range the scan is.
-///
-/// Go's `matchProperty` makes this claim without looking at the handle's
-/// SIGNEDNESS (`find_best_task.go:1084`, the `path.IsIntHandlePath` arm): an
-/// unsigned handle above `i64::MAX` is stored under a negative record key and
-/// walks FIRST, but the table reader cuts the domain at that point and reads
-/// the two halves in value order (`table_reader.go:295`). This tier makes the
-/// same cut, in `KvTable::record_key_ranges`, so the claim holds here for the
-/// same reason.
-///
-/// A COMMON handle is still refused: its key order matches its datum order
-/// only for the column families the ranger admits, which the range path
-/// proves per statement; the whole-table claim has no such proof.
-fn full_table_handle_order(
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-) -> Option<IndexAccessOrder> {
-    if !table.common_handle_offsets().is_empty() {
-        return None;
-    }
-    if let Some(offset) = table.pk_handle_offset() {
-        table.columns.get(offset)?;
-        return Some(IndexAccessOrder::from_ranges(
-            &[offset],
-            &[IndexRange::full()],
-        ));
-    }
-    // A HEAP table's handle IS `_tidb_rowid`: Go's `matchProperty` makes the
-    // same `path.IsIntHandlePath` claim through `ds.HandleCols`, which
-    // `buildDataSource` built from `NewExtraHandleSchemaCol` for such a
-    // table. The extra handle is the one column the scope appends past the
-    // table's own, so it is found in the scope's list by name; a scope that
-    // does not carry it has no order the statement could name.
-    let offset = extra_handle_scope_offset(columns)?;
-    Some(IndexAccessOrder::from_ranges(
-        &[offset],
-        &[IndexRange::full()],
-    ))
-}
-
-/// The scope offset carrying `_tidb_rowid`, when the scope carries it at all.
-fn extra_handle_scope_offset(columns: &[(String, FieldType)]) -> Option<usize> {
-    columns.iter().position(|(name, _)| {
-        name.eq_ignore_ascii_case(crate::driver::leaf_demand::EXTRA_HANDLE_NAME)
-    })
-}
-
-fn handle_range_order(
-    table: &KvTable,
-    columns: &[(String, FieldType)],
-    ranges: &[IndexRange],
-) -> Option<IndexAccessOrder> {
-    let [range] = ranges else {
-        return None;
-    };
-    let handle_columns: Vec<usize> = if !table.common_handle_offsets().is_empty() {
-        table.common_handle_offsets().to_vec()
-    } else if let Some(offset) = table.pk_handle_offset() {
-        vec![offset]
-    } else {
-        // The heap table's `_tidb_rowid` arm of [`full_table_handle_order`],
-        // over a ranger-narrowed walk of the same record keys.
-        extra_handle_scope_offset(columns).into_iter().collect()
-    };
-    let fixed_prefix = range
-        .low
-        .iter()
-        .zip(&range.high)
-        .take_while(|(low, high)| low == high)
-        .count()
-        .min(handle_columns.len());
-    (fixed_prefix < handle_columns.len())
-        .then(|| IndexAccessOrder::from_ranges(&handle_columns, ranges))
-}
-
-/// The row cap a `LIMIT` may push into the source, or `None` to leave all the
-/// work to the `LimitExec`.
-///
-/// Go pushes a `Limit` into the cop task below the scan, and a `TopN` when an
-/// order has to be established first. Captured from TiDB (mock store,
-/// `pkg/executor/zz_dump_limit_test.go`):
-///
-/// ```text
-/// select a, b from t where b > 4 limit 3
-///   Limit_8            root       offset:0, count:3
-///   └─IndexReader_13   root       index:Limit_12
-///     └─Limit_12       cop[tikv]  offset:0, count:3
-///       └─IndexRangeScan_11  cop[tikv]  range:(4,+inf], keep order:false
-///
-/// select a, b from t where b > 4 order by b limit 2, 3
-///   Limit_13           root       offset:2, count:3
-///     └─Limit_22       cop[tikv]  offset:0, count:5      <- cap is offset+count
-///       └─IndexRangeScan_21  cop[tikv]  range:(4,+inf], keep order:true
-///
-/// select a, b from t order by c limit 3                  <- NOT pushed
-///   TopN_8             root       test.t.c, offset:0, count:3
-///     └─TopN_17        cop[tikv]  test.t.c, offset:0, count:3
-///       └─TableFullScan_16  cop[tikv]  keep order:false  <- reads all 20 rows
-///
-/// select a, b from t where c > 4 order by b limit 3      <- NOT pushed
-///   TopN_8             root       test.t.b, offset:0, count:3
-///     └─TopN_18        cop[tikv]  test.t.b, offset:0, count:3
-///       └─Selection_17 cop[tikv]  gt(test.t.c, 4)        <- filter below the TopN
-/// ```
-///
-/// # The rule
-///
-/// The cap is `offset + count`, because the offset rows are dropped above and
-/// must still be produced -- Go's cop-side `Limit` carries exactly that
-/// (`limit 2, 3` lowers to `offset:0, count:5`).
-///
-/// A cap is only sound when every row the source emits reaches the `LIMIT`,
-/// in the order the `LIMIT` selects from. So it is refused when anything
-/// between them can drop rows (a residual `Selection`, `DISTINCT`, `HAVING`),
-/// or change their values using later rows (a window function), and when the
-/// query has an `ORDER BY` the access path does not already satisfy -- a sort
-/// must see every row before it can name the first one, which is why Go turns
-/// that case into a `TopN` and leaves the scan reading everything.
-///
-/// An `ORDER BY` is satisfied when the source is a single index range and the
-/// by-items are a prefix of that index's columns, all ascending: the storage
-/// iterator walks encoded index keys in ascending order, and the codec's
-/// order is the collation order the sort would have used (NULLs lowest, as
-/// `ORDER BY ... ASC` puts them first).
-///
-/// # Divergence from Go
-///
-/// Go decides this in the planner and *prints* it (`Limit` inside `cop[tikv]`,
-/// or `keep order:true` on the scan). This tier has no cop task or
-/// `TableReader` in its plan text, so the push-down changes only what runs:
-/// the printed plan keeps the `Limit`-over-scan shape either way, and the
-/// truncation shows up in `EXPLAIN ANALYZE`'s `actRows` instead.
-fn scan_limit_cap(
-    select: &tidb_ast::SelectStmt,
-    residual_where: Option<&tidb_ast::Expr>,
-    index_order: Option<&IndexAccessOrder>,
-    resolver: &ScopeResolver<'_>,
-) -> Option<u64> {
-    let limit = select.limit.as_ref()?;
-    let count = eval_limit_bound(&limit.count).ok()?;
-    let offset = match &limit.offset {
-        Some(expr) => eval_limit_bound(expr).ok()?,
-        None => 0,
-    };
-    let cap = offset.checked_add(count)?;
-    // A window needs complete input even though it preserves row count.
-    if residual_where.is_some()
-        || select.distinct
-        || select.having.is_some()
-        || crate::window::select_has_window(select)
-    {
-        return None;
-    }
-    if select.order_by.is_empty() {
-        return Some(cap);
-    }
-    // An ORDER BY the access path already produces.
-    let order = index_order?;
-    order_is_index_order(select, order, resolver).then_some(cap)
-}
-
-/// Whether an index access path over `column_offsets` already produces the
-/// order the `ORDER BY` asks for.
-///
-/// The by-items must be a prefix of the index's columns, all in the same
-/// direction, over a single range. The storage iterator walks the encoded
-/// interval forwards or backwards, and the codec's order is the collation
-/// order the sort would have used.
-fn order_is_index_order(
-    select: &tidb_ast::SelectStmt,
-    order: &IndexAccessOrder,
-    resolver: &ScopeResolver<'_>,
-) -> bool {
-    if !order.single_range || select.order_by.len() > order.column_offsets.len() {
-        return false;
-    }
-    let descending = select.order_by.first().is_some_and(|item| item.desc);
-    let mut key_position = 0;
-    for item in &select.order_by {
-        if item.desc != descending {
-            return false;
-        }
-        let Ok(Expression::Column(column)) = rewrite_expr_resolved(&item.expr, resolver) else {
-            return false;
-        };
-        let Some(wanted_offset) = usize::try_from(column.index).ok() else {
-            return false;
-        };
-        loop {
-            let Some(offset) = order.column_offsets.get(key_position) else {
-                return false;
-            };
-            // Case 1 precedes Case 2 in Go: ORDER BY the fixed column itself
-            // still matches that key part. Only a different requested column
-            // causes the fixed key part to be skipped.
-            if *offset == wanted_offset {
-                key_position += 1;
-                break;
-            }
-            if order
-                .constant_positions
-                .get(key_position)
-                .copied()
-                .unwrap_or(false)
-            {
-                key_position += 1;
-                continue;
-            }
-            return false;
-        }
-    }
-    true
-}
-
-#[cfg(test)]
-mod find_best_task_property_tests {
-    use super::*;
-
-    fn select(sql: &str) -> tidb_ast::SelectStmt {
-        let statement = tidb_parser::parse(sql).expect("query parses");
-        let Stmt::Query(query) = statement else {
-            panic!("expected query")
-        };
-        let QueryStmt::Select(select) = &*query else {
-            panic!("expected select")
-        };
-        (**select).clone()
-    }
-
-    fn assert_scan_demand(sql: &str, expected: &[usize], keyed: bool) {
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on(
-            "CREATE TABLE demand (id BIGINT PRIMARY KEY, k BIGINT, payload BIGINT, pad BIGINT, KEY by_k(k))",
-            &mut catalog,
-        ).unwrap();
-        let TableEntry::Kv(table) = catalog.get_in("test", "demand").unwrap() else {
-            panic!("KV fixture");
-        };
-        let columns = table
-            .columns
-            .iter()
-            .map(|column| (column.name.clone(), column.field_type.clone()))
-            .collect::<Vec<_>>();
-        let mut scope = PlanTrace::single_table_scope("d", None, columns.clone());
-        if keyed {
-            scope.tables[0].func_deps.strict_keys = vec![vec![0]];
-        }
-        let query = select(sql);
-        let (_, costed) = best_single_table_access_path(
-            &query,
-            &catalog,
-            &scope,
-            table,
-            &columns,
-            &crate::index_hints::AvailablePaths::unrestricted(),
-            false,
-            0.0,
-            None,
-            None,
-            None,
-        )
-        .expect("ordinary access candidate");
-        let demand = crate::driver::leaf_demand::LeafDemand::of_select(&query);
-        let emitted = crate::column_prune::prunable_columns(&query, &scope, &demand)
-            .unwrap_or_else(|| (0..columns.len()).collect());
-        assert_eq!(emitted, expected, "physical input: {sql}");
-        assert_eq!(costed, emitted, "costed and physical input: {sql}");
-    }
-
-    #[test]
-    fn single_table_scan_demand_includes_expression_and_nested_inputs() {
-        for (sql, expected) in [
-            ("SELECT d.id,d.k AS x FROM demand d WHERE d.k>10 ORDER BY x,d.id", vec![0,1]),
-            ("SELECT d.id,COUNT(*) OVER (PARTITION BY d.k%3) FROM demand d ORDER BY d.id", vec![0,1]),
-            ("SELECT SUM(d.k) OVER (ORDER BY d.id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS n FROM demand d ORDER BY n", vec![0,1]),
-            ("SELECT d.id,(SELECT d.payload) FROM demand d WHERE d.k>10", vec![0,1,2]),
-            ("SELECT d.k AS payload FROM demand d ORDER BY payload", vec![1,2]),
-            ("SELECT d.id,ROW_NUMBER() OVER w FROM demand d WINDOW w AS (ORDER BY d.k)", vec![0,1,2,3]),
-            ("SELECT d.id FROM demand d WHERE d.k>10 FOR UPDATE", vec![0,1,2,3]),
-        ] {
-            assert_scan_demand(sql, &expected, true);
-        }
-    }
-
-    #[test]
-    fn zero_input_scan_demand_costs_the_retained_row_column() {
-        assert_scan_demand("SELECT COUNT(*) FROM demand d", &[0], true);
-        assert_scan_demand("SELECT 1 FROM demand d", &[0, 1, 2, 3], false);
-    }
-
-    #[test]
-    fn index_handle_coverage_follows_the_projected_scope() {
-        let columns = ["a", "b", "c", "d"]
-            .into_iter()
-            .map(|name| (name.to_owned(), FieldType::new(FieldTypeCode::LongLong)))
-            .collect();
-        let scope = PlanTrace::single_table_scope("t", None, columns);
-        for keep in [vec![1, 2], vec![1, 2, 3], vec![3, 1, 2, 0]] {
-            let mut order = IndexAccessOrder::from_ranges(&[2], &[IndexRange::full()]);
-            // Also cover composite handles and reordered, retained handles.
-            order.handle_covered_offsets = vec![0, 3];
-            order.remap_columns(&keep);
-            let projected = crate::column_prune::pruned_scope(&scope, &keep);
-            let resolver = ScopeResolver { scope: &projected };
-            for (offset, name) in ["a", "b", "c", "d"].into_iter().enumerate() {
-                if keep.contains(&offset) {
-                    let query = select(&format!("SELECT {name} FROM t WHERE {name}>11"));
-                    assert_eq!(
-                        order.residual_uses_only_index(query.where_clause.as_ref().unwrap(), &resolver),
-                        offset != 1,
-                        "column {name}, projection {keep:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn match_property_skips_a_single_constant_index_prefix_only() {
-        let columns = vec![
-            ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-            ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-        ];
-        let scope = PlanTrace::single_table_scope("t", None, columns);
-        let resolver = ScopeResolver { scope: &scope };
-        let query = select("SELECT b FROM t WHERE a = 1 ORDER BY b");
-        let order_by_fixed = select("SELECT a FROM t WHERE a = 1 ORDER BY a");
-        let fixed_prefix = IndexAccessOrder {
-            column_offsets: vec![0, 1],
-            single_range: true,
-            constant_positions: vec![true, false],
-            handle_covered_offsets: Vec::new(),
-        };
-        assert!(order_is_index_order(&query, &fixed_prefix, &resolver));
-        assert!(order_is_index_order(
-            &order_by_fixed,
-            &fixed_prefix,
-            &resolver
-        ));
-
-        let varying_prefix = IndexAccessOrder {
-            constant_positions: vec![false, false],
-            ..fixed_prefix
-        };
-        assert!(!order_is_index_order(&query, &varying_prefix, &resolver));
-
-        let several_ranges = IndexAccessOrder {
-            single_range: false,
-            constant_positions: vec![true, false],
-            ..varying_prefix
-        };
-        assert!(!order_is_index_order(&query, &several_ranges, &resolver));
-    }
-
-    #[test]
-    fn point_get_rejects_either_open_endpoint() {
-        let closed = IndexRange {
-            low: vec![Datum::Int(7)],
-            high: vec![Datum::Int(7)],
-            low_exclusive: false,
-            high_exclusive: false,
-        };
-        assert_eq!(
-            single_point_handle(std::slice::from_ref(&closed)),
-            Some(TableHandle::Int(7))
-        );
-
-        let mut low_open = closed.clone();
-        low_open.low_exclusive = true;
-        assert_eq!(single_point_handle(&[low_open]), None);
-
-        let mut high_open = closed;
-        high_open.high_exclusive = true;
-        assert_eq!(single_point_handle(&[high_open]), None);
-    }
-
-    #[test]
-    fn range_point_conversion_preserves_key_schema_and_partition_gates() {
-        let point = |values: Vec<Datum>| IndexRange {
-            low: values.clone(), high: values, low_exclusive: false, high_exclusive: false,
-        };
-        let ranges = [point(vec![Datum::Int(1)]), point(vec![Datum::Int(3)])];
-        for (partition, static_allowed) in [
-            ("", true),
-            ("PARTITION BY HASH(a) PARTITIONS 2", true),
-            ("PARTITION BY KEY(a) PARTITIONS 2", true),
-            ("PARTITION BY HASH(a+1) PARTITIONS 2", false),
-            ("PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (2), PARTITION p1 VALUES LESS THAN MAXVALUE)", false),
-        ] {
-            let mut catalog = Catalog::default();
-            crate::run_create_table_on(&format!("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT) {partition}"), &mut catalog).unwrap();
-            let Some(TableEntry::Kv(table)) = catalog.get_in("test", "t") else { panic!("table") };
-            for static_prune in [false, true] {
-                let ctx = crate::StmtContext::for_query().with_static_partition_prune(static_prune);
-                let expected = partition.is_empty() || static_prune && static_allowed;
-                assert_eq!(point_handles_for_ranges(table, &ranges, &[], &ctx).unwrap().is_some(), expected,
-                    "{partition}, static={static_prune}");
-                assert!(point_handles_for_ranges(table, &ranges[..1], &[], &ctx).unwrap().is_some());
-            }
-            let mut transitional = table.clone();
-            transitional.set_all_columns_public(false);
-            assert!(point_handles_for_ranges(&transitional, &ranges[..1], &[], &crate::StmtContext::for_query()).unwrap().is_none());
-        }
-        let mut catalog = Catalog::default();
-        crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT, PRIMARY KEY(a,b) CLUSTERED)", &mut catalog).unwrap();
-        let Some(TableEntry::Kv(table)) = catalog.get_in("test", "t") else { panic!("table") };
-        let ctx = crate::StmtContext::for_query();
-        assert!(point_handles_for_ranges(table, &[point(vec![Datum::Int(1), Datum::Int(2)])], &[], &ctx).unwrap().is_some());
-        for incomplete in [vec![Datum::Int(1)], vec![Datum::Int(1), Datum::Null]] {
-            assert!(point_handles_for_ranges(table, &[point(incomplete)], &[], &ctx).unwrap().is_none());
-        }
-        crate::run_create_table_on("CREATE TABLE heap (a BIGINT) PARTITION BY HASH(a) PARTITIONS 2", &mut catalog).unwrap();
-        let Some(TableEntry::Kv(table)) = catalog.get_in("test", "heap") else { panic!("table") };
-        assert!(point_handles_for_ranges(table, &ranges[..1], &[], &ctx).unwrap().is_none());
-        assert!(point_handles_for_ranges(table, &ranges[..1], &["p0".to_owned()], &ctx).unwrap().is_some());
-
-        crate::run_create_table_on(
-            "CREATE TABLE collated (a VARCHAR(16) COLLATE utf8mb4_general_ci, b INT, v INT, PRIMARY KEY(a,b) CLUSTERED)",
-            &mut catalog,
-        ).unwrap();
-        crate::run_insert_on("INSERT INTO collated VALUES ('AbC',1,10),('DeF',2,20)", &mut catalog, &ctx).unwrap();
-        assert_eq!(crate::run_select_on(
-            "SELECT v FROM collated WHERE (a,b) IN (('abc',1),('def',2)) AND v>5 ORDER BY v",
-            &catalog, &ctx,
-        ).unwrap(), vec![vec![Datum::Int(10)], vec![Datum::Int(20)]],
-            "range sort keys must be encoded once and still find the original records");
-    }
-
-    fn expand(sql: &str) -> Option<tidb_ast::Expr> {
-        let statement = tidb_parser::parse(sql).expect("query parses");
-        let Stmt::Query(query) = statement else {
-            panic!("expected query")
-        };
-        let QueryStmt::Select(select) = &*query else {
-            panic!("expected select")
-        };
-        let where_clause = select.where_clause.as_ref()?;
-        let mut conjuncts = Vec::new();
-        collect_conjuncts(where_clause, &mut conjuncts);
-        conjuncts
-            .iter()
-            .find_map(|conjunct| expand_row_comparison(conjunct))
-    }
-
-    fn where_clause_of(sql: &str) -> Option<tidb_ast::Expr> {
-        let statement = tidb_parser::parse(sql).expect("query parses");
-        let Stmt::Query(query) = statement else {
-            panic!("expected query")
-        };
-        let QueryStmt::Select(select) = &*query else {
-            panic!("expected select")
-        };
-        select.where_clause.clone()
-    }
-
-    /// The parser keeps explicit parentheses; the expansion builds its DNF
-    /// without them. Parentheses are transparent, so strip them (recursively)
-    /// before two shapes are compared.
-    fn strip_parens(expr: &tidb_ast::Expr) -> tidb_ast::Expr {
-        match expr {
-            tidb_ast::Expr::Paren(inner) => strip_parens(inner),
-            tidb_ast::Expr::Binary(op, lhs, rhs) => tidb_ast::Expr::Binary(
-                *op,
-                Box::new(strip_parens(lhs)),
-                Box::new(strip_parens(rhs)),
-            ),
-            other => other.clone(),
-        }
-    }
-
-    #[test]
-    fn a_row_comparison_expands_to_go_prefix_equality_dnf() {
-        // Go `constructBinaryOpFunction`'s default arm, spelled out for the
-        // taobench batch read's leading shape.
-        let expanded = expand("SELECT * FROM t WHERE (a, b, c) > (1, 2, 3)")
-            .expect("a row comparison expands");
-        let expected = strip_parens(
-            &where_clause_of(
-                "SELECT * FROM t WHERE a > 1 OR (a = 1 AND b > 2) OR \
-                 (a = 1 AND b = 2 AND c > 3)",
-            )
-            .expect("the expected shape parses"),
-        );
-        assert_eq!(strip_parens(&expanded), expected);
-    }
-
-    #[test]
-    fn a_ge_row_comparison_degenerates_every_branch_but_the_last() {
-        let expanded = expand("SELECT * FROM t WHERE (a, b) >= (1, 2)")
-            .expect("a row comparison expands");
-        let expected = strip_parens(
-            &where_clause_of("SELECT * FROM t WHERE a > 1 OR (a = 1 AND b >= 2)")
-                .expect("the expected shape parses"),
-        );
-        assert_eq!(strip_parens(&expanded), expected);
-
-        // A one-element "row" is not a row comparison; equality and other
-        // operators keep their own paths.
-        assert!(expand("SELECT * FROM t WHERE (a, b) = (1, 2)").is_none());
-        assert!(expand("SELECT * FROM t WHERE a > 1").is_none());
-    }
-
-    #[test]
-    fn sorted_disjoint_ranges_claim_one_total_order() {
-        let point = |value: i64| IndexRange {
-            low: vec![Datum::Int(value)],
-            high: vec![Datum::Int(value)],
-            low_exclusive: false,
-            high_exclusive: false,
-        };
-        let interval = |low: i64, low_open: bool, high: i64, high_open: bool| IndexRange {
-            low: vec![Datum::Int(low)],
-            high: vec![Datum::Int(high)],
-            low_exclusive: low_open,
-            high_exclusive: high_open,
-        };
-        // The taobench batch read's detached shape: two points around an
-        // open interval, ascending.
-        let ascending = vec![
-            point(1),
-            interval(1, true, 5, true),
-            point(5),
-        ];
-        let order = IndexAccessOrder::from_ranges(&[0], &ascending);
-        assert!(order.single_range);
-
-        // The same array walked BACKWARDS serves a descending ORDER BY.
-        // (Ascending-sorted ranges are the only array both walks agree on.)
-
-        // Overlapping intervals interleave; no merge-sort exists here.
-        let overlapping = vec![interval(1, false, 5, false), interval(2, false, 6, false)];
-        assert!(!IndexAccessOrder::from_ranges(&[0], &overlapping).single_range);
-
-        // Two closed ranges sharing their boundary share the key itself.
-        let touching = vec![interval(1, false, 5, false), interval(5, false, 9, false)];
-        assert!(!IndexAccessOrder::from_ranges(&[0], &touching).single_range);
-
-        // An open high end leaves the boundary to the next range alone.
-        let abutting = vec![interval(1, false, 5, true), interval(5, false, 9, false)];
-        assert!(IndexAccessOrder::from_ranges(&[0], &abutting).single_range);
-    }
 }

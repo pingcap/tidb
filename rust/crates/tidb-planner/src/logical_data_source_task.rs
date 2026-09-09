@@ -32,12 +32,22 @@ use crate::{
         ScanReadTaskRejection, TableTaskRejection,
     },
     logical_data_source::LogicalDataSource,
-    physical_index_scan::PhysicalIndexScanPlan,
-    physical_property::IndexOrderingRequirement,
-    physical_table_dual::PhysicalTableDualPlan,
-    physical_table_scan::PhysicalTableScanPlan,
+    physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan},
     task_type::TaskType,
 };
+
+/// Ordering refusal used only by this legacy bounded task builder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexOrderingRequirement {
+    /// No required order.
+    None,
+    /// Full keep-order request.
+    KeepOrder,
+    /// Prefix-index partial-order request.
+    PartialOrder,
+    /// Grouped-range merge-sort request.
+    MergeSort,
+}
 
 /// Dependency-closed task-property input accepted by the index task builder.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,10 +120,7 @@ pub fn build_index_task(source: &LogicalDataSource, property: IndexTaskProperty)
     for path in source.possible_access_paths() {
         if let DataSourceAccessPath::Index(index_path) = path {
             if index_path.has_empty_ranges() {
-                return IndexTask::TableDual(PhysicalTableDualPlan::init(
-                    0,
-                    source.query_block_offset(),
-                ));
+                return IndexTask::TableDual(empty_range_table_dual(source));
             }
         }
 
@@ -151,10 +158,7 @@ pub fn build_scan_read_task(
             DataSourceAccessPath::IndexMerge => false,
         };
         if empty {
-            return ScanReadTask::TableDual(PhysicalTableDualPlan::init(
-                0,
-                source.query_block_offset(),
-            ));
+            return ScanReadTask::TableDual(empty_range_table_dual(source));
         }
     }
 
@@ -187,6 +191,15 @@ pub fn build_scan_read_task(
     build_supported_table_task(source, property, table_path)
 }
 
+fn empty_range_table_dual(source: &LogicalDataSource) -> PhysicalTableDual {
+    let base = BasePhysicalPlan::with_id(
+        source.physical_plan_id(),
+        crate::logical::LogicalTableDual::TYPE,
+        source.query_block_offset(),
+    );
+    PhysicalTableDual::new(base, 0)
+}
+
 fn build_supported_table_task(
     source: &LogicalDataSource,
     property: IndexTaskProperty,
@@ -212,9 +225,6 @@ fn build_supported_table_task(
     {
         return invalid_table(TableTaskRejection::Partition);
     }
-    if path.is_table_sample() {
-        return invalid_table(TableTaskRejection::TableSample);
-    }
     if property.ordering() != IndexOrderingRequirement::None
         || path.pushdown().keep_order
         || path.pushdown().desc
@@ -234,7 +244,7 @@ fn build_supported_table_task(
         return invalid_table(TableTaskRejection::UnsupportedScanFeature(feature));
     }
 
-    let Some(scan) = PhysicalTableScanPlan::from_validated_pushdown(
+    let Some(scan) = PhysicalTableScan::from_validated_pushdown(
         source.physical_plan_id(),
         source.query_block_offset(),
         path.validated_pushdown().clone(),
@@ -315,7 +325,7 @@ fn build_supported_index_task(
         return IndexTask::Invalid(IndexTaskRejection::InvalidCountAfterAccess);
     }
 
-    let mut scan = PhysicalIndexScanPlan::init(
+    let mut scan = PhysicalIndexScan::init(
         source.physical_plan_id(),
         source.query_block_offset(),
         path.candidate(),
