@@ -389,14 +389,12 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	versionCheckResult := m.jobVersionChecker.check(m.ctx)
-	if versionCheckResult == ttlJobVersionBlockJob {
-		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server versions are inconsistent")
-		return
+	allowIndexScan := vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil
+	if allowIndexScan {
+		allowIndexScan = m.jobVersionChecker.check(m.ctx)
 	}
-
 	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false,
-		versionCheckResult == ttlJobVersionAllowIndexScan)
+		allowIndexScan)
 	jobReq.RespCh <- err
 }
 
@@ -925,9 +923,15 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			if idx := table.FindTTLIndex(); idx != nil {
 				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
 				if err != nil {
-					return errors.Wrap(err, "split index scan ranges")
+					if ctx.Err() != nil {
+						return errors.Wrap(ctx.Err(), "split index scan ranges")
+					}
+					logutil.Logger(ctx).Warn("failed to split TTL index scan ranges, fall back to PK scan",
+						zap.String("table", table.FullName()), zap.String("index", idx.Name.O), zap.Error(err))
+					ranges = nil
+				} else {
+					scanIndexID = &idx.ID
 				}
-				scanIndexID = &idx.ID
 			}
 		}
 		if ranges == nil {

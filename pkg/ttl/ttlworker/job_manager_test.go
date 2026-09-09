@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -931,7 +932,7 @@ func TestLockTable(t *testing.T) {
 	}
 }
 
-func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
+func TestLockNewJobIndexScanFallbacks(t *testing.T) {
 	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
 	vardef.TTLEnableIndexScan.Store(true)
 	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
@@ -945,6 +946,7 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 			Name:    ast.NewCIStr("idx_time"),
 			Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
 			State:   model.StatePublic,
+			Unique:  true,
 		},
 	}
 
@@ -988,6 +990,128 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 
 	require.Equal(t, int64(10), lockJob(true)[7])
 	require.Nil(t, lockJob(false)[7])
+
+	// An index Region lookup failure is recoverable because the old PK scan
+	// task format covers the same rows. Use a RegionCache backed by an empty
+	// mock cluster to make LocateKeyRange exhaust its retries.
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	regionCache := tikv.NewRegionCache(pdClient)
+	defer regionCache.Close()
+	defer pdClient.Close()
+	defer func() { require.NoError(t, mockClient.Close()) }()
+	m.store = &mockTiKVStore{regionCache: regionCache}
+	// The unique TTL index does not need the hidden handle for pagination. The
+	// empty key column list also makes the PK fallback use one full range without
+	// consulting the intentionally broken RegionCache again.
+	ttlTbl.KeyColumns = nil
+	ttlTbl.KeyColumnTypes = nil
+	require.Nil(t, lockJob(true)[7])
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	taskArgs = nil
+	job, err := m.lockNewJob(canceledCtx, se, ttlTbl, now, "new-job-id", false, true)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, job)
+	require.Empty(t, taskArgs)
+}
+
+func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
+	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
+	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
+
+	localVersion := serverinfo.VersionInfo{Version: "8.0.11-TiDB-v9.0.0", GitHash: "1111111"}
+	tests := []struct {
+		name            string
+		enableIndexScan bool
+		remoteVersion   serverinfo.VersionInfo
+		expectedScanID  any
+		expectedChecks  int
+	}{
+		{
+			name:            "same build enables index scan",
+			enableIndexScan: true,
+			remoteVersion:   localVersion,
+			expectedScanID:  int64(10),
+			expectedChecks:  2,
+		},
+		{
+			name:            "different build falls back to PK scan",
+			enableIndexScan: true,
+			remoteVersion: serverinfo.VersionInfo{
+				Version: localVersion.Version,
+				GitHash: "2222222",
+			},
+			expectedChecks: 2,
+		},
+		{
+			name:            "disabled index scan uses PK scan",
+			enableIndexScan: false,
+			remoteVersion:   localVersion,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vardef.TTLEnableIndexScan.Store(tt.enableIndexScan)
+			ttlTbl := newMockTTLTbl(t, "t1")
+			ttlTbl.Indices = []*model.IndexInfo{
+				{
+					ID:      10,
+					Name:    ast.NewCIStr("idx_time"),
+					Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+					State:   model.StatePublic,
+					Unique:  true,
+				},
+			}
+
+			now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
+			expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
+			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil, func() bool { return true })
+			m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
+			m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
+			versionChecks := 0
+			m.ctx = context.WithValue(m.ctx, getServerInfoForTestContextKey{}, func() (*serverinfo.ServerInfo, error) {
+				versionChecks++
+				return &serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{VersionInfo: localVersion}}, nil
+			})
+			m.ctx = context.WithValue(m.ctx, getAllServerInfoForTestContextKey{}, func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+				versionChecks++
+				return map[string]*serverinfo.ServerInfo{
+					"remote": {StaticInfo: serverinfo.StaticInfo{VersionInfo: tt.remoteVersion}},
+				}, nil
+			})
+
+			se := newMockSession(t, ttlTbl)
+			statusSQL, _ := cache.SelectFromTTLTableStatusWithID(ttlTbl.ID)
+			insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", ttlTbl.ID, 0, nil, nil, expireTime, now)
+			require.NoError(t, err)
+			var taskArgs [][]any
+			se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {
+				switch sql {
+				case statusSQL + " FOR UPDATE NOWAIT":
+					return newTTLTableStatusRows(&cache.TableStatus{TableID: ttlTbl.ID}), nil
+				case setTableStatusOwnerTemplate, createJobHistoryRowTemplate:
+					return nil, nil
+				case updateStatusSQL:
+					return newTTLTableStatusRows(&cache.TableStatus{TableID: ttlTbl.ID}), nil
+				}
+				require.Equal(t, insertTaskSQL, sql)
+				taskArgs = append(taskArgs, append([]any(nil), args...))
+				return nil, nil
+			}
+
+			respCh := make(chan error, 1)
+			m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
+				TableID: ttlTbl.TableInfo.ID, PhysicalID: ttlTbl.ID, RequestID: "new-job-id", RespCh: respCh,
+			})
+			require.NoError(t, <-respCh)
+			require.Equal(t, tt.expectedChecks, versionChecks)
+			require.Len(t, taskArgs, 1)
+			require.Equal(t, tt.expectedScanID, taskArgs[0][7])
+		})
+	}
 }
 
 func TestLocalJobs(t *testing.T) {

@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -1029,16 +1028,31 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	allSupportV2 := true
 	allSupportGlobalIdxV1 := true
 	for _, info := range infos {
-		ver, err2 := serverinfo.ParseTiDBVersion(info.Version)
+		// we don't store TiDB version directly, but concatenated with a MySQL version,
+		// separated by mysql.VersionSeparator.
+		tidbVer := info.Version
+		idx := strings.Index(tidbVer, mysql.VersionSeparator)
+		if idx < 0 {
+			allSupportV2 = false
+			allSupportGlobalIdxV1 = false
+			// see https://github.com/pingcap/tidb/issues/31823
+			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
+				zap.String("version", tidbVer))
+			break
+		}
+		tidbVer = tidbVer[idx+len(mysql.VersionSeparator):]
+		tidbVer = strings.TrimPrefix(tidbVer, "v")
+		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
-			// See https://github.com/pingcap/tidb/issues/31823. The server
-			// version may have been changed directly in the configuration.
-			logutil.SampleLogger().Warn("parse TiDB server version failed", zap.String("version", info.Version),
+			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
 		}
+		// sem-ver also compares pre-release labels, but we don't need to consider
+		// them here, so we clear them.
+		ver.PreRelease = ""
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
 		}

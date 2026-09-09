@@ -28,28 +28,18 @@ import (
 
 const (
 	serverVersionAllowCacheInterval    = 10 * time.Second
-	serverVersionMismatchCacheInterval = time.Minute
-)
-
-type ttlJobVersionCheckResult int
-
-const (
-	// Unknown versions fall back to the old primary-key scan path. This keeps
-	// TTL available without creating index scan tasks that an older TiDB may
-	// not understand during a rolling upgrade.
-	ttlJobVersionFallbackToPK ttlJobVersionCheckResult = iota
-	ttlJobVersionAllowIndexScan
-	ttlJobVersionBlockJob
+	serverVersionFallbackCacheInterval = time.Minute
 )
 
 type getServerInfoForTestContextKey struct{}
 type getAllServerInfoForTestContextKey struct{}
 
-// ttlJobVersionChecker gates TTL index scans while TiDB server versions are
-// inconsistent during a rolling upgrade. It is not safe for concurrent use.
+// ttlJobVersionChecker enables TTL index scans only when all TiDB servers have
+// the same build. Otherwise, TTL jobs fall back to the old PK scan path. It is
+// not safe for concurrent use.
 type ttlJobVersionChecker struct {
-	lastCheckTime   time.Time
-	lastCheckResult ttlJobVersionCheckResult
+	lastCheckTime            time.Time
+	lastCheckAllowsIndexScan bool
 }
 
 func getServerInfoForTTLJob(ctx context.Context) (*serverinfo.ServerInfo, error) {
@@ -70,33 +60,33 @@ func getAllServerInfoForTTLJob(ctx context.Context) (map[string]*serverinfo.Serv
 	return infosync.GetAllServerInfo(ctx)
 }
 
-func (c *ttlJobVersionChecker) cachedResult(now time.Time) (ttlJobVersionCheckResult, bool) {
+func (c *ttlJobVersionChecker) cachedResult(now time.Time) (allowIndexScan bool, cached bool) {
 	if c.lastCheckTime.IsZero() {
-		return ttlJobVersionFallbackToPK, false
+		return false, false
 	}
 
-	cacheInterval := serverVersionMismatchCacheInterval
-	if c.lastCheckResult != ttlJobVersionBlockJob {
+	cacheInterval := serverVersionFallbackCacheInterval
+	if c.lastCheckAllowsIndexScan {
 		cacheInterval = serverVersionAllowCacheInterval
 	}
 	if now.Sub(c.lastCheckTime) < cacheInterval {
-		return c.lastCheckResult, true
+		return c.lastCheckAllowsIndexScan, true
 	}
-	return ttlJobVersionFallbackToPK, false
+	return false, false
 }
 
-func (c *ttlJobVersionChecker) cacheResult(now time.Time, result ttlJobVersionCheckResult) ttlJobVersionCheckResult {
+func (c *ttlJobVersionChecker) cacheResult(now time.Time, allowIndexScan bool) bool {
 	c.lastCheckTime = now
-	c.lastCheckResult = result
-	return result
+	c.lastCheckAllowsIndexScan = allowIndexScan
+	return allowIndexScan
 }
 
-// check compares every known TiDB server's normalized semver with the current
-// server. It compares only the semantic version part after "TiDB-v" and ignores
-// prerelease/build metadata, including Git hashes. Equal versions may use the
-// new index scan path; unequal versions block new TTL jobs. Lookup or parse
-// failures allow a job but make it use the old PK scan.
-func (c *ttlJobVersionChecker) check(ctx context.Context) ttlJobVersionCheckResult {
+// check compares every real TiDB server's complete VersionInfo (the reported
+// version string and Git hash) with the current server. Index scan tasks use a
+// new range format that old workers cannot interpret, so they are enabled only
+// when every server has the same build. A mismatch or any failure falls back to
+// the old PK scan task format instead of preventing the TTL job from running.
+func (c *ttlJobVersionChecker) check(ctx context.Context) bool {
 	now := time.Now()
 	if result, ok := c.cachedResult(now); ok {
 		return result
@@ -105,54 +95,53 @@ func (c *ttlJobVersionChecker) check(ctx context.Context) ttlJobVersionCheckResu
 	localInfo, err := getServerInfoForTTLJob(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to get current TiDB server version, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, ttlJobVersionFallbackToPK)
+		return c.cacheResult(now, false)
 	}
 	if localInfo == nil {
 		logutil.Logger(ctx).Warn("current TiDB server info is nil, create TTL job with PK scan")
-		return c.cacheResult(now, ttlJobVersionFallbackToPK)
+		return c.cacheResult(now, false)
 	}
 
 	serverInfos, err := getAllServerInfoForTTLJob(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to get TiDB server versions, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, ttlJobVersionFallbackToPK)
+		return c.cacheResult(now, false)
 	}
 
-	consistent, err := tiDBServerVersionsConsistent(localInfo.Version, serverInfos)
+	consistent, err := tiDBServerVersionInfosConsistent(localInfo.VersionInfo, serverInfos)
 	if err != nil {
-		logutil.Logger(ctx).Warn("failed to check TiDB server versions, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, ttlJobVersionFallbackToPK)
+		logutil.Logger(ctx).Warn("failed to check TiDB server build versions, create TTL job with PK scan", zap.Error(err))
+		return c.cacheResult(now, false)
 	}
 	if consistent {
-		return c.cacheResult(now, ttlJobVersionAllowIndexScan)
+		return c.cacheResult(now, true)
 	}
 
-	logutil.Logger(ctx).Warn("skip creating TTL job because TiDB server versions are inconsistent",
-		zap.String("currentVersion", localInfo.Version))
-	return c.cacheResult(now, ttlJobVersionBlockJob)
+	logutil.Logger(ctx).Warn("TiDB server build versions are inconsistent, create TTL job with PK scan",
+		zap.String("currentVersion", localInfo.Version), zap.String("currentGitHash", localInfo.GitHash))
+	return c.cacheResult(now, false)
 }
 
-func tiDBServerVersionsConsistent(currentVersion string, serverInfos map[string]*serverinfo.ServerInfo) (bool, error) {
+func tiDBServerVersionInfosConsistent(currentVersion serverinfo.VersionInfo, serverInfos map[string]*serverinfo.ServerInfo) (bool, error) {
 	if len(serverInfos) == 0 {
 		return false, errors.New("TiDB server info list is empty")
 	}
 
-	current, err := serverinfo.ParseTiDBVersion(currentVersion)
-	if err != nil {
-		return false, errors.Wrap(err, "parse current TiDB server version")
-	}
-	consistent := true
+	realServerCount := 0
 	for id, info := range serverInfos {
 		if info == nil {
 			return false, errors.Errorf("TiDB server info is nil, server ID: %s", id)
 		}
-		version, err := serverinfo.ParseTiDBVersion(info.Version)
-		if err != nil {
-			return false, errors.Wrapf(err, "parse TiDB server version, server ID: %s", id)
+		if info.IsAssumed() {
+			continue
 		}
-		if !current.Equal(*version) {
-			consistent = false
+		realServerCount++
+		if currentVersion != info.VersionInfo {
+			return false, nil
 		}
 	}
-	return consistent, nil
+	if realServerCount == 0 {
+		return false, errors.New("TiDB server info list contains no real servers")
+	}
+	return true, nil
 }
