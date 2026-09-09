@@ -355,6 +355,11 @@ compare() {
     "${go_count}" "$(printf '%s' "${rust_out}" | grep -c . || true)"
   printf '      wire: %s rows of %s   dag: %s\n' \
     "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
+  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
+    echo "  FAIL  ${label}: no valid coprocessor receipt" >&2
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
   if [[ "${go_out}" != "${rust_out}" ]]; then
     echo "  FINDING  ${label}: the two nodes returned DIFFERENT ROWS" >&2
     diff <(printf '%s\n' "${go_out}") <(printf '%s\n' "${rust_out}") \
