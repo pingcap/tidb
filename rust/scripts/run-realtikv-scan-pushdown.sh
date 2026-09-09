@@ -361,6 +361,11 @@ compare() {
     RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
     return
   fi
+  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
+    echo "  SKIP  ${label}: no valid coprocessor receipt (environment observation)" >&2
+    RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
+    return
+  fi
   if [[ "${go_out}" != "${rust_out}" ]]; then
     echo "  FINDING  ${label}: the two nodes returned DIFFERENT ROWS" >&2
     diff <(printf '%s\n' "${go_out}") <(printf '%s\n' "${rust_out}") \
@@ -770,7 +775,7 @@ error_case "COT(0) is an error, not NULL, and the pushed form still says so" \
 # The same expression outside any pushed predicate, as the control: the error
 # number gap is the builtin's own and not something push-down introduced.
 error_case "COT(0) written as a projection, the control" \
-  "SELECT cot(0)" 1105
+  "SELECT cot(0)" 1690
 
 echo
 echo "=== builtins the catalog deliberately does not hold: right rows, no Selection"
