@@ -109,15 +109,13 @@ func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) err
 			e.returningEvalBuf.SetDatum(i, types.Datum{})
 		}
 	}
+	// The handle of the written row is authoritative, and it is the one the planner put
+	// right after the public columns. Reading it out of `row` instead would be wrong on the
+	// ON DUPLICATE KEY UPDATE path, where a column being added by a concurrent DDL occupies
+	// that position.
 	handleDatum := types.Datum{}
-	if e.returningNeedExtraHandle {
-		switch {
-		case e.hasExtraHandle && numCols < len(row):
-			// _tidb_rowid was given explicitly, it is the last column of the written row.
-			handleDatum = row[numCols]
-		case handle != nil && handle.IsInt():
-			handleDatum.SetInt64(handle.IntValue())
-		}
+	if e.returningNeedExtraHandle && handle != nil && handle.IsInt() {
+		handleDatum.SetInt64(handle.IntValue())
 	}
 	e.returningEvalBuf.SetDatum(numCols, handleDatum)
 

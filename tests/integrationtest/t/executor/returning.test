@@ -71,6 +71,17 @@ insert into t_nonclustered_returning values (1, 'nonclustered-1'), (2, 'nonclust
 insert into t_nonclustered_returning values (3, 'nonclustered-3') returning *;
 drop table t_nonclustered_returning;
 
+# Test INSERT RETURNING _tidb_rowid with an explicit _tidb_rowid, also on the
+# ON DUPLICATE KEY UPDATE path, where the written row is sized by the writable columns.
+drop table if exists t_explicit_rowid_returning;
+create table t_explicit_rowid_returning (id int, name varchar(20), primary key(id) nonclustered);
+set @@tidb_opt_write_row_id = on;
+insert into t_explicit_rowid_returning (id, name, _tidb_rowid) values (1, 'a', 100) returning id, name, _tidb_rowid;
+insert into t_explicit_rowid_returning (id, name, _tidb_rowid) values (1, 'b', 100) on duplicate key update name = 'updated' returning id, name, _tidb_rowid;
+select id, name, _tidb_rowid from t_explicit_rowid_returning;
+set @@tidb_opt_write_row_id = default;
+drop table t_explicit_rowid_returning;
+
 # Test INSERT RETURNING _tidb_rowid with SHARD_ROW_ID_BITS
 drop table if exists t_shard_rowid_returning;
 create table t_shard_rowid_returning (id int, name varchar(20), primary key(id) nonclustered) shard_row_id_bits=4;

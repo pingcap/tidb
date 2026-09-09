@@ -70,6 +70,20 @@ insert into t_nonclustered_returning values (3, 'nonclustered-3') returning *;
 id	name
 3	nonclustered-3
 drop table t_nonclustered_returning;
+drop table if exists t_explicit_rowid_returning;
+create table t_explicit_rowid_returning (id int, name varchar(20), primary key(id) nonclustered);
+set @@tidb_opt_write_row_id = on;
+insert into t_explicit_rowid_returning (id, name, _tidb_rowid) values (1, 'a', 100) returning id, name, _tidb_rowid;
+id	name	_tidb_rowid
+1	a	100
+insert into t_explicit_rowid_returning (id, name, _tidb_rowid) values (1, 'b', 100) on duplicate key update name = 'updated' returning id, name, _tidb_rowid;
+id	name	_tidb_rowid
+1	updated	100
+select id, name, _tidb_rowid from t_explicit_rowid_returning;
+id	name	_tidb_rowid
+1	updated	100
+set @@tidb_opt_write_row_id = default;
+drop table t_explicit_rowid_returning;
 drop table if exists t_shard_rowid_returning;
 create table t_shard_rowid_returning (id int, name varchar(20), primary key(id) nonclustered) shard_row_id_bits=4;
 insert into t_shard_rowid_returning values (1, 'shard-1'), (2, 'shard-2'), (3, 'shard-3') returning id, _tidb_rowid, ((1 << (64 - 4 - 1)) - 1) & _tidb_rowid as rowid_sequence;
