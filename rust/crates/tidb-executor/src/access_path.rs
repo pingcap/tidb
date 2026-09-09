@@ -3573,15 +3573,8 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             }
             None => None,
         };
-        let mut filters = self.filters.clone();
-        for expression in &mut filters {
-            if crate::predicate_pushdown::remap_expression(expression, keep).is_none() {
-                return false;
-            }
-        }
         self.meta = meta;
         self.filter = filter;
-        self.filters = filters;
         // The pushed descriptions must name the SAME row space the filter
         // evaluates. Both travel to remote lowerings (the handle-collection
         // stream and the filtered lookup) whose rows are projected through
