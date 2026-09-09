@@ -17,6 +17,10 @@ include Makefile.common
 # Define this before SERVER_BUILD_CMD captures its linker flags with :=.
 # Homebrew C linker search paths are not Go linker directives.
 GO_LDFLAGS = $(filter-out -L%, $(LDFLAGS))
+# CHECK_LDFLAGS is assembled in Makefile.common before this file is parsed;
+# rebuild it from the filtered Go flags so `make test` cannot pass C flags to
+# the Go linker.
+CHECK_LDFLAGS = $(GO_LDFLAGS) $(TEST_LDFLAGS)
 
 .DEFAULT_GOAL := default
 
