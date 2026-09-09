@@ -85,7 +85,7 @@ cleanup() {
     echo "lock-recovery cleanup failed: PD ${PD_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
-  if [[ "${cleanup_failed}" == false ]]; then
+  if [[ "${cleanup_failed}" == false ]] && [[ -z "${KEEP_LOGS:-}" ]]; then
     rm -rf -- "${TAG_DIR}"
   fi
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
