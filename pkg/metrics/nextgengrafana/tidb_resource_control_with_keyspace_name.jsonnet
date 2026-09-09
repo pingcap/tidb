@@ -705,12 +705,18 @@ local ClientRUPanel = graphPanel.new(
   legend_values=true,
   format="short",
   labelY1="RU/s",
-  description="Net client request RU consumption per second by TiDB instance, using the last two samples within 30 seconds. Refunds are subtracted and can make the net rate negative. Includes KV request accounting across request sources and resource groups selected above; it differs from server-reported RU and excludes SQL CPU RU. Requires at least two scrapes within 30 seconds.",
+  description="Net client request RU consumption per second by TiDB instance and resource group, with a total per resource group across the selected instances, using the last two samples within 30 seconds. Refunds are subtracted and can make the net rate negative. Includes KV request accounting across request sources and resource groups selected above; it differs from server-reported RU and excludes SQL CPU RU. Requires at least two scrapes within 30 seconds.",
 ).addTarget(
   prometheus.target(
-    'sum(' + clientRUConsumed + ' or -' + clientRURefunded + ') by (instance)',
+    'sum(' + clientRUConsumed + ' or -' + clientRURefunded + ') by (instance, resource_group)',
     intervalFactor=1,
-    legendFormat="{{instance}}",
+    legendFormat="{{instance}}-{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(' + clientRUConsumed + ' or -' + clientRURefunded + ') by (resource_group)',
+    intervalFactor=1,
+    legendFormat="{{resource_group}}-total",
   )
 );
 
