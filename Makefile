@@ -239,7 +239,7 @@ endif
 
 SERVER_BUILD_CMD := \
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
-	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
+	-ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
 server: ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
@@ -247,9 +247,9 @@ server: ## Build TiDB server binary
 .PHONY: server_debug
 server_debug: ## Build TiDB server binary with debug symbols
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug ./cmd/tidb-server
 else
-	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(GO_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: server_failpoint
@@ -517,7 +517,7 @@ br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test: ## Run BR (backup and restore) unit tests
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(GO_LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 .PHONY: br_unit_test_in_verify_ci
@@ -578,6 +578,11 @@ gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Server > pkg/domain/sqlsvrapi/mock/server_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Runtime > pkg/domain/sqlsvrapi/mock/runtime_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi KSRuntimeHandle > pkg/domain/sqlsvrapi/mock/ksruntime_mock.go
+
+# Go's external linker flags are distinct from CGO's C linker flags.  In local
+# macOS builds LDFLAGS commonly contains ICU `-L` paths, which Go rejects when
+# passed through `-ldflags`; retain only Go linker directives here.
+GO_LDFLAGS = $(filter-out -L%, $(LDFLAGS))
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
