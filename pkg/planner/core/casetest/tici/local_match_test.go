@@ -117,3 +117,73 @@ func TestLocalMatchIndexConfig(t *testing.T) {
 	require.Contains(t, nativePlan, "index:ft(body)")
 	require.Contains(t, nativePlan, "search func:fts_match_word")
 }
+
+// TestLocalMatchSemantics ports the local MATCH regression cases from
+// 282e2d3698, using TiCI FULLTEXT DDL and the index-backed local execution path.
+func TestLocalMatchSemantics(t *testing.T) {
+	for _, name := range []string{"MockCreateTiCIIndexSuccess", "MockFinishIndexUpload", "MockCheckAddIndexProgress"} {
+		path := "github.com/pingcap/tidb/pkg/tici/" + name
+		require.NoError(t, failpoint.Enable(path, `return(true)`))
+		t.Cleanup(func() { require.NoError(t, failpoint.Disable(path)) })
+	}
+	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	tk.MustExec("use test")
+	tk.MustQuery("select @@global.innodb_ft_min_token_size, @@global.innodb_ft_max_token_size").Check(testkit.Rows("3 84"))
+	tk.MustExec("set innodb_ft_enable_stopword = on")
+	tk.MustExec(`create table articles (
+		id int primary key, title varchar(200), body text,
+		fulltext index ft_title(title), fulltext index ft_title_body(title, body))`)
+	tk.MustExec(`insert into articles values
+		(1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+		(2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+		(3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+		(4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+		(5, 'MySQL Security', 'How to secure your MySQL database')`)
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = off")
+	for _, tt := range []struct {
+		name      string
+		predicate string
+		rows      []string
+	}{
+		{"required_prohibited", `match(title) against('+MySQL -tutorial' in boolean mode)`, []string{"2 How To Use MySQL Well", "3 Optimizing MySQL", "4 MySQL vs. PostgreSQL", "5 MySQL Security"}},
+		{"word_boundary", `match(title) against('+Optimiz' in boolean mode)`, nil},
+		{"whole_word", `match(title) against('+Optimizing' in boolean mode)`, []string{"3 Optimizing MySQL"}},
+		{"prefix", `match(title) against('Optim*' in boolean mode)`, []string{"3 Optimizing MySQL"}},
+		{"multi_column_phrase", `match(title, body) against('"MySQL tutorial"' in boolean mode)`, []string{"1 MySQL Tutorial", "2 How To Use MySQL Well"}},
+		{"phrase_order", `match(title, body) against('"tutorial MySQL"' in boolean mode)`, nil},
+		{"short_token", `match(title) against('+vs' in boolean mode)`, nil},
+		{"null_search", `match(title) against(NULL in boolean mode)`, nil},
+		{"negated_null_search", `not match(title) against(NULL in boolean mode)`, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.MustQuery("select id, title from articles where " + tt.predicate + " order by id").Check(testkit.Rows(tt.rows...))
+		})
+	}
+	tk.MustExec("insert into articles values (6, 'Indexing Basics', NULL), (7, 'MySQL x tutorial', NULL), (8, 'MySQL', 'tutorial')")
+	tk.MustQuery(`select id, title from articles where match(title, body) against('+Indexing -PostgreSQL' in boolean mode)`).Check(testkit.Rows("6 Indexing Basics"))
+	// Filtering a short token must not close phrase gaps, and phrases cannot
+	// bridge the boundary between two matched columns.
+	tk.MustQuery(`select id from articles where id in (7, 8) and match(title, body) against('"MySQL tutorial"' in boolean mode)`).Check(testkit.Rows())
+	tk.MustExec("delete from articles where id >= 6")
+	require.ErrorContains(t, tk.ExecToErr(`select id, match(title) against('+MySQL' in boolean mode) as score from articles`), "cannot be used in SELECT")
+	require.ErrorContains(t, tk.ExecToErr(`select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc`), "ORDER BY")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
+	tk.MustQuery(`select id from articles where match(title) against('+MySQL -tutorial' in boolean mode) order by id`).Check(testkit.Rows("2", "3", "4", "5"))
+	// On this branch, disabling local evaluation restores native TiCI routing.
+	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "articles")
+	tk.MustExec("set tidb_enable_local_match_against = off")
+	nativePlan := fmt.Sprint(tk.MustQuery(`explain select id from articles where match(title) against('+MySQL -tutorial' in boolean mode)`).Rows())
+	require.Contains(t, nativePlan, "search func:")
+	require.Contains(t, nativePlan, "fts_match_word")
+	require.NotContains(t, nativePlan, "match_against(")
+}
