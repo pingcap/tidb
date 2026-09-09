@@ -518,6 +518,7 @@ func (a *ExecStmt) Text() string {
 // getMaxExecutionTime returns the timeout that applies to the current statement.
 // max_execution_time keeps its MySQL-compatible SELECT-only semantics, while
 // tidb_dml_max_execution_time applies to transactional DML and COMMIT.
+// Call it after building the executor so the actual DML transaction mode is known.
 func (a *ExecStmt) getMaxExecutionTime() uint64 {
 	vars := a.Ctx.GetSessionVars()
 	stmtCtx := vars.StmtCtx
@@ -531,17 +532,21 @@ func (a *ExecStmt) getMaxExecutionTime() uint64 {
 		if vars.InNonTransactionalDML || batchDML || stmtCtx.InExplainStmt {
 			return 0
 		}
-		return vars.DMLMaxExecutionTime
-	}
-	stmt := a.StmtNode
-	if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
-		stmt = executePlan.Stmt
-	}
-	if _, isCommit := stmt.(*ast.CommitStmt); isCommit {
-		if vars.BatchCommit {
-			return 0
+		if vars.DMLMaxExecutionTime > 0 && vars.BulkDMLEnabled {
+			// Txn(false) only reads the existing transaction without activating it.
+			// Keep the timeout when bulk mode falls back to a regular transaction.
+			txn, _ := a.Ctx.Txn(false)
+			if txn != nil && txn.Valid() && txn.IsPipelined() {
+				return 0
+			}
 		}
 		return vars.DMLMaxExecutionTime
+	}
+	// Both ordinary and prepared COMMIT have a Simple plan at this point.
+	if simple, ok := a.Plan.(*plannercore.Simple); ok {
+		if _, isCommit := simple.Statement.(*ast.CommitStmt); isCommit && !vars.BatchCommit {
+			return vars.DMLMaxExecutionTime
+		}
 	}
 	return vars.GetMaxExecutionTime()
 }
@@ -716,11 +721,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	// For prepared statements, a.StmtNode remains an ExecuteStmt.
-	// Resolve the timeout before unwrapping a.Plan so getMaxExecutionTime
-	// can inspect Execute.Stmt to recognize COMMIT.
-	maxExecutionTime := a.getMaxExecutionTime()
-
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
 	var rm *runaway.Manager
@@ -762,6 +762,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if pi != nil {
 		sql := a.getSQLForProcessInfo()
+		maxExecutionTime := a.getMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, a.StmtNode)
