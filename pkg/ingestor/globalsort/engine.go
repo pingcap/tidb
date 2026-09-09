@@ -489,7 +489,11 @@ func (e *Engine) handleConcurrencyChange(ctx context.Context, currBatchSize int)
 	startTime := time.Now()
 	logger.Info("waiting ingest data batch size change")
 
-	tick := time.NewTicker(time.Second)
+	tickInterval := time.Second
+	failpoint.Inject("fastHandleConcurrencyChangeTicker", func() {
+		tickInterval = 10 * time.Millisecond
+	})
+	tick := time.NewTicker(tickInterval)
 	defer func() {
 		tick.Stop()
 	}()
@@ -902,8 +906,8 @@ func (m *MemoryIngestData) GetTS() uint64 {
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
-	// Make sure data is not released.
-	intest.Assert(!m.releaseStarted.Load(), "data shouldn't be released when IncRef")
+	// Make sure data release has not started.
+	intest.Assert(!m.releaseStarted.Load(), "data release shouldn't have started when IncRef")
 }
 
 // DecRef implements IngestData.DecRef.

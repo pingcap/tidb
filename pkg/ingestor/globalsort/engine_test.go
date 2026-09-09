@@ -633,6 +633,10 @@ func TestChangeEngineConcurrency(t *testing.T) {
 	})
 
 	t.Run("wait for memory buffers to be released", func(t *testing.T) {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ingestor/globalsort/fastHandleConcurrencyChangeTicker",
+			"return(true)")
+
 		allocator := &blockingReleaseAllocator{
 			firstFreeStarted: make(chan struct{}),
 			continueFree:     make(chan struct{}),
@@ -689,50 +693,34 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		<-allocator.firstFreeStarted
 
 		resizeDoneCh := make(chan int, 1)
+		resizeStartedAt := time.Now()
 		go func() {
 			resizeDoneCh <- resizeEngine.handleConcurrencyChange(context.Background(), 1)
 		}()
 
 		<-flagsCheckedCh
-		buffersStillActive := len(resizeEngine.activeIngestDataFlags) == 1
+		require.Len(t, resizeEngine.activeIngestDataFlags, 1,
+			"engine treated data as released before its buffers were returned")
+		close(allocator.continueFree)
+		<-releaseCallbackStartedCh
 
-		var releasePanic any
-		var newBatchSize int
-		callbackStillActive := false
-		releaseRemovedAfterCallback := false
-		if buffersStillActive {
-			close(allocator.continueFree)
-			<-releaseCallbackStartedCh
+		continueAfterCheckCh <- struct{}{}
+		<-flagsCheckedCh
+		require.Len(t, resizeEngine.activeIngestDataFlags, 1,
+			"engine treated data as released before its release callback completed")
+		close(continueReleaseCallbackCh)
+		releasePanic := <-releaseResultCh
 
-			continueAfterCheckCh <- struct{}{}
-			<-flagsCheckedCh
-			callbackStillActive = len(resizeEngine.activeIngestDataFlags) == 1
-
-			if callbackStillActive {
-				close(continueReleaseCallbackCh)
-				releasePanic = <-releaseResultCh
-				continueAfterCheckCh <- struct{}{}
-				<-flagsCheckedCh
-				releaseRemovedAfterCallback = len(resizeEngine.activeIngestDataFlags) == 0
-				continueAfterCheckCh <- struct{}{}
-				newBatchSize = <-resizeDoneCh
-			} else {
-				continueAfterCheckCh <- struct{}{}
-				newBatchSize = <-resizeDoneCh
-				close(continueReleaseCallbackCh)
-				releasePanic = <-releaseResultCh
-			}
-		} else {
-			continueAfterCheckCh <- struct{}{}
-			newBatchSize = <-resizeDoneCh
-			close(allocator.continueFree)
-			releasePanic = <-releaseResultCh
-		}
+		continueAfterCheckCh <- struct{}{}
+		<-flagsCheckedCh
+		require.Empty(t, resizeEngine.activeIngestDataFlags,
+			"engine did not observe the completed release")
+		continueAfterCheckCh <- struct{}{}
+		newBatchSize := <-resizeDoneCh
 
 		data.release()
-		require.True(t, buffersStillActive, "engine treated data as released before its buffers were returned")
-		require.True(t, callbackStillActive, "engine treated data as released before its release callback completed")
-		require.True(t, releaseRemovedAfterCallback, "engine did not observe the completed release")
+		require.Less(t, time.Since(resizeStartedAt), time.Second,
+			"test should not wait for the production resize ticker")
 		require.Equal(t, 2, newBatchSize)
 		require.Nil(t, releasePanic)
 		require.EqualValues(t, 2, allocator.freeCount.Load())
