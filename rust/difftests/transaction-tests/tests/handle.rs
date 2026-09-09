@@ -86,11 +86,11 @@ fn test_handle() {
     assert_eq!(second.as_raw_bytes(), Some(&b"abc"[..]));
     assert_eq!(common.to_string(), "{100, abc}");
 
-    let partition_int = Handle::from(PartitionHandle::new(2, int_handle.clone()));
+    let partition_int = Handle::from(PartitionHandle::new(2, Some(int_handle.clone())));
     assert!(partition_int.equal(&int_handle));
     assert!(int_handle.equal(&partition_int));
 
-    let partition_common = Handle::from(PartitionHandle::new(1, common_next.clone()));
+    let partition_common = Handle::from(PartitionHandle::new(1, Some(common_next.clone())));
     assert!(partition_common.equal(&common_next));
     assert!(common_next.equal(&partition_common));
 }
@@ -212,9 +212,9 @@ fn assert_common_between_int_bounds(min: &[u8], max: &[u8], encoded: Vec<u8>) {
 /// Complete translation of `TestHandleMapWithPartialHandle`.
 #[test]
 fn test_handle_map_with_partition_handle() {
-    let partition_one = Handle::from(PartitionHandle::new(1, IntHandle::new(1)));
-    let partition_two = Handle::from(PartitionHandle::new(2, IntHandle::new(1)));
-    let partition_three = Handle::from(PartitionHandle::new(1, IntHandle::new(3)));
+    let partition_one = Handle::from(PartitionHandle::new(1, Some(Handle::from(IntHandle::new(1)))));
+    let partition_two = Handle::from(PartitionHandle::new(2, Some(Handle::from(IntHandle::new(1)))));
+    let partition_three = Handle::from(PartitionHandle::new(1, Some(Handle::from(IntHandle::new(3)))));
     let int = Handle::from(IntHandle::new(1));
     let common = Handle::from(CommonHandle::new(fixture("decimal_1")).unwrap());
 
@@ -236,7 +236,7 @@ fn test_handle_map_with_partition_handle() {
     assert_eq!(map.get(&partition_one), None);
     assert_eq!(map.len(), 4);
 
-    let missing = Handle::from(PartitionHandle::new(3, IntHandle::new(1)));
+    let missing = Handle::from(PartitionHandle::new(3, Some(Handle::from(IntHandle::new(1)))));
     assert_eq!(map.delete(&missing), None);
     assert_eq!(map.len(), 4);
 }
