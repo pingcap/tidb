@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictrows"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -42,8 +43,9 @@ import (
 )
 
 var (
-	_ scheduler.Cleaner      = (*ImportCleaner)(nil)
-	_ scheduler.BatchCleaner = (*ImportCleaner)(nil)
+	_ scheduler.Cleaner            = (*ImportCleaner)(nil)
+	_ scheduler.BatchCleaner       = (*ImportCleaner)(nil)
+	_ scheduler.ExpiredFileCleaner = (*ImportCleaner)(nil)
 )
 
 // Metering sends use little CPU and memory, so four concurrent workers are a
@@ -208,11 +210,24 @@ func cleanExternalFiles(ctx context.Context, fileGroup cleanFileGroup) error {
 		return err
 	}
 	defer store.Close()
+<<<<<<< HEAD
 	if err = external.CleanUpFiles(ctx, store, fileGroup.nonPartitionedDirs...); err != nil {
+=======
+	if err := globalsort.CleanUpFiles(ctx, store, fileGroup.nonPartitionedDirs...); err != nil {
+>>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
 		logger.Warn("failed to clean up files of tasks", zap.Error(err))
 		return err
 	}
 	return nil
+}
+
+// CleanExpiredFiles implements scheduler.ExpiredFileCleaner.
+func (*ImportCleaner) CleanExpiredFiles(
+	ctx context.Context,
+	taskInfoGetter storage.TaskCleanupInfoGetter,
+	cloudStorageURI string,
+) error {
+	return conflictrows.CleanConflictRowFiles(ctx, taskInfoGetter, cloudStorageURI)
 }
 
 func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {

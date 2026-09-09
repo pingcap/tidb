@@ -35,15 +35,108 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+=======
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
+	t := s.T()
+	if kerneltype.IsClassic() {
+		t.Skip("requires the NextGen distributed task framework")
+	}
+
+	const (
+		sourceBucket = "expired-conflict-source"
+		sortBucket   = "expired-conflict-sort"
+		dbName       = "expired_conflict_cleanup"
+	)
+	ctx := s.ctx
+	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
+	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+	})
+
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
+	vardef.CloudStorageURI.Store(baseSortURI)
+	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
+	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
+	require.NoError(t, err)
+	t.Cleanup(sortStore.Close)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "data.csv"},
+		Content:     []byte("1,one\n1,duplicate\n2,two\n"),
+	})
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t (id bigint primary key, value varchar(32))")
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from 'gs://%s/data.csv?endpoint=%s'
+		with cloud_storage_uri='%s', on_duplicate_key='capture'`, sourceBucket, gcsEndpoint, rootedSortURI)).Rows()
+	require.Len(t, result, 1)
+	jobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
+	require.NoError(t, err)
+
+	task := s.getTaskByJob(jobID)
+	require.NotNil(t, task)
+
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
+	require.NotEmpty(t, subtasks)
+	conflictFiles := make([]string, 0)
+	for _, subtask := range subtasks {
+		meta := &importinto.CollectConflictsStepMeta{}
+		require.NoError(t, json.Unmarshal(subtask.Meta, meta))
+		conflictFiles = append(conflictFiles, meta.ConflictedRowFilenames...)
+	}
+	require.NotEmpty(t, conflictFiles)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, filename)
+	}
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		rows := s.tk.MustQuery("select state from mysql.tidb_global_task_history where id = ?", task.ID).Rows()
+		if !assert.Len(collect, rows, 1) {
+			return
+		}
+		assert.Equal(collect, proto.TaskStateSucceed.String(), rows[0][0])
+	}, 30*time.Second, 100*time.Millisecond)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, "ordinary cleanup removed conflict file %s", filename)
+	}
+
+	// Conflict files are retained for seven days after a task finishes. Backdate
+	// the completion time so the periodic cleaner can exercise expiration now.
+	s.tk.MustExec(`update mysql.tidb_global_task_history
+		set end_time = CURRENT_TIMESTAMP - INTERVAL 8 DAY where id = ?`, task.ID)
+	s.tk.MustQuery(`select state, end_time < CURRENT_TIMESTAMP - INTERVAL 7 DAY
+		from mysql.tidb_global_task_history where id = ?`, task.ID).
+		Check(testkit.Rows("succeed 1"))
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		for _, filename := range conflictFiles {
+			exists, err := sortStore.FileExists(ctx, filename)
+			assert.NoError(collect, err, filename)
+			assert.False(collect, exists, "expired conflict file still exists: %s", filename)
+		}
+	}, 30*time.Second, 100*time.Millisecond)
+}
 
 func (s *mockGCSSuite) testSingleFileConflictResolution(tblSQL string, sourceContent string, resultRows []string) {
 	s.T().Helper()
