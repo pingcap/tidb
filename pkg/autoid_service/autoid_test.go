@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -121,6 +124,13 @@ func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, minv, m
 	require.Equal(t, resp, &autoid.AutoIDResponse{Min: minv, Max: maxv})
 }
 
+func testKeyspaceID() uint32 {
+	if kerneltype.IsClassic() {
+		return uint32(tikv.NullspaceID)
+	}
+	return uint32(0xFFFFFF - 1)
+}
+
 func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n uint64, keyspaceID uint32, more ...int64) autoIDResp {
 	increment := int64(1)
 	offset := int64(1)
@@ -145,6 +155,136 @@ func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	}
 	resp, err := cli.Rebase(context.Background(), req)
 	return rebaseResp{resp, err, t}
+}
+
+func readSepAutoIncIDBase(t *testing.T, store kv.Storage, dbID, tblID int64) int64 {
+	t.Helper()
+	var base int64
+	err := kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		base, err = meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5).Get()
+		return err
+	})
+	require.NoError(t, err)
+	return base
+}
+
+func TestCrossDBRenameSepAutoIncUsesCurrentTableLocation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	cli := MockForTest(store)
+	mockCli, ok := cli.(*mockClient)
+	require.True(t, ok)
+	keyspaceID := testKeyspaceID()
+
+	tk.MustExec("drop database if exists sp_autoid_old")
+	tk.MustExec("drop database if exists sp_autoid_new")
+	tk.MustExec("create database sp_autoid_old")
+	tk.MustExec("create database sp_autoid_new")
+	tk.MustExec("create table sp_autoid_old.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+
+	is := dom.InfoSchema()
+	oldDBInfo, ok := is.SchemaByName(ast.NewCIStr("sp_autoid_old"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("sp_autoid_old"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+	oldDest := dest{dbID: oldDBInfo.ID, tblID: tableID}
+
+	autoIDRequest(t, cli, oldDest, false, 1, keyspaceID).check(0, 1)
+	require.Equal(t, int64(batch), readSepAutoIncIDBase(t, store, oldDest.dbID, tableID))
+
+	tk.MustExec("rename table sp_autoid_old.t to sp_autoid_new.t")
+	is = dom.InfoSchema()
+	newDBInfo, ok := is.SchemaByName(ast.NewCIStr("sp_autoid_new"))
+	require.True(t, ok)
+	newDest := dest{dbID: newDBInfo.ID, tblID: tableID}
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, oldDest.dbID, tableID))
+	require.Equal(t, int64(batch), readSepAutoIncIDBase(t, store, newDest.dbID, tableID))
+
+	// A stale TiDB may continue to request IDs with the old dbID until its local
+	// allocator is transferred. It must keep using its existing in-memory range.
+	autoIDRequest(t, cli, oldDest, false, batch-1, keyspaceID).check(1, batch)
+	// When the stale request refills, the service resolves the table's current
+	// dbID and extends the new db key instead of resurrecting the old key.
+	autoIDRequest(t, cli, oldDest, false, 1, keyspaceID).check(batch, batch+1)
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, oldDest.dbID, tableID))
+	require.Equal(t, int64(batch*2), readSepAutoIncIDBase(t, store, newDest.dbID, tableID))
+
+	var force = struct{}{}
+	rebaseRequest(t, cli, newDest, false, 12000, force).check("")
+	// Old and new dbIDs must share the same service-side allocator by tableID.
+	// Otherwise, the stale old-db request could keep allocating from an old range
+	// after another TiDB rebases the new-db allocator.
+	autoIDRequest(t, cli, oldDest, false, 1, keyspaceID).check(12000, 12001)
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, oldDest.dbID, tableID))
+	require.Equal(t, int64(16000), readSepAutoIncIDBase(t, store, newDest.dbID, tableID))
+
+	tk.MustExec("drop database sp_autoid_old")
+	mockCli.autoIDLock.Lock()
+	clear(mockCli.autoIDMap)
+	mockCli.autoIDLock.Unlock()
+	// Simulate autoid service owner switch. The new owner starts with an empty
+	// allocator map and may receive a stale request carrying the old dbID. It
+	// should still resolve by tableID to the remaining table in the new db.
+	autoIDRequest(t, cli, oldDest, false, 1, keyspaceID).check(16000, 16001)
+	require.Equal(t, int64(20000), readSepAutoIncIDBase(t, store, newDest.dbID, tableID))
+}
+
+func TestCrossDBRenameConflictsWithFirstRefill(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database sp_autoid_race_old")
+	tk.MustExec("create database sp_autoid_race_new")
+	tk.MustExec("create table sp_autoid_race_old.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+
+	is := dom.InfoSchema()
+	oldDBInfo, ok := is.SchemaByName(ast.NewCIStr("sp_autoid_race_old"))
+	require.True(t, ok)
+	newDBInfo, ok := is.SchemaByName(ast.NewCIStr("sp_autoid_race_new"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("sp_autoid_race_old"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	// Start the first refill before rename. Its snapshot sees the table in the
+	// old database and the old auto-increment key does not exist yet.
+	refillTxn, err := store.Begin()
+	require.NoError(t, err)
+	refillMeta := meta.NewMutator(refillTxn)
+	tblInfo, err := refillMeta.GetTable(oldDBInfo.ID, tableID)
+	require.NoError(t, err)
+	require.NotNil(t, tblInfo)
+	_, err = refillMeta.GetAutoIDAccessors(oldDBInfo.ID, tableID).
+		IncrementID(model.TableInfoVersion5).Inc(batch)
+	require.NoError(t, err)
+
+	// Rename commits a tombstone for the absent old key. The stale refill must
+	// conflict instead of committing an independent range under the old dbID.
+	tk.MustExec("rename table sp_autoid_race_old.t to sp_autoid_race_new.t")
+	err = refillTxn.Commit(context.Background())
+	require.Error(t, err)
+	require.True(t, kv.IsTxnRetryableError(err), err)
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, oldDBInfo.ID, tableID))
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, newDBInfo.ID, tableID))
+
+	// Retrying through the service with the stale dbID resolves the new table
+	// location and reserves the first range only on the destination key.
+	oldDest := dest{dbID: oldDBInfo.ID, tblID: tableID}
+	autoIDRequest(t, MockForTest(store), oldDest, false, 1, testKeyspaceID()).check(0, 1)
+	require.Equal(t, int64(0), readSepAutoIncIDBase(t, store, oldDBInfo.ID, tableID))
+	require.Equal(t, int64(batch), readSepAutoIncIDBase(t, store, newDBInfo.ID, tableID))
+}
+
+func TestCreateSepAutoIncWithInitialBase(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists sp_autoid_create")
+	tk.MustExec("create database sp_autoid_create")
+	tk.MustExec("create table sp_autoid_create.t(id int primary key auto_increment) AUTO_INCREMENT=10 AUTO_ID_CACHE=1")
+	tk.MustExec("insert into sp_autoid_create.t values ()")
+	tk.MustQuery("select * from sp_autoid_create.t").Check(testkit.Rows("10"))
 }
 
 func TestAPI(t *testing.T) {
