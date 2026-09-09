@@ -1536,6 +1536,13 @@ impl KvTable {
         if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
             return Ok(None);
         }
+        // An index-handle cursor only returns index/handle columns. A
+        // residual predicate may reference a table column outside that
+        // layout; falling back keeps the local Selection on a complete row
+        // instead of evaluating it against a narrower chunk.
+        if handle_only && !predicates.is_empty() {
+            return Ok(None);
+        }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
             return Ok(None);
         };
