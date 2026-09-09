@@ -973,21 +973,15 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
 
 	// Determine join type based on AST.
-<<<<<<< HEAD
-	// Currently supports INNER JOIN and comma syntax (which the parser represents as CrossJoin).
-	// LEFT/RIGHT JOIN will be added in a follow-up PR.
-	var joinType logicalop.JoinType
-=======
 	// Supports INNER JOIN, comma syntax (which the parser represents as CrossJoin) and LEFT JOIN.
 	// RIGHT JOIN will be added in a follow-up PR.
-	var joinType base.JoinType
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
+	var joinType logicalop.JoinType
 	switch joinNode.Tp {
 	case ast.LeftJoin:
-		joinType = base.LeftOuterJoin
+		joinType = logicalop.LeftOuterJoin
 		// Once the Apply is decorrelated into a plain LogicalJoin it becomes a candidate
-		// for the outer-join simplification rules, same as a non-LATERAL LEFT JOIN.
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
+		// for outer join elimination, same as a non-LATERAL LEFT JOIN.
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
 	case ast.RightJoin:
 		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("RIGHT JOIN is not supported with LATERAL")
 	default:
@@ -1015,7 +1009,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	// A LEFT JOIN null-extends the inner (right) side when the LATERAL subquery
 	// produces no row for an outer row, so its columns lose any NOT NULL flag.
-	if joinType == base.LeftOuterJoin {
+	if joinType == logicalop.LeftOuterJoin {
 		util.ResetNotNullFlag(ap.Schema(), leftPlan.Schema().Len(), ap.Schema().Len())
 	}
 
@@ -1059,20 +1053,15 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
-<<<<<<< HEAD
 	// Mark inner CTEs against FullSchema so correlations via USING/NATURAL
 	// merged columns are detected and the CTE storage is reset per outer row.
 	setIsInApplyForCTE(rightPlan, ap.FullSchema)
 
-	// Note: FullSchema nullability adjustment is not needed for InnerJoin.
-	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
-=======
 	// Mirror the schema adjustment above on FullSchema, which additionally carries the
 	// redundant USING/NATURAL columns of the two sides.
-	if joinType == base.LeftOuterJoin {
+	if joinType == logicalop.LeftOuterJoin {
 		util.ResetNotNullFlag(ap.FullSchema, lFullSchema.Len(), ap.FullSchema.Len())
 	}
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 
 	ap.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {

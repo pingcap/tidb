@@ -133,88 +133,6 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 	return defaultValueMap
 }
 
-<<<<<<< HEAD
-=======
-// pruneRedundantApply: Removes the Apply operator if the parent SELECT clause does not filter any rows from the source.
-// Example: SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1))
-// In this case, the subquery can be removed entirely since the WHERE clause always evaluates to True.
-// This results in a SELECT node with a True condition and an Apply operator as its child.
-// If this pattern is detected, we remove both the SELECT and Apply nodes, returning the left child of the Apply operator as the result.
-// For the example above, the result would be a table scan on t1.
-func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool) {
-	// Check if the current plan is a LogicalSelection
-	logicalSelection, ok := p.(*logicalop.LogicalSelection)
-	if !ok {
-		return nil, false
-	}
-
-	// Retrieve the child of LogicalSelection
-	selectSource := logicalSelection.Children()[0]
-
-	// Check if the child is a LogicalApply
-	apply, ok := selectSource.(*logicalop.LogicalApply)
-	if !ok {
-		return nil, false
-	}
-
-	// Ensure the Apply operator is of a suitable join type to match the required pattern.
-	// Only LeftOuterJoin or LeftOuterSemiJoin are considered valid here.
-	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
-		return nil, false
-	}
-	// LATERAL joins may return multiple rows per outer row; see LogicalApply.IsLateral.
-	if apply.IsLateral {
-		return nil, false
-	}
-	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
-	// But this problem has affected tiflash CI.
-	// Simplify predicates from the LogicalSelection
-	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions,
-		true, nil)
-
-	// Determine if this is a "true selection"
-	trueSelection := false
-	if len(simplifiedPredicates) == 0 {
-		trueSelection = true
-	} else if len(simplifiedPredicates) == 1 {
-		_, simplifiedPredicatesType := rule.FindPredicateType(p.SCtx(), simplifiedPredicates[0])
-		if simplifiedPredicatesType == rule.TruePredicate {
-			trueSelection = true
-		}
-	}
-
-	if trueSelection {
-		finalResult := apply
-
-		// Traverse through LogicalApply nodes to find the last one
-		for {
-			child := finalResult.Children()[0]
-			nextApply, ok := child.(*logicalop.LogicalApply)
-			if ok && nextApply.IsLateral {
-				// The IsLateral guard above only covers the topmost Apply, but this loop drops
-				// every Apply it walks through. A LATERAL Apply nested below a prunable one may
-				// still return several rows per outer row, so pruning the chain would lose them.
-				return nil, false
-			}
-			if !ok {
-				if len(groupByColumn) == 0 {
-					return child, true
-				}
-				for col := range groupByColumn {
-					if apply.Schema().Contains(col) && !child.Schema().Contains(col) {
-						return nil, false
-					}
-				}
-				return child, true // Return the child of the last LogicalApply
-			}
-			finalResult = nextApply
-		}
-	}
-
-	return nil, false
-}
-
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
@@ -414,8 +332,6 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 						var appendedAggFuncs []*aggregation.AggFuncDesc
 
 						join := &apply.LogicalJoin
-<<<<<<< HEAD
-=======
 						// The default values only describe a *scalar* aggregation, which yields one row
 						// over an empty input. An aggregation carrying an explicit GROUP BY yields no row
 						// at all for an outer row with no matching group, and the outer join's NULL
@@ -452,7 +368,6 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 							join.RightConditions = nil
 							join.OtherConditions = nil
 						}
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
@@ -479,20 +394,62 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 							agg.SetChildren(sel.Children()[0])
 							appendRemoveSelectionTraceStep(agg, sel, opt)
 						}
-						defaultValueMap := s.aggDefaultValueMap(agg)
-						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
-							proj.SetSchema(apply.Schema())
-							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
-							for i, val := range defaultValueMap {
-								pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
-								proj.Exprs[pos] = ifNullFunc
+							if len(havingConds) == 0 {
+								proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								proj.SetSchema(apply.Schema())
+								proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
+								for i, val := range defaultValueMap {
+									pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
+									ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+									proj.Exprs[pos] = ifNullFunc
+								}
+								proj.SetChildren(apply)
+								p = proj
+								appendAddProjTraceStep(apply, proj, opt)
+							} else {
+								// Materialize HAVING conditions once to avoid evaluating it multiple times
+								// when NULL-ifying every inner column.
+								defaultProj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								defaultProj.SetSchema(apply.Schema().Clone())
+								defaultProj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
+								defaultValueSchema := expression.NewSchema()
+								defaultValueExprs := make([]expression.Expression, 0, len(defaultValueMap))
+								for i, val := range defaultValueMap {
+									pos := defaultProj.Schema().ColumnIndex(agg.Schema().Columns[i])
+									ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+									defaultProj.Exprs[pos] = ifNullFunc
+									defaultValueSchema.Append(agg.Schema().Columns[i])
+									defaultValueExprs = append(defaultValueExprs, ifNullFunc)
+								}
+								havingItems := make([]expression.Expression, 0, len(havingConds))
+								for _, cond := range havingConds {
+									havingItems = append(havingItems, expression.ColumnSubstitute(agg.SCtx().GetExprCtx(), cond, defaultValueSchema, defaultValueExprs))
+								}
+								havingExpr := expression.ComposeCNFCondition(agg.SCtx().GetExprCtx(), havingItems...)
+								havingCol := &expression.Column{
+									UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+									RetType:  havingExpr.GetType(agg.SCtx().GetExprCtx().GetEvalCtx()),
+								}
+								defaultProj.Exprs = append(defaultProj.Exprs, havingExpr)
+								defaultProj.Schema().Append(havingCol)
+								defaultProj.SetChildren(apply)
+
+								proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								proj.SetSchema(apply.Schema())
+								proj.Exprs = expression.Column2Exprs(defaultProj.Schema().Columns[:apply.Schema().Len()])
+								outerLen := outerPlan.Schema().Len()
+								havingVal := defaultProj.Schema().Columns[defaultProj.Schema().Len()-1]
+								for i := outerLen; i < proj.Schema().Len(); i++ {
+									retType := proj.Schema().Columns[i].RetType.DeepCopy()
+									retType.DelFlag(mysql.NotNullFlag)
+									nullVal := expression.NewNullWithFieldType(retType)
+									proj.Exprs[i] = expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.If, retType, havingVal, proj.Exprs[i], nullVal)
+								}
+								proj.SetChildren(defaultProj)
+								p = proj
+								appendAddProjTraceStep(apply, proj, opt)
 							}
-							proj.SetChildren(apply)
-							p = proj
-							appendAddProjTraceStep(apply, proj, opt)
 						}
 						appendModifyAggTraceStep(outerPlan, apply, agg, sel, appendedGroupByCols, appendedAggFuncs, eqCondWithCorCol, opt)
 						return s.Optimize(ctx, p, opt)
@@ -709,7 +666,7 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 		if expression.ExtractColumnSet(expr).IsEmpty() {
 			continue
 		}
-		nullResult, err := expression.EvaluateExprWithNull(apply.SCtx().GetExprCtx(), innerSchema, expr, true)
+		nullResult, err := expression.EvaluateExprWithNull(apply.SCtx().GetExprCtx(), innerSchema, expr)
 		if err != nil {
 			return true
 		}

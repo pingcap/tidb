@@ -45,16 +45,9 @@ func TestLateralJoinPlanBuilding(t *testing.T) {
 			expectApply: true,
 		},
 		{
-<<<<<<< HEAD
-			name:              "LATERAL with LEFT JOIN not yet supported",
-			sql:               "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.b) AS dt ON true",
-			expectError:       true,
-			expectedErrorCode: 3809,
-=======
 			name:        "LATERAL with LEFT JOIN builds LogicalApply",
 			sql:         "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.b) AS dt ON true",
 			expectApply: true,
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 		},
 		{
 			name:        "LATERAL with CROSS JOIN builds LogicalApply",
@@ -342,16 +335,9 @@ func TestLateralJoinErrorPaths(t *testing.T) {
 			expectedErrorCode: 3809,
 		},
 		{
-<<<<<<< HEAD
-			name:              "LEFT JOIN with LATERAL not yet supported",
-			sql:               "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true",
-			expectError:       true,
-			expectedErrorCode: 3809,
-=======
 			name:        "LEFT JOIN with LATERAL is valid",
 			sql:         "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true",
 			expectError: false,
->>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 		},
 		{
 			name:        "CROSS JOIN with LATERAL is valid",
@@ -584,7 +570,7 @@ func TestLateralJoinDecorrelateWithUSINGAndON(t *testing.T) {
 // LeftOuterJoin Apply whose inner columns are nullable: the LATERAL subquery may
 // return no row for an outer row, and that row is then NULL-extended.
 func TestLeftJoinLateralBuildsOuterApply(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
+	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
 
@@ -602,7 +588,7 @@ func TestLeftJoinLateralBuildsOuterApply(t *testing.T) {
 	require.True(t, ok)
 	apply := findFirstLogicalApply(lp)
 	require.NotNil(t, apply, "LEFT JOIN LATERAL must build a LogicalApply")
-	require.Equal(t, base.LeftOuterJoin, apply.JoinType)
+	require.Equal(t, logicalop.LeftOuterJoin, apply.JoinType)
 	require.True(t, apply.IsLateral)
 
 	outerLen := apply.Children()[0].Schema().Len()
