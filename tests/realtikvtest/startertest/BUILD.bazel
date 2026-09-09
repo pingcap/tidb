@@ -21,6 +21,7 @@ go_test(
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_prometheus_client_model//go",
         "@com_github_prometheus_common//expfmt",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )

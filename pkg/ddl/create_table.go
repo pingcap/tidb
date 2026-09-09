@@ -162,7 +162,7 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 		// Updating auto id meta kv is done in a separate txn.
 		// It's ok as these data are bind with table ID, and we won't use these
 		// table IDs until info schema version is updated.
-		if err := handleAutoIncID(r, job, tbInfo); err != nil {
+		if err := handleAutoIncID(r, job.SchemaID, tbInfo); err != nil {
 			return tbInfo, errors.Trace(err)
 		}
 
@@ -179,8 +179,8 @@ type autoIDType struct {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableInfo) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
+func handleAutoIncID(r autoid.Requirement, schemaID int64, tbInfo *model.TableInfo) error {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tbInfo)
 
 	hs := make([]autoIDType, 0, 3)
 	if tbInfo.AutoIncID > 1 {
@@ -1338,6 +1338,9 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	tblInfo.MaterializedViewBase = nil
+	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewLog = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {

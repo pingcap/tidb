@@ -345,6 +345,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
+	lockCtx.AllowSharedLockUpgrade = seVars.EnableSharedLockUpgrade
 
 	// Set max_execution_time deadline for SELECT statements
 	maxExectionTime := seVars.GetMaxExecutionTime()

@@ -811,11 +811,20 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	// QueryCopStoreLimit limits TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	DMLBatchSize int
+	// MViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MViewMaintainIsolationReadEngines string
+	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	MViewMaintainImportThreads int
+	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	MViewMaintainImportDiskQuota string
+	RetryLimit                   int64
+	DisableTxnAutoRetry          bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -1502,6 +1511,9 @@ type SessionVars struct {
 	// EnableFullOuterJoin indicates whether to enable full outer join.
 	EnableFullOuterJoin bool
 
+	// EnableMView indicates whether to enable materialized view DDL.
+	EnableMView bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1684,6 +1696,8 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
+	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
+	InMViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -1889,6 +1903,10 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+
+	// EnableSharedLockUpgrade indicates whether shared locks may be upgraded to exclusive locks during
+	// pessimistic locking.
+	EnableSharedLockUpgrade bool
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
@@ -2469,6 +2487,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
 		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
+		EnableMView:                      vardef.DefTiDBMViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2507,6 +2526,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2528,9 +2548,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
-		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:         vardef.DefTiDBMemQuotaQuery,
+		MViewMaintainMemQuota: vardef.DefTiDBMViewMaintainMemQuota,
+		MemQuotaApplyCache:    vardef.DefTiDBMemQuotaApplyCache,
 	}
+	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
+	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
+	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,
@@ -3508,6 +3532,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MViewMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MViewMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

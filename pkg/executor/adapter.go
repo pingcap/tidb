@@ -200,6 +200,11 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, e, req)
 	if err != nil {
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if maxExecErr := checkMaxExecutionTimeExceeded(a.stmt.Ctx); maxExecErr != nil {
+				err = maxExecErr
+			}
+		}
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
@@ -1718,10 +1723,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
-	a.finishStatementRU(err)
+	statementRUTotal := a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults)
-	a.SummaryStmt(succ)
+	a.LogSlowQuery(txnTS, succ, hasMoreResults, statementRUTotal)
+	a.SummaryStmt(succ, statementRUTotal)
 	a.observeStmtFinishedForTopProfiling()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -1840,31 +1845,13 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
-
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
-
-	dctx := a.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
-		return
-	}
-	tikvRU := ruDetail.TiKVRUV2()
-	tiflashRU := ruDetail.TiflashRU()
-	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
-		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
-	}
 }
 
-func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
-	var tiKVRU, tiFlashRU float64
-	if ruDetail != nil {
-		tiKVRU = ruDetail.TiKVRUV2()
-		tiFlashRU = ruDetail.TiflashRU()
+func firstStatementRUTotal(statementRUTotal []float64) float64 {
+	if len(statementRUTotal) == 0 {
+		return 0
 	}
-	if metrics == nil {
-		return tiKVRU + tiFlashRU
-	}
-	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
+	return statementRUTotal[0]
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -1970,7 +1957,7 @@ func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
@@ -2016,7 +2003,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 		}
 	})
-	slowLog := sessVars.SlowLogFormat(slowItems)
+	slowLog := sessVars.SlowLogFormat(slowItems, statementRUTotal...)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
 	if trace.IsEnabled() {
@@ -2211,7 +2198,7 @@ func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.Dump
 }
 
 // SummaryStmt collects statements for information_schema.statements_summary
-func (a *ExecStmt) SummaryStmt(succ bool) {
+func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	sessVars := a.Ctx.GetSessionVars()
 	var userString string
 	if sessVars.User != nil {
@@ -2314,7 +2301,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
+	stmtExecInfo.TotalRUV2 = firstStatementRUTotal(statementRUTotal)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()

@@ -729,6 +729,18 @@ func (e *RuntimeStatsColl) GetStmtCopRuntimeStats() StmtCopRuntimeStats {
 	return e.stmtCopStats
 }
 
+// GetRootStatsIfExists gets existing runtime stats without creating an empty
+// entry when planID has not registered any root stats.
+func (e *RuntimeStatsColl) GetRootStatsIfExists(planID int) (*RootRuntimeStats, bool) {
+	if e == nil {
+		return nil, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	return runtimeStats, exists
+}
+
 // GetRootStats gets execStat for a executor.
 func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 	e.mu.Lock()
