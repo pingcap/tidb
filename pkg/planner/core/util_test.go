@@ -20,9 +20,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +38,60 @@ var (
 	_ ast.InPlaceVisitor = (*AggregateFuncExtractor)(nil)
 	_ ast.InPlaceVisitor = (*WindowFuncExtractor)(nil)
 )
+
+func TestExpressionHashSetHandlesHashCollisions(t *testing.T) {
+	newConstant := func(collation string) *expression.Constant {
+		return &expression.Constant{
+			Value: types.NewStringDatum("A"),
+			RetType: types.NewFieldTypeBuilder().
+				SetType(mysql.TypeVarString).
+				SetCharset(charset.CharsetUTF8MB4).
+				SetCollate(collation).
+				BuildP(),
+		}
+	}
+
+	caseInsensitive := newConstant("utf8mb4_general_ci")
+	binary := newConstant(charset.CollationUTF8MB4)
+	require.Equal(t, caseInsensitive.HashCode(), binary.HashCode())
+	require.False(t, caseInsensitive.Equals(binary))
+	require.False(t, expression.HashCodeEqual(caseInsensitive, binary))
+
+	set := make(expressionHashSet)
+	require.True(t, set.add(caseInsensitive))
+	require.False(t, set.add(caseInsensitive.Clone()))
+	require.True(t, set.add(binary))
+	require.True(t, set.contains(caseInsensitive))
+	require.True(t, set.contains(binary))
+	require.Len(t, set, 1)
+
+	firstColumn := &expression.Column{
+		UniqueID: 1,
+		Index:    0,
+		OrigName: "first",
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	secondColumn := &expression.Column{
+		UniqueID: 1,
+		Index:    1,
+		OrigName: "second",
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	require.Equal(t, firstColumn.HashCode(), secondColumn.HashCode())
+	require.False(t, firstColumn.Equals(secondColumn))
+	require.True(t, expression.HashCodeEqual(firstColumn, secondColumn))
+	require.True(t, set.add(firstColumn))
+	require.False(t, set.add(secondColumn))
+
+	require.True(t, sameExpressionMultiset(
+		[]expression.Expression{caseInsensitive, binary},
+		[]expression.Expression{binary, caseInsensitive},
+	))
+	require.False(t, sameExpressionMultiset(
+		[]expression.Expression{caseInsensitive},
+		[]expression.Expression{binary},
+	))
+}
 
 func tableNamesAsStr(tableNames []*ast.TableName) string {
 	names := []string{}

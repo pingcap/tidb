@@ -1231,6 +1231,11 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 				codeMap[string(code)] = 1
 				hashcode2Expr[string(code)] = cnfItem
 			} else if _, ok := codeMap[string(code)]; ok {
+				// HashCode is a lossy digest (for example, Constant.HashCode
+				// does not encode the collation), so verify structural equality.
+				if !cnfItem.Equals(hashcode2Expr[string(code)]) {
+					continue
+				}
 				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
 				// We should make sure that the two `t.a=t1.a` contributes only once.
 				// TODO: do this out of this function.
@@ -1257,8 +1262,8 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode()
-			_, ok := hashcode2Expr[string(code)]
-			if !ok {
+			extracted, ok := hashcode2Expr[string(code)]
+			if !ok || !cnfItem.Equals(extracted) {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
 		}
@@ -1581,15 +1586,67 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 	if len(exprs) <= 1 {
 		return exprs
 	}
-	exists := make(map[string]struct{}, len(exprs))
+	exists := make(map[string][]Expression, len(exprs))
 	return slices.DeleteFunc(exprs, func(expr Expression) bool {
-		key := string(expr.HashCode())
-		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
-			exists[key] = struct{}{}
+		if IsMutableEffectsExpr(expr) {
 			return false
 		}
-		return true
+		key := string(expr.HashCode())
+		for _, existing := range exists[key] {
+			if HashCodeEqual(expr, existing) {
+				return true
+			}
+		}
+		exists[key] = append(exists[key], expr)
+		return false
 	})
+}
+
+// HashCodeEqual checks whether two expressions have the same legacy hash-code identity.
+// HashCode omits field types, so compare the semantic type tree to distinguish expressions
+// whose values are encoded identically but whose collations or other type properties differ.
+func HashCodeEqual(lhs, rhs Expression) bool {
+	if !bytes.Equal(lhs.HashCode(), rhs.HashCode()) {
+		return false
+	}
+	if lhs.Equals(rhs) {
+		return true
+	}
+	return hashCodeTypeEqual(lhs, rhs)
+}
+
+func hashCodeTypeEqual(lhs, rhs Expression) bool {
+	switch left := lhs.(type) {
+	case *ScalarFunction:
+		right, ok := rhs.(*ScalarFunction)
+		if !ok || !fieldTypeEqual(left.RetType, right.RetType) || len(left.GetArgs()) != len(right.GetArgs()) {
+			return false
+		}
+		for i, arg := range left.GetArgs() {
+			if !HashCodeEqual(arg, right.GetArgs()[i]) {
+				return false
+			}
+		}
+		return true
+	case *Constant:
+		right, ok := rhs.(*Constant)
+		return ok && fieldTypeEqual(left.RetType, right.RetType)
+	case *Column:
+		right, ok := rhs.(*Column)
+		return ok && fieldTypeEqual(left.RetType, right.RetType)
+	case *CorrelatedColumn:
+		right, ok := rhs.(*CorrelatedColumn)
+		return ok && fieldTypeEqual(left.RetType, right.RetType)
+	default:
+		return false
+	}
+}
+
+func fieldTypeEqual(lhs, rhs *types.FieldType) bool {
+	if lhs == nil || rhs == nil {
+		return lhs == rhs
+	}
+	return lhs.Equal(rhs)
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.

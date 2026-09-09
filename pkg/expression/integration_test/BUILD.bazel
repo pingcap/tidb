@@ -4,6 +4,7 @@ go_test(
     name = "integration_test_test",
     timeout = "short",
     srcs = [
+        "dnf_common_condition_extraction_collation_hash_collision_test.go",
         "integration_test.go",
         "main_test.go",
     ],
