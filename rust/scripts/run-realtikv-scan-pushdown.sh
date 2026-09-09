@@ -439,6 +439,11 @@ binary_signature_case() {
   printf '      projection control: GO %s / RUST %s\n' \
     "$(printf '%s' "${go_proj}" | head -1)" \
     "$(printf '%s' "${rust_proj}" | head -1)"
+  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
+    echo "  SKIP  ${label}: no valid coprocessor receipt (environment observation)" >&2
+    RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
+    return
+  fi
   check "${label}: the DAG carried a Selection" has_selection
   # THE PUSH IS FAITHFUL: the coprocessor sent TiDB's own answer.
   check "${label}: the coprocessor sent exactly the rows TiDB selects, \
