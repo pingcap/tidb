@@ -233,6 +233,20 @@ func TestLocalMatchSemantics(t *testing.T) {
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
 	tk.MustExec("set tidb_isolation_read_engines = 'tikv'")
 	tk.MustQuery(`select id from articles where match(title) against('+MySQL -tutorial' in boolean mode) order by id`).Check(testkit.Rows("2", "3", "4", "5"))
+	// Regression from 81a1fe7fb9 / TestIssue70706: aggregate-column
+	// substitution must preserve the local MATCH signature and analyzer state.
+	for _, alternative := range []string{"off", "on"} {
+		t.Run("group_by_having_"+alternative, func(t *testing.T) {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			for _, clause := range []string{"where", "having", "group by id, title having"} {
+				sql := "select id, title from articles " + clause + " match(title) against('+PostgreSQL' in boolean mode)"
+				tk.MustQuery(sql).Check(testkit.Rows("4 MySQL vs. PostgreSQL"))
+			}
+			plan := fmt.Sprint(tk.MustQuery("explain format='brief' select id, title from articles group by id, title having match(title) against('+PostgreSQL' in boolean mode)").Rows())
+			require.Contains(t, plan, "match_against(")
+			require.NotContains(t, plan, "search func:")
+		})
+	}
 	// On this branch, disabling local evaluation restores native TiCI routing.
 	tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "articles")
