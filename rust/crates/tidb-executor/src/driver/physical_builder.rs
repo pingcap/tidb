@@ -3400,7 +3400,16 @@ pub(super) fn build(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    build_with_state(plan, catalog, ctx, &mut BuildState::default())
+    let child = build_with_state(plan, catalog, ctx, &mut BuildState::default())?;
+    let output = plan_schema(plan)?;
+    if output.len() != child.schema().len() {
+        let expressions = output.columns.iter().map(|column| {
+            let offset = child.schema().column_index(column);
+            (offset >= 0).then(|| Expression::Column(child.schema().columns[offset as usize].clone()))
+        }).collect::<Option<Vec<_>>>().ok_or_else(|| DriverError::unsupported("root output column is absent from executor"))?;
+        return Ok(Box::new(ProjectionExec::new(meta(plan, output), expressions, child, ctx.clone())));
+    }
+    Ok(child)
 }
 
 fn schema_column_name(column: &Column, ordinal: usize) -> String {
