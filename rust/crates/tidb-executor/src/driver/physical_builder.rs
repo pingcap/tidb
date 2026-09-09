@@ -3120,14 +3120,12 @@ fn build_with_state(
                     (offset < child.schema().len()).then_some(offset)
                 })
                 .collect::<Option<Vec<usize>>>();
-            if let Some(offsets) = direct_offsets {
-                if child
-                    .table_access()
-                    .is_some_and(|access| access.accept_post_filter_projection(&offsets))
-                {
-                    return Ok(child);
-                }
-            }
+            // Keep direct projections local while residual Selection may still
+            // consume the reader's complete child row. Go's executor builder
+            // only fuses this projection after it has proved the child schema
+            // includes every filter input; the Rust plan does not carry that
+            // proof at this layer.
+            let _ = direct_offsets;
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
             let executor: Box<dyn Executor> = Box::new(ProjectionExec::new(
                 meta(plan, plan_schema(plan)?),
