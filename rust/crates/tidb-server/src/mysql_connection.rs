@@ -1719,12 +1719,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     match write_result {
                         Ok(_) => queries += 1,
                         Err(error) if !error.bytes_escaped => {
+                            let (error_code, error_message) =
+                                decode_result_set_error(&error.message);
                             write_error(
                                 &mut output,
                                 1,
-                                ER_UNKNOWN_ERROR,
+                                error_code,
                                 *b"HY000",
-                                error.message,
+                                error_message,
                                 protocol_41,
                             )?;
                             drop(result);
@@ -2483,6 +2485,20 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
         }
     }
+}
+
+fn decode_result_set_error(message: &str) -> (u16, String) {
+    const PREFIX: &str = "__TIDB_ERRNO:";
+    let Some(rest) = message.strip_prefix(PREFIX) else {
+        return (ER_UNKNOWN_ERROR, message.to_owned());
+    };
+    let Some((code, text)) = rest.split_once(':') else {
+        return (ER_UNKNOWN_ERROR, message.to_owned());
+    };
+    let Ok(code) = code.parse::<u16>() else {
+        return (ER_UNKNOWN_ERROR, message.to_owned());
+    };
+    (code, text.to_owned())
 }
 
 /// Wire-level proof that a real `COM_STMT_EXECUTE` binary payload — not a

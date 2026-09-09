@@ -218,7 +218,14 @@ impl DistSqlRecordSet {
 }
 
 fn map_source_error(error: ResponseChannelError) -> DistSqlRecordSetError {
-    DistSqlRecordSetError::Source(error.to_string())
+    match error {
+        ResponseChannelError::SelectResponse { code, message } => {
+            // Preserve the TiKV/Go errno through the legacy String result-set
+            // boundary; the MySQL connection unwraps this private framing.
+            DistSqlRecordSetError::Source(format!("__TIDB_ERRNO:{code}:{message}"))
+        }
+        other => DistSqlRecordSetError::Source(other.to_string()),
+    }
 }
 
 fn validate_chunk_row(row: Row<'_>, field_types: &[FieldType]) -> Result<(), String> {
@@ -386,4 +393,22 @@ fn append_owned_chunk_text(
         OwnedTextKind::Temporal => TextScalar::Temporal(&value),
     };
     writer.append(scalar)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_source_error;
+    use tidb_distsql::ResponseChannelError;
+
+    #[test]
+    fn select_response_errno_survives_recordset_mapping() {
+        let error = map_source_error(ResponseChannelError::SelectResponse {
+            code: 1690,
+            message: "DOUBLE value is out of range in 'cot(0)'".to_owned(),
+        });
+        assert_eq!(
+            error.to_string(),
+            "__TIDB_ERRNO:1690:DOUBLE value is out of range in 'cot(0)'"
+        );
+    }
 }
