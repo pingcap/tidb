@@ -33,6 +33,13 @@ cleanup() {
   local cleanup_failed=false
   trap - EXIT INT TERM
 
+  if [[ "${original_status}" -ne 0 ]] && [[ -d "${TAG_DIR}" ]]; then
+    local evidence_dir="${TMPDIR:-/tmp}/lock-recovery-evidence-${TAG}"
+    mkdir -p "${evidence_dir}"
+    cp -R "${TAG_DIR}" "${evidence_dir}/" 2>/dev/null || true
+    echo "lock-recovery evidence copied to ${evidence_dir}" >&2
+  fi
+
   if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
     kill "${PLAYGROUND_PID}" 2>/dev/null || true
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
