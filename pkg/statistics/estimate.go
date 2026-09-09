@@ -44,6 +44,13 @@ func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRati
 
 	ndv = uint64(math.Sqrt(rowCountN/n)*f1 + d - f1 + 0.5)
 	ndv = max(ndv, sampleNDV)
+<<<<<<< HEAD
 	ndv = min(ndv, rowCount)
 	return ndv, scaleRatio
+=======
+	if rowCount > 0 {
+		ndv = min(ndv, rowCount)
+	}
+	return ndv
+>>>>>>> 3b25bda333d (statistics: remove unused global singleton estimator (#70928))
 }
