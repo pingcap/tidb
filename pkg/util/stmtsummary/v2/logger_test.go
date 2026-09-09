@@ -20,9 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
-
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
