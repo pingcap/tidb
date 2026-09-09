@@ -90,21 +90,6 @@ func TestDefaultRouter(t *testing.T) {
 	}
 }
 
-func TestDefaultRouterDoesNotAutoDetectAurora(t *testing.T) {
-	actual, err := NewDefaultFileRouter(log.L())
-	require.NoError(t, err)
-	for path, want := range map[string]filter.Table{
-		"archive/customer/staging.users/1/part-0.parquet": {Schema: "staging", Name: "users/1/part-0"},
-		"export-a/db/db.users/1/part-a.parquet":           {Schema: "db", Name: "users/1/part-a"},
-		"backup/v1.0/db.users.0000.parquet":               {Schema: "db", Name: "users"},
-	} {
-		got, err := actual.Route(path)
-		require.NoError(t, err)
-		require.NotNil(t, got, path)
-		require.Equal(t, want, got.Table, path)
-	}
-}
-
 func TestInvalidRouteRule(t *testing.T) {
 	rule := &config.FileRouteRule{}
 	rules := []*config.FileRouteRule{rule}

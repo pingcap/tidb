@@ -15,141 +15,102 @@
 package importsdk
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
 var (
-	auroraBatchPattern = regexp.MustCompile(`^[0-9]+$`)
-	dataFileSuffix     = regexp.MustCompile(`(?i)\.(sql|csv|parquet)(\.[^./]+)?$`)
+	auroraDataPattern = regexp.MustCompile(`^(?:(.*)/)?([^/]+)/([^/]+\.[^/]+)/(?:[0-9]+/)?(?i:part-[^/]+\.parquet)$`)
+	dataFileSuffix    = regexp.MustCompile(`(?i)\.(sql|csv|parquet)(\.[^./]+)?$`)
 )
 
-// parseAuroraFile uses raw object-key components, not URL decoding or the last
-// dot in schema.table. An empty root is valid when the URL scopes one export.
-// candidate distinguishes a malformed Aurora-like path from generic input.
-func parseAuroraFile(path string, fallback mydump.FileRouter) (table filter.Table, root string, candidate bool, err error) {
-	parts := strings.Split(filepath.ToSlash(path), "/")
-	if len(parts) < 3 {
-		return table, "", false, nil
-	}
-	leaf := parts[len(parts)-1]
-	isPart := len(leaf) >= 5 && strings.EqualFold(leaf[:5], "part-")
-	if !isPart {
-		// Preserve explicit Mydumper basenames even below similarly shaped
-		// directories. Native AWS parts must instead use their parent names.
-		if res, routeErr := fallback.Route(leaf); routeErr != nil || res != nil {
-			return table, "", false, nil
+// auroraSource validates raw paths during the loader's existing listing, before
+// filters can hide mixed data or another export. Explicit file rules bypass it.
+type auroraSource struct {
+	store    storeapi.Storage
+	fallback mydump.FileRouter
+	limit    *int
+	found    bool
+}
+
+func (s *auroraSource) IterateFiles(ctx context.Context, handle mydump.FileHandler) error {
+	var root, unexpected string
+	s.found = false
+	count := 0
+	err := s.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		count++
+		if s.limit != nil && *s.limit > 0 && count > *s.limit {
+			return common.ErrTooManySourceFiles
 		}
-	}
-	tableIndex := -1
-	for i := len(parts) - 2; i >= 1; i-- {
-		if parts[i-1] != "" && strings.HasPrefix(parts[i], parts[i-1]+".") {
-			tableIndex = i
-			break
+		_, fileRoot, candidate, err := parseAuroraFile(path)
+		if err != nil {
+			return err
 		}
-	}
-	if tableIndex < 0 {
-		// A native part below a dotted table directory must not silently fall
-		// back to the generic router when its database prefix is inconsistent.
-		if isPart && dataFileSuffix.MatchString(leaf) {
-			for i := len(parts) - 2; i >= 1; i-- {
-				if strings.Contains(parts[i], ".") {
-					return table, "", true, errors.Errorf("inconsistent Aurora database/table directory: %s", path)
-				}
+		if candidate {
+			if s.found && root != fileRoot {
+				return errors.New("multiple Aurora export roots; scope the source URL to one export")
+			}
+			root, s.found = fileRoot, true
+		} else if dataFileSuffix.MatchString(path) {
+			res, err := s.fallback.Route(filepath.ToSlash(path))
+			if err != nil {
+				return err
+			}
+			if res == nil || res.Type == mydump.SourceTypeSQL || res.Type == mydump.SourceTypeCSV || res.Type == mydump.SourceTypeParquet {
+				unexpected = path
 			}
 		}
+		return handle(ctx, path, size)
+	})
+	if err != nil {
+		return errors.Annotate(err, "incomplete automatic source scan")
+	}
+	if s.found && unexpected != "" {
+		return errors.Errorf("mixed or unmatched data in Aurora source: %s", unexpected)
+	}
+	return nil
+}
+
+// Native keys are raw, not URL-encoded. Remove the exact database prefix so
+// dotted database/table names and literal percent sequences remain unchanged.
+func parseAuroraFile(path string) (table filter.Table, root string, candidate bool, err error) {
+	path = filepath.ToSlash(path)
+	parts := auroraDataPattern.FindStringSubmatch(path)
+	if parts == nil {
+		dir, leaf := filepath.Split(path)
+		if strings.HasPrefix(strings.ToLower(leaf), "part-") && dataFileSuffix.MatchString(leaf) && strings.Contains(dir, ".") {
+			return table, "", true, errors.Errorf("unsupported or inconsistent Aurora directory: %s", path)
+		}
 		return table, "", false, nil
 	}
-
-	tail := parts[tableIndex+1:]
-	if (len(tail) != 1 && (len(tail) != 2 || !auroraBatchPattern.MatchString(tail[0]))) ||
-		!strings.EqualFold(filepath.Ext(tail[len(tail)-1]), ".parquet") {
-		return table, "", true, errors.Errorf("unsupported Aurora data path: %s", path)
+	table.Schema = parts[2]
+	table.Name, candidate = strings.CutPrefix(parts[3], table.Schema+".")
+	if !candidate || table.Name == "" {
+		return table, "", true, errors.Errorf("inconsistent Aurora database/table directory: %s", path)
 	}
-	table.Schema = parts[tableIndex-1]
-	table.Name = strings.TrimPrefix(parts[tableIndex], table.Schema+".")
-	if table.Name == "" {
-		return table, "", true, errors.Errorf("unsupported empty Aurora table name: %s", path)
-	}
-	// AWS replaces backslash, backtick, double quote and space with underscore.
-	// Without authoritative metadata an underscore cannot be distinguished from
-	// that lossy conversion. Explicit file routers can supply the intended name.
-	if strings.ContainsAny(table.Schema+table.Name, "_\\`\" ") {
+	// AWS's conversion to underscores is lossy; do not guess the original name.
+	// Wildcard metacharacters cannot be represented safely in an import pattern.
+	if strings.ContainsAny(table.Schema+table.Name, "_\\`\" *?[]") {
 		return table, "", true, errors.Errorf("ambiguous Aurora identifier in %s; provide an explicit file route with the original name", path)
 	}
-	if strings.ContainsAny(table.Schema+table.Name, "*?[]") {
-		return table, "", true, errors.Errorf("unsupported wildcard character in Aurora identifier: %s", path)
-	}
-	return table, strings.Join(parts[:tableIndex-1], "/"), true, nil
+	return table, parts[1], true, nil
 }
 
-// newAuroraFileRouter validates the complete listing before filtering, sampling
-// or grouping. A nil router leaves non-Aurora sources on the existing defaults.
-func newAuroraFileRouter(files []mydump.RawFile) (mydump.FileRouter, error) {
-	fallback, err := mydump.NewDefaultFileRouter(log.L())
-	if err != nil {
-		return nil, err
-	}
-	var root, unexpectedPath string
-	var found, haveRoot bool
-	var invalid error
-	for _, file := range files {
-		_, fileRoot, candidate, parseErr := parseAuroraFile(file.Path, fallback)
-		if candidate {
-			found = true
-			if parseErr != nil {
-				if invalid == nil {
-					invalid = parseErr
-				}
-				continue
-			}
-			if haveRoot && root != fileRoot {
-				return nil, errors.Errorf("multiple Aurora export roots %q and %q; scope the source URL to one export", root, fileRoot)
-			}
-			root, haveRoot = fileRoot, true
-			continue
-		}
-
-		res, routeErr := fallback.Route(filepath.ToSlash(file.Path))
-		if routeErr == nil && res != nil {
-			switch res.Type {
-			case mydump.SourceTypeIgnore, mydump.SourceTypeSchemaSchema, mydump.SourceTypeTableSchema, mydump.SourceTypeViewSchema:
-				continue
-			}
-		}
-		if dataFileSuffix.MatchString(file.Path) && unexpectedPath == "" {
-			unexpectedPath = file.Path
-		}
-	}
-	if !found {
-		return nil, nil
-	}
-	if invalid != nil {
-		return nil, invalid
-	}
-	if unexpectedPath != "" {
-		return nil, errors.Errorf("mixed or unmatched data in Aurora source: %s", unexpectedPath)
-	}
-	return &auroraFileRouter{fallback: fallback}, nil
-}
-
-type auroraFileRouter struct {
-	fallback mydump.FileRouter
-}
-
-func (r *auroraFileRouter) Route(path string) (*mydump.RouteResult, error) {
-	table, _, candidate, err := parseAuroraFile(path, r.fallback)
+func (s *auroraSource) Route(path string) (*mydump.RouteResult, error) {
+	table, _, candidate, err := parseAuroraFile(path)
 	if err != nil {
 		return nil, err
 	}
 	if candidate {
 		return &mydump.RouteResult{Table: table, Type: mydump.SourceTypeParquet}, nil
 	}
-	return r.fallback.Route(path)
+	return s.fallback.Route(path)
 }

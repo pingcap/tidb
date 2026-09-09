@@ -97,18 +97,21 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if !cfg.estimateRealSize {
 		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
 	}
-	var auroraSource bool
+	var source *auroraSource
 	if len(cfg.fileRouteRules) == 0 {
-		loaderOptions = append(loaderOptions, mydump.WithFileRouterFactory(func(files []mydump.RawFile) (mydump.FileRouter, error) {
-			router, err := newAuroraFileRouter(files)
-			auroraSource = router != nil && err == nil
-			return router, err
-		}))
+		fallback, err := mydump.NewDefaultFileRouter(cfg.logger)
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		source = &auroraSource{store: store, fallback: fallback, limit: cfg.maxScanFiles}
+		ldrCfg.FileRouter = source
+		loaderOptions = append(loaderOptions, mydump.WithFileIterator(source), mydump.ReturnPartialResultOnError(false))
 	}
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
-		if len(cfg.fileRouteRules) == 0 || loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
+		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
 			store.Close()
 			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, charset=%s, err=%v", redactedSourcePath, cfg.charset, err)
 		}
@@ -121,7 +124,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		loader:             loader,
 		logger:             cfg.logger,
 		config:             cfg,
-		auroraSource:       auroraSource,
+		auroraSource:       source != nil && source.found,
 	}, nil
 }
 

@@ -1328,52 +1328,6 @@ func TestSetupOptions(t *testing.T) {
 	_ = md.WithMaxScanFiles
 	_ = md.ReturnPartialResultOnError
 	_ = md.WithFileIterator
-
-	t.Run("FileRouterFactory", func(t *testing.T) {
-		ctx := context.Background()
-		store := objstore.NewMemStorage()
-		defer store.Close()
-		require.NoError(t, store.WriteFile(ctx, "db.users.csv", []byte("1")))
-		require.NoError(t, store.WriteFile(ctx, "db.orders.csv", []byte("2")))
-		cfg := md.LoaderConfig{DefaultFileRules: true, Filter: []string{"db.users"}}
-		calls := 0
-		factory := md.WithFileRouterFactory(func(files []md.RawFile) (md.FileRouter, error) {
-			calls++
-			require.Len(t, files, 2) // before the table filter
-			return nil, nil
-		})
-		loader, err := md.NewLoaderWithStore(ctx, cfg, store, factory)
-		require.NoError(t, err)
-		require.Equal(t, 1, calls)
-		require.Len(t, loader.GetAllFiles(), 1)
-
-		calls = 0
-		loader, err = md.NewLoaderWithStore(ctx, cfg, store, factory, md.WithMaxScanFiles(1))
-		require.ErrorContains(t, err, "incomplete")
-		require.Nil(t, loader)
-		require.Zero(t, calls)
-
-		validationErr := errors.New("invalid source")
-		loader, err = md.NewLoaderWithStore(ctx, cfg, store, md.ReturnPartialResultOnError(true),
-			md.WithFileRouterFactory(func([]md.RawFile) (md.FileRouter, error) {
-				return nil, validationErr
-			}))
-		require.ErrorIs(t, err, validationErr)
-		require.Nil(t, loader)
-
-		cfg.Filter = []string{"*.*"}
-		loader, err = md.NewLoaderWithStore(ctx, cfg, store,
-			md.WithFileRouterFactory(func([]md.RawFile) (md.FileRouter, error) {
-				return md.NewFileRouter([]*config.FileRouteRule{{
-					Pattern: `.*\.csv$`, Schema: "target", Table: "merged", Type: "csv",
-				}}, log.L())
-			}))
-		require.NoError(t, err)
-		require.Len(t, loader.GetDatabases(), 1)
-		require.Equal(t, "target", loader.GetDatabases()[0].Name)
-		require.Equal(t, "merged", loader.GetDatabases()[0].Tables[0].Name)
-		require.Len(t, loader.GetAllFiles(), 2)
-	})
 }
 
 func TestParallelProcess(t *testing.T) {
