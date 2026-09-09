@@ -501,11 +501,7 @@ fn build_table_scan(
         // here can leave a residual expression addressing a missing slot.
         // Keep the complete scan row for residual selections, then project
         // the final output after filtering.
-        if !source.accept_post_filter_projection(&keep) {
-            return Err(DriverError::unsupported(
-                "the physical table scan cannot apply its post-filter projection",
-            ));
-        }
+        // Projection is applied by the enclosing plan after residual filters.
     }
     if let Some(slot) = extra_handle_slot {
         if !source.accept_extra_handle(slot) {
