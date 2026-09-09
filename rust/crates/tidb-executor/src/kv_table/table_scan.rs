@@ -1540,7 +1540,7 @@ impl KvTable {
         // residual predicate may reference a table column outside that
         // layout; falling back keeps the local Selection on a complete row
         // instead of evaluating it against a narrower chunk.
-        if handle_only && !predicates.is_empty() {
+        if !predicates.is_empty() {
             return Ok(None);
         }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
