@@ -52,6 +52,7 @@ func TestTiDBOptOn(t *testing.T) {
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
 
+	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, ConcurrencyUnset, vars.indexLookupConcurrency)
