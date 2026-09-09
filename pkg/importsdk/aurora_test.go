@@ -40,7 +40,7 @@ func TestAuroraSourceSafety(t *testing.T) {
 		{name: "dotted table", paths: []string{"export/sales/sales.order.items/1/part-a.parquet"}, want: "sales/order.items"},
 		{name: "dotted database", paths: []string{"export/sales.v1/sales.v1.order.items/part-a.parquet"}, want: "sales.v1/order.items"},
 		{name: "literal percent", paths: []string{"export/db%20/db%20.order%2Eitems/1/part-a.parquet"}, want: "db%20/order%2Eitems"},
-		{name: "single export scoped URL", paths: []string{"db/db.users/1/part-a.parquet"}, want: "db/users"},
+		{name: "single export scoped URL", paths: []string{"db/db.users/1/part-a.parquet", "db/db.users/2/part-b.parquet"}, want: "db/users"},
 		{name: "uppercase suffix", paths: []string{"prefix.with.dots/export/db/db.users/00042/PART-a.GZ.PARQUET"}, want: "db/users"},
 		{name: "literal encoded slash", paths: []string{"export/db/db.order%2Fitems/part-a.parquet"}, want: "db/order%2Fitems"},
 		{name: "ambiguous table", paths: []string{"export/db/db.order_items/1/part-a.parquet"}, err: "ambiguous"},
