@@ -104,6 +104,13 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   echo "LOCK_RECOVERY_TIDB_SERVER must name an executable failpoint-enabled tidb-server" >&2
   exit 1
 fi
+TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
+cat >"${TIDB_SERVER_WRAPPER}" <<EOF
+#!/bin/sh
+exec "${TIDB_SERVER}" "\$@" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
+EOF
+chmod +x "${TIDB_SERVER_WRAPPER}"
+TIDB_SERVER="${TIDB_SERVER_WRAPPER}"
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
   echo "LOCK_RECOVERY_MYSQL_CLIENT must name an executable MySQL client" >&2
   exit 1
