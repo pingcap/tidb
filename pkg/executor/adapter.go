@@ -2313,10 +2313,14 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 
-// GetOriginalSQL implements StmtExecLazyInfo interface.
+// GetOriginalSQL implements StmtExecLazyInfo interface. Statement summary keeps
+// the original sample in memory; the statement log applies redaction when writing.
 func (a *ExecStmt) GetOriginalSQL() string {
-	stmt := a.getLazyStmtText()
-	return stmt.String()
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		return sensitiveStmt.SecureText()
+	}
+	sessVars := a.Ctx.GetSessionVars()
+	return sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
 }
 
 // GetEncodedPlan implements StmtExecLazyInfo interface.
@@ -2376,25 +2380,6 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
-}
-
-// getLazyText is equivalent to `a.GetTextToLog(false)`. Note that the s.Params is a shallow copy of
-// `sessVars.PlanCacheParams`, so you can only use the lazy text within the current stmt context.
-func (a *ExecStmt) getLazyStmtText() (s variable.LazyStmtText) {
-	sessVars := a.Ctx.GetSessionVars()
-	rmode := sessVars.EnableRedactLog
-	if rmode == errors.RedactLogEnable {
-		sql, _ := sessVars.StmtCtx.SQLDigest()
-		s.SetText(sql)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql := sensitiveStmt.SecureText()
-		s.SetText(sql)
-	} else {
-		s.Redact = rmode
-		s.SQL = sessVars.StmtCtx.OriginalSQL
-		s.Params = *sessVars.PlanCacheParams
-	}
-	return
 }
 
 // updatePrevStmt is equivalent to `sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))`

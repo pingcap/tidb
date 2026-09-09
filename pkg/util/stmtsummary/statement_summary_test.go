@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -41,6 +42,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func fakePlanDigestGenerator() string {
@@ -2210,4 +2213,16 @@ func TestAddStatementPlanEncodeError(t *testing.T) {
 	require.Equal(t, plancodec.PlanDiscardedEncoded, elem.samplePlan)
 	require.Equal(t, int64(1), elem.execCount)
 	ssbd.Unlock()
+}
+
+func TestStatementSummaryDecodePlanLogUsesNormalizedSQL(t *testing.T) {
+	core, observed := observer.New(zap.ErrorLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{}))
+	stats := &stmtSummaryStats{sampleSQL: "select 'secret'", samplePlan: "invalid plan"}
+	digest := &stmtSummaryByDigest{normalizedSQL: "select ?"}
+	require.Empty(t, columnValueFactoryMap[PlanStr](nil, nil, digest, stats))
+	require.Equal(t, "select 'secret'", stats.sampleSQL)
+	entries := observed.FilterMessage("decode plan in statement summary failed").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, "select ?", entries[0].ContextMap()["query"])
 }

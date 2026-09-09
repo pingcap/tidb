@@ -1,0 +1,38 @@
+# QUERY_SAMPLE_TEXT remains raw in memory regardless of the log redaction mode.
+set global tidb_stmt_summary_refresh_interval = 3600;
+set tidb_enable_non_prepared_plan_cache = 0;
+create table sample_redaction (id int);
+
+set global tidb_redact_log = ON;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select * from sample_redaction where id = 42;
+select * from sample_redaction where id = 99;
+select query_sample_text, exec_count from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+select query_sample_text from information_schema.statements_summary_history where digest_text = 'select * from `sample_redaction` where `id` = ?';
+
+set global tidb_redact_log = MARKER;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+prepare s from 'select * from sample_redaction where id = ?';
+set @id = 42;
+execute s using @id;
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+deallocate prepare s;
+
+# Changes to the log setting do not rewrite already collected memory samples.
+set global tidb_redact_log = ON;
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+set global tidb_redact_log = OFF;
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+
+# Sensitive AST statements still apply their own credential protection.
+set global tidb_redact_log = ON;
+create user sample_redaction_user identified by 'sample_password';
+select query_sample_text from information_schema.statements_summary where stmt_type = 'CreateUser';
+drop user sample_redaction_user;
+drop table sample_redaction;
+set global tidb_redact_log = default;
+set global tidb_stmt_summary_refresh_interval = default;
+set global tidb_enable_stmt_summary = default;
+set tidb_enable_non_prepared_plan_cache = default;

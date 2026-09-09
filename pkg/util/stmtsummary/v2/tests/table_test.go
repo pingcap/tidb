@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -837,4 +838,59 @@ func closeStmtSummary() {
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
 	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
+}
+
+func TestStatementSummarySampleRedaction(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldSummary := stmtsummaryv2.GlobalStmtSummary
+	t.Cleanup(func() { stmtsummaryv2.GlobalStmtSummary = oldSummary })
+	for _, persistent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persistent=%t", persistent), func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "statements.log")
+			summary, err := stmtsummaryv2.NewStmtSummary(&stmtsummaryv2.Config{Filename: filename})
+			require.NoError(t, err)
+			t.Cleanup(summary.Close)
+			stmtsummaryv2.GlobalStmtSummary = summary
+			config.UpdateGlobal(func(c *config.Config) {
+				c.Instance.StmtSummaryEnablePersistent = persistent
+				c.Instance.StmtSummaryFilename = filename
+			})
+			store := testkit.CreateMockStore(t)
+			tk := newTestKitWithRoot(t, store)
+			t.Cleanup(func() { tk.MustExec("set global tidb_redact_log = OFF") })
+			tk.MustExec("create table sample_redaction (id int)")
+			const sql = "select * from sample_redaction where id = 42"
+			const preparedSQL = "select * from sample_redaction where id = ?"
+			normalized := parser.Normalize(sql, "ON")
+			for _, mode := range []string{"OFF", "ON", "MARKER"} {
+				tk.MustExec("set global tidb_redact_log = " + mode)
+				tk = newTestKitWithRoot(t, store)
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache = 0")
+				tk.MustExec("set global tidb_enable_stmt_summary = 0")
+				tk.MustExec("set global tidb_enable_stmt_summary = 1")
+				tk.MustQuery(sql)
+				// The next execution shares the digest but must not replace the first sample.
+				tk.MustQuery("select * from sample_redaction where id = 99")
+				for _, table := range []string{"statements_summary", "statements_summary_history"} {
+					tk.MustQuery("select query_sample_text, exec_count from information_schema." + table + " where digest_text = '" + normalized + "'").Check(testkit.Rows(sql + " 2"))
+				}
+				tk.MustExec("prepare s from '" + preparedSQL + "'")
+				tk.MustExec("set @id = 42")
+				tk.MustExec("set global tidb_enable_stmt_summary = 0")
+				tk.MustExec("set global tidb_enable_stmt_summary = 1")
+				tk.MustExec("execute s using @id")
+				tk.MustQuery("select query_sample_text from information_schema.statements_summary where digest_text = '" + normalized + "'").Check(testkit.Rows(preparedSQL + " [arguments: 42]"))
+				tk.MustExec("deallocate prepare s")
+			}
+			if persistent {
+				// The sample was collected with MARKER, but the writer observes ON now.
+				tk.MustExec("set global tidb_redact_log = ON")
+				summary.Close()
+				tk.MustQuery("select query_sample_text from information_schema.statements_summary_history where digest_text = '" + normalized + "'").Check(testkit.Rows(normalized))
+				// Reading an existing file after changing the setting does not reinterpret it.
+				tk.MustExec("set global tidb_redact_log = OFF")
+				tk.MustQuery("select query_sample_text from information_schema.statements_summary_history where digest_text = '" + normalized + "'").Check(testkit.Rows(normalized))
+			}
+		})
+	}
 }

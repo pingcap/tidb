@@ -20,10 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
@@ -127,6 +129,19 @@ func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
 }
 
 func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
+	// Read the current global mode at serialization, including for queued evictions.
+	// Readers may still hold the source record, so only modify an output copy.
+	switch mode := errors.RedactLogEnabled.Load(); mode {
+	case errors.RedactLogEnable:
+		output := *r
+		// SampleSQL may be truncated or include prepared arguments. Do not parse it.
+		output.SampleSQL = r.NormalizedSQL
+		r = &output
+	case errors.RedactLogMarker:
+		output := *r
+		output.SampleSQL = redact.String(mode, r.SampleSQL)
+		r = &output
+	}
 	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
 	if len(fields) == 0 {
 		if evicted {
