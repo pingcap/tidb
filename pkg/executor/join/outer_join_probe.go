@@ -130,7 +130,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 	scannedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
 	for insertedRows < remainCap && !j.rowIter.isEnd() {
-		if scannedRows%256 == 0 {
+		if scannedRows%1024 == 0 {
 			err := checkSQLKillerFast(sqlKiller)
 			if err != nil {
 				joinResult.err = err

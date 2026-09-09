@@ -177,6 +177,7 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
+	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
 			// We will not call `Probe` function when all partitions are spilled.
@@ -275,7 +276,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = checkSQLKiller(&j.ctx.SessCtx.GetSessionVars().SQLKiller, "killedDuringProbe"); err != nil {
+	if err = checkSQLKillerFast(killer); err != nil {
 		return err
 	}
 
@@ -290,8 +291,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.spilledIdx = j.spilledIdx[:0]
 
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
-		if logicalRowIndex%128 == 0 {
-			if err = checkSQLKillerFast(&j.ctx.SessCtx.GetSessionVars().SQLKiller); err != nil {
+		if logicalRowIndex%1024 == 0 {
+			if err = checkSQLKillerFast(killer); err != nil {
 				return err
 			}
 		}
@@ -334,8 +335,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.currentProbeRow = 0
 	for i := range int(j.ctx.partitionNumber) {
 		for index := range j.hashValues[i] {
-			if index%128 == 0 {
-				if err = checkSQLKillerFast(&j.ctx.SessCtx.GetSessionVars().SQLKiller); err != nil {
+			if index%1024 == 0 {
+				if err = checkSQLKillerFast(killer); err != nil {
 					return err
 				}
 			}
@@ -346,7 +347,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 }
 
 func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) error {
-	if err := checkSQLKiller(&j.ctx.SessCtx.GetSessionVars().SQLKiller, "killedDuringProbe"); err != nil {
+	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
+	if err := checkSQLKillerFast(killer); err != nil {
 		return err
 	}
 
@@ -384,8 +386,8 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 
 	totalMemUsage := 0
 	for rowIndex, idx := range j.usedRows {
-		if rowIndex%128 == 0 {
-			if err := checkSQLKillerFast(&j.ctx.SessCtx.GetSessionVars().SQLKiller); err != nil {
+		if rowIndex%1024 == 0 {
+			if err := checkSQLKillerFast(killer); err != nil {
 				return err
 			}
 		}
@@ -399,7 +401,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 			totalMemUsage += keyLen
 		}
 	}
-	if err := checkSQLKiller(&j.ctx.SessCtx.GetSessionVars().SQLKiller, "killedDuringProbe"); err != nil {
+	if err := checkSQLKillerFast(killer); err != nil {
 		return err
 	}
 
@@ -419,6 +421,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
 			// We will not call `Probe` function when all partitions are spilled.
@@ -475,8 +478,8 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	// rehash all rows
 	for rowIndex, idx := range j.usedRows {
-		if rowIndex%128 == 0 {
-			if err := checkSQLKillerFast(&j.ctx.SessCtx.GetSessionVars().SQLKiller); err != nil {
+		if rowIndex%1024 == 0 {
+			if err := checkSQLKillerFast(killer); err != nil {
 				return err
 			}
 		}

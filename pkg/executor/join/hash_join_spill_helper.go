@@ -297,6 +297,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 }
 
 func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) ([]byte, error) {
+	killer := &h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller
 	rowLen := len(seg.rowStartOffset)
 	if cap(validJoinKeys) < rowLen {
 		validJoinKeys = make([]byte, rowLen)
@@ -304,16 +305,16 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 		validJoinKeys = validJoinKeys[:rowLen]
 	}
 	for i := range rowLen {
-		if i%256 == 0 {
-			if err := checkSQLKillerFast(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller); err != nil {
+		if i%1024 == 0 {
+			if err := checkSQLKillerFast(killer); err != nil {
 				return validJoinKeys, err
 			}
 		}
 		validJoinKeys[i] = byte(0)
 	}
 	for i, pos := range seg.validJoinKeyPos {
-		if i%256 == 0 {
-			if err := checkSQLKillerFast(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller); err != nil {
+		if i%1024 == 0 {
+			if err := checkSQLKillerFast(killer); err != nil {
 				return validJoinKeys, err
 			}
 		}
@@ -344,6 +345,7 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 }
 
 func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
+	killer := &h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller
 	h.validJoinKeysBuffer[workerID] = h.validJoinKeysBuffer[workerID][:0]
 	h.tmpSpillBuildSideChunks[workerID].Reset()
 
@@ -357,8 +359,8 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 
 		rowNum := seg.getRowNum()
 		for i := range rowNum {
-			if i%256 == 0 {
-				err := checkSQLKillerFast(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller)
+			if i%1024 == 0 {
+				err := checkSQLKillerFast(killer)
 				if err != nil {
 					return err
 				}
@@ -445,6 +447,7 @@ func (*hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunk
 }
 
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
+	killer := &h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller
 	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
 
@@ -465,7 +468,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 		wg.RunWithRecover(
 			func() {
 				for _, partID := range partitionsNeedSpill {
-					if err := checkSQLKillerFast(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller); err != nil {
+					if err := checkSQLKillerFast(killer); err != nil {
 						errChannel <- err
 						return
 					}
@@ -505,11 +508,12 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 }
 
 func (h *hashJoinSpillHelper) spillRemainingRows() error {
+	killer := &h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller
 	h.setInSpilling()
 	defer h.cond.Broadcast()
 	defer h.setNotSpilled()
 
-	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
+	err := checkSQLKiller(killer, "killedDuringBuildSpill")
 	if err != nil {
 		return err
 	}
@@ -526,11 +530,12 @@ func (h *hashJoinSpillHelper) spillRemainingRows() error {
 }
 
 func (h *hashJoinSpillHelper) spillRowTable(hashTableMemUsage []int64) error {
+	killer := &h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller
 	h.setInSpilling()
 	defer h.cond.Broadcast()
 	defer h.setNotSpilled()
 
-	err := checkSQLKiller(&h.hashJoinExec.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuildSpill")
+	err := checkSQLKiller(killer, "killedDuringBuildSpill")
 	if err != nil {
 		return err
 	}
