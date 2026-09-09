@@ -240,6 +240,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			failpoint.Return(errors.New("occur an error after finishStmt"))
 		}
 	})
+	failpoint.InjectCall("beforeCheckConnectionAlive", sessVars)
 	readOnly := sql.IsReadOnly(sessVars)
 	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
 		sessVars.SQLKiller.CheckConnectionAlive()
@@ -294,16 +295,10 @@ func isLoadDataLocal(sql sqlexec.Statement) bool {
 	return false
 }
 
-// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
-// connection-alive throttle, while still covering long statements that reach
-// the disconnect-before-commit race without hitting another checkpoint.
-const minConnectionAliveCheckBeforeCommitDuration = time.Second
-
+// The final check must not share the execution-time throttle: even a short DML
+// can finish after its client has disconnected without hitting another check.
 func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
-		return false
-	}
-	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
 		return false
 	}
 	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
