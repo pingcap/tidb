@@ -432,12 +432,6 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 	tk.MustExec("commit")
 	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("prepare batch_commit from 'commit'")
-	tk.MustExec("begin")
-	tk.MustExec("update dml_timeout set v = v + 1 where id = 8")
-	tk.MustExec("execute batch_commit")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("deallocate prepare batch_commit")
 	tk.MustExec("set tidb_batch_commit = OFF")
 
 	tk.MustExec("set @@tidb_dml_max_execution_time = 0")

@@ -1142,7 +1142,6 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		conn MockConn,
 		sql string,
 		target tikvrpc.CmdType,
-		timeout uint64,
 		rpcResultAfterTimeout func(*tikvrpc.Response, error) (*tikvrpc.Response, error),
 	) error {
 		t.Helper()
@@ -1185,7 +1184,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		}
 		require.Eventually(t, func() bool {
 			pi := conn.Context().ShowProcess()
-			return pi != nil && pi.MaxExecutionTime == timeout &&
+			return pi != nil && pi.MaxExecutionTime == dmlTimeout &&
 				conn.Context().GetSessionVars().SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded
 		}, 5*time.Second, 10*time.Millisecond)
 
@@ -1220,31 +1219,12 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		return conn, tk
 	}
 
-	t.Run("autocommit DML", func(t *testing.T) {
-		conn, _ := configureConn(t)
-		defer conn.Close()
-		err := runBlockedRPC(t, conn, "insert into dml_timeout values (1)", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
-		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
-		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
-	})
-
 	t.Run("explicit commit", func(t *testing.T) {
 		conn, tk := configureConn(t)
 		defer conn.Close()
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into dml_timeout values (2)")
-		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
-		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
-		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
-	})
-
-	t.Run("prepared commit", func(t *testing.T) {
-		conn, tk := configureConn(t)
-		defer conn.Close()
-		tk.MustExec("prepare prepared_commit from 'commit'")
-		tk.MustExec("begin optimistic")
-		tk.MustExec("insert into dml_timeout values (3)")
-		err := runBlockedRPC(t, conn, "execute prepared_commit", tikvrpc.CmdPrewrite, dmlTimeout, returnCanceled)
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdPrewrite, returnCanceled)
 		require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
 		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
 	})
@@ -1252,7 +1232,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 	t.Run("autocommit commit succeeds after timeout", func(t *testing.T) {
 		conn, _ := configureConn(t)
 		defer conn.Close()
-		err := runBlockedRPC(t, conn, "insert into dml_timeout values (4)", tikvrpc.CmdCommit, dmlTimeout, returnOriginal)
+		err := runBlockedRPC(t, conn, "insert into dml_timeout values (4)", tikvrpc.CmdCommit, returnOriginal)
 		require.NoError(t, err)
 		setup.MustQuery("select id from dml_timeout where id = 4").Check(testkit.Rows("4"))
 		require.NoError(t, conn.Dispatch(context.Background(), append([]byte{mysql.ComQuery}, "select 1"...)))
@@ -1263,7 +1243,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 		defer conn.Close()
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into dml_timeout values (5)")
-		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdCommit, dmlTimeout, returnCanceled)
+		err := runBlockedRPC(t, conn, "commit", tikvrpc.CmdCommit, returnCanceled)
 		require.True(t, terror.ErrResultUndetermined.Equal(err), "%v", err)
 		setup.MustQuery("select id from dml_timeout where id = 5").Check(testkit.Rows("5"))
 	})

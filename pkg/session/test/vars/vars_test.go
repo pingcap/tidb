@@ -413,18 +413,15 @@ func TestGlobalVarAccessor(t *testing.T) {
 	})
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
+	// Global timeout changes affect new sessions without changing existing sessions.
 	tk1.MustExec("set @@global.max_execution_time = 100")
+	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 200")
+	require.Equal(t, uint64(0), tk1.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
+	require.Equal(t, uint64(200), tk2.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk1.MustExec("set @@global.max_execution_time = 0")
-
-	// New sessions inherit the global DML timeout without changing existing sessions.
-	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 200")
-	require.Equal(t, uint64(0), tk2.Session().GetSessionVars().DMLMaxExecutionTime)
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("use test")
-	require.Equal(t, uint64(200), tk3.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
