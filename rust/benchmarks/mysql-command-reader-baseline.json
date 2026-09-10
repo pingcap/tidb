@@ -76,6 +76,16 @@
       "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
     ]
   },
+  "push_race_merge": {
+    "upstream_revision": "586efbf085d3c834adceda2229b36f5304715e38",
+    "merge_revision": "d6f86b62ddf2911d4b25114b2c6cea426b314c25",
+    "source_check": "Go stats.go fills index paths and derives statistics from ds.PushedDownConds, matching the collaborator's change to use optimized predicates rather than only the original AST WHERE.",
+    "validation": "Ready lint passes. Repeated scoped executor tests: condition nine passes, condition eleven retains its documented failure. No server rebuild or live workload rerun for this final collaborator update; no MySQL source overlap.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor --lib -- tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup tpcc_condition_eleven_pushes_filters_through_nested_derived_joins --test-threads=12",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+    ]
+  },
   "cleanup": {"auto_analyze_restored": "1", "owned_processes_absent": 10, "ports_closed": 10, "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe", "command": "ruby /private/tmp/tidb-command-reader.yRKVf8/verify-cleanup.rb"},
   "not_verified": "No full-workspace green result, full Go-package parity, TLS syscall reduction or overall speedup claim. The shared-scheduler CPU regression and condition-eleven planner differences remain open."
 }

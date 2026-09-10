@@ -39,6 +39,9 @@ optimization, not a whole-package parity or overall performance completion claim
   tests pass. Final-merge validation limits are recorded in the receipt.
 - [x] Prepare the scoped commit for normal origin/hparser-integration
   publication. Remote SHA verification is the final delivery check.
+- [x] Preserve push-race commit 586efbf085 with a conflict-free merge. Lint
+  passes; executor condition nine passes and condition eleven remains failing.
+  Record final-revision validation limits without relabeling earlier live runs.
 
 ## Surprises & Discoveries
 
