@@ -2313,9 +2313,8 @@ mod tests {
     /// `id > 97 AND id < 97` builds an EMPTY range list, which the local cursor
     /// states exactly by opening no iterator; the coprocessor's `Ranges` list
     /// cannot state it, and the transport rejects the request instead
-    /// (`missing_ranges`). A NULL bound is NOT the same case: Go's BETWEEN
-    /// rewrite is one `and(ge, le)` condition, so `IsConstNull` misses it and
-    /// the relation is read. The control below keeps the ordinary narrowed
+    /// (`missing_ranges`). Go master also reduces BETWEEN NULL AND NULL to
+    /// TableDual, without reading storage. The control keeps the narrowed
     /// range on the coprocessor, so this is not "stop pushing ranges down".
     #[test]
     fn an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request() {
@@ -2340,24 +2339,22 @@ mod tests {
             0,
             "no row crossed the network for an empty handle range"
         );
-        // `a BETWEEN NULL AND NULL` rewrites to `and(ge(a, NULL), le(a, NULL))`
-        // (`betweenToExpression`, `expression_rewriter.go:2788`), which is NOT
-        // an access condition: Go's `IsConstNull` (`util.go:2356`) only fires
-        // on a bare comparison, so the whole relation is read and the filter
-        // drops every row.
-        assert_eq!(
+        // Go master fdfadb96b2: EXPLAIN returns TableDual, rows:0. Check
+        // requests too: an empty result alone could hide a pointless scan.
+        let (rows, ops) = capture_storage_ops(|| {
             run_select_on(
                 "SELECT a FROM t WHERE a BETWEEN NULL AND NULL",
                 &catalog,
-                &ctx
+                &ctx,
             )
-            .unwrap(),
-            Vec::<Vec<Datum>>::new()
-        );
+            .unwrap()
+        });
+        assert_eq!(rows, Vec::<Vec<Datum>>::new());
+        assert_eq!(ops, crate::storage::StorageOps::default());
         assert_eq!(
             fixture.returned.load(Ordering::Relaxed),
-            100,
-            "a NULL bound is not an access condition, so the relation is read"
+            0,
+            "TableDual must not read the relation for NULL bounds"
         );
 
         // Control: a range that DOES admit rows still reaches the coprocessor.
