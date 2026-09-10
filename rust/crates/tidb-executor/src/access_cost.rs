@@ -440,7 +440,7 @@ fn queue_column_stats_load_if_invalid(
     }
 }
 
-fn index_row_count(
+pub(crate) fn index_row_count(
     index: &KvIndex,
     table: &KvTable,
     ranges: &[IndexRange],

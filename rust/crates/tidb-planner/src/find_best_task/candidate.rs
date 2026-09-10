@@ -207,3 +207,129 @@ pub fn compare_candidates(
     }
     result(0, uses_ratio)
 }
+
+/// Inserts a candidate using Go skylinePruning's reverse traversal.
+/// The callback returns None for retained TiFlash paths, which Go skips.
+/// Returns whether the candidate survived, whether a pseudo winner was seen,
+/// and whether fix45132 was read.
+pub fn insert_skyline_candidate<T>(
+    candidates: &mut Vec<T>,
+    current: T,
+    metrics: impl Fn(&T) -> Option<&CandidateMetrics>,
+    table_pseudo: bool,
+    expected_count: f64,
+    prefer_range: bool,
+    row_count_ratio_threshold: f64,
+) -> (bool, bool, bool) {
+    let mut missing_stats = false;
+    let mut used_ratio = false;
+    for index in (0..candidates.len()).rev() {
+        let (Some(left), Some(right)) = (metrics(&candidates[index]), metrics(&current)) else {
+            continue;
+        };
+        let result = compare_candidates(
+            left,
+            right,
+            table_pseudo,
+            expected_count,
+            prefer_range,
+            row_count_ratio_threshold,
+        );
+        missing_stats |= result.winner_is_pseudo;
+        used_ratio |= result.used_row_count_ratio;
+        if result.ordering > 0 {
+            return (false, missing_stats, used_ratio);
+        }
+        if result.ordering < 0 {
+            candidates.remove(index);
+        }
+    }
+    candidates.push(current);
+    (true, missing_stats, used_ratio)
+}
+
+#[cfg(test)]
+mod skyline_tests {
+    use super::*;
+
+    fn path(columns: &[i64]) -> CandidateMetrics {
+        CandidateMetrics {
+            access_columns: Col2Len::from_pairs(columns.iter().map(|id| (*id, -1))),
+            index_columns: Col2Len::from_pairs(columns.iter().map(|id| (*id, -1))),
+            eq_or_in_count: columns.len(),
+            count_after_access: 1.0,
+            count_after_index: 1.0,
+            min_count_after_access: 1.0,
+            max_count_after_access: 1.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn superset_removes_all_dominated_paths_in_either_order() {
+        for order in [
+            vec![vec![1], vec![2], vec![1, 2]],
+            vec![vec![1, 2], vec![2], vec![1]],
+        ] {
+            let mut candidates = Vec::new();
+            for columns in order {
+                insert_skyline_candidate(
+                    &mut candidates,
+                    path(&columns),
+                    |path| Some(path),
+                    false,
+                    f64::MAX,
+                    false,
+                    1000.0,
+                );
+            }
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].eq_or_in_count, 2);
+        }
+    }
+
+    #[test]
+    fn incomparable_paths_and_property_tradeoff_survive_for_costing() {
+        let mut candidates = vec![path(&[1])];
+        insert_skyline_candidate(
+            &mut candidates,
+            path(&[2]),
+            |path| Some(path),
+            false,
+            f64::MAX,
+            false,
+            1000.0,
+        );
+        assert_eq!(candidates.len(), 2);
+        for candidate in &mut candidates {
+            candidate.matches_property = true;
+        }
+        insert_skyline_candidate(
+            &mut candidates,
+            path(&[1, 2]),
+            |path| Some(path),
+            false,
+            f64::MAX,
+            false,
+            1000.0,
+        );
+        assert_eq!(candidates.len(), 3);
+    }
+
+    #[test]
+    fn skipped_tiflash_candidate_is_preserved() {
+        let mut candidates = vec![None, Some(path(&[1]))];
+        insert_skyline_candidate(
+            &mut candidates,
+            Some(path(&[1, 2])),
+            Option::as_ref,
+            false,
+            f64::MAX,
+            false,
+            1000.0,
+        );
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates[0].is_none());
+        assert_eq!(candidates[1].as_ref().unwrap().eq_or_in_count, 2);
+    }
+}

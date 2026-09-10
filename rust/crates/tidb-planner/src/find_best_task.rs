@@ -648,6 +648,7 @@ pub(crate) fn project_one_join(
 }
 
 pub mod coster;
+pub mod candidate;
 pub mod dispatch;
 
 #[cfg(test)]

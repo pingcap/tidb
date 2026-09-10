@@ -1006,6 +1006,7 @@ impl OwnedRewrite for InitStats<'_> {
         source.base.base.set_stats(None);
         source.table_path_count_after_access = None;
         source.index_path_count_after_access.clear();
+        source.index_path_row_estimates.clear();
         // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
         // static-pruning child owns one physical partition's statistics,
         // while an ordinary/dynamic source keeps the logical table ID here.
@@ -1023,6 +1024,13 @@ impl OwnedRewrite for InitStats<'_> {
             }
         });
         let statistics = statistics.as_deref();
+        source.analyzed_index_ids = statistics
+            .map(|stats| {
+                stats.index_stats_existence.iter()
+                    .filter_map(|(id, analyzed)| analyzed.then_some(*id))
+                    .collect()
+            })
+            .unwrap_or_default();
         let row_count = crate::access_cost::realtime_row_count(statistics);
         // Go loads only the predicate columns' payloads (and the indexes they
         // cover) and leaves the rest evicted; `estimate_column_ndv` then
@@ -1222,17 +1230,18 @@ impl OwnedRewrite for InitStats<'_> {
                 ) else {
                     continue;
                 };
-                source.index_path_count_after_access.insert(
-                    index.id,
-                    crate::access_cost::index_range_row_count(
-                        index,
-                        table,
-                        &built.ranges,
-                        statistics,
-                        row_count,
-                        false,
-                    ),
+                let estimate = crate::access_cost::index_row_count(
+                    index,
+                    table,
+                    &built.ranges,
+                    statistics,
+                    row_count,
+                    false,
                 );
+                source
+                    .index_path_count_after_access
+                    .insert(index.id, estimate.est);
+                source.index_path_row_estimates.insert(index.id, estimate);
             }
             let selectivity = crate::access_cost::selectivity_with_range_context(
                 predicate,
