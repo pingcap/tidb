@@ -1310,6 +1310,47 @@ mod tests {
     }
 
     #[test]
+    fn remote_extra_handle_survives_pruning_and_staged_merge() {
+        let mut fixture = fixture();
+        let mut handles = Vec::new();
+        for a in [100, 200] {
+            let handle = fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a + 10)], &tidb_expr::NoColumns)
+                .unwrap();
+            let crate::kv_table::TableHandle::Int(handle) = handle else {
+                unreachable!()
+            };
+            handles.push(handle);
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(
+            rows,
+            handles.iter().map(|id| vec![Datum::Int(*id)]).collect::<Vec<_>>()
+        );
+        assert_eq!(ops.cop_scans, 1);
+        assert_eq!(
+            crate::run_update_on("UPDATE t SET a=a+1 WHERE a=100", &mut catalog, &ctx).unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::run_delete_on("DELETE FROM t WHERE a=200", &mut catalog, &ctx).unwrap(),
+            1
+        );
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT _tidb_rowid,a FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(rows, vec![vec![Datum::Int(handles[0]), Datum::Int(101)]]);
+        assert_eq!(ops.cop_scans, 1);
+    }
+
+    #[test]
     fn write_range_reader_preserves_record_identity_and_staged_rows() {
         for mut fixture in [fixture(), clustered_fixture(), common_handle_fixture()] {
             fixture
@@ -1544,6 +1585,46 @@ mod tests {
             unordered, rows,
             "physical-order scans merge the same record set"
         );
+    }
+
+    #[test]
+    fn virtual_dependency_expansion_preserves_reader_output() {
+        for primary in ["PRIMARY KEY", ""] {
+            let mut catalog = Catalog::default();
+            let ctx = crate::StmtContext::for_query();
+            crate::run_create_table_on(
+                &format!(
+                    "CREATE TABLE t (a BIGINT {primary}, b BIGINT AS (a+10), \
+                    d BIGINT AS (b+1), c BIGINT, INDEX idx_c(c))"
+                ),
+                &mut catalog,
+            )
+            .unwrap();
+            crate::run_insert_on(
+                "INSERT INTO t(a,c) VALUES (1,21),(2,22),(3,23)",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap();
+            for sql in [
+                "SELECT b,d,b FROM t FORCE INDEX(idx_c) WHERE c>=21 ORDER BY c",
+                "SELECT b,d,b FROM t IGNORE INDEX(idx_c) ORDER BY c",
+            ] {
+                assert_eq!(
+                    run_select_on(sql, &catalog, &ctx).unwrap(),
+                    vec![
+                        vec![Datum::Int(11), Datum::Int(12), Datum::Int(11)],
+                        vec![Datum::Int(12), Datum::Int(13), Datum::Int(12)],
+                        vec![Datum::Int(13), Datum::Int(14), Datum::Int(13)],
+                    ],
+                    "{sql}; primary={primary}"
+                );
+            }
+            assert_eq!(
+                run_select_on("SELECT SUM(d) FROM t", &catalog, &ctx).unwrap(),
+                vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(39))]]
+            );
+        }
     }
 
     #[test]

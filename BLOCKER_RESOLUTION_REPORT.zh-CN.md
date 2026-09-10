@@ -1,5 +1,57 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 远端读取保留隐藏 record handle
+
+`TableScanExec::open` 的旧逻辑认为远端不能提供 `_tidb_rowid`，无条件回退本地 cursor，
+导致两个 write-range 回归的 cop 请求数为 0。实际上 `RemoteRowCursor::next_keyed_row`
+已经在 staged merge 中保留真实 record key。现在从 codec 解码 Int handle，在虚拟列
+materialization 后插入输出；需要额外 handle 的扫描不走直接 chunk 交接，以保证输出 schema。
+这遵循 Go 以 record handle 定位 UPDATE/DELETE 行、保留 ExtraHandle 列的契约。
+
+新增 `remote_extra_handle_survives_pruning_and_staged_merge` 覆盖只选 `_tidb_rowid`、
+用户列值与物理 handle 不同、staged UPDATE 和 DELETE。临时恢复旧回退后测试稳定失败
+（cop_scans 0 != 1，`/tmp/remote-handle-red.log`）；恢复修复后完整 remote-scan 组
+28 passed（`/tmp/reader-final-green.log`），包括两个原始 write-range 失败和虚拟列回归。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib remote_scan::tests
+make lint
+git diff --check
+```
+
+以上通过，lint 日志 `/tmp/reader-final-lint.log`。同步远端 catalog 改动后重跑了该组。
+虚拟依赖独立提交 `9f18bd4f96`；本项独立提交。Ready 仅覆盖本项修复，整个目标仍有
+TPCC 计划选择、并行统计队列测试隔离和其他完整验收待完成；不能宣称所有 Rust cases 通过。
+
+## 2026-09-10 Reader 虚拟列依赖补齐
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/planner/core/operator/physicalop/task_base.go` 在构造 root reader 前调用
+`ExpandVirtualColumn`；`physical_utils.go` 递归收集依赖、去重并保留尾部 synthetic
+handle，reader 外层投影恢复 SQL 输出。Rust 原先缺少这个步骤，导致强制二级索引读取
+`b AS (a+10)` 时 schema 只有 b,c，绑定 a 报 `Can't find column with UniqueID 1 in schema`。
+
+修复在 CopTask 转 root 时补齐依赖，透传 Selection/Limit/Sort/TopN 的输出 schema，
+保留 Aggregate/Projection 的输出契约，最后隐藏新增列。已解析的 protobuf 元数据必须
+包含依赖元数据，否则明确报错，不猜测列默认值。新增测试覆盖嵌套虚拟列、重复输出、
+有/无主键、强制/忽略索引、SUM，以及 synthetic handle 排序和重复调用。
+
+红色证据 `/tmp/virtual-write-red.log`、`/tmp/virtual-reader-disabled-red.log`；
+恢复 expansion 后新增 SQL 测试通过，planner task 测试 59 passed。
+仅此修复使原 write-range 测试推进到 UPDATE cop 请求计数断言，不能称该原用例已完全通过；
+后者由独立的远端 record handle 修复处理。`make lint` 退出 0
+（`/tmp/virtual-handle-lint.log`），`git diff --check` 通过。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib virtual_dependency_expansion_preserves_reader_output
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib task::
+```
+
+本项按 Ready 范围验证；整个目标仍进行中。串行 executor 在两个 reader 修复叠加时
+1291 passed / 2 TPCC failed，并行另有共享统计队列竞争；这些剩余失败没有跳过或放宽。
+
 ## 2026-09-10 Fix52592 接入普通物理点查转换
 
 固定 Go master 的实际 SQL 对照保存在 `/tmp/go-null-oracle.8cduRk/fix52592.txt`：`SELECT b FROM t WHERE a>=5 AND a<=5 AND b>1` 默认包含 Point_Get；`SET tidb_opt_fix_control='52592:ON'` 后为 TableReader/Selection/TableRangeScan，范围仍是 `[5,5]`。Go `pkg/planner/core/find_best_task.go` 在计算 `canConvertPointGet` 时读取此 fix，同时控制 table 和 index 路径。临时 Go unistore 已收到 SIGTERM 并正常退出，日志和 SQL 输出保留。

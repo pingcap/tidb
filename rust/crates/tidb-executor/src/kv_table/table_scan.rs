@@ -3833,8 +3833,24 @@ impl TableScanExec {
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         let commit_ts_slot = self.extra_commit_ts_slot;
         if let Some(remote) = self.remote.as_mut() {
-            match remote.next_row() {
-                Ok(Some(row)) => {
+            let next = if self.extra_handle_slot.is_some() {
+                remote.next_keyed_row().and_then(|entry| {
+                    entry
+                        .map(|(key, row)| match tidb_codec::table_key::decode_row_key(&key) {
+                            Ok(RecordHandle::Int(handle)) => {
+                                Ok((row, Some(TableHandle::Int(handle))))
+                            }
+                            other => Err(KvTableError::Decode(format!(
+                                "remote extra handle is not an integer record key: {other:?}"
+                            ))),
+                        })
+                        .transpose()
+                })
+            } else {
+                remote.next_row().map(|row| row.map(|row| (row, None)))
+            };
+            match next {
+                Ok(Some((row, handle))) => {
                     let row = match &self.remote_materialization {
                         Some(projection) => projection.project_row(row).map_err(|error| {
                             ExecError::unsupported(format!(
@@ -3842,6 +3858,10 @@ impl TableScanExec {
                             ))
                         })?,
                         None => row,
+                    };
+                    let row = match (self.extra_handle_slot, handle) {
+                        (Some(slot), Some(handle)) => insert_extra_handle(row, slot, &handle),
+                        _ => row,
                     };
                     return Ok(Some(insert_extra_commit_ts(row, commit_ts_slot)));
                 }
@@ -4367,13 +4387,8 @@ impl Executor for TableScanExec {
         // conjuncts and the cap are applied below either way, which is what
         // makes the fall-through a performance choice rather than a semantic
         // one.
-        // A remote cursor answers the projected STORED columns and carries no
-        // record handle beside them, so a scan that owes `_tidb_rowid` reads
-        // records itself. This is the same performance-only choice the
-        // comment above describes, taken for a slot the wire cannot fill.
-        if self.extra_handle_slot.is_some() {
-            return self.open_local_cursor();
-        }
+        // RemoteRowCursor retains record keys through the staged merge;
+        // next_source_row materializes a requested _tidb_rowid from that key.
         let remote_projection = if virtual_projection {
             let projection =
                 RemoteRowMaterialization::new(&self.table, &self.keep, &self.decode_context, false)
@@ -4481,6 +4496,7 @@ impl Executor for TableScanExec {
                 .is_some_and(|remote| remote.predicates_applied() && !remote.merge_staged);
         if (self.filter.is_none() || remote_filter_complete)
             && self.remote_materialization.is_none()
+            && self.extra_handle_slot.is_none()
         {
             if let Some(remote) = self.remote.as_mut() {
                 let target = self.limit.map_or(cap, |limit| {
@@ -4888,10 +4904,8 @@ impl crate::table_access::TableAccess for TableScanExec {
 
     /// Names the output slot that carries `_tidb_rowid`.
     ///
-    /// Refused unless this scan reads records with the LOCAL cursor: the
-    /// value is the record handle, and only that path carries one beside the
-    /// row. A refusal leaves the leaf to decline the column rather than
-    /// answer a slot it cannot fill.
+    /// Local and remote row cursors retain record identity through the
+    /// staged merge. The extra slot is filled after virtual materialization.
     fn accept_extra_handle(&mut self, slot: usize) -> bool {
         // The slot sits immediately after the stored columns this scan
         // emits; anywhere else and the row would not line up with the schema

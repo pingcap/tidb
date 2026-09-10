@@ -54,6 +54,8 @@ use crate::plan_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
 
+mod virtual_columns;
+
 /// The bottom-up feedback produced by an inner data source planned under an
 /// index-join runtime property. This is the ported slice of Go
 /// `physicalop.IndexJoinInfo` consumed when the physical index join attaches.
@@ -397,8 +399,8 @@ impl CopTask {
     /// Index-only, double-read, and index-merge branches build their matching
     /// retained readers before the table-only tail below. `RootTaskConds`
     /// use `handleRootTaskConds` (`cardinality.Selectivity` over a built
-    /// Selection). `ExpandVirtualColumn`/`NeedExtraProj` narrow with virtual
-    /// columns, which the ported scan does not carry;
+    /// Selection). Virtual dependencies are expanded before reader construction
+    /// and an outer projection restores the original output schema.
     /// `IsCommonHandle` comes from the resolved table or retained handle columns.
     /// Readers receive fresh plan IDs from the statement allocator.
     /// Go `CopTask.handleRootTaskConds` (`physicalop/task.go:47`): the
@@ -620,6 +622,51 @@ impl CopTask {
     }
 
     pub fn convert_to_root_task_impl(
+        mut self,
+        allocator: &crate::plan_base::PlanIdAllocator,
+    ) -> Result<Task, PlanError> {
+        let origin = self
+            .table_plan
+            .as_deref()
+            .and_then(PhysicalPlan::schema)
+            .cloned();
+        if let Some(plan) = self.table_plan.as_deref_mut() {
+            virtual_columns::expand(plan)?;
+        }
+        let expanded = origin.as_ref().is_some_and(|origin| {
+            self.table_plan
+                .as_deref()
+                .and_then(PhysicalPlan::schema)
+                .is_some_and(|schema| schema.len() != origin.len())
+        });
+        let mut task = self.convert_expanded_to_root_task(allocator)?;
+        if expanded {
+            let Task::Root(root) = &mut task else {
+                return Ok(task);
+            };
+            let Some(plan) = root.take_plan() else {
+                return Ok(task);
+            };
+            let schema = origin.expect("expanded table plan retains its origin schema");
+            let mut base = crate::physical::BasePhysicalPlan::new(
+                allocator,
+                "Projection",
+                plan.query_block_offset(),
+            );
+            base.base.set_stats(plan.stats_info().cloned());
+            base.base.set_schema(Some(schema.clone()));
+            base.set_children(vec![plan]);
+            root.set_plan(PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+                base,
+                exprs: schema.columns.into_iter().map(Expression::Column).collect(),
+                calculate_no_delay: false,
+                avoid_column_evaluator: false,
+            }));
+        }
+        Ok(task)
+    }
+
+    fn convert_expanded_to_root_task(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
