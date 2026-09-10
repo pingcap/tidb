@@ -921,12 +921,14 @@ impl ClusterStatsLoader {
                 let current_item = current.hist_coll.get_index(metadata.id);
                 let replacement = match current_item {
                     Some(item)
-                        if item
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .histogram
-                            .last_update_version
-                            >= metadata.histogram.last_update_version =>
+                        if {
+                            let item = item
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            item.histogram.last_update_version
+                                >= metadata.histogram.last_update_version
+                                && item.is_full_load()
+                        } =>
                     {
                         Some(
                             item.read()
@@ -963,12 +965,14 @@ impl ClusterStatsLoader {
                 let current_item = current.hist_coll.get_column(metadata.id);
                 let replacement = match current_item {
                     Some(item)
-                        if item
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .histogram
-                            .last_update_version
-                            >= metadata.histogram.last_update_version =>
+                        if {
+                            let item = item
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            item.histogram.last_update_version
+                                >= metadata.histogram.last_update_version
+                                && item.is_full_load()
+                        } =>
                     {
                         let mut item = item
                             .read()
