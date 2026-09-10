@@ -1,5 +1,46 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 动态分区 EXPLAIN access object
+
+global_index_statistics_match_go 原始回归独立失败：IndexReader access
+object 为空，预期 partition:all（`/tmp/partition-explain-red.log`）。
+Rust physical_access 无条件清空所有 reader，同时把动态分区名称追加
+到 TableScan，和固定 Go master 的 reader/scan 分工相反。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`：
+`pkg/planner/core/operator/physicalop/physical_table_reader.go:168`、
+`physical_index_reader.go:141`、`physical_indexlookup_reader.go:172`、
+`physical_indexmerge_reader.go:185` 通过 GetDynamicAccessPartition 返回
+reader 的动态分区信息；`physical_table_scan.go:259` 仅对静态物理
+分区扫描追加 partition 名称。
+
+修复四种 reader 的 access object，从其实际 cop 子树读取已有动态裁剪
+信息，移除 TableScan 上错误的动态信息合并；保留按物理 ID 识别静态
+分区的逻辑。新增 dynamic_partitions_belong_to_readers_not_scans 回归
+覆盖四种 reader、全部分区和 p0/p2 子集，检查 scan 不携带动态分区。
+修复前 unwrap(None) 失败（`/tmp/partition-explain-unit-red.log`）。
+未修改任何已有 SQL、估算值或预期 EXPLAIN。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1298 passed，/tmp/partition-explain-executor-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib global_index_statistics_match_go
+# 1 passed，/tmp/partition-explain-server-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib global_stats_drive_partition_plans_like_go
+# 1 passed，含静态/动态切换，/tmp/partition-explain-pruning-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib merged_global_cmsketch_drives_equality_estimate
+# 1 passed，/tmp/partition-explain-cms-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/partition-explain-{fmt,lint}.log
+```
+
+本项验证现有单表 cop reader 表示；不声称完整移植 Go 所有多表
+TableScanAndPartitionInfos 结构。其余失败及完整外部门禁仍需推进。
+
 ## 2026-09-11 binding 修复后的全套结果
 
 在 cbb0565e7c 上执行

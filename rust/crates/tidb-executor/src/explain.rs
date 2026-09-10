@@ -671,34 +671,29 @@ fn physical_operator_name(
 
 fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObject> {
     match plan {
-        // Go's reader operators carry NO access object of their own: the
-        // reached partitions annotate the child scan (`table:t,
-        // partition:p1,P2`), so the reader row's access-object cell is empty
-        // and the scan row holds the combined text.
-        PhysicalPlan::TableReader(_)
-        | PhysicalPlan::IndexReader(_)
-        | PhysicalPlan::IndexLookUpReader(_)
-        | PhysicalPlan::IndexMergeReader(_) => None,
-        PhysicalPlan::TableScan(scan) => {
-            let mut access = AccessObject::Scan(table_access(
-                catalog,
-                scan.table_id,
-                scan.table_as_name.as_deref(),
-            ));
-            // Dynamic partition pruning reaches several partitions from one
-            // logical scan: fold their names into the scan's own access
-            // object, definition-ordered, as Go's `partition:p1,P2` does.
-            if let Some(object) = &scan.dynamic_partition_access {
-                if let AccessObject::Scan(scan_object) = &mut access {
-                    for name in &object.partitions {
-                        if !scan_object.partitions.contains(name) {
-                            scan_object.partitions.push(name.clone());
-                        }
-                    }
-                }
-            }
-            Some(access)
-        }
+        // Go reader AccessObject reports dynamic pruning; scan AccessObject
+        // reports a partition only when it scans a static physical table ID.
+        PhysicalPlan::TableReader(reader) => reader
+            .table_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexLookUpReader(reader) => reader
+            .index_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::IndexMergeReader(reader) => reader
+            .table_plan
+            .as_deref()
+            .and_then(dynamic_partition_access),
+        PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
+            catalog,
+            scan.table_id,
+            scan.table_as_name.as_deref(),
+        ))),
         PhysicalPlan::TableSample(sample) => Some(AccessObject::Scan(table_access(
             catalog,
             sample.physical_table_id,
@@ -2056,6 +2051,68 @@ fn text(value: &str) -> Datum {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_partitions_belong_to_readers_not_scans() {
+        use tidb_planner::physical::*;
+        let catalog = Catalog::default();
+        for (all_partitions, names, expected) in [
+            (true, Vec::new(), "partition:all"),
+            (
+                false,
+                vec!["p0".to_owned(), "p2".to_owned()],
+                "partition:p0,p2",
+            ),
+        ] {
+            let access = tidb_planner::access::DynamicPartitionAccessObject {
+                database: "test".to_owned(),
+                table: "t".to_owned(),
+                all_partitions,
+                partitions: names,
+                error: String::new(),
+            };
+            let table = PhysicalPlan::TableScan(PhysicalTableScan {
+                dynamic_partition_access: Some(access.clone()),
+                ..Default::default()
+            });
+            let index = PhysicalPlan::IndexScan(PhysicalIndexScan {
+                dynamic_partition_access: Some(access),
+                ..Default::default()
+            });
+            let readers = [
+                PhysicalPlan::TableReader(PhysicalTableReader {
+                    table_plan: Some(Box::new(table.clone())),
+                    ..Default::default()
+                }),
+                PhysicalPlan::IndexReader(PhysicalIndexReader {
+                    index_plan: Some(Box::new(index.clone())),
+                    ..Default::default()
+                }),
+                PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
+                    index_plan: Some(Box::new(index.clone())),
+                    table_plan: Some(Box::new(table.clone())),
+                    ..Default::default()
+                }),
+                PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
+                    partial_plans_raw: vec![index.clone()],
+                    table_plan: Some(Box::new(table.clone())),
+                    ..Default::default()
+                }),
+            ];
+            for reader in readers {
+                assert_eq!(
+                    physical_access(&reader, &catalog).unwrap().to_string(),
+                    expected
+                );
+            }
+            for scan in [table, index] {
+                let Some(AccessObject::Scan(access)) = physical_access(&scan, &catalog) else {
+                    panic!("scan has a scan access object");
+                };
+                assert!(access.partitions.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn physical_join_names_match_go_plancodec_types() {
