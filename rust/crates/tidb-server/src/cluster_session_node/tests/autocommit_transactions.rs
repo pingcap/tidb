@@ -926,3 +926,36 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
     let remaining = rows(&mut session, "SELECT v FROM t WHERE id = 1");
     assert!(remaining.is_empty(), "the row is gone");
 }
+
+#[test]
+fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
+    use tidb_protocol::PreparedValue;
+    // This backend opens optimistic autocommit transactions; its pessimistic
+    // lock entry point rejects calls instead of silently accepting them.
+    let (mut session, _cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id,v) VALUES (1,10)")
+        .unwrap();
+    let update = session
+        .prepare_general("UPDATE t SET v = ? WHERE id = ?")
+        .unwrap();
+    for (id, expected_affected) in [(1, 1), (2, 0)] {
+        let outcome = session
+            .execute_general(
+                &update,
+                &[
+                    PreparedValue::SignedLongLong(25),
+                    PreparedValue::SignedLongLong(id),
+                ],
+            )
+            .unwrap();
+        let GeneralExecuteOutcome::Write(outcome) = outcome else {
+            panic!("expected write result");
+        };
+        assert_eq!(outcome.affected_rows, expected_affected);
+    }
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(25)]]
+    );
+}

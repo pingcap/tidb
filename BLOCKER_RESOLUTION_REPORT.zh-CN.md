@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 autocommit 预取遵守实际事务模式
+
+准备 UPDATE 独立失败，错误为 `only a pessimistic transaction locks
+statement keys`（`/tmp/prepared-lock-red.log`）。点写在绑定阶段产生
+prelock_keys，但 begin_autocommit_write 返回的事务可能是乐观模式。
+DeferredSnapshot 之前仅检查 key 是否为空，无条件请求悲观锁。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/planner/core/point_get_plan.go:1208` 和 1215 仅在
+TxnCtx.IsPessimistic 时设置 point/batch-point UPDATE 的 Lock。
+Rust 现在同样检查实际预取事务的 is_pessimistic()；乐观模式从原事务
+读取 snapshot，悲观模式保留锁返回值及 for_update_ts 路径。
+未改变事务后端模式、提交时间戳、锁接口错误检查或原断言。
+
+新增 `optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking`
+覆盖同一准备语句对存在与不存在 key 的更新，并验证提交值。
+旧实现失败（`/tmp/optimistic-prelock-unit-red.log`），修复后新用例、
+原准备 UPDATE/DELETE 用例及真实悲观点更新锁用例均通过
+（`/tmp/server-prelock-green.log`）。Ready gate `make lint` 通过
+（`/tmp/optimistic-prelock-lint.log`）。
+全量 `RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib` 正常结束，
+**386 passed / 45 failed**，41.30 秒；这是本轮观测，不能将所有减少项
+都归因于本修复，跨测试全局状态相关失败仍需独立复现和治理。
+
 ## 2026-09-11 reader 内 TopN 的标量排序键
 
 独立复现 `cluster_views_are_registered_from_go_table_info`：包含
