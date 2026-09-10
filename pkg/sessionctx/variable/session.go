@@ -1597,8 +1597,7 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
-	// InNonTransactionalDML indicates that the session is executing the internal
-	// shard statements of a non-transactional DML statement.
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
 	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.

@@ -305,9 +305,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
-// getMaxExecutionDeadline returns the elapsed-time deadline stored in ProcessInfo.
-// ProcessInfo contains the effective timeout for the current statement, regardless of
-// whether it comes from max_execution_time or tidb_dml_max_execution_time.
+// getMaxExecutionDeadline derives the deadline from ProcessInfo's effective timeout.
 func getMaxExecutionDeadline(sctx sessionctx.Context) (time.Time, bool) {
 	if sctx == nil {
 		return time.Time{}, false
@@ -319,8 +317,7 @@ func getMaxExecutionDeadline(sctx sessionctx.Context) (time.Time, bool) {
 	return processInfo.Time.Add(time.Duration(processInfo.MaxExecutionTime) * time.Millisecond), true
 }
 
-// checkMaxExecutionTimeExceeded validates whether the current statement already hit its
-// maximum execution time. Centralized here so different executors share the same behavior.
+// checkMaxExecutionTimeExceeded returns an error if the statement deadline has passed.
 func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	deadline, ok := getMaxExecutionDeadline(sctx)
 	if !ok {

@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,8 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // StoreBootstrappedKey is used by store.G/SetOption to store related bootstrap context for kv.Storage.
@@ -250,16 +247,12 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		if checkConnectionAlive {
 			sessVars.SQLKiller.CheckConnectionAlive()
 		}
-		// The timeout watcher sets the kill signal before canceling the dispatch
-		// context. Do not start commit in that small window: once commit is sent,
-		// cancellation may turn an otherwise deterministic timeout into an
-		// undetermined transaction result.
+		// Honor a pending timeout before commit, even if context cancellation has not arrived.
+		// Starting commit here could make its outcome undetermined.
 		//
-		// Preserve the old connection-liveness behavior of handling every signal,
-		// but only extend this check to MaxExecTimeExceeded. Executors such as BRIE
-		// handle QueryInterrupted themselves; reporting it again from RecordSet.Close
-		// would produce two errors for one cancellation.
-		if shouldHandlePendingSQLKillerSignalBeforeCommit(sessVars, checkConnectionAlive) {
+		// Handle other signals only for connection-liveness checks; executors such as
+		// BRIE already report interruptions from Next.
+		if checkConnectionAlive || sessVars.SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded {
 			meetsErr = handlePendingSQLKillerSignal(sessVars)
 		}
 	}
@@ -286,7 +279,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			}
 		}
 	}
-	err := normalizeStmtCancellationError(sessVars, autoCommitAfterStmt(ctx, se, meetsErr, sql))
+	err := executor.NormalizeStmtCancellationError(sessVars, autoCommitAfterStmt(ctx, se, meetsErr, sql))
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -304,42 +297,12 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
-// handlePendingSQLKillerSignal avoids the more expensive HandleSignal path
-// when there is no pending cancellation.
+// handlePendingSQLKillerSignal avoids checking connection liveness when no signal is pending.
 func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
 	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
 		return nil
 	}
 	return sessVars.SQLKiller.HandleSignal()
-}
-
-// shouldHandlePendingSQLKillerSignalBeforeCommit preserves the old behavior for
-// statements that perform a connection-alive check. Other statements only need
-// the additional pre-commit guard for a DML timeout; their executors remain
-// responsible for handling other cancellation signals.
-func shouldHandlePendingSQLKillerSignalBeforeCommit(sessVars *variable.SessionVars, checkConnectionAlive bool) bool {
-	signal := sessVars.SQLKiller.GetKillSignal()
-	return signal != sqlkiller.UnspecifiedKillSignal &&
-		(checkConnectionAlive || signal == sqlkiller.MaxExecTimeExceeded)
-}
-
-// normalizeStmtCancellationError translates a canceled request back to the SQLKiller
-// error that caused the cancellation. Errors with a known or undetermined transaction
-// result take precedence and must never be replaced by a timeout error.
-func normalizeStmtCancellationError(sessVars *variable.SessionVars, err error) error {
-	if err == nil || terror.ErrResultUndetermined.Equal(err) {
-		return err
-	}
-	cause := errors.Cause(err)
-	code := status.Code(cause)
-	if cause != context.Canceled && cause != context.DeadlineExceeded &&
-		code != codes.Canceled && code != codes.DeadlineExceeded {
-		return err
-	}
-	if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
-		return killErr
-	}
-	return err
 }
 
 // isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.

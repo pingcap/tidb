@@ -39,13 +39,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -978,6 +982,13 @@ func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key)")
 	tk.MustExec("set @@tidb_dml_max_execution_time = 50")
+	vars := tk.Session().GetSessionVars()
+	checkReleased := func() {
+		require.Empty(t, vars.MemTracker.GetChildrenForTest())
+		require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+		require.Nil(t, vars.StmtCtx.CTEStorageMap)
+	}
+	const cteQuery = "with recursive cte(n) as (select 1 union all select n+1 from cte where n<3) select n from cte"
 
 	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
 	func() {
@@ -986,11 +997,93 @@ func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 			require.NoError(t, failpoint.Disable(failpointName))
 		}()
 
-		rs, err := tk.Exec("insert into t values (1)")
-		require.Nil(t, rs)
-		require.ErrorContains(t, err, "maximum statement execution time exceeded")
+		for _, sql := range []string{"insert into t values (1)", "insert into t " + cteQuery} {
+			rs, err := tk.Exec(sql)
+			require.Nil(t, rs)
+			require.ErrorContains(t, err, "maximum statement execution time exceeded")
+			checkReleased()
+		}
 	}()
 	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// A returned record set must keep its resources until it is closed.
+	func() {
+		rs, err := tk.Exec(cteQuery)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rs.Close()) }()
+		require.NotEmpty(t, vars.MemTracker.GetChildrenForTest())
+		require.Len(t, vars.StmtCtx.CTEStorageMap, 1)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Len(t, rows, 3)
+		for i, row := range rows {
+			require.Equal(t, int64(i+1), row.GetInt64(0))
+		}
+	}()
+	checkReleased()
+
+	// Other early returns also need statement cleanup, even after executor.Close.
+	tk.MustExec("set tidb_low_resolution_tso = ON")
+	tk.MustExec("begin optimistic")
+	err := tk.ExecToErr("select * from t for update")
+	require.ErrorContains(t, err, "can not execute select for update statement")
+	checkReleased()
+	tk.MustExec("rollback")
+}
+
+type canceledBuildTxnManager struct {
+	sessiontxn.TxnManager
+	onGetForUpdateTS func()
+}
+
+func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {
+	m.onGetForUpdateTS()
+	return 0, context.Canceled
+}
+
+func TestDMLBuildCancellationPreservesTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table build_cancel (a int primary key)")
+	setup.MustExec("insert into build_cancel values (1)")
+	for _, panicOnBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panicOnBuild), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_dml_max_execution_time = 10000")
+			vars := tk.Session().GetSessionVars()
+
+			originalGetTxnManager := sessiontxn.GetTxnManager
+			t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+			calls := 0
+			sessiontxn.GetTxnManager = func(sctx sessionctx.Context) sessiontxn.TxnManager {
+				manager := originalGetTxnManager(sctx)
+				if sctx.GetSessionVars() != vars {
+					return manager
+				}
+				return canceledBuildTxnManager{TxnManager: manager, onGetForUpdateTS: func() {
+					calls++
+					vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+					if panicOnBuild {
+						panic(exeerrors.ErrMaxExecTimeExceeded)
+					}
+				}}
+			}
+
+			// UPDATE requests its for-update timestamp while building the executor.
+			// Cleanup must preserve the kill reason before detaching its trackers.
+			rs, err := tk.Exec("update build_cancel set a = a + 1 where a > 0")
+			sessiontxn.GetTxnManager = originalGetTxnManager
+			require.Positive(t, calls)
+			require.Nil(t, rs)
+			require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+			require.Empty(t, vars.MemTracker.GetChildrenForTest())
+			require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+			require.Nil(t, vars.StmtCtx.CTEStorageMap)
+			tk.MustQuery("select * from build_cancel").Check(testkit.Rows("1"))
+		})
+	}
 }
 
 func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {

@@ -1163,8 +1163,7 @@ func TestConnDMLExecutionTimeout(t *testing.T) {
 			if req.Type != target {
 				return resp, rpcErr
 			}
-			// Only the primary commit determines whether a classic 2PC transaction's
-			// result is known. Do not let a future multi-key test block on a secondary.
+			// Block the primary commit response to exercise classic 2PC outcome handling.
 			if target == tikvrpc.CmdCommit && req.Commit().GetCommitRole() != kvrpcpb.CommitRole_Primary {
 				return resp, rpcErr
 			}

@@ -526,4 +526,7 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
 	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().DMLMaxExecutionTime)
+
+	tk.MustExec("update t set b = b + 1 where a = 0")
+	require.Equal(t, uint64(1000), tk.Session().ShowProcess().MaxExecutionTime)
 }

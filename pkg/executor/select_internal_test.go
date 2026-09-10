@@ -16,7 +16,9 @@ package executor
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -39,12 +41,22 @@ func TestNewLockCtxPropagatesSharedLockUpgrade(t *testing.T) {
 		sessiontxn.GetTxnManager = originalGetTxnManager
 	})
 
-	sctx := mock.NewContext()
+	start := time.Unix(1, 0)
+	sctx := &maxExecutionTimeTestContext{
+		Context: mock.NewContext(),
+		processInfo: &sessmgr.ProcessInfo{
+			Time:             start,
+			MaxExecutionTime: 1500,
+		},
+	}
 	sctx.GetSessionVars().EnableSharedLockUpgrade = true
+	sctx.GetSessionVars().MaxExecutionTime = 0
 
 	lockCtx, err := newLockCtx(sctx, 123, 1, true)
 	require.NoError(t, err)
 	require.True(t, lockCtx.InShareMode)
 	require.True(t, lockCtx.AllowSharedLockUpgrade)
 	require.Equal(t, uint64(9527), lockCtx.ForUpdateTS)
+	// DML's effective budget applies even when the SELECT timeout is disabled.
+	require.Equal(t, start.Add(1500*time.Millisecond), lockCtx.MaxExecutionDeadline)
 }

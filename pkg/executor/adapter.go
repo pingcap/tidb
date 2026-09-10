@@ -88,6 +88,8 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -523,9 +525,8 @@ func (a *ExecStmt) getMaxExecutionTime() uint64 {
 	vars := a.Ctx.GetSessionVars()
 	stmtCtx := vars.StmtCtx
 	if stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
-		// Non-transactional and deprecated batch DML may have committed earlier
-		// shards/batches, and EXPLAIN ANALYZE DML returns a result set after commit.
-		// None has safe statement-timeout semantics, so keep them outside this feature.
+		// Non-transactional and batch DML can commit incrementally.
+		// Autocommit EXPLAIN ANALYZE DML commits before its result set is consumed.
 		batchDML := vars.BatchCommit || vardef.EnableBatchDML.Load() && vars.DMLBatchSize > 0 && !vars.InTxn() &&
 			((stmtCtx.InInsertStmt && vars.BatchInsert) ||
 				(stmtCtx.InDeleteStmt && vars.BatchDelete))
@@ -625,7 +626,21 @@ func IsFastPlan(p base.Plan) bool {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
+func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
+	sctx := a.Ctx
+	sc := sctx.GetSessionVars().StmtCtx
+	defer func() {
+		// A returned record set owns statement cleanup. Otherwise, clean up even
+		// when execution fails before Open. Run after the panic recovery below.
+		if rs == nil {
+			// Detaching the tracker resets SQLKiller, so preserve its error first.
+			err = NormalizeStmtCancellationError(sctx.GetSessionVars(), err)
+			sc.DetachMemDiskTracker()
+			if cteErr := resetCTEStorageMap(sctx); err == nil {
+				err = cteErr
+			}
+		}
+	}()
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -683,7 +698,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 		}
 	})
-	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBBuildStatsConcurrency)
@@ -819,6 +833,24 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		txnStartTS: txnStartTS,
 		traceID:    traceID,
 	}, nil
+}
+
+// NormalizeStmtCancellationError maps context and gRPC cancellation errors to SQLKiller errors.
+// Success, undetermined outcomes, and non-cancellation errors are preserved.
+func NormalizeStmtCancellationError(sessVars *variable.SessionVars, err error) error {
+	if err == nil || terror.ErrResultUndetermined.Equal(err) {
+		return err
+	}
+	cause := errors.Cause(err)
+	code := status.Code(cause)
+	if cause != context.Canceled && cause != context.DeadlineExceeded &&
+		code != codes.Canceled && code != codes.DeadlineExceeded {
+		return err
+	}
+	if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
+		return killErr
+	}
+	return err
 }
 
 func (a *ExecStmt) inheritContextFromExecuteStmt() {
@@ -1008,22 +1040,7 @@ func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
 	return nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
-	sc := a.Ctx.GetSessionVars().StmtCtx
-	defer func() {
-		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
-		// done in the `defer` function. If the rs is not nil, the detachment will be done in
-		// `rs.Close` in `handleStmt`
-		if handled && sc != nil && rs == nil {
-			sc.DetachMemDiskTracker()
-			cteErr := resetCTEStorageMap(a.Ctx)
-			if err == nil {
-				// Only overwrite err when it's nil.
-				err = cteErr
-			}
-		}
-	}()
-
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
 	toCheck := e
 	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
@@ -1036,7 +1053,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
-		handled = !isExplainAnalyze
+		handled := !isExplainAnalyze
 		if isPessimistic {
 			err := a.handlePessimisticDML(ctx, toCheck)
 			return handled, nil, err

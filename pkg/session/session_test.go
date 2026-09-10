@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -62,45 +63,32 @@ func TestGetStartMode(t *testing.T) {
 func TestNormalizeStmtCancellationError(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	require.NoError(t, handlePendingSQLKillerSignal(vars))
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, context.Canceled), context.Canceled)
 	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(handlePendingSQLKillerSignal(vars)))
 
 	// A successful or undetermined commit result takes priority over a timeout signal.
-	require.NoError(t, normalizeStmtCancellationError(vars, nil))
+	require.NoError(t, executor.NormalizeStmtCancellationError(vars, nil))
 	require.True(t, terror.ErrResultUndetermined.Equal(
-		normalizeStmtCancellationError(vars, terror.ErrResultUndetermined),
+		executor.NormalizeStmtCancellationError(vars, terror.ErrResultUndetermined),
 	))
 
 	otherErr := errors.New("other error")
-	require.ErrorIs(t, normalizeStmtCancellationError(vars, otherErr), otherErr)
+	require.ErrorIs(t, executor.NormalizeStmtCancellationError(vars, otherErr), otherErr)
 
-	err := normalizeStmtCancellationError(vars, context.Canceled)
+	err := executor.NormalizeStmtCancellationError(vars, context.Canceled)
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
-	err = normalizeStmtCancellationError(vars, context.DeadlineExceeded)
+	err = executor.NormalizeStmtCancellationError(vars, context.DeadlineExceeded)
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
-	err = normalizeStmtCancellationError(vars, status.Error(codes.Canceled, "canceled"))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.Canceled, "canceled"))
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
-	err = normalizeStmtCancellationError(vars, status.Error(codes.DeadlineExceeded, "deadline exceeded"))
+	err = executor.NormalizeStmtCancellationError(vars, status.Error(codes.DeadlineExceeded, "deadline exceeded"))
 	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
-}
 
-func TestPendingKillSignalBeforeCommitScope(t *testing.T) {
-	vars := variable.NewSessionVars(nil)
-	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
-	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
-
-	// The DML-timeout race guard applies to MaxExecTimeExceeded even when the
-	// statement is not eligible for a connection-alive check.
-	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
-	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
-	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
 	vars.SQLKiller.Reset()
-
-	// Other cancellation signals must not be consumed by the new guard. Some
-	// executors, such as BRIE, have already returned QueryInterrupted from Next.
 	vars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
-	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(handlePendingSQLKillerSignal(vars)))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(executor.NormalizeStmtCancellationError(vars, context.Canceled)))
 }
 
 func TestSetProcessInfoDistinguishesSameSQLStatements(t *testing.T) {

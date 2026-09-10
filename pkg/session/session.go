@@ -1821,7 +1821,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
-	// We set process info before building plan, so we extended execution time.
+	// Preserve the statement start time across process-info updates and retries.
 	if oldPi != nil && (oldPi.StmtCtx == pi.StmtCtx && oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
 		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
