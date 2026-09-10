@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 TRUNCATE 分区表统计事件同步
+
+truncate_partitioned_table_statistics_match_go 独立失败：新分区 ID 已发布，
+但对应 stats_meta 行数为 0，预期 1（`/tmp/truncate-partitioned-red.log`）。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/ddl_test.go:250` 在 TRUNCATE 后显式处理
+ActionTruncateTable，然后检查两个新 ID 的统计行与旧 ID 的版本变化。
+
+Rust fixture 现于 CREATE 后和 TRUNCATE 后驱动已有真实 notifier。
+保留原始插入/ANALYZE、新旧分区 ID 不重叠、新统计行存在和旧统计版本
+递增断言，未调整生产 DDL 或统计写入行为。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib truncate_partitioned_table_statistics_match_go`
+从失败转为 1 passed（`/tmp/truncate-partitioned-green.log`）；`make lint`
+通过（`/tmp/truncate-partitioned-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 DROP SCHEMA 统计测试消费对应事件
 
 drop_schema_ddl_retires_all_statistics_like_go 独立运行在读取初始统计版本时

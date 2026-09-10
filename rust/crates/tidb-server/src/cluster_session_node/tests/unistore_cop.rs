@@ -1801,6 +1801,7 @@ fn truncate_partitioned_table_statistics_match_go() {
          PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), \
          PARTITION p1 VALUES LESS THAN (11))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO stats_truncate_partitioned VALUES (1,2),(2,2),(6,2)",
@@ -1829,6 +1830,7 @@ fn truncate_partitioned_table_statistics_match_go() {
         .collect::<Vec<_>>();
 
     rows(&mut session, "TRUNCATE TABLE stats_truncate_partitioned");
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let new_ids = partition_id_map(
         &stack.factory.catalog.load(),
         "test",
