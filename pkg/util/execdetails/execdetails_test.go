@@ -1057,6 +1057,25 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
+	t.Run("write CPU work snapshot", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		_, found := coll.GetRootWriteCPUWork(99)
+		require.False(t, found)
+		stats := &WriteRuntimeStats{}
+		coll.RegisterStats(99, stats)
+		work, found := coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Zero(t, work)
+		cloned := stats.Clone().(*WriteRuntimeStats)
+		cloned.CPUWork = 6
+		require.Zero(t, stats.CPUWork)
+		coll.RegisterStats(99, cloned)
+		coll.RegisterStats(99, &WriteRuntimeStats{CPUWork: 3})
+		work, found = coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Equal(t, float64(9), work)
+		require.Empty(t, stats.String())
+	})
 	t.Run("non-creating root lookup", func(t *testing.T) {
 		coll := NewRuntimeStatsColl(nil)
 		root, ok := coll.GetRootStatsIfExists(1)

@@ -606,6 +606,55 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil, nil))
 }
 
+func TestCheckCertBasedAuthWithURIWildcard(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	adminTK := testkit.NewTestKit(t, store)
+	adminTK.MustExec(`CREATE USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://domain.com/bar'`)
+	tk := testkit.NewTestKit(t, store)
+	authWithSANs := func(uriSANs, dnsSANs []string, ipSANs [][]byte) error {
+		tk.Session().GetSessionVars().TLSConnectionState = connectionState(
+			pkix.Name{}, pkix.Name{}, tls.TLS_AES_128_GCM_SHA256, func(cert *x509.Certificate) {
+				for _, uriSAN := range uriSANs {
+					uri, err := url.Parse(uriSAN)
+					require.NoError(t, err)
+					cert.URIs = append(cert.URIs, uri)
+				}
+				cert.DNSNames = dnsSANs
+				for _, ipSAN := range ipSANs {
+					cert.IPAddresses = append(cert.IPAddresses, ipSAN)
+				}
+			})
+		return tk.Session().Auth(&auth.UserIdentity{Username: "uri_san_wildcard", Hostname: "localhost"}, nil, nil, nil)
+	}
+
+	// A URI wildcard matches exactly one non-empty segment. Multiple URI
+	// requirements remain alternatives.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN
+		'URI:spiffe://domain.com/no-match, URI:spiffe://domain.com/*/something/foo/*'`)
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/bar/something/foo/baz"}, nil, nil))
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/youpi/something/foo/yada"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/extra/something/foo/baz"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com//something/foo/baz"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/something/foo/"}, nil, nil))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://*/bar/*'`)
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/baz"}, nil, nil))
+
+	// An asterisk has no special meaning unless it is the entire URI segment.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://domain.com/foo*/bar'`)
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/foo*/bar"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/foobar/bar"}, nil, nil))
+
+	// DNS and IP SAN requirements continue to use exact matching.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'DNS:*.domain.com'`)
+	require.NoError(t, authWithSANs(nil, []string{"*.domain.com"}, nil))
+	require.Error(t, authWithSANs(nil, []string{"service.domain.com"}, nil))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'IP:127.*'`)
+	require.Error(t, authWithSANs(nil, nil, [][]byte{{127, 0, 0, 1}}))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'IP:127.0.0.1'`)
+	require.NoError(t, authWithSANs(nil, nil, [][]byte{{127, 0, 0, 1}}))
+}
+
 func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
 	cert := &x509.Certificate{Issuer: issuer, Subject: subject}
 	for _, o := range opt {
@@ -1642,7 +1691,7 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 
-	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO 'u1'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO `u1`@`%` WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO `u1`@`%`"))
 
 	tk.MustExec("GRANT SELECT ON d1.* to u2")
 	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
@@ -1650,18 +1699,18 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON d4.* to u2")
 	tk.MustExec("GRANT SELECT ON d5.* to u2")
 	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
-		"GRANT SELECT ON `d1`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d2`.* TO 'u2'@'%' WITH GRANT OPTION",
-		"GRANT SELECT ON `d3`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d4`.* TO 'u2'@'%'",
-		"GRANT SELECT ON `d5`.* TO 'u2'@'%'",
-		"GRANT USAGE ON *.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d1`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d2`.* TO `u2`@`%` WITH GRANT OPTION",
+		"GRANT SELECT ON `d3`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d4`.* TO `u2`@`%`",
+		"GRANT SELECT ON `d5`.* TO `u2`@`%`",
+		"GRANT USAGE ON *.* TO `u2`@`%`",
 	))
 
 	tk.MustExec("grant all on hchwang.* to u3 with grant option")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO `u3`@`%`", "GRANT ALL PRIVILEGES ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION"))
 	tk.MustExec("revoke all on hchwang.* from u3")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO `u3`@`%`", "GRANT USAGE ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION"))
 
 	// Same again but with column privileges.
 
@@ -1670,9 +1719,9 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("grant all on test.testgrant to u3 with grant option")
 	tk.MustExec("revoke all on test.testgrant from u3")
 	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'u3'@'%'",
-		"GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION",
-		"GRANT USAGE ON `test`.`testgrant` TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON *.* TO `u3`@`%`",
+		"GRANT USAGE ON `hchwang`.* TO `u3`@`%` WITH GRANT OPTION",
+		"GRANT USAGE ON `test`.`testgrant` TO `u3`@`%` WITH GRANT OPTION",
 	))
 }
 
@@ -1706,30 +1755,30 @@ func TestDashboardClientDynamicPriv(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
-		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
+		"GRANT DASHBOARD_CLIENT ON *.* TO `dc_u1`@`%`",
 	))
 	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
-		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
+		"GRANT DASHBOARD_CLIENT ON *.* TO `dc_u1`@`%`",
 	))
 	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
 	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
-		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT USAGE ON *.* TO `dc_u1`@`%`",
+		"GRANT `dc_r1`@`%` TO `dc_u1`@`%`",
 	))
 }
 
@@ -1750,8 +1799,8 @@ func TestGrantCreateTmpTables(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
-		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
-		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO 'u1'@'%'"))
+		"GRANT CREATE TEMPORARY TABLES ON *.* TO `u1`@`%`",
+		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO `u1`@`%`"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }
@@ -1928,8 +1977,8 @@ func TestGrantEvent(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
-		`GRANT EVENT ON *.* TO 'u1'@'%'`,
-		"GRANT EVENT ON `event_db`.* TO 'u1'@'%'"))
+		"GRANT EVENT ON *.* TO `u1`@`%`",
+		"GRANT EVENT ON `event_db`.* TO `u1`@`%`"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE event_db")
 }
@@ -2230,14 +2279,14 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
 
 	testShowGrantsSQLMode(t, tk, []string{
-		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
-		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
+		"GRANT USAGE ON *.* TO `show_sql_mode`@`localhost`",
+		"GRANT SELECT ON `test`.* TO `show_sql_mode`@`localhost`",
 	})
 
 	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
 	testShowGrantsSQLMode(t, tk, []string{
-		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
-		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
+		"GRANT USAGE ON *.* TO \"show_sql_mode\"@\"localhost\"",
+		"GRANT SELECT ON \"test\".* TO \"show_sql_mode\"@\"localhost\"",
 	})
 }
 

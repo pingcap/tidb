@@ -43,6 +43,10 @@ type statementRURealTiKVObservation struct {
 	frontendBytes    float64
 	hashStateRows    float64
 	joinOutputRows   float64
+	writeStatement   float64
+	operatorNum      float64
+	writeKeys        float64
+	writeBytes       float64
 }
 
 func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
@@ -65,6 +69,7 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observedConnectionID uint64,
 		calibrationState string,
 		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
+		writeStatement, operatorNum, writeKeys, writeBytes float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -79,6 +84,10 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observation.frontendBytes = frontendCompileBytes
 		observation.hashStateRows = hashStateRows
 		observation.joinOutputRows = joinOutputRows
+		observation.writeStatement = writeStatement
+		observation.operatorNum = operatorNum
+		observation.writeKeys = writeKeys
+		observation.writeBytes = writeBytes
 	})
 
 	testCases := []struct {
@@ -138,6 +147,10 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			observation.frontendBytes = 0
 			observation.hashStateRows = 0
 			observation.joinOutputRows = 0
+			observation.writeStatement = 0
+			observation.operatorNum = 0
+			observation.writeKeys = 0
+			observation.writeBytes = 0
 			observation.Unlock()
 
 			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
@@ -188,9 +201,12 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			}
 			require.Positive(t, observation.scanBytes)
 			require.Positive(t, observation.netBytes)
-			require.Equal(t, float64(len(tc.query)), observation.frontendBytes)
+			require.Zero(t, observation.writeStatement)
+			require.Positive(t, observation.operatorNum)
+			require.Zero(t, observation.writeKeys)
+			require.Zero(t, observation.writeBytes)
 			totalUnits := observation.cpuWork + observation.scanBytes + observation.netBytes + observation.frontendBytes +
-				observation.hashStateRows + observation.joinOutputRows
+				observation.hashStateRows + observation.joinOutputRows + observation.operatorNum
 			require.InDelta(t, totalUnits, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
 			require.InDelta(t, totalUnits,
 				testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)

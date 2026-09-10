@@ -186,6 +186,7 @@ func (e *ExplainExec) registerExplainRUOperatorStats(
 	if coll == nil {
 		return
 	}
+	writes := snapshotStatementRUWrites(e.Ctx().GetSessionVars().StmtCtx.GetExecDetails().CommitDetail)
 	flat := core.FlattenPhysicalPlan(e.explain.TargetPlan, true)
 	setup := statementRUCalculationSetup{}
 	if e.explain.ExecStmt != nil {
@@ -199,6 +200,7 @@ func (e *ExplainExec) registerExplainRUOperatorStats(
 		flat,
 		coll,
 		metrics,
+		writes,
 		setup,
 		rootEOF,
 	)

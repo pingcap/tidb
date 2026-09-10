@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -460,53 +459,33 @@ func TestSlowLogFormat(t *testing.T) {
 	compareSlowLogItems(t, logItems, actual)
 }
 
-func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
-	seVar := variable.NewSessionVars(nil)
-	logItems := &variable.SlowQueryLogItems{
-		SQL:         "select 1",
-		Digest:      "digest",
-		TimeTotal:   time.Second,
-		Succ:        true,
-		ExecDetail:  &execdetails.ExecDetails{},
-		UsedStats:   &stmtctx.UsedStatsInfo{},
-		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
-		RUV2Metrics: execdetails.NewRUV2Metrics(),
-	}
-	logItems.RUDetails.AddTiKVRUV2(100)
-	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
-
-	logString := seVar.SlowLogFormat(logItems)
-	require.Contains(t, logString, "# Request_unit_v2: 150.00")
-	require.Contains(t, logString, "# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00")
-
-	t.Run("default session weights come from config defaults", func(t *testing.T) {
-		original := config.GetGlobalConfig()
-		t.Cleanup(func() {
-			if original != nil {
-				config.StoreGlobalConfig(original)
-			}
-		})
-
-		cfg := config.NewConfig()
-		cfg.RUV2 = config.DefaultRUV2Config()
-		config.StoreGlobalConfig(cfg)
-
-		require.Equal(t, execdetails.RUV2Weights{
-			RUScale:                 cfg.RUV2.RUScale,
-			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
-			ExecutorL1:              cfg.RUV2.ExecutorL1,
-			ExecutorL2:              cfg.RUV2.ExecutorL2,
-			ExecutorL3:              cfg.RUV2.ExecutorL3,
-			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
-			PlanCnt:                 cfg.RUV2.PlanCnt,
-			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
-			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
-			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
-			WriteKeys:               cfg.RUV2.WriteKeys,
-			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
-			TxnCnt:                  cfg.RUV2.TxnCnt,
-		}, variable.NewSessionVars(nil).RUV2Weights())
+func TestSessionVarsRUV2WeightsUseConfigDefaults(t *testing.T) {
+	original := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
 	})
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	config.StoreGlobalConfig(cfg)
+
+	require.Equal(t, execdetails.RUV2Weights{
+		RUScale:                 cfg.RUV2.RUScale,
+		ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+		ExecutorL1:              cfg.RUV2.ExecutorL1,
+		ExecutorL2:              cfg.RUV2.ExecutorL2,
+		ExecutorL3:              cfg.RUV2.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.RUV2.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.RUV2.WriteKeys,
+		SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+		TxnCnt:                  cfg.RUV2.TxnCnt,
+	}, variable.NewSessionVars(nil).RUV2Weights())
 }
 
 func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {

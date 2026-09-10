@@ -68,7 +68,6 @@ go_test(
         "bench_daily_test.go",
         "builder_test.go",
         "cmsketch_test.go",
-        "estimate_test.go",
         "fmsketch_test.go",
         "histogram_fuzz_test.go",
         "histogram_test.go",

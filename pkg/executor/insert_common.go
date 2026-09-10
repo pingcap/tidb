@@ -68,6 +68,8 @@ type embedTextGeneratedColumn struct {
 type InsertValues struct {
 	exec.BaseExecutor
 
+	writeStats *execdetails.WriteRuntimeStats
+
 	rowCount                    uint64
 	curBatchCnt                 uint64
 	maxRowsInBatch              uint64
@@ -1845,4 +1847,20 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*InsertRuntimeStat) Tp() int {
 	return execdetails.TpInsertRuntimeStat
+}
+
+// recordWriteCPUWork counts each processed target row even when no KV value changes.
+// Clustered primary keys are part of the row key; columnar indexes do not add KV index work.
+func recordWriteCPUWork(stats *execdetails.WriteRuntimeStats, tbl table.Table, rows int) {
+	if stats == nil || rows == 0 {
+		return
+	}
+	factor := 1
+	for _, idx := range tbl.Indices() {
+		if idx.Meta().IsColumnarIndex() || (tbl.Meta().IsCommonHandle && idx.Meta().Primary) {
+			continue
+		}
+		factor++
+	}
+	stats.CPUWork += float64(rows) * float64(factor)
 }

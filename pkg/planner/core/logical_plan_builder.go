@@ -1658,20 +1658,20 @@ type userVarTypeProcessor struct {
 	err     error
 }
 
-func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
+func (p *userVarTypeProcessor) Enter(in ast.Node) bool {
 	v, ok := in.(*ast.VariableExpr)
 	if !ok {
-		return in, false
+		return false
 	}
 	if v.IsSystem || v.Value == nil {
-		return in, true
+		return true
 	}
 	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
-	return in, true
+	return true
 }
 
-func (p *userVarTypeProcessor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, p.err == nil
+func (p *userVarTypeProcessor) Leave(ast.Node) bool {
+	return p.err == nil
 }
 
 func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) error {
@@ -1684,7 +1684,7 @@ func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p base.Logical
 		mapper:  aggMapper,
 	}
 	for _, field := range fields {
-		field.Expr.Accept(&processor)
+		ast.Walk(field.Expr, &processor)
 		if processor.err != nil {
 			return processor.err
 		}
@@ -3169,8 +3169,8 @@ type correlatedAggregateResolver struct {
 	noDecorrelate bool
 }
 
-// Enter implements Visitor interface.
-func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (r *correlatedAggregateResolver) Enter(n ast.Node) bool {
 	if v, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			outerSchema := r.outerPlan.Schema()
@@ -3179,9 +3179,9 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 			r.b.outerBlockExpand = append(r.b.outerBlockExpand, r.b.currentBlockExpand)
 		}
 		r.err = r.resolveSelect(v)
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
 // resolveSelect finds and collects correlated aggregates within the SELECT stmt.
@@ -3273,7 +3273,7 @@ func (r *correlatedAggregateResolver) collectFromTableRefs(from *ast.TableRefsCl
 		ctx: r.ctx,
 		b:   r.b,
 	}
-	_, ok := from.TableRefs.Accept(subResolver)
+	ok := ast.Walk(from.TableRefs, subResolver)
 	if !ok {
 		return subResolver.err
 	}
@@ -3324,8 +3324,8 @@ func (r *correlatedAggregateResolver) collectFromWhere(p base.LogicalPlan, where
 	return nil
 }
 
-// Leave implements Visitor interface.
-func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
+// Leave implements InPlaceVisitor interface.
+func (r *correlatedAggregateResolver) Leave(n ast.Node) bool {
 	if _, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
@@ -3334,7 +3334,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerBlockExpand = r.b.outerBlockExpand[0 : len(r.b.outerBlockExpand)-1]
 		}
 	}
-	return n, r.err == nil
+	return r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
@@ -3348,14 +3348,14 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
-		_, ok := field.Expr.Accept(resolver)
+		ok := ast.Walk(field.Expr, resolver)
 		if !ok {
 			return nil, resolver.err
 		}
 		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
 	}
 	if sel.Having != nil {
-		_, ok := sel.Having.Expr.Accept(resolver)
+		ok := ast.Walk(sel.Having.Expr, resolver)
 		if !ok {
 			return nil, resolver.err
 		}
@@ -3363,7 +3363,7 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 	}
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
-			_, ok := item.Expr.Accept(resolver)
+			ok := ast.Walk(item.Expr, resolver)
 			if !ok {
 				return nil, resolver.err
 			}
@@ -5589,7 +5589,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}()
 
 	hintProcessor := h.NewQBHintHandler(b.ctx.GetSessionVars().StmtCtx)
-	selectNode.Accept(hintProcessor)
+	ast.Walk(selectNode, hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
 	currentQbHints := make(map[int][]*ast.TableOptimizerHint)
@@ -5964,7 +5964,8 @@ func pruneAndBuildColPositionInfoForDelete(
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		hasMLog := tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || hasMLog
 		for _, idx := range tblInfo.Indices {
 			if len(idx.ConditionExprString) > 0 {
 				// If the index has a partial index condition, we can't prune the columns.

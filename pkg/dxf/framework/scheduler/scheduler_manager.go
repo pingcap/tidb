@@ -46,6 +46,8 @@ var (
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of task cleanup.
 	DefaultCleanUpInterval = 10 * time.Minute
+	// DefaultExpiredFileCleanInterval is the interval of owner-side expired-file cleanup.
+	DefaultExpiredFileCleanInterval = 3 * time.Hour
 	// metric scraping mostly happens at 15s intervals, it's meaningless to update
 	// internal collected date more frequently, so we align with that.
 	defaultCollectMetricsInterval = 15 * time.Second
@@ -157,7 +159,7 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		logger: logger,
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
-		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		// can make non-blocking sends drop signals until the cleanup ticker runs.
 		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
@@ -174,6 +176,9 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanTaskLoop)
+	if kerneltype.IsNextGen() {
+		sm.wg.Run(sm.expiredFileCleanLoop)
+	}
 	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
@@ -417,6 +422,49 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
+		}
+	}
+}
+
+func (sm *Manager) expiredFileCleanLoop() {
+	sm.logger.Info("expired file cleanup loop start")
+	defer sm.logger.Info("expired file cleanup loop exits")
+	sm.runExpiredFileClean()
+	ticker := time.NewTicker(DefaultExpiredFileCleanInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			return
+		case <-ticker.C:
+			sm.runExpiredFileClean()
+		}
+	}
+}
+
+func (sm *Manager) runExpiredFileClean() {
+	// NextGen deployments use one cluster-wide cloud storage URI for global sort,
+	// so the current global setting covers the conflict files from every task.
+	cloudStorageURI := handle.GetCloudStorageURI(sm.ctx, sm.store)
+	if cloudStorageURI == "" {
+		return
+	}
+
+	factories := getCleanerFactories()
+	for _, factory := range factories {
+		cleaner, ok := factory.ctor().(ExpiredFileCleaner)
+		if !ok {
+			continue
+		}
+		if err := cleaner.CleanExpiredFiles(sm.ctx, sm.taskMgr, cloudStorageURI); err != nil {
+			if sm.ctx.Err() != nil {
+				return
+			}
+			// Expired-file cleanup is owner-wide rather than task-specific.
+			dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventExpiredFileCleanupFailed).Inc()
+			sm.logger.Warn("expired file cleanup failed",
+				zap.Stringer("task-type", factory.taskType),
+				zap.Error(errors.Trace(err)))
 		}
 	}
 }

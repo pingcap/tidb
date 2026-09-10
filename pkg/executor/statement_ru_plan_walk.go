@@ -31,6 +31,20 @@ import (
 	clientutil "github.com/tikv/client-go/v2/util"
 )
 
+// statementRUWriteSnapshot owns the committed payload used by one RU calculation.
+// It is independent of RUv2 accumulation and does not retain live commit details.
+type statementRUWriteSnapshot struct {
+	keys  int64
+	bytes int64
+}
+
+func snapshotStatementRUWrites(details *clientutil.CommitDetails) statementRUWriteSnapshot {
+	if details == nil {
+		return statementRUWriteSnapshot{}
+	}
+	return statementRUWriteSnapshot{keys: int64(details.WriteKeys), bytes: int64(details.WriteSize)}
+}
+
 type statementRUFinalOutcome uint32
 
 type statementRUOperatorState uint8
@@ -125,8 +139,8 @@ func (a *ExecStmt) abortStatementRU() {
 	})
 }
 
-// recordStatementRURootEOF records that the root executor returned an empty
-// chunk. A successful statement does not imply this: a caller can
+// recordStatementRURootEOF records completion of a no-delay executor or the
+// empty chunk ending a result set. A successful statement does not imply this: a caller can
 // close a RecordSet cleanly before consuming all rows, for example when writing
 // rows to the client fails. Publishing that partial work as the statement's RU
 // would undercount, so RU v3 metric publication requires this independent bit.
@@ -141,10 +155,10 @@ func (a *ExecStmt) recordStatementRURootEOF() {
 // TODO: when the statement-RU failure metric lands, count the bounded failure
 // reasons at these fail-closed exits and publisher recoveries. Until then there
 // is deliberately no recorder-shaped no-op API.
-func (a *ExecStmt) finishStatementRU(terminalErr error) {
+func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 	owner := a.statementRUOwner
 	if owner == nil {
-		return
+		return 0
 	}
 
 	var finalized statementRUFinalizedSnapshot
@@ -176,6 +190,21 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			return
 		}
+		if statementRUIsCommitPlan(a.Plan) {
+			if !owner.rootEOF.Load() {
+				return
+			}
+			// COMMIT has no flattened physical operator. Its transaction
+			// payload belongs here, after the session has committed successfully.
+			calculator := newStatementRUCalculator(calculationSetup)
+			writes := snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail)
+			calculator.units.WriteKeys = float64(writes.keys)
+			calculator.units.WriteBytes = float64(writes.bytes)
+			finalized, publishFinalized = calculator.finalize()
+			finalized.writeSQL = true // An empty COMMIT is still a write-side statement.
+			return
+		}
+
 		switch plan := a.Plan.(type) {
 		case *physicalop.PointGetPlan:
 			finalized, publishFinalized = calculateStatementRUPointLookup(
@@ -210,13 +239,16 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 			flat,
 			sessVars.StmtCtx.RuntimeStatsColl,
 			sessVars.RUV2Metrics,
+			snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail),
 			calculationSetup,
 			owner.rootEOF.Load(),
 		)
 	})
 	if publishFinalized {
 		publishStatementRUFinalizedSnapshot(a, finalized)
+		return finalized.result.TotalRU
 	}
+	return 0
 }
 
 func calculateStatementRUPointLookup(
@@ -236,6 +268,7 @@ func calculateStatementRUPointLookup(
 	if collectStatementRUPointLookupEvidence(planID, runtimeStatsColl, &calculator) != statementRUOperatorComplete {
 		return statementRUFinalizedSnapshot{}, false
 	}
+	calculator.units.OperatorNum++
 	return calculator.finalize()
 }
 
@@ -248,21 +281,23 @@ func calculateStatementRU(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, bool) {
-	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, nil)
+	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, nil)
 }
 
 func calculateStatementRUWithOperators(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, *plannercore.ExplainRUResult, bool) {
 	operatorRUs := plannercore.NewExplainRUResult(flat)
-	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, operatorRUs)
+	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, operatorRUs)
 	if !ok {
 		return statementRUFinalizedSnapshot{}, nil, false
 	}
@@ -285,16 +320,21 @@ func calculateStatementRUInternal(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 	operatorRUs *plannercore.ExplainRUResult,
 ) (statementRUFinalizedSnapshot, bool) {
-	if flat == nil || len(flat.Main) == 0 {
+	if flat == nil || len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin == nil {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
 	if !ok {
 		return statementRUFinalizedSnapshot{}, false
+	}
+	if statementRUIsWritePlan(flat.Main[0].Origin) || statementRUIsCommitPlan(flat.Main[0].Origin) {
+		calculator.units.WriteKeys = float64(writes.keys)
+		calculator.units.WriteBytes = float64(writes.bytes)
 	}
 
 	// The forest consumes only currently visible typed evidence. Response-level
@@ -302,6 +342,9 @@ func calculateStatementRUInternal(
 	// are not all available yet, so the finalized calibration
 	// remains Incomplete and the result is neither exact nor a mathematical upper
 	// or lower bound. Invalid values and malformed tree structure still fail closed.
+	if statementRUIsWritePlan(flat.Main[0].Origin) {
+		calculator.units.WriteStatement = 1
+	}
 	mainRootUnits := calculator.units
 	mainResult := calculateStatementRUPlan(
 		flat.Main,
@@ -525,6 +568,21 @@ func calculateStatementRUPlanChildFirst(
 	beforeOperator := calculator.units
 
 	switch origin := operator.Origin.(type) {
+	case *physicalop.Insert, *physicalop.Update, *physicalop.Delete:
+		if !operator.IsRoot || runtimeStatsColl == nil {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		work, found := runtimeStatsColl.GetRootWriteCPUWork(operator.Origin.ID())
+		if !found {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, work) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *plannercore.Simple:
+		if !operator.IsRoot || len(children) != 0 || !statementRUIsCommitPlan(origin) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *plannercore.Analyze:
 		// ANALYZE can issue independent requests for indexes, partitions, and
 		// split ranges. Its scan-byte estimate is accumulated once per logical
@@ -613,6 +671,11 @@ func calculateStatementRUPlanChildFirst(
 		// payload, so collect both once at the plan occurrence.
 		if !operator.IsRoot || len(operator.ChildrenIdx) != 0 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		// DML lookup leaves do not yet own reliable point-response evidence.
+		// Keep their occurrence count without attributing remote read work here.
+		if calculator.units.WriteStatement != 0 {
+			break
 		}
 		if state := collectStatementRUPointLookupEvidence(
 			operator.Origin.ID(), runtimeStatsColl, calculator,
@@ -840,6 +903,7 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
+	calculator.units.OperatorNum++
 	if operatorRUs != nil {
 		if len(operatorRUs) != len(tree) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
@@ -1300,6 +1364,10 @@ func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta statemen
 func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
 	return statementRURawUnits{
 		CPUWork:              left.CPUWork + right.CPUWork,
+		WriteStatement:       left.WriteStatement + right.WriteStatement,
+		OperatorNum:          left.OperatorNum + right.OperatorNum,
+		WriteKeys:            left.WriteKeys + right.WriteKeys,
+		WriteBytes:           left.WriteBytes + right.WriteBytes,
 		ScanBytes:            left.ScanBytes + right.ScanBytes,
 		NetBytes:             left.NetBytes + right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes + right.FrontendCompileBytes,
@@ -1311,6 +1379,10 @@ func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits
 func subtractStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
 	return statementRURawUnits{
 		CPUWork:              left.CPUWork - right.CPUWork,
+		WriteStatement:       left.WriteStatement - right.WriteStatement,
+		OperatorNum:          left.OperatorNum - right.OperatorNum,
+		WriteKeys:            left.WriteKeys - right.WriteKeys,
+		WriteBytes:           left.WriteBytes - right.WriteBytes,
 		ScanBytes:            left.ScanBytes - right.ScanBytes,
 		NetBytes:             left.NetBytes - right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes - right.FrontendCompileBytes,
