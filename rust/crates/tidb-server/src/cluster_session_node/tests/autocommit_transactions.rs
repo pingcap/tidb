@@ -183,6 +183,10 @@ fn autocommit_on_statements_do_not_share_a_snapshot() {
 #[test]
 fn a_transaction_under_autocommit_off_that_lost_the_race_fails_at_commit() {
     let (mut loser, cluster) = open_session();
+    // A commit-time write conflict is an optimistic transaction contract.
+    loser
+        .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
+        .expect("select optimistic conflict semantics");
     loser
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");

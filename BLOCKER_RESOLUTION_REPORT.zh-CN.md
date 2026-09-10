@@ -1,5 +1,26 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 提交时冲突测试固定乐观事务前提
+
+`lost_the_race_fails_at_commit` 三个用例（普通 BEGIN、prepared BEGIN、
+autocommit=0）独立重跑全部失败，UPDATE 阶段误入悲观锁路径，尚未到达
+它们要求检查的 COMMIT（`/tmp/optimistic-conflict-red.log`）。
+测试要求的是乐观事务写冲突语义，却继承当前默认的悲观模式。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/session/tidb_test.go:449,473` 显式设置 session.tidb_txn_mode 为
+optimistic，另有 begin optimistic 场景。Rust 三个对应测试现在同样
+在开始前设置 session 模式；未改变生产默认、原 SQL 事务入口、
+UPDATE 成功、COMMIT 9007、回滚后最终行值等断言。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib lost_the_race_fails_at_commit`
+从 0 passed / 3 failed 转为 **3 passed / 0 failed**
+（`/tmp/optimistic-conflict-green.log`）；`make lint` 退出 0
+（`/tmp/optimistic-conflict-lint.log`），`git diff --check` 通过。
+这仅纠正提交冲突用例的测试前提；mock 的悲观锁返回值接口与其他失败
+仍需继续处理，不能据此宣称全部事务模式已验证。
+
 ## 2026-09-11 autocommit 预取遵守实际事务模式
 
 准备 UPDATE 独立失败，错误为 `only a pessimistic transaction locks
