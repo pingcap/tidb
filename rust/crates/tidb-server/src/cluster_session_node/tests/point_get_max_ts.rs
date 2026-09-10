@@ -85,8 +85,8 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
         .prepare_general("SELECT id, v FROM indexed_read WHERE a = ?")
         .unwrap();
     assert!(
-        statement.prepared_ast().unwrap().point_get_plan().is_some(),
-        "exercise the retained index plan"
+        statement.prepared_ast().unwrap().select_plan().is_some(),
+        "a non-unique index read retains the general SELECT descriptor"
     );
     for (value, expected) in [
         (

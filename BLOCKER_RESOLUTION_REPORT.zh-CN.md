@@ -1,5 +1,32 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 非唯一索引缓存测试检查普通 SELECT 描述
+
+上一完整 server 回归为 430 passed / 4 failed，45.02 秒，
+`/tmp/server-prepared-bound-shape-baseline.log`。其中
+`cached_prepared_index_lookup_uses_one_timestamp` 在执行前错误要求
+非唯一索引 ia(a) 对应 point_get_plan。Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/planner/core/point_get_plan.go:617` 明确跳过 !idxInfo.Unique；
+Rust 现在保留普通 select_plan 描述，首次 EXECUTE 生成缓存物理树。
+
+仅将描述存在性断言改为 select_plan，保留三组参数 7/8/9 的多行、单行、
+空集结果，保留每次只有一个普通快照、连接读资源释放，以及最终
+@@last_plan_from_cache=1 的真实缓存命中断言。未修改生产计划选择。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib cached_prepared_index_lookup_uses_one_timestamp
+# 1 passed，0.05 秒，/tmp/cached-index-descriptor-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/cached-index-descriptor-{fmt,lint}.log
+```
+
+尚未宣称其他失败或整个原始门禁通过。
+
 ## 2026-09-11 缓存 SELECT 用本次绑定值判定读取形状
 
 `a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp` 独立失败：
