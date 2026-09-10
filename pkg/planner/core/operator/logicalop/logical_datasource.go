@@ -187,6 +187,14 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
+	// Remove semantics-preserving casts before checking whether predicates can be
+	// pushed down. In particular, CAST(SET AS UNSIGNED) itself is not pushable,
+	// while its unwrapped physical SET value can be used to build table and index
+	// ranges. Doing this during stats derivation is too late for such predicates.
+	exprCtx := ds.SCtx().GetExprCtx()
+	for i, expr := range predicates {
+		predicates[i] = expression.EliminateNoPrecisionLossSetCast(exprCtx, expr)
+	}
 	ds.AllConds = predicates
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {

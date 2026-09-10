@@ -953,7 +953,95 @@ func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	return true
 }
 
-func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Expression, bool) {
+func unwrapNoPrecisionLossCastColumn(cast *ScalarFunction, col *Column, setOnly bool) (*Column, bool) {
+	if col.RetType.GetType() == mysql.TypeSet {
+		// MySQL's CAST(SET AS UNSIGNED) reads the SET bitmask as an unsigned
+		// longlong. The bitmask is also the value encoded in table and index keys,
+		// so this particular cast can be removed when building ranges.
+		if cast.RetType.GetType() != mysql.TypeLonglong || !mysql.HasUnsignedFlag(cast.RetType.GetFlag()) {
+			return nil, false
+		}
+		col = col.Clone().(*Column)
+		// Use the cast's integer type so that the rewritten predicate can be
+		// pushed down. EnumSetAsIntFlag lets ranger distinguish this explicit
+		// physical-value comparison from MySQL's ordinary SET comparison rules.
+		col.RetType = cast.RetType.Clone()
+		col.RetType.AddFlag(mysql.EnumSetAsIntFlag)
+		return col, true
+	}
+	if setOnly {
+		return nil, false
+	}
+	if !noPrecisionLossCastCompatible(cast.RetType, col.RetType) {
+		return nil, false
+	}
+	return col, true
+}
+
+func isIntegerOrNullConstant(expr Expression) bool {
+	constant, ok := expr.(*Constant)
+	if !ok {
+		return false
+	}
+	switch constant.Value.Kind() {
+	case types.KindInt64, types.KindUint64, types.KindNull:
+		return true
+	default:
+		return false
+	}
+}
+
+func unwrapNoPrecisionLossSetCastsInRow(sctx BuildContext, expr Expression, constantRows ...Expression) (Expression, bool) {
+	row, ok := expr.(*ScalarFunction)
+	if !ok || row.FuncName.L != ast.RowFunc {
+		return expr, false
+	}
+
+	changed := false
+	args := make([]Expression, len(row.GetArgs()))
+	copy(args, row.GetArgs())
+	for i, arg := range args {
+		cast, ok := arg.(*ScalarFunction)
+		if !ok || cast.FuncName.L != ast.Cast {
+			continue
+		}
+		col, ok := cast.GetArgs()[0].(*Column)
+		if !ok || col.RetType.GetType() != mysql.TypeSet {
+			continue
+		}
+		for _, constantExpr := range constantRows {
+			constantRow := constantExpr.(*ScalarFunction)
+			if i >= len(constantRow.GetArgs()) || !isIntegerOrNullConstant(constantRow.GetArgs()[i]) {
+				return expr, false
+			}
+		}
+		unwrapped, ok := unwrapNoPrecisionLossCastColumn(cast, col, true)
+		if !ok {
+			continue
+		}
+		args[i] = unwrapped
+		changed = true
+	}
+	if !changed {
+		return expr, false
+	}
+	return NewFunctionInternal(sctx, ast.RowFunc, row.RetType, args...), true
+}
+
+func isConstantRow(expr Expression) bool {
+	row, ok := expr.(*ScalarFunction)
+	if !ok || row.FuncName.L != ast.RowFunc {
+		return false
+	}
+	for _, arg := range row.GetArgs() {
+		if _, ok := arg.(*Constant); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int, setOnly bool) (Expression, bool) {
 	_, collation := parentF.CharsetAndCollation()
 	cast, ok := parentF.GetArgs()[castOffset].(*ScalarFunction)
 	if !ok || cast.FuncName.L != ast.Cast {
@@ -973,9 +1061,12 @@ func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Exp
 	if !ok {
 		return parentF, false
 	}
+	if c.RetType.GetType() == mysql.TypeSet && !isIntegerOrNullConstant(parentF.GetArgs()[1-castOffset]) {
+		return parentF, false
+	}
 
-	// current only consider varchar and integer
-	if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+	c, ok = unwrapNoPrecisionLossCastColumn(cast, c, setOnly)
+	if !ok {
 		return parentF, false
 	}
 
@@ -989,7 +1080,7 @@ func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Exp
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
 // there is no precision loss between them, current cast wrapper can be eliminated. For string
 // type, collation is also taken into consideration. (mainly used to build range or point)
-func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, changed bool) {
+func eliminateCastFunction(sctx BuildContext, expr Expression, setOnly bool) (_ Expression, changed bool) {
 	f, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr, false
@@ -1001,7 +1092,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		rmCast := false
 		rmCastItems := make([]Expression, len(dnfItems))
 		for i, dnfItem := range dnfItems {
-			newExpr, curDowncast := eliminateCastFunction(sctx, dnfItem)
+			newExpr, curDowncast := eliminateCastFunction(sctx, dnfItem, setOnly)
 			rmCastItems[i] = newExpr
 			if curDowncast {
 				rmCast = true
@@ -1017,7 +1108,7 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		rmCast := false
 		rmCastItems := make([]Expression, len(cnfItems))
 		for i, cnfItem := range cnfItems {
-			newExpr, curDowncast := eliminateCastFunction(sctx, cnfItem)
+			newExpr, curDowncast := eliminateCastFunction(sctx, cnfItem, setOnly)
 			rmCastItems[i] = newExpr
 			if curDowncast {
 				rmCast = true
@@ -1029,15 +1120,42 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		}
 		return expr, false
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
+		if isConstantRow(f.GetArgs()[1]) {
+			if lhs, ok := unwrapNoPrecisionLossSetCastsInRow(sctx, f.GetArgs()[0], f.GetArgs()[1]); ok {
+				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, lhs, f.GetArgs()[1]), true
+			}
+		}
+		if isConstantRow(f.GetArgs()[0]) {
+			if rhs, ok := unwrapNoPrecisionLossSetCastsInRow(sctx, f.GetArgs()[1], f.GetArgs()[0]); ok {
+				return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, f.GetArgs()[0], rhs), true
+			}
+		}
 		// for case: eq(cast(test.t2.a, varchar(100), "aaaaa"), once t2.a is covered by index or pk, try deconstructing it out.
-		if newF, ok := unwrapCast(sctx, f, 0); ok {
+		if newF, ok := unwrapCast(sctx, f, 0, setOnly); ok {
 			return newF, true
 		}
 		// for case: eq("aaaaa"， cast(test.t2.a, varchar(100)), once t2.a is covered by index or pk, try deconstructing it out.
-		if newF, ok := unwrapCast(sctx, f, 1); ok {
+		if newF, ok := unwrapCast(sctx, f, 1, setOnly); ok {
 			return newF, true
 		}
 	case ast.In:
+		if _, ok := f.GetArgs()[0].(*ScalarFunction); ok {
+			allConstantRows := true
+			for _, arg := range f.GetArgs()[1:] {
+				if !isConstantRow(arg) {
+					allConstantRows = false
+					break
+				}
+			}
+			if allConstantRows {
+				if lhs, ok := unwrapNoPrecisionLossSetCastsInRow(sctx, f.GetArgs()[0], f.GetArgs()[1:]...); ok {
+					newArgs := make([]Expression, len(f.GetArgs()))
+					copy(newArgs, f.GetArgs())
+					newArgs[0] = lhs
+					return NewFunctionInternal(sctx, f.FuncName.L, f.RetType, newArgs...), true
+				}
+			}
+		}
 		// case for: cast(a<int> as bigint) in (1,2,3), we could deconstruct column 'a out directly.
 		cast, ok := f.GetArgs()[0].(*ScalarFunction)
 		if !ok || cast.FuncName.L != ast.Cast {
@@ -1057,8 +1175,15 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 		if !ok {
 			return expr, false
 		}
-		// current only consider varchar and integer
-		if !noPrecisionLossCastCompatible(cast.RetType, c.RetType) {
+		if c.RetType.GetType() == mysql.TypeSet {
+			for _, arg := range f.GetArgs()[1:] {
+				if !isIntegerOrNullConstant(arg) {
+					return expr, false
+				}
+			}
+		}
+		c, ok = unwrapNoPrecisionLossCastColumn(cast, c, setOnly)
+		if !ok {
 			return expr, false
 		}
 		newArgs := []Expression{c}
@@ -1148,7 +1273,16 @@ func PushDownNot(ctx BuildContext, expr Expression) Expression {
 // 2: cast args should be one for original base column and one for constant.
 // 3: some collation compatibility and precision loss will be considered when remove this cast func.
 func EliminateNoPrecisionLossCast(sctx BuildContext, expr Expression) Expression {
-	newExpr, _ := eliminateCastFunction(sctx, expr)
+	newExpr, _ := eliminateCastFunction(sctx, expr, false)
+	return newExpr
+}
+
+// EliminateNoPrecisionLossSetCast removes CAST(SET AS UNSIGNED) before
+// predicate pushdown. Unlike the other supported no-loss casts, SET casts
+// cannot themselves be pushed down, so waiting until range construction is too
+// late. Other cast kinds are deliberately left unchanged here.
+func EliminateNoPrecisionLossSetCast(sctx BuildContext, expr Expression) Expression {
+	newExpr, _ := eliminateCastFunction(sctx, expr, true)
 	return newExpr
 }
 
