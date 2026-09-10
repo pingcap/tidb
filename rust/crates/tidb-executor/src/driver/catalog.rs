@@ -1314,9 +1314,16 @@ impl Catalog {
                                 }),
                             })
                             .collect::<Vec<_>>();
+                        // Go keeps clustered PRIMARY in TableInfo.Indices even
+                        // though no separate index records are maintained.
+                        let primary = crate::handle_range::clustered_primary_metadata(table);
+                        let missing_primary = primary.as_deref().filter(|primary| {
+                            !table.indexes().iter().any(|index| index.id == primary.id)
+                        });
                         let indexes = table
                             .indexes()
                             .iter()
+                            .chain(missing_primary)
                             .map(|index| SourceIndex {
                                 id: index.id,
                                 name: index.name.clone(),

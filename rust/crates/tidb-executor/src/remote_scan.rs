@@ -1775,6 +1775,20 @@ mod tests {
                 )
                 .unwrap();
             let catalog = catalog_of(fixture.table);
+            for (condition, expected) in [
+                ("b=1", vec![110]),
+                ("b IN (1,4,1,99)", vec![110, 40]),
+            ] {
+                let sql = format!("SELECT c FROM t WHERE {predicate} AND {condition}");
+                let (rows, ops) =
+                    capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
+                assert_eq!(
+                    rows,
+                    expected.into_iter().map(|v| vec![Datum::Int(v)]).collect::<Vec<_>>(),
+                    "{sql}"
+                );
+                assert_eq!((ops.scans, ops.cop_scans), (0, 0), "{sql}");
+            }
             for (suffix, expected) in [
                 ("ORDER BY b", vec![0, 110, 40, 130]),
                 ("ORDER BY b DESC", vec![130, 40, 110, 0]),

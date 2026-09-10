@@ -1,5 +1,25 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 无显式 PRIMARY 索引的 common-handle catalog 修复
+
+稳定红色复现：`dirty_common_handle_reads_share_the_remote_staged_merge` 在 unsigned common-handle `a=18446744073709551615` 下返回空（`/tmp/common-remote-red.log`，退出 101）。表已保存 common-handle offsets，但 catalog 没有独立 PRIMARY KvIndex。Go 的 `TableInfo.Indices` 始终保留 clustered PRIMARY 元数据，是否维护独立索引记录是另一个问题；Rust `handle_range::clustered_primary_metadata` 已实现该重建，planner catalog 却漏用它。
+
+`Catalog::planner_catalog` 现在复用此函数，将缺失的 clustered PRIMARY 元数据加入 SourceTable 索引视图；已有真实 PRIMARY 保留其 ID、列和前缀。未新增物理索引记录，也未修改 SQL 断言。原 dirty common-handle 失败与 `composite_cnf_writes_fetch_only_the_matching_keys` 均通过。前者扩展了单点、重复 IN、缺失键断言，并验证这些查询不打开普通/远端扫描；覆盖 signed、unsigned、大小写不敏感字符串三种键，保留原 staged UPDATE/DELETE、LIMIT、聚合和投影断言。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib \
+dirty_common_handle_reads_share_the_remote_staged_merge
+# 1 passed；/tmp/common-catalog-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib -- --test-threads=1
+# 1284 passed / 6 failed；/tmp/executor-common-catalog.log
+make lint
+# 退出 0；/tmp/common-catalog-lint.log
+```
+
+remote_scan 模块为 22 passed / 4 failed（`/tmp/common-metadata-tests.log`），另有两项 TPCC 聚合失败。并行队列隔离及其他完整验收项仍未完成，整体目标保持未完成。
+
 ## 2026-09-10 unsigned staged ORDER BY 元数据修复
 
 `unsigned_staged_rows_merge_in_the_readers_value_order` 修复前返回 `u64::MAX, 0, 1`，期望 `0, 1, u64::MAX`。已用单测独立复现，`/tmp/unsigned-merge-red.log` 退出 101。
