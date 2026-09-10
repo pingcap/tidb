@@ -1,0 +1,321 @@
+{
+  "status": "Scoped Go name-lookup parity established before merge; broad performance acceptance remains open.",
+  "base_revision": "cb4043ed3a6ca3b8aa0828ebada5ff7a4b06e9a9",
+  "files": [
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/driver/access.rs",
+    "rust/crates/tidb-executor/src/driver/dml.rs",
+    "rust/crates/tidb-executor/src/driver/tests/point_get.rs"
+  ],
+  "change": "Retain typed folded keys in point/SELECT/DML prepared metadata. Unify immutable/mutable catalog normalization. Planner snapshot uses existing folded catalog keys in table/view hash maps; remove unused sorting and ASCII-only scans. Preserve original public names and mutation/copy-on-write behavior.",
+  "source_authority": [
+    "pkg/parser/ast/model.go: NewCIStr retains O and computes L with strings.ToLower",
+    "pkg/infoschema/infoschema.go: TableByName consumes schema.L and table.L"
+  ],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-case-mapping.wcNW4E/candidate-server",
+      "sha256": "f17467dff32cc5378af8d0d932ef167187a6701a9f945fd4dc8e4f1d6fdbefae"
+    },
+    "after": {
+      "path": "./candidate-server",
+      "sha256": "9cd30b0a525a8bdb9f200bc221fde075c26378fd4ae73160d1e2bc0a15354c37"
+    }
+  },
+  "regressions": {
+    "unit": "Existing prepared-point test: Go-folded Unicode name validates before fix but mutable execution returns None. Fails on cb4043ed3a and passes after.",
+    "live": "Initial retained-key candidate still returns ERROR 1049 for Unicode schema in planner snapshot. Full candidate matches Go on qualified Unicode schema/table point SELECT, PREPARE/EXECUTE, range SELECT, UPDATE, DELETE, INSERT.",
+    "live_output": [
+      10,
+      10,
+      11,
+      20,
+      11,
+      20
+    ],
+    "probe_cleanup": "Unique perf_njeezi_iσ database dropped and absence verified after failed and successful attempts.",
+    "command": "ruby /private/tmp/tidb-catalog-names.nJeEZI/verify-unicode.rb",
+    "logs": [
+      "/private/tmp/tidb-catalog-names.nJeEZI/unicode.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/unicode-final.log"
+    ]
+  },
+  "validation": {
+    "profile": "Ready scope executed; not a green full suite",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session --lib --no-fail-fast -- driver::tests::point_get:: driver::tests::primary_keys:: tests_prepared_plan_cache:: tests_prepared_statements:: tests_view --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "git diff --check",
+      "ruby /private/tmp/tidb-catalog-names.nJeEZI/compare-tests.rb"
+    ],
+    "working_directory": "Cargo: rust; make/git: repository root.",
+    "results": "Pre-merge: 125 passed, six failed. Unicode regression passes. Build/all-target check/lint pass.",
+    "baseline_provenance": "Immediate cb4043ed3a batch before production edits: 95 passed/two failed, including the new Unicode reproduction. Common-handle failure body unchanged. Expanded view/lateral scope: five identical failures reproduced on retained 6ee06c31b7 executable, not an exact cb4043ed3a rebuild.",
+    "logs": [
+      "/private/tmp/tidb-catalog-names.nJeEZI/baseline-tests.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/tests-final.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/historical-views.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/test-comparison.json",
+      "/private/tmp/tidb-catalog-names.nJeEZI/build-final.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/check-final.log",
+      "/private/tmp/tidb-catalog-names.nJeEZI/lint-final.log"
+    ]
+  },
+  "premerge_workloads": {
+    "command": "ruby /private/tmp/tidb-catalog-names.nJeEZI/verify.rb",
+    "events": {
+      "sysbench": 84000,
+      "tpcc": 36000,
+      "tpcc_profile": 32000
+    },
+    "sysbench": {
+      "events_per_sample": 6000,
+      "warmup": 1000,
+      "table_rows": 100000,
+      "seed": 1,
+      "prepared_statements": "auto",
+      "sample_columns": [
+        "seconds",
+        "sql_cpu_seconds",
+        "tikv_cpu_seconds"
+      ],
+      "samples": [
+        [
+          "go/8",
+          [
+            [
+              3.1718,
+              13.94,
+              14.3
+            ],
+            [
+              3.1975,
+              13.82,
+              15.64
+            ]
+          ]
+        ],
+        [
+          "after/1",
+          [
+            [
+              12.5021,
+              7.64,
+              8.05
+            ],
+            [
+              12.6831,
+              7.78,
+              13.14
+            ]
+          ]
+        ],
+        [
+          "after/8",
+          [
+            [
+              3.3973,
+              11.5,
+              12.04
+            ],
+            [
+              3.4514,
+              11.61,
+              13.52
+            ]
+          ]
+        ],
+        [
+          "after/32",
+          [
+            [
+              2.0677,
+              12.22,
+              12.4
+            ],
+            [
+              2.1203,
+              12.4,
+              13.37
+            ]
+          ]
+        ],
+        [
+          "before/1",
+          [
+            [
+              12.6501,
+              7.76,
+              8.05
+            ],
+            [
+              12.9003,
+              7.99,
+              11.61
+            ]
+          ]
+        ],
+        [
+          "before/8",
+          [
+            [
+              3.4035,
+              11.59,
+              12.04
+            ],
+            [
+              3.4441,
+              11.68,
+              13.73
+            ]
+          ]
+        ],
+        [
+          "before/32",
+          [
+            [
+              2.1764,
+              12.14,
+              12.44
+            ],
+            [
+              2.1201,
+              12.33,
+              13.65
+            ]
+          ]
+        ]
+      ]
+    },
+    "tpcc": {
+      "events_per_sample": 6000,
+      "threads": 8,
+      "warehouses": 1,
+      "seed": 1,
+      "counts": {
+        "DELIVERY": 220,
+        "NEW_ORDER": 2674,
+        "ORDER_STATUS": 229,
+        "PAYMENT": 2652,
+        "STOCK_LEVEL": 225
+      },
+      "sample_columns": [
+        "seconds",
+        "sql_cpu_seconds",
+        "tikv_cpu_seconds"
+      ],
+      "samples": [
+        [
+          "go/8",
+          [
+            [
+              6.493787,
+              16.16,
+              35.05
+            ],
+            [
+              6.954886,
+              16.31,
+              37.98
+            ]
+          ]
+        ],
+        [
+          "after/8",
+          [
+            [
+              6.952998,
+              12.51,
+              34.98
+            ],
+            [
+              7.161346,
+              12.54,
+              39.01
+            ]
+          ]
+        ],
+        [
+          "before/8",
+          [
+            [
+              6.792339,
+              12.29,
+              34.91
+            ],
+            [
+              7.098676,
+              12.51,
+              38.93
+            ]
+          ]
+        ]
+      ]
+    },
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "driver_sha256": "9c558a7ea42ace84d653c9f6c6de4a062a1e2c80c6d6159653ba45a0916dda07",
+    "verification": "All eleven TPC-C consistency conditions, exact counts and bounded Go fixture digest pass. Auto-analyze restored from 0 to original 1 in ensure.",
+    "parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "interpretation": "Ranges overlap. TPC-C candidate is directionally slower, not an accepted win. TiKV CPU rises across rounds; mediaanalysisd is ~84-86% CPU and Spotlight mds_stores ~21-51% in host snapshots. No daemon changes. No throughput/latency promotion or attribution across later collaborator merge."
+  },
+  "profiles": [
+    {
+      "trace": "/private/tmp/tidb-case-mapping.wcNW4E/after-sysbench.trace",
+      "running_ns": 26706000000,
+      "inclusive_ns": {
+        "matches_catalog": 43000000,
+        "statement_context_ignoring": 459000000,
+        "map_string": 60000000
+      }
+    },
+    {
+      "trace": "/private/tmp/tidb-case-mapping.wcNW4E/after-tpcc.trace",
+      "running_ns": 14611000000,
+      "inclusive_ns": {
+        "statement_context_ignoring": 199000000,
+        "map_string": 32000000,
+        "planner_catalog": 6000000,
+        "matches_catalog": 2000000
+      }
+    },
+    {
+      "trace": "after-sysbench.trace",
+      "running_ns": 26366000000,
+      "inclusive_ns": {
+        "statement_context_ignoring": 455000000,
+        "map_string": 34000000
+      }
+    },
+    {
+      "trace": "after-tpcc.trace",
+      "running_ns": 13043000000,
+      "inclusive_ns": {
+        "map_string": 48000000,
+        "statement_context_ignoring": 172000000,
+        "planner_catalog": 5000000
+      }
+    }
+  ],
+  "profile_scope": "Running inclusive samples; a missing key means zero observed samples, not proof of zero runtime. Historical control profiles are diagnostics, not normalized matched-transaction ratios.",
+  "cleanup": {
+    "pids": 10,
+    "ports": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe",
+    "command": "ruby /private/tmp/tidb-catalog-names.nJeEZI/verify-cleanup.rb",
+    "evidence": "/private/tmp/tidb-catalog-names.nJeEZI/cleanup.json"
+  },
+  "remaining": [
+    "Post-merge validation pending; collaborator commits include production planner/executor fixes.",
+    "Planner metadata is still materialized into an owned snapshot, unlike Go's retained infoschema ownership.",
+    "No whole Go-package parity or full sysbench/TPC-C performance claim."
+  ]
+}

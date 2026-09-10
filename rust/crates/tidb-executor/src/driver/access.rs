@@ -67,6 +67,7 @@ pub struct PreparedPointGetPlan {
     current_database: String,
     database: String,
     table: String,
+    table_key: CatalogTableKey,
     table_id: i64,
     /// One marker order per PINNED key column, aligned with
     /// [`Self::pin_types`] — the full row handle for [`PreparedPointTarget::
@@ -135,6 +136,7 @@ fn contradiction_plan(
         current_database: current_database.to_owned(),
         database: database.to_owned(),
         table: table_name.to_owned(),
+        table_key: CatalogTableKey::new(database, table_name),
         table_id,
         parameter_orders: Vec::new(),
         pin_types: Vec::new(),
@@ -340,7 +342,7 @@ impl PreparedPointGetPlan {
             return false;
         }
         matches!(
-            catalog.get_in(&self.database, &self.table),
+            catalog.get_by_key(&self.table_key),
             Some(TableEntry::Kv(table))
                 if table.table_id == self.table_id && table.partition().is_none()
         )
@@ -386,6 +388,8 @@ pub struct PreparedPointGetExecution {
 pub struct PreparedSelectPlan {
     current_database: String,
     table_names: Vec<(String, String)>,
+    // Retain folded keys alongside the original names exposed for MDL.
+    table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     statement: tidb_ast::Stmt,
@@ -800,8 +804,8 @@ impl PreparedSelectPlan {
         if !environment.invalidate_on_fresh_stats || environment.skip_stats_on_binding {
             return 0;
         }
-        self.table_names.iter().fold(0, |hash, (database, table)| {
-            let version = match catalog.get_in(database, table) {
+        self.table_keys.iter().fold(0, |hash, key| {
+            let version = match catalog.get_by_key(key) {
                 Some(TableEntry::Kv(table)) => catalog
                     .table_statistics(table.stats_physical_id())
                     .map_or(0, |statistics| statistics.version),
@@ -1229,6 +1233,7 @@ pub fn build_prepared_point_get_plan(
         current_database: current_database.to_owned(),
         database: database.to_owned(),
         table: table_name.to_owned(),
+        table_key: CatalogTableKey::new(database, table_name),
         table_id: table.table_id,
         parameter_orders,
         pin_types: pin_offsets
@@ -1273,6 +1278,10 @@ pub fn build_prepared_select_plan(
 
     Some(PreparedSelectPlan {
         current_database: current_database.to_owned(),
+        table_keys: table_names
+            .iter()
+            .map(|(database, table)| CatalogTableKey::new(database, table))
+            .collect(),
         table_names,
         parameter_count,
         limit_parameter_orders,
@@ -1558,8 +1567,7 @@ pub fn run_prepared_point_get(
     let decode_error = |error: crate::kv_table::KvTableError| {
         ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
     };
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_in_for_read(&plan.database, &plan.table)
-    else {
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_by_key_for_read(&plan.table_key) else {
         return Ok(None);
     };
     let before = table.point_rpc_counts();

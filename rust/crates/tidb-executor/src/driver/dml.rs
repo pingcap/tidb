@@ -2256,7 +2256,7 @@ fn update_assignment_values_for_plan(
 #[derive(Debug)]
 pub struct PreparedDmlPlan {
     current_database: String,
-    table_names: Vec<(String, String)>,
+    table_keys: Vec<CatalogTableKey>,
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     statement: Stmt,
@@ -2510,8 +2510,8 @@ impl PreparedDmlPlan {
         if !environment.hashes_fresh_statistics() {
             return 0;
         }
-        self.table_names.iter().fold(0, |hash, (database, table)| {
-            let version = match catalog.get_in(database, table) {
+        self.table_keys.iter().fold(0, |hash, key| {
+            let version = match catalog.get_by_key(key) {
                 Some(TableEntry::Kv(table)) => catalog
                     .table_statistics(table.stats_physical_id())
                     .map_or(0, |statistics| statistics.version),
@@ -2582,7 +2582,10 @@ pub fn build_prepared_dml_plan(
     }
     Ok(Some(PreparedDmlPlan {
         current_database: current_db.to_owned(),
-        table_names: prepared_dml_table_names(statement, current_db),
+        table_keys: prepared_dml_table_names(statement, current_db)
+            .iter()
+            .map(|(database, table)| CatalogTableKey::new(database, table))
+            .collect(),
         parameter_count,
         limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
         statement: statement.clone(),

@@ -984,6 +984,50 @@ fn prepared_point_cache_admits_the_stock_sysbench_integer_handle() {
     .unwrap()
     .expect("the PREPARE-time plan remains valid on first execution");
     assert_eq!(datum_text_for_test(&rows[0][0]), "value");
+
+    // Go TableByName consumes CIStr.L on both validation and execution.
+    crate::run_create_table_on(
+        "CREATE TABLE `iσ` (id BIGINT PRIMARY KEY, c VARCHAR(20))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO `iσ` VALUES (1, 'unicode')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let statement = tidb_parser::parse("SELECT c FROM `İΣ` WHERE id = ?").unwrap();
+    let plan = Arc::new(
+        build_prepared_point_get_plan(
+            &statement,
+            1,
+            &catalog,
+            DEFAULT_DATABASE,
+            &Default::default(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(plan.names(), (DEFAULT_DATABASE, "İΣ"));
+    assert!(plan.matches_catalog(&catalog, DEFAULT_DATABASE));
+    let execution = plan.bind(&[Datum::Int(1)], &Default::default()).unwrap();
+    let (_, rows) = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        DEFAULT_DATABASE,
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("validation and mutable read must resolve the same Go-folded name");
+    assert_eq!(datum_text_for_test(&rows[0][0]), "unicode");
+    assert!(catalog
+        .get_mut_in_for_read(DEFAULT_DATABASE, "İΣ")
+        .is_some());
+    assert!(catalog.get_mut_in(DEFAULT_DATABASE, "İΣ").is_some());
+    let planner = catalog.planner_catalog(DEFAULT_DATABASE, None);
+    use tidb_planner::plan_builder::catalog::TableSource as _;
+    assert!(planner.find_table(DEFAULT_DATABASE, "İΣ").is_some());
 }
 
 /// Go's prepared point cache admits a complete non-prefix UNIQUE secondary

@@ -27,6 +27,25 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Reproduce mutable/immutable catalog name disagreement in the retained
+  prepared-point test: validation accepts `İΣ` as Go-folded `iσ`, but execution
+  returns no valid plan because its mutable lookup only folds ASCII. Baseline
+  selected executor/session batch: 95 pass, two fail (new reproduction plus
+  existing common-handle encoding failure). Evidence:
+  /private/tmp/tidb-catalog-names.nJeEZI/baseline-tests.log.
+- [ ] Retain typed folded schema/table keys in point, SELECT and DML prepared
+  metadata. Keep original names and public APIs unchanged. Both raw immutable
+  and mutable lookups use the same Go normalization boundary; mutable writes
+  retain their version increment and existing copy-on-write ownership.
+  Validate tests and matched workloads before publishing or accepting speedup.
+- [x] Live Unicode schema/table comparison exposes the same mismatch in
+  PlannerCatalog: Go passes, Rust returns 1049 unknown database. The probe
+  database is removed in ensure. Evidence: catalog-names.nJeEZI/unicode.log.
+- [ ] Replace the planner snapshot's ASCII-only table/view scans with maps
+  keyed by the owning catalog's already-folded names; normalize raw lookup
+  requests through CatalogTableKey. Remove unconsumed table/view sorting.
+  Recheck live Go equality and matched performance before acceptance.
+
 - [x] Trace the remaining simple-case mapper to catalog lookup, prepared-plan
   validation, statement setup, digest normalization and collation lookup.
   Go strings.ToUpper/ToLower and unicode.ToUpper/ToLower bypass Unicode table
@@ -495,6 +514,16 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+- Decision: Use a private CatalogTableKey with folded fields that cannot be
+  constructed directly by callers. Keep original prepared names for public
+  accessors and privilege/error consumers; never infer that plain strings are
+  normalized. SELECT retains folded keys alongside its original-name list;
+  DML needs only folded keys for statistics lookup.
+  Rationale: Go NewCIStr preserves O and computes L at construction, and
+  infoschema.TableByName consumes L on every lookup. Reusing the existing
+  mutable lookup body preserves copy-on-write and mutation-counter behavior.
+  Date/Author: 2026-09-10 / Codex.
 
 - Decision: Fix generic generated case mapping, not variable-cache machinery.
   Rationale: Rust already caches statement snapshots and borrows lowercase

@@ -26,6 +26,24 @@ use super::*;
 use crate::kv_table::TableCharset;
 use tidb_hack::GoToLower;
 
+/// The folded schema/table identity, corresponding to Go's two `CIStr.L`
+/// fields. Construct once when resolving retained plan metadata; raw-name
+/// catalog entrypoints normalize through the same constructor.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) struct CatalogTableKey {
+    database: String,
+    table: String,
+}
+
+impl CatalogTableKey {
+    pub(crate) fn new(database: &str, table: &str) -> Self {
+        Self {
+            database: database.go_to_lower(),
+            table: table.go_to_lower(),
+        }
+    }
+}
+
 pub(crate) mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
 mod statistics;
@@ -332,9 +350,9 @@ impl SequenceSnapshot {
 /// the planner must see only immutable table/view metadata.
 pub(crate) struct PlannerCatalog {
     current_database: String,
-    databases: std::collections::BTreeSet<String>,
-    tables: Vec<tidb_planner::plan_builder::catalog::SourceTable>,
-    views: Vec<tidb_planner::plan_builder::catalog::SourceView>,
+    databases: std::collections::HashSet<String>,
+    tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
+    views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
     latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
 }
 
@@ -348,14 +366,11 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         db_name: &str,
         table_name: &str,
     ) -> Option<&tidb_planner::plan_builder::catalog::SourceTable> {
-        self.tables.iter().find(|table| {
-            table.db_name.eq_ignore_ascii_case(db_name)
-                && table.table_name.eq_ignore_ascii_case(table_name)
-        })
+        self.tables.get(&CatalogTableKey::new(db_name, table_name))
     }
 
     fn database_exists(&self, db_name: &str) -> bool {
-        self.databases.contains(&db_name.to_ascii_lowercase())
+        self.databases.contains(&db_name.go_to_lower())
     }
 
     fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
@@ -367,10 +382,7 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         db_name: &str,
         view_name: &str,
     ) -> Option<&tidb_planner::plan_builder::catalog::SourceView> {
-        self.views.iter().find(|view| {
-            view.db_name.eq_ignore_ascii_case(db_name)
-                && view.view_name.eq_ignore_ascii_case(view_name)
-        })
+        self.views.get(&CatalogTableKey::new(db_name, view_name))
     }
 }
 
@@ -1201,10 +1213,14 @@ impl Catalog {
     }
 
     pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
+        self.get_by_key(&CatalogTableKey::new(database, name))
+    }
+
+    pub(crate) fn get_by_key(&self, key: &CatalogTableKey) -> Option<&TableEntry> {
         self.databases
-            .get(&database.go_to_lower())?
+            .get(&key.database)?
             .tables
-            .get(&name.go_to_lower())
+            .get(&key.table)
             .map(|entry| &**entry)
     }
 
@@ -1216,10 +1232,17 @@ impl Catalog {
         database: &str,
         name: &str,
     ) -> Option<&mut TableEntry> {
+        self.get_mut_by_key_for_read(&CatalogTableKey::new(database, name))
+    }
+
+    pub(crate) fn get_mut_by_key_for_read(
+        &mut self,
+        key: &CatalogTableKey,
+    ) -> Option<&mut TableEntry> {
         let entry = self
-            .database_mut(&database.to_ascii_lowercase())?
+            .database_mut(&key.database)?
             .tables
-            .get_mut(&name.to_ascii_lowercase())?;
+            .get_mut(&key.table)?;
         Some(Arc::make_mut(entry))
     }
 
@@ -1272,10 +1295,10 @@ impl Catalog {
         };
 
         let databases = self.databases.keys().cloned().collect();
-        let mut tables = Vec::new();
-        let mut views = Vec::new();
+        let mut tables = HashMap::new();
+        let mut views = HashMap::new();
         let mut synthetic_table_id = -1_i64;
-        for database in self.databases.values() {
+        for (database_key, database) in self.databases.iter() {
             let resolve_db_info = tidb_model::GoShared::new(tidb_model::DBInfo {
                 id: database.id,
                 name: tidb_ast::CiString::new(database.name.clone()),
@@ -1285,6 +1308,12 @@ impl Catalog {
                 ..tidb_model::DBInfo::default()
             });
             for (entry_name, entry) in &database.tables {
+                // The owning catalog already stores Go-folded keys. Preserve
+                // those keys rather than folding original metadata again.
+                let key = || CatalogTableKey {
+                    database: database_key.clone(),
+                    table: entry_name.clone(),
+                };
                 match &**entry {
                     TableEntry::Kv(table) => {
                         let columns = table
@@ -1401,7 +1430,7 @@ impl Catalog {
                             ..SourceTable::default()
                         };
                         source_table.attach_resolve_metadata(resolve_db_info.clone());
-                        tables.push(source_table);
+                        tables.insert(key(), source_table);
                     }
                     TableEntry::Mem(table) => {
                         let mut source_table = SourceTable {
@@ -1425,37 +1454,36 @@ impl Catalog {
                             ..SourceTable::default()
                         };
                         source_table.attach_resolve_metadata(resolve_db_info.clone());
-                        tables.push(source_table);
+                        tables.insert(key(), source_table);
                         synthetic_table_id -= 1;
                     }
-                    TableEntry::View(view) => views.push(SourceView {
-                        db_name: database.name.clone(),
-                        view_name: view.name.clone(),
-                        select_sql: view.select_sql.clone(),
-                        columns: view
-                            .columns
-                            .iter()
-                            .enumerate()
-                            .map(|(offset, (name, ret_type))| SourceColumn {
-                                id: offset as i64 + 1,
-                                name: name.clone(),
-                                offset,
-                                ret_type: ret_type.clone(),
-                                ..SourceColumn::default()
-                            })
-                            .collect(),
-                        ..SourceView::default()
-                    }),
+                    TableEntry::View(view) => {
+                        views.insert(
+                            key(),
+                            SourceView {
+                                db_name: database.name.clone(),
+                                view_name: view.name.clone(),
+                                select_sql: view.select_sql.clone(),
+                                columns: view
+                                    .columns
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(offset, (name, ret_type))| SourceColumn {
+                                        id: offset as i64 + 1,
+                                        name: name.clone(),
+                                        offset,
+                                        ret_type: ret_type.clone(),
+                                        ..SourceColumn::default()
+                                    })
+                                    .collect(),
+                                ..SourceView::default()
+                            },
+                        );
+                    }
                     TableEntry::Sequence(_) => {}
                 }
             }
         }
-        tables.sort_by(|left, right| {
-            (&left.db_name, &left.table_name).cmp(&(&right.db_name, &right.table_name))
-        });
-        views.sort_by(|left, right| {
-            (&left.db_name, &left.view_name).cmp(&(&right.db_name, &right.view_name))
-        });
         PlannerCatalog {
             current_database: current_database.to_owned(),
             databases,
@@ -1518,13 +1546,9 @@ impl Catalog {
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
-        let entry = self
-            .database_mut(&database.to_ascii_lowercase())?
-            .tables
-            .get_mut(&name.to_ascii_lowercase())?;
         // Go's write paths build a new `TableInfo` rather than editing the
         // shared one; `make_mut` is the same copy-on-write at the entry level.
-        Some(Arc::make_mut(entry))
+        self.get_mut_in_for_read(database, name)
     }
 
     /// The catalog's mutation counter.
