@@ -1163,7 +1163,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
 		metrics.GlobalMemArbitratorSubEvents.PoolInitReserve.Inc()
-	} else if m.preMaxMem > 0 {
+	} else if m.preMaxMem > 0 && m.preMaxMem < m.limit()/10 {
 		metrics.GlobalMemArbitratorSubEvents.PoolInitHitDigest.Inc()
 		m.reserveBigBudget(m.preMaxMem)
 	} else if m.bigBudgetUsed() > m.poolAllocStats.SmallPoolLimit {
