@@ -58,6 +58,61 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 
 追加提交 `5de8ec9007`：修正前一提交中的分支方向，evicted payload（`!is_full_load`）现在进入 `load_item(..., full_load=true)`，避免仅保留 metadata。已推送到 `origin/hparser-integration`。
 
+## 2026-09-10 固定 Go master 的完整 access-path 结果
+
+已建立干净 worktree `/tmp/tidb-go-master-oracle`，固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`。构建命令 `env -u LDFLAGS make server` 退出 0，`bin/tidb-server -V` 确认该 hash、Go 1.26.2、无 dirty 后缀；`git status --short` 为空。首次直接 `make server` 因本机 LDFLAGS 中的 ICU `-L...` 参数被传给 Go linker 而失败，仅清除该命令的环境变量即解决，未修改 Go 源码。
+
+master Go 与 PD v8.5.6 组合不能 bootstrap：PD 返回 `Unimplemented: unknown method QueryRegion for service pdpb.PD`。该运行日志为 `/tmp/access-master-diff.log`。新增 `ACCESS_PATH_CLUSTER_VERSION` 参数，允许选择兼容的 PD/TiKV，默认值仍为 v8.5.6，输出中明确记录版本。随后使用本机已有 nightly：PD `d71c0396ac26eb96a969c28b0efdafef9dd5aac3`，TiKV `1167092fea81ff8cb16ac49779f5702f7e225e79`。
+
+完整运行命令：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-master-nightly-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-master-nightly-diff.log 2>&1
+```
+
+结果：**0 failure(s), 1 divergent choice(s)，退出 1**。Go/Rust 的 pseudo 复合索引均为 1.25；ANALYZE 后 covering 查询均为 500；大表查询返回行对照通过。唯一差异为 ANALYZE 后 `SELECT * FROM t WHERE bucket=1 AND rare=7`：Go 使用 `idx_cover(bucket,rare)`，Rust 使用 `idx_rare(rare)`，双方 estRows 都为 1。该差异仍保留为失败，尚需对照 master skyline pruning 和 cost 调用链修复。不能把旧运行的 2 failures / 7 divergences 继续描述为此次 master 基准的结果，也不能仅凭一次运行将所有历史统计加载差异都归因于版本。
+
+节点日志位于 `/tmp/access-master-nightly-evidence/`；此次没有改动 Rust 生产实现或 SQL 断言。验证 profile 为 Ready 范围：`make lint`、`bash -n rust/scripts/run-realtikv-access-path.sh`、`bash rust/scripts/test-access-path-readiness.sh` 均退出 0。整体目标仍未完成，其余脚本和 Go integration suites 也不能据此视为通过。
+
+## 2026-09-10 access-path 的 Go 基准版本缺口
+
+脚本的 Go 节点固定为 TiUP **v8.5.6**，不是用户要求的 Go master。对照 `origin/master` 的 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，`pkg/planner/cardinality/selectivity.go` 在返回前明确执行 `ret = max(ret, 1.0/float64(coll.RealtimeCount))`。该下限来自 `11b8149926`（2026-05-28，#67841）。随后 `pkg/planner/core/stats.go::adjustCountAfterAccess` 将较低的路径估算调整为 `ds.StatsInfo().RowCount / cost.SelectionFactor`。
+
+因此 `bucket=1 AND rare=7` 的原始 pseudo index 估算虽为 `0.10`，经 master 一行下限和 `0.8` selection factor 调整后为 `1.25`。Rust 现有结果与这段 master 源码一致，不能为追平 v8.5.6 的 `0.10` 删除下限。本轮保留生产估算逻辑，并增加 EXPLAIN characterization 测试 `pseudo_composite_index_applies_master_selectivity_floor`，核对实际 scan 节点（不是 reader 的 operator info 引用）及 idx_cover。
+
+脚本新增 `ACCESS_PATH_TIDB_SERVER`：指定可执行的 Go binary 后使用 TiUP 的 `--db.binpath`，并打印该 binary 的 `-V`；未指定时明确打印旧版本基准提示。PD/TiKV 仍为原版本，SQL 断言与 golden 均未修改。当前可见本地 Go binary 为 `7a8404bd17-dirty`，不能称为固定 master 的验证。尚需构建指定 master revision 并用此入口重跑，剩余 ANALYZE 后统计估算错误也未解决。
+
+验证：`RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib pseudo_composite_index_applies_master_selectivity_floor`；`bash -n rust/scripts/run-realtikv-access-path.sh`；`bash rust/scripts/test-access-path-readiness.sh`；`git diff --check`；`make lint`。这是基准版本取证和测试入口改进，不是全部 access-path failures 的完成声明。
+
+## 2026-09-10 readiness 竞争修复与证据更正
+
+此前对话将一次 `never reported ready` 输出反复描述为已复现的服务端死锁，证据不足，应撤回。旧脚本只等待 TCP 端口开放，然后立即执行一次 ready 日志 grep；grep 失败就触发 EXIT trap 杀掉节点。因此日志停在 `mysql_tls` 不足以证明节点持续阻塞。
+
+Rust `sql_node.rs::ConcurrentSqlNode::bind` 在创建 memory runners 之前调用 `TcpListener::bind`，`cluster_session_node/boot.rs` 则在 bind 返回、安装 signal handler 后才输出 ready。端口可连接与 ready 日志之间存在正常时序窗口。Go source of truth `origin/master`（`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`）的 `pkg/server/server.go::Run` 同样先 `initTiDBListener`，随后启动网络 listener，最后才设置 `s.health.Store(true)`；TCP 可连接不是应用 ready 的充分条件。
+
+修改 `run-realtikv-access-path.sh`：端口开放后轮询原 ready 事件，最多等待 180 秒；进程退出立即失败，持续无 ready 仍超时失败并打印日志。未删除 ready 断言，未改动 Rust 服务启动或任何 SQL golden。
+
+回归 `test-access-path-readiness.sh` 从生产脚本提取实际启动检查代码，模拟端口已开放但 ready 延迟一秒。修复前退出 1，打印 `the Rust node never reported ready` 和 `mysql_tls`；修复后通过。另验证提前退出和活进程永久无 ready 都被拒绝，超时测试通过推进 Bash SECONDS 避免等待三分钟。
+
+验证命令与结果：
+
+```bash
+bash rust/scripts/test-access-path-readiness.sh
+# PASS: delayed ready; exited node rejected; stuck node rejected
+bash -n rust/scripts/run-realtikv-access-path.sh rust/scripts/test-access-path-readiness.sh
+git diff --check
+make lint
+# 均退出 0，使用 Ready 验证范围
+RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-readiness-fixed.log 2>&1
+```
+
+真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
+
 ## 2026-09-10 chunk panic 修复
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。

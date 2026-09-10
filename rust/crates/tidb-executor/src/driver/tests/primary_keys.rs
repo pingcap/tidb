@@ -377,6 +377,26 @@ fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
 }
 
 #[test]
+fn pseudo_composite_index_applies_master_selectivity_floor() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, \
+         INDEX idx_bucket(bucket), INDEX idx_rare(rare), INDEX idx_cover(bucket, rare))",
+        &mut catalog,
+    )
+    .unwrap();
+    let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog);
+    let scan = rows
+        .iter()
+        .find(|row| row.split('\t').next().unwrap().contains("IndexRangeScan"))
+        .unwrap();
+    assert!(scan.contains("idx_cover"), "{rows:?}");
+    // Go master selectivity.go floors the source at one row (11b8149926).
+    // core/stats.go::adjustCountAfterAccess then applies 1 / SelectionFactor.
+    assert_eq!(scan.split('\t').nth(1), Some("1.25"), "{rows:?}");
+}
+
+#[test]
 fn explain_uses_the_lowercase_field_name_identity() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)
