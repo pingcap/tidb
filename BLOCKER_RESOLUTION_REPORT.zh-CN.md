@@ -1,5 +1,37 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 prepared-write 原始 RealTiKV 门禁恢复
+
+脚本创建 realtikv-prepared-write-<pid>，清理却只允许旧 campaign28 前缀；
+Cargo 集成测试已合并为 all target，脚本仍指定旧独立 target。
+修复路径检查为精确数字 PID 标签，保留目录完全相等的约束；入口改为
+`--test all prepared_write_persists_realtikv_source::prepared_insert_and_update_persist_through_one_shared_authority -- --ignored --exact --nocapture`。
+未修改 SQL、持久化断言、authority 重建或 receipt 检查。
+
+新增 test-prepared-write-paths.sh 从生产脚本提取真实 TAG 和路径检查函数：
+修复前 production tag rejected（`/tmp/prepared-write-paths-red.log`）；
+修复后接受自身标签、拒绝无关目录和路径穿越。原清理自测保留且通过，
+验证清掉本次进程而无关进程仍存活。
+
+Ready 验证：
+
+```bash
+bash rust/scripts/test-prepared-write-paths.sh
+bash rust/scripts/run-realtikv-prepared-write.sh --self-test-cleanup
+bash -n rust/scripts/run-realtikv-prepared-write.sh rust/scripts/test-prepared-write-paths.sh
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-prepared-write.sh
+make lint
+git diff --check
+```
+
+均退出 0。真实 PD/TiKV v8.5.6、3 TiKV；结果日志
+`/tmp/prepared-write-restored.log`：cluster_id=7683983192718641636、
+table_id=528491、handle=10、final_balance=107、write_authority_id=1、
+restart_authority_id=2。tag realtikv-prepared-write-80814 的 PD/TiKV 进程
+和目录已清理。`/tmp/prepared-write-harness-lint.log` 为 lint 证据。
+此为原命令的启动/清理 harness 修复，不涉及 Go SQL 语义变更，也不等同于
+完整 Go package 移植完成；其余 RealTiKV 和 Go integration 门禁仍待推进。
+
 ## 2026-09-11 INSERT 快照测试显式选择立即检查模式
 
 最后的 `an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read`

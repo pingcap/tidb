@@ -44,7 +44,7 @@ validate_owned_paths() {
   fi
   local tiup_data="${TIUP_HOME:-${HOME}/.tiup}/data"
   [[ "${TAG_DIR}" == "${tiup_data}/${TAG}" ]] \
-    && [[ "${TAG}" == campaign28-prepared-write-* ]]
+    && [[ "${TAG}" =~ ^realtikv-prepared-write-[0-9]+$ ]]
 }
 
 cleanup_resources() {
@@ -205,8 +205,8 @@ fi
 cd "${RUST_ROOT}"
 PREPARED_WRITE_PD_ADDR="${PD_ADDR}" \
   CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-exec \
-    --test prepared_write_persists_realtikv_source \
-    prepared_insert_and_update_persist_through_one_shared_authority \
+    --test all \
+    prepared_write_persists_realtikv_source::prepared_insert_and_update_persist_through_one_shared_authority \
     -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 
