@@ -23,14 +23,17 @@
 //! transaction ends, when the lock is gone, or when the transaction has lived
 //! longer than any lock may be trusted.
 //!
-//! The shared TiKV session is thread-local, so the keep-alive thread cannot
-//! borrow the caller's session; it builds its own inside the thread from the
-//! supplied factory. That is why this takes a factory rather than a sender.
+//! Like client-go's ttlManager, each transaction owns a close channel, not a
+//! thread. Timer waits share the execution scheduler. Synchronous timestamp
+//! and heartbeat calls release the scheduler worker while they are blocked.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
+use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use tokio::time::{Instant, MissedTickBehavior};
 
 /// TTL written into a managed lock, matching client-go's `ManagedLockTTL`.
 pub const MANAGED_LOCK_TTL_MS: u64 = 20_000;
@@ -42,9 +45,7 @@ pub const MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
 const TSO_LOGICAL_BITS: u32 = 18;
 
-/// The one capability a keep-alive thread needs from a TiKV session.
-///
-/// It is built inside the thread, so it need not be `Send`; the factory is.
+/// The timestamp and lock-refresh capabilities owned by a keep-alive task.
 pub trait TxnHeartBeatSender {
     /// Returns a fresh real TSO used to measure transaction uptime.
     fn current_ts(&self) -> Result<u64, String>;
@@ -111,39 +112,13 @@ pub struct KeepAliveReport {
     pub stop: KeepAliveStop,
 }
 
-#[derive(Default)]
-struct CloseSignal {
-    closed: Mutex<bool>,
-    changed: Condvar,
-}
-
-impl CloseSignal {
-    fn close(&self) {
-        let mut closed = self.closed.lock().expect("keep-alive close flag poisoned");
-        *closed = true;
-        self.changed.notify_all();
-    }
-
-    /// Sleeps up to `tick`, returning `true` if the manager was closed.
-    fn wait_tick(&self, tick: Duration) -> bool {
-        let closed = self.closed.lock().expect("keep-alive close flag poisoned");
-        if *closed {
-            return true;
-        }
-        let (closed, _) = self
-            .changed
-            .wait_timeout(closed, tick)
-            .expect("keep-alive close flag poisoned");
-        *closed
-    }
-}
-
-/// Owner handle for one running primary-lock keep-alive thread.
+/// Owner handle for one primary-lock keep-alive task.
 ///
 /// Dropping the handle closes the loop, so a transaction that ends by any path
 /// — commit, rollback, or unwinding — stops refreshing its lock.
 pub struct LockKeepAlive {
-    signal: Arc<CloseSignal>,
+    // Dropping the sender closes the receiver, including during unwinding.
+    close: Option<oneshot::Sender<()>>,
     /// client-go's `lockCtx.LockExpired`, raised by the loop and read by the
     /// session BEFORE it runs the next statement; see [`Self::lock_expired`].
     lock_expired: Arc<AtomicBool>,
@@ -153,8 +128,8 @@ pub struct LockKeepAlive {
 impl LockKeepAlive {
     /// Starts refreshing `primary`'s TTL until the returned handle is closed.
     ///
-    /// `make_sender` runs on the new thread, which is where the thread-local
-    /// TiKV session must be created.
+    /// The task owns its sender while sharing process-level transport and
+    /// routing capabilities with other transactions.
     pub fn start<F, S>(
         primary: Vec<u8>,
         start_ts: u64,
@@ -163,7 +138,7 @@ impl LockKeepAlive {
     ) -> Result<Self, String>
     where
         F: FnOnce() -> Result<S, String> + Send + 'static,
-        S: TxnHeartBeatSender,
+        S: TxnHeartBeatSender + Send + 'static,
     {
         if primary.is_empty() {
             return Err("a keep-alive requires the transaction's primary key".to_owned());
@@ -174,25 +149,15 @@ impl LockKeepAlive {
         if tick.is_zero() {
             return Err("a keep-alive requires a nonzero tick".to_owned());
         }
-        let signal = Arc::new(CloseSignal::default());
-        let thread_signal = Arc::clone(&signal);
+        let runtime = crate::rpc::execution_runtime()?;
+        let (close, closed) = oneshot::channel();
         let lock_expired = Arc::new(AtomicBool::new(false));
-        let thread_expired = Arc::clone(&lock_expired);
-        let worker = std::thread::Builder::new()
-            .name(format!("txn-ttl-{start_ts}"))
-            .spawn(move || {
-                keep_alive_loop(
-                    &thread_signal,
-                    &thread_expired,
-                    make_sender,
-                    &primary,
-                    start_ts,
-                    tick,
-                )
-            })
-            .map_err(|error| format!("cannot spawn keep-alive thread: {error}"))?;
+        let task_expired = Arc::clone(&lock_expired);
+        let worker = runtime.spawn(async move {
+            keep_alive_loop(closed, &task_expired, make_sender, &primary, start_ts, tick).await
+        });
         Ok(Self {
-            signal,
+            close: Some(close),
             lock_expired,
             worker: Some(worker),
         })
@@ -211,7 +176,7 @@ impl LockKeepAlive {
     /// (Go `session.checkTxnAborted` -> `kv.ErrLockExpire`, 8229).
     ///
     /// It is a live flag rather than the [`KeepAliveReport`] that
-    /// [`Self::close`] answers, because the report arrives when the
+    /// [`Self::close_and_wait`] answers, because the report arrives when the
     /// transaction ENDS and the whole point is to stop it executing before
     /// that.
     #[must_use]
@@ -219,28 +184,26 @@ impl LockKeepAlive {
         self.lock_expired.load(Ordering::Relaxed)
     }
 
-    /// Stops the loop and returns its evidence.
-    pub fn close(mut self) -> KeepAliveReport {
-        self.signal.close();
+    /// Signals the loop to stop without waiting for an in-flight request,
+    /// matching client-go's ttlManager.close. Drop has the same behavior.
+    pub fn close(self) {
+        drop(self);
+    }
+
+    /// Stops the loop and explicitly waits for its final report. Validation
+    /// and draining owners may await this; transaction close paths must not.
+    pub async fn close_and_wait(mut self) -> KeepAliveReport {
+        self.close.take();
         self.worker
             .take()
             .expect("a live handle always owns its worker")
-            .join()
-            .expect("keep-alive thread panicked")
+            .await
+            .expect("keep-alive task panicked")
     }
 }
 
-impl Drop for LockKeepAlive {
-    fn drop(&mut self) {
-        if let Some(worker) = self.worker.take() {
-            self.signal.close();
-            let _ = worker.join();
-        }
-    }
-}
-
-fn keep_alive_loop<F, S>(
-    signal: &CloseSignal,
+async fn keep_alive_loop<F, S>(
+    mut closed: oneshot::Receiver<()>,
     lock_expired: &AtomicBool,
     make_sender: F,
     primary: &[u8],
@@ -263,47 +226,76 @@ where
             return report;
         }
     };
+    let mut ticker = tokio::time::interval_at(Instant::now() + tick, tick);
+    // Go's ticker drops missed ticks rather than issuing a catch-up burst.
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut consecutive_failures = 0_u32;
-    while !signal.wait_tick(tick) {
-        let now = match sender.current_ts() {
-            Ok(now) => now,
-            Err(error) => {
-                report.stop = KeepAliveStop::TimestampFailed(error);
-                return report;
-            }
-        };
-        let uptime_ms = transaction_uptime_ms(start_ts, now);
-        if uptime_ms > MAX_TXN_TTL_MS {
-            // client-go `2pc.go`: "the pessimistic locks may expire if the ttl
-            // manager has timed out, set `LockExpired` flag so that this
-            // transaction could only commit or rollback with no more statement
-            // executions". Raised BEFORE the loop returns, so the flag is
-            // already up when the next statement reads it.
-            lock_expired.store(true, Ordering::Relaxed);
-            report.stop = KeepAliveStop::LifetimeExceeded { uptime_ms };
-            return report;
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut closed => break,
+            _ = ticker.tick() => {}
         }
-        let advised_ttl_ms = uptime_ms.saturating_add(MANAGED_LOCK_TTL_MS);
-        match sender.send_heart_beat(primary, start_ts, advised_ttl_ms) {
-            Ok(_) => {
-                consecutive_failures = 0;
-                report.confirmed_heart_beats = report.confirmed_heart_beats.saturating_add(1);
-                report.last_advised_ttl_ms = advised_ttl_ms;
-            }
-            Err(HeartBeatFailure::Rejected(detail)) => {
-                report.stop = KeepAliveStop::Rejected(detail);
-                return report;
-            }
-            Err(HeartBeatFailure::Transport(detail)) => {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures > MAX_CONSECUTIVE_FAILURES {
-                    report.stop = KeepAliveStop::ConsecutiveFailures(detail);
-                    return report;
-                }
-            }
+        let stop = tokio::task::block_in_place(|| {
+            heartbeat_tick(
+                &mut sender,
+                lock_expired,
+                primary,
+                start_ts,
+                &mut report,
+                &mut consecutive_failures,
+            )
+        });
+        if let Some(stop) = stop {
+            report.stop = stop;
+            break;
         }
     }
     report
+}
+
+fn heartbeat_tick<S: TxnHeartBeatSender>(
+    sender: &mut S,
+    lock_expired: &AtomicBool,
+    primary: &[u8],
+    start_ts: u64,
+    report: &mut KeepAliveReport,
+    consecutive_failures: &mut u32,
+) -> Option<KeepAliveStop> {
+    let now = match sender.current_ts() {
+        Ok(now) => now,
+        Err(error) => {
+            return Some(KeepAliveStop::TimestampFailed(error));
+        }
+    };
+    let uptime_ms = transaction_uptime_ms(start_ts, now);
+    if uptime_ms > MAX_TXN_TTL_MS {
+        // client-go `2pc.go`: "the pessimistic locks may expire if the ttl
+        // manager has timed out, set `LockExpired` flag so that this
+        // transaction could only commit or rollback with no more statement
+        // executions". Raised BEFORE the loop returns, so the flag is
+        // already up when the next statement reads it.
+        lock_expired.store(true, Ordering::Relaxed);
+        return Some(KeepAliveStop::LifetimeExceeded { uptime_ms });
+    }
+    let advised_ttl_ms = uptime_ms.saturating_add(MANAGED_LOCK_TTL_MS);
+    match sender.send_heart_beat(primary, start_ts, advised_ttl_ms) {
+        Ok(_) => {
+            *consecutive_failures = 0;
+            report.confirmed_heart_beats = report.confirmed_heart_beats.saturating_add(1);
+            report.last_advised_ttl_ms = advised_ttl_ms;
+        }
+        Err(HeartBeatFailure::Rejected(detail)) => {
+            return Some(KeepAliveStop::Rejected(detail));
+        }
+        Err(HeartBeatFailure::Transport(detail)) => {
+            *consecutive_failures = consecutive_failures.saturating_add(1);
+            if *consecutive_failures > MAX_CONSECUTIVE_FAILURES {
+                return Some(KeepAliveStop::ConsecutiveFailures(detail));
+            }
+        }
+    }
+    None
 }
 
 /// Milliseconds between two TSO values, using only their physical halves.
@@ -314,6 +306,7 @@ fn transaction_uptime_ms(start_ts: u64, current_ts: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
     use std::time::Instant;
 
     use super::*;
@@ -403,7 +396,7 @@ mod tests {
                 .expect("keep-alive starts");
         wait_until(|| advised.lock().unwrap().len() >= 2);
 
-        let report = keep_alive.close();
+        let report = futures::executor::block_on(keep_alive.close_and_wait());
 
         assert_eq!(report.confirmed_heart_beats, 1);
         // Uptime is zero at this clock, so the advised TTL is the managed base.
@@ -426,7 +419,7 @@ mod tests {
                 .expect("keep-alive starts");
         wait_until(|| advised.lock().unwrap().len() as u64 > u64::from(MAX_CONSECUTIVE_FAILURES));
 
-        let report = keep_alive.close();
+        let report = futures::executor::block_on(keep_alive.close_and_wait());
 
         assert_eq!(report.confirmed_heart_beats, 0);
         assert!(matches!(report.stop, KeepAliveStop::ConsecutiveFailures(_)));
@@ -452,7 +445,7 @@ mod tests {
                 .expect("keep-alive starts");
         wait_until(|| ts_calls.load(Ordering::SeqCst) >= 1);
 
-        let report = keep_alive.close();
+        let report = futures::executor::block_on(keep_alive.close_and_wait());
 
         assert!(matches!(
             report.stop,
@@ -474,7 +467,7 @@ mod tests {
     /// abort transactions Go keeps running.
     #[test]
     fn only_the_lifetime_bound_raises_lock_expired_and_it_is_live() {
-        let expired_after = |clock_ms: u64, reject_after: u64, fail: bool, ready: usize| {
+        let expired_after = |clock_ms: u64, reject_after: u64, fail: bool| {
             let advised = Arc::new(Mutex::new(Vec::new()));
             let ts_calls = Arc::new(AtomicU64::new(0));
             let sender = ScriptedSender {
@@ -487,29 +480,25 @@ mod tests {
             let keep_alive =
                 LockKeepAlive::start(b"primary".to_vec(), START_TS, TICK, move || Ok(sender))
                     .expect("keep-alive starts");
-            wait_until(|| {
-                ts_calls.load(Ordering::SeqCst) >= 1 && advised.lock().unwrap().len() >= ready
-            });
+            wait_until(|| keep_alive.worker.as_ref().unwrap().is_finished());
             // Read WHILE the handle is alive: the session has to learn this
             // before the transaction ends, which is the whole point.
             let live = keep_alive.lock_expired();
-            (live, keep_alive.close().stop)
+            (
+                live,
+                futures::executor::block_on(keep_alive.close_and_wait()).stop,
+            )
         };
 
-        let (live, stop) = expired_after(1_000 + MAX_TXN_TTL_MS + 1, 0, false, 0);
+        let (live, stop) = expired_after(1_000 + MAX_TXN_TTL_MS + 1, 0, false);
         assert!(matches!(stop, KeepAliveStop::LifetimeExceeded { .. }));
         assert!(live, "the session must be able to read this before close");
 
-        let (live, stop) = expired_after(1_000, 1, false, 2);
+        let (live, stop) = expired_after(1_000, 1, false);
         assert!(matches!(stop, KeepAliveStop::Rejected(_)));
         assert!(!live, "a gone lock is not client-go's LockExpired");
 
-        let (live, stop) = expired_after(
-            1_000,
-            0,
-            true,
-            usize::try_from(MAX_CONSECUTIVE_FAILURES).expect("a small budget") + 1,
-        );
+        let (live, stop) = expired_after(1_000, 0, true);
         assert!(matches!(stop, KeepAliveStop::ConsecutiveFailures(_)));
         assert!(!live, "a failing transport is not client-go's LockExpired");
     }
@@ -531,7 +520,54 @@ mod tests {
         )
         .expect("keep-alive starts");
 
-        assert_eq!(keep_alive.close().stop, KeepAliveStop::Closed);
+        assert_eq!(
+            futures::executor::block_on(keep_alive.close_and_wait()).stop,
+            KeepAliveStop::Closed
+        );
+
+        // client-go ttlManager.close closes a channel; it does not join an
+        // in-flight timestamp/heartbeat request before releasing the owner.
+        struct SlowSender {
+            entered: std::sync::mpsc::SyncSender<()>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl TxnHeartBeatSender for SlowSender {
+            fn current_ts(&self) -> Result<u64, String> {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
+                Ok(START_TS)
+            }
+            fn send_heart_beat(
+                &mut self,
+                _: &[u8],
+                _: u64,
+                ttl: u64,
+            ) -> Result<u64, HeartBeatFailure> {
+                Ok(ttl)
+            }
+        }
+        let (entered, started) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::sync_channel(1);
+        let keep_alive = LockKeepAlive::start(b"primary".to_vec(), START_TS, TICK, move || {
+            Ok(SlowSender {
+                entered,
+                release: released,
+            })
+        })
+        .unwrap();
+        started.recv_timeout(Duration::from_secs(10)).unwrap();
+        let (finished, closed) = std::sync::mpsc::sync_channel(1);
+        let owner = std::thread::spawn(move || {
+            drop(keep_alive);
+            finished.send(()).unwrap();
+        });
+        let closed_without_rpc = closed.recv_timeout(Duration::from_secs(1)).is_ok();
+        release.send(()).unwrap();
+        owner.join().unwrap();
+        assert!(
+            closed_without_rpc,
+            "Go closes the manager without waiting for its RPC"
+        );
     }
 
     #[test]
@@ -542,7 +578,7 @@ mod tests {
         .expect("keep-alive starts");
 
         assert!(matches!(
-            keep_alive.close().stop,
+            futures::executor::block_on(keep_alive.close_and_wait()).stop,
             KeepAliveStop::SenderUnavailable(_)
         ));
     }

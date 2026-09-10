@@ -1,0 +1,258 @@
+{
+  "status": "TTL task ownership and Go-shaped close verified; no overall performance gain accepted.",
+  "base_revision": "fea918f29dccb2efadd2531914fc3cafc4ecf93c",
+  "documentation_only_merge": "9197fccf9bf8c4cc69b9d5cf84e2b1558de8c69b",
+  "source_authority": "Pinned client-go e4905600583b txnkv/transaction/2pc.go: ttlManager.run/close and keepAlive. Go starts a goroutine, waits for ManagedLockTTL/2 ticks, closes a channel without joining and tolerates ten consecutive transport failures before stopping on the eleventh.",
+  "change": "Replace one OS thread and Condvar per transaction with a task on the existing execution runtime, a scheduler timer and a close channel. Preserve the existing synchronous TSO/heartbeat body behind block_in_place, expiry flag and failure decisions. Production close/drop no longer wait for an in-flight request; explicit async close_and_wait retains validation reports.",
+  "files": [
+    "rust/crates/tidb-txnkv/src/transaction/ttl.rs",
+    "rust/crates/tidb-txnkv/src/transaction/coordinator/opener.rs",
+    "rust/crates/tidb-txnkv/src/read_runtime.rs",
+    "rust/crates/tidb-exec/src/multi_statement_transaction.rs",
+    "rust/crates/tidb-txnkv/tests/pessimistic_lock_realtikv_source.rs"
+  ],
+  "validation": {
+    "profile": "Ready",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --manifest-path rust/Cargo.toml --offline --locked --release -j12 -p tidb-txnkv --lib -- transaction::ttl::tests::closing_a_healthy_keep_alive_is_the_normal_end --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv -p tidb-exec --lib --test all --no-fail-fast -- transaction::ttl:: pessimistic_lock lock_expire multi_statement --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "ruby /private/tmp/tidb-ttl-task.SRHWlp/real-lock.rb",
+      "ruby /private/tmp/tidb-ttl-task.SRHWlp/verify.rb",
+      "python3 /private/tmp/tidb-ttl-task.SRHWlp/profile-ttl.py /private/tmp/tidb-hotpath.q5gFVI/after-tpcc.trace /private/tmp/tidb-ttl-task.SRHWlp/after-tpcc.trace",
+      "ruby /private/tmp/tidb-ttl-task.SRHWlp/verify-cleanup.rb",
+      "git diff --check"
+    ],
+    "working_directory": "First command and make/git at checkout root; other Cargo commands from rust/.",
+    "results": "Close-during-RPC fails before and passes after. Existing TTL suite: eight pass. Final concurrent batch: 61 pass, four ignored; two ignored real-TiKV proofs executed separately and pass. Release build, all-target check, formatting and lint pass. No new test function; existing close fixture extended. Existing expiry test waits for task completion before reading its published flag.",
+    "real_tikv": "Disposable three-TiKV cluster: four heartbeats confirmed, advised TTL 20801 ms, contended lock rejected until holder commit, released key reacquired, fair-locking conflict and release pass. Retained real-lock-tests.log. Playground realtikv-pessimistic-lock-93491 removed, TiUP status empty and ports 46379/64160/64161/64162 closed.",
+    "artifacts": "/private/tmp/tidb-ttl-task.SRHWlp",
+    "logs": [
+      "close-before.log",
+      "ttl-after.log",
+      "scoped-tests.log",
+      "final-tests.log",
+      "final-check.log",
+      "build.log",
+      "lint.log",
+      "real-lock-tests.log",
+      "live.log",
+      "ttl-profiles.jsonl",
+      "cleanup.json"
+    ],
+    "scope": "Live binary precedes later test synchronization and comment-only cleanup; production lifecycle behavior is unchanged. Source includes a documentation-only collaborator fast-forward. Full workspace tests and complete Go-package parity are not claimed."
+  },
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-ttl-task.SRHWlp/control-server",
+      "sha256": "f75c3d23f0c3a6d8ef7aeaa2af7a165a6e8a01f42d5af90c4d275b18777b0a11"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-ttl-task.SRHWlp/candidate-server",
+      "sha256": "309cf52f50108e80981d5a83e15d8f12f3166cb9564e1f2256af9e84fca4029c"
+    }
+  },
+  "workloads": {
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "sysbench_events": 84000,
+    "tpcc_events": 36000,
+    "tpcc_profile_events": 32000,
+    "configuration": "Sysbench: 6000 measured + 1000 warmup, 100000 rows, PS auto, seed 1, one/eight/32 clients. TPC-C: 6000 measured per sample, eight clients, one warehouse, seed 1; corrected measured driver SHA 9c558a7ea42ace84d653c9f6c6de4a062a1e2c80c6d6159653ba45a0916dda07.",
+    "columns": [
+      "elapsed seconds",
+      "SQL CPU seconds",
+      "sysbench p95 milliseconds or null"
+    ],
+    "sysbench": [
+      [
+        "go/8",
+        [
+          [
+            3.1876,
+            13.950000000000003,
+            4.65
+          ],
+          [
+            3.1981,
+            14.039999999999992,
+            4.65
+          ]
+        ]
+      ],
+      [
+        "after/1",
+        [
+          [
+            12.5085,
+            7.590000000000001,
+            2.22
+          ],
+          [
+            12.7651,
+            7.76,
+            2.26
+          ]
+        ]
+      ],
+      [
+        "after/8",
+        [
+          [
+            3.3973,
+            11.43,
+            4.91
+          ],
+          [
+            3.4076,
+            11.43,
+            4.91
+          ]
+        ]
+      ],
+      [
+        "after/32",
+        [
+          [
+            2.0989,
+            12.170000000000002,
+            12.3
+          ],
+          [
+            2.1248,
+            12.379999999999999,
+            12.52
+          ]
+        ]
+      ],
+      [
+        "before/1",
+        [
+          [
+            12.6394,
+            7.73,
+            2.26
+          ],
+          [
+            12.6774,
+            7.75,
+            2.26
+          ]
+        ]
+      ],
+      [
+        "before/8",
+        [
+          [
+            3.4049,
+            11.440000000000001,
+            4.91
+          ],
+          [
+            3.4043,
+            11.459999999999999,
+            4.91
+          ]
+        ]
+      ],
+      [
+        "before/32",
+        [
+          [
+            2.0732,
+            11.900000000000002,
+            12.08
+          ],
+          [
+            2.0822,
+            11.970000000000002,
+            12.3
+          ]
+        ]
+      ]
+    ],
+    "tpcc": [
+      [
+        "go/8",
+        [
+          [
+            6.899998999986565,
+            16.309999999999995,
+            null
+          ],
+          [
+            7.414913000015076,
+            16.189999999999998,
+            null
+          ]
+        ]
+      ],
+      [
+        "after/8",
+        [
+          [
+            7.1160970000200905,
+            11.880000000000003,
+            null
+          ],
+          [
+            7.487278999993578,
+            11.770000000000003,
+            null
+          ]
+        ]
+      ],
+      [
+        "before/8",
+        [
+          [
+            7.246749999991152,
+            12.079999999999998,
+            null
+          ],
+          [
+            7.327909999992698,
+            12.079999999999998,
+            null
+          ]
+        ]
+      ]
+    ],
+    "parity": "Exact measured counts and transaction mixes, all eleven TPC-C consistency conditions, and bounded Go fixture digest ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c pass.",
+    "auto_analyze": [
+      "1",
+      0,
+      "1"
+    ],
+    "interpretation": "TPC-C SQL CPU averages 11.825 s versus 12.08 s (about 2.1% lower), but elapsed ranges overlap. Candidate 32-client sysbench is slightly slower in both pairs. No overall throughput/latency promotion. Shared host: mediaanalysisd around 81% CPU and mds_stores 37-63% at endpoint snapshots; growing TPC-C fixture. Builds and trace analysis did not overlap timed runs."
+  },
+  "profiles": {
+    "before": {
+      "path": "/private/tmp/tidb-hotpath.q5gFVI/after-tpcc.trace",
+      "running_ns": 13873000000,
+      "ttl_inclusive_ns": 302000000,
+      "ttl_pthread_create_join_ns": 209000000
+    },
+    "after": {
+      "path": "/private/tmp/tidb-ttl-task.SRHWlp/after-tpcc.trace",
+      "running_ns": 11757000000,
+      "ttl_inclusive_ns": 57000000,
+      "ttl_pthread_create_join_ns": 0
+    },
+    "scope": "Running inclusive samples, not normalized equal-work windows. Earlier trace uses the preceding point-read binary, not the exact frozen f75c3d timing control. Zero means no observed samples; source inspection establishes removal of the per-transaction native spawn/join path. Do not infer a total-CPU speedup from profile totals."
+  },
+  "cleanup": "Eight owned benchmark PIDs absent, ten ports closed, auto-analyze restored. Fixture /private/tmp/tidb-live-workload.nIrZBe retained.",
+  "remaining": [
+    "Full sysbench/TPC-C throughput and latency goal remains open; no benchmark baseline promoted.",
+    "Synchronous TSO/heartbeat APIs still block only during actual renewal. Full heartbeat retry/kill/pipelined-transaction parity is outside this scoped lifecycle change.",
+    "LockKeepAlive::start now requires Send; close returns no report. Workspace consumers updated/checked; external consumers are unverified."
+  ]
+}

@@ -157,10 +157,7 @@ where
         }
     }
 
-    /// Creates one thread-local session from process-owned capabilities.
-    ///
-    /// The `Rc<RefCell<_>>` is allocated here, on the calling worker. It is
-    /// never stored in the process authority or moved between workers.
+    /// Creates one synchronized session lease over process-owned capabilities.
     pub fn open_session(&self) -> Result<SharedReadRuntime<C, L>, BackgroundRegionCacheError> {
         self.opener.open_session()
     }
@@ -218,7 +215,7 @@ where
     C: Clone,
     L: RegionLoader,
 {
-    /// Creates one thread-local session lease over process-owned capabilities.
+    /// Creates one synchronized session lease over process-owned capabilities.
     pub fn open_session(&self) -> Result<SharedReadRuntime<C, L>, BackgroundRegionCacheError> {
         SharedReadRuntime::from_shared_authorities(
             self.client.clone(),

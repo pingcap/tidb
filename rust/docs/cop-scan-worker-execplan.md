@@ -48,16 +48,25 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   pass correctness checks but show no accepted overall speedup. Post-merge:
   284 pass, five baseline-identical view failures; build/check/Ready lint pass.
   Evidence and exact revision boundaries: benchmarks/point-read-owner-validation.json.
-- [ ] Align transaction keep-alive task ownership with pinned client-go's
+- [x] Implement transaction keep-alive task ownership using pinned client-go's
   ttlManager. Go starts a goroutine, ticks at ManagedLockTTL/2 and closes a
-  channel without joining. Rust transaction/ttl.rs still starts and joins an
-  OS thread per transaction. Current SharedReadRuntime and BackgroundRegionCache
-  use synchronized Arc owners; comments claiming Rc/thread-local ownership are
-  stale and must not be used to justify that thread. Trace blocking TSO and
-  heartbeat completion, then preserve cancellation, actual long-transaction
-  refresh and the live lock-expired flag when changing scheduling. Current
-  TPC-C profiling attributes 302 ms of 13.873 s sampled Running time to
-  keep-alive; this is a causal investigation target, not an accepted speedup.
+  channel without joining. Rust now uses the existing execution runtime,
+  a timer and a close channel. Removed Condvar/OS-thread ownership and stale
+  Rc/thread-local comments. The close-during-RPC case fails before and passes
+  after. Sixty-one transaction tests pass. The existing real-TiKV proof
+  confirms four heartbeats, contention/release and fair locking; its owned
+  playground is removed and PD/three TiKV endpoints are closed. Evidence:
+  /private/tmp/tidb-ttl-task.SRHWlp. Synchronous timestamp/heartbeat calls
+  release the scheduler worker while blocked; the live expiry flag remains.
+- [x] Finish matched sysbench/TPC-C and profile comparison for the TTL task.
+  Sixty-one selected tests, two real-TiKV proofs, build/check/Ready lint pass.
+  TPC-C SQL CPU is about 2.1% lower, but elapsed ranges overlap and 32-client
+  sysbench is slightly slower in both pairs. No performance baseline promotion.
+  Sampled TTL work falls from 302 ms to 57 ms; the former 209 ms native
+  create/join chain has no observed samples in the new trace. These windows
+  are diagnostic, not normalized equal work. Full goal acceptance remains open.
+  Receipt: benchmarks/ttl-task-validation.json. Eight owned benchmark PIDs
+  absent and ten ports closed; auto-analyze restored and fixture retained.
 
 - [x] Reproduce mutable/immutable catalog name disagreement in the retained
   prepared-point test: validation accepts `İΣ` as Go-folded `iσ`, but execution
@@ -557,6 +566,20 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+
+Decision (2026-09-10): replace the per-transaction keep-alive OS thread and
+Condvar with a task on the existing execution runtime and a close channel.
+SharedReadRuntime now uses Arc/Mutex and its production client/loader/PD bounds
+are Send + Sync, so the documented thread-local constraint no longer applies.
+Use a scheduler timer at the existing ManagedLockTTL/2 cadence. The synchronous
+timestamp and heartbeat calls must release the scheduler worker while blocking;
+do not run them on the transport event loop. Transaction close/drop only signals
+the task, matching client-go ttlManager.close. Retain an explicitly awaited
+report API for existing real-TiKV validation, not in transaction close paths.
+Prove close during a stalled request on the existing close fixture, retain
+lifetime/rejection/failure-budget coverage, and measure real lock refresh and
+matched sysbench/TPC-C before accepting any performance improvement.
+
 - Decision: Use a private CatalogTableKey with folded fields that cannot be
   constructed directly by callers. Keep original prepared names for public
   accessors and privilege/error consumers; never infer that plain strings are
@@ -737,6 +760,16 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+The TTL implementation's thread-local justification was stale: current
+SharedReadRuntime and BackgroundRegionCache retain synchronized Arc owners,
+and production capability bounds already require Send + Sync. Removing the
+per-transaction thread also exposes the old close contract: it blocks behind
+an in-flight timestamp call, unlike Go's close channel. The existing close
+fixture reproduces this before the edit. A task removes the native thread
+creation/join chains, but matched elapsed times still overlap. The desktop
+also runs mediaanalysisd at about 81% CPU and mds_stores at 37-63% at endpoint
+snapshots; do not promote these results to a whole-workload speedup.
 
 PointRead cannot blindly inherit the in-process backend's old deep-copy Clone:
 that would copy all rows on every prepared execution. MemStorage now shares an
@@ -1020,6 +1053,15 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+The TTL task increment follows Go's timer/close ownership, eliminates the
+Condvar and native thread per transaction, and preserves real lock renewal.
+Explicit async report collection remains only for validation/draining; normal
+transaction close/drop never waits for an in-flight request. The measured
+CPU reduction does not establish the broader throughput/latency goal. The
+next performance step must attribute remaining end-to-end waiting, not infer
+that removing more sampled CPU alone will improve throughput. Exact commands,
+revision boundaries and cleanup evidence are in benchmarks/ttl-task-validation.json.
 
 The point-read increment removes mutable catalog lookup from prepared execution
 and separates encoded unique-key preparation from storage consumption, without

@@ -345,7 +345,7 @@ where
     ///
     /// Go's optimistic provider returns `math.MaxUint64` directly for this
     /// plan shape; it does not call `Txn()`. Keep that distinction here too:
-    /// open a thread-local read runtime and run the snapshot RPC directly.
+    /// open a read-session lease and run the snapshot RPC directly.
     /// The snapshot reader still owns the normal region
     /// recovery, lock resolution, GC visibility, and call-deadline checks.
     pub fn snapshot_get_at_max_ts(
@@ -514,9 +514,8 @@ where
     ///
     /// A pessimistic transaction must call this once its primary key is
     /// locked, because that lock then has to survive every later statement.
-    /// The keep-alive runs on its own thread with its own session opened from
-    /// these same process authorities — the caller's session is thread-local
-    /// and cannot be shared.
+    /// The keep-alive task owns a session lease over these same process
+    /// authorities; its timer does not reserve a thread per transaction.
     pub fn start_lock_keep_alive(
         &self,
         primary: Vec<u8>,
@@ -556,7 +555,7 @@ where
     }
 }
 
-/// TxnHeartBeat sender bound to one keep-alive thread's session, generic
+/// TxnHeartBeat sender bound to one keep-alive task's session, generic
 /// over the same seams as the opener that starts it.
 struct SessionHeartBeatSender<C, L, P> {
     runtime: SharedReadRuntime<C, L>,

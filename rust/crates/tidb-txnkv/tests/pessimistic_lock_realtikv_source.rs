@@ -151,7 +151,7 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     // Give the keep-alive time for several real TxnHeartBeat round trips
     // before the lock is released.
     std::thread::sleep(Duration::from_millis(900));
-    let keep_alive_report = keep_alive.close();
+    let keep_alive_report = futures::executor::block_on(keep_alive.close_and_wait());
     assert!(
         keep_alive_report.confirmed_heart_beats >= 2,
         "TiKV must confirm repeated TxnHeartBeat on a real primary lock: {keep_alive_report:?}"

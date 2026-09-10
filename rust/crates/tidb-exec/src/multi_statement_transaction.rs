@@ -911,8 +911,8 @@ where
         } else {
             Vec::new()
         };
-        // The keep-alive thread must stop before the locks it refreshes are
-        // resolved, so a heartbeat can never revive a lock the commit released.
+        // Signal the TTL manager as the transaction ends. Like client-go,
+        // close does not wait for an already in-flight heartbeat.
         if let Some(keep_alive) = self.keep_alive.take() {
             keep_alive.close();
         }
