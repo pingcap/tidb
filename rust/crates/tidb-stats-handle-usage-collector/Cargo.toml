@@ -7,5 +7,8 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB generic statistics usage collector."
 
+[dependencies]
+crossbeam-channel = "0.5"
+
 [lints]
 workspace = true

@@ -4287,6 +4287,9 @@ dependencies = [
 [[package]]
 name = "tidb-stats-handle-usage-collector"
 version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+]
 
 [[package]]
 name = "tidb-stats-handle-usage-indexusage"

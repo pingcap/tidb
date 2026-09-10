@@ -14,23 +14,19 @@
 
 //! Go `pkg/statistics/handle/usage/collector`.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use crossbeam_channel::{bounded, select, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const DEFAULT_CHANNEL_SIZE: usize = 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-struct QueueState<T> {
-    normal: VecDeque<T>,
-    high_priority: VecDeque<T>,
-    closed: bool,
-}
-
 struct Shared<T> {
-    state: Mutex<QueueState<T>>,
-    changed: Condvar,
+    normal: (Sender<T>, Receiver<T>),
+    high_priority: (Sender<T>, Receiver<T>),
+    closed: Receiver<()>,
+    close_once: Mutex<Option<Sender<()>>>,
 }
 
 /// Go `GlobalCollector` and `globalCollector`.
@@ -38,7 +34,6 @@ pub struct GlobalCollector<T> {
     shared: Arc<Shared<T>>,
     merge: Arc<dyn Fn(T) + Send + Sync>,
     workers: Mutex<Vec<JoinHandle<()>>>,
-    close_once: Mutex<bool>,
 }
 
 impl<T: Send + 'static> GlobalCollector<T> {
@@ -47,18 +42,16 @@ impl<T: Send + 'static> GlobalCollector<T> {
     where
         F: Fn(T) + Send + Sync + 'static,
     {
+        let (close, closed) = bounded(0);
         Self {
             shared: Arc::new(Shared {
-                state: Mutex::new(QueueState {
-                    normal: VecDeque::with_capacity(DEFAULT_CHANNEL_SIZE),
-                    high_priority: VecDeque::with_capacity(DEFAULT_CHANNEL_SIZE),
-                    closed: false,
-                }),
-                changed: Condvar::new(),
+                normal: bounded(DEFAULT_CHANNEL_SIZE),
+                high_priority: bounded(DEFAULT_CHANNEL_SIZE),
+                closed,
+                close_once: Mutex::new(Some(close)),
             }),
             merge: Arc::new(merge),
             workers: Mutex::new(Vec::new()),
-            close_once: Mutex::new(false),
         }
     }
 
@@ -78,30 +71,30 @@ impl<T: Send + 'static> GlobalCollector<T> {
         self.workers
             .lock()
             .expect("collector worker lock poisoned")
-            .push(thread::spawn(move || loop {
-                let item = {
-                    let mut state = shared.state.lock().expect("collector state lock poisoned");
-                    loop {
-                        if let Some(item) = state.high_priority.pop_front() {
-                            shared.changed.notify_all();
-                            break Some(item);
+            .push(thread::spawn(move || {
+                loop {
+                    // Go's outer select prioritizes high-priority data over
+                    // entering the ordinary, blocking three-way select.
+                    select! {
+                        recv(shared.high_priority.1) -> item => merge(item.expect("retained sender")),
+                        recv(shared.closed) -> _ => break,
+                        default => {
+                            select! {
+                                recv(shared.normal.1) -> item => merge(item.expect("retained sender")),
+                                recv(shared.high_priority.1) -> item => merge(item.expect("retained sender")),
+                                recv(shared.closed) -> _ => break,
+                            }
                         }
-                        if let Some(item) = state.normal.pop_front() {
-                            shared.changed.notify_all();
-                            break Some(item);
-                        }
-                        if state.closed {
-                            break None;
-                        }
-                        state = shared
-                            .changed
-                            .wait(state)
-                            .expect("collector state lock poisoned while waiting");
                     }
-                };
-                match item {
-                    Some(item) => merge(item),
-                    None => break,
+                }
+                // Close stops admission to the worker, not the data channels.
+                // Like Go flush, drain accepted deltas before joining.
+                loop {
+                    select! {
+                        recv(shared.high_priority.1) -> item => merge(item.expect("retained sender")),
+                        recv(shared.normal.1) -> item => merge(item.expect("retained sender")),
+                        default => break,
+                    }
                 }
             }));
     }
@@ -109,27 +102,21 @@ impl<T: Send + 'static> GlobalCollector<T> {
     /// Go `GlobalCollector.Close`.
     pub fn close(&self) {
         let mut closed = self
+            .shared
             .close_once
             .lock()
             .expect("collector close lock poisoned");
-        if *closed {
+        if closed.is_none() {
             return;
         }
-        {
-            let mut state = self
-                .shared
-                .state
-                .lock()
-                .expect("collector state lock poisoned");
-            state.closed = true;
-            self.shared.changed.notify_all();
-        }
+        // Disconnecting the stop channel broadcasts to every worker. Keep
+        // the close lock until they join, matching Go sync.Once + WaitGroup.
+        drop(closed.take());
         let workers =
             std::mem::take(&mut *self.workers.lock().expect("collector worker lock poisoned"));
         for worker in workers {
             worker.join().expect("collector worker panicked");
         }
-        *closed = true;
     }
 }
 
@@ -152,48 +139,30 @@ impl<T: Send + 'static> SessionCollector<T> {
         if expired {
             return self.send_delta_sync(data);
         }
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("collector state lock poisoned");
-        if state.normal.len() >= DEFAULT_CHANNEL_SIZE {
+        if self.shared.normal.0.try_send(data).is_err() {
             return false;
         }
-        state.normal.push_back(data);
         *self
             .last_update
             .lock()
             .expect("session timestamp lock poisoned") = Instant::now();
-        self.shared.changed.notify_one();
         true
     }
 
     /// Go `SessionCollector.SendDeltaSync`.
     pub fn send_delta_sync(&self, data: T) -> bool {
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("collector state lock poisoned");
         // Pinned Go `SpawnSession` leaves `sessionCollector.closeCh` nil, so
         // this synchronous path cannot observe `GlobalCollector.Close` and
         // still enqueues while the high-priority channel has capacity.
-        loop {
-            if state.high_priority.len() < DEFAULT_CHANNEL_SIZE {
-                state.high_priority.push_back(data);
-                *self
-                    .last_update
-                    .lock()
-                    .expect("session timestamp lock poisoned") = Instant::now();
-                self.shared.changed.notify_one();
-                return true;
-            }
-            state = self
-                .shared
-                .changed
-                .wait(state)
-                .expect("collector state lock poisoned while waiting");
-        }
+        self.shared
+            .high_priority
+            .0
+            .send(data)
+            .expect("retained receiver");
+        *self
+            .last_update
+            .lock()
+            .expect("session timestamp lock poisoned") = Instant::now();
+        true
     }
 }
