@@ -1,5 +1,33 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 嵌入式 DDL owner 按存储隔离
+
+check_constraint_runs_through_the_owner_job_queue 单独执行 1.25 秒通过
+（`/tmp/check-owner-red.log`，文件名不代表失败），并行全量却反复等不到
+历史记录。`/tmp/server-parallel-diagnosis.log` 显示已关闭存储的 scheduler
+持续扫描失败；该诊断运行取证后终止，不能计为完成。
+
+根因：RealClusterDdl 的无 etcd 分支调用 MockManager 时传入 store_id=None，
+所有独立嵌入式库都使用同一个 mock_store_id/DDL_OWNER_KEY。一个库的
+owner 会阻止其他库取得 ownership，因而无法处理后者的持久化 job。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/ddl/ddl.go` 传入 opt.Store，`pkg/owner/mock.go::NewMockManager`
+以 store.UUID() 为选举命名空间，只有 nil store 才使用 mock_store_id。
+
+Rust 现使用嵌入式存储的稳定 read authority ID 作为本地 store 身份，
+opener 克隆保持同一 ID。新增回归创建两个独立 authority 和一个同库竞争者，
+确认独立库都可成为 owner、同库仍互斥。旧实现 2.02 秒失败
+（`/tmp/ddl-owner-isolation-red.log`），修复后通过
+（`/tmp/ddl-owner-isolation-green.log`）。未修改队列、job 完成断言或超时。
+
+Ready 验证：`make lint` 退出 0（`/tmp/ddl-owner-isolation-lint.log`），
+`git diff --check` 通过。完整命令
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-server --lib -- --nocapture` 正常结束，42.83 秒，
+**371 passed / 58 failed**（`/tmp/server-owner-isolation-full.log`）；
+原 check-constraint 用例通过，没有跳过任何测试。全量仍为失败，58 项
+保持待修复，不能把解除调度等待当作整体目标完成。
+
 ## 2026-09-11 MODIFY/RENAME COLUMN 统计事件同步
 
 独立复现 `modify_column_ddl_recreates_missing_default_statistics_like_go`：

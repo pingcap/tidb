@@ -471,12 +471,7 @@ where
                 owner_id.clone(),
                 DDL_OWNER_KEY,
             )),
-            None => Arc::new(tidb_owner::MockManager::new(
-                tidb_owner::Context::background(),
-                owner_id,
-                None,
-                DDL_OWNER_KEY,
-            )),
+            None => Arc::new(local_ddl_owner(owner_id, opener.authority_id())),
         };
         *scheduler
             .owner
@@ -590,9 +585,49 @@ where
     }
 }
 
+fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManager {
+    // Go NewMockManager uses store.UUID(), not the nil-store fallback.
+    // Embedded stores each own one read authority; clones retain its ID.
+    let store_id = format!("embedded-authority-{authority_id}");
+    tidb_owner::MockManager::new(
+        tidb_owner::Context::background(),
+        owner_id,
+        Some(&store_id),
+        DDL_OWNER_KEY,
+    )
+}
+
 #[cfg(test)]
 mod schema_sync_tests {
     use super::*;
+
+    #[test]
+    fn independent_store_authorities_can_both_own_ddl() {
+        use tidb_owner::Manager;
+        let first = local_ddl_owner("isolated-ddl-first".to_owned(), u64::MAX - 1);
+        let second = local_ddl_owner("isolated-ddl-second".to_owned(), u64::MAX);
+        first.campaign_owner(&[]).unwrap();
+        second.campaign_owner(&[]).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !(first.is_owner() && second.is_owner()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let both_owned = first.is_owner() && second.is_owner();
+        let competing = local_ddl_owner("isolated-ddl-competing".to_owned(), u64::MAX - 1);
+        competing.campaign_owner(&[]).unwrap();
+        let same_store_exclusive = first.is_owner() && !competing.is_owner();
+        competing.close();
+        first.close();
+        second.close();
+        assert!(
+            both_owned,
+            "independent stores must not compete for the same DDL owner"
+        );
+        assert!(
+            same_store_exclusive,
+            "one store must retain a single DDL owner"
+        );
+    }
 
     #[test]
     fn closed_server_state_watch_rewatches_and_reloads() {
