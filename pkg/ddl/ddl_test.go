@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -66,6 +67,42 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+func TestAccountJobRU(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	sessCtx := mock.NewContext()
+	sessCtx.Store = store
+	w := worker{tp: generalWorker, sess: sess.NewSession(sessCtx)}
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	discardedTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, discardedTxn.Set(kv.Key("discarded-key"), []byte("discarded-payload-is-longer")))
+	discardedSize := discardedTxn.Size()
+	w.sess.Rollback()
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	t.Cleanup(w.sess.Rollback)
+	activeTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, activeTxn.Set(kv.Key("active"), []byte("value")))
+	require.NotEqual(t, discardedSize, activeTxn.Size())
+
+	job := &model.Job{RU: 7}
+	require.NoError(t, w.accountJobRU(job))
+	require.Equal(t, 7+float64(activeTxn.Size()), job.RU)
+
+	accountedRU := job.RU
+	w.tp = addIdxWorker
+	require.NoError(t, w.accountJobRU(job))
+	require.Equal(t, accountedRU, job.RU)
+
+	w.tp = backgroundWorker
+	require.NoError(t, w.accountJobRU(job))
+	require.Equal(t, accountedRU, job.RU)
 }
 
 func NewJobSubmitterForTest() *JobSubmitter {

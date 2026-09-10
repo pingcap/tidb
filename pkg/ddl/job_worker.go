@@ -204,6 +204,8 @@ const (
 	backgroundWorker workerType = 2
 )
 
+const ddlJobRUPerKVByte = 1.0
+
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
 type worker struct {
@@ -618,6 +620,18 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	return txn, err
 }
 
+func (w *worker) accountJobRU(job *model.Job) error {
+	if w.tp != generalWorker {
+		return nil
+	}
+	txn, err := w.sess.Txn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.RU += float64(txn.Size()) * ddlJobRUPerKVByte
+	return nil
+}
+
 // transitOneJobStep runs one step of the DDL job and persist the new job
 // information.
 //
@@ -739,8 +753,17 @@ func (w *worker) transitOneJobStep(
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
+	ruBeforeUpdate := job.RU
+	if err = w.accountJobRU(job); err != nil {
+		w.sess.Rollback()
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+		return 0, err
+	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
+	if err != nil {
+		job.RU = ruBeforeUpdate
+	}
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
