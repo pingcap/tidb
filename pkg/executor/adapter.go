@@ -525,6 +525,9 @@ func (a *ExecStmt) Text() string {
 // Call it after building the executor so the actual DML transaction mode is known.
 func (a *ExecStmt) getMaxExecutionTime() uint64 {
 	vars := a.Ctx.GetSessionVars()
+	if vars.DMLMaxExecutionTime == 0 {
+		return vars.GetMaxExecutionTime()
+	}
 	stmtCtx := vars.StmtCtx
 	if stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt {
 		// Non-transactional and batch DML can commit incrementally.
@@ -535,7 +538,7 @@ func (a *ExecStmt) getMaxExecutionTime() uint64 {
 		if vars.InNonTransactionalDML || batchDML || stmtCtx.InExplainStmt {
 			return 0
 		}
-		if vars.DMLMaxExecutionTime > 0 && vars.BulkDMLEnabled {
+		if vars.BulkDMLEnabled {
 			// Txn(false) only reads the existing transaction without activating it.
 			// Keep the timeout when bulk mode falls back to a regular transaction.
 			txn, _ := a.Ctx.Txn(false)
@@ -632,13 +635,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
 	sctx := a.Ctx
 	sc := sctx.GetSessionVars().StmtCtx
 	defer func() {
-		// A returned record set owns statement cleanup. Otherwise, clean up even
-		// when execution fails before Open. Run after the panic recovery below.
+		// If a record set is returned, its Close method detaches the trackers.
+		// Otherwise, clean up here, including failures before executor Open.
+		// Run after panic recovery so cleanup sees the recovered error.
 		if rs == nil {
 			// Detaching the tracker resets SQLKiller, so preserve its error first.
 			err = NormalizeStmtCancellationError(sctx.GetSessionVars(), err)
 			sc.DetachMemDiskTracker()
 			if cteErr := resetCTEStorageMap(sctx); err == nil {
+				// Only overwrite err when it's nil.
 				err = cteErr
 			}
 		}

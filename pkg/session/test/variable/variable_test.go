@@ -343,104 +343,125 @@ func TestMaxExecutionTime(t *testing.T) {
 
 func TestDMLMaxExecutionTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table dml_timeout (id int primary key, v int)")
+	// Use generous budgets for timeout selection; only the delayed case below needs a short budget.
+	t.Run("configuration", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table dml_timeout (id int primary key, v int)")
 
-	tk.MustQuery("select @@tidb_dml_max_execution_time").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_dml_max_execution_time = 200")
-	require.Equal(t, uint64(200), tk.Session().GetSessionVars().DMLMaxExecutionTime)
+		tk.MustQuery("select @@tidb_dml_max_execution_time").Check(testkit.Rows("0"))
+		tk.MustExec("set @@tidb_dml_max_execution_time = 60000")
+		require.Equal(t, uint64(60000), tk.Session().GetSessionVars().DMLMaxExecutionTime)
 
-	// The TiDB-specific DML timeout and MySQL-compatible SELECT timeout are independent.
-	tk.MustExec("set @@max_execution_time = 100")
-	tk.MustQuery("select 1")
-	require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("insert into dml_timeout values (1, 1)")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("prepare prepared_select from 'select 1'")
-	tk.MustQuery("execute prepared_select")
-	require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("deallocate prepare prepared_select")
-	tk.MustExec("prepare prepared_insert from 'insert into dml_timeout values (7, 7)'")
-	tk.MustExec("execute prepared_insert")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("deallocate prepare prepared_insert")
-	tk.MustExec("prepare prepared_point_get from 'select * from dml_timeout where id = 1'")
-	for range 2 {
-		tk.MustQuery("execute prepared_point_get").Check(testkit.Rows("1 1"))
-		require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
-	}
-	tk.MustExec("deallocate prepare prepared_point_get")
+		// The TiDB-specific DML timeout and MySQL-compatible SELECT timeout are independent.
+		tk.MustExec("set @@max_execution_time = 30000")
+		tk.MustQuery("select 1")
+		require.Equal(t, uint64(30000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("insert into dml_timeout values (1, 1)")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
 
-	// SET_VAR applies to the complete autocommit DML, then is restored for the next statement.
-	tk.MustExec("insert /*+ set_var(tidb_dml_max_execution_time=300) */ into dml_timeout values (2, 2)")
-	require.Equal(t, uint64(300), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+		// SET_VAR applies to the complete autocommit DML, then is restored for the next statement.
+		tk.MustExec("insert /*+ set_var(tidb_dml_max_execution_time=90000) */ into dml_timeout values (2, 2)")
+		require.Equal(t, uint64(90000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
 
-	// COMMIT has its own timeout budget, including when it is executed as a prepared statement.
-	tk.MustExec("begin")
-	tk.MustExec("delete from dml_timeout where id = 2")
-	tk.MustExec("commit")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("prepare prepared_commit from 'commit'")
-	tk.MustExec("begin")
-	tk.MustExec("insert into dml_timeout values (3, 3)")
-	tk.MustExec("execute prepared_commit")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("deallocate prepare prepared_commit")
-
-	// The binary protocol's prepared statement path must also recognize COMMIT
-	// after its Execute plan is unwrapped, and use the current session budget.
-	stmtID, _, _, err := tk.Session().PrepareStmt("commit")
-	require.NoError(t, err)
-	for _, timeout := range []int{300, 200} {
-		tk.MustExec("set tidb_dml_max_execution_time = ?", timeout)
+		// COMMIT has its own timeout budget.
 		tk.MustExec("begin")
-		tk.MustExec("update dml_timeout set v = v + 1 where id = 3")
-		rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+		tk.MustExec("delete from dml_timeout where id = 2")
+		tk.MustExec("commit")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
+
+		tk.MustExec("set @@tidb_dml_max_execution_time = 0")
+		tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("set @@max_execution_time = 0")
+		tk.MustExec("set @@tidb_dml_max_execution_time = 60000")
+		tk.MustQuery("select 1")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	})
+
+	t.Run("prepared", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table prepared_dml_timeout (id int primary key, v int)")
+		tk.MustExec("insert into prepared_dml_timeout values (1, 1)")
+		tk.MustExec("set @@max_execution_time = 30000")
+		tk.MustExec("set @@tidb_dml_max_execution_time = 60000")
+
+		tk.MustExec("prepare prepared_select from 'select 1'")
+		tk.MustQuery("execute prepared_select")
+		require.Equal(t, uint64(30000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("deallocate prepare prepared_select")
+		tk.MustExec("prepare prepared_insert from 'insert into prepared_dml_timeout values (7, 7)'")
+		tk.MustExec("execute prepared_insert")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("deallocate prepare prepared_insert")
+		tk.MustExec("prepare prepared_point_get from 'select * from prepared_dml_timeout where id = 1'")
+		for range 2 {
+			tk.MustQuery("execute prepared_point_get").Check(testkit.Rows("1 1"))
+			require.Equal(t, uint64(30000), tk.Session().ShowProcess().MaxExecutionTime)
+		}
+		tk.MustExec("deallocate prepare prepared_point_get")
+
+		tk.MustExec("prepare prepared_commit from 'commit'")
+		tk.MustExec("begin")
+		tk.MustExec("insert into prepared_dml_timeout values (3, 3)")
+		tk.MustExec("execute prepared_commit")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("deallocate prepare prepared_commit")
+
+		// The binary protocol's prepared statement path must also recognize COMMIT
+		// after its Execute plan is unwrapped, and use the current session budget.
+		stmtID, _, _, err := tk.Session().PrepareStmt("commit")
 		require.NoError(t, err)
-		require.Nil(t, rs)
-		require.Equal(t, uint64(timeout), tk.Session().ShowProcess().MaxExecutionTime)
-	}
-	require.NoError(t, tk.Session().DropPreparedStmt(stmtID))
+		for _, timeout := range []int{90000, 60000} {
+			tk.MustExec("set tidb_dml_max_execution_time = ?", timeout)
+			tk.MustExec("begin")
+			tk.MustExec("update prepared_dml_timeout set v = v + 1 where id = 3")
+			rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+			require.NoError(t, err)
+			require.Nil(t, rs)
+			require.Equal(t, uint64(timeout), tk.Session().ShowProcess().MaxExecutionTime)
+		}
+		require.NoError(t, tk.Session().DropPreparedStmt(stmtID))
+	})
 
-	// EXPLAIN ANALYZE DML commits before returning a result set, so it is excluded
-	// to avoid reporting a timeout after the write has already committed.
-	tk.MustQuery("explain analyze insert into dml_timeout values (4, 4)")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	t.Run("excluded modes", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table excluded_dml_timeout (id int primary key, v int)")
+		tk.MustExec("set @@max_execution_time = 30000")
+		tk.MustExec("set @@tidb_dml_max_execution_time = 60000")
 
-	// Deprecated batch DML can commit earlier batches, so it is also excluded.
-	originalEnableBatchDML := vardef.EnableBatchDML.Load()
-	vardef.EnableBatchDML.Store(true)
-	t.Cleanup(func() { vardef.EnableBatchDML.Store(originalEnableBatchDML) })
-	tk.MustExec("set tidb_batch_insert = ON")
-	tk.MustExec("set tidb_dml_batch_size = 1")
-	tk.MustExec("insert into dml_timeout values (5, 5), (6, 6)")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	// Batch insert is disabled inside an explicit transaction, so the regular
-	// transactional DML timeout still applies there.
-	tk.MustExec("begin")
-	tk.MustExec("insert into dml_timeout values (9, 9)")
-	require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("rollback")
-	tk.MustExec("set tidb_batch_insert = OFF")
-	tk.MustExec("set tidb_dml_batch_size = 0")
-	tk.MustExec("set tidb_batch_commit = ON")
-	tk.MustExec("begin")
-	tk.MustExec("insert into dml_timeout values (8, 8)")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("commit")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("set tidb_batch_commit = OFF")
+		// EXPLAIN ANALYZE DML commits before returning a result set, so it is excluded
+		// to avoid reporting a timeout after the write has already committed.
+		tk.MustQuery("explain analyze insert into excluded_dml_timeout values (4, 4)")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
 
-	tk.MustExec("set @@tidb_dml_max_execution_time = 0")
-	tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
-	tk.MustExec("set @@max_execution_time = 0")
-	tk.MustExec("set @@tidb_dml_max_execution_time = 200")
-	tk.MustQuery("select 1")
-	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		// Deprecated batch DML can commit earlier batches, so it is also excluded.
+		originalEnableBatchDML := vardef.EnableBatchDML.Load()
+		vardef.EnableBatchDML.Store(true)
+		t.Cleanup(func() { vardef.EnableBatchDML.Store(originalEnableBatchDML) })
+		tk.MustExec("set tidb_batch_insert = ON")
+		tk.MustExec("set tidb_dml_batch_size = 1")
+		tk.MustExec("insert into excluded_dml_timeout values (5, 5), (6, 6)")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		// Batch insert is disabled inside an explicit transaction, so the regular
+		// transactional DML timeout still applies there.
+		tk.MustExec("begin")
+		tk.MustExec("insert into excluded_dml_timeout values (9, 9)")
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("rollback")
+		tk.MustExec("set tidb_batch_insert = OFF")
+		tk.MustExec("set tidb_dml_batch_size = 0")
+		tk.MustExec("set tidb_batch_commit = ON")
+		tk.MustExec("begin")
+		tk.MustExec("insert into excluded_dml_timeout values (8, 8)")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+		tk.MustExec("commit")
+		require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	})
 
 	t.Run("pipelined DML", func(t *testing.T) {
 		if kerneltype.IsNextGen() {
@@ -449,7 +470,7 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("create table pipelined_dml_timeout (id int primary key, v int)")
-		tk.MustExec("set tidb_dml_max_execution_time = 200")
+		tk.MustExec("set tidb_dml_max_execution_time = 60000")
 		tk.MustExec("set tidb_dml_type = bulk")
 		tk.MustExec("set tidb_constraint_check_in_place = OFF")
 		for _, sql := range []string{
@@ -470,9 +491,9 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 		tk.MustExec("deallocate prepare pipelined_insert")
 
 		// SELECT keeps its own timeout even when bulk mode is enabled.
-		tk.MustExec("set max_execution_time = 100")
+		tk.MustExec("set max_execution_time = 30000")
 		tk.MustQuery("select * from pipelined_dml_timeout").Check(testkit.Rows("2 2"))
-		require.Equal(t, uint64(100), tk.Session().ShowProcess().MaxExecutionTime)
+		require.Equal(t, uint64(30000), tk.Session().ShowProcess().MaxExecutionTime)
 		tk.MustExec("set max_execution_time = 0")
 		tk.MustExec("set tidb_dml_type = standard")
 		tk.MustExec("insert /*+ set_var(tidb_dml_type=bulk) */ into pipelined_dml_timeout values (3, 3)")
@@ -483,16 +504,17 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 		// Falling back to a regular transaction must retain the DML and COMMIT budgets.
 		tk.MustExec("set tidb_constraint_check_in_place = ON")
 		tk.MustExec("insert into pipelined_dml_timeout values (4, 4)")
-		require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
 		tk.MustQuery("select @@tidb_last_txn_info").CheckContain(`"pipelined":false`)
 		tk.MustExec("set tidb_constraint_check_in_place = OFF")
 		tk.MustExec("begin")
 		tk.MustExec("update pipelined_dml_timeout set v = v + 1 where id = 4")
-		require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
 		tk.MustExec("commit")
-		require.Equal(t, uint64(200), tk.Session().ShowProcess().MaxExecutionTime)
+		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)
 
 		// A pipelined statement must also survive the timeout check before Open.
+		tk.MustExec("set tidb_dml_max_execution_time = 200")
 		const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
 		func() {
 			require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
