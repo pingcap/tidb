@@ -224,7 +224,14 @@ impl Session {
             self.current_database(),
             &self.session_time_zone(),
         );
-        if disable_point_get && shape == StatementReadShape::AutocommitPointGet {
+        // Fix52592 disables TryFastPlan, not MaxTS for a TableReader whose
+        // range is one complete clustered key (Go common_plans.go). A LIMIT
+        // can only use this AST proof when TryFastPlan folds it away; retain
+        // the conservative answer for that shape when the fast path is off.
+        let has_limit = matches!(stmt, Stmt::Query(query)
+            if matches!(query.as_ref(), tidb_ast::QueryStmt::Select(select)
+                if select.limit.is_some()));
+        if disable_point_get && has_limit && shape == StatementReadShape::AutocommitPointGet {
             StatementReadShape::Unknown
         } else {
             shape

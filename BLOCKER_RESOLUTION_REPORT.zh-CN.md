@@ -1,5 +1,35 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 fix52592 不再一律禁止完整主键 MaxTS
+
+原回归独立失败，`/tmp/fix52592-max-ts-red.log`，0.04 秒：ON hint 下
+完整主键查询被强制归类 Unknown。Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/planner/core/point_get_plan.go:83` 的 fix52592 只关闭 TryFastPlan；
+`tests/pointget/point_get_plan_test.go:383` 验证随后得到单点 TableReader；
+`pkg/planner/core/common_plans.go:1704` 明确允许完整主键单点 TableReader
+使用 MaxTS。不能将“关闭快速规划”等同于“禁止点读时间戳优化”。
+
+现在保留已有完整主键、非分区、无残余条件等 AST 证明，不再因 fix 开启
+一律拒绝。LIMIT 仍保守：快速规划关闭后可能保留 Limit 算子，当前 AST
+判定器无法证明实际物理根，不扩大这部分准入。
+原测试所有会话设置、hint ON/OFF、非法 hint first-wins、prepared 断言均
+未改，修复后 1 passed，0.06 秒，`/tmp/fix52592-max-ts-green.log`。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib fix_52592_preserves_max_ts_for_a_complete_clustered_key
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 完整 433 passed / 1 failed，45.07 秒，/tmp/server-fix52592-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# scoped test、fmt、lint、diff check 退出 0；完整 server 退出 101
+```
+
+最后一条是 INSERT 立即唯一性检查测试；其他原始外部集成门禁仍未全部完成。
+
 ## 2026-09-11 SLI 测试启用所依赖 crate 的 failpoints
 
 默认 server 测试中的 txn_write_throughput_sli_matches_source 失败并非已证实
