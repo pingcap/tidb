@@ -37,6 +37,8 @@ pub(crate) trait CopWorkerSource: CopTaskSource + Sized {
     fn keep_order(&self) -> bool;
     fn concurrency(&self) -> usize;
     fn into_tasks(self) -> Vec<Self>;
+    fn task(&self) -> &crate::RegionTaskEnvelope;
+    fn use_row_hints(&self) -> bool;
 }
 
 pub(crate) type ConcurrentStart<R> = fn(R, bool) -> Box<dyn QueryResponse + Send>;
@@ -174,12 +176,15 @@ struct Task<R> {
     source: Option<R>,
     rows: VecDeque<Row>,
     finished: bool,
+    response_capacity: usize,
+    lane: usize,
 }
 
 struct State<R> {
     tasks: Vec<Task<R>>,
     ready: VecDeque<(usize, Event)>,
     next_task: usize,
+    waiting: [Option<usize>; 2],
     current: usize,
     retired: usize,
     live_workers: usize,
@@ -224,23 +229,52 @@ impl<R> Drop for WorkerExit<R> {
 }
 
 impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
-    async fn next_task(&self) -> Option<(usize, R)> {
+    async fn next_task(&self, lane: usize) -> Option<(usize, R)> {
         loop {
             // notify_waiters does not retain a permit: subscribe before
             // observing the send window, just like a channel receive.
             let available = self.available.notified();
             tokio::pin!(available);
             available.as_mut().enable();
-            {
+            let (task, exhausted, admitted) = {
                 let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if self.closed.load(Ordering::Acquire) || state.next_task == state.tasks.len() {
+                if self.closed.load(Ordering::Acquire) {
                     return None;
                 }
-                if state.next_task < state.retired + self.window {
+                let previous_next = state.next_task;
+                // Go's single task sender visits tasks in order and sends to
+                // a one-slot normal or small-task channel. A full target
+                // channel blocks that sender, not just its worker lane.
+                while state.next_task < state.tasks.len()
+                    && state.next_task < state.retired + self.window
+                {
                     let index = state.next_task;
+                    let target = state.tasks[index].lane;
+                    if state.waiting[target].is_some() {
+                        break;
+                    }
+                    state.waiting[target] = Some(index);
                     state.next_task += 1;
-                    return Some((index, state.tasks[index].source.take().unwrap()));
                 }
+                let task = state.waiting[lane]
+                    .take()
+                    .map(|index| (index, state.tasks[index].source.take().unwrap()));
+                (
+                    task,
+                    state.next_task == state.tasks.len(),
+                    state.next_task != previous_next,
+                )
+            };
+            // Admission may have filled only the other lane. Wake its
+            // receivers even when this worker did not dequeue a task.
+            if admitted || task.is_some() {
+                self.available.notify_waiters();
+            }
+            if task.is_some() {
+                return task;
+            }
+            if exhausted {
+                return None;
             }
             available.await;
         }
@@ -258,7 +292,7 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                 if self.closed.load(Ordering::Acquire) {
                     return false;
                 }
-                if state.tasks[index].rows.len() < 2 {
+                if state.tasks[index].rows.len() < state.tasks[index].response_capacity {
                     state.tasks[index].rows.push_back(row.take().unwrap());
                     Some(index == state.current)
                 } else {
@@ -271,8 +305,8 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
                 }
                 return true;
             }
-            // Two buffered responses and this worker-held response match
-            // Go's ordered task channel. No other task is stopped by it.
+            // The task builder owns Go's paging/non-paging channel size.
+            // This worker holds one additional response while sending.
             space.await;
         }
     }
@@ -390,9 +424,10 @@ impl<R: CopTaskSource + Send + 'static> WorkerGroup<R> {
 async fn run_worker<R: CopTaskSource + Send + 'static>(
     exit: WorkerExit<R>,
     wake: Arc<tokio::sync::Notify>,
+    lane: usize,
 ) {
     let group = &exit.0;
-    while let Some((index, mut source)) = group.next_task().await {
+    while let Some((index, mut source)) = group.next_task(lane).await {
         source.set_waker(Waker::from(Arc::new(TaskWake(Arc::clone(&wake)))));
         loop {
             let completed = wake.notified();
@@ -482,15 +517,32 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     let call = source.call();
     let limiter_wait = source.limiter_wait_stats();
     let ordered = source.keep_order();
-    let concurrency = if lite_fallback {
+    let requested_concurrency = source.concurrency();
+    let use_row_hints = source.use_row_hints() && !lite_fallback;
+    let tasks = source.into_tasks();
+    let runtime =
+        execution_runtime().expect("runtime was initialized before installing the worker factory");
+    let small_count = if use_row_hints {
+        tasks
+            .iter()
+            .filter(|source| source.task().is_small())
+            .count()
+    } else {
+        0
+    };
+    let mut small_workers =
+        crate::RegionTaskEnvelope::small_concurrency(small_count, runtime.metrics().num_workers());
+    if ordered {
+        small_workers = small_workers.min(20);
+    }
+    // Go liteWorker.runWorkerConcurrently starts one normal worker even
+    // when region rebuilding has split its original task into many tasks.
+    let normal_workers = if lite_fallback {
         1
     } else {
-        source.concurrency().min(source.task_count()).max(1)
+        requested_concurrency.min(tasks.len() - small_count).max(1)
     };
-    let tasks = source.into_tasks();
-    // Go liteWorker.runWorkerConcurrently starts one worker, even when
-    // region rebuilding has turned its original task into multiple tasks.
-    let workers = concurrency;
+    let workers = normal_workers + small_workers;
     let group = Arc::new(WorkerGroup {
         spaces: (0..tasks.len())
             .map(|_| tokio::sync::Notify::new())
@@ -498,14 +550,20 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
         state: Mutex::new(State {
             tasks: tasks
                 .into_iter()
-                .map(|source| Task {
-                    source: Some(source),
-                    rows: VecDeque::new(),
-                    finished: false,
+                .map(|source| {
+                    let task = source.task();
+                    Task {
+                        response_capacity: task.response_channel_capacity,
+                        lane: usize::from(small_workers > 0 && task.is_small()),
+                        source: Some(source),
+                        rows: VecDeque::new(),
+                        finished: false,
+                    }
                 })
                 .collect(),
             ready: VecDeque::new(),
             next_task: 0,
+            waiting: [None; 2],
             current: 0,
             retired: 0,
             live_workers: workers,
@@ -519,19 +577,15 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
         joined: Condvar::new(),
         call,
         ordered,
-        window: if ordered {
-            2 * concurrency
-        } else {
-            concurrency
-        },
+        window: if ordered { 2 * workers } else { workers },
         closed: AtomicBool::new(false),
     });
-    for wake in &group.worker_wakes {
-        drop(
-            execution_runtime()
-                .expect("runtime was initialized before installing the worker factory")
-                .spawn(run_worker(WorkerExit(Arc::clone(&group)), Arc::clone(wake))),
-        );
+    for (index, wake) in group.worker_wakes.iter().enumerate() {
+        drop(runtime.spawn(run_worker(
+            WorkerExit(Arc::clone(&group)),
+            Arc::clone(wake),
+            usize::from(index >= normal_workers),
+        )));
     }
     Box::new(ConcurrentResponse { group })
 }

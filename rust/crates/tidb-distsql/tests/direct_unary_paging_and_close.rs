@@ -219,6 +219,42 @@ mod concurrent {
         assert!(third_calls.try_recv().is_err());
         assert_eq!(second.next_raw().unwrap(), Some(b"second".to_vec()));
         assert_eq!(second.next_raw().unwrap(), None);
+
+        // Go TestBasicSmallTaskConc / optRowHint: small tasks have their
+        // own workers, but internal requests keep the normal pool.
+        for internal in [false, true] {
+            let (mut runtime, incoming, _) = runtime([
+                location(1, "a", "g", "tikv-1:20160"),
+                location(2, "g", "m", "tikv-2:20160"),
+                location(3, "m", "z", "tikv-3:20160"),
+            ]);
+            let mut request = metadata("a", "z");
+            request.request_source.internal = internal;
+            request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
+                vec![range("a", "g"), range("g", "m"), range("m", "z")],
+                vec![64, 64, 1],
+            ));
+            let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
+            let mut attempts = vec![started(&incoming), started(&incoming)];
+            if !internal {
+                attempts.push(started(&incoming));
+            } else {
+                assert!(matches!(
+                    incoming.recv_timeout(Duration::from_millis(100)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ));
+            }
+            for attempt in attempts {
+                answer(attempt, response(b"row"));
+            }
+            if internal {
+                answer(started(&incoming), response(b"row"));
+            }
+            for _ in 0..3 {
+                assert_eq!(result.next_raw().unwrap(), Some(b"row".to_vec()));
+            }
+            assert_eq!(result.next_raw().unwrap(), None);
+        }
     }
 
     /// Go liteSendReq/Next switches remaining work to the concurrent worker
@@ -301,6 +337,52 @@ mod concurrent {
             assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
             assert_eq!(result.next_raw().unwrap(), None);
         }
+
+        // Go rebuilds without response channels; lite fallback creates two
+        // slots for each rebuilt task, including tasks with paging enabled.
+        let (mut runtime, incoming, _) = runtime([
+            location(1, "a", "z", "tikv-1:20160"),
+            location(10, "a", "m", "tikv-10:20160"),
+            location(11, "m", "z", "tikv-11:20160"),
+        ]);
+        let mut request = metadata("a", "z");
+        request.paging.enabled = true;
+        request.paging.min_size = 2;
+        request.paging.max_size = 8;
+        let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
+        let first_read = std::thread::spawn(move || {
+            assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
+            result
+        });
+        answer(started(&incoming), region_not_found(1));
+        answer(started(&incoming), response(b"left"));
+        let mut result = first_read.join().unwrap();
+        for page in 1..=3 {
+            let right = started(&incoming);
+            assert_eq!(right.0, 11);
+            answer(
+                right,
+                CoprocessorResponse {
+                    data: vec![page],
+                    range: Some(CoprocessorKeyRange {
+                        start: b"m".to_vec(),
+                        end: vec![b'm', page],
+                    }),
+                    ..CoprocessorResponse::default()
+                }
+                .encode_to_vec(),
+            );
+        }
+        assert!(matches!(
+            incoming.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        for page in 1..=3 {
+            assert_eq!(result.next_raw().unwrap(), Some(vec![page]));
+        }
+        answer(started(&incoming), response(b"right"));
+        assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+        assert_eq!(result.next_raw().unwrap(), None);
     }
 
     #[test]
@@ -341,26 +423,33 @@ mod concurrent {
         let mut result = select(&mut runtime, metadata, Arc::new(AtomicBool::new(false)));
         let mut attempts = [started(&incoming), started(&incoming)];
         attempts.sort_by_key(|attempt| attempt.0);
-        let [head, later] = attempts;
-        answer(
-            later,
-            CoprocessorResponse {
-                data: b"later-one".to_vec(),
-                range: Some(CoprocessorKeyRange {
-                    start: b"m".to_vec(),
-                    end: b"t".to_vec(),
-                }),
-                ..CoprocessorResponse::default()
-            }
-            .encode_to_vec(),
-        );
-        let continuation = started(&incoming);
-        assert_eq!(continuation.0, 2);
-        answer(continuation, response(b"later-two"));
+        let [head, mut later] = attempts;
+        // Go buildCopTasks gives paging tasks 18 response slots. With a
+        // blocked head, the later worker can fill all slots and fetch one
+        // more response before it waits for the consumer.
+        for page in 1..=18 {
+            answer(
+                later,
+                CoprocessorResponse {
+                    data: vec![page],
+                    range: Some(CoprocessorKeyRange {
+                        start: b"m".to_vec(),
+                        end: vec![b'm', page],
+                    }),
+                    ..CoprocessorResponse::default()
+                }
+                .encode_to_vec(),
+            );
+            later = started(&incoming);
+            assert_eq!(later.0, 2);
+        }
+        answer(later, response(b"last"));
         answer(head, response(b"head"));
         assert_eq!(result.next_raw().unwrap(), Some(b"head".to_vec()));
-        assert_eq!(result.next_raw().unwrap(), Some(b"later-one".to_vec()));
-        assert_eq!(result.next_raw().unwrap(), Some(b"later-two".to_vec()));
+        for page in 1..=18 {
+            assert_eq!(result.next_raw().unwrap(), Some(vec![page]));
+        }
+        assert_eq!(result.next_raw().unwrap(), Some(b"last".to_vec()));
         assert_eq!(result.next_raw().unwrap(), None);
     }
 
@@ -404,6 +493,53 @@ mod concurrent {
             assert_eq!(result.next_raw().unwrap(), Some(row.to_vec()));
         }
         assert_eq!(result.next_raw().unwrap(), None);
+
+        // Go's sender cannot skip a full normal-task channel to feed a
+        // later small task. Once a normal worker takes its queued task,
+        // both channels can advance within the shared admission window.
+        let (mut runtime, incoming, _) = self::runtime([
+            location(1, "a", "e", "tikv-1:20160"),
+            location(2, "e", "i", "tikv-2:20160"),
+            location(3, "i", "m", "tikv-3:20160"),
+            location(4, "m", "q", "tikv-4:20160"),
+            location(5, "q", "z", "tikv-5:20160"),
+        ]);
+        let mut request = metadata("a", "z");
+        request.request_source.internal = false;
+        request.key_ranges = Some(RequestKeyRanges::new_non_partitioned_with_hints(
+            vec![
+                range("a", "e"),
+                range("e", "i"),
+                range("i", "m"),
+                range("m", "q"),
+                range("q", "z"),
+            ],
+            vec![64, 64, 64, 64, 1],
+        ));
+        let mut result = select(&mut runtime, request, Arc::new(AtomicBool::new(false)));
+        let mut attempts = [started(&incoming), started(&incoming)];
+        attempts.sort_by_key(|attempt| attempt.0);
+        let [first, second] = attempts;
+        assert_eq!((first.0, second.0), (1, 2));
+        assert!(matches!(
+            incoming.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        answer(first, response(b"row"));
+        let mut next = [started(&incoming), started(&incoming)];
+        next.sort_by_key(|attempt| attempt.0);
+        assert_eq!((next[0].0, next[1].0), (3, 5));
+        for attempt in next {
+            answer(attempt, response(b"row"));
+        }
+        let fourth = started(&incoming);
+        assert_eq!(fourth.0, 4);
+        answer(fourth, response(b"row"));
+        answer(second, response(b"row"));
+        for _ in 0..5 {
+            assert_eq!(result.next_raw().unwrap(), Some(b"row".to_vec()));
+        }
+        assert_eq!(result.next_raw().unwrap(), None);
     }
 
     // Go's workers may wait on either RPC completion or sendToRespCh.
@@ -425,20 +561,20 @@ mod concurrent {
             let mut attempts = [started(&incoming), started(&incoming)];
             attempts.sort_by_key(|attempt| attempt.0);
             let [head, mut later] = attempts;
-            for (index, end) in [b"p", b"s", b"v"].into_iter().enumerate() {
+            for index in 0..19 {
                 answer(
                     later,
                     CoprocessorResponse {
                         data: b"later".to_vec(),
                         range: Some(CoprocessorKeyRange {
                             start: b"m".to_vec(),
-                            end: end.to_vec(),
+                            end: vec![b'm', index + 1],
                         }),
                         ..CoprocessorResponse::default()
                     }
                     .encode_to_vec(),
                 );
-                if !ordered || index == 2 {
+                if !ordered || index == 18 {
                     break;
                 }
                 later = started(&incoming);

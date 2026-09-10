@@ -523,6 +523,15 @@ impl CopReadTaskRuntime {
             .collect()
     }
 
+    /// Retains the builder's worker policy when transferring a task owner.
+    pub(super) fn first_task(&self) -> &RegionTaskEnvelope {
+        &self
+            .tasks
+            .first()
+            .expect("a split response owns a task")
+            .task
+    }
+
     /// Returns one immutable prepared attempt by its response-matching ID.
     #[must_use]
     pub fn prepared_attempt(&self, attempt_id: u64) -> Option<&PreparedCopReadTask> {
@@ -746,6 +755,7 @@ impl CopReadTaskRuntime {
         if logical.task.task_id != failed.logical_task_id {
             return Err(CopReadTaskError::UnmatchedResponse);
         }
+        task.response_channel_capacity = logical.task.response_channel_capacity;
         logical
             .paging
             .replace_ranges_for_region_retry(task.ranges.clone(), failed.paging_size);
@@ -785,6 +795,10 @@ impl CopReadTaskRuntime {
         }
         for task in &mut rebuilt {
             task.paging_size = failed.paging_size;
+            // Go rebuilds without task channels. Concurrent workers keep
+            // their parent channel; lite fallback creates two-slot channels
+            // when these rebuilt tasks become independent worker sources.
+            task.response_channel_capacity = 2;
         }
 
         let mut rebuilt = rebuilt.into_iter();

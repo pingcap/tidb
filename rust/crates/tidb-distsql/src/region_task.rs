@@ -231,22 +231,23 @@ impl RegionTaskEnvelope {
     /// concurrency with the exact sigma and per-core cap.
     #[must_use]
     pub fn small_task_concurrency(tasks: &[Self], num_cpus: usize) -> (usize, usize) {
-        let count = tasks
-            .iter()
-            .filter(|task| {
-                (task.row_count_hint > 0
-                    && task.batch_task_list.is_empty()
-                    && task.row_count_hint <= 32)
-                    || (!task.batch_task_list.is_empty() && task.row_count_hint <= 64)
-            })
-            .count();
+        let count = tasks.iter().filter(|task| task.is_small()).count();
+        (count, Self::small_concurrency(count, num_cpus))
+    }
+
+    pub(crate) fn is_small(&self) -> bool {
+        (self.row_count_hint > 0 && self.batch_task_list.is_empty() && self.row_count_hint <= 32)
+            || (!self.batch_task_list.is_empty() && self.row_count_hint <= 64)
+    }
+
+    pub(crate) fn small_concurrency(count: usize, num_cpus: usize) -> usize {
         if count == 0 {
-            return (0, 0);
+            return 0;
         }
         let count_as_float = count as f64;
         let concurrency =
             (count_as_float / (1.0 + 0.5 * (2.0 * count_as_float.ln()).sqrt())) as usize;
-        (count, concurrency.min(20 * num_cpus.max(1)))
+        concurrency.min(20 * num_cpus.max(1))
     }
 
     /// Returns the EMA prediction when row paging or request-level byte

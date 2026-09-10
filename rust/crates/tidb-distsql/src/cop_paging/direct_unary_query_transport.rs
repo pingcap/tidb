@@ -2162,6 +2162,14 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
             .max(1)
     }
 
+    fn task(&self) -> &crate::RegionTaskEnvelope {
+        self.runtime.first_task()
+    }
+
+    fn use_row_hints(&self) -> bool {
+        !self.metadata.request_source.internal
+    }
+
     fn into_tasks(mut self) -> Vec<Self> {
         let tasks = self.runtime.take_tasks();
         tasks
