@@ -1,5 +1,38 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 统计 mock owner 按存储隔离
+
+两个无 etcd 启动入口创建统计 MockManager 时传入 None，所有独立
+embedded 集群因此共享 mock_store_id 和统计 owner key。双真实 unistore
+stack 回归 independent_unistore_stores_can_both_own_statistics 在修复前
+得到 (true,false)，第二个集群无法获得 owner（4.27 秒，
+`/tmp/stats-owner-isolation-red.log`）。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/domain/domain.go:2092` 将 do.store 传入 NewMockManager；
+`pkg/owner/mock.go:52-57` 使用 store.UUID() 而非 nil-store fallback。
+Rust 两个入口现使用与 mock DDL owner 相同的 embedded-authority 身份；
+同一 opener 的 clone 保留身份，独立 store authority 互不争抢。
+etcd owner 路径不变，未延长就绪等待上限。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib independent_unistore_stores_can_both_own_statistics
+# 1 passed，3.26 秒，/tmp/stats-owner-isolation-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 417 passed / 17 failed，43.88 秒，/tmp/server-stats-owner-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/stats-owner-isolation-{fmt,lint}.log
+```
+
+原 auto_analyze_skips_configured_column_types_like_go 在全套通过。
+priority_queue 用例已越过 owner 就绪及队列初始化，继续暴露后续错误：
+DROP 后立即读取队列仍为 2，预期 1，需继续核对 DDL 订阅处理时序。
+不将这个后续失败或剩余外部集成门禁记为完成。
+
 ## 2026-09-11 统计 DDL 测试等待正确订阅者的事务
 
 已确认此前四个并发超时不是统计写入未完成。辅助函数等待整个 notifier

@@ -202,7 +202,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None => Arc::new(tidb_owner::MockManager::new(
                 tidb_owner::Context::background(),
                 server_info.local_server_info().static_info.id,
-                None,
+                // Match the store-scoped mock DDL owner and Go store.UUID().
+                Some(&format!(
+                    "embedded-authority-{}",
+                    authority.transaction_opener().authority_id()
+                )),
                 super::STATS_OWNER_KEY,
             )),
         };

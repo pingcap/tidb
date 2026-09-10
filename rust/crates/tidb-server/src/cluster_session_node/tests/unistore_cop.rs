@@ -1267,6 +1267,30 @@ fn auto_analyze_window_check_kills_only_outside_the_window_like_go() {
 }
 
 #[test]
+fn independent_unistore_stores_can_both_own_statistics() {
+    let (first, _first_users) = cop_backed_stack();
+    let (second, _second_users) = cop_backed_stack();
+    let first_owner = first.factory.stats_owner.as_ref().unwrap();
+    let second_owner = second.factory.stats_owner.as_ref().unwrap();
+    first_owner.campaign_owner(&[]).unwrap();
+    second_owner.campaign_owner(&[]).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !(first_owner.is_owner() && second_owner.is_owner())
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let ownership = (first_owner.is_owner(), second_owner.is_owner());
+    first_owner.campaign_cancel();
+    second_owner.campaign_cancel();
+    assert_eq!(
+        ownership,
+        (true, true),
+        "Go isolates mock owners by store.UUID()"
+    );
+}
+
+#[test]
 fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));

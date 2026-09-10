@@ -517,7 +517,9 @@ pub(crate) fn unistore_cluster_session_stack(
     let stats_owner: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::MockManager::new(
         tidb_owner::Context::background(),
         server_info.local_server_info().static_info.id.clone(),
-        None,
+        // Go Domain.NewOwnerManager supplies store.UUID(). Opener clones
+        // share this store authority, while independent embedded stores do not.
+        Some(&format!("embedded-authority-{}", opener.authority_id())),
         crate::cluster_session_node::STATS_OWNER_KEY,
     ));
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
