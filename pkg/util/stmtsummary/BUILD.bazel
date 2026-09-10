@@ -15,6 +15,7 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/util/execdetails",
         "//pkg/util/hack",

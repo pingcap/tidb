@@ -43,6 +43,12 @@ import (
 	3. Add SysVar instance in 'defaultSysVars' slice.
 */
 
+// Statement summary redaction timings are selected when a new sample is captured.
+const (
+	StmtSummaryRedactTimingCapture = "CAPTURE"
+	StmtSummaryRedactTimingPersist = "PERSIST"
+)
+
 // TiDB system variable names that only in session scope.
 const (
 	TiDBDDLSlowOprThreshold = "ddl_slow_threshold"
@@ -746,6 +752,9 @@ const (
 
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
+
+	// TiDBStmtSummaryRedactTiming chooses when QUERY_SAMPLE_TEXT is redacted.
+	TiDBStmtSummaryRedactTiming = "tidb_stmt_summary_redact_timing"
 
 	// TiDBStmtSummaryPersistEvicted controls whether per-record LRU evictions
 	// in the v2 (persistent) statement summary are persisted to the stmt log.
@@ -1717,6 +1726,7 @@ const (
 	DefTiDBStorageClassTransitionHistorySize          = 1000
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
+	DefTiDBStmtSummaryRedactTiming                    = StmtSummaryRedactTimingCapture
 	DefTiDBStmtSummaryPersistEvicted                  = false
 	DefTiDBStmtSummaryGroupByUser                     = false
 	DefTiDBCapturePlanBaseline                        = Off
@@ -1961,6 +1971,9 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
+	// StmtSummaryRedactTiming is refreshed by the global system variable cache.
+	StmtSummaryRedactTiming = atomic.NewString(DefTiDBStmtSummaryRedactTiming)
+
 	AnalyzeColumnOptions = atomic.NewString(DefTiDBAnalyzeColumnOptions)
 	// AnalyzeDefaultNumBuckets is the global default number of histogram buckets for analyze operations.
 	AnalyzeDefaultNumBuckets = atomic.NewUint64(DefTiDBAnalyzeDefaultNumBuckets)

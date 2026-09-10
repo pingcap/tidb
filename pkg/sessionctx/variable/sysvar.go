@@ -1012,6 +1012,12 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, vardef.DefTiDBStmtSummaryMaxSQLLength))
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStmtSummaryRedactTiming, Value: vardef.DefTiDBStmtSummaryRedactTiming, Type: vardef.TypeEnum,
+		PossibleValues: []string{vardef.StmtSummaryRedactTimingCapture, vardef.StmtSummaryRedactTimingPersist},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			vardef.StmtSummaryRedactTiming.Store(val)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStmtSummaryPersistEvicted, Value: BoolToOnOff(vardef.DefTiDBStmtSummaryPersistEvicted), Type: vardef.TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetPersistEvicted(TiDBOptOn(val))

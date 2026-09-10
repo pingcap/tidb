@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
@@ -36,6 +37,10 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 // StmtRecord represents a statement statistics record.
 // StmtRecord is addable and mergable.
 type StmtRecord struct {
+	// Selected with the first sample and retained through eviction cloning.
+	// Timing changes affect new samples; this internal flag is not persisted.
+	redactSampleSQLAtPersist bool
+
 	// Each record is summarized between [Begin, End).
 	Begin int64 `json:"begin"`
 	End   int64 `json:"end"`
@@ -209,7 +214,10 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
+	redactAtCapture := vardef.StmtSummaryRedactTiming.Load() == vardef.StmtSummaryRedactTimingCapture
 	return &StmtRecord{
+		redactSampleSQLAtPersist: !redactAtCapture,
+
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
@@ -219,7 +227,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
-		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
+		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL(redactAtCapture)),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -757,7 +765,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 type mockLazyInfo struct{}
 
-func (*mockLazyInfo) GetOriginalSQL() string {
+func (*mockLazyInfo) GetOriginalSQL(_ bool) string {
 	return ""
 }
 

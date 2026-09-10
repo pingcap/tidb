@@ -129,18 +129,20 @@ func marshalEvictedStmtRecord(r *StmtRecord) ([]byte, error) {
 }
 
 func marshalStmtRecordWithEvicted(r *StmtRecord, evicted bool) ([]byte, error) {
-	// Read the current global mode at serialization, including for queued evictions.
-	// Readers may still hold the source record, so only modify an output copy.
-	switch mode := errors.RedactLogEnabled.Load(); mode {
-	case errors.RedactLogEnable:
-		output := *r
-		// SampleSQL may be truncated or include prepared arguments. Do not parse it.
-		output.SampleSQL = r.NormalizedSQL
-		r = &output
-	case errors.RedactLogMarker:
-		output := *r
-		output.SampleSQL = redact.String(mode, r.SampleSQL)
-		r = &output
+	if r.redactSampleSQLAtPersist {
+		// PERSIST samples use the current global mode, including queued evictions.
+		// Readers may still hold the source record, so only modify an output copy.
+		switch mode := errors.RedactLogEnabled.Load(); mode {
+		case errors.RedactLogEnable:
+			output := *r
+			// SampleSQL may be truncated or include prepared arguments. Do not parse it.
+			output.SampleSQL = r.NormalizedSQL
+			r = &output
+		case errors.RedactLogMarker:
+			output := *r
+			output.SampleSQL = redact.String(mode, r.SampleSQL)
+			r = &output
+		}
 	}
 	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
 	if len(fields) == 0 {

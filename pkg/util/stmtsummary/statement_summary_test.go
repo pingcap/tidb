@@ -96,7 +96,7 @@ func TestAddStatement(t *testing.T) {
 		beginTime: now + 60,
 		endTime:   now + 1860,
 		stmtSummaryStats: stmtSummaryStats{
-			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
+			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(false),
 			samplePlan:           samplePlan,
 			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 			execCount:            1,
@@ -539,7 +539,7 @@ func TestAddStatement(t *testing.T) {
 	for i := range buf {
 		buf[i] = 'a'
 	}
-	originalSQL := stmtExecInfo1.LazyInfo.GetOriginalSQL()
+	originalSQL := stmtExecInfo1.LazyInfo.GetOriginalSQL(false)
 	stmtExecInfo7.LazyInfo = &mockLazyInfo{
 		originalSQL: originalSQL,
 		plan:        string(buf),
@@ -799,7 +799,7 @@ type mockLazyInfo struct {
 	bindingDigest string
 }
 
-func (a *mockLazyInfo) GetOriginalSQL() string {
+func (a *mockLazyInfo) GetOriginalSQL(_ bool) string {
 	return a.originalSQL
 }
 
@@ -1154,7 +1154,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.MemArbitration, stmtExecInfo1.MemArbitration, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(false), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
 		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),

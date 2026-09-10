@@ -1,3 +1,14 @@
+select @@global.tidb_stmt_summary_redact_timing;
+@@global.tidb_stmt_summary_redact_timing
+CAPTURE
+set global tidb_stmt_summary_redact_timing = 'READ';
+Error 1231 (42000): Variable 'tidb_stmt_summary_redact_timing' can't be set to the value of 'READ'
+set session tidb_stmt_summary_redact_timing = PERSIST;
+Error 1229 (HY000): Variable 'tidb_stmt_summary_redact_timing' is a GLOBAL variable and should be set with SET GLOBAL
+set global tidb_stmt_summary_redact_timing = persist;
+select @@global.tidb_stmt_summary_redact_timing;
+@@global.tidb_stmt_summary_redact_timing
+PERSIST
 set global tidb_stmt_summary_refresh_interval = 3600;
 set tidb_enable_non_prepared_plan_cache = 0;
 create table sample_redaction (id int);
@@ -39,8 +50,32 @@ select query_sample_text from information_schema.statements_summary where stmt_t
 query_sample_text
 create user {sample_redaction_user@% password = ***}
 drop user sample_redaction_user;
+set global tidb_stmt_summary_redact_timing = CAPTURE;
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+query_sample_text
+select * from sample_redaction where id = ? [arguments: 42]
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select * from sample_redaction where id = 42;
+id
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+query_sample_text
+select * from `sample_redaction` where `id` = ?
+set global tidb_redact_log = MARKER;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select * from sample_redaction where id = 42;
+id
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+query_sample_text
+‹select * from sample_redaction where id = 42›
+set global tidb_stmt_summary_redact_timing = PERSIST;
+select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
+query_sample_text
+‹select * from sample_redaction where id = 42›
 drop table sample_redaction;
 set global tidb_redact_log = default;
 set global tidb_stmt_summary_refresh_interval = default;
 set global tidb_enable_stmt_summary = default;
 set tidb_enable_non_prepared_plan_cache = default;
+set global tidb_stmt_summary_redact_timing = default;

@@ -1067,7 +1067,7 @@ func TestStatementSummaryOriginalSQL(t *testing.T) {
 	for _, mode := range []string{"OFF", "ON", "MARKER"} {
 		vars.EnableRedactLog = mode
 		vars.StmtCtx.OriginalSQL = "select '中文‹secret›'"
-		require.Equal(t, "select '中文‹secret›'", stmt.GetOriginalSQL(), mode)
+		require.Equal(t, "select '中文‹secret›'", stmt.GetOriginalSQL(false), mode)
 		expectedLog := "select '中文‹secret›'"
 		switch mode {
 		case "ON":
@@ -1075,13 +1075,14 @@ func TestStatementSummaryOriginalSQL(t *testing.T) {
 		case "MARKER":
 			expectedLog = "‹select '中文‹‹secret››'›"
 		}
+		require.Equal(t, expectedLog, stmt.GetOriginalSQL(true), "CAPTURE preserves session redaction")
 		require.Equal(t, expectedLog, stmt.GetTextToLog(false), "shared log formatting must still redact")
 		// Prepared values are retained in the summary sample, including a cached execution.
 		vars.StmtCtx.OriginalSQL = "select ?"
 		vars.PlanCacheParams.Append(types.NewIntDatum(42))
-		require.Equal(t, "select ? [arguments: 42]", stmt.GetOriginalSQL(), mode)
+		require.Equal(t, "select ? [arguments: 42]", stmt.GetOriginalSQL(false), mode)
 		vars.PlanCacheParams.SetForNonPrepCache(true)
-		require.Equal(t, "select ?", stmt.GetOriginalSQL(), mode)
+		require.Equal(t, "select ?", stmt.GetOriginalSQL(false), mode)
 		vars.PlanCacheParams.Reset()
 		vars.PlanCacheParams.SetForNonPrepCache(false)
 
@@ -1089,9 +1090,10 @@ func TestStatementSummaryOriginalSQL(t *testing.T) {
 		require.NoError(t, err)
 		stmt.StmtNode = node
 		vars.StmtCtx.OriginalSQL = "create user u identified by 'credential'"
-		sample := stmt.GetOriginalSQL()
+		sample := stmt.GetOriginalSQL(false)
 		require.Equal(t, node.(ast.SensitiveStmtNode).SecureText(), sample)
 		require.NotContains(t, sample, "credential")
+		require.NotContains(t, stmt.GetOriginalSQL(true), "credential")
 		stmt.StmtNode = nil
 	}
 }
