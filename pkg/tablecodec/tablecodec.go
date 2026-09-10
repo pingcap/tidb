@@ -68,7 +68,7 @@ const (
 	CommonHandleFlag byte = 127
 	// PartitionIDFlag is the flag used to decode the partition ID.
 	// Used in both global index values and global index keys (for V1+ non-unique indexes).
-	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded (IntHandle)
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + encoded inner handle
 	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
@@ -1260,12 +1260,9 @@ func GenIndexKey(enc codec.Encoder, loc *time.Location, tblInfo *model.TableInfo
 	if !distinct && h != nil {
 		// For PartitionHandle on global indexes V1+, we must encode BOTH partition ID and inner handle
 		// in the key to prevent collisions when different partitions have duplicate handles.
-		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
+		// This is critical after EXCHANGE PARTITION, which can create duplicate handles.
 		// Only use the new format for version >= V1. Legacy indexes (version 0) use the old format.
 		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-			if tblInfo.HasClusteredIndex() {
-				return nil, false, errors.New("clustered index is not supported in GlobalIndexVersionV1+")
-			}
 			ph, ok := h.(kv.PartitionHandle)
 			if !ok {
 				return nil, false, errors.New("handle is not a PartitionHandle in GlobalIndexVersionV1+")
@@ -1970,8 +1967,9 @@ func decodeIndexKvForClusteredIndexVersion1(useNewCollate bool, key, value []byt
 		// In unique common handle index.
 		handle, err = kv.NewCommonHandle(segs.CommonHandle)
 	} else {
-		// In non-unique index, decode handle in keySuffix.
-		handle, err = kv.NewCommonHandle(keySuffix)
+		// In non-unique index, decode the handle, including a possible partition ID,
+		// from keySuffix.
+		handle, err = decodeHandleInIndexKey(keySuffix)
 	}
 	if err != nil {
 		return nil, err
