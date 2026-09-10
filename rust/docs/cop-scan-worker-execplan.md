@@ -3,9 +3,10 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment aligns shared case mapping with Go's direct ASCII
-handling, reducing Unicode-table work across catalog, digest and statement
-paths. The preceding increment constructs statement state from existing session inputs,
+The current increment retains Go-folded catalog identities in prepared plans
+and uses those same identities for reads, writes and planner lookup. The
+preceding case-mapping increment uses Go's direct ASCII handling across
+catalog, digest and statement paths. An earlier increment constructs statement state from existing session inputs,
 avoiding standalone defaults immediately replaced by assignment-only setters.
 The preceding increment shares statement configuration by reference instead of
 copying it through builders and executor clones. The preceding point-read
@@ -33,18 +34,23 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   selected executor/session batch: 95 pass, two fail (new reproduction plus
   existing common-handle encoding failure). Evidence:
   /private/tmp/tidb-catalog-names.nJeEZI/baseline-tests.log.
-- [ ] Retain typed folded schema/table keys in point, SELECT and DML prepared
+- [x] Retain typed folded schema/table keys in point, SELECT and DML prepared
   metadata. Keep original names and public APIs unchanged. Both raw immutable
   and mutable lookups use the same Go normalization boundary; mutable writes
   retain their version increment and existing copy-on-write ownership.
-  Validate tests and matched workloads before publishing or accepting speedup.
+  The fail-before Unicode case passes. Pre-merge matched workloads and profiles
+  establish correctness but no accepted throughput/latency improvement.
 - [x] Live Unicode schema/table comparison exposes the same mismatch in
   PlannerCatalog: Go passes, Rust returns 1049 unknown database. The probe
   database is removed in ensure. Evidence: catalog-names.nJeEZI/unicode.log.
-- [ ] Replace the planner snapshot's ASCII-only table/view scans with maps
+- [x] Replace the planner snapshot's ASCII-only table/view scans with maps
   keyed by the owning catalog's already-folded names; normalize raw lookup
   requests through CatalogTableKey. Remove unconsumed table/view sorting.
-  Recheck live Go equality and matched performance before acceptance.
+  Qualified Unicode SELECT, PREPARE/EXECUTE, UPDATE, DELETE and INSERT match
+  live Go. Original public spelling and catalog copy-on-write behavior remain.
+- [ ] Finish final merged-parent failure comparison and live verification;
+  publish only to origin/hparser-integration. Receipt:
+  benchmarks/catalog-name-validation.json. No whole-package or speedup claim.
 
 - [x] Trace the remaining simple-case mapper to catalog lookup, prepared-plan
   validation, statement setup, digest normalization and collation lookup.
@@ -968,12 +974,19 @@ checkout; selected SQL equality does not establish full source parity.
 
 ## Outcomes & Retrospective
 
+Catalog lookup now follows Go's retained CIStr.L identity rather than folding
+prepared names on each lookup. Planner snapshots use the same normalized keys
+instead of ASCII-only scans; the reproduced Unicode lookup disagreement is
+gone in unit and live SQL checks. Snapshots still materialize owned metadata,
+unlike Go's retained infoschema ownership. Pre-merge matched timings overlap,
+so this is a scoped parity improvement, not performance-goal completion.
+
 The generated mapper now follows Go's ASCII handling for both ASCII-only and
 mixed Unicode strings. Full scalar comparison preserves the exact simple-case
 semantics. Profiles confirm less mapper work across catalog, digest and
 statement paths, but matched timings do not establish the full performance
-goal. The next ownership gap is repeated catalog name folding versus Go's
-CIStr.L lookup; do not bypass normalization for arbitrary plain strings.
+goal. The catalog increment above addresses retained plan-name folding;
+arbitrary plain strings still normalize at the lookup boundary.
 
 Constructor inputs now carry the existing session owners and captured values
 directly into query/DML state. This removes discarded default construction and
@@ -1237,4 +1250,5 @@ or whole-package parity is claimed.
 
 Updated 2026-09-10 after generic ASCII case-mapping validation: recorded Go
 source, unchanged Unicode oracle, matched workload results, full profile
-totals and verified cleanup. Repeated catalog name folding remains next.
+totals and verified cleanup. The subsequent catalog increment records retained
+keys and live Unicode parity without promoting noisy performance samples.

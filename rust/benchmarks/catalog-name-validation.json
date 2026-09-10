@@ -1,5 +1,5 @@
 {
-  "status": "Scoped Go name-lookup parity established before merge; broad performance acceptance remains open.",
+  "status": "Scoped Go name-lookup parity verified after collaborator merges; broad performance acceptance remains open.",
   "base_revision": "cb4043ed3a6ca3b8aa0828ebada5ff7a4b06e9a9",
   "files": [
     "rust/crates/tidb-executor/src/driver/catalog.rs",
@@ -313,8 +313,34 @@
     "command": "ruby /private/tmp/tidb-catalog-names.nJeEZI/verify-cleanup.rb",
     "evidence": "/private/tmp/tidb-catalog-names.nJeEZI/cleanup.json"
   },
+  "postmerge_validation": {
+    "source_revision": "f80d92b00bcb6c6e1e3af6c2aeb066f5e19fd811",
+    "remote_parent": "4bd2fb487b6dd415a20d5e055edaa3b3a8a3ff09",
+    "candidate_sha256": "4888b5c7f108ccd216896e18100dc3181c3d286476c8ff862bccb50601e1e89a",
+    "profile": "Ready scope executed; full suite is not green",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-expr -p tidb-planner --lib --no-fail-fast -- driver::tests::point_get:: driver::tests::primary_keys:: tests_prepared_plan_cache:: tests_prepared_statements:: tests_view evaluator::tests:: find_best_task::candidate:: remote_scan::tests:: --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "CARGO_TARGET_DIR=/private/tmp/tidb-upstream-merge.nzY42N/rust/target CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session --lib --no-fail-fast -- remote_scan::tests:: tests_view --test-threads=1",
+      "ruby /private/tmp/tidb-catalog-merge.GeN6r2/compare-parent.rb",
+      "ruby /private/tmp/tidb-catalog-final.cC8ceC/verify-unicode.rb",
+      "ruby /private/tmp/tidb-catalog-final.cC8ceC/verify.rb",
+      "ruby /private/tmp/tidb-catalog-final.cC8ceC/verify-cleanup.rb",
+      "git diff --check"
+    ],
+    "working_directories": "Candidate Cargo commands: isolated merge checkout/rust; make/git: its root. Parent test: /private/tmp/tidb-catalog-parent.3Us0I2/rust at the exact remote parent.",
+    "results": "163 passed, nine failed. All nine failure assertions identical on exact remote parent (37 passed, nine failed in its comparison scope). Release build, all-target check and lint exit zero. Unicode regression passes. Collaborator changes also remove the earlier common-handle, composite-CNF and dirty common-handle failures.",
+    "failure_evidence": "/private/tmp/tidb-catalog-merge.GeN6r2/parent-comparison.json",
+    "logs": "/private/tmp/tidb-catalog-merge.GeN6r2/{final-tests,final-build,final-check,final-lint,remote-parent-tests}.log",
+    "live_artifacts": "/private/tmp/tidb-catalog-final.cC8ceC",
+    "live_results": "Final immutable binary matches Go Unicode SQL output and bounded fixture digest. Go/Rust/Go at eight clients completes 18,000 sysbench and 18,000 TPC-C measured transactions with exact transaction mix and all eleven TPC-C consistency conditions passing. Auto-analyze restored from 0 to original 1; unique Unicode probe database removed and absence verified.",
+    "timing_exclusion": "Final live runs are functional validation only: parent compilation overlapped them. No timing promotion or attribution across collaborator production changes. Raw validation.json lists an unused historical before binary; only Go and after were executed.",
+    "remaining_failures": "Four remote-scan and five view/lateral assertions remain, unchanged from the remote parent. Full SQL/package parity and broad performance acceptance are not established."
+  },
   "remaining": [
-    "Post-merge validation pending; collaborator commits include production planner/executor fixes.",
+    "Nine remote-parent test failures remain; this receipt does not claim a green full suite.",
     "Planner metadata is still materialized into an owned snapshot, unlike Go's retained infoschema ownership.",
     "No whole Go-package parity or full sysbench/TPC-C performance claim."
   ]
