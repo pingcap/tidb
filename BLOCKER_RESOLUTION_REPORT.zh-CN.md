@@ -1,5 +1,48 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 binding 缓存 TIMESTAMP 解码 panic
+
+`global_binding_commands_commit_outside_the_user_transaction` 独立复现
+`rowcodec.rs:759 Go map decoder timezone` panic，完整栈在
+`/tmp/binding-timezone-red.log`。调用链为提交 binding → 刷新缓存 →
+SystemRow::parse → decode_table_row_to_map；parse 的 None 时区入口
+要求投影不含 TIMESTAMP，但 bind_info 的 create_time/update_time
+均为 TIMESTAMP(6)。这也影响另一个 binding 可见性用例和系统表
+hidden ID 用例，不能把 panic 当作存储环境缺口。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 依据：
+`pkg/meta/metadef/system_tables_def.go:245` 的表定义；
+`pkg/bindinfo/utils.go:145` 使用内部会话执行 SELECT；
+`pkg/sessionctx/variable/session.go:2907` 解析实际会话时区；
+`pkg/util/rowcodec/decoder.go:144` 将 UTC TIMESTAMP 转入解码器时区。
+Rust binding 刷新现在从节点 global time_zone 构造内部读取会话的时区，
+通过已有 parse_in_timezone 入口传入，不改变底层 codec 的契约。
+
+新增完整集群回归 global_binding_reload_decodes_timestamps_in_its_session_timezone：
+用户会话 UTC 写入，内部读取时区 +08:00；断言缓存的创建/更新时间
+分别为 08:00:00.123456 和 09:00:00.654321。修复前同一 panic
+（`/tmp/binding-timezone-unit-red.log`），修复后通过，保留微秒精度。
+
+Ready 验证命令：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib global_binding
+# 3 passed，/tmp/binding-timezone-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib system_table_hidden_ids_use_the_full_counter_key
+# 1 passed，/tmp/binding-timezone-counter-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+# 退出 0，/tmp/binding-timezone-fmt.log
+make lint
+# 退出 0，/tmp/binding-timezone-lint.log
+git diff --check
+```
+
+本修复前、空表健康度修复后的 server 全套为 403 passed / 28 failed
+（`/tmp/server-health-baseline.log`，42.38 秒）。其中四个 DDL fixture
+在全套并发下仍触发五秒事件等待上限；独立通过不足以宣称它们在全套
+稳定。还存在事务模式、时间戳优化、分区 EXPLAIN、自动分析、全局变量
+隔离等失败；完整目标与外部集成门禁仍未完成。
+
 ## 2026-09-11 空表健康度使用原始缓存的 pseudo 状态
 
 partition_global_stats_health_matches_go 在空分区表 ANALYZE 后独立失败：

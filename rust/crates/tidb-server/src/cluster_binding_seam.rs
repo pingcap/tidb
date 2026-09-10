@@ -82,6 +82,17 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterBind
         let catalog = self.catalog.load();
         let view = SystemTableView::locate(&catalog, "bind_info", COLUMNS)
             .map_err(|error| error.to_string())?;
+        // Go readBindingsFromStorage runs SELECT through an internal session.
+        // bind_info's create_time/update_time are TIMESTAMP(6), so decoding
+        // needs that session's timezone rather than the no-TIMESTAMP shortcut.
+        let timezone = crate::real_tikv_node::RealTiKvSessionTimeZone::parse(
+            &self
+                .globals
+                .get("time_zone")
+                .map_err(|error| format!("binding session time_zone: {error:?}"))?,
+        )
+        .map_err(|error| error.to_string())?
+        .zone();
         let start = view.record_prefix(&[]).map_err(|error| error.to_string())?;
         let mut end = start.clone();
         // Record prefixes end in '_r'; its successor bounds precisely this table.
@@ -96,8 +107,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterBind
                 .map_err(|error| error.to_string())?
                 .into_iter()
                 .map(|(key, value)| {
-                    let row =
-                        SystemRow::parse(&view, &key, &value).map_err(|error| error.to_string())?;
+                    let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))
+                        .map_err(|error| error.to_string())?;
                     COLUMNS
                         .iter()
                         .map(|name| {

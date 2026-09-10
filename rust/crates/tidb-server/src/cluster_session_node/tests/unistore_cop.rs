@@ -174,6 +174,25 @@ fn system_table_hidden_ids_use_the_full_counter_key() {
 }
 
 #[test]
+fn global_binding_reload_decodes_timestamps_in_its_session_timezone() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(124))
+        .expect("session");
+    rows(&mut session, "SET GLOBAL time_zone = '+08:00'");
+    rows(&mut session, "SET SESSION time_zone = '+00:00'");
+    rows(&mut session, "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest) VALUES ('select ?','SELECT 1','test','enabled','2026-09-07 00:00:00.123456','2026-09-07 01:00:00.654321','utf8mb4','utf8mb4_bin','manual','binding_timezone_probe')");
+    let bindings = displayed(rows(&mut session, "SHOW GLOBAL BINDINGS"));
+    let binding = bindings
+        .iter()
+        .find(|row| row[9] == "binding_timezone_probe")
+        .expect("committed binding appears in the shared cache");
+    assert_eq!(binding[4], "2026-09-07 08:00:00.123456");
+    assert_eq!(binding[5], "2026-09-07 09:00:00.654321");
+}
+
+#[test]
 fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     let (stack, _users) = cop_backed_stack();
     let mut writer = stack
