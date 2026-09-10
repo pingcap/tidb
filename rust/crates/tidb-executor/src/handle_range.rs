@@ -275,7 +275,7 @@ pub(crate) fn handle_range_row_count(
         })
         .collect::<Vec<_>>();
     get_row_count_by_column_ranges(
-        stats.and_then(|stats| stats.columns.get(&column.id)),
+        stats.and_then(|stats| stats.column_for_estimation(column.id)),
         &column_ranges,
         column.field_type.collation(),
         realtime as i64,

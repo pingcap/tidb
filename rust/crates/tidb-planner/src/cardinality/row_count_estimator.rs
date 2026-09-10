@@ -740,7 +740,8 @@ pub fn get_column_row_count(
 }
 
 /// Estimates a column's row count, falling back to pseudo statistics when the
-/// column has none. Go `GetRowCountByColumnRanges`.
+/// column has none or its retained payload has no rows. The collection owner
+/// also filters pseudo/evicted entries using Go `ColumnStatsIsInvalid`.
 #[must_use]
 pub fn get_row_count_by_column_ranges(
     column: Option<&ColumnStats>,
@@ -751,7 +752,7 @@ pub fn get_row_count_by_column_ranges(
     pk_is_handle: bool,
     options: EstimatorOptions,
 ) -> RowEstimate {
-    let Some(column) = column else {
+    let Some(column) = column.filter(|column| column.total_row_count() != 0.0) else {
         return RowEstimate::default_est(pseudo_row_count(
             ranges,
             collation,

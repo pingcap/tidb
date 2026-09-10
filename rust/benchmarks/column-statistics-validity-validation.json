@@ -1,0 +1,131 @@
+{
+  "base_revision": "c4e080b73c8165c971709a985c4ce4f07f227f9d",
+  "scope": "Go column-statistics validity and removal of misplaced column/index fallback. Not whole-package parity or a verified performance win.",
+  "artifact_root": "/private/tmp/tidb-column-validity.EXqPAR",
+  "source_diff_sha256": "a83f8e04dd84a608ed38d6b1c197961ca11f41fed8029bdb76f3fd3f8a8ac62e",
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-prepared-order.Y13Xya/candidate-server",
+      "sha256": "02c996989ffde30f078789aa6915b1bb643f0110fc066a9a69e03a7239417b0d"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-column-validity.EXqPAR/candidate-server",
+      "sha256": "304482c3ca2b019384dad83f6fa7f366f1df4526a81f9d038df11a6b68fa9113"
+    }
+  },
+  "source_evidence": [
+    "pkg/statistics/column.go ColumnStatsIsInvalid: pseudo, missing, zero-row or non-essential-loaded positive-NDV columns are invalid; evicted all-NULL NDV-zero columns remain usable.",
+    "pkg/planner/cardinality/row_count_column.go GetRowCountByColumnRanges applies the validity gate before estimation.",
+    "pkg/planner/cardinality/selectivity.go builds column and index nodes separately; findAvailableStatsForCol is not the ordinary range-node fallback."
+  ],
+  "validation": {
+    "profile": "Ready commands executed; six existing session failures remain. Not a fully green release.",
+    "red_logs": [
+      "column-red-verified.log: 1 versus Go pseudo 0.127",
+      "handle-red-verified.log: 1 versus Go pseudo 0.01 for evicted nullable positive-NDV column"
+    ],
+    "planner": {
+      "passed": 14,
+      "failed": 0,
+      "log": "planner-tests.log"
+    },
+    "executor": {
+      "passed": 63,
+      "failed": 0,
+      "log": "executor-tests.log"
+    },
+    "session_pair": {
+      "baseline": "106 passed, 6 failed, 1 ignored",
+      "candidate": "106 passed, 6 failed, 1 ignored",
+      "logs": [
+        "session-baseline.log",
+        "session-tests.log"
+      ],
+      "changed_failure_bodies": [
+        "a_case_insensitive_column_estimates_off_the_collation_sort_key: 1.00 -> 100.00; Go fixture 144.00",
+        "analyze_publishes_the_row_count_and_the_distribution: 1.00 -> 3.33; Go fixture 7.00",
+        "analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row: 1.88 -> 4.44; Go fixture 2.75",
+        "statistics_describe_the_moment_they_were_built: 1.00 -> 1.67; Go fixture 3.00"
+      ],
+      "unchanged_failures": [
+        "physical_statistics_loads_become_shared_at_the_next_statement_boundary: missing customer.c_mktsegment histogram",
+        "explain_select: USE INDEX() clustered-primary assertion"
+      ]
+    },
+    "retired_tests": [
+      "empty_histogram_with_positive_ndv_estimates_the_whole_table",
+      "a_single_column_index_supplies_the_fallback_estimate",
+      "a_composite_index_does_not_supply_the_fallback"
+    ],
+    "retirement_scope": "Obsolete Rust-only tests removed under user authorization; Go fixtures retained.",
+    "passed_logs": [
+      "workspace-check.log",
+      "build.log",
+      "lint.log"
+    ],
+    "commands": {
+      "planner": "cargo test --offline --locked --release -j12 -p tidb-planner --test all -- row_count_estimator_source column_stats_lite --test-threads=1",
+      "executor": "cargo test --offline --locked --release -j12 -p tidb-executor --lib --no-fail-fast -- access_cost:: index_range:: handle_range:: --test-threads=1",
+      "session": "cargo test --offline --locked --release -j12 -p tidb-session --lib --no-fail-fast -- tests_prepared_plan_cache tests_prepared_statements tests_statistics tests_analyze tests_explain::explain_select tests_non_prepared_plan_cache --test-threads=1",
+      "workspace": "cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "git diff --name-only --diff-filter=ACM -- '*.rs' | xargs rustfmt --check --edition 2021 --config skip_children=true",
+      "diff": "git diff --check",
+      "prepared": "ruby /private/tmp/tidb-column-validity.EXqPAR/verify-prepared-candidate.rb",
+      "live": "ruby /private/tmp/tidb-column-validity.EXqPAR/verify-range-cost.rb",
+      "sort_diagnostic": "ruby /private/tmp/tidb-column-validity.EXqPAR/candidate-sort-plans.rb",
+      "load_diagnostic": "ruby /private/tmp/tidb-column-validity.EXqPAR/probe-load.rb",
+      "profiles": "python3 /private/tmp/tidb-column-validity.EXqPAR/profile-cost.py /private/tmp/tidb-column-validity.EXqPAR/after-sysbench.trace /private/tmp/tidb-column-validity.EXqPAR/after-tpcc.trace",
+      "cleanup": "ruby /private/tmp/tidb-column-validity.EXqPAR/verify-cleanup.rb"
+    },
+    "working_directories": {
+      "cargo": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+      "other": "/private/tmp/tidb-upstream-merge.nzY42N"
+    },
+    "bazel_prepare": "Not triggered: no Go/module/Bazel changes."
+  },
+  "live": {
+    "prepared_comparisons": 8,
+    "prepared_results_equal": true,
+    "sysbench_measured_events": 72000,
+    "sysbench_warmup_events": 12000,
+    "sysbench_profile_events": 49588,
+    "uninstrumented_candidate_tpcc_transactions": 50000,
+    "baseline_tpcc_transactions": 12000,
+    "diagnostic_tpcc_transactions": 12000,
+    "tpcc_consistency_checks": "All 11 checks passed after each workload; all five transaction types present.",
+    "selected_parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "scope": "Selected result/aggregate/checksum queries and TPC-C consistency, not full SQL parity.",
+    "timing_log": "process-validation.json",
+    "profiles": [
+      {
+        "trace": "/private/tmp/tidb-column-validity.EXqPAR/after-sysbench.trace",
+        "running_ns": 26766000000,
+        "sort_next_ns": 2564000000
+      },
+      {
+        "trace": "/private/tmp/tidb-column-validity.EXqPAR/after-tpcc.trace",
+        "running_ns": 15757000000,
+        "sort_next_ns": 614000000
+      }
+    ],
+    "baseline_tpcc_sort_next_ns": 627000000,
+    "performance_acceptance": false,
+    "baseline_promoted": false,
+    "limitations": "Timing overlaps; shared-host CPU, Go auto-analyze and a growing TPC-C fixture prevent clean performance acceptance. Rust SortExec::next remains about 4% of TPC-C Running samples."
+  },
+  "cleanup": {
+    "owned_processes_absent": 11,
+    "ports_closed": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe",
+    "log": "cleanup.json"
+  },
+  "next_root_cause": {
+    "diagnostic_binary_sha256": "2a724fd1f392a0fbe6017f19751b2fb004ab50f5fd79bb18a75b3cb077eae0b8",
+    "log": "server-candidate-load-tpcc-diagnostic.log",
+    "observation": "Customer predicates collect columns 2/3/6 and both index loads with wait=100ms but service=false. 92 unique request log entries lack the service; 22 have it. Diagnostic logging removed from shipping source.",
+    "source": "ClusterSessionFactory attaches set_statistics_item_loader when opening a session. ClusterServerSession::rebuild_catalog_now replaces that catalog without installing the service. Catalog::request_statistics_load returns without loading when service is absent. Go Domain::StatsHandle lives independently of schema refresh.",
+    "status": "Located, not fixed by this increment; preserve domain loading ownership through catalog refresh and verify the actual cached scan-plus-sort chain next."
+  }
+}

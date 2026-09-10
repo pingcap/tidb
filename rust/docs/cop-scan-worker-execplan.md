@@ -3,11 +3,10 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment restores statement-context-aware access-path costing.
-Go builds ranges through the current ranger context; Rust's statistics pass
-used a name-only resolver, so EXECUTE parameters could not constrain estimates.
-The preceding increment shares configuration and version-owned index metadata
-and makes the domain available independently of statement kind.
+The current increment reconciles column-statistics validity. Go distinguishes
+loaded distributions from retained headers and evicted payloads; Rust admitted
+unusable columns into range costing and index exponential backoff. The preceding
+increment restored the current execution context for prepared range costing.
 Full performance and whole-Go-package acceptance remain open.
 
 
@@ -59,11 +58,41 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 - [x] Remove temporary instrumentation; verify all 11 owned PIDs absent and
   ten ports closed, retaining the fixture. Receipt and exact commands:
   benchmarks/prepared-range-context-validation.json.
-- [ ] Trace the remaining common-handle prefix estimate and cold statistics
-  ownership. Compare Go ColumnStatsIsInvalid with Rust cardinality's
-  get_row_count_by_column_ranges, which checks only Option presence. This is
-  a source-backed next investigation, not yet a proven causal fix. Preserve
-  the full throughput/latency goal and existing semantic failures.
+- [x] Reproduce Go ColumnStatsIsInvalid mismatches: a retained empty histogram
+  estimates 1 instead of the source pseudo estimate 0.127; an evicted nullable
+  common-handle column with positive NDV estimates 1 instead of 0.01. The latter
+  retains a nonzero NULL count, so checking TotalRowCount alone is insufficient.
+  Red logs: /private/tmp/tidb-column-validity.EXqPAR/column-red-verified.log and
+  handle-red-verified.log. Preserve the valid evicted all-NULL/zero-NDV case.
+- [x] Centralize the collection's pseudo/payload/essential-load validity gate
+  and apply it to integer/common handles, partial-index costing, exponential
+  backoff inputs and column selectivity. The public reduced-column estimator
+  rejects zero-row payloads too. Remove the misplaced ordinary-column index
+  fallback: Go builds column and index nodes separately. Retire its two
+  helper-only tests and the obsolete public-entry empty-histogram assertion;
+  source pseudo fixtures and live execution remain the verification path.
+- [x] Column-validity batch: 14 planner and 63 executor tests pass; workspace
+  all-target check, release build, Ready lint and changed-source formatting pass.
+  Paired session results are 106 passed / 6 failed / 1 ignored on both revisions.
+  Four failing estimate values change; two failure bodies are unchanged. Retain
+  all six unresolved fixtures. This is not a fully green release.
+- [x] Eight prepared result comparisons match Go. Complete 72,000 measured
+  sysbench events and 50,000 uninstrumented candidate TPC-C transactions, with
+  all 11 consistency checks passing. SortExec::next remains 614ms versus 627ms,
+  about 4% of Running samples. No accepted speedup or baseline promotion.
+- [x] Trace the remaining customer statistics gap through a separate request
+  probe: columns 2/3/6 and both index payloads are requested with a 100ms wait,
+  but the planning catalog has no load service. Session construction installs
+  it; ClusterServerSession::rebuild_catalog_now replaces the catalog without
+  installing it. Go's Domain.StatsHandle survives schema refresh. The two
+  diagnostic runs each complete 6,000 TPC-C transactions and 11 consistency
+  checks. Remove all instrumentation; verify 11 owned PIDs absent and ten ports
+  closed, retaining the fixture. Exact evidence and commands are in
+  benchmarks/column-statistics-validity-validation.json.
+- [ ] Preserve domain statistics-loading ownership across catalog refresh.
+  Reproduce using the existing refresh/load test surface, then verify the actual
+  prepared customer scan-plus-sort chain and remeasure matched workloads. The
+  column-validity change alone does not fix this independent lifecycle gap.
 - [x] Inspect final 6ef4aea7aa source/profile and Go GetGlobalConfig/UpdateGlobal.
   Statement context's instance-variable read deep-copies the full Rust Config;
   Go reads a published pointer and clones only in UpdateGlobal.
@@ -290,6 +319,14 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+Decision (2026-09-10, column-statistics validity): keep eviction metadata with
+the owning TableStatistics and expose one validated column lookup. Match Go's
+nonzero-row and essential-load/NDV conditions, including valid all-NULL headers.
+The reduced-column public estimator independently rejects zero-row payloads.
+Do not replace a column range node with an index estimate: Go Selectivity builds
+those nodes separately. Retain the distinct index fallback used for expression
+evaluation, where Go findAvailableStatsForCol actually calls for it.
+
 Decision (2026-09-10, prepared range costing): InitStats borrows StmtContext
 instead of only SessionTimeZone. Use FromScope::for_statement once per filtered
 data source for handle ranges, index ranges and selectivity, matching Go's
@@ -393,6 +430,16 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+The final column-validity load probe narrows the next failure to catalog
+replacement, not estimator arithmetic or predicate collection. It records 92
+unique requests with service=false and 22 with service=true. Customer's ordered
+query has the correct column/index demand but no service to execute it. Initial
+session construction in cluster_session_node/mod.rs installs the loader;
+rebuild_catalog_now assigns a fresh catalog and loses that attachment. Go's
+domain/domain.go StatsHandle accessor reads a domain-owned handle. A fix must
+preserve that lifetime through both statistics and schema refresh; forcing an
+index or preloading the benchmark's customer table would hide the cause.
 
 The post-lock profile exposes substantial Sort/TableScan CPU in Rust TPC-C.
 Go uses a covering idx_customer range for customer-name lookup and an ordered
@@ -636,6 +683,15 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+Column validity now follows Go's loaded-distribution gate, including the valid
+evicted all-NULL case. Three obsolete Rust-only tests and their misplaced index
+fallback are removed; Go fixtures remain. Focused checks pass, but six existing
+session failures and the workload optimization goal remain open. Paired timing
+does not support a speedup claim. The live request probe locates the next root
+cause: catalog replacement discards its statistics-loading service. Receipt:
+benchmarks/column-statistics-validity-validation.json. All owned services are
+stopped and the benchmark fixture is retained.
 
 The process-publication increment removes repeated normalization under the global
 registry lock and duplicate execution-history entries, following Go's separation

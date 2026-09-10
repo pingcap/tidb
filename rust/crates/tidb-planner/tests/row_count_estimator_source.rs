@@ -241,7 +241,11 @@ fn range_of(low: Datum, high: Datum, low_exclude: bool, high_exclude: bool) -> C
     ColumnRange::new(low, high, low_exclude, high_exclude)
 }
 
-fn column_estimate(column: Option<&ColumnStats>, ranges: &[ColumnRange], pk: bool) -> (f64, f64, f64) {
+fn column_estimate(
+    column: Option<&ColumnStats>,
+    ranges: &[ColumnRange],
+    pk: bool,
+) -> (f64, f64, f64) {
     let result = get_row_count_by_column_ranges(
         column,
         ranges,
@@ -342,7 +346,11 @@ fn source_column_point_estimates_follow_topn_then_histogram_then_uniform() {
         ),
     ];
     for (name, column, value, pk, want) in cases {
-        check(name, column_estimate(Some(column), &[point(*value)], *pk), *want);
+        check(
+            name,
+            column_estimate(Some(column), &[point(*value)], *pk),
+            *want,
+        );
     }
 }
 
@@ -507,6 +515,19 @@ fn source_column_multi_range_estimates() {
 
 #[test]
 fn source_pseudo_estimates_when_the_column_has_no_statistics() {
+    // Go ColumnStatsIsInvalid rejects a retained histogram header with no
+    // loaded rows exactly as it rejects a missing column.
+    let unloaded = ColumnStats {
+        histogram: Histogram {
+            id: 1,
+            ndv: 10,
+            ..Histogram::default()
+        },
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        unsigned: false,
+    };
     let cases: &[(&str, Vec<ColumnRange>, bool, f64)] = &[
         ("pseudo_eq", vec![point(3)], false, 0.127),
         (
@@ -552,10 +573,20 @@ fn source_pseudo_estimates_when_the_column_has_no_statistics() {
         assert_close(est, *want, name);
         assert_close(min, *want, &format!("{name}.min"));
         assert_close(max, *want, &format!("{name}.max"));
+        check(
+            name,
+            column_estimate(Some(&unloaded), ranges, *pk),
+            (est, min, max),
+        );
     }
 }
 
-fn index_range(low: &[i64], high: &[i64], low_exclude: bool, high_exclude: bool) -> IndexRangeDatums {
+fn index_range(
+    low: &[i64],
+    high: &[i64],
+    low_exclude: bool,
+    high_exclude: bool,
+) -> IndexRangeDatums {
     IndexRangeDatums {
         low: low.iter().map(|v| Datum::Int(*v)).collect(),
         high: high.iter().map(|v| Datum::Int(*v)).collect(),
@@ -640,7 +671,6 @@ fn source_index_range_estimates() {
         check(name, (result.est, result.min_est, result.max_est), *want);
     }
 }
-
 
 #[test]
 fn source_index_exp_backoff_estimates() {
@@ -825,7 +855,15 @@ fn source_v1_cmsketch_queries_match_go() {
     let column = column_v1();
     let cms = column.cms.as_ref().expect("version-1 column has a sketch");
     // Printed by the generator's CMSQUERY lines.
-    for (value, want) in [(0_i64, 1_u64), (1, 22), (2, 18), (20, 3), (39, 1), (500, 0), (-7, 0)] {
+    for (value, want) in [
+        (0_i64, 1_u64),
+        (1, 22),
+        (2, 18),
+        (20, 3),
+        (39, 1),
+        (500, 0),
+        (-7, 0),
+    ] {
         let got = cms
             .query_integer_datum(None, &Datum::Int(value))
             .expect("integer datums always encode");
@@ -906,141 +944,6 @@ fn equal_row_count_prefers_topn_over_every_later_source() {
         EstimatorOptions::default(),
     );
     assert_close(result.est, 22.0, "TopN count is exact");
-}
-
-/// The one branch every other fixture in this file misses: a column whose
-/// statistics row exists and reports a positive NDV, but whose histogram
-/// carries **no rows** and whose TopN is empty, with `ModifyCount = 0`.
-///
-/// Note the exact shape. A histogram with a literally empty bucket list is
-/// *not* the reachable one: `row_count_column.go:95` short-circuits
-///
-/// ```go
-/// if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 { return DefaultRowEst(0) }
-/// ```
-///
-/// before the uniform estimator is ever called, and this port agrees (the
-/// zero-bucket assertion at the end of this test states that). The branch is
-/// reached by bucket *bounds* that loaded with zero counts -- the shape
-/// sampling leaves behind, and the one
-/// `estimateRowCountWithUniformDistribution` calls out.
-///
-/// Every parity fixture above carries a populated histogram, so none of them
-/// reaches `estimateRowCountWithUniformDistribution`'s empty-histogram arm.
-/// That arm is `row_count_index.go:374`:
-///
-/// ```go
-/// return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
-/// ```
-///
-/// `TopN.MinCount()` returns `uint64` (`cmsketch.go:573`) and returns 0 for an
-/// empty or nil TopN, so `MinCount()-1` is an UNSIGNED subtraction that wraps
-/// to `math.MaxUint64`. Go therefore evaluates `float64(math.MaxUint64)` ~
-/// 1.8446744073709552e19, and `getColumnRowCount`'s closing
-/// `Clamp(1, realtimeRowCount)` turns that into the whole table.
-///
-/// This is the plan-flipping shape: computing the same expression in `f64`
-/// gives `max(0-1, 1) = 1`, which is a point lookup where Go full-scans. The
-/// wrap is deliberate arithmetic, not an accident to correct, so this fixture
-/// pins the wrapped answer.
-#[test]
-fn empty_histogram_with_positive_ndv_estimates_the_whole_table() {
-    let column = ColumnStats {
-        histogram: Histogram {
-            id: 9,
-            ndv: 5,
-            null_count: 0,
-            // Bounds present, counts zero: `NotNullCount()` is the last
-            // bucket's cumulative count, so this histogram holds no rows.
-            buckets: vec![int_bucket(0, 0, 0, 100)],
-            ..Histogram::default()
-        },
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
-    };
-
-    // The raw estimator, before any clamp: Go's wrapped `MaxUint64`.
-    let raw = equal_row_count_on_column(
-        &column,
-        &Datum::Int(42),
-        &key_of(&[Datum::Int(42)]),
-        Collation::Binary,
-        REALTIME,
-        0,
-        EstimatorOptions::default(),
-    );
-    assert_close(
-        raw.est,
-        18446744073709551615.0,
-        "unsigned wrap of topN.MinCount()-1",
-    );
-
-    // Through the column entry point, where the clamp turns it into the whole
-    // table rather than one row.
-    let clamped = get_row_count_by_column_ranges(
-        Some(&column),
-        &[point(42)],
-        Collation::Binary,
-        REALTIME,
-        0,
-        false,
-        EstimatorOptions::default(),
-    );
-    check(
-        "empty_histogram_point",
-        (clamped.est, clamped.min_est, clamped.max_est),
-        (
-            REALTIME as f64,
-            REALTIME as f64,
-            REALTIME as f64,
-        ),
-    );
-
-    // The wrap only fires with no modifications. A non-zero `ModifyCount`
-    // sends the same shape down the out-of-range NDV derivation instead, and
-    // that path does not produce the whole table.
-    let modified = equal_row_count_on_column(
-        &column,
-        &Datum::Int(42),
-        &key_of(&[Datum::Int(42)]),
-        Collation::Binary,
-        REALTIME,
-        MODIFY,
-        EstimatorOptions::default(),
-    );
-    assert!(
-        modified.est < REALTIME as f64,
-        "modify_count != 0 leaves the wrap branch: got {}",
-        modified.est
-    );
-
-    // And the literally-empty histogram never gets that far: the source
-    // short-circuit at `row_count_column.go:95` returns zero.
-    let no_buckets = ColumnStats {
-        histogram: Histogram {
-            id: 9,
-            ndv: 5,
-            null_count: 0,
-            buckets: vec![],
-            ..Histogram::default()
-        },
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
-    };
-    let short_circuit = equal_row_count_on_column(
-        &no_buckets,
-        &Datum::Int(42),
-        &key_of(&[Datum::Int(42)]),
-        Collation::Binary,
-        REALTIME,
-        0,
-        EstimatorOptions::default(),
-    );
-    assert_close(short_circuit.est, 0.0, "no bounds and no TopN short-circuits");
 }
 
 #[test]
@@ -1253,7 +1156,11 @@ fn source_pseudo_handle_ranges_with_an_infinite_low_take_the_unsigned_arm() {
         ("id < 0", &below_zero, less),
         ("id < -100000", &below_big_negative, less),
         ("id >= 199", &from_199, less),
-        ("id between 100 and 199", &between_100_199, between.min(99.0)),
+        (
+            "id between 100 and 199",
+            &between_100_199,
+            between.min(99.0),
+        ),
     ] {
         let (est, _, _) = column_estimate(None, std::slice::from_ref(range), true);
         assert_close(est, want, name);
