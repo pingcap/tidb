@@ -6748,6 +6748,7 @@ fn truncate_partitions_refreshes_global_stats_meta_like_go() {
          PARTITION p4 VALUES LESS THAN (50),\
          PARTITION p5 VALUES LESS THAN (60))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO global_stats_truncate VALUES \
@@ -6779,6 +6780,19 @@ fn truncate_partitions_refreshes_global_stats_meta_like_go() {
         "ALTER TABLE global_stats_truncate TRUNCATE PARTITION p2, p4",
     );
     rows(&mut session, "FLUSH STATS_DELTA *.*");
+    drain_stats_ddl_events(&stack.factory, &mut session);
+    // Go calls h.Update after handling the DDL event before reading SHOW's
+    // cached statistics. Trigger and await the corresponding cache refresh.
+    let reloads = stack._stats_reloader.stats().reloads;
+    rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statistics cache did not refresh"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert_eq!(global_count(&mut session), "11");
 
     rows(&mut session, "ANALYZE TABLE global_stats_truncate");

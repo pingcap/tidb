@@ -1,5 +1,26 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 多分区 TRUNCATE 后刷新全局统计缓存
+
+truncate_partitions_refreshes_global_stats_meta_like_go 独立失败：截断 p2/p4
+并 FLUSH STATS_DELTA 后 SHOW STATS_META 仍为 15，预期 11
+（`/tmp/truncate-multi-red.log`）。仅消费 DDL 事件仍失败
+（`/tmp/truncate-multi-green.log`，该日志名称不代表通过）。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/globalstats/global_stats_test.go:550` 的
+TestDDLPartition4GlobalStats 在 CREATE 后消费事件；TRUNCATE 后则先
+flush delta，再消费事件，再 h.Update，才检查内存全局统计。
+Rust fixture 现补齐事件消费，并通过现有 FLUSH 入口触发和等待统计缓存
+reload，等待有五秒上限。保留 15→11、再次 ANALYZE 后 7 条统计及
+全局 11 的断言；没有改生产统计或预期值。
+
+验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib truncate_partitions_refreshes_global_stats_meta_like_go`
+通过，1 passed，4.27 秒（`/tmp/truncate-multi-refresh.log`）。
+Ready gate `make lint` 通过（`/tmp/truncate-multi-final-lint.log`）；
+`git diff --check` 通过。
+
 ## 2026-09-11 DROP PARTITION 统计事件同步
 
 drop_partitions_statistics_match_go 独立失败：删除 p0/p1 后全局统计仍为
