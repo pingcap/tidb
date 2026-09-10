@@ -160,6 +160,26 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
+	t.Run("MemTable and Lock preserve child work", func(t *testing.T) {
+		ctx := mock.NewContext()
+		memTable := physicalop.PhysicalMemTable{}.Init(ctx, &property.StatsInfo{}, 0)
+		projection := physicalop.PhysicalProjection{Exprs: []expression.Expression{&expression.Column{}}}.Init(ctx, &property.StatsInfo{}, 0)
+		lock := physicalop.PhysicalLock{}.Init(ctx, &property.StatsInfo{}, nil)
+		projection.SetChildren(memTable)
+		lock.SetChildren(projection)
+		tree := plannercore.FlattenPhysicalPlan(lock, false).Main
+		for _, rows := range []int{0, 3} {
+			coll := execdetails.NewRuntimeStatsColl(nil)
+			for _, operator := range tree {
+				coll.GetBasicRuntimeStats(operator.Origin.ID(), true).Record(0, rows)
+			}
+			calculator := &statementRUCalculator{}
+			result := calculateStatementRUPlanChildFirst(tree, 0, coll, calculator, 10, statementRURawUnits{}, nil)
+			require.Equal(t, statementRUOperatorComplete, result.state)
+			require.EqualValues(t, rows, result.outputRows)
+			require.Equal(t, statementRURawUnits{CPUWork: float64(rows), OperatorNum: 3}, calculator.units)
+		}
+	})
 	t.Run("DML requires typed processed work", func(t *testing.T) {
 		ctx := mock.NewContext()
 		plan := physicalop.Insert{}.Init(ctx)
