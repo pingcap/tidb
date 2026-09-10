@@ -168,7 +168,7 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
 	var remainedConds []expression.Expression
-	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0, 0)
 	if err != nil {
 		return nil, err
 	}

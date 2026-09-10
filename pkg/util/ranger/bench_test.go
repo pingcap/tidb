@@ -136,7 +136,7 @@ WHERE
 	b.ResetTimer()
 	pctx := sctx.GetPlanCtx()
 	for range b.N {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()
@@ -159,7 +159,7 @@ CREATE TABLE t (
 	var rangeCount int
 	var rangeBytes int64
 	for range b.N {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0, 0)
 		require.NoError(b, err)
 		rangeCount = len(res.Ranges)
 		rangeBytes = res.Ranges.MemUsage()
@@ -184,7 +184,7 @@ CREATE TABLE t (
 	var rangeCount int
 	var rangeBytes int64
 	for range b.N {
-		ranges, _, _, err := ranger.BuildColumnRange(conds, rctx, tp, types.UnspecifiedLength, 0)
+		ranges, _, _, err := ranger.BuildColumnRange(conds, rctx, tp, types.UnspecifiedLength, 0, 0)
 		require.NoError(b, err)
 		rangeCount = len(ranges)
 		rangeBytes = ranges.MemUsage()

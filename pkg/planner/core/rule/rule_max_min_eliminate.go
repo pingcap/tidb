@@ -85,7 +85,7 @@ func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx().GetRangerCtx(), conditions, indexCols, indexColLen, p.SCtx().GetSessionVars().RangeMaxSize)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx().GetRangerCtx(), conditions, indexCols, indexColLen, p.SCtx().GetSessionVars().RangeMaxSize, p.SCtx().GetSessionVars().RangeMaxCount)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}

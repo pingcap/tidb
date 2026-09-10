@@ -407,7 +407,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 			access = append(access, newCond)
 		}
 		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), access, idxCols, idxColLens, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), access, idxCols, idxColLens, 0, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -416,7 +416,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 		var err error
 		pkTP := p.Table.GetPkColInfo().FieldType
 		// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-		p.Ranges, _, _, err = ranger.BuildTableRange(access, ctx.GetRangerCtx(), &pkTP, 0)
+		p.Ranges, _, _, err = ranger.BuildTableRange(access, ctx.GetRangerCtx(), &pkTP, 0, 0)
 		if err != nil {
 			return nil, err
 		}

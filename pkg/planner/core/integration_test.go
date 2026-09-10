@@ -1551,6 +1551,54 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	})
 }
 
+func TestPlanCacheForIndexRangeCountFallback(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, c int, index idx(a, b, c))")
+		tk.MustExec("insert into t values (10, 40, 70), (20, 50, 75), (30, 60, 80), (10, 99, 70)")
+		tk.MustExec("set @@tidb_opt_range_max_size=0")
+		tk.MustExec("set @@tidb_opt_range_max_count=8")
+
+		query := "select /*+ use_index(t, idx) */ * from t where a in (10, 20, 30) and b in (40, 50, 60) and c between 70 and 80"
+		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + query).Rows())
+		require.Contains(t, plan, "IndexRangeScan")
+		require.Contains(t, plan, "range:[10,10], [20,20], [30,30]")
+		require.Contains(t, plan, "in(test.t.b, 40, 50, 60)")
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+
+		// SET_VAR should be able to enable the range-count guardrail for a single statement.
+		tk.MustExec("set @@tidb_opt_range_max_count=0")
+		hintedQuery := "select /*+ set_var(tidb_opt_range_max_count=8) use_index(t, idx) */ * from t where a in (10, 20, 30) and b in (40, 50, 60) and c between 70 and 80"
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + hintedQuery).Rows())
+		require.Contains(t, plan, "range:[10,10], [20,20], [30,30]")
+		require.Contains(t, plan, "in(test.t.b, 40, 50, 60)")
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("0"))
+		tk.MustExec("set @@tidb_opt_range_max_count=8")
+
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+		tk.MustExec("prepare stmt from 'select /*+ use_index(t, idx) */ * from t where a in (?, ?, ?) and b in (?, ?, ?) and c between ? and ?'")
+		tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50, @f=60, @g=70, @h=80")
+		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
+		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen",
+			"Warning 1105 skip prepared plan-cache: range count exceeds limit"))
+		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		// A count fallback must not also be reported as a size fallback when plan cache is forced.
+		tk.MustExec(`set @@tidb_opt_fix_control="49736:ON"`)
+		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
+		tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Warning 1105 Range count limit of 8 for 'tidb_opt_range_max_count' exceeded when building ranges. Less accurate ranges such as full range are chosen",
+			"Warning 1105 force plan-cache: may use risky cached plan: range count exceeds limit"))
+		tk.MustExec("execute stmt using @a, @b, @c, @d, @e, @f, @g, @h")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
+}
+
 func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")

@@ -98,7 +98,7 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	} else {
 		return false
 	}
-	ranges, _, _, err := ranger.BuildColumnRange([]expression.Expression{pre}, rangerctx, col.RetType, -1, 0)
+	ranges, _, _, err := ranger.BuildColumnRange([]expression.Expression{pre}, rangerctx, col.RetType, -1, 0, 0)
 	if len(ranges) == 0 || err != nil {
 		return false
 	}
@@ -106,7 +106,7 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	if len(columnConds) == 0 {
 		return false
 	}
-	rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, col.RetType, -1, 0)
+	rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, col.RetType, -1, 0, 0)
 	if len(rangesFromFilters) == 0 || err != nil {
 		return false
 	}
@@ -133,7 +133,7 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 	if len(columnConds) == 0 {
 		return false
 	}
-	rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, targetCol.RetType, -1, 0)
+	rangesFromFilters, _, _, err := ranger.BuildColumnRange(columnConds, rangerctx, targetCol.RetType, -1, 0, 0)
 	if len(rangesFromFilters) == 0 || err != nil {
 		return false
 	}
