@@ -2869,6 +2869,11 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .collect::<Vec<_>>();
     for (row, access) in analyzed_access.iter().enumerate() {
         if access == "table:orders" {
+            assert_eq!(
+                analyzed_cell(&analyzed[row], 1),
+                "10.00",
+                "Go table probe reverses the retained warehouse filter selectivity"
+            );
             assert!(
                 !analyzed_details[row].contains("stats:pseudo"),
                 "analyzed IndexJoin table probes retain the source statistics version: {}",

@@ -1,5 +1,61 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 table probe 范围选择率与扫描反算
+
+本轮将 `lt/le/gt/ge` 单列条件经现有 ranger 构建 ColumnRange，调用
+`get_row_count_by_column_ranges`（包括空 histogram 的 pseudo 回退），采用列
+自身 collation。列间比较继续走原默认分支，不将范围条件硬编码成 0.8。
+回归 `range_with_metadata_only_statistics_uses_range_estimator` 精确校验
+`(rows/3-rows/1000)/rows`，符合 Go 对非 NULL 下界的 pseudo 估算；关闭新增
+范围分支后失败，日志 `/tmp/metadata-range-red.log`。
+
+table probe 保留被运行时 join key 替换的静态条件为 residual，按 Go
+`constructDS2TableScanTask` 将输出行数除 residual selectivity 后应用 access
+floor 与唯一键上限；扫描和 Selection 共享同一选择率。pseudo source 使用
+原 pseudo range 路径，analyzed source 使用含范围处理的现有 helper。
+orders 10.00 行断言修复前失败（`/tmp/table-probe-rows-red.log`），修复后通过。
+此前退化的 subqueries 两层 IndexHashJoin 也恢复通过，与同 JSON 的 Go 对照一致。
+
+验证命令与证据：`RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-planner --lib`，`/tmp/probe-range-planner-final.log`；
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-executor --lib`，`/tmp/probe-range-executor-final.log`；
+`make lint`，`/tmp/probe-range-lint.log`。实际结果为 planner 927 passed、
+executor 1294 passed / 1 failed，lint 退出 0，使用 Ready 验证范围；
+condition eleven 其余旧 MergeJoin/路径/行数断言仍待 Go 校正
+与实现修复，不以新断言通过声明整个 case 或整体目标完成。
+
+## 2026-09-10 subqueries 回归的 Go 证据
+
+已导出 wait_orders/wait_lineitem 的原始 Rust fixture 统计到
+`/tmp/wait-probe-oracle/`，Go master 加载同一 JSON 并执行 setup.sql 中的查询。
+`go.out` 确认两层 IndexHashJoin（semi、anti semi），旧 subqueries 类型断言正确。
+未修改生产实现时原测试通过，日志 `rust-export.log`。临时统计导出代码已移除。
+
+Go l2 probe Selection 400.08、TableRangeScan 1203.85，过滤为
+`lt(l_orderkey,100000)`；l3 Selection 320.06、TableRangeScan 400.08，过滤为
+列间 `gt(l_receiptdate,l_commitdate)`。因此两个过滤选择率分别约 0.3323 和 0.8。
+上一轮实验的 analyzed_filter_selectivity 对未识别的 lt 也返回 0.8，不能直接
+用于 table probe 的范围反算。JSON 只有 NDV 而无 histogram buckets；现有
+cardinality/row_count_estimator.rs::get_row_count_by_column_ranges 在 histogram
+total_row_count 为零时回退 pseudo_row_count，提供了正确的后续实现入口。
+应通过 ranger 构建 ColumnRange 并复用该估算器，而不是硬编码 1/3 或把所有
+条件送入 analyzed helper。该证据解释了实验引入的计划排序回归，整体目标未完成。
+
+## 2026-09-10 table probe 行数实验与回归约束
+
+新增 condition eleven orders 扫描 10.00 行断言，当前实现失败（1.00），日志
+`/tmp/table-probe-rows-red.log`。实验将被 runtime keys 替换的静态 access 条件
+加入 residual 估算，先按选择率反算扫描，再应用 access floor 与唯一键上限。
+orders 10 行断言通过，但 executor 全量出现新增
+`driver::tests::subqueries::subqueries` 失败（subqueries.rs:2500，要求两个
+decorrelated joins，实际一个）；全量 1293 passed / 2 failed，日志
+`/tmp/table-probe-rows-experiment.log`。这尚不证明新的 plan 错误，也不证明旧
+断言正确，需要用 Go master 对照该具体 SQL，并区分 pseudo 与 analyzed
+选择率调用。为避免集成未经验证的行为，本轮实验生产改动已撤回；保留 orders
+扫描行数红色回归。下一步须按 Go chosenRemained 构建及 Selectivity 路径完整
+核实，而不是仅匹配列 ID 或在全路径调用 analyzed 估算器。整体目标未完成。
+
 ## 2026-09-10 table probe 统计版本保留
 
 Go `constructDS2TableScanTask` 为 probe scan 设置

@@ -178,6 +178,49 @@ pub(crate) fn analyzed_filter_selectivity(
             selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
             continue;
         };
+        if matches!(function.func_name.lowercase(), "lt" | "le" | "gt" | "ge") {
+            let columns = tidb_expr::simple_expr::extract_columns(condition);
+            if columns.len() == 1 {
+                let column = &columns[0];
+                if let (Some(field_type), Some(hist)) =
+                    (column.ret_type.as_ref(), table_stats.hist_coll())
+                {
+                    if let Ok(built) = crate::ranger::ranger::build_column_range(
+                        std::slice::from_ref(condition),
+                        field_type,
+                        crate::ranger::checker::UNSPECIFIED_LENGTH,
+                        0,
+                    ) {
+                        if built.remained_conds.is_empty() && !built.access_conds.is_empty() {
+                            let ranges = built
+                                .ranges
+                                .iter()
+                                .map(|range| {
+                                    crate::cardinality::row_count_estimator::ColumnRange::new(
+                                        range.low_val[0].clone(),
+                                        range.high_val[0].clone(),
+                                        range.low_exclude,
+                                        range.high_exclude,
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            let is_handle = hist.pk_is_handle()
+                                && hist
+                                    .column(column.unique_id)
+                                    .is_some_and(|stats| stats.is_handle);
+                            let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+                                hist.histogram(column.unique_id).map(|stats| stats.as_ref()), &ranges,
+                                field_type.collation(), hist.realtime_count(), hist.modify_count(),
+                                is_handle, crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+                            );
+                            selectivity_total *= (estimate.est / table_stats.row_count()).min(1.0);
+                            recognized = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
             ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
                 (column, vec![value.value.clone()])
@@ -2643,6 +2686,33 @@ mod analyzed_filter_selectivity_tests {
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_stats::{Bucket, Histogram};
+
+    #[test]
+    fn range_with_metadata_only_statistics_uses_range_estimator() {
+        let rows = 6_001_215;
+        let stats = StatsInfo::new(rows as f64, [(7, 1_500_000.0)]).with_hist_coll(HistColl::new(
+            false,
+            rows,
+            [],
+        ));
+        let condition = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("lt"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                Expression::Column(Column::new(7, FieldType::new(FieldTypeCode::LongLong))),
+                Expression::Constant(Constant::new(
+                    Datum::Int(100_000),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let selectivity = analyzed_filter_selectivity(&stats, &[condition]).unwrap();
+        let expected = (rows as f64 / 3.0 - rows as f64 / 1_000.0) / rows as f64;
+        assert_eq!(
+            selectivity, expected,
+            "Go excludes pseudo NULL rows from the open lower bound"
+        );
+    }
 
     /// Go `cardinality.Selectivity`'s equality arm reads the loaded
     /// histogram: when the value is a bucket's upper bound the estimate is

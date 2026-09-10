@@ -2046,7 +2046,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
                 // access conditions are re-attached to the Selection.
-                let residual_table_filters = table_filters.clone();
+                let mut residual_table_filters = table_filters.clone();
                 if prop.index_join_prop.is_some() {
                     // Go `constructDS2TableScanTask` re-attaches every
                     // inner-only access condition as an explicit probe-side
@@ -2063,6 +2063,22 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             {
                                 table_filters.push(condition.clone());
                             }
+                        }
+                    }
+                }
+                if let Some(runtime) = &prop.index_join_prop {
+                    for condition in &table_access_conds {
+                        let columns = tidb_expr::simple_expr::extract_columns(condition);
+                        if columns.iter().any(|column| {
+                            runtime
+                                .inner_join_keys
+                                .iter()
+                                .any(|key| key.unique_id == column.unique_id)
+                        }) && !residual_table_filters
+                            .iter()
+                            .any(|existing| existing.equal(condition))
+                        {
+                            residual_table_filters.push(condition.clone());
                         }
                     }
                 }
@@ -2147,12 +2163,44 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         }
                     }
                 }
+                let probe_selectivity =
+                    if prop.index_join_prop.is_none() || residual_table_filters.is_empty() {
+                        1.0
+                    } else {
+                        table_stats
+                            .as_ref()
+                            .and_then(|stats| {
+                                if ds.table_scan_penalty.pseudo_stats {
+                                    crate::logical::rewrite::pseudo_range_filter_selectivity(
+                                        ds,
+                                        stats,
+                                        &residual_table_filters,
+                                        ds.base.base.schema()?,
+                                        ctx.range_max_size,
+                                        ctx.selectivity_factor,
+                                        ctx.range_fallback_handler,
+                                    )
+                                } else {
+                                    crate::logical::rewrite::analyzed_filter_selectivity(
+                                        stats,
+                                        &residual_table_filters,
+                                    )
+                                }
+                            })
+                            .filter(|value| *value > 0.0)
+                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                    };
                 if let Some(runtime) = &prop.index_join_prop {
                     // Go `constructDS2TableScanTask`: the runtime row count is
                     // the per-outer-row average, capped at one row for a
                     // complete unique equality probe.
-                    let mut runtime_rows =
-                        probe_access_rows_floor.unwrap_or(runtime.avg_inner_row_count);
+                    let output_rows = if runtime.avg_inner_row_count > 0.0 {
+                        runtime.avg_inner_row_count
+                    } else {
+                        1.0
+                    };
+                    let mut runtime_rows = (output_rows / probe_selectivity)
+                        .max(probe_access_rows_floor.unwrap_or(0.0));
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
@@ -2358,32 +2406,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base
                         .base
                         .set_stats(if prop.index_join_prop.is_some() {
-                            let residual_selectivity = table_stats.as_ref().map_or(1.0, |stats| {
-                                if ds.table_scan_penalty.pseudo_stats {
-                                    crate::logical::rewrite::pseudo_range_filter_selectivity(
-                                        ds,
-                                        stats,
-                                        &residual_table_filters,
-                                        ds.base
-                                            .base
-                                            .schema()
-                                            .unwrap_or(&tidb_expr::schema::Schema::default()),
-                                        ctx.range_max_size,
-                                        ctx.selectivity_factor,
-                                        ctx.range_fallback_handler,
-                                    )
-                                    .unwrap_or(1.0)
-                                } else {
-                                    crate::logical::rewrite::analyzed_filter_selectivity(
-                                        stats,
-                                        &residual_table_filters,
-                                    )
-                                    .unwrap_or(1.0)
-                                }
-                            });
                             stats
                                 .as_ref()
-                                .map(|stats| stats.scale(residual_selectivity, ctx.skew_ratio))
+                                .map(|stats| stats.scale(probe_selectivity, ctx.skew_ratio))
                         } else {
                             ds.base.base.stats_info().cloned()
                         });
