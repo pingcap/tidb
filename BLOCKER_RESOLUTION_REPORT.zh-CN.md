@@ -58,6 +58,26 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 
 追加提交 `5de8ec9007`：修正前一提交中的分支方向，evicted payload（`!is_full_load`）现在进入 `load_item(..., full_load=true)`，避免仅保留 metadata。已推送到 `origin/hparser-integration`。
 
+## 2026-09-10 固定 Go master 的完整 access-path 结果
+
+已建立干净 worktree `/tmp/tidb-go-master-oracle`，固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`。构建命令 `env -u LDFLAGS make server` 退出 0，`bin/tidb-server -V` 确认该 hash、Go 1.26.2、无 dirty 后缀；`git status --short` 为空。首次直接 `make server` 因本机 LDFLAGS 中的 ICU `-L...` 参数被传给 Go linker 而失败，仅清除该命令的环境变量即解决，未修改 Go 源码。
+
+master Go 与 PD v8.5.6 组合不能 bootstrap：PD 返回 `Unimplemented: unknown method QueryRegion for service pdpb.PD`。该运行日志为 `/tmp/access-master-diff.log`。新增 `ACCESS_PATH_CLUSTER_VERSION` 参数，允许选择兼容的 PD/TiKV，默认值仍为 v8.5.6，输出中明确记录版本。随后使用本机已有 nightly：PD `d71c0396ac26eb96a969c28b0efdafef9dd5aac3`，TiKV `1167092fea81ff8cb16ac49779f5702f7e225e79`。
+
+完整运行命令：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-master-nightly-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-master-nightly-diff.log 2>&1
+```
+
+结果：**0 failure(s), 1 divergent choice(s)，退出 1**。Go/Rust 的 pseudo 复合索引均为 1.25；ANALYZE 后 covering 查询均为 500；大表查询返回行对照通过。唯一差异为 ANALYZE 后 `SELECT * FROM t WHERE bucket=1 AND rare=7`：Go 使用 `idx_cover(bucket,rare)`，Rust 使用 `idx_rare(rare)`，双方 estRows 都为 1。该差异仍保留为失败，尚需对照 master skyline pruning 和 cost 调用链修复。不能把旧运行的 2 failures / 7 divergences 继续描述为此次 master 基准的结果，也不能仅凭一次运行将所有历史统计加载差异都归因于版本。
+
+节点日志位于 `/tmp/access-master-nightly-evidence/`；此次没有改动 Rust 生产实现或 SQL 断言。验证 profile 为 Ready 范围：`make lint`、`bash -n rust/scripts/run-realtikv-access-path.sh`、`bash rust/scripts/test-access-path-readiness.sh` 均退出 0。整体目标仍未完成，其余脚本和 Go integration suites 也不能据此视为通过。
+
 ## 2026-09-10 access-path 的 Go 基准版本缺口
 
 脚本的 Go 节点固定为 TiUP **v8.5.6**，不是用户要求的 Go master。对照 `origin/master` 的 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，`pkg/planner/cardinality/selectivity.go` 在返回前明确执行 `ret = max(ret, 1.0/float64(coll.RealtimeCount))`。该下限来自 `11b8149926`（2026-05-28，#67841）。随后 `pkg/planner/core/stats.go::adjustCountAfterAccess` 将较低的路径估算调整为 `ds.StatsInfo().RowCount / cost.SelectionFactor`。

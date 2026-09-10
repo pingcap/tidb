@@ -174,6 +174,8 @@ check() {
 }
 
 echo "starting playground (tag ${TAG})"
+CLUSTER_VERSION=${ACCESS_PATH_CLUSTER_VERSION:-v8.5.6}
+echo "TiUP cluster version: ${CLUSTER_VERSION}"
 GO_BINARY_ARGS=()
 if [[ -n "${ACCESS_PATH_TIDB_SERVER:-}" ]]; then
   [[ -x "${ACCESS_PATH_TIDB_SERVER}" ]] \
@@ -181,9 +183,9 @@ if [[ -n "${ACCESS_PATH_TIDB_SERVER:-}" ]]; then
   "${ACCESS_PATH_TIDB_SERVER}" -V
   GO_BINARY_ARGS=(--db.binpath "${ACCESS_PATH_TIDB_SERVER}")
 else
-  echo "Go baseline: TiUP v8.5.6 (set ACCESS_PATH_TIDB_SERVER to compare with Go master)"
+  echo "Go baseline: TiUP ${CLUSTER_VERSION} (set ACCESS_PATH_TIDB_SERVER to compare with Go master)"
 fi
-tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+tiup playground "${CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
   "${GO_BINARY_ARGS[@]}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
