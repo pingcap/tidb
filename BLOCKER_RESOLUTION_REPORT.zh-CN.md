@@ -1,5 +1,38 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 分区 ANALYZE 回归中的 DDL 事件与缓存同步
+
+partition_scoped_analyze_refreshes_global_count_and_modify_count 在 DROP p2
+后立即读取 SHOW STATS_META，独立得到 9 而不是 7（1.27 秒，
+`/tmp/partition-scoped-red.log`）。固定 Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/statistics/handle/globalstats/global_stats_test.go:492` 在 CREATE 后
+处理统计 DDL 事件，并在统计读取前调用 h.Update；DROP 的统计扣减
+由 `pkg/statistics/handle/ddl/ddl_test.go:1080` 明确在处理事件后验证。
+SHOW 读取缓存，因此只等 schema DDL 返回不够。
+
+fixture 现按顺序消费 CREATE、ADD PARTITION 和 DROP PARTITION 的统计
+事件；DROP 后通过已有 FLUSH 入口触发缓存刷新并等待完成（五秒上限），
+再读取计数。保留原 2/9、0/9 断言，以及重新 ANALYZE 前后两处计数 7
+断言；没有修改生产统计实现或预期值。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib partition_scoped_analyze_refreshes_global_count_and_modify_count
+# 1 passed，7.37 秒，/tmp/partition-scoped-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 418 passed / 16 failed，44.11 秒，/tmp/server-partition-scoped-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/partition-scoped-{fmt,lint}.log
+```
+
+目标用例在全套通过，但 ordinary_cluster_sysvars_are_also_installed_before_login_and_reloaded
+本轮再次失败，故总失败数仍为 16，不能从上一轮总数直接减一。
+本项不代表剩余 Rust failures 和外部集成门禁已完成。
+
 ## 2026-09-11 优先队列 DROP 回归等待事件事务
 
 auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path

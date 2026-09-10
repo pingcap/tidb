@@ -6740,6 +6740,7 @@ fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
          PARTITION p0 VALUES LESS THAN (10),\
          PARTITION p1 VALUES LESS THAN (20))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO global_stats_version VALUES (1),(5),(NULL),(11),(15)",
@@ -6771,6 +6772,7 @@ fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
         "ALTER TABLE global_stats_version ADD PARTITION \
          (PARTITION p2 VALUES LESS THAN (30))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO global_stats_version VALUES (13),(14),(22),(23)",
@@ -6795,8 +6797,20 @@ fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
         &mut session,
         "ALTER TABLE global_stats_version DROP PARTITION p2",
     );
-    assert_eq!(global_meta(&mut session)[5], "7");
+    // Go DDL tests handle the subscriber event before inspecting stats;
+    // SHOW reads the cache, so also perform the equivalent of h.Update.
+    drain_stats_ddl_events(&stack.factory, &mut session);
+    let reloads = stack._stats_reloader.stats().reloads;
     rows(&mut session, "FLUSH STATS_DELTA *.*");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._stats_reloader.stats().reloads == reloads {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "statistics cache did not refresh after dropping p2"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(global_meta(&mut session)[5], "7");
     rows(&mut session, "ANALYZE TABLE global_stats_version");
     let meta = global_meta(&mut session);
     assert_eq!(meta[5], "7");
