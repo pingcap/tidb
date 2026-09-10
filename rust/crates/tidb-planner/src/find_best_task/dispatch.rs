@@ -1441,7 +1441,9 @@ fn path_matches_index_join_runtime(
                 // `schema_column_for_index_column` (Go's `ds.Columns`
                 // alignment) does.
                 let Some(column) = ds.schema_column_for_index_column(index_column) else {
-                    return false;
+                    // Go IndexInfo2Cols truncates IdxCols at the first
+                    // pruned column, retaining any usable leading join keys.
+                    break;
                 };
                 if inner_ids.contains(&column.unique_id) {
                     matched_runtime_key = true;
@@ -4451,6 +4453,57 @@ mod tests {
             PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
 
         assert!(table_path_matches_order(&source, &order_by_district));
+    }
+
+    #[test]
+    fn index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned() {
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
+        use crate::physical_property::IndexJoinRuntimeProp;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+        use tidb_expr::schema::Schema;
+
+        let key = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
+        base.base.set_schema(Some(Schema::new(vec![key.clone()])));
+        let mut source = DataSource {
+            base,
+            columns: vec![DataSourceColumn {
+                id: 1,
+                name: "key".to_owned(),
+                is_primary_key: false,
+                is_not_null: true,
+            }],
+            indexes: vec![SourceIndex {
+                columns: ["key", "pruned"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, name)| SourceIndexColumn {
+                        name: name.to_owned(),
+                        offset,
+                        length: -1,
+                    })
+                    .collect(),
+                ..SourceIndex::default()
+            }],
+            ..DataSource::default()
+        };
+        let runtime = IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
+            inner_join_keys: vec![key],
+            avg_inner_row_count: 1.0,
+            table_range_scan: false,
+        };
+        let path = PossiblePath::Index { index: 0 };
+        assert!(path_matches_index_join_runtime(&source, &path, &runtime));
+
+        // A missing leading column still prevents probing a later join key.
+        source.indexes[0].columns.swap(0, 1);
+        assert!(!path_matches_index_join_runtime(&source, &path, &runtime));
     }
 
     #[test]

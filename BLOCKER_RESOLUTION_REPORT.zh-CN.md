@@ -1,5 +1,36 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 IndexJoin 保留裁剪后的可用索引前缀
+
+condition eleven 剩余 customer 路径差异并非成本偏低：候选日志证明只有
+Table 路径到达成本比较。`path_matches_index_join_runtime` 遇到被裁剪的
+尾列直接返回 false，错误淘汰已匹配连接键的 idx_customer。
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/planner/util/column.go::indexInfo2ColsImpl` 遇到缺失列仅截断
+prefixCols，保留前面的可用键；`stats.go::fillIndexPath` 将该前缀传入路径。
+Rust 现按相同边界终止匹配，保留此前结果；不跨越前缀缺口。
+
+新增 `index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned`，
+旧实现断言失败（`/tmp/pruned-probe-red.log`），修复后通过，同时验证缺失
+首列不能用于探测后面的连接键。原始 condition eleven 完整计划断言通过，
+包含有序 idx_customer；没有修改 SQL、Go golden 或既有计划断言。
+
+Ready 验证：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib
+# 928 passed, 0 failed; /tmp/pruned-probe-planner.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1295 passed, 0 failed; /tmp/pruned-probe-full-executor.log
+make lint
+# exit 0; /tmp/pruned-probe-lint.log
+git diff --check
+# exit 0
+```
+
+临时成本探针已删除。此结果关闭 condition eleven 的剩余路径失败，不能
+代替 BLOCKER_RESOLUTION.md 要求的所有外部集成、workspace 和 Bazel 门禁。
+
 ## 2026-09-10 aggregate repair 输出 ID 修复
 
 Go master `logical_aggregation.go::PruneColumns` 在补充 COUNT/FIRST_ROW 时调用
