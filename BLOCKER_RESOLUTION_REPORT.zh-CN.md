@@ -1,5 +1,51 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 catalog-load 单表分发修复
+
+原始脚本先失败于过时断言：它要求拒绝 VARCHAR(64)，但节点已支持并加载。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/util/rowcodec/decoder.go` 明确将 TypeVarchar 解码为字符串。
+脚本现在精确验证两张表的 ID、列形状、无拒绝表，以及 Go/Rust 实际返回行；
+VARCHAR fixture 覆盖普通值、空串、前后空格和 64 字符上限。
+新增 Go binary 和集群版本参数，以固定 master 与兼容 nightly 实测。
+
+更新元数据断言后，原始单表 SELECT 显露真正生产错误：
+`configured ORDER BY/LIMIT planning failed: RelationBinding(ExactlyTwoBaseRelationsRequired)`，
+日志 `/tmp/quality-catalog-load-master.log`。多表 adapter 根据 catalog 中
+配置了两张表便将全部文本查询送入双表 Join planner。
+Go `logical_plan_builder.go::buildJoin` 对 `Right == nil` 明确只规划 Left。
+Rust 现从 AST 的 FROM 关系选择单表路径，通过既有 catalog resolver 和
+ReadOnlyScanPlan 降低计划，再复用匹配 table_id 的 reader、取消与结果处理。
+无事务状态的锁定读取仍拒绝；Join/TopN 路由保持原有验证。
+
+新增无网络回归 `single_table_queries_are_admitted_with_two_configured_tables`：
+旧实现失败（`/tmp/catalog-single-route-red.log`），修复后精确验证两个 table_id、
+限定名/别名、未知表与锁定读取；原 Join/TopN 回归也通过
+（`/tmp/catalog-single-route-green.log`）。最终增加锁定断言后的测试在完整
+server 运行中亦为通过。
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 \
+CATALOG_LOAD_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+CATALOG_LOAD_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+bash rust/scripts/run-realtikv-catalog-load.sh
+# exit 0; /tmp/quality-catalog-load-master-green.log
+make lint
+# exit 0; /tmp/catalog-single-route-lint.log
+git diff --check
+# exit 0
+```
+
+完整 `cargo test -p tidb-server --lib` **未通过**：在
+`/tmp/catalog-single-route-server.log` 记录 61 项失败，check-constraint
+测试持续等待 DDL 历史记录，超过两分钟后取栈并终止本次进程（退出 101），
+没有跳过或改写测试。栈 `/tmp/catalog-server-hang.sample` 定位到
+`cluster_session_node/ddl.rs::wait_persisted_job` 与 scheduler 等待。
+独立执行 `add_column_ddl_initializes_statistics_like_go` 也稳定失败：
+实际统计行 `[]`，Go 预期 `[["0", "3", "0"]]`，日志
+`/tmp/server-stats-single-red.log`，耗时 1.24 秒。这些是下一组明确失败入口，
+并非 readiness 或外部取证缺口。整体质量目标仍未完成。
+
 ## 2026-09-11 PD-route 入口与 Bazel 复验
 
 PD-route 旧脚本调用不存在的 `--test realtikv_pd_route`，原始真实运行

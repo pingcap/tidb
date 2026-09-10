@@ -8,9 +8,8 @@
 # the cluster's stored catalog out of TiKV's `m` meta namespace, then serves a
 # SELECT over the rows the real TiDB inserted.
 #
-# A second table with a column type this node cannot decode proves the other
-# half of the contract: it is listed at startup with the exact refusal reason
-# and refused by name at query time rather than silently hidden.
+# A second table verifies VARCHAR catalog metadata and stored values against
+# Go, including empty strings, spaces, and the declared maximum length.
 
 set -euo pipefail
 
@@ -71,7 +70,7 @@ AUTH_USER=campaign26
 AUTH_PASSWORD=${CATALOG_LOAD_AUTH_PASSWORD:-campaign26-native-password}
 DATABASE=campaign26
 SERVED_TABLE=catalog_rows
-REFUSED_TABLE=refused_rows
+VARCHAR_TABLE=varchar_rows
 PLAYGROUND_PID=
 RUST_PID=
 OWNED_PIDS=
@@ -256,8 +255,18 @@ fi
 chmod 0600 "${AUTH_FILE}"
 unset AUTH_HASH_HEX
 
-tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+GO_SERVER_ARGS=()
+if [[ -n "${CATALOG_LOAD_TIDB_SERVER:-}" ]]; then
+  if [[ ! -x "${CATALOG_LOAD_TIDB_SERVER}" ]]; then
+    echo "CATALOG_LOAD_TIDB_SERVER must be an executable Go TiDB binary" >&2
+    exit 1
+  fi
+  "${CATALOG_LOAD_TIDB_SERVER}" -V
+  GO_SERVER_ARGS=(--db.binpath="${CATALOG_LOAD_TIDB_SERVER}")
+fi
+tiup playground "${CATALOG_LOAD_CLUSTER_VERSION:-v8.5.6}" --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
+  "${GO_SERVER_ARGS[@]}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
 
@@ -314,11 +323,12 @@ INSERT INTO ${DATABASE}.${SERVED_TABLE} VALUES
   (-7, 913, 18446744073709551615, 1.5, 'alpha'),
   (0, -2048, 0, -0.25, 'beta'),
   (42, 77, 4294967296, 3.75, 'gamma');
-CREATE TABLE ${DATABASE}.${REFUSED_TABLE} (
+CREATE TABLE ${DATABASE}.${VARCHAR_TABLE} (
   id BIGINT PRIMARY KEY CLUSTERED,
   note VARCHAR(64) NOT NULL
 );
-INSERT INTO ${DATABASE}.${REFUSED_TABLE} VALUES (1, 'unreadable');
+INSERT INTO ${DATABASE}.${VARCHAR_TABLE} VALUES
+  (1, 'readable'), (2, ''), (3, ' leading and trailing '), (4, REPEAT('x', 64));
 SQL
 
 TABLE_ID=$(go_tidb -Nse \
@@ -331,13 +341,17 @@ fi
 # yet), so both sides are compared as sorted sets.
 GO_ROWS=$(go_tidb -N -B -e \
   "SELECT id, balance, counter, score, label FROM ${DATABASE}.${SERVED_TABLE}" | sort)
+VARCHAR_TABLE_ID=$(go_tidb -Nse \
+  "select tidb_table_id from information_schema.tables where table_schema='${DATABASE}' and table_name='${VARCHAR_TABLE}'")
+GO_VARCHAR_ROWS=$(go_tidb -N -B -e \
+  "SELECT id, note FROM ${DATABASE}.${VARCHAR_TABLE}" | sort)
 
 # Only the PD address, the table NAMES, and the accounts file. No table ID, no
 # column IDs, no column types.
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
   --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
   --load-table "${DATABASE}.${SERVED_TABLE}" \
-  --load-table "${DATABASE}.${REFUSED_TABLE}" \
+  --load-table "${DATABASE}.${VARCHAR_TABLE}" \
   --auth-file "${AUTH_FILE}" --max-connections 4 \
   >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
@@ -366,16 +380,16 @@ fi
 if ! printf '%s\n' "${READY_JSON}" | jq -e \
   --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
   --arg database "${DATABASE}" --arg table "${SERVED_TABLE}" \
-  '(.tables | length) == 1
-   and (.tables[0].table_id | tostring) == $table_id
-   and .tables[0].database == $database and .tables[0].table == $table
-   and (.tables[0].columns | length) == 5
-   and (.tables[0].columns[0] | endswith(":clustered-pk"))
-   and (.tables[0].columns[0] | startswith("id:"))
-   and (.tables[0].columns[1] | endswith(":stored-not-null"))
-   and (.tables[0].columns[2] | endswith(":stored-unsigned-bigint-not-null"))
-   and (.tables[0].columns[3] | endswith(":stored-double-not-null"))
-   and (.tables[0].columns[4] | endswith(":stored-char-not-null:16"))
+  '(.tables | map(select(.database == $database and .table == $table))) as $served
+   | (.tables | length) == 2 and ($served | length) == 1
+   and ($served[0].table_id | tostring) == $table_id
+   and ($served[0].columns | length) == 5
+   and ($served[0].columns[0] | endswith(":clustered-pk"))
+   and ($served[0].columns[0] | startswith("id:"))
+   and ($served[0].columns[1] | endswith(":stored-not-null"))
+   and ($served[0].columns[2] | endswith(":stored-unsigned-bigint-not-null"))
+   and ($served[0].columns[3] | endswith(":stored-double-not-null"))
+   and ($served[0].columns[4] | endswith(":stored-char-not-null:16"))
    and (.cluster_id | tostring) == $cluster_id' \
   >/dev/null; then
   echo "Rust readiness did not carry the cluster-loaded table identity and column shape" >&2
@@ -383,15 +397,16 @@ if ! printf '%s\n' "${READY_JSON}" | jq -e \
   exit 1
 fi
 
-# The other half: the unreadable table is listed with its exact reason.
+# Go rowcodec decodes VARCHAR as a string; it is a supported catalog column.
 if ! printf '%s\n' "${READY_JSON}" | jq -e \
-  --arg name "${DATABASE}.${REFUSED_TABLE}" \
-  '(.refused_tables | length) == 1
-   and .refused_tables[0].table == $name
-   and (.refused_tables[0].reason | test("`note`"))
-   and (.refused_tables[0].reason | contains("VARCHAR(64)"))' \
+  --arg database "${DATABASE}" --arg table "${VARCHAR_TABLE}" \
+  --arg table_id "${VARCHAR_TABLE_ID}" \
+  '(.tables | map(select(.database == $database and .table == $table))) as $varchar
+   | (.refused_tables | length) == 0 and ($varchar | length) == 1
+   and ($varchar[0].table_id | tostring) == $table_id
+   and $varchar[0].columns == ["id:1:clustered-pk", "note:2:stored-varchar-not-null:64:false"]' \
   >/dev/null; then
-  echo "Rust readiness did not list the unreadable table with a precise reason" >&2
+  echo "Rust readiness did not carry the supported VARCHAR table metadata" >&2
   printf '%s\n' "${READY_JSON}" >&2
   exit 1
 fi
@@ -411,18 +426,13 @@ if [[ "${RUST_ROWS}" != "${GO_ROWS}" ]]; then
   exit 1
 fi
 
-REFUSAL_OUTPUT=$(rust_node -N -B \
-  -e "SELECT id FROM ${DATABASE}.${REFUSED_TABLE}" 2>&1 || true)
-if ! printf '%s\n' "${REFUSAL_OUTPUT}" | grep -q 'note'; then
-  echo "Rust SQL node did not refuse the unreadable table by naming its column" >&2
-  printf '%s\n' "${REFUSAL_OUTPUT}" >&2
-  exit 1
-fi
-if ! printf '%s\n' "${REFUSAL_OUTPUT}" | grep -q 'VARCHAR(64)'; then
-  echo "Rust SQL node refusal did not name the unreadable column type" >&2
-  printf '%s\n' "${REFUSAL_OUTPUT}" >&2
+RUST_VARCHAR_ROWS=$(rust_node -N -B \
+  -e "SELECT id, note FROM ${DATABASE}.${VARCHAR_TABLE}" | sort)
+if [[ "${RUST_VARCHAR_ROWS}" != "${GO_VARCHAR_ROWS}" ]]; then
+  echo "Rust VARCHAR rows differ from the creating Go TiDB" >&2
+  printf 'go tidb:\n%s\nrust node:\n%s\n' "${GO_VARCHAR_ROWS}" "${RUST_VARCHAR_ROWS}" >&2
   exit 1
 fi
 
 ROW_COUNT=$(printf '%s\n' "${RUST_ROWS}" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
-echo "catalog-load live proof passed: the Rust node loaded ${DATABASE}.${SERVED_TABLE} (table_id=${TABLE_ID}, 5 columns) from the cluster catalog it never wrote, served ${ROW_COUNT} rows identical to the creating Go TiDB, and refused ${DATABASE}.${REFUSED_TABLE} by naming column \`note\` VARCHAR(64); pd_cluster_id=${PD_CLUSTER_ID}"
+echo "catalog-load live proof passed: the Rust node loaded ${DATABASE}.${SERVED_TABLE} (table_id=${TABLE_ID}, 5 columns) from the cluster catalog it never wrote, served ${ROW_COUNT} rows identical to the creating Go TiDB, and matched VARCHAR(64) metadata and rows for ${DATABASE}.${VARCHAR_TABLE}; pd_cluster_id=${PD_CLUSTER_ID}"

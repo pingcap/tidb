@@ -16,8 +16,8 @@
 //!
 //! This is deliberately a sibling of the single-table adapter rather than a
 //! second listener or process owner. One `ProductionReadProcessAuthority`
-//! supplies both table-bound transports; every statement then reaches the
-//! planner and `ConfiguredInnerJoinRecordSet` before a result can escape.
+//! supplies both table-bound transports; each statement selects a single
+//! reader or `ConfiguredInnerJoinRecordSet` from its parsed FROM relations.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -314,6 +314,14 @@ impl QuerySession for RealTiKvMultiServerSession {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let route = prepare_configured_query(sql, &catalog, self.max_topn_rows)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.message))?;
+        if let ConfiguredQueryRoute::Single { plan } = route {
+            let query = self
+                .reader
+                .execute_point_read_plan_with_cancellation(plan, cancellation)
+                .map_err(read_error_sql_error)?;
+            return Ok(complete_real_tikv_query(query, cancellation_lease)
+                .with_process_statement(process_statement));
+        }
         if let ConfiguredQueryRoute::LocalEmpty { plan, .. } = route {
             let inner = ConfiguredOrderedQueryRecordSet::local_empty(
                 &plan,
@@ -544,6 +552,10 @@ fn configured_catalog_from_tables(
 }
 
 enum ConfiguredQueryRoute {
+    /// A single FROM relation uses its own reader regardless of catalog size.
+    Single {
+        plan: tidb_planner::read_only_scan::ReadOnlyScanPlan,
+    },
     /// LIMIT 0 has ordinary metadata but must not open a TiKV query.
     LocalEmpty { plan: ConfiguredJoinPlan },
     /// The terminal tail, if present, was fully admitted before reader execution.
@@ -558,6 +570,39 @@ fn prepare_configured_query(
     catalog: &tidb_planner::read_only_scan::configured_catalog::ConfiguredCatalog,
     max_topn_rows: usize,
 ) -> Result<ConfiguredQueryRoute, SqlQueryError> {
+    // Go PlanBuilder.buildJoin delegates a Join with no Right to its Left.
+    // Catalog size must not decide how many relations a statement reads.
+    if let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(sql) {
+        if let tidb_ast::QueryStmt::Select(select) = query.into_inner() {
+            let mut from = select.from.as_ref();
+            while let Some(join) = from.filter(|join| join.right.is_none()) {
+                match &join.left {
+                    tidb_ast::JoinNode::Table(table) => {
+                        let (schema, name) = match table.name.as_slice() {
+                            [name] => (None, name.as_str()),
+                            [schema, name] => (Some(schema.as_str()), name.as_str()),
+                            _ => break,
+                        };
+                        let table = catalog
+                            .resolve_table(schema, name)
+                            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        let plan =
+                            tidb_planner::read_only_scan::ReadOnlyScanPlan::lower(sql, table)
+                                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                        if plan.lock().is_some() {
+                            return Err(SqlQueryError::unknown(
+                                "a locking read requires an explicit transaction; an autocommit \
+                                 statement releases its locks before the client can use them",
+                            ));
+                        }
+                        return Ok(ConfiguredQueryRoute::Single { plan });
+                    }
+                    tidb_ast::JoinNode::Join(join) => from = Some(join),
+                    tidb_ast::JoinNode::Derived { .. } => break,
+                }
+            }
+        }
+    }
     let plan = ConfiguredOrderedJoinPlan::lower(sql, catalog)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     if plan.is_empty() {
@@ -781,6 +826,31 @@ mod tests {
             "/tmp/campaign26-users.tsv",
         ])
         .expect("valid two-relation node config")
+    }
+
+    #[test]
+    fn single_table_queries_are_admitted_with_two_configured_tables() {
+        let catalog = configured_catalog(&config()).unwrap();
+        for (sql, table_id) in [
+            ("SELECT id, balance FROM campaign26.accounts", 101),
+            ("SELECT o.amount FROM orders o", 202),
+        ] {
+            let ConfiguredQueryRoute::Single { plan } =
+                prepare_configured_query(sql, &catalog, 3).unwrap()
+            else {
+                panic!("expected single-table route: {sql}")
+            };
+            assert_eq!(plan.table_id(), table_id);
+        }
+        assert!(prepare_configured_query("SELECT id FROM missing", &catalog, 3).is_err());
+        let locking = prepare_configured_query(
+            "SELECT balance FROM accounts WHERE id=1 FOR UPDATE",
+            &catalog,
+            3,
+        )
+        .err()
+        .expect("the configured multi-table adapter has no transaction state");
+        assert!(locking.message.contains("explicit transaction"));
     }
 
     #[test]
