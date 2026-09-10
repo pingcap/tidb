@@ -84,6 +84,7 @@ type statementRUOwner struct {
 	// Install-time snapshots reject transient restricted/cursor classifications
 	// that may be restored before a delayed result-set terminal.
 	restrictedSQLAtInstall bool
+	ttlJobAtInstall        bool
 	cursorAtInstall        bool
 	calculationSetup       statementRUCalculationSetup
 }
@@ -98,6 +99,7 @@ func newStatementRUOwner(stmt *ExecStmt) *statementRUOwner {
 		return owner
 	}
 	owner.restrictedSQLAtInstall = sessVars.InRestrictedSQL
+	owner.ttlJobAtInstall = isStatementRUTTLJob(sessVars)
 	owner.cursorAtInstall = sessVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	return owner
 }
@@ -186,8 +188,9 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		sessVars := a.Ctx.GetSessionVars()
 		// The snapshots catch eligibility that disappeared before terminal; the
 		// live checks catch a classification entered after owner installation.
-		if sessVars == nil || sessVars.StmtCtx == nil || owner.restrictedSQLAtInstall || owner.cursorAtInstall ||
-			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall ||
+			((owner.restrictedSQLAtInstall || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall) ||
+			sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			return
 		}
 		if statementRUIsCommitPlan(a.Plan) {
@@ -245,6 +248,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		)
 	})
 	if publishFinalized {
+		finalized.ttlJob = owner.ttlJobAtInstall
 		publishStatementRUFinalizedSnapshot(a, finalized)
 		return finalized.result.TotalRU
 	}

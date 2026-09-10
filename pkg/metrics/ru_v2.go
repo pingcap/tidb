@@ -47,6 +47,7 @@ var (
 // RUv3 metrics.
 var (
 	RUV3Total     prometheus.Counter
+	RUV3TTLTotal  prometheus.Counter
 	RUV3BySQLType *prometheus.CounterVec
 	RUV3ByEngine  *prometheus.CounterVec
 	RUV3Unit      *prometheus.CounterVec
@@ -289,6 +290,14 @@ func InitRUV2Metrics() {
 
 // InitRUV3Metrics initializes RUv3 metrics.
 func InitRUV3Metrics() {
+	RUV3TTLTotal = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv3",
+			Name:      "ttl_ru_total",
+			Help:      "Counter of RU v3 consumption attributable to TTL jobs, included in ru_total. Excludes global TTL maintenance.",
+		},
+	)
 	RUV3Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

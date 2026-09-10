@@ -124,6 +124,7 @@ type ttlJob struct {
 
 // finish turns current job into last job, and update the error message and statistics summary
 func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	se = session.WithJob(se, job.id)
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 
 	// at this time, the job.ctx may have been canceled (to cancel this job)

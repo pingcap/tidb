@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	metrics2 "github.com/pingcap/tidb/pkg/metrics"
@@ -394,6 +395,22 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustExec("insert into t values(3, ?)", expreDateStr)
 	tk.MustExec("insert into t values(4, ?)", nowDateStr)
 
+	var ruMu sync.Mutex
+	scanJobs, deleteJobs := make(map[string]int), make(map[string]int)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
+		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
+			return
+		}
+		sql := stmt.GetTextToLog(false)
+		ruMu.Lock()
+		defer ruMu.Unlock()
+		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY SQL_NO_CACHE") {
+			scanJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
+		} else if strings.HasPrefix(sql, "DELETE LOW_PRIORITY FROM") {
+			deleteJobs[stmt.Ctx.GetSessionVars().TTLJobID]++
+		}
+	})
+
 	cli := do.TTLJobManager().GetCommandCli()
 	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	require.NoError(t, err)
@@ -408,6 +425,12 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	waitTTLJobFinished(t, tk, tblID, timerCli)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+	ruMu.Lock()
+	defer ruMu.Unlock()
+	require.Positive(t, scanJobs[tableResult.JobID])
+	require.Positive(t, deleteJobs[tableResult.JobID])
+	require.Zero(t, scanJobs[""])
+	require.Zero(t, deleteJobs[""])
 }
 
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {

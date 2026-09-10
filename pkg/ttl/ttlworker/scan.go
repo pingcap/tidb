@@ -219,6 +219,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		return err
 	}
 	defer terror.Call(restoreSession)
+	sess.Session = session.WithJob(sess.Session, t.JobID)
 
 	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, expireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
