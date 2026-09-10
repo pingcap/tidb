@@ -1048,9 +1048,12 @@ func TestHandleSubmitJobRequestIndexScanVersionGate(t *testing.T) {
 			expectedError:  true,
 		},
 		{
-			name:            "disabled index scan uses PK scan",
+			name:            "disabled index scan uses PK scan during mixed build",
 			enableIndexScan: false,
-			remoteVersion:   localVersion,
+			remoteVersion: serverinfo.VersionInfo{
+				Version: localVersion.Version,
+				GitHash: "2222222",
+			},
 		},
 	}
 
