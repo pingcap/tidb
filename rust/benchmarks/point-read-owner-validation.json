@@ -261,8 +261,25 @@
   ],
   "profile_scope": "Running inclusive samples. Missing counters mean no observed samples, not zero-runtime proof. Historical catalog-name profiles are diagnostic, not the exact 293c474e25 timing-control binary or normalized equal work. Source inspection proves the mutable catalog lookup is absent.",
   "cleanup": "Nine owned PIDs absent, ten ports closed; /private/tmp/tidb-live-workload.nIrZBe retained. cleanup.json verified.",
+  "post_merge": {
+    "revision": "d47f5cbcf81fb0aa68ed4d1dc9a96339bdc2196b",
+    "remote_parent": "0c5d738da8",
+    "command": "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-txnkv -p tidb-planner --lib --no-fail-fast -- driver::tests::point_get:: driver::tests::primary_keys:: kv_table:: tests_prepared_plan_cache:: tests_prepared_statements:: mem_storage:: tests_core::transactions remote_scan::tests:: task:: tests_view --test-threads=1",
+    "results": "284 pass: 128 executor, 59 planner, 93 session and four txnkv. Five session view failures have identical assertion bodies on the frozen 293c474e25 baseline. Release server build, workspace all-target check and separately exit-confirmed Ready lint pass.",
+    "baseline_command": "/private/tmp/tidb-hotpath.q5gFVI/control-session-tests tests_view --test-threads=1",
+    "baseline_view_results": "15 pass, five fail; retained baseline-views.log compared with merge-tests.log after excluding thread IDs and backtrace hints.",
+    "unchanged_failures": [
+      "tests_views::a_view_body_may_contain_a_derived_table",
+      "tests_views::a_view_column_type_follows_the_base_column",
+      "tests_views::a_view_over_a_dropped_table_is_invalid",
+      "tests_views::lateral_alias_column_list_renames_positionally",
+      "tests_views::lateral_derived_table_join_shapes"
+    ],
+    "logs": ["merge-tests.log", "merge-build.log", "merge-check.log", "merge-lint-confirmed.log", "baseline-views.log"],
+    "live_scope": "Live workloads and profiles above cover the pre-merge point-read implementation committed as 211a1e5ae3, not the later collaborator virtual-column and hidden-handle changes. Those changes are source-reviewed and covered by the post-merge test/build/check/lint batch, not a repeated live benchmark."
+  },
   "remaining": [
-    "Post-merge validation of collaborator virtual-column/hidden-handle fixes remains.",
+    "Five pre-existing view failures remain; a selected test batch is not a full workspace test pass.",
     "Whole Go-package parity and the full sysbench/TPC-C performance goal remain unproven."
   ]
 }
