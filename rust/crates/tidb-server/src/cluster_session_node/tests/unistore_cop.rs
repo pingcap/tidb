@@ -35,7 +35,7 @@ use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use super::super::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
 use super::super::{
     partition_id_map, ClusterHistoricalStatsHandle, ClusterPriorityQueueSource,
-    ClusterServerSession,
+    ClusterServerSession, ClusterSessionFactory,
 };
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::configured_user_store::ConfiguredUserStore;
@@ -470,6 +470,32 @@ fn handle_stats_schema_change(session: &mut ClusterServerSession, event: &Schema
     session
         .control_transaction("COMMIT")
         .expect("stats subscriber transaction commits");
+}
+
+// Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
+// statistics. This fixture does not campaign the background statistics owner.
+fn drain_stats_ddl_events(
+    factory: &Arc<ClusterSessionFactory>,
+    session: &mut ClusterServerSession,
+) {
+    let notifier = super::super::ddl_notifier::build_notifier(factory, Duration::ZERO);
+    tidb_owner::Listener::on_become_owner(notifier.as_ref());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let pending = displayed(rows(
+            session,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ));
+        if pending == [["0"]] {
+            notifier.stop();
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            notifier.stop();
+            panic!("DDL notifier did not finish pending events: {pending:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn partition_payload(ids: &[i64]) -> PartitionInfo {
@@ -2530,6 +2556,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         .expect("session opens");
     rows(&mut session, "USE test");
     rows(&mut session, "CREATE TABLE stats_add_column (a INT)");
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO stats_add_column VALUES (1),(2),(3)",
@@ -2554,6 +2581,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_add_column ADD COLUMN b INT",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let column_id = stack
         .factory
         .catalog
@@ -2589,6 +2617,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_add_column ADD COLUMN c VARCHAR(15) DEFAULT '123'",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let defaulted_column_id = stack
         .factory
         .catalog
@@ -2629,6 +2658,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_add_column ADD COLUMN d BIGINT NOT NULL",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let zeroed_column_id = stack
         .factory
         .catalog
@@ -2669,6 +2699,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_add_column ADD COLUMN e INT GENERATED ALWAYS AS (a + 1) VIRTUAL",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let virtual_column_id = {
         let catalog = stack.factory.catalog.load();
         let column = catalog
@@ -2742,6 +2773,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
          ADD COLUMN f VARCHAR(15) DEFAULT '123', \
          ADD COLUMN g VARCHAR(15) DEFAULT '123'",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let (f_id, g_id) = {
         let catalog = stack.factory.catalog.load();
         let table = catalog
@@ -2804,6 +2836,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
          ADD COLUMN IF NOT EXISTS f VARCHAR(15) DEFAULT '123', \
          ADD COLUMN h VARCHAR(15) DEFAULT '123'",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let h_id = stack
         .factory
         .catalog

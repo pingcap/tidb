@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 ADD COLUMN 统计测试的事件同步
+
+独立失败 `add_column_ddl_initializes_statistics_like_go` 的根因是测试没有
+消费持久化 DDL 事件。临时探针证明 ALTER 后 job 3/4 已在
+mysql.tidb_ddl_notifier 中，等待 1.5 秒后 processed_by_flag 仍均为 0；
+统计行依然为空（`/tmp/stats-ddl-delivery-probe.log`）。fixture 仅创建
+Unistore stack，没有 production boot 的 campaign_stats_owner 步骤。
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/statistics/handle/ddl/ddl_test.go::TestDDLHistogram` 在 ALTER 后显式
+`statstestutil.HandleNextDDLEventWithTxn(h)`，再断言统计结果。Rust 回归
+现在对应地运行实际 notifier，确认持久化队列清空后停止 worker，再检查
+原有 histogram/bucket/version 断言。5 秒内队列未清空仍失败，不增加
+固定成功延迟，不改统计值，不直接伪造事件或写入统计行。
+
+所有 ADD COLUMN 分支均通过：nullable/default/NOT NULL/virtual、多列
+sub-job，以及 IF NOT EXISTS 跳过列不重建已删除 histogram 的约束。
+原始红色证据 `/tmp/server-stats-single-red.log`；最终 1 passed，8.29 秒，
+`/tmp/stats-ddl-drain-final.log`。临时探针全部删除。
+
+Ready 验证命令：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib add_column_ddl_initializes_statistics_like_go
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib ddl_notifier
+# 3 passed; /tmp/stats-ddl-notifier-regression.log
+make lint
+# exit 0; /tmp/stats-ddl-drain-lint.log
+git diff --check
+# exit 0
+```
+
+仅关闭此失败类别；不能把其他统计失败或 DDL scheduler 等待归为相同原因，
+完整 server 和原始集成清单仍未全部通过。
+
 ## 2026-09-11 catalog-load 单表分发修复
 
 原始脚本先失败于过时断言：它要求拒绝 VARCHAR(64)，但节点已支持并加载。
