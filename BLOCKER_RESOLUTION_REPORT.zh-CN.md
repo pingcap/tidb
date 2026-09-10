@@ -1,5 +1,27 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 region-retry 原始 RealTiKV 门禁恢复
+
+旧 `cargo test -p difftest-transaction-tests --test realtikv_region_retry -- --list`
+退出 101，目标已合并为 all，`/tmp/region-retry-target-red.log`。
+脚本改为 all target 加完整模块测试名，保留 ignored/exact、原阶段握手和
+所有成员发现/PD 移除/region leader 切换断言。
+
+Ready 验证：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-region-retry.sh
+bash -n rust/scripts/run-realtikv-region-retry.sh
+make lint
+git diff --check
+```
+
+均退出 0；`/tmp/region-retry-restored.log` 证明同一进程的 PD 路由
+http://127.0.0.1:26379 → http://127.0.0.1:26382，TiKV leader
+127.0.0.1:44160 → 127.0.0.1:44162。tag realtikv-region-retry-83784
+的所属进程、data 和 phase 已清理。lint 为
+`/tmp/region-retry-harness-lint.log`。此修改只修复测试入口，未变更协议行为。
+
 ## 2026-09-11 optimistic-2pc 清理恢复，继续追踪异步 secondary 证据
 
 路径回归从生产 TAG/validate_owned_paths 提取代码，旧 campaign28 前缀拒绝
