@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::{OomAction, StatementMemory};
 use tidb_exec::real_tikv_dml::prepare_configured_write;
 use tidb_exec::real_tikv_read::prepare_configured_point_read;
+use tidb_executor::{OomAction, StatementMemory};
 use tidb_planner::prepared_dml::{ConfiguredPreparedWrite, PreparedBindValue};
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
@@ -28,9 +28,10 @@ use tidb_protocol::{
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead, PreparedWrite,
-    PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext,
-    SessionTransaction, SqlQueryError, WireStatus, WriteOutcome, SERVER_STATUS_IN_TRANS,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
+    PreparedStatement, PreparedWrite, QueryResult, QuerySession, QuerySessionFactory,
+    ResultSetSource, SessionContext, SessionTransaction, SqlQueryError, WireStatus, WriteOutcome,
+    SERVER_STATUS_IN_TRANS,
 };
 use tidb_session::ResultMaterializationAuthority;
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
@@ -57,11 +58,14 @@ struct Rows {
 }
 
 impl ResultSetSource for Rows {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![
             ColumnInfo {
                 schema: "campaign20".to_owned(),
@@ -92,12 +96,12 @@ impl ResultSetSource for Rows {
         ])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -217,10 +221,8 @@ fn authenticate_with_options(
         .unwrap();
     assert_eq!(initial[version_end + 16], 46);
 
-    let mut capabilities = CLIENT_PROTOCOL_41
-        | CLIENT_SECURE_CONNECTION
-        | CLIENT_PLUGIN_AUTH
-        | CLIENT_CONNECT_ATTRS;
+    let mut capabilities =
+        CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_ATTRS;
     if deprecate_eof {
         capabilities |= CLIENT_DEPRECATE_EOF;
     }
@@ -278,12 +280,13 @@ struct LocalInfileSession {
 
 impl QuerySession for LocalInfileSession {
     fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        Err(SqlQueryError::unknown("LOAD STATS must not use the query path"))
+        Err(SqlQueryError::unknown(
+            "LOAD STATS must not use the query path",
+        ))
     }
 
     fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        Ok((sql == "LOAD STATS 'client/stats.json'")
-            .then(|| "client/stats.json".to_owned()))
+        Ok((sql == "LOAD STATS 'client/stats.json'").then(|| "client/stats.json".to_owned()))
     }
 
     fn execute_local_infile(
@@ -298,7 +301,6 @@ impl QuerySession for LocalInfileSession {
             last_insert_id: 0,
         })
     }
-
 }
 
 struct LocalInfileFactory {
@@ -480,7 +482,10 @@ struct PreparedRows {
 }
 
 impl ResultSetSource for PreparedRows {
-    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().next_batches += 1;
         Ok(self
             .value
@@ -489,16 +494,16 @@ impl ResultSetSource for PreparedRows {
             .unwrap_or_default())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![prepared_balance_column()])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -559,10 +564,7 @@ impl QuerySession for PreparedSession {
             },
         }))
         .with_statement_status(0, self.wire_status())
-        .with_cursor_materialization(
-            statement.result_field_types().to_vec(),
-            authority,
-        ))
+        .with_cursor_materialization(statement.result_field_types().to_vec(), authority))
     }
 
     fn wire_status(&self) -> WireStatus {
@@ -628,26 +630,29 @@ struct CursorEncodingRows {
 }
 
 impl ResultSetSource for CursorEncodingRows {
-    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         if std::mem::replace(&mut self.emitted, true) {
             return Ok(Vec::new());
         }
         Ok(vec![vec![Datum::Bytes(b"not-an-integer".to_vec())]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         // Deliberately inconsistent with the exact Varchar FieldType below:
         // materialization remains valid, while binary FETCH must reject this
         // datum/metadata pair before advancing the cursor.
         Ok(vec![prepared_balance_column()])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -784,13 +789,16 @@ struct CursorReaderFailureRows {
 }
 
 impl ResultSetSource for CursorReaderFailureRows {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         Ok((0..max_rows.max(1))
             .map_while(|_| self.rows.pop_front())
             .collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![ColumnInfo {
             schema: "test".to_owned(),
             table: "reader_failure".to_owned(),
@@ -806,12 +814,12 @@ impl ResultSetSource for CursorReaderFailureRows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         let data_path = fs::read_dir(&self.spill_path)
             .map_err(|error| error.to_string())?
@@ -828,7 +836,12 @@ impl ResultSetSource for CursorReaderFailureRows {
             .open(&data_path)
             .map_err(|error| format!("open {}: {error}", data_path.display()))?
             .set_len(1024)
-            .map_err(|error| format!("truncate {}: {error}", data_path.display()))
+            .map_err(|error| {
+                tidb_executor::MysqlError::unknown(format!(
+                    "truncate {}: {error}",
+                    data_path.display()
+                ))
+            })
     }
 }
 
@@ -1466,13 +1479,7 @@ fn assert_prepared_point_read_cursor_protocol(deprecate_eof: bool) {
 
     let mut client = TcpStream::connect(address).unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
-    authenticate_with_eof_mode(
-        &mut client,
-        &mut reader,
-        "alice",
-        b"secret",
-        deprecate_eof,
-    );
+    authenticate_with_eof_mode(&mut client, &mut reader, "alice", b"secret", deprecate_eof);
     reader.set_sequence(2);
     assert_eq!(reader.read_packet().unwrap()[0], 0);
 
@@ -2364,8 +2371,15 @@ fn long_data_quota_refuses_before_copy_and_releases_on_execute_and_close() {
     assert_eq!(error[0], 0xff, "EXECUTE must return an ERR packet");
     assert_eq!(u16::from_le_bytes([error[1], error[2]]), 8175);
     assert_eq!(&error[4..9], b"HY000");
-    assert_eq!(*consumed.lock().unwrap(), 0, "EXECUTE reset releases prior bytes");
-    assert!(bound.lock().unwrap().is_empty(), "quota failure skips the write");
+    assert_eq!(
+        *consumed.lock().unwrap(),
+        0,
+        "EXECUTE reset releases prior bytes"
+    );
+    assert!(
+        bound.lock().unwrap().is_empty(),
+        "quota failure skips the write"
+    );
 
     // A later chunk is accepted again after RESET released the old bytes.
     write_packet(

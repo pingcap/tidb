@@ -33,6 +33,13 @@ cleanup() {
   local cleanup_failed=false
   trap - EXIT INT TERM
 
+  if [[ "${original_status}" -ne 0 ]] && [[ -d "${TAG_DIR}" ]]; then
+    local evidence_dir="${TMPDIR:-/tmp}/lock-recovery-evidence-${TAG}"
+    mkdir -p "${evidence_dir}"
+    cp -R "${TAG_DIR}" "${evidence_dir}/" 2>/dev/null || true
+    echo "lock-recovery evidence copied to ${evidence_dir}" >&2
+  fi
+
   if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
     kill "${PLAYGROUND_PID}" 2>/dev/null || true
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
@@ -85,7 +92,7 @@ cleanup() {
     echo "lock-recovery cleanup failed: PD ${PD_ADDR} remains reachable" >&2
     cleanup_failed=true
   fi
-  if [[ "${cleanup_failed}" == false ]]; then
+  if [[ "${cleanup_failed}" == false ]] && [[ -z "${KEEP_LOGS:-}" ]]; then
     rm -rf -- "${TAG_DIR}"
   fi
   if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
@@ -104,6 +111,16 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   echo "LOCK_RECOVERY_TIDB_SERVER must name an executable failpoint-enabled tidb-server" >&2
   exit 1
 fi
+TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
+TIDB_AUTH_FILE="${TMPDIR:-/tmp}/lock-recovery-auth-${$}.tsv"
+printf 'root\tlocalhost\tmysql_native_password\t\n' >"${TIDB_AUTH_FILE}"
+chmod 600 "${TIDB_AUTH_FILE}"
+cat >"${TIDB_SERVER_WRAPPER}" <<EOF
+#!/bin/sh
+exec "${TIDB_SERVER}" "\$@" --auth-file "${TIDB_AUTH_FILE}" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
+EOF
+chmod +x "${TIDB_SERVER_WRAPPER}"
+TIDB_SERVER="${TIDB_SERVER_WRAPPER}"
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
   echo "LOCK_RECOVERY_MYSQL_CLIENT must name an executable MySQL client" >&2
   exit 1

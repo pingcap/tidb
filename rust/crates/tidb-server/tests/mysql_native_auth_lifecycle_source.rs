@@ -94,11 +94,14 @@ struct Rows {
 }
 
 impl ResultSetSource for Rows {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![ColumnInfo {
             schema: "campaign21".to_owned(),
             table: "rows".to_owned(),
@@ -114,11 +117,11 @@ impl ResultSetSource for Rows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 }

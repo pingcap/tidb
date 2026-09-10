@@ -32,6 +32,8 @@ use crate::recordset_lifecycle::RecordSetLifecycle;
 pub enum DistSqlRecordSetError {
     /// The checked DistSQL response iterator failed.
     Source(String),
+    /// The TiKV select response carried a MySQL error.
+    Sql(tidb_executor::MysqlError),
 }
 
 /// A typed response chunk retained for direct Go-shaped text serialization.
@@ -107,11 +109,21 @@ impl std::fmt::Display for DistSqlRecordSetError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Source(message) => formatter.write_str(message),
+            Self::Sql(error) => error.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for DistSqlRecordSetError {}
+
+impl From<DistSqlRecordSetError> for tidb_executor::MysqlError {
+    fn from(error: DistSqlRecordSetError) -> Self {
+        match error {
+            DistSqlRecordSetError::Sql(error) => error,
+            DistSqlRecordSetError::Source(message) => Self::unknown(message),
+        }
+    }
+}
 
 /// Lazy RecordSet over one already-injected select response iterator.
 pub struct DistSqlRecordSet {
@@ -218,7 +230,12 @@ impl DistSqlRecordSet {
 }
 
 fn map_source_error(error: ResponseChannelError) -> DistSqlRecordSetError {
-    DistSqlRecordSetError::Source(error.to_string())
+    match error {
+        ResponseChannelError::SelectResponse { code, message } => {
+            DistSqlRecordSetError::Sql(tidb_executor::MysqlError::new(code as u16, message))
+        }
+        other => DistSqlRecordSetError::Source(other.to_string()),
+    }
 }
 
 fn validate_chunk_row(row: Row<'_>, field_types: &[FieldType]) -> Result<(), String> {
@@ -386,4 +403,22 @@ fn append_owned_chunk_text(
         OwnedTextKind::Temporal => TextScalar::Temporal(&value),
     };
     writer.append(scalar)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_source_error;
+    use tidb_distsql::ResponseChannelError;
+
+    #[test]
+    fn select_response_errno_survives_recordset_mapping() {
+        let error = map_source_error(ResponseChannelError::SelectResponse {
+            code: 1690,
+            message: "DOUBLE value is out of range in 'cot(0)'".to_owned(),
+        });
+        let error = tidb_executor::MysqlError::from(error);
+        assert_eq!(error.code, 1690);
+        assert_eq!(error.state, *b"22003");
+        assert_eq!(error.message, "DOUBLE value is out of range in 'cot(0)'");
+    }
 }

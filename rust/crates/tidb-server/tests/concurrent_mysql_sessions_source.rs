@@ -203,16 +203,19 @@ struct BlockingResultSet {
 }
 
 impl ResultSetSource for BlockingResultSet {
-    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         self.state.entered.store(true, Ordering::Release);
         let mut cancelled = self.state.cancelled.lock().unwrap();
         while !*cancelled {
             cancelled = self.state.wake.wait(cancelled).unwrap();
         }
-        Err("query cancelled by connection shutdown".to_owned())
+        Err("query cancelled by connection shutdown".into())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![ColumnInfo {
             schema: "campaign21".to_owned(),
             table: "rows".to_owned(),
@@ -228,11 +231,11 @@ impl ResultSetSource for BlockingResultSet {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 }

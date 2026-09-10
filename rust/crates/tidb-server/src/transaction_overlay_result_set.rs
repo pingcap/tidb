@@ -106,7 +106,10 @@ impl<'a> TransactionOverlayResultSet<'a> {
 }
 
 impl ResultSetSource for TransactionOverlayResultSet<'_> {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         loop {
             let batch = self.inner.next_batch(max_rows)?;
             if batch.is_empty() {
@@ -143,15 +146,15 @@ impl ResultSetSource for TransactionOverlayResultSet<'_> {
         }
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         self.inner.columns()
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
     }
 }
@@ -169,22 +172,25 @@ mod tests {
     }
 
     impl ResultSetSource for SnapshotRows {
-        fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        fn next_batch(
+            &mut self,
+            _max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
             if self.batches.is_empty() {
                 return Ok(Vec::new());
             }
             Ok(self.batches.remove(0))
         }
 
-        fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
             Ok(Vec::new())
         }
 
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
 
-        fn close(&mut self) -> Result<(), String> {
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
     }

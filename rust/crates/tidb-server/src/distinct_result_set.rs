@@ -61,7 +61,10 @@ impl<'a> DistinctResultSetSource<'a> {
 }
 
 impl ResultSetSource for DistinctResultSetSource<'_> {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         let mut distinct = Vec::new();
         // Dedup drops rows, so one inner batch can yield fewer than `max_rows`
         // new rows. Keep pulling until the batch is full or the inner source is
@@ -84,16 +87,16 @@ impl ResultSetSource for DistinctResultSetSource<'_> {
         Ok(distinct)
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         // Dedup never changes the schema.
         self.inner.columns()
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
     }
 }
@@ -126,17 +129,20 @@ mod tests {
     }
 
     impl ResultSetSource for MockSource {
-        fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        fn next_batch(
+            &mut self,
+            max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
             let take = max_rows.min(self.rows.len());
             Ok(self.rows.drain(..take).collect())
         }
-        fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
             Ok(Vec::new())
         }
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
-        fn close(&mut self) -> Result<(), String> {
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
     }

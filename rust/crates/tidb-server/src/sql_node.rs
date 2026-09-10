@@ -924,7 +924,10 @@ struct ProcessTrackedResultSet<'a> {
 }
 
 impl ResultSetSource for ProcessTrackedResultSet<'_> {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
         self.inner.next_batch(max_rows)
     }
 
@@ -935,21 +938,24 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
     fn next_text_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+    ) -> Result<
+        Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>,
+        tidb_executor::MysqlError,
+    > {
         self.inner.next_text_batch(max_rows)
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         self.inner.columns()
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         let result = self.inner.finish();
         self.statement.take();
         result
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         let result = self.inner.close();
         self.statement.take();
         result
@@ -962,7 +968,10 @@ pub struct BoxedResultSetSource<'a> {
 }
 
 impl ResultSetSource for BoxedResultSetSource<'_> {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
         self.inner.next_batch(max_rows)
     }
 
@@ -973,19 +982,22 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
     fn next_text_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+    ) -> Result<
+        Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>,
+        tidb_executor::MysqlError,
+    > {
         self.inner.next_text_batch(max_rows)
     }
 
-    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
         self.inner.columns()
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
     }
 }

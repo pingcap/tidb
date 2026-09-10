@@ -136,8 +136,8 @@ pub struct ResultSetWriteOutcome {
 /// Result-set failure plus source-shaped retry classification.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResultSetWriteError {
-    /// Error text from source, protocol encoder, or packet sink.
-    pub message: String,
+    /// Typed SQL error from the source, protocol encoder, or packet sink.
+    pub cause: tidb_executor::MysqlError,
     /// True only when the first `Next` failed before any packet escaped.
     pub retryable: bool,
     /// Whether any response bytes may already be visible to the client.
@@ -190,7 +190,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             .next_text_batch(batch_size)
             .map_err(|message| TrackedResultSetWriteError {
                 error: ResultSetWriteError {
-                    message,
+                    cause: message.into(),
                     retryable: true,
                     bytes_escaped: false,
                 },
@@ -203,7 +203,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 .next_batch(batch_size)
                 .map_err(|message| TrackedResultSetWriteError {
                     error: ResultSetWriteError {
-                        message,
+                        cause: message.into(),
                         retryable: true,
                         bytes_escaped: false,
                     },
@@ -347,7 +347,7 @@ fn tracked(error: ResultSetWriteError, finish_attempted: bool) -> TrackedResultS
 }
 
 fn tracked_after_pull<W: ResultSetSink>(
-    message: String,
+    message: impl Into<tidb_executor::MysqlError>,
     sink: &W,
     finish_attempted: bool,
 ) -> TrackedResultSetWriteError {
@@ -361,7 +361,7 @@ fn write_payload<W: ResultSetSink>(
     sink.write_payload(payload).map_err(|error| {
         let bytes_escaped = sink.packets_written() > 0 || error.bytes_escaped;
         ResultSetWriteError {
-            message: error.message,
+            cause: error.message.into(),
             retryable: false,
             bytes_escaped,
         }
@@ -377,7 +377,7 @@ fn payloads_failed<W: ResultSetSink>(
 ) -> TrackedResultSetWriteError {
     tracked(
         ResultSetWriteError {
-            message: error.message,
+            cause: error.message.into(),
             retryable: false,
             bytes_escaped: error.bytes_escaped || sink.packets_written() > 0,
         },
@@ -387,15 +387,18 @@ fn payloads_failed<W: ResultSetSink>(
 
 fn flush_sink<W: ResultSetSink>(sink: &mut W) -> Result<(), ResultSetWriteError> {
     sink.flush().map_err(|error| ResultSetWriteError {
-        message: error.message,
+        cause: error.message.into(),
         retryable: false,
         bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
     })
 }
 
-fn failed_after_pull<W: ResultSetSink>(message: String, sink: &W) -> ResultSetWriteError {
+fn failed_after_pull<W: ResultSetSink>(
+    message: impl Into<tidb_executor::MysqlError>,
+    sink: &W,
+) -> ResultSetWriteError {
     ResultSetWriteError {
-        message,
+        cause: message.into(),
         retryable: false,
         bytes_escaped: sink.packets_written() > 0,
     }

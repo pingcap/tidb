@@ -130,6 +130,28 @@ pub struct FrameBound {
 }
 
 impl FrameBound {
+    /// Go FrameBound.UpdateCompareCols, called by the window executor builder.
+    pub fn update_compare_cols(&mut self, order_by: &[Column]) -> Result<(), tidb_expr::EvalError> {
+        let Some(calc) = self.calc_funcs.first() else {
+            return Ok(());
+        };
+        let Some(first) = order_by.first() else {
+            return Ok(());
+        };
+        self.compare_cols = order_by.iter().cloned().map(Expression::Column).collect();
+        if let (Some(calc_type), Some(column_type)) = (calc.static_type(), first.get_static_type())
+        {
+            if calc_type.eval_type() != column_type.eval_type() {
+                self.compare_cols[0] = tidb_expr::aggregation::wrap_cast::build_cast_to(
+                    Expression::Column(first.clone()),
+                    calc_type.clone(),
+                )?;
+            }
+            self.update_cmp_funcs_and_cmp_data_type(calc_type.eval_type());
+        }
+        Ok(())
+    }
+
     /// Go `FrameBound.UpdateCmpFuncsAndCmpDataType(cmpDataType)`
     /// (`logical_window.go:207`): pick the comparison the frame's key type
     /// needs.

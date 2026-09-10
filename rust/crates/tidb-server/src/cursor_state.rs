@@ -55,7 +55,10 @@ impl CursorState {
     /// unrelated quota or spill directory.
     pub(crate) fn materialize_result(result: &mut QueryResult<'_>) -> Result<Self, SqlQueryError> {
         let Some(authority) = result.take_cursor_materialization() else {
-            let close = result.source().close().map_err(SqlQueryError::unknown);
+            let close = result
+                .source()
+                .close()
+                .map_err(|error| SqlQueryError::new(error.code, error.state, error.message));
             return match close {
                 Ok(()) => Err(SqlQueryError::unknown(
                     "prepared cursor result is missing its materialization authority",
@@ -111,7 +114,10 @@ impl CursorState {
         };
 
         let materialized = cursor.materialize_source(result);
-        let closed = result.source().close().map_err(SqlQueryError::unknown);
+        let closed = result
+            .source()
+            .close()
+            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message));
         materialized?;
         closed?;
 
@@ -129,7 +135,7 @@ impl CursorState {
             let batch = result
                 .source()
                 .next_batch(self.max_chunk_size)
-                .map_err(SqlQueryError::unknown)?;
+                .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
             if batch.is_empty() {
                 break;
             }
@@ -151,7 +157,10 @@ impl CursorState {
             self.rows.add(chunk).map_err(cursor_disk_error)?;
             self.memory.check().map_err(cursor_exec_error)?;
         }
-        self.columns = result.source().columns().map_err(SqlQueryError::unknown)?;
+        self.columns = result
+            .source()
+            .columns()
+            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
         if self.columns.len() != self.field_types.len() {
             return Err(SqlQueryError::unknown(format!(
                 "cursor metadata has {} columns for {} field types",
@@ -159,7 +168,10 @@ impl CursorState {
                 self.field_types.len()
             )));
         }
-        result.source().finish().map_err(SqlQueryError::unknown)
+        result
+            .source()
+            .finish()
+            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))
     }
 
     pub(crate) fn columns(&self) -> &[tidb_protocol::ColumnInfo] {
@@ -302,22 +314,25 @@ mod tests {
     }
 
     impl ResultSetSource for CountingRows {
-        fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        fn next_batch(
+            &mut self,
+            max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
             Ok((0..max_rows.max(1))
                 .map_while(|_| self.rows.pop_front())
                 .collect())
         }
 
-        fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
+        fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
             Ok(self.columns.clone())
         }
 
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             self.lifecycle.lock().unwrap().finish += 1;
             Ok(())
         }
 
-        fn close(&mut self) -> Result<(), String> {
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
             self.lifecycle.lock().unwrap().close += 1;
             Ok(())
         }

@@ -58,6 +58,15 @@ pub enum ConfiguredOrderedQueryError {
     },
 }
 
+impl From<ConfiguredOrderedQueryError> for tidb_executor::MysqlError {
+    fn from(error: ConfiguredOrderedQueryError) -> Self {
+        match error {
+            ConfiguredOrderedQueryError::Join(error) => error.into(),
+            other => Self::unknown(other.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for ConfiguredOrderedQueryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

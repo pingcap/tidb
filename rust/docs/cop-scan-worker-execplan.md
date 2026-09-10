@@ -45,7 +45,9 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 - [x] Run retained Go memory-cleanup, sort-spill and session-variable tests:
   three passed, zero failed. Ready lint passed.
 - [ ] Complete the repository-wide Go-test provenance audit.
-- [ ] Finish the upstream semantic merge, SQL validation and normal push.
+- [x] Reconcile the upstream merge through b77c90cde6 with no unresolved entries.
+- [x] Build release server/smoke binaries and compare 81 live Go/Rust SQL cases.
+- [ ] Finish consolidated socket-enabled tests and verify normal remote publication.
 
 
 ## Context and Orientation
@@ -207,103 +209,61 @@ origin/hparser-integration with a normal push, preserving unrelated local work
 and concurrent remote commits. The measured base commit is 431d637dec; verify
 the published merge commit on the remote before reporting delivery.
 
-The user authorized a full upstream merge, including semantic conflict
-resolution. The detached worktree /private/tmp/tidb-upstream-merge.nzY42N merges
-local 59700b3180 with origin cf6990b012. The original merge had 144 conflicted
-files. TiKV transport conflicts now retain native reply/I/O ownership alongside
-upstream lock registry, cancellation and explicit callback interfaces. Datatype
-resolutions preserve shared charset storage and Go conversion-error precedence.
-The dependency graph resolution follows Go's distinct identity policies:
-AddFrom keeps the first registration; MakeOuterJoin records the inner identity.
-Upstream's unused, ignored extraction-test placeholders are removed; this is
-not a claim that their upstream Go tests have been ported. There are 15
-unresolved index entries; their text markers have been resolved, but semantic
-integration is not complete. The resolved ranges evaluate scalar bounds against
-the current execution; planner properties retain one index-join requirement;
-upstream's spill-capable HashAgg replaces the superseded specialized pipeline.
-The server retains direct packet buffering and a single prepared-definition
-owner while adopting upstream's result authority, lazy clock and cache plans.
-Planner/executor dispatch and cached-execution integration remain in progress.
+The authorized merge is being assembled in /private/tmp/tidb-upstream-merge.nzY42N,
+preserving the original checkout and its uncommitted files. Local merge
+cf5e822e99 combines 59700b3180 and cf6990b012. The newer remote history through
+b77c90cde6 is also integrated; there are no unresolved index entries.
 
-Merged-code validation is distinct from the pre-merge benchmark evidence.
-Bazel preparation passed with twelve jobs after aligning WORKSPACE to go.mod's
-Go 1.25.12 requirement. Expression tests passed 1,188 (99 ignored), planner
-tests passed 1,192 (1,071 ignored), and transaction tests passed 641 (10 ignored).
-These 3,021 tests are scoped evidence, not complete Go-package parity.
+The active executor owns physical construction and ResolveIndices. The unused
+crate-root builder/readers and duplicate join state are retired. Scan pruning
+preserves stored column identities; projection offsets resolve against the
+actual child schema. Preserved-side outer-join predicates remain join conditions.
+Prepared scope resolvers forward the execution parameter snapshot. Window
+execution includes ranking, value/relative functions and RANGE comparison columns.
+TiKV select-response errors retain typed code, SQLSTATE and message through
+storage, executor, recordset, text/binary writer and cursor materialization.
+No string marker or substring-based error-code parsing remains.
 
-The user approved the remaining merge edits on 2026-09-10. The superseded
-crate-root executor builder and duplicate join state have been retired.
-Client authentication identity, transport status, privilege attachment and
-connection kill handling remain in public open_session; internal storage
-sessions no longer duplicate client setup. Both boot paths configure the
-factory before sharing it, and the binding writer borrows a weak factory
-reference rather than cloning worker ownership. The session-manager trait
-method is restored so process-memory control receives the real registry.
+Client identity, authentication, privilege attachment and connection kill
+handling remain in public open_session. Both boot paths configure the factory
+before sharing it; the binding writer borrows a weak factory reference.
+The cleanup removes 52 identified Rust-only tests and obsolete scaffolding,
+not every test lacking a completed provenance audit. Retained shared fixtures
+must still compile against the current public interfaces.
 
-The combined executor/session/server release check and all their test-target
-type checks pass. The latest logs are merge-approved-runtime-6.log and
-merge-test-cleanup-check-3.log under /private/tmp/tidb-counter-window.jbkXVN.
-The user requested removal of tests absent from Go. The current cleanup removes
-52 Rust-only tests, including source-text guards, retired candidate-builder
-assertions, cache pointer-identity tests, manual timing tests and their unused
-helpers. Original Go test ports remain. This is a scoped cleanup, not a claim
-that every Rust test has had its Go provenance audited.
+Merged validation is separate from earlier measured performance evidence.
+Bazel preparation passed with twelve jobs after matching the WORKSPACE Go pin
+to go.mod 1.25.12. Earlier foundation runs passed 1,188 expression, 1,192 planner
+and 641 transaction tests (99, 1,071 and 10 ignored respectively). Retained Go
+memory-cleanup, sort-spill and session-variable tests passed. The latest broad
+runtime run (merge-latest-runtime.log) reports executor 1,278 passed / 13 failed
+and session 1,522 passed / 157 failed / 210 ignored. These failures include
+plan/receipt expectations, unsupported SQL shapes and result/metadata differences;
+they have not all been established as pre-existing and are not waived or deleted.
+The merged code is not complete Go parity or a fully green release.
 
-Ready lint passed with GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint. The retained
-Go memory-cleanup, sort-spill and session-variable tests passed: three tests,
-zero failures (merge-go-source-retained-tests.log). Full merged SQL, wire,
-storage and performance acceptance remains outstanding. Nothing has been pushed. The main checkout remains at 59700b3180 with its existing files intact.
+Release server and smoke builds passed. The real TiKV scan differential ran
+81 Go/Rust SQL cases with no row/error divergence, including exact COT(0)
+code 1690, SQLSTATE 22003 and message. Its 78 coprocessor receipts were unavailable
+because cluster-session-smoke reports PD shutdown with three live request handles.
+This proves the exercised SQL comparisons, not pushdown/batching acceptance.
+Playground cleanup completed and ports 46199/47820/47920 are closed.
+Evidence: merge-live-scan-pushdown.log under /private/tmp/tidb-counter-window.jbkXVN.
 
-The unaffected fixes follow Go's construction and execution boundaries:
-implicit charset/comparison casts fold when built (except JSON); integer
-constant refinement uses Datum comparison, including NULL; all cached range
-families evaluate against current parameters. Prepared SELECT/DML now carry
-one parameter snapshot into planning and execution. Their context-free cache-hit
-API still lacks session-sensitive evaluation context and needs reconciliation
-before claiming complete cache parity. Session wiring cannot be accepted until
-the combined runtime build and SQL tests pass. Tests first demonstrated the
-expression/range failures, then passed after the shared fixes. Two obsolete
-Rust-only source/lint guard tests were removed; their source remains in Git.
+Final socket-enabled client/executor checks are in progress. An earlier
+sandboxed run passed the non-socket checks; all 31 socket failures were
+PermissionDenied at bind. The authorized rerun is merge-final-verified.log.
+Ready lint passed in merge-final-lint-2.log with
+GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint. Publication remains pending a normal
+push to origin/hparser-integration and remote SHA verification.
 
-Latest validation commands, from the isolated worktree's rust directory:
-
-    cargo test --offline --locked --release -j12 --no-fail-fast -p tidb-expr -p tidb-planner -p tidb-txnkv --lib --tests
-    cargo test --offline --locked --release -j12 --no-fail-fast -p tidb-expr --lib --tests
-    cargo check --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server
-    cargo check --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --tests
-    cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session --lib -- tests_memtest_source sort::tests::test_unparallel_sort_spill_disk vars::tests::session_states_system_var_matches_go
-
-The consolidated run left one large-number expression expectation mismatch;
-Go's standalone strconv.ParseFloat/FormatFloat check confirmed the rounded
-value, and the final complete expression rerun passed. Logs are
-merge-foundations-recheck.log and merge-expression-final.log under
-/private/tmp/tidb-counter-window.jbkXVN. Localhost socket tests ran with the
-required permissions. No performance measurements were changed or accepted.
-The remote branch was subsequently verified at
-b77c90cde62c3857278bbad20584cf9dd56faf70; those concurrent commits must also be
-integrated before a normal push. MERGE_HEAD for the current pending merge is
-still cf6990b012e5c5390b97402dcf5f8c6c50727a51.
-
-The cache-context investigation identifies the next connected ownership fix.
-prepared_ast.rs::bind_cached_prepared_select_for_statement and its DML twin
-call the context-free cache probe before constructing a statement context.
-The protocol calls these before execute_prepared_select/execute_cached_prepared_dml
-enter run_with_columns_using, which clears hints and statement result authority.
-CachedSelectPlan::bind and CachedDmlPlan::bind evaluate with a
-CachedPlanRebuildContext that supplies parameters but inherits Columns defaults,
-including the fixture-only UTC+11 timezone and no session user-variable values.
-Go plan_cache.go::adjustCachedPlan instead calls RebuildPlan4CachedPlan through
-the current session; plan_cache_rebuild.go::buildRangeForTableScan passes its
-GetRangerCtx to ranger. Do not add another rich context before the cache probe:
-one current statement context must span cache rebuilding and execution, with
-the lifecycle reset and effective hints installed at the owning boundary.
-The approval restriction is resolved. The remaining cache-context change still
-requires SQL validation; earlier passing counts remain scoped library evidence.
-
-Next, port the local ResolveIndices implementation to the canonical physical node types,
-retain current execution parameter ownership and selected-row locking on the
-active builder, then rerun consolidated checks. Do not publish a marker-only
-merge or use the old performance receipt as merged-code validation.
+Remaining semantic work includes statement-context-aware cached-plan rebuilding,
+physical selected-row locking, unsupported aggregate/window/subquery shapes,
+and the broad failures listed above. CachedSelectPlan::bind and CachedDmlPlan::bind
+still use parameter-only rebuild context, whereas Go plan_cache.go::adjustCachedPlan
+uses the current session's ranger context. One current statement context must own
+cache rebuilding and execution. No complete package or performance acceptance
+is claimed by this merge.
 
 Counter diagnostics at /private/tmp/tidb-counter-window.jbkXVN/probe.json show
 that TiKV metrics continue publishing buffered work after a benchmark ends.

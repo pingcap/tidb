@@ -21,7 +21,8 @@ use tidb_protocol::ColumnInfo;
 /// Lazy source consumed by the connection result-set writer.
 pub trait ResultSetSource {
     /// Pulls a bounded row batch.
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String>;
+    fn next_batch(&mut self, max_rows: usize)
+        -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>;
 
     /// Whether this source can retain a typed chunk while the text writer
     /// formats rows directly from borrowed cells. Row-oriented sources keep
@@ -36,23 +37,26 @@ pub trait ResultSetSource {
     fn next_text_batch(
         &mut self,
         _max_rows: usize,
-    ) -> Result<Option<Box<dyn TextResultBatch>>, String> {
+    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
         Ok(None)
     }
 
     /// Returns metadata after the first pull has established dynamic schema.
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String>;
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError>;
 
     /// Finishes statement execution once rows are drained.
-    fn finish(&mut self) -> Result<(), String>;
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError>;
 
     /// Releases the record-set resource, finishing it first when needed.
-    fn close(&mut self) -> Result<(), String>;
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError>;
 }
 
 impl ResultSetSource for DistSqlRecordSet {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
-        DistSqlRecordSet::next_batch(self, max_rows).map_err(|error| error.to_string())
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        DistSqlRecordSet::next_batch(self, max_rows).map_err(tidb_executor::MysqlError::from)
     }
 
     fn supports_text_batch(&self) -> bool {
@@ -62,19 +66,19 @@ impl ResultSetSource for DistSqlRecordSet {
     fn next_text_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Option<Box<dyn TextResultBatch>>, String> {
-        DistSqlRecordSet::next_text_batch(self, max_rows).map_err(|error| error.to_string())
+    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
+        DistSqlRecordSet::next_text_batch(self, max_rows).map_err(tidb_executor::MysqlError::from)
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(DistSqlRecordSet::columns(self).to_vec())
     }
 
-    fn finish(&mut self) -> Result<(), String> {
-        DistSqlRecordSet::finish(self).map_err(|error| error.to_string())
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        DistSqlRecordSet::finish(self).map_err(tidb_executor::MysqlError::from)
     }
 
-    fn close(&mut self) -> Result<(), String> {
-        DistSqlRecordSet::close(self).map_err(|error| error.to_string())
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        DistSqlRecordSet::close(self).map_err(tidb_executor::MysqlError::from)
     }
 }

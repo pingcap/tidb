@@ -45,8 +45,7 @@ use tidb_protocol::{
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
-    QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext,
-    SqlQueryError,
+    QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
@@ -66,7 +65,10 @@ struct Rows {
 }
 
 impl ResultSetSource for Rows {
-    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         if self.sent {
             return Ok(Vec::new());
         }
@@ -74,7 +76,7 @@ impl ResultSetSource for Rows {
         Ok(vec![vec![Datum::Int(7)]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(vec![ColumnInfo {
             schema: SCHEMA.to_owned(),
             table: "rows".to_owned(),
@@ -90,11 +92,11 @@ impl ResultSetSource for Rows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         Ok(())
     }
 }
@@ -140,7 +142,9 @@ impl QuerySessionFactory for Factory {
 
     fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         Ok(Session {
-            databases: [SCHEMA.to_owned(), "other31".to_owned()].into_iter().collect(),
+            databases: [SCHEMA.to_owned(), "other31".to_owned()]
+                .into_iter()
+                .collect(),
             current: String::new(),
         })
     }
@@ -263,7 +267,11 @@ fn write_client_response(
 }
 
 /// Serves exactly one connection on a fresh loopback port.
-fn serve_one() -> (TcpStream, PacketReader<TcpStream>, std::thread::JoinHandle<()>) {
+fn serve_one() -> (
+    TcpStream,
+    PacketReader<TcpStream>,
+    std::thread::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
@@ -289,8 +297,14 @@ fn serve_one() -> (TcpStream, PacketReader<TcpStream>, std::thread::JoinHandle<(
 }
 
 /// Connects with `database` and returns the packet answering the handshake.
-fn connect(database: InitialDatabase) -> (TcpStream, PacketReader<TcpStream>, std::thread::JoinHandle<()>, Vec<u8>)
-{
+fn connect(
+    database: InitialDatabase,
+) -> (
+    TcpStream,
+    PacketReader<TcpStream>,
+    std::thread::JoinHandle<()>,
+    Vec<u8>,
+) {
     let (mut client, mut reader, server) = serve_one();
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();

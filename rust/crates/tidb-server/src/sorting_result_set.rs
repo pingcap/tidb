@@ -58,7 +58,7 @@ impl<'a> SortingResultSetSource<'a> {
     }
 
     /// Drains and orders the inner source exactly once, on the first pull.
-    fn ensure_ordered(&mut self) -> Result<(), String> {
+    fn ensure_ordered(&mut self) -> Result<(), tidb_executor::MysqlError> {
         if self.ordered.is_some() {
             return Ok(());
         }
@@ -78,7 +78,10 @@ impl<'a> SortingResultSetSource<'a> {
 }
 
 impl ResultSetSource for SortingResultSetSource<'_> {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         self.ensure_ordered()?;
         let ordered = self
             .ordered
@@ -87,16 +90,16 @@ impl ResultSetSource for SortingResultSetSource<'_> {
         Ok(ordered.by_ref().take(max_rows).collect())
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         // Ordering never changes the schema.
         self.inner.columns()
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
     }
 }
@@ -114,18 +117,21 @@ mod tests {
     }
 
     impl ResultSetSource for MockSource {
-        fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        fn next_batch(
+            &mut self,
+            max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
             let take = max_rows.min(self.rows.len());
             Ok(self.rows.drain(..take).collect())
         }
-        fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
             Ok(Vec::new())
         }
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             self.finished = true;
             Ok(())
         }
-        fn close(&mut self) -> Result<(), String> {
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
     }

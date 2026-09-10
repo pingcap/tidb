@@ -18,10 +18,13 @@ struct QueryLifecycleResultSet {
 }
 
 impl ResultSetSource for QueryLifecycleResultSet {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
         self.inner
             .next_batch(max_rows)
-            .map_err(|error| error.to_string())
+            .map_err(tidb_executor::MysqlError::from)
     }
 
     fn supports_text_batch(&self) -> bool {
@@ -31,21 +34,24 @@ impl ResultSetSource for QueryLifecycleResultSet {
     fn next_text_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>, String> {
+    ) -> Result<
+        Option<Box<dyn tidb_exec::distsql_recordset::TextResultBatch>>,
+        tidb_executor::MysqlError,
+    > {
         self.inner
             .next_text_batch(max_rows)
-            .map_err(|error| error.to_string())
+            .map_err(tidb_executor::MysqlError::from)
     }
 
-    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
         Ok(self.inner.columns().to_vec())
     }
 
-    fn finish(&mut self) -> Result<(), String> {
-        self.inner.finish().map_err(|error| error.to_string())
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.inner.finish().map_err(tidb_executor::MysqlError::from)
     }
 
-    fn close(&mut self) -> Result<(), String> {
-        self.inner.close().map_err(|error| error.to_string())
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.inner.close().map_err(tidb_executor::MysqlError::from)
     }
 }

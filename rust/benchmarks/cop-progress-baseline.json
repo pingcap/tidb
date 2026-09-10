@@ -4,17 +4,18 @@
   "integration_validation": {
     "status": "WIP semantic merge; no merged-code performance acceptance or Ready completion",
     "local_parent": "59700b3180dfb00747c0f18114428f1b0d7cfbdd",
-    "upstream_parent": "cf6990b012e5c5390b97402dcf5f8c6c50727a51",
+    "upstream_parent": "b77c90cde62c3857278bbad20584cf9dd56faf70",
     "worktree": "/private/tmp/tidb-upstream-merge.nzY42N",
     "original_conflicted_files": 144,
-    "unresolved_files": 15,
+    "unresolved_files": 0,
     "bazel_prepare": "Passed with twelve jobs after aligning the WORKSPACE Go pin to go.mod 1.25.12 and formatting metrics/memory.go",
     "release_tests": "Expression 1188 passed (99 ignored), planner 1192 passed (1071 ignored), transaction KV 641 passed (10 ignored). Combined executor/session/server release compilation and all their test-target type checks pass. Three retained Go tests passed: statement memory cleanup, sort spilling and session-variable state.",
-    "merge_blocker": "Approval resolved. Remaining work is semantic integration, current-context cache rebuilding, physical ResolveIndices/locking, newer remote integration and SQL validation.",
+    "merge_blocker": "No text conflicts. Final scoped validation and normal publication pending. Broad runtime suites remain non-green: executor 1278 passed / 13 failed; session 1522 passed / 157 failed / 210 ignored. No full Go parity or performance acceptance.",
     "latest_observed_remote": "b77c90cde62c3857278bbad20584cf9dd56faf70",
     "publication": "Not pushed; destination is origin/hparser-integration only",
     "test_cleanup": "Removed 52 identified Rust-only tests plus obsolete helpers. No Rust source-text include_str guards remain under rust/crates. Repository-wide Go-test provenance audit is not complete.",
-    "ready_lint": "Passed: GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+    "ready_lint": "Passed: GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint (merge-final-lint-2.log)",
+    "live_sql": "Release server/smoke built. 81 Go/Rust scan cases had zero row/error divergence; COT code 1690, SQLSTATE 22003 and message match. 78 coprocessor receipts unavailable because smoke PD shutdown retains 3 handles; no batching/pushdown acceptance. Isolated playground stopped and ports verified closed."
   },
   "counter_visibility_diagnostic": {
     "path": "/private/tmp/tidb-counter-window.jbkXVN/probe.json",

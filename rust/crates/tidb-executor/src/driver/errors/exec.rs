@@ -49,8 +49,24 @@ const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
 const ER_OPERAND_COLUMNS: u16 = tidb_error::mysql::errcode::ErrOperandColumns;
 
 /// The MySQL error an execution failure reaches the client as.
+#[test]
+fn coprocessor_cot_error_matches_go() {
+    // pkg/expression/builtin_math_test.go: TestCot.
+    let storage = crate::storage::StorageError::Sql(MysqlError::new(
+        1690,
+        "DOUBLE value is out of range in 'cot(0)'",
+    ));
+    let error = to_mysql_error(ExecError::from(crate::kv_table::KvTableError::from(
+        storage,
+    )));
+    assert_eq!(error.code, 1690);
+    assert_eq!(error.state, *b"22003");
+    assert_eq!(error.message, "DOUBLE value is out of range in 'cot(0)'");
+}
+
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
+        ExecError::Mysql(error) => error,
         ExecError::Eval(eval) => eval_to_mysql_error(eval),
         // An internal invariant error carries the exact message Go returns
         // through its generic error path.

@@ -171,10 +171,7 @@ impl KvTable {
             }
         }
         let keys: Vec<Key> = probes.iter().map(|(key, _)| key.clone()).collect();
-        let entries = self
-            .store
-            .batch_get(&keys)
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let entries = self.store.batch_get(&keys).map_err(KvTableError::from)?;
         // Keep the batch lookup linear. Scanning `probes` for every handle
         // makes a 20k-row index batch quadratic before row decoding starts;
         // Go's batch table reader indexes each returned record once.
@@ -231,7 +228,7 @@ impl KvTable {
                 } else {
                     self.store.iter(Some(&low), Some(&upper))
                 }
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?,
+                .map_err(KvTableError::from)?,
             );
         }
         if descending {
@@ -306,7 +303,7 @@ impl KvTable {
             let Some((key, value)) = self
                 .store
                 .first(Some(&low), Some(&upper))
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+                .map_err(KvTableError::from)?
             else {
                 continue;
             };
@@ -700,7 +697,7 @@ impl KvTable {
                 }
                 return Ok(None);
             };
-            let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            let mut scan = scan.map_err(KvTableError::from)?;
             // Cluster storage can expose staged writes together with a remote
             // snapshot.  The integer merge below reconstructs keys with one
             // table id, so a partitioned staged row would be keyed under the
@@ -1334,7 +1331,7 @@ impl KvTable {
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
         };
-        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let mut scan = scan.map_err(KvTableError::from)?;
         if !scan.staged.is_empty() {
             scan.stream.close();
             return Ok(None);
@@ -1552,7 +1549,7 @@ impl KvTable {
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
         };
-        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let mut scan = scan.map_err(KvTableError::from)?;
         if !scan.staged.is_empty() {
             scan.stream.close();
             return Ok(None);
@@ -1592,6 +1589,13 @@ impl KvTable {
         // and a covering prefix read of bmsql_oorder_idx1 plus the ecasdb
         // max(dtlno) stream answer correctly against the real backend again.
         if self.has_dirty_content() || self.partition.is_some() || ranges.is_empty() {
+            return Ok(None);
+        }
+        // An index-handle cursor only returns index/handle columns. A
+        // residual predicate may reference a table column outside that
+        // layout; falling back keeps the local Selection on a complete row
+        // instead of evaluating it against a narrower chunk.
+        if !predicates.is_empty() {
             return Ok(None);
         }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
@@ -1768,8 +1772,13 @@ impl KvTable {
         // cursor consumes the projected response schema. Keep both mappings
         // explicit: a plain double read projects the original handle slots
         // and then sees them densely at positions 0..handle_count.
-        let output_offsets = handle_only.then(|| handle_indices.clone());
-        let returned_handle_indices = if handle_only {
+        // A residual predicate may still reference any table/index column.
+        // Narrowing to handles in that case shifts the response coordinates
+        // and makes local evaluation index past the returned chunk. Keep the
+        // complete schema unless this is a predicate-free handle-only read.
+        let narrow_to_handles = handle_only && predicates.is_empty() && topn.is_none();
+        let output_offsets = narrow_to_handles.then(|| handle_indices.clone());
+        let returned_handle_indices = if narrow_to_handles {
             (0..handle_indices.len()).collect::<Vec<_>>()
         } else {
             handle_indices.clone()
@@ -1873,7 +1882,7 @@ impl KvTable {
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
         };
-        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let mut scan = scan.map_err(KvTableError::from)?;
         if !scan.staged.is_empty() {
             scan.stream.close();
             return Ok(None);
@@ -2263,7 +2272,7 @@ impl KvTable {
                 } else {
                     self.store.iter(Some(&low), Some(&high))
                 }
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
                 iterators.push(iterator);
             }
         }
@@ -2464,9 +2473,7 @@ impl RowCursor {
             let (handle, row) = self
                 .decoder
                 .decode_record(iterator.key().as_bytes(), iterator.value())?;
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            iterator.next().map_err(KvTableError::from)?;
             if iterator.valid() {
                 self.merge_heap.push(
                     record_merge_key(iterator.key().as_bytes(), self.unsigned_handle),
@@ -2486,9 +2493,7 @@ impl RowCursor {
             let (handle, row) = self
                 .decoder
                 .decode_record(iterator.key().as_bytes(), iterator.value())?;
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            iterator.next().map_err(KvTableError::from)?;
             return Ok(Some((physical_id, handle, row)));
         }
         Ok(None)
@@ -2851,7 +2856,7 @@ impl RemoteRowCursor {
                 let next = self
                     .stream
                     .next_chunk(target_rows)
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                    .map_err(KvTableError::from)?;
                 if output.num_rows() == 0 {
                     if let Some(batch) = next.as_ref() {
                         // `SelectResponseIter` already applies Go
@@ -2919,10 +2924,7 @@ impl RemoteRowCursor {
     }
 
     fn read_remote(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
-        let next = self
-            .stream
-            .next_row()
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let next = self.stream.next_row().map_err(KvTableError::from)?;
         self.note_wire_rows();
         let Some(mut row) = next else {
             return Ok(None);
@@ -2959,10 +2961,7 @@ impl RemoteRowCursor {
     /// shared integer/composite-handle snapshot/staged merge.
     pub fn next_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
         if !self.merge_staged {
-            let next = self
-                .stream
-                .next_row()
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            let next = self.stream.next_row().map_err(KvTableError::from)?;
             self.note_wire_rows();
             return Ok(next.map(|mut row| {
                 row.truncate(self.width);
@@ -3035,10 +3034,7 @@ impl RemoteRowCursor {
     /// so transport-only columns never escape the projected schema.
     pub fn next_row_with_handle(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
         debug_assert!(!self.merge_staged);
-        let next = self
-            .stream
-            .next_row()
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let next = self.stream.next_row().map_err(KvTableError::from)?;
         self.note_wire_rows();
         Ok(next)
     }
@@ -3082,7 +3078,7 @@ impl RemoteRowCursor {
         let Some(batch) = self
             .stream
             .next_chunk(required_rows.max(1))
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+            .map_err(KvTableError::from)?
         else {
             self.note_wire_rows();
             return Ok(Some(Chunk::new_with_capacity(
@@ -3200,11 +3196,7 @@ impl RemoteIndexHandleCursor {
     /// order. Go's `PhysicalIndexReader` emits these values directly from the
     /// index stream, so no table row lookup or handle reordering is involved.
     pub fn next_projected_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some(row) = self
-            .inner
-            .next_row()
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
-        else {
+        let Some(row) = self.inner.next_row().map_err(KvTableError::from)? else {
             self.note_rows();
             return Ok(None);
         };
@@ -3249,11 +3241,7 @@ impl RemoteIndexHandleCursor {
                 self.pending_chunk = None;
                 self.pending_chunk_row = 0;
             }
-            let Some(batch) = self
-                .inner
-                .next_chunk(1)
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
-            else {
+            let Some(batch) = self.inner.next_chunk(1).map_err(KvTableError::from)? else {
                 self.note_rows();
                 return Ok(None);
             };
@@ -3300,7 +3288,7 @@ impl RemoteIndexHandleCursor {
                 let Some(chunk) = self
                     .inner
                     .next_chunk(decoder_rows)
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+                    .map_err(KvTableError::from)?
                 else {
                     self.note_rows();
                     break;
@@ -3340,11 +3328,7 @@ impl RemoteIndexHandleCursor {
         {
             return self.next_handle_from_chunk();
         }
-        let Some(row) = self
-            .inner
-            .next_row()
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
-        else {
+        let Some(row) = self.inner.next_row().map_err(KvTableError::from)? else {
             return Ok(None);
         };
         self.note_rows();
@@ -3463,9 +3447,7 @@ impl IndexRangeCursor {
                     self.global_partition_ids.as_deref(),
                     iterator.value(),
                 )?;
-                iterator
-                    .next()
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                iterator.next().map_err(KvTableError::from)?;
                 if iterator.valid() {
                     self.merge_heap.push(
                         cut_index_prefix(iterator.key().as_bytes()).to_vec(),
@@ -3503,9 +3485,7 @@ impl IndexRangeCursor {
                 self.global_partition_ids.as_deref(),
                 iterator.value(),
             )?;
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            iterator.next().map_err(KvTableError::from)?;
             let partition = if self.global_partition_ids.is_some() {
                 let Some(partition) = global_partition else {
                     continue;
@@ -3799,9 +3779,7 @@ impl TableScanExec {
                     self.keep_order,
                     &self.decode_context,
                 )
-                .map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?,
+                .map_err(ExecError::from)?,
         );
         Ok(())
     }
@@ -3878,9 +3856,7 @@ impl TableScanExec {
             }),
             (None, None) => return Ok(None),
         }
-        .map_err(|error| {
-            ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-        })?;
+        .map_err(ExecError::from)?;
         match next {
             Some(row) => Ok(Some(insert_extra_commit_ts(row, commit_ts_slot))),
             None => {
@@ -4350,9 +4326,7 @@ impl Executor for TableScanExec {
                     self.decode_context.zone(),
                     &self.statement,
                 )
-                .map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?;
+                .map_err(ExecError::from)?;
             if self.partial_remote.is_some() {
                 self.remote = None;
                 return Ok(());
@@ -4405,9 +4379,7 @@ impl Executor for TableScanExec {
                 &self.decode_context,
                 &self.statement,
             )
-            .map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })?;
+            .map_err(ExecError::from)?;
         if self.remote.is_some() {
             // A clean remote stream whose backend lowered every predicate is
             // already exact. Keep the local filter for residuals and staged
@@ -4450,10 +4422,7 @@ impl Executor for TableScanExec {
                 return Ok(());
             }
             while req.num_rows() < cap {
-                let Some(row) = remote.next_row().map_err(|error| {
-                    ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
-                })?
-                else {
+                let Some(row) = remote.next_row().map_err(ExecError::from)? else {
                     self.partial_remote = None;
                     self.partial_done = true;
                     break;
@@ -4510,9 +4479,7 @@ impl Executor for TableScanExec {
                 }
                 if let Some(appended) = remote
                     .append_clean_chunk(req, target, self.limit.is_none())
-                    .map_err(|error| {
-                        ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                    })?
+                    .map_err(ExecError::from)?
                 {
                     self.scanned
                         .set(self.scanned.get().saturating_add(appended as u64));
@@ -4625,9 +4592,7 @@ fn append_partial_remote_chunk(
         let (batch, start) = if let Some((batch, start)) = pending.take() {
             (batch, start)
         } else {
-            let batch = remote.next_chunk(cap).map_err(|error| {
-                ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
-            })?;
+            let batch = remote.next_chunk(cap).map_err(ExecError::from)?;
             let Some(batch) = batch else {
                 return Ok((req.num_rows() > before).then_some(req.num_rows() - before));
             };
@@ -4818,7 +4783,6 @@ impl crate::table_access::TableAccess for TableScanExec {
             .map(|(index, offset)| {
                 let mut column = self.meta.schema().columns[*offset].clone();
                 column.index = index as i64;
-                column.id = index as i64 + 1;
                 column
             })
             .collect();
@@ -5011,10 +4975,7 @@ impl crate::table_access::TableAccess for TableScanExec {
             .map(|(index, offset)| {
                 let mut column = self.meta.schema().columns[*offset].clone();
                 column.index = index as i64;
-                // The driver's scope resolver hands expressions the unique id
-                // `index + 1`, so the schema must renumber with it or the two
-                // would disagree about which column is which.
-                column.id = index as i64 + 1;
+                // Projection changes execution positions, not storage/planner identities.
                 column
             })
             .collect();

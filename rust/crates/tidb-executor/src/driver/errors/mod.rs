@@ -77,7 +77,7 @@ impl MysqlError {
     /// raise site is what lets a code and its state disagree -- `1365` was
     /// reaching clients as `HY000` where TiDB sends `22012` -- so raise
     /// sites must not name one; this lookup is the only `state` source.
-    fn new(code: u16, message: impl Into<String>) -> Self {
+    pub fn new(code: u16, message: impl Into<String>) -> Self {
         let mut state = [0u8; 5];
         state.copy_from_slice(tidb_error::mysql::mysql_state(code).as_bytes());
         Self::with_state(code, state, message)
@@ -101,8 +101,28 @@ impl MysqlError {
     }
 
     /// Go's catch-all `ER_UNKNOWN_ERROR` (1105), whose SQLSTATE is HY000.
-    fn unknown(message: impl Into<String>) -> Self {
+    pub fn unknown(message: impl Into<String>) -> Self {
         Self::new(1105, message)
+    }
+}
+
+impl std::fmt::Display for MysqlError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for MysqlError {}
+
+impl From<String> for MysqlError {
+    fn from(message: String) -> Self {
+        Self::unknown(message)
+    }
+}
+
+impl From<&str> for MysqlError {
+    fn from(message: &str) -> Self {
+        Self::unknown(message)
     }
 }
 

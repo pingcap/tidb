@@ -265,9 +265,12 @@ where
                 Some(offsets.iter().map(|offset| *offset as u32).collect())
             }
             Some(_) => {
+                // output_offsets specifies the returned row layout. Refuse
+                // an unfulfillable request so the caller retains its local
+                // filter/projection; never return a different-width row.
                 return Err(refuse(
-                    "this coprocessor lowering does not narrow output columns",
-                ))
+                    "projected coprocessor output requires complete predicate pushdown",
+                ));
             }
         };
 
@@ -738,7 +741,12 @@ impl CopRowStream {
             };
             let batch = iter
                 .next_chunk_with_required_rows(required_rows.max(1))
-                .map_err(|error| StorageError::Backend(error.to_string()))?;
+                .map_err(|error| match error {
+                    tidb_distsql::ResponseChannelError::SelectResponse { code, message } => {
+                        StorageError::Sql(tidb_executor::MysqlError::new(code as u16, message))
+                    }
+                    other => StorageError::Backend(other.to_string()),
+                })?;
             let Some(batch) = batch else {
                 self.exhausted = true;
                 return Ok(None);

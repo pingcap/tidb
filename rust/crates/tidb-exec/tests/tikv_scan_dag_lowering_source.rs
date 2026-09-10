@@ -105,7 +105,7 @@ fn aggregate_dag_accepts_global_functions_or_group_only_dedup() {
     use tidb_exec::dag_request::construct_grouped_aggregate_read_only_dag_req_with_conditions;
     use tidb_proto::tipb::{Expr, ExprType};
 
-    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
+    let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
     let encoded_int = |value| {
         let mut bytes = Vec::new();
         tidb_codec::encode_int(&mut bytes, value);

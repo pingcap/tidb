@@ -1718,9 +1718,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             write_error(
                                 &mut output,
                                 1,
-                                ER_UNKNOWN_ERROR,
-                                *b"HY000",
-                                error.message,
+                                error.cause.code,
+                                error.cause.state,
+                                error.cause.message,
                                 protocol_41,
                             )?;
                             drop(result);
@@ -1731,7 +1731,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Err(error) => {
                             drop(result);
                             engine.finish_execute_stmt(query_started.elapsed());
-                            return Err(MysqlConnectionError::PartialResult(error.message));
+                            return Err(MysqlConnectionError::PartialResult(error.cause.message));
                         }
                     }
                     drop(result);
@@ -2066,14 +2066,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 write_error(
                                     &mut output,
                                     1,
-                                    ER_UNKNOWN_ERROR,
-                                    *b"HY000",
-                                    error.message,
+                                    error.cause.code,
+                                    error.cause.state,
+                                    error.cause.message,
                                     protocol_41,
                                 )?;
                             }
                             Err(error) => {
-                                return Err(MysqlConnectionError::PartialResult(error.message))
+                                return Err(MysqlConnectionError::PartialResult(
+                                    error.cause.message,
+                                ))
                             }
                         }
                         drop(result);
@@ -2170,15 +2172,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         write_error(
                                             &mut output,
                                             1,
-                                            ER_UNKNOWN_ERROR,
-                                            *b"HY000",
-                                            error.message,
+                                            error.cause.code,
+                                            error.cause.state,
+                                            error.cause.message,
                                             protocol_41,
                                         )?;
                                     }
                                     Err(error) => {
                                         return Err(MysqlConnectionError::PartialResult(
-                                            error.message,
+                                            error.cause.message,
                                         ))
                                     }
                                 }

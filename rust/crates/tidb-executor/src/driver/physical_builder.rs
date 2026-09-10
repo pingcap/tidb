@@ -434,6 +434,9 @@ fn table_scan_schema(
                 })?,
         );
     }
+    // The source starts in stored-column coordinates. accept_column_prune
+    // composes keep into those coordinates and updates its output schema.
+    // LogicalSelection has already added every filter input to scan.Schema.
     Ok((
         Schema::new(full),
         keep,
@@ -494,7 +497,7 @@ fn build_table_scan(
     {
         if !source.accept_column_prune(&keep) {
             return Err(DriverError::unsupported(
-                "the physical table scan cannot apply its projection",
+                "physical scan projection does not match its stored columns",
             ));
         }
     }
@@ -846,7 +849,7 @@ fn build_window(
             &child_schema,
         )?);
     }
-    let frame = match &window.frame {
+    let mut frame = match &window.frame {
         Some(frame) => {
             window_frame_spec(frame, window.order_by.first().is_some_and(|item| item.desc))?
         }
@@ -859,6 +862,18 @@ fn build_window(
             range_desc: false,
         },
     };
+    if let Some(range) = &mut frame.range {
+        let order_by = window
+            .order_by
+            .iter()
+            .map(|item| item.col.clone())
+            .collect::<Vec<_>>();
+        for bound in range.start.iter_mut().chain(range.end.iter_mut()) {
+            bound
+                .update_compare_cols(&order_by)
+                .map_err(crate::ExecError::from)?;
+        }
+    }
     let mut funcs = Vec::with_capacity(window.window_func_descs.len());
     for (index, descriptor) in window.window_func_descs.iter().enumerate() {
         use crate::window::WindowFunction;
@@ -915,15 +930,14 @@ fn build_window(
                     .ok_or(DriverError::WrongArguments("lead/lag"))?;
                 let mut default = args.get(2).cloned();
                 // Go buildLeadLag converts a constant default to RetTp.
-                if let Some(Expression::Constant(_)) = &default {
-                    let cast = tidb_expr::aggregation::wrap_cast::build_cast_to(
-                        default.as_ref().unwrap().clone(),
-                        output_type.clone(),
-                    )
-                    .map_err(crate::ExecError::from)?;
-                    if let Ok(value) = tidb_expr::eval_expression_once(&cast, ctx) {
+                if let Some(Expression::Constant(constant)) = &default {
+                    if let Ok(converted) = constant.value.convert_to_in(
+                        &output_type,
+                        tidb_expr::Columns::type_flags(ctx),
+                        &ctx.session_zone(),
+                    ) {
                         default = Some(Expression::Constant(tidb_expr::constant::Constant::new(
-                            value,
+                            converted.value,
                             output_type.clone(),
                         )));
                     }
@@ -3233,8 +3247,7 @@ fn build_with_state(
                 .iter()
                 .map(|expression| {
                     let column = expression.as_column()?;
-                    let offset = usize::try_from(column.index).ok()?;
-                    (offset < child.schema().len()).then_some(offset)
+                    usize::try_from(child.schema().column_index(column)).ok()
                 })
                 .collect::<Option<Vec<usize>>>();
             if let Some(offsets) = direct_offsets {
@@ -3274,6 +3287,28 @@ fn build_with_state(
                     .table_access()
                     .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
             {
+                let output = unary_schema(plan, child.as_ref());
+                if output.len() != child.schema().len() {
+                    let expressions = output
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            let offset = child.schema().column_index(column);
+                            (offset >= 0).then(|| {
+                                Expression::Column(child.schema().columns[offset as usize].clone())
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| {
+                            DriverError::unsupported("selection output column is absent from child")
+                        })?;
+                    return Ok(Box::new(ProjectionExec::new(
+                        meta(plan, output),
+                        expressions,
+                        child,
+                        ctx.clone(),
+                    )));
+                }
                 Ok(child)
             } else {
                 let schema = unary_schema(plan, child.as_ref());
@@ -3502,7 +3537,29 @@ pub(super) fn build(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    build_with_state(plan, catalog, ctx, &mut BuildState::default())
+    let child = build_with_state(plan, catalog, ctx, &mut BuildState::default())?;
+    let output = plan_schema(plan)?;
+    if output.len() != child.schema().len() {
+        let expressions = output
+            .columns
+            .iter()
+            .map(|column| {
+                let offset = child.schema().column_index(column);
+                (offset >= 0)
+                    .then(|| Expression::Column(child.schema().columns[offset as usize].clone()))
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                DriverError::unsupported("root output column is absent from executor")
+            })?;
+        return Ok(Box::new(ProjectionExec::new(
+            meta(plan, output),
+            expressions,
+            child,
+            ctx.clone(),
+        )));
+    }
+    Ok(child)
 }
 
 fn schema_column_name(column: &Column, ordinal: usize) -> String {

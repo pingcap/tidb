@@ -158,7 +158,7 @@ pub fn write_connection_result_set_to_sink<S: ResultSetSource, W: ResultSetSink>
     match (result, finish_result, close_result) {
         (Err(error), _, _) => Err(error.error),
         (Ok(_), Err(message), _) | (Ok(_), Ok(()), Err(message)) => Err(ResultSetWriteError {
-            message,
+            cause: message.into(),
             retryable: false,
             bytes_escaped: sink.packets_written() > 0,
         }),
@@ -184,7 +184,7 @@ pub fn write_connection_binary_result_set_to_sink<S: ResultSetSource, W: ResultS
     match (result, finish_result, close_result) {
         (Err(error), _, _) => Err(error.error),
         (Ok(_), Err(message), _) | (Ok(_), Ok(()), Err(message)) => Err(ResultSetWriteError {
-            message,
+            cause: message.into(),
             retryable: false,
             bytes_escaped: sink.packets_written() > 0,
         }),
@@ -207,7 +207,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .next_batch(batch_size.max(1))
         .map_err(|message| BinaryTrackedError {
             error: ResultSetWriteError {
-                message,
+                cause: message.into(),
                 retryable: true,
                 bytes_escaped: false,
             },
@@ -291,13 +291,13 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
 }
 
 fn binary_failure<W: ResultSetSink>(
-    message: String,
+    message: impl Into<tidb_executor::MysqlError>,
     sink: &W,
     finish_attempted: bool,
 ) -> BinaryTrackedError {
     BinaryTrackedError {
         error: ResultSetWriteError {
-            message,
+            cause: message.into(),
             retryable: false,
             bytes_escaped: sink.packets_written() > 0,
         },
@@ -313,7 +313,7 @@ fn write_binary_payloads<W: ResultSetSink>(
     sink.write_payloads(payloads)
         .map_err(|error| BinaryTrackedError {
             error: ResultSetWriteError {
-                message: error.message,
+                cause: error.message.into(),
                 retryable: false,
                 bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
             },
@@ -327,7 +327,7 @@ fn flush_binary_payload<W: ResultSetSink>(
 ) -> Result<(), BinaryTrackedError> {
     sink.flush().map_err(|error| BinaryTrackedError {
         error: ResultSetWriteError {
-            message: error.message,
+            cause: error.message.into(),
             retryable: false,
             bytes_escaped: sink.packets_written() > 0 || error.bytes_escaped,
         },

@@ -3230,17 +3230,17 @@ impl ClusterStatsSessionState {
                 .execute(sql)
                 .map_err(|error| stats_session_error(error.message))?;
             let source = result.source();
-            let columns = source.columns().map_err(stats_session_error)?;
+            let columns = source.columns()?;
             let mut rows = Vec::new();
             loop {
-                let batch = source.next_batch(1024).map_err(stats_session_error)?;
+                let batch = source.next_batch(1024)?;
                 if batch.is_empty() {
                     break;
                 }
                 rows.extend(batch);
             }
-            source.finish().map_err(stats_session_error)?;
-            source.close().map_err(stats_session_error)?;
+            source.finish()?;
+            source.close()?;
             Ok((rows, stats_result_fields(columns)))
         })
     }
@@ -4058,7 +4058,7 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
         let source = result.source();
         let mut rows = Vec::new();
         loop {
-            let batch = source.next_batch(256)?;
+            let batch = source.next_batch(256).map_err(|error| error.to_string())?;
             if batch.is_empty() {
                 break;
             }
@@ -4070,8 +4070,8 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
                 );
             }
         }
-        source.finish()?;
-        source.close()?;
+        source.finish().map_err(|error| error.to_string())?;
+        source.close().map_err(|error| error.to_string())?;
         Ok(rows)
     }
 

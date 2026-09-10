@@ -114,6 +114,8 @@ use crate::remote_scan::{PushdownScan, PushdownScanRequest};
 /// `KvTableError::Storage` carries is unchanged by the seam.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageError {
+    /// A SQL error returned by the coprocessor, retained without string encoding.
+    Sql(crate::MysqlError),
     /// Go `kv.ErrNotExist`: the key has no value.
     NotFound,
     /// The iterator is exhausted, so it cannot advance further.
@@ -128,6 +130,7 @@ pub enum StorageError {
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            StorageError::Sql(error) => error.fmt(f),
             StorageError::NotFound => f.write_str("key not found"),
             StorageError::InvalidIterator => f.write_str("iterator is exhausted"),
             StorageError::Backend(message) => write!(f, "storage error: {message}"),

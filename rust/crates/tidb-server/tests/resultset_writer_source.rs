@@ -32,7 +32,7 @@ use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteEr
 
 #[derive(Default)]
 struct Source {
-    events: VecDeque<Result<Vec<Vec<Datum>>, String>>,
+    events: VecDeque<Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>>,
     log: Vec<&'static str>,
     columns: Option<Vec<ColumnInfo>>,
     columns_calls: usize,
@@ -41,23 +41,25 @@ struct Source {
 }
 
 impl ResultSetSource for Source {
-    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         self.log.push("next");
         self.events.pop_front().unwrap_or(Ok(Vec::new()))
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         self.log.push("columns");
         self.columns_calls += 1;
         Ok(self.columns.clone().unwrap_or_else(|| vec![column()]))
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.log.push("finish");
-        self.finish_error.clone().map_or(Ok(()), Err)
+        self.finish_error
+            .clone()
+            .map_or(Ok(()), |error| Err(error.into()))
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.log.push("close");
         self.close_calls += 1;
         Ok(())
@@ -141,18 +143,40 @@ fn typed_column(type_code: u8, decimal: u8) -> ColumnInfo {
 
 #[test]
 fn first_next_error_is_retryable_and_never_reads_columns_or_writes() {
-    let mut source = Source {
-        events: [Err("first next failed".to_owned())].into(),
-        ..Source::default()
-    };
-    let mut sink = Sink::default();
-    let error =
-        write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 32).unwrap_err();
-    assert!(error.retryable);
-    assert!(!error.bytes_escaped);
-    assert_eq!(source.columns_calls, 0);
-    assert!(sink.payloads.is_empty());
-    assert_eq!(source.log, ["next"]);
+    // Go pkg/expression/builtin_math_test.go: TestCot, carried through both
+    // result protocols without changing code, SQLSTATE or message.
+    for (index, write) in
+        [
+            write_result_set::<Source, Sink>,
+            tidb_server::connection_resultset::write_connection_binary_result_set_to_sink::<
+                Source,
+                Sink,
+            >,
+        ]
+        .into_iter()
+        .enumerate()
+    {
+        let expected =
+            tidb_executor::MysqlError::new(1690, "DOUBLE value is out of range in 'cot(0)'");
+        let mut source = Source {
+            events: [Err(expected.clone())].into(),
+            ..Source::default()
+        };
+        let mut sink = Sink::default();
+        let error = write(&mut source, &mut sink, ResultSetOptions::default(), 32).unwrap_err();
+        assert_eq!(error.cause, expected);
+        assert_eq!(error.cause.state, *b"22003");
+        assert!(error.retryable);
+        assert!(!error.bytes_escaped);
+        assert_eq!(source.columns_calls, 0);
+        assert!(sink.payloads.is_empty());
+        let expected_log: &[&str] = if index == 0 {
+            &["next"]
+        } else {
+            &["next", "finish", "close"]
+        };
+        assert_eq!(source.log, expected_log);
+    }
 }
 
 #[test]
@@ -193,7 +217,7 @@ fn second_next_error_is_nonretryable_after_metadata_and_rows_escape() {
     let mut source = Source {
         events: [
             Ok(vec![vec![Datum::Int(7)]]),
-            Err("second next failed".to_owned()),
+            Err("second next failed".into()),
         ]
         .into(),
         ..Source::default()
@@ -213,7 +237,7 @@ fn second_next_error_is_nonretryable_after_metadata_and_rows_escape() {
 #[test]
 fn connection_finishes_before_close_on_early_error_without_double_finish() {
     let mut source = Source {
-        events: [Err("first next failed".to_owned())].into(),
+        events: [Err("first next failed".into())].into(),
         ..Source::default()
     };
     let mut sink = Sink::default();
@@ -240,7 +264,7 @@ fn connection_finishes_before_close_on_early_error_without_double_finish() {
         32,
     )
     .unwrap_err();
-    assert_eq!(error.message, "finish failed");
+    assert_eq!(error.cause.message, "finish failed");
     assert_eq!(source.log, ["next", "columns", "finish", "close"]);
     assert_eq!(source.close_calls, 1);
 }
@@ -259,7 +283,7 @@ fn first_pulled_row_format_error_is_nonretryable_and_connection_is_cleaned_up() 
         32,
     )
     .unwrap_err();
-    assert_eq!(error.message, "cannot render MinNotNull as a SQL row");
+    assert_eq!(error.cause.message, "cannot render MinNotNull as a SQL row");
     assert!(!error.retryable);
     assert!(error.bytes_escaped);
     assert_eq!(source.log, ["next", "columns", "finish", "close"]);
@@ -307,16 +331,24 @@ fn binary_rows_reuse_one_encoding_buffer_across_batches() {
         events: [
             Ok(vec![vec![Datum::Int(7)], vec![Datum::Int(8)]]),
             Ok(vec![vec![Datum::Int(9)], vec![Datum::Int(10)]]),
-        ].into(),
+        ]
+        .into(),
         ..Source::default()
     };
     let mut sink = RowBufferSink::default();
     let outcome = tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
-        &mut source, &mut sink, ResultSetOptions::default(), 2,
-    ).unwrap();
+        &mut source,
+        &mut sink,
+        ResultSetOptions::default(),
+        2,
+    )
+    .unwrap();
     assert_eq!(outcome.rows_written, 4);
     assert_eq!(sink.row_buffers.len(), 4);
-    assert!(sink.row_buffers.iter().all(|ptr| *ptr == sink.row_buffers[0]));
+    assert!(sink
+        .row_buffers
+        .iter()
+        .all(|ptr| *ptr == sink.row_buffers[0]));
     assert_eq!(source.close_calls, 1);
 }
 
@@ -333,8 +365,12 @@ fn binary_row_errors_preserve_preceding_rows_and_reject_extra_cells() {
         };
         let mut sink = Sink::default();
         let error = tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
-            &mut source, &mut sink, ResultSetOptions::default(), 32,
-        ).unwrap_err();
+            &mut source,
+            &mut sink,
+            ResultSetOptions::default(),
+            32,
+        )
+        .unwrap_err();
         assert!(!error.retryable);
         assert!(error.bytes_escaped);
         assert_eq!(source.log, ["next", "columns", "finish", "close"]);
@@ -352,7 +388,7 @@ fn finish_error_suppresses_terminal_eof_and_write_failure_is_nonretryable() {
     let mut sink = Sink::default();
     let error =
         write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 32).unwrap_err();
-    assert_eq!(error.message, "finish failed");
+    assert_eq!(error.cause.message, "finish failed");
     assert!(!error.retryable);
     // The third packet is the metadata terminator and is itself an EOF packet.
     // A successful empty result has a fourth, terminal EOF packet; Finish
@@ -395,7 +431,11 @@ fn a_null_cell_is_the_text_protocol_0xfb_sentinel() {
     // Column count, one column definition, EOF, then the three row packets.
     let rows = &sink.payloads[sink.payloads.len() - 4..sink.payloads.len() - 1];
     assert_eq!(rows[0], vec![0xfb], "NULL is the bare 0xfb sentinel");
-    assert_eq!(rows[1], vec![0x00], "an empty string is a zero-length string");
+    assert_eq!(
+        rows[1],
+        vec![0x00],
+        "an empty string is a zero-length string"
+    );
     assert_eq!(rows[2], vec![0x01, b'7']);
 }
 
@@ -441,7 +481,7 @@ fn unsupported_column_type_fails_before_a_row_packet_is_written() {
     let error =
         write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap_err();
 
-    assert_eq!(error.message, "invalid type 255");
+    assert_eq!(error.cause.message, "invalid type 255");
     assert!(!error.retryable);
     assert!(error.bytes_escaped, "metadata was already written");
     assert_eq!(sink.payloads.len(), 3, "no row packet or terminal EOF");

@@ -26,6 +26,8 @@ use tidb_expr::EvalError;
 /// ported executors can surface.
 #[derive(Debug, Clone)]
 pub enum ExecError {
+    /// A typed SQL failure carried through a storage/executor boundary.
+    Mysql(crate::MysqlError),
     /// An expression failed to evaluate.
     Eval(EvalError),
     /// A violated executor/chunk invariant surfaced as Go's generic 1105.
@@ -90,6 +92,24 @@ impl ExecError {
     #[must_use]
     pub fn unsupported(reason: impl Into<Cow<'static, str>>) -> Self {
         ExecError::Unsupported(reason.into())
+    }
+}
+
+impl From<crate::kv_table::KvTableError> for ExecError {
+    fn from(error: crate::kv_table::KvTableError) -> Self {
+        match error {
+            crate::kv_table::KvTableError::Sql(error) => Self::Mysql(error),
+            other => Self::unsupported(format!("table bytes failed to decode: {other:?}")),
+        }
+    }
+}
+
+impl From<crate::storage::StorageError> for ExecError {
+    fn from(error: crate::storage::StorageError) -> Self {
+        match error {
+            crate::storage::StorageError::Sql(error) => Self::Mysql(error),
+            other => Self::unsupported(other.to_string()),
+        }
     }
 }
 

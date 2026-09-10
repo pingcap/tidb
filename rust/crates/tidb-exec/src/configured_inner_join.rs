@@ -81,6 +81,15 @@ pub enum ConfiguredInnerJoinError {
     Cancelled,
 }
 
+impl From<ConfiguredInnerJoinError> for tidb_executor::MysqlError {
+    fn from(error: ConfiguredInnerJoinError) -> Self {
+        match error {
+            ConfiguredInnerJoinError::Source { source, .. } => source.into(),
+            other => Self::unknown(other.to_string()),
+        }
+    }
+}
+
 impl std::fmt::Display for ConfiguredInnerJoinError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

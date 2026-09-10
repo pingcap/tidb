@@ -99,10 +99,14 @@ struct ProjectedColumn {
 
 fn projection_columns(keep: &[usize]) -> Vec<ProjectedColumn> {
     let mut seen = BTreeSet::new();
-    let mut columns: Vec<_> = keep.iter().rev().map(|offset| ProjectedColumn {
-        offset: *offset,
-        consume: seen.insert(*offset),
-    }).collect();
+    let mut columns: Vec<_> = keep
+        .iter()
+        .rev()
+        .map(|offset| ProjectedColumn {
+            offset: *offset,
+            consume: seen.insert(*offset),
+        })
+        .collect();
     columns.reverse();
     columns
 }
@@ -232,7 +236,9 @@ impl PreparedPointGetRowDecoder {
         // every prepared point read (the YCSB hot path).
         if tidb_codec::is_new_format(value) {
             let codec_handle = self.needs_handle.then(|| match handle {
-                TableHandle::Int(handle_value) => Ok(tidb_codec::Handle::Int(*handle_value)),
+                TableHandle::Int(handle_value) => {
+                    Ok::<_, KvTableError>(tidb_codec::Handle::Int(*handle_value))
+                }
                 TableHandle::Common(encoded) => {
                     let common = CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -831,14 +837,18 @@ impl RowDecoder {
     }
 
     fn project_values(&self, mut values: Vec<Datum>) -> Vec<Datum> {
-        let Some(keep) = &self.keep else { return values; };
-        keep.iter().map(|column| {
-            if column.consume {
-                std::mem::replace(&mut values[column.offset], Datum::Null)
-            } else {
-                values[column.offset].clone()
-            }
-        }).collect()
+        let Some(keep) = &self.keep else {
+            return values;
+        };
+        keep.iter()
+            .map(|column| {
+                if column.consume {
+                    std::mem::replace(&mut values[column.offset], Datum::Null)
+                } else {
+                    values[column.offset].clone()
+                }
+            })
+            .collect()
     }
 }
 

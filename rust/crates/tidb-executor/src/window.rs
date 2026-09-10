@@ -454,6 +454,20 @@ impl<C: Columns> Executor for WindowExec<C> {
                         Datum::UInt(bucket)
                     }
                 };
+                // Go's valueEvaluator reads EvalString rather than the enum/
+                // set's encoded datum. Keep the label bytes in a string result.
+                let value = if matches!(
+                    spec.func,
+                    WindowFunction::Value { .. } | WindowFunction::Relative { .. }
+                ) && spec.output_type.eval_type() == tidb_datatype::EvalType::String
+                    && !value.is_null()
+                {
+                    Datum::Bytes(value.sql_bytes().map_err(|_| {
+                        ExecError::internal("window value cannot be read as a string")
+                    })?)
+                } else {
+                    value
+                };
                 req.append_datum(self.child_width + position, &value);
             }
             self.emitted += 1;

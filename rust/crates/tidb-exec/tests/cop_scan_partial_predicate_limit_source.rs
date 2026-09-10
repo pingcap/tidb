@@ -46,6 +46,12 @@ use tidb_executor::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
 use tidb_txnkv::Key;
 
+fn region_rows() -> Vec<(i64, i64)> {
+    (1..=20)
+        .map(|id| (id, if id % 4 == 0 { 7 } else { 0 }))
+        .collect()
+}
+
 #[derive(Debug)]
 struct EmptySnapshot;
 
@@ -548,7 +554,6 @@ fn count_star_lowers_to_count_with_one_constant_child() {
             // Go's `desc` on the TableScan executor: this request walks its one
             // range forwards.
             desc: false,
-            read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 4_242,
             ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
             range_hints: Vec::new(),

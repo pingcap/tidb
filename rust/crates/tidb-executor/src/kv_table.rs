@@ -668,9 +668,20 @@ impl Clone for DirtyMark {
     }
 }
 
+impl From<crate::storage::StorageError> for KvTableError {
+    fn from(error: crate::storage::StorageError) -> Self {
+        match error {
+            crate::storage::StorageError::Sql(error) => Self::Sql(error),
+            other => Self::Storage(format!("{other:?}")),
+        }
+    }
+}
+
 /// A failure while encoding or decoding table bytes.
 #[derive(Debug)]
 pub enum KvTableError {
+    /// A SQL error from storage, with its original code, state and message.
+    Sql(crate::MysqlError),
     /// A row failed to encode.
     Encode(String),
     /// Go `ErrDupKeyName` (1061).

@@ -65,7 +65,7 @@ impl<'a> AggregateResultSetSource<'a> {
     }
 
     /// Drains the inner source and folds the summed column into one datum.
-    fn fold(&mut self) -> Result<Datum, String> {
+    fn fold(&mut self) -> Result<Datum, tidb_executor::MysqlError> {
         let mut values: Vec<Datum> = Vec::new();
         loop {
             let batch = self.inner.next_batch(AGGREGATE_DRAIN_BATCH)?;
@@ -83,12 +83,15 @@ impl<'a> AggregateResultSetSource<'a> {
             }
         }
         fold_values(self.kind, false, &values, UNUSED_DIV_PRECISION_INCREMENT)
-            .map_err(|error| format!("{error:?}"))
+            .map_err(|error| tidb_executor::MysqlError::unknown(format!("{error:?}")))
     }
 }
 
 impl ResultSetSource for AggregateResultSetSource<'_> {
-    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+    fn next_batch(
+        &mut self,
+        _max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
         // An aggregate with no GROUP BY always emits exactly one row, regardless
         // of the requested batch size; a second pull reports the source drained.
         if self.emitted {
@@ -99,15 +102,15 @@ impl ResultSetSource for AggregateResultSetSource<'_> {
         Ok(vec![vec![result]])
     }
 
-    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
         Ok(self.columns.clone())
     }
 
-    fn finish(&mut self) -> Result<(), String> {
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), String> {
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
     }
 }
@@ -121,18 +124,21 @@ mod tests {
     }
 
     impl ResultSetSource for MockSource {
-        fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        fn next_batch(
+            &mut self,
+            max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
             let take = max_rows.min(self.rows.len());
             Ok(self.rows.drain(..take).collect())
         }
-        fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
             // The inner scan's column (k, an INT); the aggregate replaces it.
             Ok(vec![ColumnInfo::default()])
         }
-        fn finish(&mut self) -> Result<(), String> {
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
-        fn close(&mut self) -> Result<(), String> {
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
             Ok(())
         }
     }

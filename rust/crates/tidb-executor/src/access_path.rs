@@ -928,15 +928,11 @@ impl Executor for HandleSourceExec {
             vec![self
                 .table
                 .get_row_by_handle_with_context(handle, &self.decode_context)
-                .map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?]
+                .map_err(ExecError::from)?]
         } else {
             self.table
                 .stored_records_batched(&self.handles, None, &self.decode_context)
-                .map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?
+                .map_err(ExecError::from)?
         };
         self.preloaded = Some(rows);
         Ok(())
@@ -960,9 +956,7 @@ impl Executor for HandleSourceExec {
             self.cursor += 1;
             // A handle with no row is Go's point get that finds nothing: the
             // plan is right, the row is simply absent.
-            let row = preloaded_ref(&mut self.preloaded, index).map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })?;
+            let row = preloaded_ref(&mut self.preloaded, index).map_err(ExecError::from)?;
             if let Some(row) = row {
                 let visible = visible_of(&self.table, &row);
                 if let Some(columns) = &self.output_columns {
@@ -2217,11 +2211,7 @@ impl IndexRangeSourceExec {
                             Some(&self.keep),
                             &self.decode_context,
                         )
-                        .map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "table bytes failed to decode: {error:?}"
-                            ))
-                        })?;
+                        .map_err(ExecError::from)?;
                     return Ok(Some((lookup_rows, lookup_handles, false, None)));
                 }
             }
@@ -2419,16 +2409,12 @@ impl IndexRangeSourceExec {
             // one), so every handle is ordinal 0.
             return Ok(remote
                 .next_handle()
-                .map_err(|error| {
-                    ExecError::unsupported(format!("remote index row failed to decode: {error:?}"))
-                })?
+                .map_err(ExecError::from)?
                 .map(|handle| (handle, 0)));
         }
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
-                let entry = cursor.next_handle_in_partition().map_err(|error| {
-                    ExecError::unsupported(format!("index bytes failed to decode: {error:?}"))
-                })?;
+                let entry = cursor.next_handle_in_partition().map_err(ExecError::from)?;
                 if let Some(entry) = entry {
                     return Ok(Some(entry));
                 }
@@ -3232,10 +3218,7 @@ impl Executor for IndexRangeSourceExec {
         req.reset();
         if let Some(remote) = self.partial_remote.as_mut() {
             while req.num_rows() < cap {
-                let Some(row) = remote.next_row().map_err(|error| {
-                    ExecError::unsupported(format!("index aggregate response failed: {error:?}"))
-                })?
-                else {
+                let Some(row) = remote.next_row().map_err(ExecError::from)? else {
                     self.retain_partial_remote_stats();
                     self.partial_remote = None;
                     self.partial_done = true;
@@ -4530,9 +4513,7 @@ impl IndexJoinLookupExec {
     fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
-                let handle = cursor.next_handle().map_err(|error| {
-                    ExecError::unsupported(format!("index bytes failed to decode: {error:?}"))
-                })?;
+                let handle = cursor.next_handle().map_err(ExecError::from)?;
                 if let Some(handle) = handle {
                     return Ok(Some(handle));
                 }
@@ -4608,9 +4589,7 @@ impl IndexJoinLookupExec {
                 self.remote_cursor = None;
             }
             if let Some(cursor) = self.record_cursor.as_mut() {
-                let row = cursor.next_row().map_err(|error| {
-                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-                })?;
+                let row = cursor.next_row().map_err(ExecError::from)?;
                 if let Some((_, row)) = row {
                     return Ok(Some(row));
                 }
@@ -4750,9 +4729,7 @@ impl IndexJoinLookupExec {
                 self.decode_offsets.as_deref(),
                 &self.decode_context,
             )
-            .map_err(|error| {
-                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
-            })
+            .map_err(ExecError::from)
     }
 
     /// One window's rows through a record-range coprocessor scan, or `None`
