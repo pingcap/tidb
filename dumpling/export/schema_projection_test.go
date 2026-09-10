@@ -499,7 +499,13 @@ func generateProjectedSchemaForTest(
 	if schemas == nil {
 		schemas = make(projectedTableSchemas)
 	}
-	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns, rewriteSchema)
+	var schema *projectedTableSchema
+	var err error
+	if rewriteSchema {
+		schema, err = buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
+	} else {
+		schema, err = parseTableSchema(parser.New(), originSQL)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -524,7 +530,7 @@ func generateProjectedSchemaForTest(
 
 func projectedTableSchemaForTest(t *testing.T, originSQL string, selectedColumns []string) *projectedTableSchema {
 	t.Helper()
-	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns, true)
+	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
 	require.NoError(t, err)
 	return schema
 }

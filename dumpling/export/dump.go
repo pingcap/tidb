@@ -557,12 +557,15 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			if err != nil {
 				return err
 			}
-			schemas[key], err = buildProjectedTableSchema(
-				schemaParser,
-				createTableSQL,
-				columnNames(projection.selectedTypes),
-				projection.hasFilteredColumns(),
-			)
+			if projection.hasFilteredColumns() {
+				schemas[key], err = buildProjectedTableSchema(
+					schemaParser,
+					createTableSQL,
+					columnNames(projection.selectedTypes),
+				)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
+			}
 			if err != nil {
 				return errors.Annotatef(
 					err,

@@ -20,12 +20,7 @@ type projectedTableSchema struct {
 
 type projectedTableSchemas map[tableName]*projectedTableSchema
 
-func buildProjectedTableSchema(
-	p *parser.Parser,
-	originSQL string,
-	selectedColumns []string,
-	projected bool,
-) (*projectedTableSchema, error) {
+func parseTableSchema(p *parser.Parser, originSQL string) (*projectedTableSchema, error) {
 	stmt, err := p.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
@@ -34,7 +29,30 @@ func buildProjectedTableSchema(
 	if !ok {
 		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
+	retainedColumns := make(map[string]struct{}, len(createTable.Cols))
+	for _, column := range createTable.Cols {
+		retainedColumns[column.Name.Name.L] = struct{}{}
+	}
+	return &projectedTableSchema{
+		createTable:     createTable,
+		retainedColumns: retainedColumns,
+	}, nil
+}
+
+func buildProjectedTableSchema(
+	p *parser.Parser,
+	originSQL string,
+	selectedColumns []string,
+) (*projectedTableSchema, error) {
+	schema, err := parseTableSchema(p, originSQL)
+	if err != nil {
+		return nil, err
+	}
+	createTable := schema.createTable
 	partitionColumns, unsupportedPartition := collectPartitionColumns(createTable)
+	if unsupportedPartition {
+		return nil, errors.New("PARTITION BY KEY() is not supported with column filtering")
+	}
 
 	retainedColumns := make(map[string]struct{}, len(selectedColumns))
 	for _, selectedColumn := range selectedColumns {
@@ -72,13 +90,8 @@ func buildProjectedTableSchema(
 	}
 	createTable.Constraints = constraints
 
-	if projected && unsupportedPartition {
-		return nil, errors.New("PARTITION BY KEY() is not supported with column filtering")
-	}
-	if projected {
-		if err := validateAutoRandomColumns(createTable); err != nil {
-			return nil, err
-		}
+	if err := validateAutoRandomColumns(createTable); err != nil {
+		return nil, err
 	}
 	if !allColumnsRetained(partitionColumns, retainedColumns) {
 		return nil, errors.New("partition definition references a removed column")
@@ -86,10 +99,8 @@ func buildProjectedTableSchema(
 	if err := validateTTLColumns(createTable.Options, retainedColumns); err != nil {
 		return nil, err
 	}
-	return &projectedTableSchema{
-		createTable:     createTable,
-		retainedColumns: retainedColumns,
-	}, nil
+	schema.retainedColumns = retainedColumns
+	return schema, nil
 }
 
 func restoreProjectedSchema(createTable *ast.CreateTableStmt) (string, error) {
