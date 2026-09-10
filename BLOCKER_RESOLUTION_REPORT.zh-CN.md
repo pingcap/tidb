@@ -1,5 +1,34 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 Python 3.9 认证错误导致的 packet EOF
+
+repeatable-read 在 ready 后失败的根因是共享 raw MySQL 客户端调用
+`zip(stage_one, challenge, strict=True)`，本机 Python 3.9.6 不支持该关键字。
+客户端在发送认证包前退出，服务端随后记录 packet EOF；不是事务或 ready 死锁。
+对两个 SHA-1 固定长度摘要按字节索引异或，与固定 Go master
+`pkg/parser/auth/mysql_native_password.go::CheckScrambledPassword` 的协议说明和
+实现一致。回归直接采用该 master `mysql_native_password_test.go::TestCheckScramble`
+的密码、salt 和完整 20 字节 token，并覆盖空密码。
+
+`python3 rust/scripts/test-mysql-native-password.py` 修复前 1 error，报相同
+TypeError（`/tmp/native-password-python39-red.log`），修复后 2 passed
+（`/tmp/native-password-python39-green.log`）。Ready 验证另包括：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-repeatable-read.sh
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-multi-statement-txn.sh
+make lint
+git diff --check
+```
+
+`/tmp/repeatable-read-python39.log`：事务保持 BEGIN 时 balance=100，并发事务
+提交 999 后重复读取仍为 100，自身提交返回 9007，Go 读回 999。
+`/tmp/multi-statement-python39.log`：悲观事务 read-your-writes、另一连接读取旧值、
+NOWAIT 3572、乐观竞争 9007、文本 UPDATE/INSERT/DELETE、Go 读回均通过；
+cluster 7683989829543214242。两门禁不再因认证阶段 EOF 失败；集群沿用原脚本
+v8.5.6，协议向量源自固定 master，不称为 master 全套差分完成。
+lint `/tmp/native-password-lint.log` 退出 0。整体目标仍有其他门禁未完成。
+
 ## 2026-09-11 三个遗漏 runner 的 readiness 竞争
 
 发现 convergence、analyze、repeatable-read 仍在 TCP 端口开放后只 grep 一次

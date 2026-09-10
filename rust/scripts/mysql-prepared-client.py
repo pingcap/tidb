@@ -334,7 +334,9 @@ def native_password_token(password: bytes, salt: bytes) -> bytes:
     stage_one = hashlib.sha1(password).digest()
     stage_two = hashlib.sha1(stage_one).digest()
     challenge = hashlib.sha1(salt + stage_two).digest()
-    return bytes(left ^ right for left, right in zip(stage_one, challenge, strict=True))
+    # Both digests have SHA-1's fixed length; index as Go's scramble does.
+    # Avoid zip(strict=...), which the system Python 3.9 does not support.
+    return bytes(stage_one[i] ^ challenge[i] for i in range(len(stage_one)))
 
 
 def assert_eof(payload: bytes, deprecate_eof: bool) -> None:
