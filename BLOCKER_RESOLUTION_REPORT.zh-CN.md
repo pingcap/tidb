@@ -1,5 +1,48 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 condition nine 修复并通过
+
+已定位成本约十倍的原因：Rust 把 accessRowsFloor 直接作为 index filter 后的
+runtime 行数，再除 index 选择率生成扫描行数。Go master
+`exhaust_physical_plans.go::constructDS2IndexScanTask` 将下限用于
+CountAfterAccess，并保持 CountAfterIndex/CountAfterAccess 比率。
+本次沿现有 index-filter 选择率路径将下限换算到过滤后行数，并保留原始 runtime
+行数作为另一项下限。无 index filter 时选择率为 1，唯一键仍最多一行。
+
+原始候选逐节点证据 `/tmp/nine-inner-tree.log`：每次 probe 扫描
+299990.000083 行、过滤后 29999.5 行；修复后 `/tmp/nine-floor-stage-green.log`
+为扫描 29999.5、过滤后 3000。outer 8 行对应 EXPLAIN 扫描 239996、过滤后
+24000，与此前相同 JSON 统计导入 Go master 的实测结果一致，计划自然选择
+district outer / history inner IndexHashJoin。
+
+根据固定 master 的 `load-analyzed.out`，将历史测试的 IndexJoin 类型改为
+IndexHashJoin；根据 Go `base_physical_agg.go` 为 partial state 分配新 UniqueID
+的逻辑，将错误的 `Column#0 -> Column#0` 改为精确验证 partial 输出等于 final
+输入、final 输出与 partial 输出不同。其余树结构、24000/239996 行数和 access
+keys 断言保留。不是删掉失败断言或重录 Rust golden。
+
+更新后的同一回归，暂时恢复错误的 floor 阶段后退出 101，日志
+`/tmp/nine-floor-regression-red.log`；恢复修复后退出 0，日志
+`/tmp/nine-floor-stage-final.log`。所有临时树日志已移除。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1294 passed / 1 failed，剩 condition eleven；/tmp/nine-floor-executor.log
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib
+# 926 passed / 0 failed；/tmp/nine-floor-planner.log
+make lint
+# exit 0；/tmp/nine-floor-lint.log
+git diff --check
+# exit 0
+```
+
+本次修复现有 secondary-index residual-filter 路径的下限阶段；table-filter
+补偿、独立 index selectivity 求值及其他 IndexJoin 路径的完整 Go 覆盖仍需审计，
+不将此单例通过视为整个 Go planner 包完成。condition eleven 与其余完整集成
+gates 仍待执行和修复，整体目标继续保持 active。
+
 ## 2026-09-10 IndexJoin fractional outer 平均 probe 修复
 
 Go master `exhaust_physical_plans.go::enumerateIndexJoinByOuterIdx` 对正数

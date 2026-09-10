@@ -2823,19 +2823,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // access estimate), while the pushed-down Selection and the
                 // lookup's table side carry `finalStats`/`CountAfterIndex`,
                 // the per-outer-row runtime count.
-                let runtime_probe_stats = prop.index_join_prop.as_ref().map(|runtime| {
-                    let mut runtime_rows =
-                        probe_access_rows_floor.unwrap_or(runtime.avg_inner_row_count);
-                    if index_join_path_is_max_one_row(ds, path, runtime) {
-                        runtime_rows = runtime_rows.min(1.0);
-                    }
-                    table_stats
-                        .as_ref()
-                        .map(|table_stats| {
-                            table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
-                        })
-                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(runtime_rows, []))
-                });
                 let fully_covered_columns = source_index
                     .columns
                     .iter()
@@ -2896,6 +2883,26 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // per-outer-row count divided by the residual index-filter
                 // selectivity; the static access estimate is used otherwise.
                 let table_rows = table_stats.as_ref().map_or(0.0, |stats| stats.row_count());
+                let runtime_probe_stats = prop.index_join_prop.as_ref().map(|runtime| {
+                    let index_selectivity = if !index_filters.is_empty() && table_rows > 0.0 {
+                        count_after_access
+                            .filter(|count| *count > 0.0)
+                            .map_or(1.0, |count| count / table_rows)
+                    } else {
+                        1.0
+                    };
+                    // Go floors CountAfterAccess, retaining the index-filter ratio.
+                    let mut runtime_rows = runtime
+                        .avg_inner_row_count
+                        .max(probe_access_rows_floor.unwrap_or(0.0) * index_selectivity);
+                    if index_join_path_is_max_one_row(ds, path, runtime) {
+                        runtime_rows = runtime_rows.min(1.0);
+                    }
+                    table_stats
+                        .as_ref()
+                        .map(|stats| stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio))
+                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(runtime_rows, []))
+                });
                 let scan_stats = match (&runtime_probe_stats, count_after_access) {
                     (Some(runtime_stats), Some(access))
                         if !index_filters.is_empty() && access > 0.0 && table_rows > 0.0 =>

@@ -2472,7 +2472,7 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     let analyzed_operators = (0..analyzed.len())
         .map(|row| analyzed_cell(row, 0))
         .collect::<Vec<_>>();
-    assert_eq!(analyzed_operators[1], "└─IndexJoin", "{analyzed:#?}");
+    assert_eq!(analyzed_operators[1], "└─IndexHashJoin", "{analyzed:#?}");
     let inner = analyzed_operators
         .iter()
         .position(|operator| operator.contains("Selection(Probe)"))
@@ -2495,9 +2495,27 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     let first_row = grouped
         .find("funcs:firstrow(")
         .expect("history FIRST_ROW state");
-    assert!(
-        grouped.contains("funcs:sum(Column#0)->Column#0"),
-        "Go's root aggregate consumes the cop partial SUM: {grouped}"
+    let partial = analyzed_cell(inner + 5, 4);
+    let partial_output = partial
+        .strip_prefix(
+            "group by:test.history.h_d_id, test.history.h_w_id, funcs:sum(test.history.h_amount)->",
+        )
+        .expect("cop aggregate computes history SUM");
+    let final_sum = grouped[sum..]
+        .strip_prefix("funcs:sum(")
+        .expect("final SUM")
+        .split_once(")->")
+        .expect("final SUM input and output");
+    let final_output = final_sum.1.split(',').next().unwrap();
+    assert!(partial_output.starts_with("Column#"), "{partial}");
+    assert!(final_output.starts_with("Column#"), "{grouped}");
+    assert_eq!(
+        final_sum.0, partial_output,
+        "final SUM must read the cop SUM output"
+    );
+    assert_ne!(
+        final_output, partial_output,
+        "partial state has a fresh Go plan-column ID"
     );
     assert!(
         sum < first_row,
@@ -2513,12 +2531,6 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     assert_eq!(analyzed_cell(inner + 4, 1), "239996.00", "{analyzed:#?}");
     assert_eq!(analyzed_cell(inner + 5, 1), "24000.00", "{analyzed:#?}");
     assert_eq!(analyzed_cell(inner + 6, 1), "24000.00", "{analyzed:#?}");
-    assert_eq!(
-        analyzed_cell(inner + 5, 4),
-        "group by:test.history.h_d_id, test.history.h_w_id, \
-         funcs:sum(test.history.h_amount)->Column#0",
-        "{analyzed:#?}",
-    );
     assert!(
         analyzed_cell(1, 4)
             .contains("outer key:test.district.d_w_id, inner key:test.history.h_w_id"),
