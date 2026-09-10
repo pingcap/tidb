@@ -1,0 +1,81 @@
+{
+  "status": "Scoped Go input-buffer alignment. Mixed timing results; no overall performance or whole-package parity claim.",
+  "base_revision": "d26fec5d07044457b8b57f5a4251d26ed036e0d6",
+  "source_authority": "pkg/server/internal/util/buffered_read_conn.go: DefaultReaderSize = 16 * 1024; Read delegates to bufio.Reader. pkg/server/internal/packetio.go frames packets above that buffered connection.",
+  "change": "Use native std::io::BufReader at the authenticated command boundary, below compression and above ClientStream. Preserve raw authentication/TLS upgrade, packet framing, limits, timeouts, output batching and shutdown ownership. Additional input capacity is 16 KiB per authenticated connection.",
+  "binaries": {
+    "before_sha256": "4714fbce32e843494793474c31192aad201f43d37795a3afe56a211a4f570480",
+    "after_sha256": "9db12f43921582072cefe2ecf6bcaa73b07ad73ad2a2539767ca617da329cc7e"
+  },
+  "validation": {
+    "profile": "Ready scoped",
+    "retained_server_tests": "35 pass: 34 together plus the global-mutating require_secure_transport test in a separate process. Combined parallel and serial runs fail because that existing test leaves the global flag ON. No test assertions or production authentication settings changed.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-server --test all -- mysql_client_lifecycle_source server_internal_packetio_source mysql_tls_source require_ssl_login_source --skip require_ssl_login_source::require_secure_transport_refuses_every_plaintext_login --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-server --test all -- require_ssl_login_source::require_secure_transport_refuses_every_plaintext_login --exact --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 -p tidb-server --all-targets",
+      "rustfmt --edition 2021 --check --config skip_children=true crates/tidb-server/src/mysql_connection.rs",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "ruby /private/tmp/tidb-command-reader.yRKVf8/verify.rb",
+      "ruby /private/tmp/tidb-command-reader.yRKVf8/profile.rb",
+      "git diff --check"
+    ],
+    "working_directory": "Cargo and rustfmt from rust/; make and git from checkout root. Socket tests and live workloads require local socket permissions."
+  },
+  "mechanism_probe": {
+    "source": "/private/tmp/tidb-command-reader.yRKVf8/command_read_probe.rs",
+    "command": "CARGO_BUILD_JOBS=12 cargo run --offline --locked --release -j12 -p tidb-protocol --example command_read_probe",
+    "result": "Actual PacketIoReader over a counting Read source: 1000 complete 64-byte commands require 3000 reads before, 1000 after; one-byte fragments require 68000 both; 100 complete 128 KiB commands require 300 before, 200 after. All decoded bytes equal. Temporary example removed from repository.",
+    "limit": "Read adapter counts, not live syscall counts. TLS already buffers decrypted bytes."
+  },
+  "workloads": {
+    "sysbench_measured_events": 84000,
+    "tpcc_measured_events": 36000,
+    "order": ["go", "after", "before", "before", "after", "go"],
+    "sample_size": 6000,
+    "sysbench": "1/8/32 clients; 1000 warmup events; seed 1; prepared statements auto; one 100000-row table.",
+    "tpcc": "8 clients, one warehouse, fixed input seed 1; each sample has delivery 220, new-order 2674, order-status 229, payment 2652, stock-level 225.",
+    "correctness": "Exact work and zero errors. Fresh Go SQL digest ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c matches Rust; all eleven live TPC-C consistency conditions pass.",
+    "summary": [
+      {"workload": "sysbench", "threads": 1, "before_seconds": 12.88895, "after_seconds": 12.88785, "tps_change_percent": 0.0085, "before_sql_cpu_seconds": 9.075, "after_sql_cpu_seconds": 9.075, "before_p95_ms": 2.3, "after_p95_ms": 2.3},
+      {"workload": "sysbench", "threads": 8, "before_seconds": 3.37445, "after_seconds": 3.3829, "tps_change_percent": -0.2498, "before_sql_cpu_seconds": 11.69, "after_sql_cpu_seconds": 11.705, "before_p95_ms": 4.82, "after_p95_ms": 4.865},
+      {"workload": "sysbench", "threads": 32, "before_seconds": 2.14575, "after_seconds": 2.1133, "tps_change_percent": 1.5355, "before_sql_cpu_seconds": 12.4, "after_sql_cpu_seconds": 12.175, "before_p95_ms": 12.52, "after_p95_ms": 12.3},
+      {"workload": "tpcc", "threads": 8, "before_seconds": 6.8964, "after_seconds": 7.0111335, "elapsed_change_percent": 1.6637, "before_sql_cpu_seconds": 13.85, "after_sql_cpu_seconds": 13.85}
+    ]
+  },
+  "profiles": {
+    "method": "Separate 12000-event serial sysbench runs for before/after/Go; eight-second Rust Time Profiler and Go pprof captures. No builds or profiling overlapped timing.",
+    "call_chain": "Rust before: PacketIoReader -> read_header_or_eof -> ClientStream -> rustls complete_io -> recvfrom. After: PacketIoReader -> BufReader -> ClientStream -> rustls complete_io -> recvfrom. Go: clientConn.readPacket -> packetIO.readOnePacket -> BufferedReadConn/bufio -> TLS/net read.",
+    "finding": "Both Rust traces show TLS on the actual MySQL receive path. This sysbench driver's --mysql-ssl=off skips SSL configuration instead of explicitly setting SSL_MODE_DISABLED; do not label these runs plaintext. The new buffer does not remove TLS record reads.",
+    "rust_running_sample_ms": {"before": 5519, "after": 5467},
+    "mysql_recvfrom_inclusive_sample_ms": {"before": 214, "after": 243},
+    "limit": "Sampled weights are not syscall counts or directly comparable to Go pprof units. No read-syscall performance win inferred from these profiles."
+  },
+  "measurement_limits": "Two pairs on a local shared-host fixture. TPC-C Go anchors drift from 6.4105 to 6.9612 seconds. Small differences do not establish a broad improvement. Live Go is TiDB 23bff313186b8ceb61fcbe9faac43ae700e7fb14, not checkout Go master.",
+  "artifacts": {
+    "root": "/private/tmp/tidb-command-reader.yRKVf8",
+    "raw_validation_sha256": "b9ded5217f255aea1e908b7c5739ed83136fcdf8f32c0dd6d09bdc83f74a3de4"
+  },
+  "merged_verification": {
+    "upstream_revision": "832ed58f36ed455fc3b0f0182932c10bbee21103",
+    "preserved_commits": ["882cc27174", "832ed58f36"],
+    "tests": "Executor condition-nine regression passes. Condition-eleven reaches the unchanged MergeJoin expectation and fails (0 versus 2), as documented in the upstream report; no assertions weakened.",
+    "command": "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor --lib -- tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup tpcc_condition_eleven_pushes_filters_through_nested_derived_joins --test-threads=12",
+    "build_and_lint": "Merged server release build and Ready lint pass.",
+    "live": "6000 sysbench and 6000 TPC-C measured events pass with exact counts, zero errors, fresh Go SQL equality and all eleven consistency conditions. The alternating comparison above belongs to d26 plus only the reader change.",
+    "live_binary_sha256": "3fbcda988f6451a09d35fb90665bccac2efd25e356c8a0ffc70ead6e7cc2cbbe",
+    "live_command": "ruby /private/tmp/tidb-command-reader.yRKVf8/merged-smoke.rb"
+  },
+  "final_concurrent_merge": {
+    "upstream_revision": "4665f159240ed57550d34b02ae58f45c25a6fdf3",
+    "source_check": "Go constructDS2TableScanTask reverses filter selectivity before applying unique-probe limits and preserves the source statistics version; the collaborator change follows that ordering.",
+    "validation": "Three analyzed_filter_selectivity planner tests and Ready lint pass. No MySQL source overlap. The final added planner commit was not rerun through the server build or live cluster; merged live evidence above belongs to 832ed58f36 plus the reader change.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-planner --lib -- analyzed_filter_selectivity_tests --test-threads=12",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+    ]
+  },
+  "cleanup": {"auto_analyze_restored": "1", "owned_processes_absent": 10, "ports_closed": 10, "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe", "command": "ruby /private/tmp/tidb-command-reader.yRKVf8/verify-cleanup.rb"},
+  "not_verified": "No full-workspace green result, full Go-package parity, TLS syscall reduction or overall speedup claim. The shared-scheduler CPU regression and condition-eleven planner differences remain open."
+}

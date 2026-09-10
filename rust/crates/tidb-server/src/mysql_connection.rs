@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
@@ -1308,7 +1308,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } else {
         CompressionAlgorithm::None
     };
-    let mut reader = PacketIoReader::new(reader.into_inner(), compression)?;
+    // Go BufferedReadConn.DefaultReaderSize. Buffer the established command
+    // stream below compression, after TLS upgrade can no longer consume raw bytes.
+    let input = BufReader::with_capacity(16 * 1024, reader.into_inner());
+    let mut reader = PacketIoReader::new(input, compression)?;
     reader.set_max_allowed_packet(runtime.max_allowed_packet);
     let mut output = PacketIoWriter::new(output, compression)?;
     output.set_zstd_level(zstd_level);
@@ -1342,6 +1345,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         reader.set_compressed_sequence(0);
         let wait_timeout = engine.wait_timeout();
         reader
+            .get_ref()
             .get_ref()
             .set_read_timeout((!wait_timeout.is_zero()).then_some(wait_timeout))
             .map_err(MysqlConnectionError::Io)?;
