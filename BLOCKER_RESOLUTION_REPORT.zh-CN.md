@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 PREPARE 元数据路径校验系统变量
+
+原 server `prepared_system_variable_scope_errors_survive_cluster_metadata_probe`
+独立失败（`/tmp/prepare-sysvar-red.log`）：非法 @@session.ddl_slow_threshold
+在 PREPARE 被接受。plan_bound_prepared_columns 漏掉普通执行路径已有的
+bind_variables，planner 收到未绑定变量后报泛化 1105，协议的元数据
+fallback 又将该错误吞掉。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/planner/core/expression_rewriter.go:1984` 的 rewriteSystemVariable
+在规划阶段检查显式作用域与 InternalSessionVariable；对应测试在
+`pkg/planner/core/tests/rewriter/rewriter_test.go:24`。
+Rust 元数据路径现在复用 session.bind_variables，返回既有的 Var 错误，
+不改协议错误码映射、不执行查询、不修改保留的 prepared AST。
+
+新增 session API 回归，旧实现实际 1105、预期 1238
+（`/tmp/prepare-sysvar-unit-red.log`）；修复后覆盖顶层、嵌套、隐藏内部
+变量及合法变量的用例通过，原变量执行测试也通过
+（`/tmp/prepare-sysvar-unit-green.log`）。原 server 用例核对错误码、
+SQLSTATE、文本和错误包，全部通过（`/tmp/prepare-sysvar-server-green.log`）。
+Ready gate `make lint` 通过（`/tmp/prepare-sysvar-lint.log`）。
+扩展 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib prepared`
+为 101 passed / 1 failed / 2 ignored；剩余是无 ORDER BY 的 GROUP BY
+行序断言（`/tmp/prepare-sysvar-prepared-regression.log`），另行处理。
+
 ## 2026-09-11 提交时冲突测试固定乐观事务前提
 
 `lost_the_race_fails_at_commit` 三个用例（普通 BEGIN、prepared BEGIN、

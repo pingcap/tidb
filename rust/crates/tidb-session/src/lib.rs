@@ -1648,6 +1648,9 @@ impl Session {
         mut statement: Stmt,
     ) -> Result<Vec<(String, FieldType)>, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut statement)?;
+        // Go's expression rewriter validates and resolves variables during
+        // planning, including PREPARE's metadata-only path.
+        self.bind_variables(&mut statement)?;
         let Stmt::Query(query) = statement else {
             return Err(DriverError::unsupported(
                 "prepared metadata requires a query statement",

@@ -16,6 +16,29 @@
 
 use crate::Session;
 
+#[test]
+fn prepared_metadata_validates_variable_scope_without_execution() {
+    let mut session = Session::new();
+    for (sql, code) in [
+        ("SELECT @@session.ddl_slow_threshold", 1238),
+        ("SELECT COALESCE(@@global.warning_count, 0)", 1238),
+        ("SELECT @@session.tidb_redact_log", 1193),
+    ] {
+        let prepared = session.prepare_ast(sql).unwrap();
+        let bound = prepared.bind(&[]).unwrap();
+        let error = session.plan_bound_prepared_columns(bound).unwrap_err();
+        assert_eq!(error.to_mysql_error().code, code, "{sql}");
+    }
+    let prepared = session.prepare_ast("SELECT @@autocommit").unwrap();
+    assert_eq!(
+        session
+            .plan_bound_prepared_columns(prepared.bind(&[]).unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 /// Source: `pkg/planner/core/tests/rewriter.TestVariableRewritter`.
 #[test]
 fn variable_rewriter_validates_scope_and_hides_internal_session_variables() {
