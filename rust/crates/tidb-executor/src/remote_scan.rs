@@ -1547,6 +1547,46 @@ mod tests {
     }
 
     #[test]
+    fn virtual_dependency_expansion_preserves_reader_output() {
+        for primary in ["PRIMARY KEY", ""] {
+            let mut catalog = Catalog::default();
+            let ctx = crate::StmtContext::for_query();
+            crate::run_create_table_on(
+                &format!(
+                    "CREATE TABLE t (a BIGINT {primary}, b BIGINT AS (a+10), \
+                    d BIGINT AS (b+1), c BIGINT, INDEX idx_c(c))"
+                ),
+                &mut catalog,
+            )
+            .unwrap();
+            crate::run_insert_on(
+                "INSERT INTO t(a,c) VALUES (1,21),(2,22),(3,23)",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap();
+            for sql in [
+                "SELECT b,d,b FROM t FORCE INDEX(idx_c) WHERE c>=21 ORDER BY c",
+                "SELECT b,d,b FROM t IGNORE INDEX(idx_c) ORDER BY c",
+            ] {
+                assert_eq!(
+                    run_select_on(sql, &catalog, &ctx).unwrap(),
+                    vec![
+                        vec![Datum::Int(11), Datum::Int(12), Datum::Int(11)],
+                        vec![Datum::Int(12), Datum::Int(13), Datum::Int(12)],
+                        vec![Datum::Int(13), Datum::Int(14), Datum::Int(13)],
+                    ],
+                    "{sql}; primary={primary}"
+                );
+            }
+            assert_eq!(
+                run_select_on("SELECT SUM(d) FROM t", &catalog, &ctx).unwrap(),
+                vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(39))]]
+            );
+        }
+    }
+
+    #[test]
     fn write_range_reader_reconstructs_virtual_columns() {
         for pk_handle_offset in [Some(0), None] {
             let mut columns = vec![column("a", 1), column("b", 2), column("c", 3)];
