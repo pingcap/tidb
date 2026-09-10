@@ -12,6 +12,7 @@ TIKV_ADDR="127.0.0.1:${TIKV_PORT}"
 PLAYGROUND_PID=
 OWNED_PIDS=
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}.log"
+RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 
 tag_status_rows() {
@@ -113,7 +114,7 @@ cleanup() {
       cleanup_failed=true
     fi
   fi
-  rm -f "${PLAYGROUND_LOG}"
+  rm -f "${PLAYGROUND_LOG}" "${RUST_LOG}"
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
   fi
@@ -165,5 +166,10 @@ fi
 export PD_ROUTE_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
-  --test realtikv_pd_route \
-  pd_only_input_discovers_route_and_reaches_tikv -- --ignored --exact --nocapture
+  --test all \
+  realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv \
+  -- --ignored --exact --nocapture | tee "${RUST_LOG}"
+if ! grep -F 'test result: ok. 1 passed; 0 failed;' "${RUST_LOG}" >/dev/null; then
+  echo "pd-route expected exactly one successful Rust test" >&2
+  exit 1
+fi

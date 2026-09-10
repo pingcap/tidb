@@ -1,5 +1,29 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 PD-route 入口与 Bazel 复验
+
+PD-route 旧脚本调用不存在的 `--test realtikv_pd_route`，原始真实运行
+失败见 `/tmp/quality-pd-route-red.log`。改为聚合 `all` 与完整名称
+`realtikv_pd_route::pd_only_input_discovers_route_and_reaches_tikv`，新增
+恰好 1 passed、0 failed 检查，防止 `--exact` 失配导致零测试假通过。
+使用 `RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 bash
+rust/scripts/run-realtikv-pd-route.sh` 完整运行退出 0，日志
+`/tmp/quality-pd-route-green.log`。`bash -n`、`git diff --check`、
+`make lint` 通过（`/tmp/quality-pd-route-lint.log`）。未改动 RPC 实现或预期。
+
+Bazel parser 的历史 replacement 阻塞已不再复现。`make bazel_prepare`
+第一次在 tazel filepath.Walk 回调中空指针退出，当时 Cargo 正在构建；
+临时文件变化只是待证假设。Cargo 完成后相同命令退出 0，最终没有任何
+生成文件差异，日志 `/tmp/quality-bazel-prepare-retry.log`。
+`bazel query //pkg/parser/...` 退出 0；`bazel test //pkg/parser/...`
+实际执行 12 个 target，全部通过，parser 分片 test.log 亦为 PASS。
+日志分别为 `/tmp/quality-bazel-parser-query.log`、
+`/tmp/quality-bazel-parser-test.log`。不修改 go.mod 的本地 parser replacement。
+
+catalog-load 使用固定 Go master 的新证据是：两张表加载成功后，普通
+单表 SELECT 返回 `RelationBinding(ExactlyTwoBaseRelationsRequired)`。
+此失败在更新过时 VARCHAR 拒绝断言后显露，尚需修复；不能计为通过。
+
 ## 2026-09-10 adaptive-forwarding 测试入口修复
 
 原命令实测退出 1（`/tmp/quality-adaptive-forwarding.log`）：
