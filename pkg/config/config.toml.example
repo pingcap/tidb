@@ -435,8 +435,12 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
-# RU v2 TiDB-side weights for RU value calculation and statement metrics logging.
+# RU v2 TiDB-side weights and RU v3 reporting.
 [ru-v2]
+# RU v3 reporting: "result" publishes total, SQL-type and per-engine RU; "full" also publishes
+# raw units by engine/opclass and calculation status for calibration.
+report-mode = "result"
+
 # ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.
 # It is intentionally chosen to match legacy RU values for compatibility.
 ru-scale = 2.01

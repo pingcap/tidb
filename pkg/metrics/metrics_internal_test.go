@@ -104,23 +104,33 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 
 	InitRUV3Metrics()
 	RUV3Total.Add(1)
-	RUV3BySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
-	RUV3ByEngine.WithLabelValues(LblEngineTiKV).Add(3)
+	RUV3BySQLType.WithLabelValues("select").Add(2)
+	AddRUV3Results(3, 4, 7, "select")
+	RUV3Unit.WithLabelValues("tikv", "hash_agg", LblRUV3UnitCPUWork).Add(5)
+	RUV3Statements.WithLabelValues("success", "incomplete").Inc()
 
 	registry := prometheus.NewRegistry()
 	require.NoError(t, registry.Register(RUV3Total))
 	require.NoError(t, registry.Register(RUV3BySQLType))
 	require.NoError(t, registry.Register(RUV3ByEngine))
+	require.NoError(t, registry.Register(RUV3Unit))
+	require.NoError(t, registry.Register(RUV3Statements))
 	families, err := registry.Gather()
 	require.NoError(t, err)
 
 	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeRead,
+		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, "select",
 	)
 	requireMetricFamilyHasLabel(
 		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
 	)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, "tidb")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", LblEngine, "tikv")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", "opclass", "hash_agg")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", LblRUV3Unit, LblRUV3UnitCPUWork)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_statements_total", "status", "success")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_statements_total", "reason", "incomplete")
 }
 
 func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {

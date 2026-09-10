@@ -79,6 +79,8 @@ func newStatementRUSimpleSelectFixture(t testing.TB) statementRUSimpleSelectFixt
 	installStatementRUOwner(stmt)
 	require.NotNil(t, stmt.statementRUOwner)
 	owner := stmt.statementRUOwner
+	// Existing unit fixtures observe full-mode units as well as engine results.
+	owner.calculationSetup.fullReport = true
 	ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
@@ -161,7 +163,7 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	var calibrationCount atomic.Int64
 	var snapshot statementRUCalibrationSnapshot
 	totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-	readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
+	readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))
 	tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 	var totalAtCalibration float64
 	observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
@@ -194,8 +196,8 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	require.InDelta(t, expectedResult.TotalRU, totalAtCalibration, 1e-9)
 	require.InDelta(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
 	require.InDelta(t, expectedResult.TotalRU,
-		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)
-	require.InDelta(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes,
+		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))-readBefore, 1e-9)
+	require.InDelta(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes+1,
 		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
 	require.Zero(t, fixture.owner.calculationSetup)
 
@@ -203,8 +205,8 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	require.Equal(t, int64(1), calibrationCount.Load())
 	require.InDelta(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
 	require.InDelta(t, expectedResult.TotalRU,
-		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)
-	require.InDelta(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes,
+		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))-readBefore, 1e-9)
+	require.InDelta(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes+1,
 		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
 	require.Equal(t, float64(10), snapshot.Units.ScanBytes)
 	require.Equal(t, float64(20), snapshot.Units.NetBytes)
@@ -405,13 +407,16 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		require.Equal(t, int64(100), m.WriteSize())
 		require.Equal(t, before, testutil.ToFloat64(metrics.RUV2WriteKeys))
 		require.Equal(t, bytesBefore, testutil.ToFloat64(metrics.RUV2WriteSize))
-		writeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeWrite))
+		writeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))
 		tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
-		finalized, ok := (statementRUCalculator{units: units}).finalize()
+		calculator := statementRUCalculator{units: units, report: new(statementRUFullReport)}
+		calculator.recordOperatorUnits(statementRUTiDB, units)
+		finalized, ok := calculator.finalize()
 		require.True(t, ok)
+		finalized.sqlType = "commit"
 		publishStatementRUMetricsSafely(finalized)
 		require.InDelta(t, finalized.result.TotalRU,
-			testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeWrite))-writeBefore, 1e-9)
+			testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))-writeBefore, 1e-9)
 		require.InDelta(t, finalized.result.TotalRU-4,
 			testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
 	})
@@ -424,17 +429,18 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 			Plan: &plannercore.Simple{Statement: node}}
 		installStatementRUOwner(stmt)
 		require.NotNil(t, stmt.statementRUOwner)
+		stmt.statementRUOwner.calculationSetup.fullReport = true
 		var snapshot statementRUCalibrationSnapshot
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) { snapshot = published })
-		writeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeWrite))
-		readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
+		writeBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))
+		readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))
 		stmt.recordStatementRURootEOF()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.finishStatementRUForTest(nil)
 		stmt.finishStatementRUForTest(nil)
 		require.Equal(t, statementRURawUnits{FrontendCompileBytes: 6}, snapshot.Units)
-		require.InDelta(t, float64(6), testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeWrite))-writeBefore, 1e-9)
-		require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead)))
+		require.InDelta(t, float64(6), testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("commit"))-writeBefore, 1e-9)
+		require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select")))
 	})
 
 	t.Run("placeholder formula stays pinned", func(t *testing.T) {
@@ -464,10 +470,10 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 
 	t.Run("engine projection preserves the lower layer boundary", func(t *testing.T) {
 		units := statementRURawUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		finalized := statementRUFinalizedSnapshot{
-			units:  units,
-			result: calculateStatementRUResultOnly(units),
-		}
+		calculator := statementRUCalculator{units: units}
+		calculator.recordOperatorUnits(statementRUTiDB, units)
+		finalized, ok := calculator.finalize()
+		require.True(t, ok)
 		tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 		publishStatementRUMetricsSafely(finalized)
 		require.InDelta(t, float64(30),
@@ -550,7 +556,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 	t.Run("publication contracts contain only approved scalar fields", func(t *testing.T) {
 		calculatorType := reflect.TypeOf(statementRUCalculator{})
 		require.Equal(t, []string{
-			"units",
+			"units", "compute", "report",
 		}, statementRUFieldNames(calculatorType))
 		unitsType := reflect.TypeOf(statementRURawUnits{})
 		require.Equal(t, []string{
@@ -577,6 +583,12 @@ func requireStatementRUValueOnlyType(t *testing.T, valueType reflect.Type) {
 	t.Helper()
 	for i := range valueType.NumField() {
 		fieldType := valueType.Field(i).Type
+		if fieldType == reflect.TypeOf((*statementRUFullReport)(nil)) {
+			fieldType = fieldType.Elem()
+		}
+		for fieldType.Kind() == reflect.Array {
+			fieldType = fieldType.Elem()
+		}
 		if fieldType.Kind() == reflect.Struct {
 			requireStatementRUValueOnlyType(t, fieldType)
 			continue

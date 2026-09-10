@@ -342,6 +342,16 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			calibrationCount.Add(1)
 			snapshot = published
 		})
+		sc := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		calculationPlan, _ := sc.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		if calculationPlan == nil {
+			calculationPlan = plannercore.FlattenPhysicalPlan(fixture.stmt.Plan, false)
+		}
+		finalized, ok := calculateStatementRU(calculationPlan,
+			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+		require.True(t, ok)
+		requireStatementRUReportConservation(t, finalized)
 		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
@@ -599,6 +609,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		ctx.GetSessionVars().StmtCtx.SetPlan(plan)
 		installStatementRUOwner(stmt)
 		require.NotNil(t, stmt.statementRUOwner)
+		stmt.statementRUOwner.calculationSetup.fullReport = true
 		ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(plan, false))
 		stmt.recordStatementRURootEOF()
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
@@ -1020,6 +1031,14 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
 		recordScan(fixture, agg, 1, 1, 10)
 		setPlan(fixture, reader)
+		sc := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		finalized, ok := calculateStatementRU(sc.GetFlatPlan().(*plannercore.FlatPhysicalPlan),
+			sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+		require.True(t, ok)
+		require.Equal(t, statementRURawUnits{CPUWork: 15, HashStateRows: 2, OperatorNum: 1},
+			finalized.report.units[statementRUTiKV][statementRUHashAgg])
+		require.Equal(t, float64(49), finalized.engineRU.TiKV)
 		requirePublication(t, fixture, statementRURawUnits{
 			CPUWork:              15,
 			HashStateRows:        2,

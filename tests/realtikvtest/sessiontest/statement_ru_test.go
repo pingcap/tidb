@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -53,6 +54,8 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires a RealTiKV cluster that publishes ExecDetailsV2.RuV2")
 	}
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -154,7 +157,8 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			observation.Unlock()
 
 			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-			readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
+			readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))
+			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
 			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 			rs, err := tk.ExecWithContext(context.Background(), tc.query)
 			require.NoError(t, err)
@@ -172,7 +176,8 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			require.Zero(t, observation.calibrationUnits)
 			observation.Unlock()
 			require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
-			require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead)))
+			require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select")))
+			require.Equal(t, tidbBefore, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")))
 			require.Equal(t, tikvBefore, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV)))
 
 			require.NoError(t, rs.Close())
@@ -209,9 +214,13 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 				observation.hashStateRows + observation.joinOutputRows + observation.operatorNum
 			require.InDelta(t, totalUnits, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
 			require.InDelta(t, totalUnits,
-				testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)
-			require.InDelta(t, observation.scanBytes+observation.netBytes,
-				testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
+				testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))-readBefore, 1e-9)
+			tidbRU := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvRU := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV)) - tikvBefore
+			require.Positive(t, tidbRU)
+			// TiKV also owns the pushed operators and their computation.
+			require.Greater(t, tikvRU, observation.scanBytes+observation.netBytes)
+			require.InDelta(t, totalUnits, tidbRU+tikvRU, 1e-9)
 			require.Equal(t, observation.netBytes, float64(tk.Session().GetSessionVars().RUV2Metrics.TiKVCoprocessorResponseBytes()))
 		})
 	}

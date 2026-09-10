@@ -1,0 +1,268 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"github.com/pingcap/tidb/pkg/metrics"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+)
+
+type statementRUEngine uint8
+
+const (
+	statementRUTiDB statementRUEngine = iota
+	statementRUTiKV
+	statementRUEngineCount
+)
+
+var statementRUEngineNames = [...]string{"tidb", "tikv"}
+
+// Only computation has location-dependent ownership. Storage/transport units
+// always belong to TiKV; frontend and write-statement units belong to TiDB.
+type statementRUComputeUnits struct {
+	cpuWork       float64
+	hashStateRows float64
+	operatorNum   float64
+}
+
+type statementRUEngineResult struct {
+	TiDB float64
+	TiKV float64
+}
+
+type statementRUOpClass uint8
+
+const (
+	statementRUWrapper statementRUOpClass = iota
+	statementRUProjection
+	statementRUSelection
+	statementRULimit
+	statementRUSort
+	statementRUTopN
+	statementRUWindow
+	statementRUHashAgg
+	statementRUStreamAgg
+	statementRUHashJoin
+	statementRUMergeJoin
+	statementRULookupJoin
+	statementRUReader
+	statementRULookupReader
+	statementRUUnionScan
+	statementRUShuffle
+	statementRURangeScan
+	statementRUPointLookup
+	statementRUWrite
+	statementRUAnalyze
+	statementRUFrontend
+	statementRUCopTransport
+	statementRUKVWrite
+	statementRUOpClassCount
+)
+
+var statementRUOpClassNames = [...]string{
+	"wrapper", "projection", "selection", "limit", "sort", "topn", "window",
+	"hash_agg", "stream_agg", "hash_join", "merge_join", "lookup_join",
+	"reader", "lookup_reader", "union_scan", "shuffle", "range_scan", "point_lookup",
+	"write", "analyze", "sql_frontend", "coprocessor", "kv_write",
+}
+
+// statementRUFullReport is allocated only in full mode. Its bounded arrays own
+// numeric values, never plans or runtime statistics. Finalization freezes a copy
+// for the publisher; result mode never allocates either report.
+type statementRUFullReport struct {
+	units [statementRUEngineCount][statementRUOpClassCount]statementRURawUnits
+	seen  [statementRUEngineCount][statementRUOpClassCount]bool
+}
+
+func (report *statementRUFullReport) add(engine statementRUEngine, class statementRUOpClass, units statementRURawUnits) {
+	report.units[engine][class] = addStatementRURawUnits(report.units[engine][class], units)
+	report.seen[engine][class] = true
+}
+
+// statementRUClassForPlan runs exclusively in full mode. Classes are bounded
+// independently of SQL text, plan IDs, table names, and index names.
+func statementRUClassForPlan(plan base.Plan) statementRUOpClass {
+	switch plan.(type) {
+	case *physicalop.PhysicalProjection:
+		return statementRUProjection
+	case *physicalop.PhysicalSelection:
+		return statementRUSelection
+	case *physicalop.PhysicalLimit, *physicalop.PhysicalMaxOneRow:
+		return statementRULimit
+	case *physicalop.PhysicalSort:
+		return statementRUSort
+	case *physicalop.PhysicalTopN:
+		return statementRUTopN
+	case *physicalop.PhysicalWindow:
+		return statementRUWindow
+	case *physicalop.PhysicalHashAgg:
+		return statementRUHashAgg
+	case *physicalop.PhysicalStreamAgg:
+		return statementRUStreamAgg
+	case *physicalop.PhysicalHashJoin:
+		return statementRUHashJoin
+	case *physicalop.PhysicalMergeJoin:
+		return statementRUMergeJoin
+	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalIndexMergeJoin:
+		return statementRULookupJoin
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader:
+		return statementRUReader
+	case *physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		return statementRULookupReader
+	case *physicalop.PhysicalUnionScan:
+		return statementRUUnionScan
+	case *physicalop.PhysicalShuffle:
+		return statementRUShuffle
+	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
+		return statementRURangeScan
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		return statementRUPointLookup
+	case *physicalop.Insert, *physicalop.Update, *physicalop.Delete:
+		return statementRUWrite
+	case *plannercore.Analyze:
+		return statementRUAnalyze
+	default:
+		return statementRUWrapper
+	}
+}
+
+func (report *statementRUFullReport) addOperator(engine statementRUEngine, class statementRUOpClass, units statementRURawUnits) {
+	// A root Reader/PointGet owns the evidence, but the scan and payload are
+	// TiKV work. Keep that ownership distinct from the local executor work.
+	remote := statementRURawUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
+	units.ScanBytes, units.NetBytes = 0, 0
+	report.add(engine, class, units)
+	if remote.ScanBytes != 0 || remote.NetBytes != 0 {
+		report.add(statementRUTiKV, class, remote)
+	}
+}
+
+func (calculator statementRUCalculator) engineResult() statementRUEngineResult {
+	tidb, tikv := calculator.compute[statementRUTiDB], calculator.compute[statementRUTiKV]
+	units := calculator.units
+	return statementRUEngineResult{
+		TiDB: statementRUCPUWorkWeight*tidb.cpuWork + statementRUHashStateRowWeight*tidb.hashStateRows +
+			statementRUOperatorNumWeight*tidb.operatorNum + statementRUJoinOutputRowWeight*units.JoinOutputRows +
+			statementRUFrontendCompileByteWeight*units.FrontendCompileBytes + statementRUWriteStatementWeight*units.WriteStatement,
+		TiKV: statementRUCPUWorkWeight*tikv.cpuWork + statementRUHashStateRowWeight*tikv.hashStateRows +
+			statementRUOperatorNumWeight*tikv.operatorNum + statementRUScanByteWeight*units.ScanBytes +
+			statementRUNetByteWeight*units.NetBytes + statementRUWriteKeyWeight*units.WriteKeys + statementRUWriteByteWeight*units.WriteBytes,
+	}
+}
+
+// addStatementUnits accounts for evidence outside individual operators once.
+func (report *statementRUFullReport) addStatementUnits(units statementRURawUnits) {
+	report.add(statementRUTiDB, statementRUFrontend, statementRURawUnits{FrontendCompileBytes: units.FrontendCompileBytes})
+	if units.WriteStatement != 0 {
+		report.add(statementRUTiDB, statementRUWrite, statementRURawUnits{WriteStatement: units.WriteStatement})
+	}
+	if units.WriteKeys != 0 || units.WriteBytes != 0 {
+		report.add(statementRUTiKV, statementRUKVWrite, statementRURawUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
+	}
+}
+
+// statementRUSQLTypeForPlan classifies a successfully calculated statement by
+// its executed plan. Prepared statements have already been unwrapped, and the
+// type is independent of affected rows or whether a transaction wrote any keys.
+func statementRUSQLTypeForPlan(plan base.Plan) string {
+	switch plan := plan.(type) {
+	case *physicalop.Insert:
+		if plan.IsReplace {
+			return "replace"
+		}
+		return "insert"
+	case *physicalop.Update:
+		return "update"
+	case *physicalop.Delete:
+		return "delete"
+	case *plannercore.Analyze:
+		return "analyze"
+	case *plannercore.Simple:
+		// COMMIT is the only supported Simple plan.
+		return "commit"
+	default:
+		return "select"
+	}
+}
+
+func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
+	for engine, classes := range finalized.report.units {
+		for class, units := range classes {
+			if !finalized.report.seen[engine][class] {
+				continue
+			}
+			for _, unit := range [...]struct {
+				name  string
+				value float64
+			}{
+				{metrics.LblRUV3UnitCPUWork, units.CPUWork},
+				{metrics.LblRUV3UnitScanBytes, units.ScanBytes},
+				{metrics.LblRUV3UnitNetBytes, units.NetBytes},
+				{metrics.LblRUV3UnitFrontendCompileBytes, units.FrontendCompileBytes},
+				{metrics.LblRUV3UnitHashStateRows, units.HashStateRows},
+				{metrics.LblRUV3UnitJoinOutputRows, units.JoinOutputRows},
+				{metrics.LblRUV3UnitWriteStatement, units.WriteStatement},
+				{metrics.LblRUV3UnitOperatorNum, units.OperatorNum},
+				{metrics.LblRUV3UnitWriteKeys, units.WriteKeys},
+				{metrics.LblRUV3UnitWriteBytes, units.WriteBytes},
+			} {
+				if unit.value == 0 {
+					continue
+				}
+				metrics.RUV3Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOpClassNames[class], unit.name).Add(unit.value)
+			}
+		}
+	}
+	metrics.RUV3Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()
+}
+
+// These reasons are terminal calculation outcomes, not claims of complete
+// remote evidence. Successful snapshots currently all remain incomplete.
+type statementRUFailureReason string
+
+const (
+	statementRUNotFinished    statementRUFailureReason = "not_finished"
+	statementRUUnsupported    statementRUFailureReason = "unsupported_plan"
+	statementRUInvalid        statementRUFailureReason = "invalid_plan_or_evidence"
+	statementRUStatementError statementRUFailureReason = "statement_error"
+	statementRUIneligible     statementRUFailureReason = "ineligible"
+	statementRUPanic          statementRUFailureReason = "panic"
+)
+
+func statementRUFailed(state statementRUOperatorState) statementRUFinalizedSnapshot {
+	reason := statementRUInvalid
+	if state == statementRUOperatorUnsupported {
+		reason = statementRUUnsupported
+	}
+	return statementRUFinalizedSnapshot{failure: reason}
+}
+
+func statementRUTerminalFailure(rootEOF bool) statementRUFinalizedSnapshot {
+	if !rootEOF {
+		return statementRUFinalizedSnapshot{failure: statementRUNotFinished}
+	}
+	return statementRUFailed(statementRUOperatorInvalid)
+}
+
+func publishStatementRUFailureSafely(reason statementRUFailureReason) {
+	defer func() { _ = recover() }()
+	status := "failed"
+	if reason == statementRUIneligible || reason == statementRUUnsupported {
+		status = "skipped"
+	}
+	metrics.RUV3Statements.WithLabelValues(status, string(reason)).Inc()
+}

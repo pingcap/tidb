@@ -394,10 +394,20 @@ type ErrorMessageExtension struct {
 	Regexp *regexp.Regexp `toml:"-" json:"-"`
 }
 
-// RUV2Config is the configuration for RU v2 weight calculation.
+// RU report modes separate production engine results from calibration metrics.
+const (
+	RUReportModeResult = "result"
+	RUReportModeFull   = "full"
+)
+
+// RUV2Config configures RU v2 weights and RU v3 reporting.
 // The default values are experimentally fitted so they stay stable under the
 // same workload while remaining numerically aligned with RU v1.
 type RUV2Config struct {
+	// ReportMode controls RU v3 metrics. Full additionally reports raw units and
+	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
+	ReportMode string `toml:"report-mode" json:"report-mode"`
+
 	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
 	// It is intentionally chosen to match legacy RU values for compatibility.
 	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
@@ -430,7 +440,8 @@ type RUV2Config struct {
 // DefaultRUV2Config returns the default RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
-		RUScale: 2.01,
+		ReportMode: RUReportModeResult,
+		RUScale:    2.01,
 
 		ResultChunkCells:        0.00010000,
 		ExecutorL1:              0.00013278,
@@ -1726,6 +1737,11 @@ func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInv
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	switch c.RUV2.ReportMode {
+	case RUReportModeResult, RUReportModeFull:
+	default:
+		return fmt.Errorf("invalid ru-v2.report-mode %q, expected result or full", c.RUV2.ReportMode)
+	}
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
