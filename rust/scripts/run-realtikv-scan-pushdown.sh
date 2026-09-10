@@ -107,7 +107,7 @@ PLAYGROUND_PID=""
 RUST_PID=""
 FAILURES=0
 ROW_DIVERGENCES=0
-RECEIPT_SKIPS=0
+RECEIPT_FAILURES=0
 
 cleanup() {
   if [[ -n "${RUST_PID}" ]] && kill -0 "${RUST_PID}" 2>/dev/null; then
@@ -288,18 +288,13 @@ wire() {
     --pd "127.0.0.1:${PD_PORT}" --schema pushdiff --cop --sql "$1" 2>&1)
   status=$?
   set -e
-  # The smoke binary can complete the query and print its receipt before a
-  # best-effort PD shutdown reports lingering background handles. Preserve a
-  # valid receipt in that case; only classify the call as an error when no
-  # coprocessor receipt was produced.
-  if ! printf '%s\n' "${out}" | grep -q 'rows across the wire'; then
+  # Both execution/shutdown and the receipt must succeed. Never turn a
+  # missing observation into a passing pushdown comparison.
+  if ((status != 0)) || ! printf '%s\n' "${out}" | grep -q 'rows across the wire'; then
     WIRE_ROWS="error"
     WIRE_SHAPE="error"
     printf '%s\n' "${out}" | tail -3 >&2
     return 0
-  fi
-  if ((status != 0)); then
-    printf '%s\n' "${out}" | grep 'cluster-session-smoke: .*shutdown failed' >&2 || true
   fi
   WIRE_ROWS=$(printf '%s\n' "${out}" \
     | awk '/rows across the wire/ { print $NF }' | tail -1)
@@ -355,24 +350,19 @@ compare() {
     "${go_count}" "$(printf '%s' "${rust_out}" | grep -c . || true)"
   printf '      wire: %s rows of %s   dag: %s\n' \
     "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
-  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
-    echo "  SKIP  ${label}: no valid coprocessor receipt (environment observation)" >&2
-    RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
-    return
-  fi
-  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
-    echo "  SKIP  ${label}: no valid coprocessor receipt (environment observation)" >&2
-    RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
-    return
-  fi
   if [[ "${go_out}" != "${rust_out}" ]]; then
     echo "  FINDING  ${label}: the two nodes returned DIFFERENT ROWS" >&2
     diff <(printf '%s\n' "${go_out}") <(printf '%s\n' "${rust_out}") \
-      | head -10 >&2
+      | head -10 >&2 || true
     ROW_DIVERGENCES=$((ROW_DIVERGENCES + 1))
     return
   fi
   check "${label}: both nodes returned the same rows, value for value" true
+  if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
+    echo "  FAIL  ${label}: no valid coprocessor receipt" >&2
+    RECEIPT_FAILURES=$((RECEIPT_FAILURES + 1))
+    return
+  fi
   case "${expect_selection}" in
     pushed)
       check "${label}: the DAG carried a Selection" has_selection
@@ -438,9 +428,13 @@ binary_signature_case() {
   printf '      projection control: GO %s / RUST %s\n' \
     "$(printf '%s' "${go_proj}" | head -1)" \
     "$(printf '%s' "${rust_proj}" | head -1)"
+  check "${label}: the same rows, not merely the same number of them" \
+    test "${go_out}" = "${rust_out}"
+  check "${label}: the same builtin as a PROJECTION agrees too" \
+    test "${go_proj}" = "${rust_proj}"
   if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
-    echo "  SKIP  ${label}: no valid coprocessor receipt (environment observation)" >&2
-    RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
+    echo "  FAIL  ${label}: no valid coprocessor receipt" >&2
+    RECEIPT_FAILURES=$((RECEIPT_FAILURES + 1))
     return
   fi
   check "${label}: the DAG carried a Selection" has_selection
@@ -448,13 +442,6 @@ binary_signature_case() {
   check "${label}: the coprocessor sent exactly the rows TiDB selects, \
 so the signature that travelled is the right one" \
     test "${WIRE_ROWS}" -eq "${go_count}"
-  # Row SETS, not counts: counts coincide while selecting different rows.
-  check "${label}: the same rows, not merely the same number of them" \
-    test "${go_out}" = "${rust_out}"
-  # AND SO IS THE LOCAL EVALUATOR: the same builtin with nothing pushed.
-  check "${label}: the same builtin as a PROJECTION agrees too, \
-so the local signature selection matches the pushed one" \
-    test "${go_proj}" = "${rust_proj}"
 }
 
 # Compare actual Go/Rust SQL errors, including code, SQLSTATE and message.
@@ -588,8 +575,8 @@ printf '      wire: %s rows of %s   dag: %s\n' \
 check "PI(): both nodes returned the same rows, value for value" \
   test "$(go_rows "${PI_QUERY}")" = "$(rust_rows "${PI_QUERY}")"
 if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
-  echo "  SKIP  PI(): no valid coprocessor receipt (environment observation)" >&2
-  RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
+  echo "  FAIL  PI(): no valid coprocessor receipt" >&2
+  RECEIPT_FAILURES=$((RECEIPT_FAILURES + 1))
 else
   check "PI(): the DAG carried a Selection" has_selection
   check "PI(): which rejects nothing, so the whole relation crosses the wire" \
@@ -887,16 +874,12 @@ echo
 if [[ "${ROW_DIVERGENCES}" -gt 0 ]]; then
   echo "${ROW_DIVERGENCES} case(s) where the two nodes returned DIFFERENT ROWS -- see the FINDING lines above" >&2
 fi
-if [[ "${RECEIPT_SKIPS}" -gt 0 ]]; then
-  echo "${RECEIPT_SKIPS} case(s) skipped because the coprocessor receipt was unavailable" >&2
+if [[ "${RECEIPT_FAILURES}" -gt 0 ]]; then
+  echo "${RECEIPT_FAILURES} case(s) failed because the coprocessor receipt was unavailable" >&2
 fi
-if [[ "${FAILURES}" -eq 0 && "${ROW_DIVERGENCES}" -eq 0 ]]; then
-  if [[ "${RECEIPT_SKIPS}" -gt 0 ]]; then
-    echo "SQL row/error comparisons passed; coprocessor receipt validation is incomplete"
-  else
-    echo "the scan-pushdown differential passed"
-  fi
+if [[ "${FAILURES}" -eq 0 && "${ROW_DIVERGENCES}" -eq 0 && "${RECEIPT_FAILURES}" -eq 0 ]]; then
+  echo "the scan-pushdown differential passed"
 else
-  echo "the scan-pushdown differential had ${FAILURES} failure(s) and ${ROW_DIVERGENCES} row divergence(s)" >&2
+  echo "the scan-pushdown differential had ${FAILURES} failure(s), ${ROW_DIVERGENCES} row divergence(s), and ${RECEIPT_FAILURES} receipt failure(s)" >&2
   exit 1
 fi

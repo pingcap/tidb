@@ -17,7 +17,19 @@
     "ready_lint": "Passed: GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint (merge-final-lint-2.log)",
     "workspace_check": "Passed: cargo check --offline --locked --release -j12 --workspace --all-targets (merge-workspace-ready-2.log)",
     "final_scoped_tests": "71 client/executor/recordset plus 7 Go-derived planner fixture tests passed; zero failures",
-    "live_sql": "Release server/smoke built. 81 Go/Rust scan cases had zero row/error divergence; COT code 1690, SQLSTATE 22003 and message match. 78 coprocessor receipts unavailable because smoke PD shutdown retains 3 handles; no batching/pushdown acceptance. Isolated playground stopped and ports verified closed."
+    "live_sql": "Superseded by post_merge_root_fixes: the original harness returned before SQL equality assertions when receipts were missing. Its earlier claim of 81 proven comparisons was incorrect."
+  },
+  "post_merge_root_fixes": {
+    "base_commit": "c4af9c5b70bdff7934ef2a99d1d18ff4b065813a",
+    "changes": "PD shutdown follows Go cancel-and-join without an Arc-count gate. Table scans retain executable residual predicates across reopening and require complete descriptions before trusting remote filtering or moving post-Selection operations.",
+    "before": "Two PD lifecycle assertions failed with SharedOwners. Repaired SQL assertions exposed 11 live row divergences, previously hidden by missing receipts.",
+    "after": "PD tests: 70 passed, 1 ignored. Scan/predicate/coprocessor tests: 42 passed, zero failures. Live SQL: 78 row, 2 error and 1 projection equality assertions passed; five additional LIMIT/TopN/COUNT/SUM checks matched Go. No PD shutdown failure.",
+    "cleanup": "Removed one obsolete Rust-only refusal-message test and unused helpers; expanded the existing SQL residual-filter fixture. The earlier merge removed 56 other identified Rust-only tests.",
+    "ready": "Scoped Ready validation passed: release server/smoke build, 112 targeted tests, make -j12 lint, Rust formatting, shell syntax and diff checks. Full differential remains red for missing receipts.",
+    "receipts": "Still unavailable: obsolete diagnostic lines are absent from the smoke binary. The harness now exits 1 with 78 receipt failures and zero SQL row divergences. No pushdown or batching acceptance.",
+    "services": "Owned playgrounds stopped; PD 46199, Go SQL 47820 and Rust SQL 47920 verified closed.",
+    "evidence": "/private/tmp/tidb-counter-window.jbkXVN: pd-close-before.log, pd-close-after.log, pd-close-live.log, scan-filter-after-live.log, scan-filter-scoped-verified.log, scan-filter-lint.log",
+    "performance_accepted": false
   },
   "counter_visibility_diagnostic": {
     "path": "/private/tmp/tidb-counter-window.jbkXVN/probe.json",

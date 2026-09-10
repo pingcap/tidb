@@ -46,7 +46,17 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   three passed, zero failed. Ready lint passed.
 - [ ] Complete the repository-wide Go-test provenance audit.
 - [x] Reconcile the upstream merge through b77c90cde6 with no unresolved entries.
-- [x] Build release server/smoke binaries and compare 81 live Go/Rust SQL cases.
+- [x] Build release server/smoke binaries and run the 81-case live SQL harness.
+- [x] Identify and remove PD's Go-incompatible reference-count shutdown gate.
+- [x] Verify retained-handle/in-flight cancellation and live shutdown.
+- [x] Repaired SQL assertions expose 11 real row divergences, all returning
+  unfiltered rows when physical predicates are not fully described remotely.
+- [x] Keep residual conditions authoritative across chunk/row reads,
+  projection, TopN/Limit, partial aggregation and scan reopening; rerun live SQL.
+- [x] Live result equality: 78 row, two error and one projection assertion pass,
+  plus five related LIMIT/TopN/COUNT/SUM checks. Missing receipts now fail loudly.
+- [ ] Repair receipt validation: removed diagnostic output and an early return
+  concealed both missing receipts and unperformed SQL equality assertions.
 - [x] Pass 78 scoped socket/executor/planner tests, workspace all-target compilation,
   formatting, shell syntax and Ready lint.
 
@@ -135,6 +145,22 @@ four real regions intersect that range. No task-count shortcut is justified.
 
 ## Plan of Work and Milestones
 
+Current correctness increment: follow pinned PD client afa43111d149
+client.go::Close -> inner_client.go::close (cancel, wait, close services), and
+client-go e4905600583b tikv/kv.go::Close (stop background tasks, region cache,
+TiKV transport, then PD). Remove only PD's reference-count prerequisite, not
+cancellation, worker joining or actual error reporting. Existing retained-handle
+and in-flight fixtures must fail before the production change and pass after.
+Make missing receipts fail the differential, and compare SQL independently.
+
+The corrected live run exposes a second production root cause. TableScanExec
+trusts a backend's receipt for a subset of the original conditions, and its
+Open removes retained filters. Use one complete-description decision for remote
+post-Selection operations; keep the executable filter across Open/Close.
+Go PhysicalSelection.ToPB encodes the complete Conditions list, never treating
+an empty encoded subset as proof of the whole Selection. Existing index lookup
+paths already combine their receipt with fully_described; table scans must too.
+
 The transport co-location milestone is implemented and measured; preserve its
 evidence before subsequent edits. Do not revisit the removed publication
 boundary as though it still existed.
@@ -188,6 +214,60 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+Post-merge root-fix evidence is under /private/tmp/tidb-counter-window.jbkXVN.
+PD close tests fail twice before the production change (SharedOwners) and pass
+after: 70 passed, one ignored across the PD library and aggregate test target.
+The actual smoke path closes cleanly. Removing a reference-count gate is not
+removing worker cancellation/join/error checks; those remain tested.
+
+The corrected live harness initially found 11 wrong-result cases: omitted
+conditions made the table-scan fast path return all 2,000 rows. A single
+complete-description decision now protects remote post-Selection operations;
+Open no longer erases the executable filter. The subsequent run has 78 row,
+two error and one projection equality assertion passing. Five additional SQL
+comparisons against the same Go node also pass:
+
+    SELECT id FROM t WHERE sbig + 1 > 999 ORDER BY id LIMIT 1
+    SELECT id FROM t WHERE abs(sbig) ORDER BY id DESC LIMIT 3
+    SELECT COUNT(*) FROM t WHERE sbig + 1 > 999
+    SELECT SUM(sbig) FROM t WHERE NOT mod(sbig, 100)
+    SELECT id FROM t WHERE mod(sbig, 2.5) ORDER BY id LIMIT 3
+
+The live harness still exits 1 for 78 unavailable coprocessor receipts, not SQL
+differences. The removed smoke diagnostics must be replaced with current
+runtime statistics before claiming pushdown/batching acceptance. This is not
+performance evidence. Index partial-aggregation receipt completeness also needs
+follow-up source/live verification; the table-only fixture does not prove it.
+
+Commands for this increment (Cargo and script from the isolated rust directory):
+
+    cargo test --offline --locked --release -j12 -p tidb-pd-client --lib --test all -- close_cancels
+    cargo test --offline --locked --release -j12 -p tidb-pd-client --lib --test all --no-fail-fast
+    cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-exec --lib --test all --no-fail-fast -- kv_table::table_scan predicate_pushdown cop_scan_
+    KEEP_LOGS=1 SCAN_PUSHDOWN_PORT_OFFSET=43820 CARGO_BUILD_JOBS=12 bash scripts/run-realtikv-scan-pushdown.sh
+    GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint
+
+The script builds release server/smoke with twelve jobs. Ready lint passed;
+formatting, bash syntax and git diff checks pass. The final scan/predicate/cop
+suite passed 42 tests with zero failures (112 passes including PD). One obsolete
+Rust-only refusal-message protection test and unused helpers were removed;
+the existing residual SQL fixture now covers NOT, projection and TopN/Limit.
+Logs are pd-close-before.log, pd-close-after.log, pd-close-live.log,
+scan-filter-after-live.log, scan-filter-scoped-verified.log and scan-filter-lint.log. Both isolated playgrounds
+are stopped and their PD/Go/Rust ports 46199/47820/47920 are verified closed.
+No Go or Bazel source changed, so no new bazel_prepare run is required.
+
+Changed production files: tidb-pd-client/src/client/mod.rs and src/error.rs,
+tidb-executor/src/kv_table/table_scan.rs, and lifecycle comments in
+tidb-exec/src/real_tikv_read.rs and tidb-server/src/bin/cluster-session-smoke.rs.
+Changed fixtures: tidb-pd-client/tests/pd_worker_lifecycle_source.rs,
+tidb-exec/tests/cop_scan_narrowed_output_source.rs and
+cop_scan_partial_predicate_limit_source.rs. The differential script, this living
+plan and baseline validation metadata carry the corrected evidence. Historical
+performance measurements are unchanged. Full runtime/package/platform parity
+and throughput remain unverified; the earlier broad-suite failures remain open.
+
 
 Candidate SHA256 e61d432de6c71681b9868d7df9a0e81786c56551093742ed95f1793c5c130c8c
 reduces fixed-work SQL CPU relative to immediate prior 76f6f08fa without improving
@@ -244,10 +324,12 @@ they have not all been established as pre-existing and are not waived or deleted
 The merged code is not complete Go parity or a fully green release.
 
 Release server and smoke builds passed. The real TiKV scan differential ran
-81 Go/Rust SQL cases with no row/error divergence, including exact COT(0)
-code 1690, SQLSTATE 22003 and message. Its 78 coprocessor receipts were unavailable
-because cluster-session-smoke reports PD shutdown with three live request handles.
-This proves the exercised SQL comparisons, not pushdown/batching acceptance.
+81 cases, including exact COT(0) code 1690, SQLSTATE 22003 and message. A subsequent
+source audit found that missing receipts returned before SQL equality assertions;
+the earlier claim of 81 proven comparisons was incorrect. Two independent issues
+exist: PD shutdown rejects retained handles, and the smoke binary no longer emits
+the receipt lines parsed by the script. Neither full SQL equality nor pushdown
+acceptance is established by that earlier run.
 Playground cleanup completed and ports 46199/47820/47920 are closed.
 Evidence: merge-live-scan-pushdown.log under /private/tmp/tidb-counter-window.jbkXVN.
 

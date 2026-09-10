@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A narrowed scan output travels when every conjunct lowers, and refuses
-//! when one stays behind.
-//!
-//! `PushdownScanRequest::output_offsets` promises the caller narrower rows.
-//! The contract says a backend must refuse unless it can lower EVERY
-//! predicate -- once the narrower row crosses the wire, no residual conjunct
-//! can be repeated locally over the dropped columns. Both halves are pinned
-//! here against a coprocessor fake that projects rows exactly the way TiKV
-//! reads `DAGRequest.output_offsets`: it encodes only the offsets the DAG
-//! names, so a wrong lowering is visible as wrong data, not as nothing.
+//! Go `DAGRequest.output_offsets`: a fully pushed Selection returns only
+//! the projected columns. The fixture checks both the request offsets and
+//! the narrowed rows returned through the normal decoder.
 
 #![allow(missing_docs)]
 
@@ -33,48 +26,18 @@ use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResult
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_executor::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
-};
 use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
 use tidb_executor::remote_scan::{
-    PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownScannerError,
-    PushdownStatementContext,
+    PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownStatementContext,
 };
-use tidb_executor::storage::StorageError;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, SelectResponse};
 use tidb_txnkv::Key;
-
-/// Go `mysql.UnsignedFlag`.
-const UNSIGNED_FLAG: u32 = 32;
 
 /// Rows the region holds, as `(id, tag)`. Every id is positive, so the one
 /// conjunct that lowers (`id > 0`) admits all of them; the tag differs from
 /// the id so narrowing to the tag cannot be confused with returning both.
 fn region_rows() -> Vec<(i64, i64)> {
     (1..=6).map(|id| (id, id * 10)).collect()
-}
-
-#[derive(Debug)]
-struct EmptySnapshot;
-
-impl ClusterSnapshot for EmptySnapshot {
-    fn get(&mut self, _key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        Ok(None)
-    }
-
-    fn scan(
-        &mut self,
-        _start: &Key,
-        _end: &Key,
-        _limit: Option<usize>,
-    ) -> Result<SnapshotPairs, StorageError> {
-        Ok(Vec::new())
-    }
-
-    fn start_ts(&self) -> u64 {
-        4_242
-    }
 }
 
 fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
@@ -134,7 +97,9 @@ fn admits(condition: &Expr, id: i64) -> bool {
     let children = &condition.children;
     let constant = children
         .iter()
-        .find(|child| child.tp != Some(tidb_proto::tipb::ExprType::ColumnRef as i32) && child.val.is_some())
+        .find(|child| {
+            child.tp != Some(tidb_proto::tipb::ExprType::ColumnRef as i32) && child.val.is_some()
+        })
         .expect("the constant operand");
     let (_, literal) =
         tidb_codec::decode_int(constant.val.as_deref().expect("the literal carries bytes"))
@@ -233,19 +198,6 @@ fn column(id: i64) -> PushdownScanColumn {
     }
 }
 
-/// Column 1 as UNSIGNED, so a negative constant against it is the shape this
-/// lowering refuses.
-fn unsigned_column(id: i64) -> PushdownScanColumn {
-    let mut field_type = bigint();
-    field_type.add_flags(UNSIGNED_FLAG);
-    PushdownScanColumn {
-        id,
-        field_type,
-        is_handle: false,
-        origin_default: None,
-    }
-}
-
 /// The lowered conjunct: `id > 0` over offset 0.
 fn lowered_conjunct() -> ScanPredicate {
     ScanPredicate::Compare(ScanComparison {
@@ -255,22 +207,6 @@ fn lowered_conjunct() -> ScanPredicate {
         literal_type: bigint(),
         op: ScanComparisonOp::Gt,
         literal: Datum::Int(0),
-        column_on_left: true,
-    })
-}
-
-/// A conjunct this lowering REFUSES: an unsigned column against a negative
-/// constant, the exact shape Go's `refineArgsByUnsignedFlag` leaves alone.
-fn residual_conjunct() -> ScanPredicate {
-    let mut unsigned = bigint();
-    unsigned.add_flags(UNSIGNED_FLAG);
-    ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
-        column_offset: 0,
-        column_type: unsigned.clone(),
-        literal_type: unsigned,
-        op: ScanComparisonOp::Gt,
-        literal: Datum::Int(-1),
         column_on_left: true,
     })
 }
@@ -357,34 +293,4 @@ fn a_fully_lowered_projected_scan_sends_its_output_offsets_and_reads_narrow_rows
         "the conjunct travelled beside it"
     );
     assert_eq!(observation.sent_values.len(), region_rows().len());
-}
-
-/// The other half of the contract: a residual conjunct means the backend must
-/// refuse the narrowing BY NAME -- silently serving full-width rows for a
-/// narrowed request would mis-shape the caller's row, and serving narrowed
-/// rows would make the answer depend on a filter nobody applied. Nothing may
-/// reach the region either way.
-#[test]
-fn a_projected_scan_with_a_residual_conjunct_is_refused_before_the_wire() {
-    let region = Arc::new(FakeRegion::default());
-    let stream = scanner(&region).open(&request_over(
-        vec![unsigned_column(1), column(2)],
-        vec![residual_conjunct()],
-        Some(vec![1]),
-    ));
-    let reason = match stream {
-        Err(PushdownScannerError::Unsupported(reason)) => reason,
-        Err(other) => panic!("an unsupported refusal, not {other:?}"),
-        Ok(_) => panic!("narrowing over a residual conjunct must be refused"),
-    };
-    assert!(
-        reason.contains("does not narrow output columns"),
-        "the refusal names the shape: {reason}"
-    );
-
-    let observations = region.observations.lock().unwrap();
-    assert!(
-        observations.is_empty(),
-        "no request may travel behind a refusal: {observations:?}"
-    );
 }

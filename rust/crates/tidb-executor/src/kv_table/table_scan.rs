@@ -3673,6 +3673,15 @@ impl PartialSum {
 }
 
 impl TableScanExec {
+    /// A coprocessor receipt covers only the descriptions sent to it, not
+    /// conditions retained solely in the executable Selection. Operations
+    /// after Selection may move remote only when that entire input is known.
+    fn filter_fully_described(&self) -> bool {
+        self.filter
+            .as_ref()
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
+    }
+
     /// Builds a scan over `table` with an explicit row-decode context.
     #[must_use]
     pub fn new_with_context(
@@ -4309,7 +4318,7 @@ impl Executor for TableScanExec {
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
-            .filter(|_| !virtual_projection)
+            .filter(|_| !virtual_projection && self.filter_fully_described())
         {
             let context = self
                 .partial_context
@@ -4381,21 +4390,6 @@ impl Executor for TableScanExec {
             )
             .map_err(ExecError::from)?;
         if self.remote.is_some() {
-            // A clean remote stream whose backend lowered every predicate is
-            // already exact. Keep the local filter for residuals and staged
-            // rows, but avoid evaluating the same expression once per wire
-            // row on the common coprocessor path.
-            if self
-                .remote
-                .as_ref()
-                .is_some_and(|remote| remote.predicates_applied() && !remote.merge_staged)
-                && self
-                    .filter
-                    .as_ref()
-                    .is_some_and(crate::predicate_pushdown::ScanFilterProbe::fully_described)
-            {
-                self.filter = None;
-            }
             return Ok(());
         }
         self.open_local_cursor()
@@ -4459,7 +4453,8 @@ impl Executor for TableScanExec {
         // A completed remote Selection needs no local re-evaluation, but
         // must not destroy the retained filter: the next Open (or a refused
         // request) may read through the local/staged cursor instead.
-        let remote_filter_complete = self.remote_materialization.is_none()
+        let remote_filter_complete = self.filter_fully_described()
+            && self.remote_materialization.is_none()
             && self
                 .remote
                 .as_ref()
@@ -4763,7 +4758,8 @@ impl crate::table_access::TableAccess for TableScanExec {
         // family while the table is clean: no UnionScan row needs a handle
         // reconstructed from the narrowed response. Local fallback applies
         // the same projection after the optional scan filter.
-        if self.table.has_dirty_content()
+        if !self.filter_fully_described()
+            || self.table.has_dirty_content()
             || self.has_virtual_projection()
             || self.partial_aggregate.is_some()
             || self.post_filter_projection.is_some()
@@ -4799,7 +4795,8 @@ impl crate::table_access::TableAccess for TableScanExec {
     fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
         // TopN must see the merged relation. Reordering/capping only the
         // snapshot would break both merge order and replacement semantics.
-        if topn.order_by.is_empty()
+        if !self.filter_fully_described()
+            || topn.order_by.is_empty()
             || self.table.has_dirty_content()
             || self.has_virtual_projection()
             || topn.limit == 0
@@ -4836,11 +4833,7 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// order, so stopping after `cap` of them yields the same prefix a
     /// `LimitExec` above would have kept.
     fn accept_scan_limit(&mut self, cap: u64) -> bool {
-        if self
-            .filter
-            .as_ref()
-            .is_some_and(|filter| !filter.fully_described())
-        {
+        if !self.filter_fully_described() {
             return false;
         }
         self.limit = Some(cap);

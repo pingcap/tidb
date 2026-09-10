@@ -151,9 +151,7 @@ fn run() -> Result<(), String> {
         run_autocommit(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     };
     drop(cop_scans);
-    // The opener clone holds PD request handles; the authority's shutdown
-    // drains and refuses to stop while any are live (the drain footgun only a
-    // real cluster exposes) -- release ours before asking it to stop.
+    // Release the statement capabilities before closing their shared clients.
     drop(buffer);
     drop(opener);
     let shutdown = authority.shutdown().map_err(|error| error.to_string());

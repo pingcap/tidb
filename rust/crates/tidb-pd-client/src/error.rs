@@ -204,11 +204,6 @@ impl std::error::Error for PdClientError {}
 pub enum PdClientShutdownError {
     /// A cloneable request handle tried to exercise process lifecycle authority.
     NotOwner,
-    /// Explicit shutdown began while request handles were still retained.
-    SharedOwners {
-        /// Number of live owner and request-handle values.
-        owners: usize,
-    },
     /// The worker command receiver disappeared before accepting Close.
     CommandSend,
     /// The worker accepted Close but disappeared before acknowledging it.
@@ -227,7 +222,6 @@ impl PdClientShutdownError {
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::NotOwner => "not_owner",
-            Self::SharedOwners { .. } => "shared_owners",
             Self::CommandSend => "command_send",
             Self::MissingAcknowledgement => "missing_acknowledgement",
             Self::WorkerStatePoisoned => "worker_state_poisoned",
@@ -249,10 +243,6 @@ impl std::fmt::Display for PdClientShutdownError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotOwner => formatter.write_str("PD request handle does not own worker shutdown"),
-            Self::SharedOwners { owners } => write!(
-                formatter,
-                "explicit PD shutdown requires drained request handles; observed {owners} live handles"
-            ),
             Self::CommandSend => {
                 formatter.write_str("PD worker stopped before accepting the shutdown command")
             }

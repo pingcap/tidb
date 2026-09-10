@@ -368,11 +368,11 @@ impl PdClient {
 
     /// Consumes the unique owner, cancels foreground work, and joins the worker.
     ///
-    /// Every request handle must be drained first. Dropping the owner invokes
-    /// the same idempotent machinery only as a best-effort containment path;
-    /// production lifecycle success must come from this explicit result.
+    /// Like Go `innerClient.close`, cancellation stops in-flight RPCs even
+    /// when request handles remain. Retained handles observe `Closed` after
+    /// the worker exits. Drop uses the same path but cannot report failures.
     pub fn shutdown(mut self) -> Result<(), PdClientShutdownError> {
-        self.shutdown_inner(true)
+        self.shutdown_inner()
     }
 
     /// Refreshes membership through the first reachable known endpoint.
@@ -626,15 +626,9 @@ impl PdClient {
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
-    fn shutdown_inner(&mut self, require_unique: bool) -> Result<(), PdClientShutdownError> {
+    fn shutdown_inner(&mut self) -> Result<(), PdClientShutdownError> {
         if !self.owns_worker {
             return Err(PdClientShutdownError::NotOwner);
-        }
-        if require_unique {
-            let owners = Arc::strong_count(&self.shared);
-            if owners != 1 {
-                return Err(PdClientShutdownError::SharedOwners { owners });
-            }
         }
 
         let (worker, worker_state_poisoned) = match self.shared.worker.lock() {
@@ -672,7 +666,7 @@ impl PdClient {
 impl Drop for PdClient {
     fn drop(&mut self) {
         if self.owns_worker {
-            let _ = self.shutdown_inner(false);
+            let _ = self.shutdown_inner();
         }
     }
 }
@@ -781,8 +775,10 @@ mod worker_lifecycle_tests {
         reply.send(()).expect("shutdown receiver");
     }
 
+    // Go pd/client/inner_client.go: innerClient.close cancels shared work
+    // before waiting; retained references do not prevent closure.
     #[test]
-    fn clones_are_request_handles_and_explicit_shutdown_requires_drain() {
+    fn close_cancels_shared_request_handles() {
         let owner = test_client(acknowledge_close);
         assert!(owner.is_worker_owner());
 
@@ -791,10 +787,7 @@ mod worker_lifecycle_tests {
         assert_eq!(non_owner.shutdown(), Err(PdClientShutdownError::NotOwner));
 
         let retained = owner.clone();
-        assert_eq!(
-            owner.shutdown(),
-            Err(PdClientShutdownError::SharedOwners { owners: 2 })
-        );
+        assert_eq!(owner.shutdown(), Ok(()));
         assert_eq!(retained.refresh_members(), Err(PdClientError::Closed));
     }
 
@@ -849,14 +842,14 @@ mod worker_lifecycle_tests {
         assert!(poison.is_err());
 
         assert_eq!(
-            owner.shutdown_inner(true),
+            owner.shutdown_inner(),
             Err(PdClientShutdownError::WorkerStatePoisoned)
         );
-        assert_eq!(owner.shutdown_inner(true), Ok(()));
+        assert_eq!(owner.shutdown_inner(), Ok(()));
     }
 
     #[test]
-    fn owner_drop_cancels_in_flight_request_before_join() {
+    fn close_cancels_in_flight_request_before_join() {
         let (started, observed) = mpsc::channel();
         let owner = test_client(move |receiver, shutdown| {
             let WorkerCommand::RefreshMembers { reply } =
@@ -881,10 +874,7 @@ mod worker_lifecycle_tests {
         let foreground = std::thread::spawn(move || request.refresh_members());
         observed.recv().expect("worker started foreground request");
 
-        assert_eq!(
-            owner.shutdown(),
-            Err(PdClientShutdownError::SharedOwners { owners: 2 })
-        );
+        assert_eq!(owner.shutdown(), Ok(()));
         assert_eq!(
             foreground.join().expect("foreground thread"),
             Err(PdClientError::Closed)

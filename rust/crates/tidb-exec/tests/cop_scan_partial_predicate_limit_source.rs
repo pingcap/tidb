@@ -481,31 +481,54 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
 /// and its Limit must remain at root as well.
 #[test]
 fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
-    let (catalog, region) = fixture();
-    let rows = run_select_on(
-        "SELECT id FROM t WHERE tan(id) > 0 LIMIT 5",
-        &catalog,
-        &StmtContext::for_query(),
-    )
-    .expect("the scan is served by the coprocessor");
-    assert_eq!(
-        rows,
-        [1, 4, 7, 10, 13]
-            .into_iter()
-            .map(|id| vec![Datum::Int(id)])
-            .collect::<Vec<_>>()
-    );
+    // The arithmetic and NOT cases also have no remote descriptor. A
+    // receipt for the empty subset must not bypass their Selection, project
+    // away its inputs, or count raw rows against a pushed TopN/Limit.
+    let ints = |values: &[i64]| values.iter().copied().map(Datum::Int).collect::<Vec<_>>();
+    for (sql, expected) in [
+        (
+            "SELECT id FROM t WHERE tan(id) > 0 LIMIT 5",
+            ints(&[1, 4, 7, 10, 13]),
+        ),
+        (
+            "SELECT id FROM t WHERE NOT mod(id, 4) LIMIT 5",
+            ints(&[4, 8, 12, 16, 20]),
+        ),
+        (
+            "SELECT tag FROM t WHERE id + 1 > 15 LIMIT 5",
+            vec![
+                Datum::UInt(0),
+                Datum::UInt(7),
+                Datum::UInt(0),
+                Datum::UInt(0),
+                Datum::UInt(0),
+            ],
+        ),
+        (
+            "SELECT id FROM t WHERE id + 1 > 15 ORDER BY id DESC LIMIT 3",
+            ints(&[20, 19, 18]),
+        ),
+    ] {
+        let (catalog, region) = fixture();
+        let rows = run_select_on(sql, &catalog, &StmtContext::for_query())
+            .expect("the scan is served by the coprocessor");
+        assert_eq!(
+            rows,
+            expected
+                .into_iter()
+                .map(|value| vec![value])
+                .collect::<Vec<_>>(),
+            "{sql}"
+        );
 
-    let observations = region.observations.lock().unwrap();
-    let [observation] = observations.as_slice() else {
-        panic!("exactly one coprocessor request: {observations:?}");
-    };
-    assert_eq!(observation.conditions, 0, "TAN remains at the root");
-    assert_eq!(
-        observation.remote_limit, None,
-        "the root Limit stays with it"
-    );
-    assert_eq!(observation.rows_sent, region_rows().len());
+        let observations = region.observations.lock().unwrap();
+        let [observation] = observations.as_slice() else {
+            panic!("exactly one coprocessor request: {observations:?}");
+        };
+        assert_eq!(observation.conditions, 0, "{sql}");
+        assert_eq!(observation.remote_limit, None, "{sql}");
+        assert_eq!(observation.rows_sent, region_rows().len(), "{sql}");
+    }
 }
 
 /// Go rewrites `COUNT(*)` to `COUNT(1)` before `AggFuncToPBExpr` serializes

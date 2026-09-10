@@ -485,10 +485,8 @@ pub struct ProductionReadProcessAuthority {
     /// TiKV transport this authority owns. It holds only cloneable handles, so
     /// retaining it starts no second worker and creates no second client.
     ///
-    /// It is `None` after shutdown for the same reason `opener` becomes
-    /// `Closed`: those clones each hold a PD/RegionCache/transport reference,
-    /// and the PD stage refuses to stop while any clone is still alive. It must
-    /// be dropped before `shutdown_read_process`, exactly like the read opener.
+    /// Removed on shutdown to release the transaction safe-point refresher
+    /// before closing the cluster clients it uses.
     transaction_opener: Option<RealOptimisticTransactionOpener>,
     admission: ReadSessionAdmissionOwner,
     lifecycle: ProductionReadLifecycle,
@@ -815,10 +813,7 @@ impl ProductionReadProcessAuthority {
         self.admission.close_admission()?;
         let opener = std::mem::replace(&mut self.opener, ProductionOpener::Closed);
         drop(opener);
-        // The write capability holds the same PD/RegionCache/transport clones
-        // as the read opener, so it must be released before the PD stage checks
-        // for unique ownership. Without this, any authority that ever handed out
-        // a transaction opener could never shut PD down.
+        // Stop the transaction safe-point refresher before its PD client.
         drop(self.transaction_opener.take());
         shutdown_read_process(0, &mut self.lifecycle)
     }

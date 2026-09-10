@@ -193,14 +193,11 @@ fn unique_owner_explicitly_closes_and_joins_the_real_worker() {
 }
 
 #[test]
-fn retained_request_prevents_success_and_is_closed_by_owner_fallback() {
+fn close_cancels_retained_request_handles() {
     let server = Server::start();
     let owner = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     let retained = owner.clone();
 
-    assert_eq!(
-        owner.shutdown(),
-        Err(PdClientShutdownError::SharedOwners { owners: 2 })
-    );
+    assert_eq!(owner.shutdown(), Ok(()));
     assert_eq!(retained.refresh_members(), Err(PdClientError::Closed));
 }
