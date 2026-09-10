@@ -1,5 +1,33 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 point-get 显式输出保留隐藏列
+
+独立复现 loaded_hidden_columns_preserve_native_layout_and_index_values：
+UPDATE t SET v=30 WHERE id=1 返回 point-get output column is outside the row，
+`/tmp/hidden-point-red.log`。HandleSourceExec 的输出 Stored(offset) 指向
+完整表列，但 next 先通过 visible_of 去掉隐藏列，导致表达式索引维护需要
+的隐藏列偏移落在截断行之外。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+pkg/executor/point_get.go 按 e.Schema() DecodeRowValToChunk，并依照 schema
+填充虚拟列。Rust 显式物理输出映射现使用完整 decoded row；默认可见输出
+继续使用原前缀。没有改变隐藏列可见性、表存储布局或索引断言。
+
+新增 mapped_point_read_retains_hidden_columns_required_by_the_plan 回归，
+按隐藏列在前、普通列在后的映射检查输出；旧实现同样越界失败
+（`/tmp/hidden-point-unit-red.log`），修复后通过。原始 server 用例
+包括 UPDATE 后 FORCE INDEX(vi) 读取也全部通过，0.03 秒
+（`/tmp/hidden-point-server-green.log`）。
+
+验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-executor --lib` 为 **1295 passed /
+1 failed**（`/tmp/hidden-point-executor-green.log`）；剩余 subqueries 在
+2183 行实际顺序 3,2、预期 2,3，尚未修复，不能视为全绿。
+`cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+loaded_hidden_columns_preserve_native_layout_and_index_values` 通过；
+两条 cargo 命令均使用上述工具链与栈设置。`make lint` 退出 0
+（`/tmp/hidden-point-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 嵌入式 DDL owner 按存储隔离
 
 check_constraint_runs_through_the_owner_job_queue 单独执行 1.25 秒通过

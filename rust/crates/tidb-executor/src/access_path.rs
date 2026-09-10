@@ -719,8 +719,9 @@ fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool
 /// `KvTable::get_row_by_handle` decodes and materializes EVERY column of the
 /// table, hidden ones included -- the hidden column an expression index was
 /// rewritten into has to be computed so an index entry can be written from
-/// the same row. A read never wants it: the schema these sources append into
-/// is the visible one, and the hidden columns are the row's trailing tail by
+/// the same row. The default output schema of these sources is the visible
+/// one; an explicit physical output mapping may also request hidden columns
+/// and uses the full row instead. Hidden columns are the row's trailing tail by
 /// construction (`KvTable::add_hidden_column`), so the visible row is a
 /// prefix rather than a gather.
 ///
@@ -963,7 +964,11 @@ impl Executor for HandleSourceExec {
                     for (output, source) in columns.iter().copied().enumerate() {
                         match source {
                             HandleOutputColumn::Stored(source) => {
-                                let value = visible.get(source).ok_or_else(|| {
+                                // The physical schema may request a hidden
+                                // generated column for an UPDATE/index key.
+                                // Stored offsets address the full decoded row,
+                                // not the wildcard's visible-column prefix.
+                                let value = row.get(source).ok_or_else(|| {
                                     ExecError::unsupported(
                                         "point-get output column is outside the row",
                                     )
@@ -5272,6 +5277,35 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn mapped_point_read_retains_hidden_columns_required_by_the_plan() {
+        let mut table = KvTable::with_storage(
+            77,
+            vec![column("id", 1)],
+            Box::new(MemTableStorage::default()),
+        );
+        table.add_hidden_column(column("hidden", 2));
+        let schema = tidb_expr::schema::Schema::new(vec![
+            tidb_expr::column::Column::new(2, long()),
+            tidb_expr::column::Column::new(1, long()),
+        ]);
+        let mut source = HandleSourceExec::new_projected_with_context(
+            ExecutorMeta::new(schema, 0, 1, 1024),
+            table,
+            vec![TableHandle::Int(7)],
+            vec![1, 0],
+            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+        );
+        // The row decoder supplies the full table layout, including the
+        // expression-index column needed by an UPDATE's physical plan.
+        source.preloaded = Some(vec![Some(vec![Datum::Int(7), Datum::Int(8)])]);
+        let mut chunk = Chunk::new(&[long(), long()], 1, 1024);
+        source.next(&mut chunk).unwrap();
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.get_row(0).get_datum(0, &long()), Datum::Int(8));
+        assert_eq!(chunk.get_row(0).get_datum(1, &long()), Datum::Int(7));
     }
 
     /// The rows counters and a catalog holding `t(a, b, c)` with `n` rows and
