@@ -54,8 +54,8 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   pass before the last default-preserving fix-control merge; that final delta
   is source/unit/build validated, not live-benchmarked again. Five owned PIDs
   absent and ten ports closed. Receipt: benchmarks/catalog-name-validation.json.
-- [ ] Publish the verified catalog increment only to origin/hparser-integration.
-  No whole-package or speedup claim.
+- [x] Publish the verified catalog increment to origin/hparser-integration
+  with a normal non-force push (235208e748). No whole-package or speedup claim.
 
 - [x] Trace the remaining simple-case mapper to catalog lookup, prepared-plan
   validation, statement setup, digest normalization and collation lookup.
