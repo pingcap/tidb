@@ -1,5 +1,21 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 分区 EXPLAIN 修复后的全套结果
+
+在 22b9dcf9cf 上执行
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib`：
+410 passed / 22 failed，42.47 秒，日志 `/tmp/server-partition-explain-baseline.log`。
+三个分区 EXPLAIN 用例在全套中也全部通过。
+
+下一组 DDL fixture 超时的源码线索：drain_stats_ddl_events 等待整个
+mysql.tidb_ddl_notifier 表为空，build_notifier 同时注册 StatsMetaHandler
+和 PriorityQueueHandler；未初始化的自动分析队列在自动分析启用时
+返回 NotReadyRetryLater，因而事件可以在统计处理完成后仍留存。
+固定 Go master `pkg/statistics/handle/ddl/testutil/util.go:29-39` 的
+HandleNextDDLEventWithTxn 只等待统计 handler 的事务完成，不等待
+priority queue。需要通过明确启用自动分析的回归验证这一判断，再修正
+辅助函数的完成条件；此处尚未修改测试辅助函数，也未将超时记为解决。
+
 ## 2026-09-11 动态分区 EXPLAIN access object
 
 global_index_statistics_match_go 原始回归独立失败：IndexReader access
