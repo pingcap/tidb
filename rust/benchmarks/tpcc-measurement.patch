@@ -1,0 +1,139 @@
+diff --git a/pkg/measurement/measure.go b/pkg/measurement/measure.go
+index 182d713..82f4ae4 100644
+--- a/pkg/measurement/measure.go
++++ b/pkg/measurement/measure.go
+@@ -24,7 +24,8 @@ type Measurement struct {
+ 	OpSumMeasurement map[string]*Histogram
+ }
+ 
+-func (m *Measurement) getHist(op string, err error, current bool) *Histogram {
++// getHistLocked requires the measurement write lock while publishing a pair.
++func (m *Measurement) getHistLocked(op string, err error, current bool) *Histogram {
+ 	opMeasurement := m.OpSumMeasurement
+ 	if current {
+ 		opMeasurement = m.OpCurMeasurement
+@@ -36,28 +37,42 @@ func (m *Measurement) getHist(op string, err error, current bool) *Histogram {
+ 		op, opPairedKey = opPairedKey, op
+ 	}
+ 
+-	m.RLock()
+ 	opM, ok := opMeasurement[op]
+-	m.RUnlock()
+ 	if !ok {
+ 		opM = NewHistogram(m.MinLatency, m.MaxLatency, m.SigFigs)
+ 		opPairedM := NewHistogram(m.MinLatency, m.MaxLatency, m.SigFigs)
+-		m.Lock()
+ 		opMeasurement[op] = opM
+ 		opMeasurement[opPairedKey] = opPairedM
+-		m.Unlock()
+ 	}
+ 	return opM
+ }
+ 
+ func (m *Measurement) measure(op string, err error, lan time.Duration) {
+-	m.getHist(op, err, true).Measure(lan)
+-	m.getHist(op, err, false).Measure(lan)
++	key := op
++	if err != nil {
++		key += "_ERR"
++	}
++	m.RLock()
++	current, summary := m.OpCurMeasurement[key], m.OpSumMeasurement[key]
++	if current == nil || summary == nil {
++		m.RUnlock()
++		m.Lock()
++		defer m.Unlock()
++		// Recheck under the write lock: another writer or rotation may
++		// have changed either map while we waited.
++		current = m.getHistLocked(op, err, true)
++		summary = m.getHistLocked(op, err, false)
++	} else {
++		defer m.RUnlock()
++	}
++	// Keep the current window attached until both records are complete.
++	current.Measure(lan)
++	summary.Measure(lan)
+ }
+ 
+ func (m *Measurement) takeCurMeasurement() (ret map[string]*Histogram) {
+-	m.RLock()
+-	defer m.RUnlock()
++	m.Lock()
++	defer m.Unlock()
+ 	ret, m.OpCurMeasurement = m.OpCurMeasurement, make(map[string]*Histogram, 16)
+ 	return
+ }
+diff --git a/pkg/measurement/measure_test.go b/pkg/measurement/measure_test.go
+new file mode 100644
+index 0000000..744b063
+--- /dev/null
++++ b/pkg/measurement/measure_test.go
+@@ -0,0 +1,68 @@
++package measurement
++
++import (
++	"errors"
++	"sync"
++	"testing"
++	"time"
++)
++
++func TestConcurrentMeasurement(t *testing.T) {
++	for _, rotate := range []bool{false, true} {
++		for round := 0; round < 64; round++ {
++			m := NewMeasurement()
++			start := make(chan struct{})
++			finished := make(chan struct{})
++			var workers sync.WaitGroup
++			var windows sync.WaitGroup
++			var currentCount int64
++			collect := func() {
++				for _, h := range m.takeCurMeasurement() {
++					currentCount += h.GetInfo().Count
++				}
++			}
++			if rotate {
++				windows.Add(1)
++				go func() {
++					defer windows.Done()
++					<-start
++					for {
++						select {
++						case <-finished:
++							return
++						default:
++							collect()
++						}
++					}
++				}()
++			}
++			for worker := 0; worker < 64; worker++ {
++				workers.Add(1)
++				go func(worker int) {
++					defer workers.Done()
++					<-start
++					var err error
++					if worker%2 != 0 {
++						err = errors.New("transaction error")
++					}
++					for sample := 0; sample < 16; sample++ {
++						m.Measure("transaction", time.Millisecond, err)
++					}
++				}(worker)
++			}
++			close(start)
++			workers.Wait()
++			close(finished)
++			windows.Wait()
++			collect()
++			for _, op := range []string{"transaction", "transaction_ERR"} {
++				if got := m.OpSumMeasurement[op].GetInfo().Count; got != 512 {
++					t.Fatalf("rotate=%v round=%d %s: got %d, want 512", rotate, round, op, got)
++				}
++			}
++			if currentCount != 1024 {
++				t.Fatalf("rotate=%v round=%d current windows: got %d, want 1024", rotate, round, currentCount)
++			}
++		}
++	}
++}

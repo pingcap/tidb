@@ -287,11 +287,34 @@ impl PlannerWarningAppender {
 /// so every executor in a plan writes into the one buffer the statement
 /// reports at the end.
 ///
-/// DEFERRED (documented): the rest of `StatementContext` -- the remaining
-/// error groups (bad NULL, no default), the resource tracker and runtime
-/// stats.
+/// Configuration is shared by reference, like Go's session expression
+/// context. Changing a cloned context detaches only its configuration;
+/// statement effects (warnings, memory, locks and counters) retain their
+/// existing shared owners.
 #[derive(Clone, Default)]
-pub struct StmtContext {
+pub struct StmtContext(Arc<StmtContextData>);
+
+impl std::ops::Deref for StmtContext {
+    type Target = StmtContextData;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for StmtContext {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+/// Private configuration payload exposed only as the context's dereference
+/// target. Access and mutation remain on [`StmtContext`].
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct StmtContextData {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
     ///
     /// The level is not decoration. Go reaches this one buffer through three
@@ -304,7 +327,7 @@ pub struct StmtContext {
     /// OK packet's length-encoded info field.
     message: Arc<Mutex<String>>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
-    /// ([`Self::enter_cop_eval`]).
+    /// ([`StmtContext::enter_cop_eval`]).
     ///
     /// Go's pushed-down predicates evaluate inside TiKV, whose response
     /// reports each DISTINCT warning once (`EvalWarnings::append_warning`
@@ -313,7 +336,7 @@ pub struct StmtContext {
     /// equivalent boundary is a scan source applying its accepted filter, so
     /// the same reporting contract lives here: while the cop depth is open,
     /// warnings accumulate deduplicated in this buffer instead of the row
-    /// buffer, and [`Self::take_warnings`] appends them once.
+    /// buffer, and [`StmtContext::take_warnings`] appends them once.
     cop_batch_warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
     /// How many coprocessor-equivalent evaluations are open on this thread.
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
@@ -340,7 +363,7 @@ pub struct StmtContext {
     ///
     /// Go folds it into every value-level decision as `!strictSQLMode ||
     /// ignoreErr` (`util.GetTypeFlagsForInsert`, `ResetContextOfStmt`'s
-    /// `*ast.InsertStmt` arm), so [`Self::for_dml`] resolves it INTO `strict`
+    /// `*ast.InsertStmt` arm), so [`StmtContext::for_dml`] resolves it INTO `strict`
     /// and no reader of `strict` has to know about it. It is kept beside the
     /// result for the one rule that is not a plain `||`: `ErrGroupBadNull`
     /// promotes a SINGLE-ROW insert to an error even without a strict mode,
@@ -794,7 +817,7 @@ impl StmtContext {
         ignore_err: bool,
         memory: StatementMemory,
     ) -> Self {
-        Self {
+        Self(Arc::new(StmtContextData {
             warnings: Arc::default(),
             message: Arc::default(),
             cop_batch_warnings: Arc::default(),
@@ -950,7 +973,7 @@ impl StmtContext {
             has_physical_table_reader: Arc::default(),
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
-        }
+        }))
     }
 
     /// Records which `ResetContextOfStmt` arm this statement took; see
@@ -963,7 +986,7 @@ impl StmtContext {
 
     /// Which `ResetContextOfStmt` arm built this context.
     #[must_use]
-    pub const fn statement_class(&self) -> StatementClass {
+    pub fn statement_class(&self) -> StatementClass {
         self.statement_class
     }
 
@@ -1087,11 +1110,12 @@ impl StmtContext {
     pub fn with_mem_quota(mut self, quota: i64, oom_action: OomAction) -> Self {
         let tmp_storage_on_oom = self.memory.tmp_storage_on_oom();
         let spill_storage = self.memory.configured_spill_storage();
-        self.memory = StatementMemory::new(quota, oom_action, self.connection_id.unwrap_or(0))
+        let mut memory = StatementMemory::new(quota, oom_action, self.connection_id.unwrap_or(0))
             .with_tmp_storage_on_oom(tmp_storage_on_oom);
         if let Some(storage) = spill_storage {
-            self.memory = self.memory.with_spill_storage(storage);
+            memory = memory.with_spill_storage(storage);
         }
+        self.memory = memory;
         self
     }
 
@@ -1129,7 +1153,7 @@ impl StmtContext {
     /// the budget.
     #[must_use]
     pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
-        self.memory = self.memory.with_tmp_storage_on_oom(enabled);
+        self.memory.set_tmp_storage_on_oom(enabled);
         self
     }
 
@@ -1138,7 +1162,7 @@ impl StmtContext {
     /// receives the same immutable path, encryption, and quota policy.
     #[must_use]
     pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
-        self.memory = self.memory.with_spill_storage(storage);
+        self.memory.set_spill_storage(storage);
         self
     }
 
@@ -1158,7 +1182,7 @@ impl StmtContext {
 
     /// Attaches the complete session SQL mode that Go persists in DDL jobs.
     #[must_use]
-    pub const fn with_ddl_sql_mode(mut self, sql_mode: i64) -> Self {
+    pub fn with_ddl_sql_mode(mut self, sql_mode: i64) -> Self {
         self.ddl_sql_mode = sql_mode;
         self
     }
@@ -1238,69 +1262,69 @@ impl StmtContext {
 
     /// Sets the range-building memory quota; zero means unlimited.
     #[must_use]
-    pub const fn with_range_max_size(mut self, bytes: i64) -> Self {
+    pub fn with_range_max_size(mut self, bytes: i64) -> Self {
         self.range_max_size = bytes;
         self
     }
 
     /// Go `SessionVars.RangeMaxSize`.
     #[must_use]
-    pub const fn range_max_size(&self) -> i64 {
+    pub fn range_max_size(&self) -> i64 {
         self.range_max_size
     }
 
     /// Sets `@@tidb_opt_index_prune_threshold` for this statement.
     #[must_use]
-    pub const fn with_opt_index_prune_threshold(mut self, threshold: i32) -> Self {
+    pub fn with_opt_index_prune_threshold(mut self, threshold: i32) -> Self {
         self.opt_index_prune_threshold = threshold;
         self
     }
 
     /// Sets `@@tidb_opt_prefix_index_single_scan` for this statement.
     #[must_use]
-    pub const fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
+    pub fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
         self.opt_prefix_index_single_scan = enabled;
         self
     }
 
     /// Sets `@@tidb_opt_always_keep_join_key` for this statement.
     #[must_use]
-    pub const fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
+    pub fn with_always_keep_join_key(mut self, always_keep: bool) -> Self {
         self.always_keep_join_key = always_keep;
         self
     }
 
     /// Sets `@@tidb_enable_unsafe_substitute` for this statement.
     #[must_use]
-    pub const fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
+    pub fn with_enable_unsafe_substitute(mut self, enable: bool) -> Self {
         self.enable_unsafe_substitute = enable;
         self
     }
 
     /// Sets `@@tidb_opt_enable_semi_join_rewrite` for this statement.
     #[must_use]
-    pub const fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
+    pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
         self.enable_semi_join_rewrite = enable;
         self
     }
 
     /// Sets Go `SessionVars.GetAllowInSubqToJoinAndAgg()` for this statement.
     #[must_use]
-    pub const fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
+    pub fn with_allow_in_subq_to_join_and_agg(mut self, allow: bool) -> Self {
         self.allow_in_subq_to_join_and_agg = allow;
         self
     }
 
     /// Sets `@@tidb_opt_enable_no_decorrelate_in_select` for this statement.
     #[must_use]
-    pub const fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
+    pub fn with_enable_no_decorrelate_in_select(mut self, enable: bool) -> Self {
         self.enable_no_decorrelate_in_select = enable;
         self
     }
 
     /// Sets `@@tidb_opt_skew_distinct_agg` for this statement.
     #[must_use]
-    pub const fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
+    pub fn with_enable_skew_distinct_agg(mut self, enable: bool) -> Self {
         self.enable_skew_distinct_agg = enable;
         self
     }
@@ -1320,7 +1344,7 @@ impl StmtContext {
 
     /// The complete numeric SQL mode captured for a persisted DDL job.
     #[must_use]
-    pub const fn ddl_sql_mode(&self) -> i64 {
+    pub fn ddl_sql_mode(&self) -> i64 {
         self.ddl_sql_mode
     }
 
@@ -1332,13 +1356,13 @@ impl StmtContext {
 
     /// CDC write-source identifier captured for a persisted DDL job.
     #[must_use]
-    pub const fn ddl_cdc_write_source(&self) -> u64 {
+    pub fn ddl_cdc_write_source(&self) -> u64 {
         self.ddl_cdc_write_source
     }
 
     /// Reorganization priority captured for ADD CHECK.
     #[must_use]
-    pub const fn ddl_reorg_priority(&self) -> i64 {
+    pub fn ddl_reorg_priority(&self) -> i64 {
         self.ddl_reorg_priority
     }
 
@@ -1416,62 +1440,62 @@ impl StmtContext {
 
     /// Go `SessionVars.StatsLoadSyncWait`, in milliseconds.
     #[must_use]
-    pub const fn stats_load_sync_wait_ms(&self) -> u64 {
+    pub fn stats_load_sync_wait_ms(&self) -> u64 {
         self.stats_load_sync_wait_ms
     }
 
     /// Go `vardef.StatsLoadPseudoTimeout`.
     #[must_use]
-    pub const fn stats_load_pseudo_timeout(&self) -> bool {
+    pub fn stats_load_pseudo_timeout(&self) -> bool {
         self.stats_load_pseudo_timeout
     }
 
     /// Go `SessionVars.OptIndexPruneThreshold`.
     #[must_use]
-    pub const fn opt_index_prune_threshold(&self) -> i32 {
+    pub fn opt_index_prune_threshold(&self) -> i32 {
         self.opt_index_prune_threshold
     }
 
     /// Returns `@@tidb_opt_prefix_index_single_scan`.
     #[must_use]
-    pub const fn opt_prefix_index_single_scan(&self) -> bool {
+    pub fn opt_prefix_index_single_scan(&self) -> bool {
         self.opt_prefix_index_single_scan
     }
 
     /// Returns `@@tidb_opt_always_keep_join_key`.
-    pub const fn always_keep_join_key(&self) -> bool {
+    pub fn always_keep_join_key(&self) -> bool {
         self.always_keep_join_key
     }
 
     /// Returns `@@tidb_enable_unsafe_substitute`.
-    pub const fn enable_unsafe_substitute(&self) -> bool {
+    pub fn enable_unsafe_substitute(&self) -> bool {
         self.enable_unsafe_substitute
     }
 
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
-    pub const fn enable_semi_join_rewrite(&self) -> bool {
+    pub fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
     }
 
     /// Returns Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
-    pub const fn allow_in_subq_to_join_and_agg(&self) -> bool {
+    pub fn allow_in_subq_to_join_and_agg(&self) -> bool {
         self.allow_in_subq_to_join_and_agg
     }
 
     /// Returns `@@tidb_opt_enable_no_decorrelate_in_select`.
-    pub const fn enable_no_decorrelate_in_select(&self) -> bool {
+    pub fn enable_no_decorrelate_in_select(&self) -> bool {
         self.enable_no_decorrelate_in_select
     }
 
     /// Returns `@@tidb_opt_skew_distinct_agg`.
-    pub const fn enable_skew_distinct_agg(&self) -> bool {
+    pub fn enable_skew_distinct_agg(&self) -> bool {
         self.enable_skew_distinct_agg
     }
 
     /// Go caps synchronous statistics loading by `max_execution_time` when
     /// that statement limit is non-zero.
     #[must_use]
-    pub const fn stats_load_wait_ms(&self) -> u64 {
+    pub fn stats_load_wait_ms(&self) -> u64 {
         if self.max_execution_time_ms > 0
             && self.max_execution_time_ms < self.stats_load_sync_wait_ms
         {
@@ -1565,7 +1589,7 @@ impl StmtContext {
 
     /// Whether Go's plan-replayer table-statistics capture is enabled.
     #[must_use]
-    pub const fn plan_replayer_capture_enabled(&self) -> bool {
+    pub fn plan_replayer_capture_enabled(&self) -> bool {
         self.plan_replayer_capture_enabled
     }
 
@@ -1875,14 +1899,14 @@ impl StmtContext {
 
     /// The statement's parsed optimizer-fix controls.
     #[must_use]
-    pub const fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
+    pub fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
         &self.optimizer_fix_control
     }
 
     /// Attaches the session and transaction facts used by index-lookup
     /// pushdown planning.
     #[must_use]
-    pub const fn with_index_lookup_push_down_session(
+    pub fn with_index_lookup_push_down_session(
         mut self,
         session: tidb_planner::access_path::IndexLookupPushDownSession,
     ) -> Self {
@@ -1892,7 +1916,7 @@ impl StmtContext {
 
     /// The statement snapshot used by index-lookup pushdown planning.
     #[must_use]
-    pub const fn index_lookup_push_down_session(
+    pub fn index_lookup_push_down_session(
         &self,
     ) -> tidb_planner::access_path::IndexLookupPushDownSession {
         self.index_lookup_push_down_session
@@ -1941,7 +1965,7 @@ impl StmtContext {
 
     /// Resolved `tidb_executor_concurrency` for this statement.
     #[must_use]
-    pub const fn executor_concurrency(&self) -> usize {
+    pub fn executor_concurrency(&self) -> usize {
         self.executor_concurrency
     }
 
@@ -1968,7 +1992,7 @@ impl StmtContext {
     /// Go `SessionVars.HashAggPartialConcurrency()` and
     /// `HashAggFinalConcurrency()` for this statement.
     #[must_use]
-    pub const fn hashagg_concurrency(&self) -> (usize, usize) {
+    pub fn hashagg_concurrency(&self) -> (usize, usize) {
         (
             self.hashagg_partial_concurrency,
             self.hashagg_final_concurrency,
@@ -2342,13 +2366,13 @@ impl StmtContext {
 
     /// Whether Go's normal INSERT duplicate check is eager for this statement.
     #[must_use]
-    pub const fn constraint_check_in_place(&self) -> bool {
+    pub fn constraint_check_in_place(&self) -> bool {
         self.constraint_check_in_place
     }
 
     /// Sets `@@tidb_constraint_check_in_place` for this statement.
     #[must_use]
-    pub const fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
+    pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
         self.constraint_check_in_place = enabled;
         self
     }
@@ -2565,14 +2589,14 @@ impl StmtContext {
 
     /// Sets Go `SessionVars.GetReplicaRead()` for this statement.
     #[must_use]
-    pub const fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
+    pub fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
         self.replica_read = replica_read;
         self
     }
 
     /// Sets Go `StmtCtx.Priority` from the statement's own priority modifier.
     #[must_use]
-    pub const fn with_statement_priority(
+    pub fn with_statement_priority(
         mut self,
         statement_priority: tidb_ast::StatementPriority,
     ) -> Self {
@@ -2582,20 +2606,20 @@ impl StmtContext {
 
     /// Sets Go `StmtCtx.NotFillCache` from a SELECT's `SQL_NO_CACHE`.
     #[must_use]
-    pub const fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
+    pub fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
         self.not_fill_cache = not_fill_cache;
         self
     }
 
     /// Go `StmtCtx.Priority` for this statement.
     #[must_use]
-    pub const fn statement_priority(&self) -> tidb_ast::StatementPriority {
+    pub fn statement_priority(&self) -> tidb_ast::StatementPriority {
         self.statement_priority
     }
 
     /// Go `StmtCtx.NotFillCache` for this statement.
     #[must_use]
-    pub const fn not_fill_cache(&self) -> bool {
+    pub fn not_fill_cache(&self) -> bool {
         self.not_fill_cache
     }
 
@@ -2607,7 +2631,7 @@ impl StmtContext {
 
     /// Returns Go `SessionVars.GetReplicaRead()`.
     #[must_use]
-    pub const fn replica_read(&self) -> ReplicaReadType {
+    pub fn replica_read(&self) -> ReplicaReadType {
         self.replica_read
     }
 
@@ -2971,7 +2995,7 @@ impl StmtContext {
 
     /// Whether this session permits a caller-provided AUTO_RANDOM value.
     #[must_use]
-    pub const fn allow_auto_random_explicit_insert(&self) -> bool {
+    pub fn allow_auto_random_explicit_insert(&self) -> bool {
         self.allow_auto_random_explicit_insert
     }
 
@@ -3005,7 +3029,7 @@ impl StmtContext {
 
     /// Whether unchanged matched update rows count as affected.
     #[must_use]
-    pub const fn client_found_rows(&self) -> bool {
+    pub fn client_found_rows(&self) -> bool {
         self.client_found_rows
     }
 
@@ -3675,7 +3699,7 @@ mod tests {
     fn range_fallback_shares_statement_warnings_and_cache_admission() {
         let context = super::StmtContext::default();
         context.start_prepared_range_tracking();
-        let clone = context.clone();
+        let clone = context.clone().with_resource_group_name("worker");
         clone.range_fallback_handler().record_range_fallback(1);
         assert!(context.skip_plan_cache());
         context.start_prepared_range_tracking();
@@ -3841,7 +3865,9 @@ mod tests {
         let shared = ctx.statement_clock.as_ref().unwrap();
         assert!(shared.get().is_none());
 
-        let worker = ctx.clone();
+        let worker = ctx.clone().with_resource_group_name("worker");
+        assert_eq!(ctx.resource_group_name(), "default");
+        assert_eq!(worker.resource_group_name(), "worker");
         assert_eq!(Columns::now(&ctx), Some((1_700_000_000, 654_320_955, 0)));
         assert_eq!(Columns::now(&worker), Columns::now(&ctx));
         assert!(Arc::ptr_eq(

@@ -557,9 +557,14 @@ impl StatementMemory {
     /// need a session handle.
     #[must_use]
     pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
+        self.set_tmp_storage_on_oom(enabled);
+        self
+    }
+
+    /// Changes spill policy without replacing the statement's tracker owner.
+    pub(crate) fn set_tmp_storage_on_oom(&mut self, enabled: bool) {
         self.tmp_storage_on_oom = enabled;
         self.refresh_global_disk_attachment();
-        self
     }
 
     /// Installs the process spill-storage authority captured at server
@@ -567,10 +572,15 @@ impl StatementMemory {
     /// tracker and physical file shares one policy.
     #[must_use]
     pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
+        self.set_spill_storage(storage);
+        self
+    }
+
+    /// Changes the spill authority while retaining the statement lifetime.
+    pub(crate) fn set_spill_storage(&mut self, storage: Arc<SpillStorage>) {
         self.disk_session.detach();
         self.spill_storage = Some(storage);
         self.refresh_global_disk_attachment();
-        self
     }
 
     fn refresh_global_disk_attachment(&self) {
@@ -1062,6 +1072,18 @@ mod tests {
 
         let next = session.statement();
         assert!(next.check().is_ok());
+        drop(op);
+
+        // A worker may override its configuration, but Go's retained
+        // statement context keeps the same accounting lifetime.
+        let context = crate::StmtContext::for_query_with_memory(next);
+        let worker = context.clone().with_resource_group_name("worker");
+        let op = context.statement_memory().operator_tracker(3);
+        op.consume(4);
+        drop(context);
+        assert_eq!(session.bytes_consumed(), 4);
+        drop(worker);
+        assert_eq!(session.bytes_consumed(), 0);
         drop(op);
     }
 

@@ -3,9 +3,10 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment removes a table/storage clone used only to report index
-usage after a prepared point read. Go reports with logical/physical table IDs
-and an index ID. The preceding increments preserve domain statistics ownership,
+The current increment shares statement configuration by reference instead of
+copying it through builders and executor clones. The preceding point-read
+increment reports usage through IDs instead of a cloned table. Earlier increments
+preserve domain statistics ownership,
 reconcile column-statistics validity and restore the current execution context
 for prepared range costing.
 Full performance and whole-Go-package acceptance remain open.
@@ -21,6 +22,30 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 
 ## Progress
+
+- [x] Share StmtContext's configuration by reference, matching Go's session
+  expression-context ownership. Keep existing effect cells shared; changing
+  a clone's flags must not change its parent. Replace 1,104-byte builder moves
+  and deep executor-context clones with an Arc handle and copy-on-write
+  configuration. Establish an unchanged context/cache/DML test baseline,
+  inspect compiled copies and compare matched sysbench/TPC-C runs before
+  deciding whether this addresses the measured setup cost. Evidence root:
+  /private/tmp/tidb-shared-context.K1zPdw.
+- [x] Validate the shared-context increment: 185 selected tests pass; nine
+  failures have identical baseline assertion bodies. Release build,
+  all-target check, Ready lint and changed-line formatting pass. Static
+  full-context copy sites fall from 34 to zero, but fixed-work timings overlap.
+  Correct the reproduced go-tpc measurement race and rerun all servers with
+  the same driver: 84,000 measured sysbench and 36,000 measured TPC-C
+  transactions, plus 32,000 TPC-C profile transactions. Exact counts, all
+  eleven consistency conditions and bounded Go result equality pass.
+  Restore auto-analyze; verify eleven owned PIDs absent and ten ports closed.
+  Replace the obsolete context microbenchmark receipt with current evidence
+  in benchmarks/statement-context-cost-baseline.json. Do not claim a speedup.
+- [ ] Trace remaining context allocations and variable reads against Go's
+  eligible-context reuse. Cross-statement pooling, external Rust const-call
+  compatibility, nine baseline failures and full performance acceptance
+  remain unverified; do not infer them from shared executor configuration.
 
 - [x] Inspect the final publication binary's statement setup against Go
   `pkg/executor/select.go::ResetContextOfStmt`. Five uninlined Rust builders
@@ -422,6 +447,15 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+- Decision: Keep StmtContext as one shared configuration handle. Copy only
+  when a clone changes its flags; retain existing shared owners for warnings,
+  statement time and memory cleanup. Cross-statement context reuse is separate
+  work and is not claimed here. Correct go-tpc's measurement-map ownership
+  before using it to compare either server; do not tolerate missing counts.
+  Rationale: Go expressions retain their session context by reference, and
+  measurement-window rotation must not detach unfinished records.
+  Date/Author: 2026-09-10 / Codex.
+
 - Decision: Capture scalar reporting identities under the existing table
   borrow and release it before resolving statistics. Do not clone a table to
   bypass the borrow boundary. Retain all reporting rules and existing tests.
@@ -563,6 +597,16 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+- The unchanged Rust control reported 5,999 of 6,000 TPC-C transactions.
+  go-tpc creates histogram pairs after releasing its read lock, without
+  rechecking under its write lock; simultaneous first writers overwrite
+  recorded counts. It also swaps the current-window map under a read lock.
+  A concurrent Go regression reproduces lost records before the tool fix;
+  ten race-detector runs pass afterward. Preserve the rejected sample and
+  repeat the comparison with the same corrected driver for all servers.
+  The reproducible tool patch is benchmarks/tpcc-measurement.patch, applied
+  beside tpcc-input-seed.patch to go-tpc a9ca4818625deef91ff80f6c395a575ccae22b7c.
 
 The final column-validity load probe narrows the next failure to catalog
 replacement, not estimator arithmetic or predicate collection. It records 92
@@ -817,13 +861,23 @@ checkout; selected SQL equality does not establish full source parity.
 
 ## Outcomes & Retrospective
 
+The shared-context increment removes full-value builder copies and makes
+executor clones share configuration until mutation. Existing warning, clock
+and final-memory-owner behavior is preserved. The corrected workload driver
+now counts concurrent measurements without overwriting or detaching them.
+Sysbench/TPC-C timings overlap, so this is an ownership and measurement
+correction, not a demonstrated throughput win. Profiles still expose allocation
+and variable-lookup cost; Go's cross-statement reuse is not implemented here.
+All owned services are stopped and the fixture is retained. Current evidence
+and exact commands are in benchmarks/statement-context-cost-baseline.json.
+
 The prepared point-reporting increment removes unnecessary table/storage
 ownership and reduces the function's static machine code from 1,304 to 399
 instructions. This is not a throughput result: matched timings overlap and
 the original point-read inclusive profile is effectively unchanged. Preserve
 the remaining performance goal and eleven reproduced baseline test failures.
-Statement-context construction still performs full-value copies; the rejected
-inline-only probe must not be revived as a demonstrated optimization.
+At that point statement-context construction still performed full-value copies;
+the rejected inline-only probe must not be revived as a demonstrated optimization.
 
 Statistics loading now survives catalog refresh through retained loading
 resources and one attachment path. The existing Go-derived regression fails
