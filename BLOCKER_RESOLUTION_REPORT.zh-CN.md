@@ -1,5 +1,21 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 HAVING 子查询区分结果集合与排序契约
+
+executor 剩余 subqueries 失败独立复现于 `/tmp/subquery-order-red.log`：
+无 ORDER BY 的 GROUP BY/HAVING 返回 3,2，旧断言要求 2,3。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+的 `pkg/executor/test/aggregate/aggregate_test.go:487` 对无排序聚合
+先 Sort() 再比较。Rust 测试现在保留原 SQL，按多重集合精确比较结果，
+并额外执行 ORDER BY a 的同一查询，直接断言有序结果。
+没有修改执行器、过滤条件、预期行值或行数。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-executor --lib` 全部 1296 用例通过
+（`/tmp/subquery-order-green.log`）；`make lint` 退出 0
+（`/tmp/subquery-order-lint.log`）。server 的其余失败与外部集成门禁
+仍需逐项处理，不能将 executor 全绿等同于整体目标完成。
+
 ## 2026-09-11 point-get 显式输出保留隐藏列
 
 独立复现 loaded_hidden_columns_preserve_native_layout_and_index_values：

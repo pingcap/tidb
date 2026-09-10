@@ -2180,9 +2180,21 @@ fn subqueries() {
     );
 
     // A subquery in HAVING, over the aggregate path.
+    // Like Go's aggregate tests, compare unordered GROUP BY output as a multiset.
+    let mut having_rows = run_select_on(
+        "SELECT a FROM s GROUP BY a HAVING SUM(b) > (SELECT MIN(b) FROM s)",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    having_rows.sort_by_key(|row| match row.as_slice() {
+        [Datum::Int(value)] => *value,
+        _ => panic!("unexpected HAVING output: {row:?}"),
+    });
+    assert_eq!(having_rows, vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]);
     assert_eq!(
         run_select_on(
-            "SELECT a FROM s GROUP BY a HAVING SUM(b) > (SELECT MIN(b) FROM s)",
+            "SELECT a FROM s GROUP BY a HAVING SUM(b) > (SELECT MIN(b) FROM s) ORDER BY a",
             &catalog,
             &crate::StmtContext::for_query()
         )
