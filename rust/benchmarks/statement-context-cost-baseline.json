@@ -383,5 +383,20 @@
     "Nine baseline failures remain; no full-package semantic parity or broad performance acceptance claim.",
     "Next source comparison: Rust variable-name normalization and registry lookup versus Go cached fields/GetSystemVar/GetSysVar."
   ],
+  "publication_merge": {
+    "validated_merge_revision": "4e412789785663835b74c98ba54c9b6eb17114b3",
+    "remote_parent": "c4b2b720ad",
+    "scope": "Three collaborator commits in tests, access-path harness and report; no constructor overlap or production Rust changes.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor --lib pseudo_composite_index_applies_master_selectivity_floor -- --nocapture",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "bash -n rust/scripts/run-realtikv-access-path.sh rust/scripts/test-access-path-readiness.sh",
+      "bash rust/scripts/test-access-path-readiness.sh",
+      "git diff --check"
+    ],
+    "results": "Selected upstream test passes (one executed), all-target check/lint/shell/readiness checks pass. Initial exact-name filter selected zero tests and was corrected, not counted as validation. Sandboxed lint could not reach the module proxy; authorized rerun passes.",
+    "benchmark_scope": "Workloads exercised the frozen constructor candidate before this test/harness-only merge, not the merged access-path harness. No full access-path RealTiKV harness rerun claimed."
+  },
   "supersedes": "Updates the shared-context receipt at 6ee06c31b7. That receipt incorrectly described the construction probe as already removed; its actual deletion is part of this increment. No obsolete microbenchmark result is promoted."
 }
