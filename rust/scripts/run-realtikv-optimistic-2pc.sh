@@ -40,7 +40,7 @@ validate_owned_paths() {
   fi
   local tiup_data="${TIUP_HOME:-${HOME}/.tiup}/data"
   [[ "${TAG_DIR}" == "${tiup_data}/${TAG}" ]] \
-    && [[ "${TAG}" == campaign28-optimistic-2pc-* ]] \
+    && [[ "${TAG}" =~ ^realtikv-optimistic-2pc-[0-9]+$ ]] \
     && [[ "${PHASE_DIR}" == "${TMPDIR:-/tmp}/${TAG}-phases" ]]
 }
 

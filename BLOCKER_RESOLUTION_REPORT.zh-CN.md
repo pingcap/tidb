@@ -1,5 +1,33 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 optimistic-2pc 清理恢复，继续追踪异步 secondary 证据
+
+路径回归从生产 TAG/validate_owned_paths 提取代码，旧 campaign28 前缀拒绝
+本脚本 realtikv-optimistic-2pc-<pid>，`/tmp/optimistic-paths-red.log`。
+现仅允许数字 PID 标签，同时要求 data 和 phase 路径完全匹配。
+`bash rust/scripts/test-optimistic-2pc-paths.sh`、原 `--self-test-cleanup`、
+`bash -n`、`make lint`、`git diff --check` 均退出 0。
+lint 日志 `/tmp/optimistic-paths-lint.log`。
+
+实际执行：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-optimistic-2pc.sh
+# 退出 1，/tmp/optimistic-2pc-restored.log
+```
+
+清理已成功，tag realtikv-optimistic-2pc-81835 的进程/data/phase 已移除。
+真实测试提交成功后在 optimistic_2pc_realtikv_source.rs:263 失败：同步
+receipt.secondary_publications 为 0，旧断言要求 1。未修改或删除该断言。
+当前源代码已将 classic 2PC secondary 交给 detached task，同步 receipt
+不能代表其完成状态。固定 Go master 所依赖 client-go
+`v2.0.8-0.20260903102657-08cbf831121a/txnkv/transaction/2pc.go:1099`
+同样 spawnWithStorePool 后立即返回，不能为满足断言强制同步 secondary。
+
+下一步需为实际异步完成提供可验证的 publication 证据，同时保持原提交、
+split/leader retry、回滚和所有 readback 断言。此提交只解决清理失败，
+该 RealTiKV 门禁仍为红色，不记为通过。
+
 ## 2026-09-11 prepared-write 原始 RealTiKV 门禁恢复
 
 脚本创建 realtikv-prepared-write-<pid>，清理却只允许旧 campaign28 前缀；
