@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	util2 "github.com/pingcap/tidb/pkg/util"
@@ -436,6 +437,25 @@ func (m *ownerManager) closeSession() {
 
 func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
 	m.closeSession()
+
+	// Validate that the advertise address is still bound to a local interface
+	// before creating/renewing the session. This prevents stale entries when
+	// the host IP changes.
+	cfg := config.GetGlobalConfig()
+	advertiseAddr := cfg.AdvertiseAddress
+	if len(advertiseAddr) > 0 && advertiseAddr != "0.0.0.0" && advertiseAddr != "::" {
+		if !util2.IsIPBoundLocally(advertiseAddr) {
+			m.logger.Warn("advertise-address is no longer bound to any local interface, refusing to renew session",
+				zap.String("advertise-address", advertiseAddr),
+				zap.String("manager-id", m.id),
+				zap.String("owner-key", m.key))
+			return errors.Errorf(
+				"advertise-address %s is not bound to any local network interface. "+
+					"The host IP may have changed. Refusing to renew etcd session to prevent stale entries.",
+				advertiseAddr)
+		}
+	}
+
 	// Note: we must use manager's context to create session. If we use campaign
 	// context and the context is cancelled, the created session cannot be closed
 	// as session close depends on the context.
