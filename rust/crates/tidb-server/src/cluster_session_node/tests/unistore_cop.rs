@@ -1529,6 +1529,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
         &mut session,
         "CREATE TABLE stats_lifecycle (a INT, b INT, INDEX idx_b(b))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let old_id = stack
         .factory
         .catalog
@@ -1556,6 +1557,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
         &mut session,
         "CREATE TABLE stats_lifecycle_like LIKE stats_lifecycle",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let like_id = stack
         .factory
         .catalog
@@ -1581,6 +1583,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
         .parse::<u64>()
         .expect("stats version is an unsigned integer");
     rows(&mut session, "TRUNCATE TABLE stats_lifecycle");
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let new_id = stack
         .factory
         .catalog
@@ -1612,6 +1615,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
         .parse::<u64>()
         .expect("new stats version is an unsigned integer");
     rows(&mut session, "DROP TABLE stats_lifecycle");
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let dropped_version = displayed(rows(
         &mut session,
         &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {new_id}"),
