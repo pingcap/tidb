@@ -39,3 +39,13 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 ```
 
 这确认 PD readiness 重试、Go failpoint 的 primary/secondary 构造、Rust lock resolver 和第二次 cop response 全部跨进程工作。此前 `mysql.tidb` 缺失来自错误地用 Rust server 承担 Go fixture；现已移除该 wrapper。测试过滤器也改为 aggregate target 的全限定 case 名，避免 0 tests 假失败。
+
+## access-path 当前证据（2026-09-10）
+
+完整脚本运行完成，但统计阶段仍有 2 个硬失败、7 个路径差异：
+
+- `bucket=1 AND rare=7`：Go `idx_cover` 估算 1（伪统计阶段 0.10），Rust 伪统计 1.25。
+- `SELECT bucket,rare ... bucket=1`：Go 覆盖索引估算 500，Rust 2000。
+- ANALYZE 后 Rust 对 `rare=7`、`rare>0`、`u(a=1,b=2)` 等选择退化为全表或错误索引，说明问题不止成本常数，而是 Go `GetRowCountByIndexRanges` 的复合索引等值前缀、直方图 total-row-count 和列统计回退语义未完整接入。
+
+权威运行：`RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-access-path.sh`。该结果未宣称通过；下一修复类别继续对照 `pkg/planner/cardinality/row_count_index.go` 与 Rust `row_count_estimator.rs`。
