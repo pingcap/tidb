@@ -98,6 +98,7 @@ go_test(
         "//pkg/ttl/client",
         "//pkg/ttl/metrics",
         "//pkg/ttl/session",
+        "//pkg/ttl/sqlbuilder",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
