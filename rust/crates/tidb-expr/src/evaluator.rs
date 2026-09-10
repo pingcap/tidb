@@ -206,14 +206,14 @@ fn eval_vectorized_expression<C: Columns>(
                 .map(|row| input.get_row(row).get_datum(column_index, field_type))
                 .collect())
         }
-        // A deferred constant (the clock family) re-evaluates per row against
-        // the statement clock, matching Go's `Constant.Eval` over
-        // `DeferredExpr`; a plain constant repeats its build-time value.
+        // Go Constant.VecEval* reads parameters from this execution once per
+        // nonempty batch. Deferred expressions retain row evaluation.
         Expression::Constant(constant) => {
             if constant.deferred_expr.is_none() {
-                Ok(std::iter::repeat_with(|| constant.eval())
-                    .take(input.num_rows())
-                    .collect::<Result<Vec<_>, _>>()?)
+                if input.num_rows() == 0 {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![constant.eval_in(ctx)?; input.num_rows()])
             } else {
                 (0..input.num_rows())
                     .map(|row| expression.eval(ctx, input.get_row(row)))
@@ -457,6 +457,36 @@ mod tests {
         let mut constant = Constant::new(Datum::Null, field_type);
         constant.param_marker = Some(ParamMarker { order: 0 });
         Expression::Constant(constant)
+    }
+
+    #[test]
+    fn vector_filter_reads_current_parameter_once_per_nonempty_chunk() {
+        let filters = vec![parameter(long())];
+        for value in [Datum::Null, Datum::Int(0), Datum::Int(1), Datum::Int(-1)] {
+            for rows in [0, 1, 8] {
+                let ctx = CountedParameter {
+                    value: Ok(value.clone()),
+                    reads: Cell::new(0),
+                };
+                let mut input = Chunk::new(&[], rows, rows.max(1));
+                input.set_num_virtual_rows(rows);
+                let (selected, nulls) = vectorized_filter_consider_null(
+                    &ctx,
+                    true,
+                    &filters,
+                    &input,
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .unwrap();
+                assert_eq!(
+                    selected,
+                    vec![crate::truthy_of(&value).unwrap() == Some(true); rows]
+                );
+                assert_eq!(nulls, vec![value.is_null(); rows]);
+                assert_eq!(ctx.reads.get(), usize::from(rows > 0));
+            }
+        }
     }
 
     #[test]

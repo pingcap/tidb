@@ -397,6 +397,52 @@ fn pseudo_composite_index_applies_master_selectivity_floor() {
 }
 
 #[test]
+fn analyzed_composite_index_dominates_single_equality_index() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, payload VARCHAR(20), \
+         INDEX idx_bucket(bucket), INDEX idx_rare(rare), INDEX idx_cover(bucket, rare))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let values = (1..=2000)
+        .map(|id| format!("({id}, {}, {id}, 'payload')", id % 4))
+        .collect::<Vec<_>>()
+        .join(",");
+    run_insert_on(&format!("INSERT INTO t VALUES {values}"), &mut catalog, &ctx).unwrap();
+    let (table_id, statistics) = {
+        let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "t").unwrap() else {
+            panic!("expected KV table");
+        };
+        (
+            table.table_id,
+            crate::analyze::kv::analyze_kv_table(
+                table,
+                &crate::analyze::AnalyzeOptions::default(),
+                None,
+                &ctx,
+            )
+            .unwrap(),
+        )
+    };
+    for evicted in [false, true] {
+        let mut current = statistics.clone();
+        if evicted {
+            // Eviction removes payloads, not persisted HasAnalyzed metadata.
+            current.indexes.retain(|_, index| index.num_columns == 1);
+        }
+        catalog.set_table_statistics(table_id, Arc::new(current));
+        let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog);
+        let scan = rows
+            .iter()
+            .find(|row| row.split('\t').next().unwrap().contains("IndexRangeScan"))
+            .expect("Go master selects an index range");
+        assert!(scan.contains("idx_cover"), "evicted={evicted}: {rows:?}");
+    }
+}
+
+#[test]
 fn explain_uses_the_lowercase_field_name_identity() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)

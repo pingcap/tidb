@@ -1088,7 +1088,28 @@ impl UniqueIndexPointSourceExec {
 impl Executor for UniqueIndexPointSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.source = None;
-        let mut handles: Vec<TableHandle> = if self.single_point {
+        // Go isCommonHandleRead: clustered PRIMARY has metadata but no
+        // separate index entries. Its values directly encode record handles.
+        let common_primary = !self.table.common_handle_offsets().is_empty()
+            && self
+                .table
+                .plan_indexes()
+                .any(|index| index.id == self.index_id && index.clustered_primary);
+        let mut handles: Vec<TableHandle> = if common_primary {
+            self.index_values
+                .iter()
+                .filter(|values| !values.iter().any(Datum::is_null))
+                .map(|values| {
+                    self.table
+                        .common_handle_from_values(values, self.decode_context.zone())
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "common primary key encoding failed: {error:?}"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else if self.single_point {
             let [values] = self.index_values.as_slice() else {
                 return Err(ExecError::unsupported(
                     "a unique-index PointGet does not retain exactly one key",

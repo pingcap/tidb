@@ -247,6 +247,11 @@ pub struct DataSource {
     pub table_path_count_after_access: Option<f64>,
     /// Go index access paths' already-derived `CountAfterAccess`, by index id.
     pub index_path_count_after_access: std::collections::BTreeMap<i64, f64>,
+    /// Unadjusted index cardinality bounds retained for Go skyline risk comparison.
+    pub index_path_row_estimates:
+        std::collections::BTreeMap<i64, crate::cardinality::row_count_column::RowEstimate>,
+    /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
+    pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
     /// `getTableScanPenalty`.
     pub table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput,
@@ -753,6 +758,8 @@ impl DataSource {
             table_stats: self.table_stats.clone(),
             table_path_count_after_access: self.table_path_count_after_access,
             index_path_count_after_access: self.index_path_count_after_access.clone(),
+            index_path_row_estimates: self.index_path_row_estimates.clone(),
+            analyzed_index_ids: self.analyzed_index_ids.clone(),
             table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
         }

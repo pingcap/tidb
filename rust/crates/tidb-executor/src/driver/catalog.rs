@@ -1323,9 +1323,13 @@ impl Catalog {
                             .map(|(offset, column)| SourceColumn {
                                 id: column.id,
                                 name: column.name.clone(),
-                                is_primary_key: column
-                                    .field_type
-                                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                                // PKIsHandle and its primary column must agree,
+                                // including tables installed through register_kv.
+                                is_primary_key: table.pk_handle_offset() == Some(offset)
+                                    || table.common_handle_offsets().contains(&offset)
+                                    || column
+                                        .field_type
+                                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
                                 offset,
                                 ret_type: column.field_type.clone(),
                                 is_public: true,

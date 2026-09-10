@@ -1866,6 +1866,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let mut best_preferred_range: Option<Task> = None;
     let mut best_is_preferred_range = false;
     let mut best_is_full_range = true;
+    let mut ordinary_candidates = Vec::new();
     'paths: for path in &ds.enumerated_paths {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
@@ -1882,6 +1883,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         let mut index_join_skyline_count = None;
         let mut cur_preferred_range = false;
         let mut cur_is_full_range = true;
+        let mut candidate_metrics = None;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if (!ordered && ds.force_keep_order_table_path)
@@ -2767,6 +2769,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .min(base_stats.row_count());
                     }
                 }
+                let skyline_access_count = count_after_access;
                 // Go `GetOriginalPhysicalIndexScan` calls
                 // `AdjustRowCountForIndexScanByLimit` before pricing the
                 // scan. With pseudo statistics its cross-estimation arm
@@ -2832,6 +2835,43 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .iter()
                             .all(|column| fully_covered_columns.contains(&column.unique_id))
                     });
+                // Retain candidates whose skyline facts are unavailable. In
+                // particular, do not invent CountAfterIndex for residual filters.
+                if prop.index_join_prop.is_none() && index_filters.is_empty() {
+                    if let (Some(estimate), Some(detached), Some(access)) = (
+                        ds.index_path_row_estimates.get(&source_index.id),
+                        detach.as_ref(),
+                        skyline_access_count,
+                    ) {
+                        let analyzed = ds.analyzed_index_ids.contains(&source_index.id);
+                        if analyzed {
+                            let mut pairs = std::collections::BTreeMap::new();
+                            for condition in &detached.access_conds {
+                                for column in tidb_expr::simple_expr::extract_columns(condition) {
+                                    if let Some(position) = index_cols.iter()
+                                        .position(|index| index.unique_id == column.unique_id) {
+                                        pairs.insert(column.unique_id, index_lengths[position]);
+                                    }
+                                }
+                            }
+                            let columns = crate::column_length::Col2Len::from_pairs(pairs);
+                            candidate_metrics = Some(crate::find_best_task::candidate::CandidateMetrics {
+                                access_columns: columns.clone(),
+                                index_columns: columns,
+                                single_scan,
+                                multi_valued: source_index.is_multi_valued,
+                                global: source_index.global,
+                                matches_property: !ordered || keep_order,
+                                eq_or_in_count: detached.eq_or_in_count,
+                                count_after_access: access,
+                                count_after_index: access,
+                                min_count_after_access: estimate.min_est.min(estimate.est),
+                                max_count_after_access: estimate.max_est.max(access),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
                 // Go `constructDS2IndexScanTask` sets the scan to
                 // `tmpPath.CountAfterAccess`, which for a runtime probe is the
                 // per-outer-row count divided by the residual index-filter
@@ -3024,6 +3064,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         } else {
             cop.convert_to_root_task(ctx.allocator)?
         };
+        if prop.index_join_prop.is_none() {
+            crate::find_best_task::candidate::insert_skyline_candidate(
+                &mut ordinary_candidates,
+                (cur, candidate_metrics, cur_preferred_range, cur_is_full_range),
+                |candidate| candidate.1.as_ref(),
+                ds.table_scan_penalty.pseudo_stats,
+                prop.expected_cnt,
+                ctx.prefer_range_scan,
+                ctx.index_join_skyline_threshold,
+            );
+            continue;
+        }
         let skyline_choice = if prop.index_join_prop.is_some() {
             index_join_skyline_prefers_current(
                 index_join_skyline_count,
@@ -3052,6 +3104,24 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             best_index_join_skyline_count = index_join_skyline_count;
         } else if better_than_preferred_range {
             best_preferred_range = Some(cur);
+        }
+    }
+    for (cur, _, preferred, full_range) in ordinary_candidates {
+        let better_range = if preferred {
+            match best_preferred_range.as_ref() {
+                Some(best_range) => compare_task_cost(ctx.coster, &cur, best_range)?,
+                None => true,
+            }
+        } else {
+            false
+        };
+        if better_range {
+            best_preferred_range = Some(cur.clone());
+        }
+        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+            best = cur;
+            best_is_preferred_range = preferred;
+            best_is_full_range = full_range;
         }
     }
     if prefer_range && best_is_full_range {
