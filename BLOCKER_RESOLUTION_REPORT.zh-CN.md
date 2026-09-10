@@ -1,5 +1,51 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 table probe 统计版本保留
+
+Go `constructDS2TableScanTask` 为 probe scan 设置
+`StatsVersion: ds.StatsInfo().StatsVersion`。Rust 无 access floor 时新建的
+StatsInfo 默认版本为零，导致 analyzed orders probe 错误显示 `stats:pseudo`。
+现保留 source 统计版本，仍不附加 Go 此处刻意省略的 NDV。
+
+在 condition eleven 的原始 analyzed 计划上新增断言：orders access 不得显示
+`stats:pseudo`。旧实现运行退出 101，直接失败于此断言，日志
+`/tmp/probe-version-red.log`。修复后该断言通过，随后仍失败于原有两层 MergeJoin
+断言，日志 `/tmp/probe-version-green.log`；这个文件名不表示整个测试通过。
+执行命令为 `RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-executor --lib
+tpcc_condition_eleven_pushes_filters_through_nested_derived_joins`。
+`make lint` 退出 0（`/tmp/probe-version-lint.log`），`git diff --check` 通过。
+这是可独立验证的版本丢失修复，condition eleven 的扫描行数、路径和 synthetic
+COUNT 问题仍未解决，未声明完整 case 通过。
+
+## 2026-09-10 condition eleven 精确 Go master 对照
+
+在 `882cc27174` 上复现剩余 executor 测试，并使用现有 load_stats 导出 API
+导出 customer/orders/new_order 的实际 fixture 统计。Go oracle 仍固定
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，以 unistore 启动并加载相同 JSON。
+证据位于 `/tmp/tpcc-eleven-oracle/`：三份表名 JSON、setup.sql、setup.out、
+query.sql、go-plan.out、rust.log。导出及可读计划临时日志代码已经移除。
+
+重要更正：Go master 本例没有两层 MergeJoin；实际为顶层 IndexHashJoin，
+new_order build 与 orders probe 的下层 IndexJoin，与 Rust join 类型一致。
+旧断言不能作为 Go 行为依据。但不能仅修改类型让测试通过，因为以下真实差异
+已由相同统计证实：
+
+| 节点 | Go master | Rust |
+| --- | --- | --- |
+| new_order TableRangeScan | 9000 行 | 11250 行 |
+| orders probe TableRangeScan | 10 行 | 1 行，错误显示 pseudo |
+| orders probe Selection | 1 行 | 1 行 |
+| customer probe | idx_customer IndexReader，扫描 10 行 | TableReader，扫描 1 行 |
+| customer synthetic COUNT | Column#41 | ScalarQueryCol#-9223372036854775808 |
+
+Go `constructDS2TableScanTask` 在过滤前计算 rowCount/selectivity，随后应用
+accessRowsFloor 和唯一键上限，并保留统计版本；Rust 当前 runtime table path
+直接把过滤后 rowCount 作为 scan 统计。该入口是下一修复点。new_order 静态
+扫描另经过 CountAfterAccess < dsStats 时的 0.8 调整，需要独立检查加载统计
+后的 native common-handle range 估算。未经证明，不把这些差异视为格式噪音。
+本轮为 WIP 取证，没有新增生产修复，也未修改现有失败断言；整体目标 active。
+
 ## 2026-09-10 condition nine 修复并通过
 
 已定位成本约十倍的原因：Rust 把 accessRowsFloor 直接作为 index filter 后的

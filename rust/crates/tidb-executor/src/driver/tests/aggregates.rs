@@ -2867,6 +2867,15 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .iter()
         .map(|operator| operator.trim_start_matches(&[' ', '│', '├', '└', '─'][..]))
         .collect::<Vec<_>>();
+    for (row, access) in analyzed_access.iter().enumerate() {
+        if access == "table:orders" {
+            assert!(
+                !analyzed_details[row].contains("stats:pseudo"),
+                "analyzed IndexJoin table probes retain the source statistics version: {}",
+                analyzed_details[row]
+            );
+        }
+    }
     assert_eq!(
         analyzed_operator_names
             .iter()

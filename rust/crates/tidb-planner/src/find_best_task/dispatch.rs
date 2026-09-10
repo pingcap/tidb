@@ -2162,7 +2162,17 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
                             })
                         })
-                        .or_else(|| Some(crate::stats_info::StatsInfo::new(runtime_rows, [])));
+                        .or_else(|| {
+                            Some(
+                                crate::stats_info::StatsInfo::new(runtime_rows, [])
+                                    .with_stats_version(
+                                        ds.base
+                                            .base
+                                            .stats_info()
+                                            .map_or(0, |stats| stats.stats_version()),
+                                    ),
+                            )
+                        });
                 }
                 base.base.set_stats(stats.clone());
                 let table_range_rebuild = if table_access_conds.is_empty() {
