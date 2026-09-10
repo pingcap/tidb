@@ -144,5 +144,17 @@
     "cleanup": "4 owned PIDs absent; 10 ports closed; fixture retained.",
     "artifacts": "/private/tmp/tidb-shared-scheduler.fEsNL7/merged",
     "logs": "/private/tmp/tidb-shared-scheduler.fEsNL7/response/merged-{tests,build,lint}.log"
+  },
+  "final_concurrent_merge": {
+    "revision": "af38d2b28d3508c2b35bc59662472901ffa80d09",
+    "upstream": "18bcfaa19b66e2ba31aa3ef6d5539f56e7ca8293",
+    "source_check": "Go exhaust_physical_plans.go:488-497 uses the original fractional outer row count and divides only when positive; the collaborator's change matches this.",
+    "validation": "Focused fractional-outer-count planner regression and Ready lint pass. No txnkv source change or merge conflict.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-planner --lib -- index_join_probe_average_preserves_fractional_outer_rows --test-threads=12",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+    ],
+    "limits": "The final additional planner change was unit-tested, not rerun through the live cluster or server build. Those results above belong to eb8966fb8f. No full-workspace or broad performance claim.",
+    "logs": "/private/tmp/tidb-shared-scheduler.fEsNL7/response/latest-{planner-test,lint}.log"
   }
 }

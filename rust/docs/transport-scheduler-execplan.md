@@ -41,6 +41,10 @@ of a whole Go package or of the throughput/latency goal.
   Merged build and Ready lint pass. Another 6,000 sysbench and 6,000 TPC-C events
   pass fresh Go equality and eleven consistency checks. Restore settings and
   verify four owned PIDs absent and ten ports closed before retrying publication.
+- [x] Preserve the next concurrent update, 18bcfaa19b. Verify its fractional
+  IndexJoin outer-count calculation against Go source; its focused regression
+  and Ready lint pass. No txnkv changes. Server build/live evidence remains
+  explicitly scoped to eb8966fb8f, before this last planner-only merge.
 
 ## Surprises & Discoveries
 
