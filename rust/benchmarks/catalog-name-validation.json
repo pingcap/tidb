@@ -339,8 +339,19 @@
     "timing_exclusion": "Final live runs are functional validation only: parent compilation overlapped them. No timing promotion or attribution across collaborator production changes. Raw validation.json lists an unused historical before binary; only Go and after were executed.",
     "remaining_failures": "Four remote-scan and five view/lateral assertions remain, unchanged from the remote parent. Full SQL/package parity and broad performance acceptance are not established."
   },
+  "publication_validation": {
+    "source_revision": "7f419f46b74a706cb1e59d2c38633f02947722dd",
+    "remote_parent": "b45aec98c4df68b79f238d42f0e7a7def9afcc93",
+    "delta": "Merge the Go NULL-bound test correction and session fix 52592 point-conversion control. Default conversion remains enabled, matching Go find_best_task.go. Both formerly failing cases and the new fix-control test pass.",
+    "commands": "Same candidate test/build/check/lint commands listed in postmerge_validation; ruby /private/tmp/tidb-catalog-final.cC8ceC/compare-publication.rb; git diff --check.",
+    "results": "166 passed, seven failed; all seven assertions match the exact 4bd2fb487b parent baseline. Release build, workspace all-target check and Ready lint exit zero.",
+    "logs": "/private/tmp/tidb-catalog-final.cC8ceC/publication-{tests,build,check,lint}.log",
+    "comparison": "/private/tmp/tidb-catalog-final.cC8ceC/publication-comparison.json",
+    "live_scope": "Live workload evidence is for f80d92b00b and its recorded immutable binary, not a rerun after the final b45aec98c4 merge. The final default-preserving fix-control delta was source-reviewed and unit/build/check/lint validated.",
+    "cleanup": "Five owned PIDs absent, ten ports closed, fixture retained; cleanup.json under live_artifacts. The clean temporary parent checkout was removed after comparison, with revision and logs retained."
+  },
   "remaining": [
-    "Nine remote-parent test failures remain; this receipt does not claim a green full suite.",
+    "Seven existing assertions remain: two write-range readers and five view/lateral cases. This receipt does not claim a green full suite.",
     "Planner metadata is still materialized into an owned snapshot, unlike Go's retained infoschema ownership.",
     "No whole Go-package parity or full sysbench/TPC-C performance claim."
   ]

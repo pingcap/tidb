@@ -48,9 +48,14 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   requests through CatalogTableKey. Remove unconsumed table/view sorting.
   Qualified Unicode SELECT, PREPARE/EXECUTE, UPDATE, DELETE and INSERT match
   live Go. Original public spelling and catalog copy-on-write behavior remain.
-- [ ] Finish final merged-parent failure comparison and live verification;
-  publish only to origin/hparser-integration. Receipt:
-  benchmarks/catalog-name-validation.json. No whole-package or speedup claim.
+- [x] Finish merged-parent comparison and live verification. Final selected
+  tests: 166 pass, seven unchanged baseline failures; build/check/Ready lint
+  pass. Live Unicode equality and 18,000 sysbench plus 18,000 TPC-C transactions
+  pass before the last default-preserving fix-control merge; that final delta
+  is source/unit/build validated, not live-benchmarked again. Five owned PIDs
+  absent and ten ports closed. Receipt: benchmarks/catalog-name-validation.json.
+- [ ] Publish the verified catalog increment only to origin/hparser-integration.
+  No whole-package or speedup claim.
 
 - [x] Trace the remaining simple-case mapper to catalog lookup, prepared-plan
   validation, statement setup, digest normalization and collation lookup.
