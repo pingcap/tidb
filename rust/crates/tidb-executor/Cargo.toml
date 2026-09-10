@@ -18,6 +18,7 @@ chrono-tz = { workspace = true }
 crc32fast = { workspace = true }
 crossbeam-channel = "0.5"
 flate2 = { workspace = true }
+indexmap = "2.14"
 prost = { workspace = true }
 smallvec = { workspace = true }
 serde = { workspace = true }

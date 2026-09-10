@@ -1,0 +1,82 @@
+{
+  "status": "Measured large-group improvement; live sysbench/TPC-C correct and near-neutral overall. No overall goal or whole-package completion claim.",
+  "base_revision": "0afb4e3b7ec35e372534edd165e240e78d8f8ac2",
+  "go_authority": {
+    "partial": "pkg/executor/aggregate/agg_hash_partial_worker.go: updatePartialResult accumulates state memory deltas across the chunk before Consume.",
+    "final": "pkg/executor/aggregate/agg_hash_final_worker.go: generateResultAndSend emits each final map without globally sorting groups; spilled partitions are restored and emitted individually."
+  },
+  "change": "Delete first-seen group metadata, channel ordinals, spill ordinals, global sort and all-partition collection. Use native IndexMap dense group storage with unchanged key hashing and bucket routing. Batch state-memory deltas per chunk. Aggregate FIRST_ROW values, explicit SQL ORDER BY, concurrency and cancellation policies are unchanged. Private scratch spill version advances to 2; no old decoder retained.",
+  "binaries": {
+    "before_sha256": "dc7a67aa2f87e0d62c92f5856e453ce8b53a29b45e172e05179a147f6312133d",
+    "after_sha256": "bf135d6f9d2ce645f0a7172c47f959759d6cf883c17901967a59e5b972461308"
+  },
+  "large_group_probe": {
+    "shape": "Real HashAgg executor; 400000 rows, 200000 integer groups in permuted input order, FIRST_ROW key plus COUNT, 1024-row input chunks. Exact group count, key sum and aggregate count verified. No SQL/TiKV in this focused probe.",
+    "method": "after/before/before/after immutable test binaries; six executions each, discard first as warmup; ten measured samples per variant. No builds overlap paired timing.",
+    "before_mean_seconds": 0.0735893,
+    "after_mean_seconds": 0.0681715,
+    "elapsed_reduction_percent": 7.3622,
+    "before_fold_seconds": 0.0262236,
+    "after_fold_seconds": 0.0249428,
+    "before_finalize_seconds": 0.0421539,
+    "after_finalize_seconds": 0.0379863,
+    "control_probe": "/private/tmp/tidb-hashagg-order.DOPFeg/phase-control-probe",
+    "candidate_probe": "/private/tmp/tidb-hashagg-order.DOPFeg/indexed-probe",
+    "candidate_probe_sha256": "0e3ad8a2a258bf79275565e0cf3a81b3d146c563b950079bb31032944d97ff65",
+    "command": "<probe-binary> measure_hashagg_finalization --ignored --nocapture --test-threads=12",
+    "probe_source": "/private/tmp/tidb-hashagg-order.DOPFeg/indexed-with-probe.rs",
+    "limit": "Temporary phase timers and test are removed from production source. A focused large-group gain is not a sysbench/TPC-C throughput claim."
+  },
+  "rejected_variants": "Deleting the sort while keeping sparse HashMap storage regressed from about 73 to 83 ms; collecting each map into a dense temporary vector still took about 87 ms. Phase probes isolated finalization (43 to 58 ms), with folding near 27 ms in both. Native dense map storage removes that regression. Both earlier implementations and all temporary instrumentation are absent from production.",
+  "validation": {
+    "profile": "Ready scoped",
+    "tests": "54 retained HashAgg/parallel/spill tests pass without assertion changes. The ignored temporary probe was run separately and then removed.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --release -j12 -p tidb-executor --lib -- hash_agg --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 -p tidb-executor --all-targets",
+      "rustfmt --edition 2021 --check --config skip_children=true crates/tidb-executor/src/hash_agg/parallel.rs",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "git diff --check"
+    ],
+    "cwd": "Cargo and rustfmt from rust/; make and git from checkout root. Initial offline test command updates only the executor's lockfile dependency list to reference already-locked indexmap 2.14.0; subsequent build/check use --locked."
+  },
+  "live_workloads": {
+    "command": "ruby /private/tmp/tidb-hashagg-order.DOPFeg/verify.rb",
+    "events": {"sysbench": 84000, "tpcc": 36000},
+    "method": "Go/after/before/before/after/Go; 6000 events per sample. Sysbench 1/8/32 clients with 1000-event warmup, prepared statements auto, seed 1 and 100000-row table. TPC-C eight clients, one warehouse, fixed input seed 1: delivery 220, new-order 2674, order-status 229, payment 2652, stock-level 225 per sample.",
+    "correctness": "Exact work, zero errors, fresh Go SQL digest ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c and all eleven TPC-C consistency conditions pass.",
+    "summary": [
+      {"workload": "sysbench", "threads": 1, "before_seconds": 12.8757, "after_seconds": 12.8471, "before_sql_cpu_seconds": 9.13, "after_sql_cpu_seconds": 9.12, "before_p95_ms": 2.3, "after_p95_ms": 2.3},
+      {"workload": "sysbench", "threads": 8, "before_seconds": 3.36215, "after_seconds": 3.36035, "before_sql_cpu_seconds": 11.695, "after_sql_cpu_seconds": 11.6, "before_p95_ms": 4.82, "after_p95_ms": 4.82},
+      {"workload": "sysbench", "threads": 32, "before_seconds": 2.15425, "after_seconds": 2.13415, "before_sql_cpu_seconds": 12.435, "after_sql_cpu_seconds": 12.56, "before_p95_ms": 12.635, "after_p95_ms": 12.41},
+      {"workload": "tpcc", "threads": 8, "before_seconds": 6.444925, "after_seconds": 6.462696, "before_sql_cpu_seconds": 14.335, "after_sql_cpu_seconds": 14.3}
+    ],
+    "auto_analyze_restored": "1",
+    "raw_validation_sha256": "59ddb756d8a42e57368236b2ad2366dc892fb1df7bf8dbb6da518115bfb2628e",
+    "limits": "Two pairs on a shared local host, with no builds or profiling overlapping timing. Sysbench --mysql-ssl=off does not explicitly disable TLS in this client; preceding profiles verified TLS on this command path. Small live differences are not a broad speedup claim."
+  },
+  "grouped_sql": {
+    "command": "ruby /private/tmp/tidb-hashagg-order.DOPFeg/grouped-sql.rb",
+    "query": "SELECT c, COUNT(*) AS n FROM perf_sysbench.sbtest1 GROUP BY c ORDER BY n, c",
+    "result": "Go/control/candidate plans all contain HashAgg. All 100000 ordered result rows match exactly, SHA256 7c11b3cb64d267b1f9a627921282d3eac3801da722e62d9bf53cb2aecfad018d. Correctness check only, not timed performance evidence.",
+    "separate_open_finding": "The initial SELECT /*+ HASH_AGG() */ k, COUNT(*) FROM perf_sysbench.sbtest1 GROUP BY k ORDER BY k selects HashAgg in Go but StreamAgg in unchanged Rust control. It was rejected as HashAgg coverage. Original plans retained as hint-{go,before}-plan.log; the planner hint/property mismatch is not fixed here."
+  },
+  "merged_verification": {
+    "upstream_revision": "c728a58eb27b91ad3b1a0c84b50287853fc6db5c",
+    "preserved_commits": ["a9bf8915df", "2337e56a36", "bdc2600d04", "c728a58eb2"],
+    "result": "56 executor tests and four planner tests pass, including condition nine, condition eleven and usable index-prefix regression. Merged server build and Ready lint pass. No assertions changed by this increment.",
+    "binary_sha256": "a7f9158d40dfdc5df3572cf01624bff18dc14ec5776e18f3b60b7748a426d98b",
+    "live": "Additional 6000 sysbench and 6000 TPC-C measured events pass with exact work, zero errors, fresh Go equality and all eleven consistency conditions. Smoke evidence, not another performance comparison. Auto-analyze restored to 1.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-planner --lib --no-fail-fast -- hash_agg tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup tpcc_condition_eleven_pushes_filters_through_nested_derived_joins index_join_keeps_a_usable_prefix_when_trailing_columns_are_pruned --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "ruby /private/tmp/tidb-hashagg-order.DOPFeg/merged-smoke.rb"
+    ],
+    "scope": "The alternating comparison and grouped SQL check use base 0afb4e3b7e plus only this HashAgg change. Combined-revision smoke and scoped tests use c728a58eb2 plus this change."
+  },
+  "cleanup": {"auto_analyze_restored": "1", "owned_pids_absent": 11, "ports_closed": 10, "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe", "command": "ruby /private/tmp/tidb-hashagg-order.DOPFeg/verify-cleanup.rb"},
+  "artifacts": "/private/tmp/tidb-hashagg-order.DOPFeg",
+  "limits": "No full-workspace green or whole-Go-package parity claim. SQL result order without ORDER BY remains unspecified. Live Go fixture is nightly 23bff313186b8ceb61fcbe9faac43ae700e7fb14, not checkout Go master."
+}

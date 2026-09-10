@@ -3647,6 +3647,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-channel",
  "flate2",
+ "indexmap",
  "prost 0.14.4",
  "serde",
  "serde_json",
