@@ -1959,6 +1959,39 @@ mod tests {
     }
 
     #[test]
+    fn hash_join_preserves_the_planned_comparison_collation() {
+        let (storage, _, _) = cluster_storage();
+        let (mut session, _) = session_with_cluster_storage(
+            &ci_catalog(),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        session.run("USE app").unwrap();
+        session
+            .run("INSERT INTO ci (id,c) VALUES (1,'B'),(2,'b')")
+            .unwrap();
+        for (comparison, expected) in [
+            ("a.c = b.c", 4),
+            ("a.c COLLATE utf8mb4_bin = b.c COLLATE utf8mb4_bin", 2),
+        ] {
+            let StmtResult::Rows(rows) = session
+                .run(&format!(
+                    "SELECT COUNT(*) FROM ci a JOIN ci b ON {comparison}"
+                ))
+                .unwrap()
+            else {
+                panic!("expected join rows");
+            };
+            assert_eq!(
+                rows,
+                vec![vec![tidb_datatype::Datum::Int(expected)]],
+                "{comparison}"
+            );
+        }
+    }
+
+    #[test]
     fn a_snapshot_row_is_visible_and_shadowed_by_a_staged_write() {
         let (storage, _, snapshot) = cluster_storage();
         let (mut session, _) = session_with_cluster_storage(
