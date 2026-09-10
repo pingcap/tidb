@@ -177,7 +177,6 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
-	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
 			// We will not call `Probe` function when all partitions are spilled.
@@ -276,9 +275,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = checkSQLKillerFast(killer); err != nil {
-		return err
-	}
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
@@ -291,11 +287,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.spilledIdx = j.spilledIdx[:0]
 
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
-		if logicalRowIndex%1024 == 0 {
-			if err = checkSQLKillerFast(killer); err != nil {
-				return err
-			}
-		}
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
 			j.matchedRowsHeaders[logicalRowIndex] = 0
@@ -335,23 +326,13 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.currentProbeRow = 0
 	for i := range int(j.ctx.partitionNumber) {
 		for index := range j.hashValues[i] {
-			if index%1024 == 0 {
-				if err = checkSQLKillerFast(killer); err != nil {
-					return err
-				}
-			}
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
 	}
 	return
 }
 
-func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) error {
-	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
-	if err := checkSQLKillerFast(killer); err != nil {
-		return err
-	}
-
+func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) {
 	if cap(j.matchedRowsHeaders) >= logicalRowCount {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRowCount]
 	} else {
@@ -385,12 +366,7 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 	j.spilledIdx = j.spilledIdx[:0]
 
 	totalMemUsage := 0
-	for rowIndex, idx := range j.usedRows {
-		if rowIndex%1024 == 0 {
-			if err := checkSQLKillerFast(killer); err != nil {
-				return err
-			}
-		}
+	for _, idx := range j.usedRows {
 		oldHashValue := hashValueCol.GetUint64(idx)
 		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
 		j.matchedRowsHashValue[idx] = newHashVal
@@ -400,9 +376,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 			j.serializedKeysLens[idx] = keyLen
 			totalMemUsage += keyLen
 		}
-	}
-	if err := checkSQLKillerFast(killer); err != nil {
-		return err
 	}
 
 	if cap(j.serializedKeysBuffer) < totalMemUsage {
@@ -417,11 +390,9 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 		j.serializedKeys[idx] = j.serializedKeysBuffer[start : start : start+keyLen]
 		start += keyLen
 	}
-	return nil
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
-	killer := &j.ctx.SessCtx.GetSessionVars().SQLKiller
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
 			// We will not call `Probe` function when all partitions are spilled.
@@ -464,9 +435,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	j.usedRows = j.selRows
 
-	if err := j.preAllocForSetRestoredChunkForProbe(logicalRows, hashValueCol, serializedKeysCol); err != nil {
-		return err
-	}
+	j.preAllocForSetRestoredChunkForProbe(logicalRows, hashValueCol, serializedKeysCol)
 
 	var serializedKeyVectorBufferCapsForTest []int
 	if intest.InTest {
@@ -477,12 +446,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	}
 
 	// rehash all rows
-	for rowIndex, idx := range j.usedRows {
-		if rowIndex%1024 == 0 {
-			if err := checkSQLKillerFast(killer); err != nil {
-				return err
-			}
-		}
+	for _, idx := range j.usedRows {
 		newHashVal := j.matchedRowsHashValue[idx]
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
@@ -564,13 +528,6 @@ func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
 		}
 	})
 	return err
-}
-
-func checkSQLKillerFast(killer *sqlkiller.SQLKiller) error {
-	if killer.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
-		return nil
-	}
-	return killer.HandleSignal()
 }
 
 func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV2(rowInfo *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {

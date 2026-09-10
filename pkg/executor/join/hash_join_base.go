@@ -58,22 +58,12 @@ type hashJoinCtxBase struct {
 	diskTracker   *disk.Tracker   // track disk usage.
 }
 
-func (c *hashJoinCtxBase) sendJoinResult(result *hashjoinWorkerResult) bool {
-	select {
-	case c.joinResultCh <- result:
-		return true
-	case <-c.closeCh:
-		return false
-	}
-}
-
 type probeSideTupleFetcherBase struct {
 	ProbeSideExec      exec.Executor
 	probeChkResourceCh chan *probeChkResource
 	probeResultChs     []chan *chunk.Chunk
 	requiredRows       int64
 	joinResultChannel  chan *hashjoinWorkerResult
-	closeCh            <-chan struct{}
 	buildSuccess       bool
 }
 
@@ -102,10 +92,7 @@ func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
-		select {
-		case fetcher.joinResultChannel <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}:
-		case <-fetcher.closeCh:
-		}
+		fetcher.joinResultChannel <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
@@ -135,9 +122,9 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, 
 	}
 	if err != nil {
 		// if err is not nil, send out the error
-		hashJoinCtx.sendJoinResult(&hashjoinWorkerResult{
+		hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
 			err: err,
-		})
+		}
 	} else if skipProbe {
 		// if skipProbe is true and there is no need to scan hash table after probe, just the whole hash join is finished
 		if !needScanAfterProbeDone {
@@ -182,17 +169,17 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
-			hashJoinCtx.sendJoinResult(&hashjoinWorkerResult{
+			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
-			})
+			}
 			return
 		}
 
 		err = triggerIntest(2)
 		if err != nil {
-			hashJoinCtx.sendJoinResult(&hashjoinWorkerResult{
+			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
-			})
+			}
 			return
 		}
 
@@ -215,11 +202,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			return
 		}
 
-		select {
-		case <-hashJoinCtx.closeCh:
-			return
-		case probeSideResource.dest <- probeSideResult:
-		}
+		probeSideResource.dest <- probeSideResult
 	}
 }
 

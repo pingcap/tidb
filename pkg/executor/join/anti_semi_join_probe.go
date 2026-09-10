@@ -69,16 +69,8 @@ func (a *antiSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKi
 	a.nextCachedBuildRowIndex = 0
 	meta := a.ctx.hashTableMeta
 	insertedRows := 0
-	scannedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
 	for insertedRows < remainCap && !a.rowIter.isEnd() {
-		if scannedRows%1024 == 0 {
-			err := checkSQLKillerFast(sqlKiller)
-			if err != nil {
-				joinResult.err = err
-				return joinResult
-			}
-		}
 		currentRow := a.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
@@ -86,7 +78,6 @@ func (a *antiSemiJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKi
 			insertedRows++
 		}
 		a.rowIter.next()
-		scannedRows++
 	}
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {

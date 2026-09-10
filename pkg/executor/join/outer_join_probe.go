@@ -127,16 +127,8 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 	j.nextCachedBuildRowIndex = 0
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
-	scannedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
 	for insertedRows < remainCap && !j.rowIter.isEnd() {
-		if scannedRows%1024 == 0 {
-			err := checkSQLKillerFast(sqlKiller)
-			if err != nil {
-				joinResult.err = err
-				return joinResult
-			}
-		}
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
@@ -144,7 +136,6 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 			insertedRows++
 		}
 		j.rowIter.next()
-		scannedRows++
 	}
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {

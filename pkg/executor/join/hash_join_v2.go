@@ -423,12 +423,9 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start 
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		w.HashJoinCtx.sendJoinResult(joinResult)
+		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		select {
-		case <-w.HashJoinCtx.closeCh:
-		case w.joinChkResourceCh <- joinResult.chk:
-		}
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
@@ -592,17 +589,7 @@ func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 			setMaxValue(&b.HashJoinCtx.stats.maxBuildHashTableForCurrentRound, cost)
 		}
 	}()
-	for {
-		var task *buildTask
-		var ok bool
-		select {
-		case <-b.HashJoinCtx.closeCh:
-			return nil
-		case task, ok = <-taskCh:
-			if !ok {
-				return nil
-			}
-		}
+	for task := range taskCh {
 		start := time.Now()
 		b.HashJoinCtx.hashTableContext.build(task)
 		failpoint.Inject("buildHashTablePanic", nil)
@@ -612,6 +599,7 @@ func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 			return err
 		}
 	}
+	return nil
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -646,11 +634,6 @@ type HashJoinV2Exec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
-	hashTableCleanupOnce sync.Once
-	stopOnce             sync.Once
-	queryCancel          context.CancelFunc
-	runDone              chan struct{}
-
 	restoredBuildInDisk []*chunk.DataInDiskByChunks
 	restoredProbeInDisk []*chunk.DataInDiskByChunks
 
@@ -664,41 +647,8 @@ type HashJoinV2Exec struct {
 	FileNamePrefixForTest string
 }
 
-func (e *HashJoinV2Exec) stopHashJoin() {
-	e.finished.Store(true)
-	e.stopOnce.Do(func() {
-		if e.closeCh != nil {
-			close(e.closeCh)
-		}
-		if e.queryCancel != nil {
-			e.queryCancel()
-		}
-	})
-}
-
-func (e *HashJoinV2Exec) monitorSQLKiller(done <-chan struct{}) {
-	killer := &e.Ctx().GetSessionVars().SQLKiller
-	select {
-	case <-killer.GetKillEventChan():
-		e.stopHashJoin()
-	case <-done:
-	}
-}
-
 func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
 	return e.isMemoryClearedForTest
-}
-
-// cleanupHashTableContext releases all build-side segments owned by this query.
-// It must only be called after all workers that may access the hash table have
-// exited. The once guard also makes the build-error path and Close safe to use
-// together.
-func (e *HashJoinV2Exec) cleanupHashTableContext() {
-	e.hashTableCleanupOnce.Do(func() {
-		if e.hashTableContext != nil {
-			e.hashTableContext.reset()
-		}
-	})
 }
 
 func (e *HashJoinV2Exec) initMaxSpillRound() {
@@ -713,13 +663,11 @@ func (e *HashJoinV2Exec) initMaxSpillRound() {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
-	e.stopHashJoin()
+	if e.closeCh != nil {
+		close(e.closeCh)
+	}
+	e.finished.Store(true)
 	if e.prepared {
-		if e.runDone != nil {
-			<-e.runDone
-		} else {
-			e.waiterWg.Wait()
-		}
 		if e.buildFinished != nil {
 			channel.Clear(e.buildFinished)
 		}
@@ -739,7 +687,7 @@ func (e *HashJoinV2Exec) Close() error {
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
-		e.cleanupHashTableContext()
+		e.hashTableContext.reset()
 	}
 	for _, w := range e.ProbeWorkers {
 		w.joinChkResourceCh = nil
@@ -774,7 +722,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 func (e *HashJoinV2Exec) OpenSelf() error {
 	e.prepared = false
 	e.inRestore = false
-	e.hashTableCleanupOnce = sync.Once{}
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
@@ -811,9 +758,6 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.waiterWg = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
-	e.stopOnce = sync.Once{}
-	e.queryCancel = nil
-	e.runDone = nil
 
 	if e.RuntimeStats() != nil && e.stats == nil {
 		e.stats = &hashJoinRuntimeStatsV2{concurrent: int(e.Concurrency)}
@@ -854,7 +798,6 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 
 func (e *HashJoinV2Exec) initializeForProbe() {
 	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
-	e.ProbeSideTupleFetcher.closeCh = e.closeCh
 	// e.joinResultCh is for transmitting the join result chunks to the main thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
@@ -894,12 +837,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 
 	if e.inRestore {
 		// Wait for the restore build
-		var err error
-		select {
-		case <-e.closeCh:
-			return
-		case err = <-e.buildFinished:
-		}
+		err := <-e.buildFinished
 		if err != nil {
 			return
 		}
@@ -936,13 +874,13 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
 	if r != nil {
-		w.HashJoinCtx.sendJoinResult(&hashjoinWorkerResult{err: util.GetRecoverError(r)})
+		w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
 func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	if r != nil {
-		e.sendJoinResult(&hashjoinWorkerResult{err: util.GetRecoverError(r)})
+		e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
@@ -978,20 +916,18 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	for !w.JoinProbe.IsScanRowTableDone() {
 		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
-			w.HashJoinCtx.sendJoinResult(joinResult)
+			w.HashJoinCtx.joinResultCh <- joinResult
 			return
 		}
 
 		err := triggerIntest(4)
 		if err != nil {
-			w.HashJoinCtx.sendJoinResult(&hashjoinWorkerResult{err: err})
+			w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: err}
 			return
 		}
 
 		if joinResult.chk.IsFull() {
-			if !w.HashJoinCtx.sendJoinResult(joinResult) {
-				return
-			}
+			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return
@@ -1000,12 +936,9 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		w.HashJoinCtx.sendJoinResult(joinResult)
+		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		select {
-		case <-w.HashJoinCtx.closeCh:
-		case w.joinChkResourceCh <- joinResult.chk:
-		}
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
@@ -1044,9 +977,7 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
-			if !w.HashJoinCtx.sendJoinResult(joinResult) {
-				return false, waitTime, joinResult
-			}
+			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			waitTime += int64(time.Since(waitStart))
 			if !ok {
@@ -1105,11 +1036,7 @@ func (w *ProbeWorkerV2) runJoinWorker(start time.Time) {
 		emptyProbeSideResult.chk = probeSideResult
 
 		// Give back to probe fetcher
-		select {
-		case <-w.HashJoinCtx.closeCh:
-			return
-		case w.probeChkResourceCh <- emptyProbeSideResult:
-		}
+		w.probeChkResourceCh <- emptyProbeSideResult
 	}
 
 	err := w.JoinProbe.SpillRemainingProbeChunks()
@@ -1118,12 +1045,9 @@ func (w *ProbeWorkerV2) runJoinWorker(start time.Time) {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		w.HashJoinCtx.sendJoinResult(joinResult)
+		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		select {
-		case <-w.HashJoinCtx.closeCh:
-		case w.joinChkResourceCh <- joinResult.chk:
-		}
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
@@ -1179,15 +1103,9 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			e.sendJoinResult(&hashjoinWorkerResult{err: util.GetRecoverError(r)})
-		} else {
-			e.cleanupHashTableContext()
-		}
-		if e.queryCancel != nil {
-			e.queryCancel()
+			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 		}
 		close(e.joinResultCh)
-		close(e.runDone)
 	}()
 
 	lastRound := 0
@@ -1199,9 +1117,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.buildFinished = make(chan error, 1)
 
 		e.fetchAndBuildHashTable(ctx)
-		if e.finished.Load() {
-			return
-		}
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
@@ -1217,7 +1132,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
 		err := e.spillHelper.prepareForRestoring(lastRound)
 		if err != nil {
-			e.sendJoinResult(&hashjoinWorkerResult{err: err})
+			e.joinResultCh <- &hashjoinWorkerResult{err: err}
 			return
 		}
 
@@ -1280,11 +1195,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
-		queryCtx, cancel := context.WithCancel(ctx)
-		e.queryCancel = cancel
-		e.runDone = make(chan struct{})
-		go e.monitorSQLKiller(e.runDone)
-		go e.startBuildAndProbe(queryCtx)
+		go e.startBuildAndProbe(ctx)
 		e.prepared = true
 	}
 	if e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize() {
@@ -1294,13 +1205,10 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	result, ok := <-e.joinResultCh
 	if !ok {
-		return e.Ctx().GetSessionVars().SQLKiller.HandleSignal()
+		return nil
 	}
 	if result.err != nil {
-		e.stopHashJoin()
-		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return err
-		}
+		e.finished.Store(true)
 		return result.err
 	}
 	req.SwapColumns(result.chk)
@@ -1310,10 +1218,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
 	if r != nil {
-		select {
-		case e.buildFinished <- util.GetRecoverError(r):
-		case <-e.closeCh:
-		}
+		e.buildFinished <- util.GetRecoverError(r)
 	}
 	close(e.buildFinished)
 }
@@ -1353,8 +1258,6 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 			select {
 			case <-doneCh:
 				return
-			case <-e.closeCh:
-				return
 			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
 			}
 		}
@@ -1377,8 +1280,6 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 				endIndex := min(startIndex+segStep, partitionSegmentLength[partIdx])
 				select {
 				case <-doneCh:
-					return
-				case <-e.closeCh:
 					return
 				case buildTaskCh <- createBuildTask(partIdx, startIndex, endIndex):
 				}
@@ -1411,11 +1312,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		wg.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
-			e.cleanupHashTableContext()
-			select {
-			case e.buildFinished <- err:
-			case <-e.closeCh:
-			}
+			e.buildFinished <- err
 			return false
 		}
 		return true
@@ -1439,9 +1336,6 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	if !success {
 		return
 	}
-	if e.finished.Load() {
-		return
-	}
 
 	if e.spillHelper.spillTriggered {
 		e.spillHelper.spillTriggedInBuildingStageForTest = true
@@ -1449,14 +1343,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.partitionNumber, e.spillHelper)
 	if err != nil {
-		e.cleanupHashTableContext()
-		select {
-		case e.buildFinished <- err:
-		case <-e.closeCh:
-		}
-		return
-	}
-	if e.finished.Load() {
+		e.buildFinished <- err
 		return
 	}
 
