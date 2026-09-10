@@ -1,5 +1,44 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DROP SCHEMA 统计测试消费对应事件
+
+drop_schema_ddl_retires_all_statistics_like_go 独立运行在读取初始统计版本时
+越界：CREATE 的统计事件未消费，stats_meta 查询为空
+（`/tmp/stats-drop-schema-red.log`）。
+Go master 固定版本 `pkg/statistics/handle/ddl/ddl_test.go:1472` 的
+TestDropSchema 先建立统计，再于 DROP DATABASE 后显式调用
+HandleDDLEventWithTxn 处理 ActionDropSchema，才检查版本变化。
+
+Rust fixture 现于两个表建好后、DROP DATABASE 后分别驱动已有真实 notifier。
+普通表、分区表全局 ID 和两个分区 ID 共四项版本递增断言全部保留。
+没有直接补写统计、跳过 ID 或忽略空结果。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib drop_schema_ddl_retires_all_statistics_like_go`
+通过，1 passed，3.25 秒（`/tmp/stats-drop-schema-green.log`）；
+`make lint` 通过（`/tmp/stats-drop-schema-lint.log`），`git diff --check` 通过。
+
+## 2026-09-11 表生命周期统计测试消费 DDL 事件
+
+最新修改前 server 基线正常结束，397 passed / 34 failed，40.79 秒
+（`/tmp/server-current-baseline.log`）。其中 table_lifecycle_ddl_updates_statistics_like_go
+独立复现 CREATE 后 stats_meta 为空，预期 [0,0]
+（`/tmp/stats-lifecycle-red.log`）。fixture 仅创建零 lease stack，未启动
+stats owner；DDL 返回不代表持久化事件已由统计订阅者处理。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/ddl_test.go:60` TestDDLTable 显式调用
+HandleNextDDLEventWithTxn；同文件 250 行附近的 TRUNCATE 用例同样显式
+消费事件。Rust 用例现在于 CREATE、CREATE LIKE、TRUNCATE、DROP 后调用
+已有 drain_stats_ddl_events，驱动真实 notifier 到持久化队列清空。
+未直接写统计表或更改任何统计计数、histogram 数量、ID/版本递增断言。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib table_lifecycle_ddl_updates_statistics_like_go`
+通过，1 passed，5.28 秒（`/tmp/stats-lifecycle-green.log`）；
+`make lint` 通过（`/tmp/stats-lifecycle-lint.log`），`git diff --check` 通过。
+本轮基线 34 个失败为修改前观测，不能当作当前剩余失败的精确计数。
+
 ## 2026-09-11 binary prepared SELECT 使用保留的缓存计划
 
 pipeline `prepared_execution_retains_ast_and_reuses_current_handles` 独立
