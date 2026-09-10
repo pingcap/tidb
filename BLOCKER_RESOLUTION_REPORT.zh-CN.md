@@ -1,5 +1,38 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 PD batch topology 使用同一物理连接检验 stream 隔离
+
+先修复旧 realtikv_replica_read target 为 all 加完整模块测试名，原 target
+失败证据 `/tmp/replica-read-target-red.log`。随后真实运行到 target freeze /
+request published 阶段，在 realtikv_replica_read.rs:814 报 3 != 2，
+`/tmp/pd-batch-topology-restored.log`。此前的地址级 channel version 来自前
+一个请求，默认四连接池轮询后失败请求实际用了另一物理连接。
+
+固定 Go master 对应 client-go
+`v2.0.8-0.20260903102657-08cbf831121a/config/client.go:210` 默认连接数 4，
+`internal/client/conn_pool.go:198` 轮询连接；地址级最近版本并不等于某次
+请求的版本。本测试目标是同一物理连接上的 direct/forwarded stream 隔离，
+故在该测试显式使用 with_connection_count(1)，生产默认保持 4。保留全部
+版本相等、单次失败、无 transport resend、direct sibling 生存、精确 peer
+就绪及同地址重启读回断言，未将不等改为宽松比较。
+
+Ready 验证：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-pd-batch-topology.sh
+# /tmp/pd-batch-topology-single-channel.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all
+bash -n rust/scripts/run-realtikv-pd-batch-topology.sh
+make lint
+git diff --check
+```
+
+业务断言通过：GetPrevRegion adjacency；physical proxy 127.0.0.1:58160
+转发 follower 127.0.0.1:58161，leader store 1 不变；channel 1 的 route
+generation 1 恰好失败一次，调用方 retry generation 2 成功。lint 退出 0，
+`/tmp/pd-batch-single-channel-lint.log`。脚本终态退出 0，tag
+realtikv-pd-batch-87799-1789067451 的进程、data 和 phase 均已清理。
+
 ## 2026-09-11 replica-read 原始 RealTiKV 门禁恢复
 
 旧 realtikv_replica_read target 已合并，原调用退出 101，

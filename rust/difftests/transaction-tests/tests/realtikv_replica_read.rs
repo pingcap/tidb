@@ -711,7 +711,13 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .encode_to_vec(),
     };
 
-    let mut client = TonicCoprocessorClient::new().expect("construct production tonic client");
+    // This test proves direct/forwarded stream isolation on one physical
+    // channel. The default four-connection pool round-robins requests and
+    // would compare unrelated channel generations instead.
+    let mut client = TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(1).unwrap(),
+    )
+    .expect("construct one-channel production tonic client");
     let direct_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
     let (direct_completion, mut direct_pull) = completion_pair::<
         OpaqueBatchCommand,
