@@ -1,5 +1,32 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 异步统计加载队列的并行测试隔离
+
+完整并行 executor 曾在 `an_unloaded_column_is_queued_for_async_load` 随机失败，串行通过。
+两个 fixture 共用 table_id=11 / column_id=1，加载完成测试在清理阶段删除另一个测试刚入队
+的项。固定 master `pkg/statistics/column.go::ColumnStatsIsInvalid` 同样以物理表 ID 和列 ID
+构造 `TableItemID`；生产队列的键语义正确，测试身份不应碰撞。
+
+新增固定交错回归 `cleaning_loaded_fixture_preserves_other_fixture_pending_load`，先入队
+unloaded fixture，再执行 loaded fixture 的清理和加载状态检查。旧固定 ID 下稳定失败
+（`/tmp/stats-queue-red.log`）；改用模块内 AtomicI64 唯一表 ID 后通过。原有全部断言保留，
+没有用串行化或生产锁隐藏竞争。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib index_async_load_queue_tests
+# 8 passed；/tmp/stats-queue-green.log
+RUST_MIN_STACK=33554432 bash -c 'for iteration in {1..30}; do rust/target/debug/deps/tidb_executor-980779d52cc3a360 index_async_load_queue_tests --test-threads=8 || exit; done'
+# 30 轮全部通过；/tmp/stats-queue-stress.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib
+# 1292 passed / 2 TPCC failed；/tmp/executor-queue-full.log
+make lint
+# 退出 0；/tmp/stats-queue-lint.log
+```
+
+本项 Ready 验证完成。整个目标仍未完成，剩余 TPCC 和外部完整 gates 继续处理。
+
 ## 2026-09-10 远端读取保留隐藏 record handle
 
 `TableScanExec::open` 的旧逻辑认为远端不能提供 `_tidb_rowid`，无条件回退本地 cursor，
