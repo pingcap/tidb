@@ -1,5 +1,21 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 TPCC condition nine 的 master 实测取证
+
+以同一固定 master binary 启动独立 unistore，完整 DDL、数据和 SQL 位于
+`/tmp/tpcc-master-oracle.0t3pI6/condition-nine.sql`；结果和版本位于同目录
+`condition-nine.out`。Go 返回 COUNT=1，选择 IndexHashJoin；Rust 也返回 1，但选择
+IndexJoin。Go 的 district Selection 从 10 行降为 8，Rust 保留 10 行；Go 此次计划
+没有 cop partial HashAgg，Rust 有。不能只把 Rust 测试中 IndexHashJoin 改成 IndexJoin。
+
+临时成本和计划探针日志 `/tmp/tpcc9-cost-probe.log`、`/tmp/tpcc9-plan-probe.log`：
+Rust 候选 build_rows=10、probe_rows=0.8、build_size=56、probe_size=80。
+EXPLAIN 的 inner 8 行是乘以 outer 次数后的显示，不能与单次 probe 成本输入直接比较。
+下一步核对 `logical/rewrite.rs::pseudo_range_filter_selectivity`、source stats bridge、
+runtime avg_inner_row_count 和聚合候选成本。当前仍属未完成诊断，未修改 TPCC golden 或断言，
+临时 DEBUG 探针已移除。三个已完成修复提交为 `9f18bd4f96`、`0c5d738da8`、`cd4514ae09`，
+已分别推送 origin/hparser-integration。
+
 ## 2026-09-10 异步统计加载队列的并行测试隔离
 
 完整并行 executor 曾在 `an_unloaded_column_is_queued_for_async_load` 随机失败，串行通过。
