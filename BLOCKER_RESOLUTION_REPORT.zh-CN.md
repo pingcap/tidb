@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 replica-read 原始 RealTiKV 门禁恢复
+
+旧 realtikv_replica_read target 已合并，原调用退出 101，
+`/tmp/replica-read-target-red.log`。改为 all target 中完整测试名
+`realtikv_replica_read::follower_policy_reaches_a_live_nonleader_voter`，
+保留 --ignored --exact、peer 身份与有效响应的原断言。
+
+Ready 验证命令为
+`RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-replica-read.sh`；
+`bash -n rust/scripts/run-realtikv-replica-read.sh`、`make lint`、
+`git diff --check` 均通过。真实结果 `/tmp/replica-read-restored.log`：
+region_id=14，leader_peer_id=15，post_leader_peer_id=15，selected_peer_id=25，
+selected_store_id=4，selected_address=127.0.0.1:48160，replica_read=true，
+stale_read=false，usable_response=true。所属 tag realtikv-replica-read-85513
+进程和数据已清理；lint 为 `/tmp/replica-read-harness-lint.log`。
+只修复测试入口，不改变 follower 选择或读取协议。
+
 ## 2026-09-11 region-retry 原始 RealTiKV 门禁恢复
 
 旧 `cargo test -p difftest-transaction-tests --test realtikv_region_retry -- --list`

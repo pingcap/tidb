@@ -124,8 +124,8 @@ fi
 export REPLICA_READ_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
-  --test realtikv_replica_read \
-  follower_policy_reaches_a_live_nonleader_voter \
+  --test all \
+  realtikv_replica_read::follower_policy_reaches_a_live_nonleader_voter \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
   echo "replica-read Rust follower-read proof failed" >&2
   tail -160 "${RUST_LOG}" >&2
