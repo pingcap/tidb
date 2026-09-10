@@ -107,6 +107,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
+	info.SupportsClusteredGlobalIndexV1 = true
 	return info
 }
 

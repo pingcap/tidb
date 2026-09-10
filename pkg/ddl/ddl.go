@@ -984,6 +984,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			model.SetJobVerInUse(model.JobVersion2)
 		}
 		model.SetGlobalIndexV1Supported(true)
+		model.SetClusteredGlobalIndexV1Supported(true)
 		return
 	}
 
@@ -992,13 +993,15 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
 
-	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
+	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() &&
+		model.GetClusteredGlobalIndexV1Supported() {
 		return
 	}
 
-	logutil.DDLLogger().Info("job version in use is not v2 or global index v1 not supported, maybe in upgrade, start detecting",
+	logutil.DDLLogger().Info("job version in use is not v2 or a global index v1 variant is not supported, maybe in upgrade, start detecting",
 		zap.Stringer("current", model.GetJobVerInUse()),
-		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()))
+		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()),
+		zap.Bool("clusteredGlobalIndexV1Supported", model.GetClusteredGlobalIndexV1Supported()))
 	d.wg.RunWithLog(func() {
 		ticker := time.NewTicker(detectJobVerInterval)
 		defer ticker.Stop()
@@ -1013,8 +1016,9 @@ func (d *ddl) detectAndUpdateJobVersion() {
 				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
-				logutil.DDLLogger().Info("job version in use is v2 and global index v1 supported now, stop detecting")
+			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() &&
+				model.GetClusteredGlobalIndexV1Supported() {
+				logutil.DDLLogger().Info("job version in use is v2 and all global index v1 variants are supported now, stop detecting")
 				return
 			}
 		}
@@ -1023,7 +1027,8 @@ func (d *ddl) detectAndUpdateJobVersion() {
 
 // when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
 // we should use job version 1 to keep compatibility.
-// Also checks whether all instances support global index V1 key format (>= 8.5.6).
+// Also checks whether all instances support global index V1 key format (>= 8.5.6)
+// and whether every instance advertises support for its clustered-table variant.
 func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	infos, err := infosync.GetAllServerInfo(d.ctx)
 	if err != nil {
@@ -1031,7 +1036,14 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	}
 	allSupportV2 := true
 	allSupportGlobalIdxV1 := true
+	allSupportClusteredGlobalIdxV1 := true
 	for _, info := range infos {
+		// A release version alone cannot establish support: released 8.5.8 and
+		// 9.0.0-beta.1 binaries lack this capability. Missing advertisements from
+		// older nodes therefore keep the clustered format disabled.
+		if !info.SupportsClusteredGlobalIndexV1 {
+			allSupportClusteredGlobalIdxV1 = false
+		}
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
 		tidbVer := info.Version
@@ -1039,6 +1051,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if idx < 0 {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportClusteredGlobalIdxV1 = false
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -1050,6 +1063,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if err2 != nil {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportClusteredGlobalIdxV1 = false
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
@@ -1063,7 +1077,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if ver.LessThan(globalIdxV1FirstVer) {
 			allSupportGlobalIdxV1 = false
 		}
-		if !allSupportV2 && !allSupportGlobalIdxV1 {
+		if !allSupportV2 && !allSupportGlobalIdxV1 && !allSupportClusteredGlobalIdxV1 {
 			break
 		}
 	}
@@ -1082,6 +1096,12 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			zap.Bool("old", model.GetGlobalIndexV1Supported()),
 			zap.Bool("new", allSupportGlobalIdxV1))
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
+	}
+	if model.GetClusteredGlobalIndexV1Supported() != allSupportClusteredGlobalIdxV1 {
+		logutil.DDLLogger().Info("change clustered global index V1 support",
+			zap.Bool("old", model.GetClusteredGlobalIndexV1Supported()),
+			zap.Bool("new", allSupportClusteredGlobalIdxV1))
+		model.SetClusteredGlobalIndexV1Supported(allSupportClusteredGlobalIdxV1)
 	}
 	return nil
 }

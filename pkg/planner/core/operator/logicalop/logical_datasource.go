@@ -640,6 +640,11 @@ func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*
 	if slices.Contains(declaredCols, nil) {
 		return nil, nil
 	}
+	// V1 global indexes put the partition ID before the handle, so predicates on
+	// the handle cannot directly extend ranges over the declared index columns.
+	if path.Index.Global && path.Index.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		return nil, nil
+	}
 	if ds.TableInfo != nil && ds.TableInfo.IsCommonHandle {
 		if len(ds.CommonHandleCols) == 0 || len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
 			return nil, nil

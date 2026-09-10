@@ -1112,6 +1112,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// For non-unique secondary indexes on CommonHandle tables, the index physically
 	// stores (index_cols, PK_cols). Build an effective column list that includes the
 	// PK suffix so that ORDER BY on PK columns can be recognised.
+	// V1 global indexes put the partition ID before the PK suffix, which breaks
+	// this ordering across partitions.
 	//
 	// Skip this when CommonHandleVersion == 0 with new collation enabled and
 	// the handle contains non-binary string columns. In v0, string handle columns
@@ -1122,6 +1124,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	idxCols := path.IdxCols
 	idxColLens := path.IdxColLens
 	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
+		(!path.Index.Global || path.Index.GlobalIndexVersion < model.GlobalIndexVersionV1) &&
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
 		len(ds.CommonHandleLens) == len(ds.CommonHandleCols) &&
 		len(path.Index.Columns) == len(path.IdxCols) &&
