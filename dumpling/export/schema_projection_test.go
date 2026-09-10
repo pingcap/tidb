@@ -245,6 +245,21 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Contains(t, projectedSQL, "`token` VARCHAR(32) DEFAULT (UUID())")
 	})
 
+	t.Run("string literals preserve backslashes", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT PRIMARY KEY," +
+			"`path` VARCHAR(32) DEFAULT 'C:\\\\new' COMMENT 'C:\\\\new'," +
+			"`secret` INT)"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "path"}, true, nil,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "DEFAULT _UTF8MB4'C:\\\\new'")
+		require.Contains(t, projectedSQL, "COMMENT 'C:\\\\new'")
+		require.NotContains(t, projectedSQL, "`secret`")
+		require.NotPanics(t, func() { parseCreateTableForTest(t, projectedSQL) })
+	})
+
 	t.Run("composite primary key removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (" +
 			"`tenant_id` INT," +

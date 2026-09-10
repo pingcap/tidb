@@ -58,7 +58,8 @@ func buildProjectedTableSchema(
 	for _, selectedColumn := range selectedColumns {
 		retainedColumns[strings.ToLower(selectedColumn)] = struct{}{}
 	}
-	// A generated column can only depend on generated columns defined before it.
+	// Process generated columns in declaration order because a generated column
+	// may depend on an earlier generated column.
 	for _, column := range createTable.Cols {
 		for _, option := range column.Options {
 			if option.Tp == ast.ColumnOptionGenerated && usesOnlyRetainedColumns(option.Expr, retainedColumns) {
@@ -84,7 +85,7 @@ func buildProjectedTableSchema(
 
 	constraints := make([]*ast.Constraint, 0, len(createTable.Constraints))
 	for _, constraint := range createTable.Constraints {
-		if filterTableConstraint(constraint, retainedColumns) {
+		if shouldKeepTableConstraint(constraint, retainedColumns) {
 			constraints = append(constraints, constraint)
 		}
 	}
@@ -143,7 +144,7 @@ func filterColumnOptions(
 	return options, nil
 }
 
-func filterTableConstraint(
+func shouldKeepTableConstraint(
 	constraint *ast.Constraint,
 	retained map[string]struct{},
 ) bool {
