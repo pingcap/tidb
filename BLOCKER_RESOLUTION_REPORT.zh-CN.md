@@ -1,5 +1,41 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 prepared filter 参数上下文修复
+
+最终合并状态完整 access-path 再次退出 0：`/tmp/access-merged-readiness.log`；节点日志 `/tmp/access-merged-readiness-evidence/rust-node.log` 第 8 行包含 `cluster_session_node_ready`。沿用下节固定 Go master 和 nightly 命令，仅替换 `ACCESS_PATH_KEEP_LOGS` 目录。索引候选修复独立提交为 `891ed3c537`；prepared filter 修复单独提交。
+
+根因：`tidb-expr/src/evaluator.rs::eval_vectorized_expression` 的非 deferred 常量分支调用 `constant.eval()`，没有传递执行上下文。SelectionExec 的向量过滤因此无法读取已经绑定的 prepared parameter，抛出 `unbound prepared parameter`。StmtContext 绑定和 clone 均保留参数；问题在过滤求值调用点。
+
+Go master `fdfadb96b2c` 的 `pkg/expression/constant.go::Constant.VecEvalInt` 等方法调用 `genVecFromConstExpr`，通过当前 EvalContext 求值；`getLazyDatum` 从该上下文的 ParamValues 取参数。Rust 现与已有 projection batch 路径一致，对每个非空 batch 调用 `constant.eval_in(ctx)` 一次并广播结果；空 batch 不求值，deferred 表达式仍按行执行。
+
+新增回归 `vector_filter_reads_current_parameter_once_per_nonempty_chunk`：复用过滤表达式，切换 NULL、0、1、-1 参数，验证 0、1、8 行的过滤 mask、NULL mask 和参数读取次数。新增回归和已有 `prepared_filter_and_projection_use_fresh_execution_state` 修复前均失败，日志 `/tmp/vector-filter-red.log`、`/tmp/prepared-filter-red.log`。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib evaluator::tests
+# 11 passed，/tmp/vector-filter-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1280 passed / 10 failed，/tmp/executor-after-vector-filter.log
+```
+
+已 fast-forward 同步远端 `cb4043ed3a`，保留其他作者的 statement context 和字符映射提交。合并后再次运行 executor 全量，仍为 **1280 passed / 10 failed**（`/tmp/executor-merged-readiness.log`）；`make lint` 退出 0（`/tmp/readiness-merged-lint.log`）。新增 skyline 回归和已有 prepared filter 回归均通过。
+
+仍失败的 10 项如下，未跳过、未改断言，且不属于 readiness：
+
+- `driver::tests::aggregates::tpcc_condition_eleven_pushes_filters_through_nested_derived_joins`
+- `driver::tests::aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`
+- `driver::tests::point_get::primary_batch_reads_use_written_common_handle_encoding`
+- `remote_scan::tests::a_cluster_point_get_is_one_key_lookup_and_no_coprocessor_request`
+- `remote_scan::tests::an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request`
+- `remote_scan::tests::composite_cnf_writes_fetch_only_the_matching_keys`
+- `remote_scan::tests::dirty_common_handle_reads_share_the_remote_staged_merge`
+- `remote_scan::tests::unsigned_staged_rows_merge_in_the_readers_value_order`
+- `remote_scan::tests::write_range_reader_preserves_record_identity_and_staged_rows`
+- `remote_scan::tests::write_range_reader_reconstructs_virtual_columns`
+
+从仓库根目录执行 Cargo 不会自动读取 `rust/.cargo/config.toml`，全量测试需要显式设置 `RUST_MIN_STACK=33554432`。未设置时出现的 grouped subquery 栈溢出不是本轮参数修复的测试结论。
+
 ## 2026-09-10 最新结论：readiness 已解除，access-path 对照通过
 
 以下为最新状态，后文保留早期失败和 WIP 记录作为时间线，不能用早期描述覆盖本节结果。
