@@ -1081,6 +1081,11 @@ func (m *memArbitrator) growBigBudget() {
 		upper := m.bigBudget()
 		upper.Lock()
 
+		if m.killer.GetKillSignal() != 0 {
+			upper.Unlock()
+			return
+		}
+
 		used, growThreshold, capacity := m.bigBudgetUsed(), m.bigBudgetGrowThreshold(), m.bigBudgetCap()
 		if used > growThreshold {
 			// expect next cap := used * 2.718
@@ -1191,6 +1196,11 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 	{
 		upper := m.bigBudget()
 		upper.Lock()
+
+		if m.killer.GetKillSignal() != 0 {
+			upper.Unlock()
+			return
+		}
 
 		capacity := m.bigBudgetCap()
 		extra := max(newCap*1100/1000, m.bigBudgetGrowThreshold(), capacity, m.bigBudgetUsed()*1100/1000) - capacity
