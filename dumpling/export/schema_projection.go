@@ -93,6 +93,9 @@ func buildProjectedTableSchema(
 	if err := validateAutoRandomColumns(createTable); err != nil {
 		return nil, err
 	}
+	if err := validateAutoIncrementColumns(createTable); err != nil {
+		return nil, err
+	}
 	if !allColumnsRetained(partitionColumns, retainedColumns) {
 		return nil, errors.New("partition definition references a removed column")
 	}
@@ -300,6 +303,43 @@ func validateAutoRandomColumns(createTable *ast.CreateTableStmt) error {
 		return errors.New("auto_random is only supported on the tables with clustered primary key")
 	}
 	return nil
+}
+
+func validateAutoIncrementColumns(createTable *ast.CreateTableStmt) error {
+	for _, column := range createTable.Cols {
+		hasAutoIncrement := false
+		for _, option := range column.Options {
+			hasAutoIncrement = hasAutoIncrement || option.Tp == ast.ColumnOptionAutoIncrement
+		}
+		if !hasAutoIncrement || hasIndexStartingWithColumn(createTable, column.Name.Name.L) {
+			continue
+		}
+		return errors.Errorf("auto_increment column `%s` must be defined as a key", column.Name.Name.O)
+	}
+	return nil
+}
+
+func hasIndexStartingWithColumn(createTable *ast.CreateTableStmt, columnName string) bool {
+	for _, column := range createTable.Cols {
+		if column.Name.Name.L != columnName {
+			continue
+		}
+		for _, option := range column.Options {
+			if option.Tp == ast.ColumnOptionPrimaryKey || option.Tp == ast.ColumnOptionUniqKey {
+				return true
+			}
+		}
+	}
+	for _, constraint := range createTable.Constraints {
+		switch constraint.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
+			ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			if indexCoversColumns(constraint.Keys, []ast.CIStr{{L: columnName}}) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hasClusteredPrimaryKey(createTable *ast.CreateTableStmt, columnName string) bool {

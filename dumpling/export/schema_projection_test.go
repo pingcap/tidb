@@ -265,12 +265,10 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"`id` BIGINT AUTO_INCREMENT," +
 			"PRIMARY KEY (`tenant_id`, `id`)" +
 			")"
-		projectedSQL, err := generateProjectedSchemaForTest(
+		_, err := generateProjectedSchemaForTest(
 			t, createSQL, "test", []string{"id"}, true, nil,
 		)
-		require.NoError(t, err)
-		require.Contains(t, projectedSQL, "`id` BIGINT AUTO_INCREMENT")
-		require.Empty(t, parseCreateTableForTest(t, projectedSQL).Constraints)
+		require.ErrorContains(t, err, "auto_increment column `id` must be defined as a key")
 	})
 
 	t.Run("auto random key removed", func(t *testing.T) {
