@@ -913,15 +913,20 @@ mod tests {
     fn healthy_row_distinguishes_absent_from_zero() {
         let mut stats = TableStatistics {
             pseudo: true,
+            cache_pseudo: true,
             ..TableStatistics::default()
         };
         assert!(healthy_row("d", "t", &PartitionLabel::None, &stats).is_none());
 
-        // Non-pseudo and never analyzed: a real row holding 0.
-        stats.pseudo = false;
+        // A real cache table may still use pseudo estimates in the planner.
+        // Never analyzed: a real row holding 0.
+        stats.cache_pseudo = false;
         let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row.len(), 4);
         assert_eq!(row[3], Datum::Int(0));
+        stats.last_analyze_version = 42;
+        let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
+        assert_eq!(row[3], Datum::Int(100));
     }
 
     // WRITTEN test for :571-587 and :575-580: independently nullable

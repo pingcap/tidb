@@ -1,5 +1,36 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 空表健康度使用原始缓存的 pseudo 状态
+
+partition_global_stats_health_matches_go 在空分区表 ANALYZE 后独立失败：
+SHOW STATS_META 返回三条记录，SHOW STATS_HEALTHY 却为空
+（`/tmp/partition-health-red.log`）。消费 CREATE 事件仍失败
+（`/tmp/partition-health-events.log`），因此移除了该实验改动。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/executor/show_stats.go:522` 读取原始缓存 Table.GetStatsHealthy；
+`pkg/statistics/table.go:806` 仅跳过原始 pseudo 对象。Rust 转换层已分别
+保存 cache_pseudo 和优化器 pseudo，但健康度误用了后者：零行的真实
+统计也会被优化器标为 pseudo。现在健康度只检查 cache_pseudo，保留
+优化器原有估算策略。回归覆盖合成 pseudo 不显示、未分析空表显示 0、
+已分析空表显示 100，原分区用例的全部健康度和计数断言保持不变。
+
+验证（Ready 范围）：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib initialized_empty_stats_are_not_a_synthetic_cache_pseudo
+# 修复前失败：预期 (0,true)，实际 (0,false)，/tmp/empty-health-unit-red.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1297 passed，/tmp/empty-health-executor-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib partition_global_stats_health_matches_go
+# 1 passed，10.29 秒，/tmp/empty-health-server-green.log
+make lint
+# 退出 0，/tmp/empty-health-lint.log
+git diff --check
+```
+
+本项是 SHOW 健康度语义修复，不代表统计包完整移植或全部门禁完成。
+
 ## 2026-09-11 多分区 TRUNCATE 后刷新全局统计缓存
 
 truncate_partitions_refreshes_global_stats_meta_like_go 独立失败：截断 p2/p4

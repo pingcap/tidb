@@ -155,7 +155,9 @@ impl TableStatistics {
     /// Go `statistics.Table.GetStatsHealthy`.
     #[must_use]
     pub fn stats_healthy(&self) -> (i64, bool) {
-        if self.pseudo {
+        // Go SHOW reads the canonical cache table, not GetStatsTable's
+        // planner copy, which can be pseudo even for an analyzed empty table.
+        if self.cache_pseudo {
             return (0, false);
         }
         if self.last_analyze_version == 0 {
@@ -3155,6 +3157,7 @@ mod tests {
     fn initialized_empty_stats_are_not_a_synthetic_cache_pseudo() {
         let synthetic = TableStatistics::new(0, 0, BTreeMap::new(), BTreeMap::new());
         assert!(synthetic.is_synthetic_pseudo());
+        assert_eq!(synthetic.stats_healthy(), (0, false));
 
         let mut analyzed_empty = synthetic;
         analyzed_empty.cache_pseudo = false;
@@ -3163,6 +3166,9 @@ mod tests {
             .insert(1, tidb_stats::StatsLoadedStatus::full_load());
         assert!(analyzed_empty.pseudo);
         assert!(!analyzed_empty.is_synthetic_pseudo());
+        assert_eq!(analyzed_empty.stats_healthy(), (0, true));
+        analyzed_empty.last_analyze_version = 42;
+        assert_eq!(analyzed_empty.stats_healthy(), (100, true));
     }
 
     #[test]
