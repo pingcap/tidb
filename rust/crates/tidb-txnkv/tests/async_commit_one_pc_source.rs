@@ -333,7 +333,14 @@ fn detached_secondary_flushes_progress_independently() {
     let server = TestServer::start(service);
     let first = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
     let second = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
+    let (first_completion, first_observed) = mpsc::channel();
+    let (second_completion, second_observed) = mpsc::channel();
     let request = |start_version| OwnedTransactionCommitRequest {
+        completion: Some(if start_version == 10 {
+            first_completion.clone()
+        } else {
+            second_completion.clone()
+        }),
         address: server.address.clone(),
         request: KvrpcCommitRequest {
             start_version,
@@ -351,6 +358,7 @@ fn detached_secondary_flushes_progress_independently() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let first_authority_available = first.try_lock().is_ok();
+    let admission_has_no_response = matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
     let started = Instant::now();
     assert!(second.lock().unwrap().publish_commits_detached(vec![request(20)], Arc::clone(&second)));
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -359,8 +367,18 @@ fn detached_secondary_flushes_progress_independently() {
     }
     let independent = recorded.lock().unwrap().commits.len() == 2;
     let elapsed = started.elapsed();
+    let second_response = second_observed.recv_timeout(Duration::from_secs(2));
+    let held_has_no_response = matches!(first_observed.try_recv(), Err(mpsc::TryRecvError::Empty));
     // Release held I/O even on the old implementation, before asserting.
     release.send(true).unwrap();
+    let second_response = second_response.unwrap().unwrap();
+    assert!(second_response.response.error.is_none());
+    assert!(second_response.response.region_error.is_none());
+    let first_response = first_observed.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+    assert!(first_response.response.error.is_none());
+    assert!(first_response.response.region_error.is_none());
+    assert!(admission_has_no_response && held_has_no_response,
+        "only the released transaction may report a completed response");
     let deadline = Instant::now() + Duration::from_secs(2);
     while recorded.lock().unwrap().commits.len() < 2 {
         assert!(Instant::now() < deadline, "flush did not drain after release");

@@ -876,6 +876,7 @@ where
         for batch in &batches {
             let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
             requests.push(OwnedTransactionCommitRequest {
+                completion: self.detached_commit_observer.clone(),
                 address: batch.address().to_owned(),
                 request: KvrpcCommitRequest {
                     start_version: self.start_ts,

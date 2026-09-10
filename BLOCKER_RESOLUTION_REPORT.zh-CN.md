@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 optimistic 2PC 异步 secondary 完成证据
+
+原真实测试在 `secondary_publications.len() == 1` 失败（实际 0），
+`/tmp/optimistic-2pc-restored.log`。固定 Go master 的 client-go
+`v2.0.8-0.20260903102657-08cbf831121a/txnkv/transaction/2pc.go:1075-1118`
+先提交 primary，再通过 `spawnWithStorePool` 提交 secondaries；因此同步
+返回的 receipt 不能证明后台批次已经完成。
+
+增加按事务显式订阅的 detached completion 通道。后台只有实际解码响应后
+才通知，保留 region/key error；admission、transport、deadline 失败报告错误。
+默认没有订阅，不等待观察者，不改变 primary 返回时机和 secondary 失败指标。
+真实测试在 commit 返回之后等待全部订阅结束，严格要求一个成功的 secondary
+publication，再执行原有 marker、读回、重试和回滚检查。
+
+延迟响应回归先红：`/tmp/detached-observer-red.log`，完成通知超时，2.03 秒。
+修复后同模块 10 passed，`/tmp/detached-observer-green.log`。分别订阅两笔事务，
+验证第一笔响应暂停期间第二笔独立完成、暂停的第一笔无提前完成事件、释放后
+收到真实响应，同时保持原有 client authority 不被网络等待锁住的断言。
+
+Ready 验证命令：
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-txnkv --test all async_commit_one_pc_source -- --nocapture
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-optimistic-2pc.sh
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all
+make lint
+git diff --check
+```
+
+真实场景退出 0，日志 `/tmp/optimistic-2pc-observed.log`：cluster
+7683988181398460413，primary region 28、secondary region 10；分裂、leader
+转移、提交读回、冲突回滚、新旧锁检查全部通过，脚本完成严格进程/端口/数据
+清理。lint 日志 `/tmp/detached-observer-lint.log`。该修复解决这一门禁的
+完成证据缺口，不是全部原始集成门禁或整个 client-go package 的完成声明。
+
 ## 2026-09-11 PD batch topology 使用同一物理连接检验 stream 隔离
 
 先修复旧 realtikv_replica_read target 为 all 加完整模块测试名，原 target

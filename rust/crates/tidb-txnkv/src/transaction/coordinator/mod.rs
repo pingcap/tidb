@@ -227,6 +227,7 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
     protocol: CommitProtocol,
+    detached_commit_observer: Option<std::sync::mpsc::Sender<super::DetachedCommitCompletion>>,
     /// Resource group inherited by Prewrite and Commit request contexts.
     resource_group_name: Option<String>,
     /// Go `SnapshotRuntimeStats` command RPC totals for point readers.
@@ -371,6 +372,7 @@ where
             pinned_primary_key: None,
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
+            detached_commit_observer: None,
             resource_group_name: None,
             snapshot_get_rpc_count: 0,
             snapshot_batch_get_rpc_count: 0,
@@ -391,6 +393,17 @@ where
     /// Permits this transaction to attempt async commit and/or 1PC.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
         self.protocol = protocol;
+    }
+
+    /// Subscribe to actual detached commit completions for this transaction.
+    /// This does not wait for secondaries or change the foreground receipt.
+    /// Only detached batches report here; awaited fallback uses the receipt.
+    pub fn observe_detached_commits(
+        &mut self,
+    ) -> std::sync::mpsc::Receiver<super::DetachedCommitCompletion> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.detached_commit_observer = Some(sender);
+        receiver
     }
 
     /// Rejects a completed read whose timestamp GC has already passed.

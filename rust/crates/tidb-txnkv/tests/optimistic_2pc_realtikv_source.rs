@@ -249,6 +249,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         OptimisticMutation::insert(LOW_SIBLING_KEY.to_vec(), b"low-sibling-v1".to_vec()).unwrap(),
         OptimisticMutation::insert(HIGH_KEY.to_vec(), b"high-v1".to_vec()).unwrap(),
     ];
+    let detached_completions = transaction.observe_detached_commits();
     let committed = transaction
         .commit(mutations, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("run normal optimistic 2PC");
@@ -260,7 +261,23 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     assert_eq!(committed.receipt.primary_key, LOW_KEY);
     assert_eq!(committed.receipt.prewrite_publications.len(), 2);
     assert_eq!(committed.receipt.primary_publications.len(), 1);
-    assert_eq!(committed.receipt.secondary_publications.len(), 1);
+    // Go returns after the primary and flushes secondaries in the store pool.
+    // Validate the actual response after commit without making commit await it.
+    assert!(committed.receipt.secondary_publications.is_empty());
+    let mut secondary_publications = Vec::new();
+    loop {
+        match detached_completions.recv_timeout(RPC_TIMEOUT) {
+            Ok(completion) => {
+                let secondary = completion.expect("detached secondary transport must succeed");
+                assert!(secondary.response.region_error.is_none());
+                assert!(secondary.response.error.is_none());
+                secondary_publications.push(secondary.publication);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(error) => panic!("detached secondary must complete: {error}"),
+        }
+    }
+    assert_eq!(secondary_publications.len(), 1);
     assert!(
         committed.receipt.prewrite_attempt_publications.len()
             > committed.receipt.prewrite_publications.len(),
@@ -353,7 +370,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
             committed.receipt.commit_ts,
         );
     }
-    for publication in &committed.receipt.secondary_publications {
+    for publication in &secondary_publications {
         print_publication(
             "secondary_commit",
             publication,

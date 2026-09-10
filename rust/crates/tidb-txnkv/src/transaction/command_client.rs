@@ -96,33 +96,40 @@ async fn run_detached_flush(
             &request.context,
             &call,
         ) {
-            Ok(request) => pending.push(request),
-            Err(_) => {
+            Ok(pending_request) => pending.push((pending_request, request.completion)),
+            Err(error) => {
                 DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Some(observer) = request.completion {
+                    let _ = observer.send(Err(format!("commit admission: {error:?}")));
+                }
             }
         }
     }
     // Admit all region batches before awaiting any response. Other transaction
     // tasks continue while these requests are in flight.
-    for mut request in pending {
+    for (mut request, observer) in pending {
         let result = tokio::time::timeout_at(
             tokio::time::Instant::from_std(call.deadline()),
             std::future::poll_fn(|cx| request.poll_complete(cx)),
         )
         .await;
-        let failed = match result {
-            Ok(Ok(Ok(response))) => {
-                response.response.region_error.is_some() || response.response.error.is_some()
-            }
-            _ => {
+        let completion = match result {
+            Ok(Ok(Ok(response))) => Ok(response),
+            error => {
                 request.cancel();
-                true
+                Err(format!("commit completion: {error:?}"))
             }
         };
+        let failed = completion.as_ref().map_or(true, |response| {
+            response.response.region_error.is_some() || response.response.error.is_some()
+        });
         if failed {
             // Primary success already decided the outcome. Secondary errors
             // are diagnostic, not rollback or an undetermined primary.
             DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(observer) = observer {
+            let _ = observer.send(completion);
         }
     }
 }
@@ -207,7 +214,13 @@ pub struct OwnedTransactionCommitRequest {
     pub request: KvrpcCommitRequest,
     /// Region context stamped with the transaction's resolved locks.
     pub context: KvrpcContext,
+    /// Optional diagnostic sink; sending never waits for the observer.
+    pub completion: Option<std::sync::mpsc::Sender<DetachedCommitCompletion>>,
 }
+
+/// Actual response of a detached commit, or its admission/transport failure.
+/// Region and key errors remain in the decoded response for the observer.
+pub type DetachedCommitCompletion = Result<TransactionBatchResponse<KvrpcCommitResponse>, String>;
 
 /// One region-routed PessimisticLock submitted as part of a concurrent
 /// locking round.
