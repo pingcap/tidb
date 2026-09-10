@@ -1,5 +1,39 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 mock transaction 接入点写入返回值锁接口
+
+四个事务测试在点写入阶段报 1105：only a pessimistic transaction locks
+statement keys。独立红测 `an_explicit_transaction_holds_one_transaction_for_every_statement`
+为 0 passed / 1 failed，0.04 秒，`/tmp/mock-prelock-red.log`。
+MockSessionTransaction 已实现带断言的普通锁入口，却未实现新增的
+lock_staged_keys_with_values，落入 trait 的拒绝默认实现。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/executor/point_get.go:602,615,621` 在 e.lock 时 InitReturnValues 并缓存
+返回行。Rust 真实 SessionTransaction 已接入该接口，故本次只补 mock 接口，
+复用其现有锁定/重试结果；mock 数据仍来自内存快照。未给生产接口增加无锁
+成功回退，未修改默认事务模式，未弱化失败断言。
+
+排除了一项假设：临时 BEGIN OPTIMISTIC 点更新探针在生产修改前即通过
+（`/tmp/optimistic-prelock-red.log` 名称虽带 red，实际为 green）。上游不会为
+该模式产生预加锁请求，不能据此宣称发现乐观事务缺陷；探针已删除。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 429 passed / 5 failed，45.49 秒，退出 101；/tmp/server-mock-prelock-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# fmt、lint、diff check 均退出 0，/tmp/mock-prelock-{fmt,lint}.log
+```
+
+四个原失败用例的参数绑定、事务生命周期、schema move 及 mock 冲突断言
+均通过。`an_explicit_transaction_does_not_lock_what_go_would_lock` 是既有
+mock 能力限制的刻画，不是 Go 悲观锁行为等价证据；本次不将其作为真实
+存储的锁排他性验证，也不声称整个事务 package 已完成。
+
 ## 2026-09-11 unistore LIKE escape 按协议整数求值
 
 `auto_analyze_fills_missing_partition_statistics_like_go` 的两条自动任务已经
