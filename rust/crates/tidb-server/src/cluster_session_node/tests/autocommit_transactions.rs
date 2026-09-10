@@ -608,17 +608,14 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
 }
 
-/// An `INSERT ... VALUES` DOES read: the duplicate-key check is a read, so the
-/// statement has a timestamp and publishes at it.
-///
-/// Worth pinning because the three cases this seam distinguishes are read/write
-/// (publish at the read), never-read (a fresh timestamp is correct), and the
-/// max-ts shortcut (nothing may publish) -- and it would be easy to assume an
-/// INSERT is the middle one. It is not: two sessions inserting the same key
-/// race exactly as two updates do, and the loser must hear about it.
+/// An in-place duplicate check reads at the statement timestamp. Go defaults
+/// to lazy checks, so explicitly request the mode this snapshot test covers.
 #[test]
 fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
     let (mut session, cluster) = open_session();
+    session
+        .execute_write("SET tidb_txn_mode = 'optimistic', tidb_constraint_check_in_place = ON")
+        .expect("enable in-place duplicate checks");
     let opened_before = cluster.opened.load(Ordering::Acquire);
     session
         .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")

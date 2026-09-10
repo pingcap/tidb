@@ -1,5 +1,32 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 INSERT 快照测试显式选择立即检查模式
+
+最后的 `an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read`
+独立失败，`/tmp/insert-inplace-red.log`：期待一个执行阶段快照，实际为零。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/sessionctx/vardef/tidb_vars.go:1603` 默认 ConstraintCheckInPlace=false；
+`pkg/executor/insert.go:330` 在关闭立即检查或悲观事务时选择 DupKeyCheckLazy。
+原测试把“INSERT 一定先读取唯一性”当作默认行为，前提不正确。
+
+保留原快照数和返回值断言，只在测试中显式设置
+`tidb_txn_mode='optimistic', tidb_constraint_check_in_place=ON`，覆盖其本意的
+执行阶段立即检查。仅打开约束检查仍因悲观模式失败，日志
+`/tmp/insert-inplace-green.log` 实际为 red；两个前提均设置后 1 passed，
+0.05 秒，`/tmp/insert-optimistic-inplace-green.log`。未修改生产默认值。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 完整 434 passed / 0 failed，45.10 秒，退出 0；/tmp/server-inplace-final.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# fmt、lint、diff check 退出 0，/tmp/insert-inplace-{fmt,lint-final}.log
+```
+
 ## 2026-09-11 fix52592 不再一律禁止完整主键 MaxTS
 
 原回归独立失败，`/tmp/fix52592-max-ts-red.log`，0.04 秒：ON hint 下
