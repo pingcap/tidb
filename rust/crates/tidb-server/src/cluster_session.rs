@@ -274,61 +274,14 @@ pub fn cluster_session_catalog(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
-    let mut templates = StatsTemplates::default();
     cluster_session_catalog_with_templates(
         loaded,
         storage,
-        stats,
+        Some(stats),
         auto_ids,
-        &mut templates,
         storage,
         None,
     )
-}
-
-/// Per-snapshot planner statistics shared by every session opened against the
-/// same [`StatsSnapshot`] generation.
-///
-/// Go builds one `statistics.Table` per table inside the domain's shared
-/// `StatsHandle`, and every session plans against that ONE copy. Rebuilding
-/// `planner_statistics` per session instead cloned every histogram, TopN and
-/// CMSketch for all ~700 restored tables into EACH connection -- measured at
-/// ~50MB per session just to open, which is what ran the node into the
-/// container's memory ceiling under a connection flood. The built value is a
-/// pure function of the (catalog, snapshot) pair this factory owns, so one
-/// `Arc` per table is exactly as correct and a few KB instead of tens of MB.
-#[derive(Default)]
-pub struct StatsTemplates {
-    /// `Arc::as_ptr` of the snapshot these templates were built from. A new
-    /// publish by the reload thread moves the pointer; the whole cache then
-    /// drops, so a DDL/stats reload never serves stale histograms.
-    snapshot_generation: usize,
-    per_table: std::collections::HashMap<i64, Arc<TableStatistics>>,
-}
-
-impl StatsTemplates {
-    /// Drops the cache when `snapshot` is not the generation it was built
-    /// from. Call once per catalog build, before any lookup.
-    pub fn reuse(&mut self, snapshot: &Arc<StatsSnapshot>) {
-        let generation = Arc::as_ptr(snapshot) as usize;
-        if self.snapshot_generation != generation {
-            self.snapshot_generation = generation;
-            self.per_table.clear();
-        }
-    }
-
-    /// The shared statistics for one table, building them on first use within
-    /// this snapshot generation.
-    fn get_or_build(
-        &mut self,
-        table_id: i64,
-        build: impl FnOnce() -> TableStatistics,
-    ) -> Arc<TableStatistics> {
-        self.per_table
-            .entry(table_id)
-            .or_insert_with(|| Arc::new(build()))
-            .clone()
-    }
 }
 
 /// One schema version's worth of fully built [`KvTable`]s, reused by every
@@ -378,9 +331,8 @@ impl KvTableTemplates {
 pub fn cluster_session_catalog_with_templates(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
-    stats: &StatsSnapshot,
+    stats: Option<&StatsSnapshot>,
     auto_ids: &dyn TableAutoIds,
-    stats_templates: &mut StatsTemplates,
     // Neutral storage over which CACHED-MISS tables are built for the
     // template set; sessions rebind their own seam afterwards either way.
     template_storage: &ClusterTableStorage,
@@ -459,21 +411,18 @@ pub fn cluster_session_catalog_with_templates(
                     // loaded yet is left OUT of the map, which is exactly what
                     // makes the planner treat it as `statistics.PseudoTable`.
                     if let Some(loaded_stats) =
-                        stats.get(&table.id).and_then(TableStatsState::loaded)
+                        stats.and_then(|stats| stats.get(&table.id)).and_then(TableStatsState::loaded)
                     {
-                        let statistics = stats_templates
-                            .get_or_build(table.id, || planner_statistics(loaded_stats, table));
+                        let statistics = Arc::new(planner_statistics(loaded_stats, table));
                         catalog.set_table_statistics(table.id, statistics);
                     }
                     if let Some(partition) = &table.partition {
                         for definition in partition.read().definitions.snapshot() {
                             let physical_id = definition.id;
                             if let Some(loaded_stats) =
-                                stats.get(&physical_id).and_then(TableStatsState::loaded)
+                                stats.and_then(|stats| stats.get(&physical_id)).and_then(TableStatsState::loaded)
                             {
-                                let statistics = stats_templates.get_or_build(physical_id, || {
-                                    planner_statistics(loaded_stats, table)
-                                });
+                                let statistics = Arc::new(planner_statistics(loaded_stats, table));
                                 catalog.set_table_statistics(physical_id, statistics);
                             }
                         }

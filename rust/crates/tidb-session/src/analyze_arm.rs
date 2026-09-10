@@ -486,13 +486,11 @@ impl Session {
         let Some(table) = temporary else {
             return Ok(None);
         };
-        self.analyze_one_table(statement)?;
         let table_id = table.table_id;
-        let statistics = self.with_catalog_mut(|catalog| {
-            catalog
-                .table_statistics(table_id)
-                .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))
-        })?;
+        let statistics = self
+            .analyze_one_table(statement)?
+            .remove(&table_id)
+            .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))?;
         Ok(Some((
             table_id,
             Arc::new(
@@ -505,46 +503,14 @@ impl Session {
         )))
     }
 
-    /// Reinstalls analyzed LOCAL temporary-table statistics after the shared
-    /// catalog image has been rebuilt.
-    ///
-    /// LOCAL metadata is owned by this session and therefore is absent while
-    /// the server rebuilds the shared catalog. Go's statistics cache is not:
-    /// an explicit temporary-table `ANALYZE` remains cached across an
-    /// unrelated infoschema or statistics refresh. Recreate only the planner
-    /// views for cache entries that still exist; ordinary temporary-table
-    /// reads never create one.
-    pub fn reinstall_local_temporary_statistics(
-        &self,
-        mut cached: impl FnMut(i64) -> Option<Arc<tidb_stats::Table>>,
-    ) {
-        let planner = self
-            .local_temporary_tables
-            .iter()
-            .filter_map(|(_, _, table)| {
-                let canonical = cached(table.table_id)?;
-                Some((
-                    table.table_id,
-                    Arc::new(tidb_executor::load_stats::table_statistics_from_table(
-                        &canonical, table,
-                    )),
-                ))
-            })
-            .collect::<Vec<_>>();
-        if planner.is_empty() {
-            return;
-        }
-        let mut catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (table_id, statistics) in planner {
-            catalog.set_table_statistics(table_id, statistics);
-        }
-    }
-
     /// Analyzes one named table and publishes its statistics.
-    fn analyze_one_table(&mut self, statement: &AnalyzeStatement) -> Result<(), DriverError> {
+    fn analyze_one_table(
+        &mut self,
+        statement: &AnalyzeStatement,
+    ) -> Result<
+        std::collections::HashMap<i64, Arc<tidb_executor::access_cost::TableStatistics>>,
+        DriverError,
+    > {
         let schema = statement.schema.clone();
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
@@ -670,6 +636,7 @@ impl Session {
                 .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
                 .collect::<Vec<_>>();
             let global_count = realtime_count(table_id);
+            let mut analyzed = std::collections::HashMap::new();
             let execution: Result<(), DriverError> = recover_analyze_panic(|| {
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
@@ -698,7 +665,7 @@ impl Session {
                             statistics,
                             selected.is_some(),
                         );
-                        catalog.set_table_statistics(table_id, Arc::new(statistics));
+                        analyzed.insert(table_id, Arc::new(statistics));
                     } else {
                         let mut partition_statistics = Vec::with_capacity(partition_counts.len());
                         for (physical_id, realtime_count) in partition_counts {
@@ -762,10 +729,10 @@ impl Session {
                         #[cfg(test)]
                         inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
                         for (physical_id, statistics) in partition_statistics {
-                            catalog.set_table_statistics(physical_id, statistics);
+                            analyzed.insert(physical_id, statistics);
                         }
                         if let Some(statistics) = global_statistics {
-                            catalog.set_table_statistics(table_id, statistics);
+                            analyzed.insert(table_id, statistics);
                         }
                     }
                 }
@@ -782,15 +749,18 @@ impl Session {
                         analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
                             .map_err(|error| DriverError::unsupported(error.to_string()))?;
                     let statistics = merge_independent_index_statistics(
-                        catalog.table_statistics(table_id),
+                        analyzed.get(&table_id).cloned().or_else(|| catalog.table_statistics(table_id)),
                         statistics,
                     );
-                    catalog.set_table_statistics(table_id, Arc::new(statistics));
+                    analyzed.insert(table_id, Arc::new(statistics));
                 }
                 Ok(())
             })
             .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?;
             execution?;
+            for (&physical_id, statistics) in &analyzed {
+                catalog.set_table_statistics(physical_id, Arc::clone(statistics));
+            }
             if statement.persist_options {
                 for options in &resolution.physical {
                     if options.is_partition && !ctx.static_partition_prune() {
@@ -805,7 +775,7 @@ impl Session {
                     );
                 }
             }
-            Ok(())
+            Ok(analyzed)
         });
         self.drain_context_warnings(&ctx);
         result

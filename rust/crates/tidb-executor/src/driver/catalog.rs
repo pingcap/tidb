@@ -28,6 +28,8 @@ use tidb_hack::GoToLower;
 
 pub(crate) mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
+mod statistics;
+pub use statistics::{StatisticsSource, StatisticsView};
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -88,16 +90,11 @@ struct Database {
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
 }
 
-/// Go's process-wide statistics handle cache.
-///
-/// Catalog clones are transaction and stale-read images of schema/table
-/// state. Statistics are neither: the stats handle publishes one cache for
-/// every session, including sessions currently reading through an older
-/// transaction image.
 /// Storage half of Go's statistics sync/async load worker.
 pub trait StatisticsItemLoader: Send + Sync {
     /// Loads the requested items and returns refreshed planner tables for
-    /// publication into the requesting session's cache.
+    /// publication into the in-process cache. Cluster loaders publish directly
+    /// to the domain source read by `StatisticsView` and return no copies.
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
@@ -235,6 +232,8 @@ pub struct Catalog {
     /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
     /// so the two are published independently.
     statistics: Arc<StatisticsCache>,
+    statistics_view: Option<Arc<StatisticsView>>,
+    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
     /// In-process backing for pinned Go's shared `mysql.analyze_options`
     /// rows. Cluster execution uses the real system table.
     analyze_options: Arc<std::sync::RwLock<HashMap<i64, crate::analyze::SavedAnalyzeOptions>>>,
@@ -410,6 +409,7 @@ struct CatalogSnapshot {
     foreign_keys_present: bool,
     version: u64,
     metadata_version: u64,
+    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<statistics::StatisticsSchema>>>>,
     latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
@@ -429,6 +429,7 @@ impl CatalogSnapshot {
             foreign_keys_present: catalog.foreign_keys_present,
             version: catalog.version,
             metadata_version: catalog.metadata_version,
+            statistics_schemas: Arc::clone(&catalog.statistics_schemas),
             latest_index_schema: catalog.latest_index_schema.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
@@ -451,6 +452,8 @@ impl CatalogSnapshot {
             latest_index_schema: self.latest_index_schema.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
+            statistics_view: owner.statistics_view.clone(),
+            statistics_schemas: Arc::clone(&self.statistics_schemas),
             analyze_options: Arc::clone(&owner.analyze_options),
             commit_history: Arc::clone(&owner.commit_history),
             temporary_sweep: self.temporary_sweep.clone(),
@@ -550,6 +553,8 @@ impl Default for Catalog {
             latest_index_schema: std::sync::OnceLock::new(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
+            statistics_view: None,
+            statistics_schemas: Arc::default(),
             analyze_options: Arc::default(),
             commit_history: Arc::new(std::sync::Mutex::new(CommitHistory::default())),
             temporary_sweep: None,
@@ -1539,6 +1544,7 @@ impl Catalog {
     fn bump_metadata_version(&mut self) {
         self.metadata_version += 1;
         self.latest_index_schema.take();
+        self.statistics_schemas = Arc::default();
     }
 
     /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
@@ -2055,12 +2061,49 @@ impl Catalog {
         Ok(())
     }
 
+    /// Uses the domain cache for cluster planning, independent of schema refresh.
+    pub fn set_statistics_view(&mut self, view: Arc<StatisticsView>) {
+        self.statistics_view = Some(view);
+    }
+
     /// One table's loaded statistics; `None` is Go's `PseudoTable`.
     #[must_use]
     pub fn table_statistics(
         &self,
         table_id: i64,
     ) -> Option<Arc<crate::access_cost::TableStatistics>> {
+        if let Some(view) = &self.statistics_view {
+            let schemas = self.statistics_schemas.get_or_init(|| {
+                let mut schemas = HashMap::new();
+                for database in self.databases.values() {
+                    for entry in database.tables.values() {
+                        let TableEntry::Kv(table) = entry.as_ref() else {
+                            continue;
+                        };
+                        let schema = Arc::new(statistics::StatisticsSchema {
+                            columns: table
+                                .columns()
+                                .iter()
+                                .map(|column| (column.id, column.field_type.is_unsigned()))
+                                .collect(),
+                            indexes: table
+                                .indexes()
+                                .iter()
+                                .map(|index| (index.id, index.column_offsets.len(), index.unique))
+                                .collect(),
+                        });
+                        if let Some(partition) = table.partition() {
+                            for definition in &partition.definitions {
+                                schemas.insert(definition.id, Arc::clone(&schema));
+                            }
+                        }
+                        schemas.insert(table.table_id, schema);
+                    }
+                }
+                schemas
+            });
+            return view.table(table_id, schemas.get(&table_id)?);
+        }
         self.statistics
             .values
             .read()

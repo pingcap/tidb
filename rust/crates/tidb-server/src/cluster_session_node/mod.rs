@@ -212,8 +212,8 @@ use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, Table
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
-    cluster_session_catalog, cluster_session_catalog_with_templates, planner_statistics,
-    KvTableTemplates, SkippedTable, StatsTemplates, TableAutoIds,
+    cluster_session_catalog, cluster_session_catalog_with_templates, KvTableTemplates,
+    SkippedTable, TableAutoIds,
 };
 use crate::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
@@ -395,11 +395,25 @@ struct ClusterStatisticsItemLoader {
 struct ClusterStatisticsLoading {
     loader: Arc<ClusterStatisticsItemLoader>,
     workers: Arc<tidb_executor::driver::StatisticsLoadWorkers>,
+    view: Arc<tidb_executor::driver::StatisticsView>,
 }
 
 impl ClusterStatisticsLoading {
     fn attach(&self, catalog: &mut tidb_executor::Catalog) {
+        catalog.set_statistics_view(Arc::clone(&self.view));
         catalog.set_statistics_item_loader(self.loader.clone(), Arc::clone(&self.workers));
+    }
+}
+
+struct ClusterStatisticsSource(Arc<SharedStats>);
+
+impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
+    fn table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.0
+            .load()
+            .get(&physical_id)
+            .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+            .cloned()
     }
 }
 
@@ -828,7 +842,6 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
             .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
             .map(|value| tidb_session::varsutil::parse_analyze_skip_column_types(&value))
             .unwrap_or_default();
-        let mut updated = std::collections::BTreeSet::new();
         for requested in items {
             let item = requested.table_item_id;
             let Some(table) = catalog
@@ -898,9 +911,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                         cms: None,
                         fm_sketch: None,
                     };
-                    if self.stats.update_item(item.table_id, empty, table) {
-                        updated.insert(item.table_id);
-                    }
+                    self.stats.update_item(item.table_id, empty, table);
                     continue;
                 }
             }
@@ -916,23 +927,12 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                     requested.full_load,
                 )
                 .map_err(|error| error.to_string())?;
-            if loaded.is_some_and(|loaded| self.stats.update_item(item.table_id, loaded, table)) {
-                updated.insert(item.table_id);
+            if let Some(loaded) = loaded {
+                self.stats.update_item(item.table_id, loaded, table);
             }
         }
-        let snapshot = self.stats.load();
-        Ok(updated
-            .into_iter()
-            .filter_map(|table_id| {
-                let table = catalog
-                    .databases
-                    .iter()
-                    .flat_map(|database| &database.tables)
-                    .find(|table| table.id == table_id)?;
-                let stats = snapshot.get(&table_id)?.loaded()?;
-                Some((table_id, Arc::new(planner_statistics(stats, table))))
-            })
-            .collect())
+        // The domain publication above is authoritative for every session.
+        Ok(Vec::new())
     }
 }
 
@@ -1014,10 +1014,8 @@ pub struct ClusterSessionFactory {
     /// a Go DDL owner this node has the new schema. See
     /// [`schema_sync::SchemaPinRegistry`].
     schema_pins: Arc<schema_sync::SchemaPinRegistry>,
-    /// Planner statistics built once per stats snapshot and handed to every
-    /// session opened against it, the way Go's domain-level `StatsHandle`
-    /// serves one `statistics.Table` per table to all sessions.
-    session_stats_cache: Arc<Mutex<StatsTemplates>>,
+    /// One live planner view over the domain's canonical statistics.
+    statistics_view: Arc<tidb_executor::driver::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
     stats_load_workers: std::sync::OnceLock<Arc<tidb_executor::driver::StatisticsLoadWorkers>>,
     /// Fully built tables of one schema version, shared by every session
@@ -1132,11 +1130,13 @@ impl ClusterSessionFactory {
             server_info: None,
             global_vars,
             boot_skipped,
+            statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(
+                Arc::new(ClusterStatisticsSource(Arc::clone(&stats))),
+            )),
             stats,
             spill_storage: None,
             mem_arbitrator: None,
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
-            session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
             stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             workload_repository: std::sync::OnceLock::new(),
@@ -3068,14 +3068,6 @@ impl ClusterSessionFactory {
             storage = storage.with_remote_scanner(Arc::clone(scanner));
         }
         let loaded = self.catalog.load();
-        let statistics = self.stats.load();
-        // One planner-statistics set per stats snapshot, shared by every
-        // session on it. Building histograms per connection cost ~50MB each.
-        let mut templates = self
-            .session_stats_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        templates.reuse(&statistics);
         // One fully built table set per schema version, shared the same way:
         // each session clones its tables (columns/indexes are Arc-shared) and
         // swaps in only its own storage seam below.
@@ -3088,13 +3080,13 @@ impl ClusterSessionFactory {
         let mut built = cluster_session_catalog_with_templates(
             &loaded,
             &storage,
-            &statistics,
+            None,
             self.auto_ids.as_ref(),
-            &mut templates,
             &template_storage,
             Some(&mut kv_templates),
         );
         let statistics_loading = ClusterStatisticsLoading {
+            view: Arc::clone(&self.statistics_view),
             loader: Arc::new(ClusterStatisticsItemLoader {
                 transactions: Arc::clone(&self.transactions),
                 catalog: Arc::clone(&self.catalog),
@@ -3191,7 +3183,6 @@ impl ClusterSessionFactory {
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
-            statistics,
             explicit: None,
             savepoints: Vec::new(),
             skipped: built.skipped,
@@ -4265,10 +4256,6 @@ pub struct ClusterServerSession {
     /// reload thread -- an `ANALYZE` changes these without changing the
     /// schema version, so they are followed separately.
     stats: Arc<SharedStats>,
-    /// The exact snapshot this connection's catalog carries. A `store` on
-    /// `stats` always publishes a NEW `Arc`, so pointer identity is what
-    /// tells the connection its statistics moved.
-    statistics: Arc<tidb_exec::stats_watch::StatsSnapshot>,
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
     /// where a statement prepares a timestamp of its own after planning and
     /// waits for it at its first read.
@@ -5377,31 +5364,25 @@ impl ClusterServerSession {
     /// `BEGIN` is visible to every statement of the new transaction.
     fn rebuild_catalog_now(&mut self) {
         let loaded = self.catalog.load();
-        let statistics = self.stats.load();
-        // Either half can move on its own: a DDL bumps the schema version, an
-        // `ANALYZE` republishes the statistics. Both are rebuilt through the
-        // same path, so a connection never plans against one half of a pair.
-        if loaded.schema_version == self.schema_version
-            && Arc::ptr_eq(&statistics, &self.statistics)
-        {
+        // Go pins InfoSchema independently of Domain.StatsHandle. Statistics
+        // reads already see current publications, including inside a transaction.
+        if loaded.schema_version == self.schema_version {
             return;
         }
-        let mut built =
-            cluster_session_catalog(&loaded, &self.storage, &statistics, self.auto_ids.as_ref());
+        let mut built = cluster_session_catalog_with_templates(
+            &loaded,
+            &self.storage,
+            None,
+            self.auto_ids.as_ref(),
+            &self.storage,
+            None,
+        );
         self.statistics_loading.attach(&mut built.catalog);
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;
         drop(catalog);
-        self.session
-            .reinstall_local_temporary_statistics(|table_id| {
-                statistics
-                    .get(&table_id)
-                    .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
-                    .cloned()
-            });
         self.schema_version = loaded.schema_version;
-        self.statistics = statistics;
         self.skipped = built.skipped;
     }
 

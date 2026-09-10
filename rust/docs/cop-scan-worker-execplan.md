@@ -117,12 +117,61 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   End-to-end timings overlap; no performance acceptance or baseline promotion.
   Verify ten owned PIDs absent and ten ports closed, retaining the fixture.
   Receipt: benchmarks/statistics-loading-lifetime-validation.json.
-- [ ] Reproduce cross-catalog statistics publication under concurrent loads.
-  Global singleflight wakes all listeners, but Rust handle_task publishes only
-  to the initiating catalog's cache. Go updateCachedItem uses the domain cache.
-  The existing concurrent-identical-request test returns no table payload and
-  checks only call count, so it cannot prove every waiter sees loaded statistics.
-  Establish the relation to remaining cached scan-plus-sort before fixing it.
+- [x] Reproduce cross-catalog statistics publication in the retained Go-derived
+  ddl_after_loaded_statistics_matches_go test. A peer opened with evicted
+  statistics still sees an evicted column after another session completes its
+  domain load. Red log: /private/tmp/tidb-stats-publication.2G2PqG/peer-red.log.
+- [x] Replace independent cluster planner copies with a shared live conversion
+  view over SharedStats. Every read must resolve the canonical table; memoized
+  conversions must include schema metadata and retain weak source identity,
+  so a load, eviction, ANALYZE or DDL cannot reuse stale values. Catalog schema
+  metadata includes partition and temporary-table IDs. Remove StatsTemplates
+  and the loader's session-only conversion publication. Remove statistics-only
+  schema rebuilds and temporary-statistics reinstall. ANALYZE returns computed
+  results directly instead of reading back through a planner cache.
+- [x] Candidate statistics batch: 17 pass / 4 fail. All four remaining failures
+  reproduce with the same assertions on unmodified 15a5025ac9: add-column DDL,
+  partition truncation, global partition plan expectation, and global-temporary
+  statistics publication. Baseline logs are baseline-tests.log and
+  baseline-temporary.log under /private/tmp/tidb-stats-publication.2G2PqG.
+  These are retained failures, not waived parity claims.
+- [x] Nine loader/concurrency tests pass. Native ANALYZE: 14 pass / 5 fail;
+  baseline-native.log reproduces all five failures on unmodified 15a5025ac9.
+  All-target workspace compilation, release build, Ready lint and changed-line
+  formatting pass. The initial candidate is candidate-server under
+  /private/tmp/tidb-stats-publication.2G2PqG, SHA-256
+  02c82ba8119a426283f82676dd391471a5c7c85f217f2d4add030b33b49a7c55.
+  It passes prepared results and an ABBA trial but does not establish a speedup.
+  Final source review shares the initially empty schema memo itself across
+  transaction clones (Arc<OnceLock<_>>), avoiding a new build per transaction.
+  Final combined tests retain 40 passes and the same nine baseline failures.
+  Workspace compilation, lint and release build pass again. The final frozen
+  binary is publication-server, SHA-256
+  18340f03da2ebb0d15d62bdc024df525dc7a202fd9c233a6263806c8dd0f44e9.
+  No whole-package or all-tests-pass claim.
+- [x] Finish live timings and Go/Rust profiles for this increment. The former
+  session-only publication is removed from cluster loading. The peer regression
+  verifies shared loaded values and eviction without rebuilding its schema.
+  Establish the performance effect on remaining scan-plus-sort in live trials;
+  the reproduced visibility failure establishes correctness, not a speedup.
+- [x] Final eight-client TPC-C: 6.549147 / 6.516980 seconds per 6,000
+  transactions versus 6.554072 / 6.550132 before; Go 6.197479 / 6.257330.
+  Final sysbench 1/8/32-client before/after values overlap. Eight final prepared
+  comparisons match Go; all live consistency checks pass, including 32,000
+  profiled transactions each on final Rust and Go. No speedup acceptance or
+  baseline promotion: background macOS CPU and Go auto-ANALYZE are recorded.
+  Final Rust SortExec::next is 2.546s sysbench / 409ms TPC-C; Go 177ms / 1ms.
+  These inclusive frames have different caller boundaries: Go fetchChunksParallel
+  starts fetch/worker/result goroutines, while Rust fetches under next.
+  Go also has substantial condition-variable signaling; the traces do not prove
+  excess Rust wakeups. Full traces and caller chains are retained in the artifact
+  root. Verify 15 owned PIDs absent and 10 ports closed; retain the data fixture.
+  Remove the clean, recreatable baseline checkout after retaining its logs.
+  Receipt: benchmarks/statistics-publication-validation.json records final
+  source/binary hashes, exact commands, known failures and raw timing samples.
+- [ ] Continue causal latency attribution using comparable work/request/poll
+  counts and Go/Rust call chains, not inclusive SortExec::next totals. Remaining
+  scan-plus-sort choices and the nine reproduced baseline failures remain open.
 - [x] Inspect final 6ef4aea7aa source/profile and Go GetGlobalConfig/UpdateGlobal.
   Statement context's instance-variable read deep-copies the full Rust Config;
   Go reads a published pointer and clones only in UpdateGlobal.
@@ -348,6 +397,19 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, cross-session statistics visibility): make
+executor driver/catalog/statistics.rs a shared conversion view over the domain's
+canonical SharedStats, not another publication owner. A catalog caches only the
+schema tuples used by conversion, invalidating them with metadata changes.
+Every statistics lookup resolves the current raw table; converted values are
+reused only when both source identity and schema tuples match. Weak source
+identity prevents address reuse without retaining obsolete raw payloads.
+Initial sessions, rebuilt catalogs and transaction snapshots retain this view.
+Statistics publication no longer rebuilds schema catalogs. The Go-derived peer
+test verifies both eviction and completed-load visibility without schema refresh.
+Native ANALYZE returns its result to the cluster publisher directly; reading its
+unpublished output through the live planner view would read the prior generation.
 
 Decision (2026-09-10, statistics-loading lifetime): retain an immutable pair of
 the cluster storage loader and domain-owned worker pool on ClusterServerSession.

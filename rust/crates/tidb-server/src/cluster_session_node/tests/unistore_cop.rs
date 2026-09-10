@@ -1649,18 +1649,37 @@ fn ddl_after_loaded_statistics_matches_go() {
     // Demand must still reload evicted payloads after a stats-only refresh
     // and after the DDL below replaces the connection's schema catalog.
     let check_reload = |session: &mut ClusterServerSession| {
-        let snapshot = stack.factory.stats().load();
+        let peer = stack.factory.open_session(session_context(76)).unwrap();
+        let peer_catalog = peer.session.shared_catalog();
+        assert!(!peer_catalog
+            .lock()
+            .unwrap()
+            .table_statistics(table_id)
+            .unwrap()
+            .column_is_load_needed(1, true));
+        let mut snapshot = (*stack.factory.stats().load()).clone();
         let table = snapshot.get(&table_id).unwrap().loaded().unwrap();
+        let table = table.copy_as(tidb_stats::CopyIntent::AllDataWritable);
         for column in table.hist_coll.stable_columns() {
             column.write().unwrap().drop_unnecessary_data();
         }
         for index in table.hist_coll.stable_indices() {
             index.write().unwrap().evict_all_stats();
         }
+        snapshot.insert(
+            table_id,
+            tidb_exec::stats_watch::TableStatsState::Loaded(Arc::new(table)),
+        );
         stack
             .factory
             .stats()
-            .store_after_analyze((*snapshot).clone());
+            .store_after_analyze(snapshot);
+        assert!(peer_catalog
+            .lock()
+            .unwrap()
+            .table_statistics(table_id)
+            .unwrap()
+            .column_is_load_needed(1, true));
         rows(
             session,
             "EXPLAIN SELECT * FROM stats_ddl_after_load WHERE c1 = 42 AND c2 = 43",
@@ -1688,6 +1707,34 @@ fn ddl_after_loaded_statistics_matches_go() {
                 .stats_loaded_status
                 .is_full_load(),
             "index payload must reload after catalog refresh"
+        );
+        // Go publishes into Domain.StatsHandle, not just the loading session.
+        // This peer must see the payload without rebuilding its schema catalog.
+        assert!(
+            !peer_catalog
+                .lock()
+                .unwrap()
+                .table_statistics(table_id)
+                .unwrap()
+                .column_is_load_needed(1, true),
+            "the peer still sees an evicted column after the domain load completes"
+        );
+        assert!(
+            Arc::ptr_eq(
+                &peer_catalog
+                    .lock()
+                    .unwrap()
+                    .table_statistics(table_id)
+                    .unwrap(),
+                &session
+                    .session
+                    .shared_catalog()
+                    .lock()
+                    .unwrap()
+                    .table_statistics(table_id)
+                    .unwrap(),
+            ),
+            "sessions must share the same converted statistics"
         );
     };
     check_reload(&mut session);

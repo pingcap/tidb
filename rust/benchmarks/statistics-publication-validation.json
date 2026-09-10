@@ -1,0 +1,636 @@
+{
+  "base_revision": "15a5025ac942b06f97d0a378257dcb5875779f2f",
+  "scope": "Cross-session canonical statistics visibility and schema-independent publication; not a whole-Go-package completion or full parity claim.",
+  "artifact_root": "/private/tmp/tidb-stats-publication.2G2PqG",
+  "source_files_sha256": {
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "ccbd0bb84d4ca50746d8e4e9c5c377e0ff954252a68f56be7c852c8748f83e70",
+    "rust/crates/tidb-executor/src/driver/catalog/statistics.rs": "db38a7605e031752e6a8dfa2ea316194dc2417cf16885ff4786c0e9d56cd8a5b",
+    "rust/crates/tidb-server/src/cluster_session.rs": "71f6ac2d0f619e47ad5824e3336746b122311ff7c07e8f0c505a34738c149233",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "bb5689dbee06160ef604a37b45562cbc41022632dfdda749b35673bcf7e6fc8a",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs": "ee15f0047f0dc4d45228fe704ab2e5aff0babe446f46b0df320a7a9c5b25832d",
+    "rust/crates/tidb-session/src/analyze_arm.rs": "247903945329a724ca895f24c60c8761a51b34f3fc2466ce90f4835629bb1aaf"
+  },
+  "binaries": {
+    "final": {
+      "path": "/private/tmp/tidb-stats-publication.2G2PqG/publication-server",
+      "sha256": "18340f03da2ebb0d15d62bdc024df525dc7a202fd9c233a6263806c8dd0f44e9"
+    },
+    "before": {
+      "path": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/candidate-server",
+      "sha256": "32abcca425371c6d600e4d4227e79973e67935e64ace710db4c27b70efa1f0bf"
+    },
+    "initial_prototype": {
+      "path": "/private/tmp/tidb-stats-publication.2G2PqG/candidate-server",
+      "sha256": "02c82ba8119a426283f82676dd391471a5c7c85f217f2d4add030b33b49a7c55",
+      "note": "Precedes shared initialization of the schema memo; initial timing/profile artifacts are not attributed to the final binary."
+    },
+    "go": {
+      "path": "/Users/qiliu/.tiup/components/tidb/v9.0.0-beta.2.pre-nightly/tidb-server",
+      "sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2"
+    }
+  },
+  "root_cause": {
+    "go": "pkg/statistics/handle/syncload/stats_syncload.go::updateCachedItem publishes to Domain.StatsHandle, independently of InfoSchema.",
+    "before": "Cluster catalogs owned converted planner copies. Global singleflight completion could wake a peer whose copy remained evicted.",
+    "change": "Cluster planning resolves current SharedStats through one shared StatisticsView. Conversion reuse checks canonical table identity and schema tuples; weak identity does not retain obsolete raw payloads. Schema memo initialization is shared across transaction/historical clones and detached on metadata mutation.",
+    "removed": [
+      "StatsTemplates and its snapshot-address cache",
+      "cluster loader's session-only converted-table publication",
+      "statistics-only schema-catalog rebuilds",
+      "temporary-statistics reinstall"
+    ],
+    "analyze": "Return computed ANALYZE results to the domain publisher rather than reading unpublished output through the planner view."
+  },
+  "validation": {
+    "profile": "Ready",
+    "red": {
+      "command": "cargo test --offline --locked --release -j12 -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --test-threads=1",
+      "log": "peer-red.log",
+      "failure": "the peer still sees an evicted column after the domain load completes"
+    },
+    "final_tests": {
+      "log": "final-tests.log",
+      "passed": 40,
+      "failed": 9,
+      "breakdown": {
+        "executor": {
+          "passed": 9,
+          "failed": 0
+        },
+        "server": {
+          "passed": 17,
+          "failed": 4
+        },
+        "session": {
+          "passed": 14,
+          "failed": 5
+        }
+      }
+    },
+    "baseline": {
+      "revision": "15a5025ac942b06f97d0a378257dcb5875779f2f",
+      "logs": [
+        "baseline-tests.log",
+        "baseline-temporary.log",
+        "baseline-native.log"
+      ],
+      "result": "All nine remaining failures reproduce with the same assertions on unchanged baseline source; none was removed or waived.",
+      "failures": [
+        "add_column_ddl_initializes_statistics_like_go",
+        "truncate_partitioned_table_statistics_match_go",
+        "global_stats_drive_partition_plans_like_go",
+        "global_temporary_analyze_uses_session_rows_and_statistics",
+        "a_case_insensitive_column_estimates_off_the_collation_sort_key",
+        "analyze_publishes_the_row_count_and_the_distribution",
+        "analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row",
+        "physical_statistics_loads_become_shared_at_the_next_statement_boundary",
+        "statistics_describe_the_moment_they_were_built"
+      ]
+    },
+    "passed_logs": [
+      "workspace-publication.log",
+      "build-publication.log",
+      "lint-publication.log"
+    ],
+    "bazel_prepare": "Not triggered: no Go, module or Bazel files changed.",
+    "environment": "Initial unprivileged Instruments export could not create its analysis cache; authorized export succeeded.",
+    "commands": {
+      "tests": "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-server -p tidb-session -p tidb-executor --no-fail-fast --lib -- tests_analyze:: driver::catalog::sync_load:: cluster_session_node::tests::statistics:: ddl_after_loaded_statistics_matches_go global_temporary_analyze_uses_session_rows_and_statistics truncate_partitioned_table_statistics_match_go add_column_ddl_initializes_statistics_like_go analyze_changes_the_plan_and_never_the_answer global_stats_drive_partition_plans_like_go --test-threads=1",
+      "workspace": "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "build": "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "rustfmt --unstable-features --check --edition 2021 --config skip_children\\=true --file-lines \\[\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[31,32\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[92,92\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[96,97\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[235,236\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[412,412\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[432,432\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[455,456\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[556,557\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[1547,1547\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[2064,2068\\]\\},\\{\\\"file\\\":\\\"crates/tidb-executor/src/driver/catalog.rs\\\",\\\"range\\\":\\[2075,2106\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[276,276\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[280,280\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[281,281\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[286,286\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[334,334\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[335,335\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[414,414\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[416,416\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[423,423\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session.rs\\\",\\\"range\\\":\\[425,425\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[215,216\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[398,398\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[403,403\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[408,419\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[844,844\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[914,914\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[930,931\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[934,935\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[1017,1018\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[1133,1135\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[1139,1139\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[3070,3070\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[3083,3083\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[3084,3084\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[3089,3089\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[3185,3185\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[4258,4258\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[5367,5369\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[5372,5379\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[5384,5384\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/mod.rs\\\",\\\"range\\\":\\[5385,5385\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\\\",\\\"range\\\":\\[1652,1660\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\\\",\\\"range\\\":\\[1662,1662\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\\\",\\\"range\\\":\\[1669,1672\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\\\",\\\"range\\\":\\[1676,1682\\]\\},\\{\\\"file\\\":\\\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\\\",\\\"range\\\":\\[1711,1738\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[488,488\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[490,493\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[505,505\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[507,513\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[639,639\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[668,668\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[732,732\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[735,735\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[752,752\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[755,755\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[761,763\\]\\},\\{\\\"file\\\":\\\"crates/tidb-session/src/analyze_arm.rs\\\",\\\"range\\\":\\[778,778\\]\\}\\] crates/tidb-executor/src/driver/catalog.rs crates/tidb-server/src/cluster_session.rs crates/tidb-server/src/cluster_session_node/mod.rs crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs crates/tidb-session/src/analyze_arm.rs",
+      "format_new_module": "rustfmt --check --edition 2021 crates/tidb-executor/src/driver/catalog/statistics.rs",
+      "diff": "git diff --check",
+      "initial_live": "ruby /private/tmp/tidb-stats-publication.2G2PqG/verify-range-cost.rb",
+      "final_live": "ruby /private/tmp/tidb-stats-publication.2G2PqG/verify-publication.rb",
+      "profiles": "python3 /private/tmp/tidb-stats-publication.2G2PqG/profile-cost.py /private/tmp/tidb-stats-publication.2G2PqG/publication-sysbench.trace /private/tmp/tidb-stats-publication.2G2PqG/publication-tpcc.trace /private/tmp/tidb-stats-publication.2G2PqG/go-sysbench.trace /private/tmp/tidb-stats-publication.2G2PqG/go-tpcc.trace",
+      "call_chains": "python3 /private/tmp/tidb-stats-publication.2G2PqG/profile-chains.py /private/tmp/tidb-stats-publication.2G2PqG/publication-sysbench.trace /private/tmp/tidb-stats-publication.2G2PqG/publication-tpcc.trace /private/tmp/tidb-stats-publication.2G2PqG/go-sysbench.trace /private/tmp/tidb-stats-publication.2G2PqG/go-tpcc.trace",
+      "cleanup": "ruby /private/tmp/tidb-stats-publication.2G2PqG/verify-cleanup.rb"
+    },
+    "working_directories": {
+      "cargo_and_format": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+      "lint_and_diff": "/private/tmp/tidb-upstream-merge.nzY42N",
+      "baseline": "/private/tmp/tidb-stats-baseline.LnmVJs/rust (clean temporary checkout removed after verification)"
+    },
+    "unverified": "No full-workspace test pass, whole-package Go parity, complete workload coverage or dedicated conversion-cache memory/quota stress claim."
+  },
+  "live": {
+    "final_results": "publication-live.log, publication-validation.json, publication-prepared-plans.jsonl",
+    "prepared": "Four prepared query shapes executed twice each; all eight final Rust results equal Go. Captured EXPLAIN plans are not proof of the executed cached plans.",
+    "fixed_result_digest": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "result_scope": "Bounded point/range/aggregate/checksum fixture comparison; not full SQL parity.",
+    "final_sysbench": [
+      {
+        "server": "go",
+        "round": "publication-start",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.2567,
+        "tps": 1842.355758897043,
+        "sql_cpu_seconds": 14.610000000000014,
+        "tikv_cpu_seconds": 14.629999999999882,
+        "latency_mean_ms": 4.34,
+        "latency_p95_ms": 4.74,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-start-8-go.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-0",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.856,
+        "tps": 466.70815183571875,
+        "sql_cpu_seconds": 7.970000000000001,
+        "tikv_cpu_seconds": 8.899999999999864,
+        "latency_mean_ms": 2.14,
+        "latency_p95_ms": 2.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-0-1-publication.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-0",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4314,
+        "tps": 1748.5574401119077,
+        "sql_cpu_seconds": 11.82,
+        "tikv_cpu_seconds": 12.25,
+        "latency_mean_ms": 4.57,
+        "latency_p95_ms": 4.91,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-0-8-publication.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-0",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.121,
+        "tps": 2828.8543140028287,
+        "sql_cpu_seconds": 12.89,
+        "tikv_cpu_seconds": 12.88000000000011,
+        "latency_mean_ms": 11.28,
+        "latency_p95_ms": 12.52,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-0-32-publication.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-1",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.7704,
+        "tps": 469.8364968990791,
+        "sql_cpu_seconds": 7.9,
+        "tikv_cpu_seconds": 8.200000000000045,
+        "latency_mean_ms": 2.13,
+        "latency_p95_ms": 2.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-1-1-before.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-1",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4126,
+        "tps": 1758.190236183555,
+        "sql_cpu_seconds": 11.740000000000002,
+        "tikv_cpu_seconds": 11.950000000000045,
+        "latency_mean_ms": 4.55,
+        "latency_p95_ms": 4.91,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-1-8-before.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-1",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.0726,
+        "tps": 2894.9146000192995,
+        "sql_cpu_seconds": 12.46,
+        "tikv_cpu_seconds": 12.409999999999854,
+        "latency_mean_ms": 11.03,
+        "latency_p95_ms": 12.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-1-32-before.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-2",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.8514,
+        "tps": 466.8752042579019,
+        "sql_cpu_seconds": 7.919999999999999,
+        "tikv_cpu_seconds": 8.950000000000045,
+        "latency_mean_ms": 2.14,
+        "latency_p95_ms": 2.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-2-1-before.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-2",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.5032,
+        "tps": 1712.719799040877,
+        "sql_cpu_seconds": 11.940000000000001,
+        "tikv_cpu_seconds": 12.600000000000136,
+        "latency_mean_ms": 4.67,
+        "latency_p95_ms": 5.09,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-2-8-before.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-2",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.0913,
+        "tps": 2869.028833739779,
+        "sql_cpu_seconds": 12.450000000000003,
+        "tikv_cpu_seconds": 12.6400000000001,
+        "latency_mean_ms": 11.13,
+        "latency_p95_ms": 12.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-2-32-before.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-3",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.7256,
+        "tps": 471.4905387565223,
+        "sql_cpu_seconds": 7.89,
+        "tikv_cpu_seconds": 8.220000000000027,
+        "latency_mean_ms": 2.12,
+        "latency_p95_ms": 2.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-3-1-publication.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-3",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4108,
+        "tps": 1759.1180954614754,
+        "sql_cpu_seconds": 11.740000000000002,
+        "tikv_cpu_seconds": 11.940000000000055,
+        "latency_mean_ms": 4.54,
+        "latency_p95_ms": 4.91,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-3-8-publication.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-3",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.0795,
+        "tps": 2885.308968502044,
+        "sql_cpu_seconds": 12.600000000000005,
+        "tikv_cpu_seconds": 12.379999999999882,
+        "latency_mean_ms": 11.06,
+        "latency_p95_ms": 12.3,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-3-32-publication.log"
+      },
+      {
+        "server": "go",
+        "round": "publication-end",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.2488,
+        "tps": 1846.8357547402118,
+        "sql_cpu_seconds": 13.860000000000014,
+        "tikv_cpu_seconds": 14.670000000000073,
+        "latency_mean_ms": 4.33,
+        "latency_p95_ms": 4.74,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/trial-publication-end-8-go.log"
+      }
+    ],
+    "final_tpcc": [
+      {
+        "server": "go",
+        "round": "publication-start",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.197478999994928,
+        "sql_cpu_seconds": 16.359999999999957,
+        "tikv_cpu_seconds": 33.77999999999997,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-start-go-8.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-0",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.549147000012454,
+        "sql_cpu_seconds": 13.25,
+        "tikv_cpu_seconds": 35.069999999999936,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-0-publication-8.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-1",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.554071999998996,
+        "sql_cpu_seconds": 13.07,
+        "tikv_cpu_seconds": 33.73000000000002,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-1-before-8.log"
+      },
+      {
+        "server": "before",
+        "round": "publication-2",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.550132000003941,
+        "sql_cpu_seconds": 13.029999999999994,
+        "tikv_cpu_seconds": 34.99000000000001,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-2-before-8.log"
+      },
+      {
+        "server": "publication",
+        "round": "publication-3",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.5169800000148825,
+        "sql_cpu_seconds": 13.019999999999996,
+        "tikv_cpu_seconds": 34.350000000000136,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-3-publication-8.log"
+      },
+      {
+        "server": "go",
+        "round": "publication-end",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.25732999999309,
+        "sql_cpu_seconds": 16.149999999999977,
+        "tikv_cpu_seconds": 34.25,
+        "log": "/private/tmp/tidb-stats-publication.2G2PqG/process-tpcc-publication-end-go-8.log"
+      }
+    ],
+    "profiled_tpcc": {
+      "rust_transactions": 32000,
+      "go_transactions": 32000,
+      "mix": "All five transaction types; fixed seed 1.",
+      "consistency": "All eleven TPC-C consistency checks passed after each workload, including final profiles."
+    },
+    "profiles": [
+      {
+        "trace": "/private/tmp/tidb-stats-publication.2G2PqG/publication-sysbench.trace",
+        "running_ns": 26554000000,
+        "sort_next": {
+          "inclusive_ns": 2546000000,
+          "self_ns": 12000000
+        },
+        "statistics_view": {
+          "inclusive_ns": 58000000,
+          "self_ns": 13000000
+        },
+        "top_self": [
+          [
+            "__psynch_cvwait",
+            2358000000
+          ],
+          [
+            "__recvfrom",
+            2064000000
+          ],
+          [
+            "kevent",
+            1543000000
+          ],
+          [
+            "semaphore_timedwait_trap",
+            1350000000
+          ],
+          [
+            "_platform_memmove",
+            1339000000
+          ],
+          [
+            "__psynch_cvsignal",
+            1309000000
+          ],
+          [
+            "semaphore_signal_trap",
+            1165000000
+          ],
+          [
+            "writev",
+            1124000000
+          ]
+        ]
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-publication.2G2PqG/publication-tpcc.trace",
+        "running_ns": 14851000000,
+        "sort_next": {
+          "inclusive_ns": 409000000,
+          "self_ns": 0
+        },
+        "statistics_view": {
+          "inclusive_ns": 30000000,
+          "self_ns": 8000000
+        },
+        "top_self": [
+          [
+            "__recvfrom",
+            1210000000
+          ],
+          [
+            "kevent",
+            1090000000
+          ],
+          [
+            "_platform_memmove",
+            1070000000
+          ],
+          [
+            "writev",
+            852000000
+          ],
+          [
+            "__psynch_cvwait",
+            422000000
+          ],
+          [
+            "_rjem_malloc",
+            418000000
+          ],
+          [
+            "semaphore_timedwait_trap",
+            392000000
+          ],
+          [
+            "mach_absolute_time",
+            354000000
+          ]
+        ]
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-publication.2G2PqG/go-sysbench.trace",
+        "running_ns": 34539000000,
+        "sort_next": {
+          "inclusive_ns": 177000000,
+          "self_ns": 3000000
+        },
+        "statistics_view": null,
+        "top_self": [
+          [
+            "__semwait_signal",
+            3170000000
+          ],
+          [
+            "mach_absolute_time",
+            3010000000
+          ],
+          [
+            "kevent",
+            2542000000
+          ],
+          [
+            "__psynch_cvwait",
+            2510000000
+          ],
+          [
+            "read",
+            1842000000
+          ],
+          [
+            "__psynch_cvsignal",
+            1451000000
+          ],
+          [
+            "write",
+            1408000000
+          ],
+          [
+            "runtime.memclrNoHeapPointers",
+            731000000
+          ]
+        ]
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-publication.2G2PqG/go-tpcc.trace",
+        "running_ns": 18227000000,
+        "sort_next": {
+          "inclusive_ns": 1000000,
+          "self_ns": 0
+        },
+        "statistics_view": null,
+        "top_self": [
+          [
+            "kevent",
+            1749000000
+          ],
+          [
+            "__psynch_cvwait",
+            1513000000
+          ],
+          [
+            "mach_absolute_time",
+            1209000000
+          ],
+          [
+            "__semwait_signal",
+            1098000000
+          ],
+          [
+            "__psynch_cvsignal",
+            991000000
+          ],
+          [
+            "read",
+            958000000
+          ],
+          [
+            "write",
+            837000000
+          ],
+          [
+            "runtime.memclrNoHeapPointers",
+            449000000
+          ]
+        ]
+      }
+    ],
+    "call_chains": "publication-chains.jsonl retains sampled syscall/copy caller chains. Go also has substantial condition-variable signaling; these traces do not prove excess Rust wakeups.",
+    "interpretation": "Final before/after timing differences do not establish an end-to-end speedup. Background mediaanalysisd/mds_stores CPU, Go auto-ANALYZE and growing fixture state are recorded. No performance baseline promoted. Inclusive SortExec.Next samples are not directly comparable: Go fetches in separate goroutines, while Rust fetches beneath next.",
+    "workload_commands": "Exact per-trial commands are retained in publication-validation.json in the artifact root; verify-publication.rb is the executed driver."
+  },
+  "cleanup": {
+    "processes_absent": {
+      "75954": true,
+      "75955": true,
+      "75956": true,
+      "78175": true,
+      "79312": true,
+      "79899": true,
+      "80093": true,
+      "80390": true,
+      "80847": true,
+      "84309": true,
+      "84509": true,
+      "84761": true,
+      "85090": true,
+      "85447": true,
+      "85500": true
+    },
+    "ports_closed": {
+      "53563": true,
+      "53564": true,
+      "53565": true,
+      "53566": true,
+      "53567": true,
+      "53568": true,
+      "57106": true,
+      "57107": true,
+      "57108": true,
+      "57109": true
+    },
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe",
+    "cluster_manifest": "/private/tmp/tidb-stats-publication.2G2PqG/manifest.json"
+  },
+  "risks": "Planner conversion and publication changed across sessions, transaction schemas, partitions and temporary metadata. Go-derived visibility/eviction, native ANALYZE and live checks cover the changed path; nine baseline failures and broader parity gaps remain.",
+  "next_evidence_gap": "Continue Go/Rust causal latency attribution using comparable request, work and poll counts. Remaining scan-plus-sort choices, scheduler/copy chains and the nine baseline failures are open; no guessed batching-count root cause."
+}
