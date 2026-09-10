@@ -78,6 +78,7 @@ tidb-config = { path = "../tidb-config" }
 toml.workspace = true
 
 [dev-dependencies]
+tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }
 prost.workspace = true
 # The TLS tests act as a real client against this node's own material.

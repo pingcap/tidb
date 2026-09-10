@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 SLI 测试启用所依赖 crate 的 failpoints
+
+默认 server 测试中的 txn_write_throughput_sli_matches_source 失败并非已证实
+的统计错误：tidb-util 的 SLI failpoint 受该 crate 的 failpoints feature 控制。
+测试直接设置 fail::cfg，但 server dev-dependencies 只启用了 fail 库本身，
+没有启用 tidb-util 的 cfg，因此 FinishExecuteStmt 正常重置状态。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/executor/executor_failpoint_test.go:595` 显式启用 CheckTxnWriteThroughput。
+先用 `cargo test --manifest-path rust/Cargo.toml -p tidb-server --features failpoints
+--lib txn_write_throughput_sli_matches_source` 验证全部原断言通过（0.05 秒，
+`/tmp/write-sli-failpoints.log`）。现仅在 server dev-dependencies 为 tidb-util
+启用 failpoints，使默认测试命令具有该测试的必要环境，生产依赖默认不变。
+未跳过用例、删除断言或让生产 SLI 永远不重置。
+
+Ready 验证：默认同名测试命令日志 `/tmp/write-sli-default-green.log`；
+`make lint` 退出 0，`/tmp/write-sli-lint.log`。完整 server 基准待本轮汇总。
+
 ## 2026-09-11 非唯一索引缓存测试检查普通 SELECT 描述
 
 上一完整 server 回归为 430 passed / 4 failed，45.02 秒，
