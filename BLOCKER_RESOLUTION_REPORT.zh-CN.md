@@ -58,6 +58,31 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 
 追加提交 `5de8ec9007`：修正前一提交中的分支方向，evicted payload（`!is_full_load`）现在进入 `load_item(..., full_load=true)`，避免仅保留 metadata。已推送到 `origin/hparser-integration`。
 
+## 2026-09-10 readiness 竞争修复与证据更正
+
+此前对话将一次 `never reported ready` 输出反复描述为已复现的服务端死锁，证据不足，应撤回。旧脚本只等待 TCP 端口开放，然后立即执行一次 ready 日志 grep；grep 失败就触发 EXIT trap 杀掉节点。因此日志停在 `mysql_tls` 不足以证明节点持续阻塞。
+
+Rust `sql_node.rs::ConcurrentSqlNode::bind` 在创建 memory runners 之前调用 `TcpListener::bind`，`cluster_session_node/boot.rs` 则在 bind 返回、安装 signal handler 后才输出 ready。端口可连接与 ready 日志之间存在正常时序窗口。Go source of truth `origin/master`（`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`）的 `pkg/server/server.go::Run` 同样先 `initTiDBListener`，随后启动网络 listener，最后才设置 `s.health.Store(true)`；TCP 可连接不是应用 ready 的充分条件。
+
+修改 `run-realtikv-access-path.sh`：端口开放后轮询原 ready 事件，最多等待 180 秒；进程退出立即失败，持续无 ready 仍超时失败并打印日志。未删除 ready 断言，未改动 Rust 服务启动或任何 SQL golden。
+
+回归 `test-access-path-readiness.sh` 从生产脚本提取实际启动检查代码，模拟端口已开放但 ready 延迟一秒。修复前退出 1，打印 `the Rust node never reported ready` 和 `mysql_tls`；修复后通过。另验证提前退出和活进程永久无 ready 都被拒绝，超时测试通过推进 Bash SECONDS 避免等待三分钟。
+
+验证命令与结果：
+
+```bash
+bash rust/scripts/test-access-path-readiness.sh
+# PASS: delayed ready; exited node rejected; stuck node rejected
+bash -n rust/scripts/run-realtikv-access-path.sh rust/scripts/test-access-path-readiness.sh
+git diff --check
+make lint
+# 均退出 0，使用 Ready 验证范围
+RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-readiness-fixed.log 2>&1
+```
+
+真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
+
 ## 2026-09-10 chunk panic 修复
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。

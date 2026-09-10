@@ -334,8 +334,22 @@ echo "starting the Rust node in cluster-session mode"
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 wait_for_port "${RUST_SQL_PORT}" "${RUST_LOG_FILE}"
-grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" >/dev/null \
-  || { echo "the Rust node never reported ready"; cat "${RUST_LOG_FILE}"; exit 1; }
+# bind() opens the listener before memory runners and signal setup complete.
+# TCP connectivity therefore does not imply that the ready event is written.
+ready_deadline=$((SECONDS + 180))
+while ! grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" >/dev/null; do
+  if ! kill -0 "${RUST_PID}" 2>/dev/null; then
+    echo "the Rust node exited before reporting ready" >&2
+    cat "${RUST_LOG_FILE}" >&2
+    exit 1
+  fi
+  if ((SECONDS >= ready_deadline)); then
+    echo "the Rust node never reported ready within 180 seconds" >&2
+    cat "${RUST_LOG_FILE}" >&2
+    exit 1
+  fi
+  sleep 1
+done
 
 # The chosen access path, as one word, and the scan's estRows. Go wraps its
 # scan in a TableReader/IndexReader/IndexLookUp; this tier prints neither (see
