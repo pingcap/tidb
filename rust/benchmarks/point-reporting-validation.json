@@ -1,0 +1,302 @@
+{
+  "base_revision": "99d66db439d8fb486d329ae3b10c7d7ca7a16137",
+  "artifact_root": "/private/tmp/tidb-context-cost.omI0Sw",
+  "go_binary": {
+    "path": "/Users/qiliu/.tiup/components/tidb/v9.0.0-beta.2.pre-nightly/tidb-server",
+    "sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2"
+  },
+  "change": "Prepared point reads report index usage with IDs and counters rather than cloning KvTable and its storage handle.",
+  "go_source": [
+    "pkg/executor/internal/exec/indexusage.go:ReportPointGetIndexUsage",
+    "pkg/executor/internal/exec/indexusage.go:getClusterIndexID"
+  ],
+  "preserved": [
+    "logical table ID for usage, physical table ID for statistics",
+    "integer/common-handle and unique-index selection",
+    "request and row counters, pseudo-statistics fallback",
+    "NULL keys, schema mismatch, and non-clustered rowid behavior"
+  ],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-stats-publication.2G2PqG/publication-server",
+      "sha256": "18340f03da2ebb0d15d62bdc024df525dc7a202fd9c233a6263806c8dd0f44e9"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-context-cost.omI0Sw/candidate-server",
+      "sha256": "e4c81b7049524d74cc5a864481b99b1618b624101389dff560a4946f49b441ca"
+    }
+  },
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/driver/access.rs": "65895b16c6f04c87ebc5f26a119797a1d40e56708eb8bcfe200fb57bc020094b",
+    "rust/crates/tidb-executor/src/driver/index_usage_reporter.rs": "96bcba377afe73a601b606323f7d4621773411828c32f7cb8d296b5bdee50134"
+  },
+  "machine_code": {
+    "function": "run_prepared_point_get",
+    "instructions_before": 1304,
+    "instructions_after": 399,
+    "direct_malloc_call_sites_before": 4,
+    "direct_malloc_call_sites_after": 0,
+    "qualification": "Static function totals, not executed instruction or allocation counts per request.",
+    "evidence": [
+      "point-before.asm",
+      "point-after.asm"
+    ]
+  },
+  "rejected_probe": "Five StmtContext #[inline] annotations moved full-context copies into the caller (34 to 39 static copy sites, five fewer builder calls). All annotations were removed; no inline-only binary was benchmarked or published.",
+  "validation": {
+    "profile": "Ready",
+    "passed": 59,
+    "failed": 11,
+    "baseline_passed": 59,
+    "baseline_failed": 11,
+    "assertions_identical": true,
+    "failures": [
+      "cluster_session_node::tests::point_get_max_ts::a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp",
+      "cluster_session_node::tests::point_get_max_ts::cached_prepared_index_lookup_uses_one_timestamp",
+      "cluster_session_node::tests::point_get_max_ts::fix_52592_preserves_max_ts_for_a_complete_clustered_key",
+      "tests_sysbench_access::a_point_write_keys_the_row_a_scan_would_have_filtered_to",
+      "tests_sysbench_access::a_point_write_opens_no_scan_at_all",
+      "tests_sysbench_access::aggregate_over_a_range_does_not_scan_an_unrelated_index",
+      "tests_sysbench_access::narrowing_survives_aliases_ordering_limits_and_subqueries",
+      "tests_sysbench_access::ordered_and_distinct_selects_read_the_same_range",
+      "tests_sysbench_access::range_select_reads_only_the_handle_range",
+      "tests_sysbench_access::the_handle_range_corpus_matches_go",
+      "tests_sysbench_access::the_sysbench_write_shapes_read_a_handle_range"
+    ],
+    "commands": {
+      "build": "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "check": "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "tests": "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --lib --no-fail-fast -- driver::index_usage_reporter:: stmt_context:: stmt_ctx:: tests_sysbench_access:: tidb_index_usage_reads_the_shared_collector_for_every_catalog_index cluster_session_node::tests::point_get_max_ts:: --test-threads=1",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "rustfmt --unstable-features --check --edition 2021 --config skip_children=true --file-lines '[{\"file\":\"crates/tidb-executor/src/driver/access.rs\",\"range\":[1599,1619]},{\"file\":\"crates/tidb-executor/src/driver/index_usage_reporter.rs\",\"range\":[105,151]}]' crates/tidb-executor/src/driver/access.rs crates/tidb-executor/src/driver/index_usage_reporter.rs",
+      "diff": "git diff --check",
+      "live": "ruby /private/tmp/tidb-context-cost.omI0Sw/verify.rb",
+      "profiles": "python3 /private/tmp/tidb-context-cost.omI0Sw/profile-point.py /private/tmp/tidb-stats-publication.2G2PqG/publication-sysbench.trace /private/tmp/tidb-context-cost.omI0Sw/after-sysbench.trace /private/tmp/tidb-stats-publication.2G2PqG/publication-tpcc.trace /private/tmp/tidb-context-cost.omI0Sw/after-tpcc.trace",
+      "cleanup": "ruby /private/tmp/tidb-context-cost.omI0Sw/verify-cleanup.rb"
+    },
+    "cwd": "Cargo/format commands run in rust/; lint/diff run at repository root.",
+    "results": "Build, all-target check, lint, formatting and diff checks pass. Selected tests have identical failures on unchanged HEAD and candidate. Go files/modules/Bazel metadata unchanged; bazel_prepare not triggered. Initial sandboxed lint could not resolve proxy.golang.org; authorized rerun passed.",
+    "logs": [
+      "build-point.log",
+      "check-point.log",
+      "tests-point.log",
+      "tests-baseline.log",
+      "test-comparison.json",
+      "lint-point.log",
+      "format.log",
+      "live.log"
+    ]
+  },
+  "workload": {
+    "order": [
+      "after",
+      "before",
+      "before",
+      "after"
+    ],
+    "sysbench": {
+      "measured_transactions": 84000,
+      "transactions_per_sample": 6000,
+      "warmup_events": 1000,
+      "table_rows": 100000,
+      "prepared_statements": "auto",
+      "seed": 1,
+      "columns": [
+        "server",
+        "threads",
+        "seconds",
+        "p95_ms",
+        "sql_cpu_seconds"
+      ],
+      "samples": [
+        [
+          "go",
+          8,
+          3.2354,
+          4.74,
+          14
+        ],
+        [
+          "after",
+          1,
+          12.7946,
+          2.3,
+          7.96
+        ],
+        [
+          "after",
+          8,
+          3.4851,
+          5,
+          11.89
+        ],
+        [
+          "after",
+          32,
+          2.1037,
+          12.52,
+          12.43
+        ],
+        [
+          "before",
+          1,
+          12.7363,
+          2.3,
+          7.9
+        ],
+        [
+          "before",
+          8,
+          3.4225,
+          4.91,
+          11.76
+        ],
+        [
+          "before",
+          32,
+          2.0953,
+          12.3,
+          12.51
+        ],
+        [
+          "before",
+          1,
+          12.8486,
+          2.3,
+          7.97
+        ],
+        [
+          "before",
+          8,
+          3.4426,
+          5,
+          11.85
+        ],
+        [
+          "before",
+          32,
+          2.1407,
+          12.75,
+          12.41
+        ],
+        [
+          "after",
+          1,
+          12.9008,
+          2.3,
+          8
+        ],
+        [
+          "after",
+          8,
+          3.4132,
+          4.91,
+          11.71
+        ],
+        [
+          "after",
+          32,
+          2.082,
+          12.3,
+          12.28
+        ],
+        [
+          "go",
+          8,
+          3.1756,
+          4.65,
+          13.89
+        ]
+      ]
+    },
+    "tpcc": {
+      "measured_transactions": 36000,
+      "profiled_candidate_transactions": 32000,
+      "warehouses": 1,
+      "threads": 8,
+      "seed": 1,
+      "all_11_consistency_conditions_passed_after_every_run": true,
+      "columns": [
+        "server",
+        "seconds",
+        "sql_cpu_seconds"
+      ],
+      "samples": [
+        [
+          "go",
+          6.549400999996578,
+          16.56
+        ],
+        [
+          "after",
+          6.528694999986328,
+          13.11
+        ],
+        [
+          "before",
+          6.581796000013128,
+          13.02
+        ],
+        [
+          "before",
+          6.641797000018414,
+          13
+        ],
+        [
+          "after",
+          6.784080999990692,
+          13.25
+        ],
+        [
+          "go",
+          6.44634500000393,
+          16.22
+        ]
+      ]
+    },
+    "fixture_digest": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "qualification": "Fixture digest checks bounded point/range/aggregate results, not full SQL parity. TPC-C fixture grows; host mediaanalysisd was active. Raw timing and command arguments retained in validation.json."
+  },
+  "profiles": [
+    {
+      "trace": "/private/tmp/tidb-stats-publication.2G2PqG/publication-sysbench.trace",
+      "running_ns": 26554000000,
+      "prepared_point_inclusive_ns": 1649000000,
+      "prepared_point_memmove_ns": 155000000
+    },
+    {
+      "trace": "/private/tmp/tidb-context-cost.omI0Sw/after-sysbench.trace",
+      "running_ns": 26892000000,
+      "prepared_point_inclusive_ns": 1656000000,
+      "prepared_point_memmove_ns": 151000000
+    },
+    {
+      "trace": "/private/tmp/tidb-stats-publication.2G2PqG/publication-tpcc.trace",
+      "running_ns": 14851000000,
+      "prepared_point_inclusive_ns": 39000000,
+      "prepared_point_memmove_ns": 6000000
+    },
+    {
+      "trace": "/private/tmp/tidb-context-cost.omI0Sw/after-tpcc.trace",
+      "running_ns": 14251000000,
+      "prepared_point_inclusive_ns": 23000000,
+      "prepared_point_memmove_ns": 5000000
+    }
+  ],
+  "performance_acceptance": {
+    "speedup_established": false,
+    "baseline_promoted": false,
+    "reason": "Matched timings overlap and point-read inclusive samples remain essentially unchanged. Removed reporting-only work is verified, but not an end-to-end throughput/latency win."
+  },
+  "cleanup": {
+    "owned_pids_absent": 8,
+    "ports_closed": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe"
+  },
+  "not_verified": [
+    "Whole-Go-package parity",
+    "Full workspace tests",
+    "Resolution of the eleven unchanged selected-test failures",
+    "End-to-end performance goal"
+  ]
+}

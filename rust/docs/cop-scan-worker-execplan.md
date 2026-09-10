@@ -3,11 +3,11 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment preserves statistics-loading services through catalog
-refresh. Live request logging proved a refreshed catalog has histogram demand
-but no service; Go's domain owns the loading handle independently of InfoSchema.
-The preceding increments reconcile column-statistics validity and restore the
-current execution context for prepared range costing.
+The current increment removes a table/storage clone used only to report index
+usage after a prepared point read. Go reports with logical/physical table IDs
+and an index ID. The preceding increments preserve domain statistics ownership,
+reconcile column-statistics validity and restore the current execution context
+for prepared range costing.
 Full performance and whole-Go-package acceptance remain open.
 
 
@@ -21,6 +21,30 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 
 ## Progress
+
+- [x] Inspect the final publication binary's statement setup against Go
+  `pkg/executor/select.go::ResetContextOfStmt`. Five uninlined Rust builders
+  each return the complete 1,104-byte context through a memcpy, despite thin
+  LTO. The recorded sysbench/TPC-C traces attribute 570ms/245ms inclusive to
+  statement_context_ignoring; these totals are not the savings prediction.
+- [x] Reject the inline-only prototype: the caller grows from 34 to 39
+  explicit full-context copy sites as five out-of-line calls disappear.
+  The copies moved into the caller, not out of the execution. Remove all
+  five annotations; retain disassembly in /private/tmp/tidb-context-cost.omI0Sw.
+- [x] Remove the reporting-only KvTable clone in prepared point reads.
+  Go `internal/exec/indexusage.go::ReportPointGetIndexUsage` accepts logical
+  and physical IDs, not an owned table. Capture these IDs while borrowing the
+  table, then report counters after releasing that borrow. Validate existing
+  reporter/prepared coverage and matched workloads against 99d66db439.
+- [x] Point-reporting validation: 59 selected tests pass and 11 fail with
+  identical assertions on unchanged HEAD and candidate. Build, workspace
+  all-target check, Ready lint, formatting and diff checks pass. Complete
+  84,000 measured sysbench transactions and 36,000 measured TPC-C transactions,
+  plus a 32,000-transaction candidate TPC-C profile. All 11 live consistency
+  conditions pass after every run; bounded fixture results remain equal.
+  Timings overlap, so no speedup claim or performance-baseline promotion.
+  Verify eight owned PIDs absent and ten ports closed, retaining the fixture.
+  Exact commands and evidence: benchmarks/point-reporting-validation.json.
 
 - [x] Trace the remaining TPC-C SortExec to the actual prepared non-covering
   customer query: instrumented 0a61b84af5 chooses a table scan with 30,000-row
@@ -397,6 +421,15 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+- Decision: Capture scalar reporting identities under the existing table
+  borrow and release it before resolving statistics. Do not clone a table to
+  bypass the borrow boundary. Retain all reporting rules and existing tests.
+  Reject inline-only context annotations after disassembly showed that the
+  full-context copies merely moved into the caller.
+  Rationale: Go's reporter consumes IDs/counters, while no measured evidence
+  justifies treating inlining as a fix for the context ownership shape.
+  Date/Author: 2026-09-10 / Codex.
 
 Decision (2026-09-10, cross-session statistics visibility): make
 executor driver/catalog/statistics.rs a shared conversion view over the domain's
@@ -783,6 +816,14 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+The prepared point-reporting increment removes unnecessary table/storage
+ownership and reduces the function's static machine code from 1,304 to 399
+instructions. This is not a throughput result: matched timings overlap and
+the original point-read inclusive profile is effectively unchanged. Preserve
+the remaining performance goal and eleven reproduced baseline test failures.
+Statement-context construction still performs full-value copies; the rejected
+inline-only probe must not be revived as a demonstrated optimization.
 
 Statistics loading now survives catalog refresh through retained loading
 resources and one attachment path. The existing Go-derived regression fails

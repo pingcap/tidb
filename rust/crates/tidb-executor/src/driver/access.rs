@@ -1596,30 +1596,24 @@ pub fn run_prepared_point_get(
         }
     };
     let after = table.point_rpc_counts();
-    let report_table = table.clone();
-    let stats_id = report_table.stats_physical_id();
+    let logical_table_id = table.table_id;
+    let stats_id = table.stats_physical_id();
     let index_id = match plan.target {
-        PreparedPointTarget::RowHandle => None,
+        PreparedPointTarget::RowHandle => super::index_usage_reporter::cluster_index_id(table),
         PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
     };
     let kv_requests = after.0.wrapping_sub(before.0);
     let stats = catalog.table_statistics(stats_id);
     let reporter =
         super::index_usage_reporter::IndexUsageReporter::new(stmt_ctx.index_usage_collector());
-    match index_id {
-        Some(index_id) => reporter.report_point_for_table(
-            &report_table,
+    if let Some(index_id) = index_id {
+        reporter.report_point(
+            logical_table_id,
             stats.as_deref(),
             index_id,
             kv_requests,
             rows.len() as u64,
-        ),
-        None => reporter.report_point_for_handle(
-            &report_table,
-            stats.as_deref(),
-            kv_requests,
-            rows.len() as u64,
-        ),
+        );
     }
     Ok(Some((plan.output.columns.clone(), rows)))
 }

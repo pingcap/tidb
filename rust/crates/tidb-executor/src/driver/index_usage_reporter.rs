@@ -102,10 +102,23 @@ impl<'a> IndexUsageReporter<'a> {
         self.report_point_for_table(table, stats, index_id, kv_requests, rows);
     }
 
-    /// Go `ReportPointGetIndexUsage`.
+    /// Resolves Go's logical table identity without retaining the table.
     pub(crate) fn report_point_for_table(
         &self,
         table: &KvTable,
+        stats: Option<&TableStatistics>,
+        index_id: i64,
+        kv_requests: u64,
+        rows: u64,
+    ) {
+        self.report_point(table.table_id, stats, index_id, kv_requests, rows);
+    }
+
+    /// Go `ReportPointGetIndexUsage`: reporting owns IDs and counters, not
+    /// a copy of the table or its storage handle.
+    pub(crate) fn report_point(
+        &self,
+        logical_table_id: i64,
         stats: Option<&TableStatistics>,
         index_id: i64,
         kv_requests: u64,
@@ -116,7 +129,7 @@ impl<'a> IndexUsageReporter<'a> {
         };
         let table_rows = real_table_row_count(stats).unwrap_or(i32::MAX as u64);
         collector.update(
-            table.table_id,
+            logical_table_id,
             index_id,
             new_sample(0, kv_requests, rows, table_rows),
         );
@@ -132,7 +145,7 @@ fn real_table_row_count(stats: Option<&TableStatistics>) -> Option<u64> {
 }
 
 /// Go `getClusterIndexID`.
-fn cluster_index_id(table: &KvTable) -> Option<i64> {
+pub(super) fn cluster_index_id(table: &KvTable) -> Option<i64> {
     if table.pk_handle_offset().is_some() {
         return Some(0);
     }
