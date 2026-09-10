@@ -1414,6 +1414,10 @@ pub(crate) fn physical_plan_for_logical(
                 .max(1.0) as usize,
         )
         .with_apply_cache_capacity(ctx.apply_cache_capacity())
+        .with_point_get_conversion(
+            !ctx.optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false),
+        )
         .with_index_join_probe_row_count_fix(
             ctx.optimizer_fix_control()
                 .get_bool_with_default(tidb_planner::fix_control::FIX_44855, false),

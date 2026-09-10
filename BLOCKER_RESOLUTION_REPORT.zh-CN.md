@@ -1,5 +1,41 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 Fix52592 接入普通物理点查转换
+
+固定 Go master 的实际 SQL 对照保存在 `/tmp/go-null-oracle.8cduRk/fix52592.txt`：`SELECT b FROM t WHERE a>=5 AND a<=5 AND b>1` 默认包含 Point_Get；`SET tidb_opt_fix_control='52592:ON'` 后为 TableReader/Selection/TableRangeScan，范围仍是 `[5,5]`。Go `pkg/planner/core/find_best_task.go` 在计算 `canConvertPointGet` 时读取此 fix，同时控制 table 和 index 路径。临时 Go unistore 已收到 SIGTERM 并正常退出，日志和 SQL 输出保留。
+
+Rust 原来只在 AST fast-plan 入口读取 52592，普通 DispatchContext 没有该状态，导致相同查询开关 ON 后仍发点查。`/tmp/fix52592-red.log` 为精确失败证据（退出 101）。现在 bridge 读取执行上下文的 fix control，并传递 point conversion permission；dispatch 对普通 table/index 的 PointGet 和 BatchPointGet 转换统一应用。默认值保持允许转换，开关解析继续使用现有 Go-compatible bool getter。
+
+原远端回归验证真实 get/scan 操作及 residual、ORDER BY、LIMIT，修复后通过。新增 `fix52592_disables_unique_index_point_conversion` 覆盖 unique index 单点和批量、缺失值、residual，并连续切换 OFF/ON/OFF 检查行结果及读操作，结果通过。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib \
+a_cluster_point_get_is_one_key_lookup_and_no_coprocessor_request
+# 1 passed；/tmp/fix52592-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib \
+fix52592_disables_unique_index_point_conversion
+# 1 passed；/tmp/fix52592-unique-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib -- --test-threads=1
+# 1287 passed / 4 failed；/tmp/executor-fix52592.log
+make lint
+# 退出 0；/tmp/fix52592-lint.log
+```
+
+当前稳定失败为 TPCC condition nine、condition eleven、`write_range_reader_preserves_record_identity_and_staged_rows`、`write_range_reader_reconstructs_virtual_columns`。并行统计队列干扰和 BLOCKER_RESOLUTION.md 其余全量验收仍未完成；不能将上述串行结果称为整个 Rust 测试体系通过。
+
+## 2026-09-10 NULL-bound 测试按实际 Go master 更正
+
+旧 `an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request` 要求 `a BETWEEN NULL AND NULL` 读取并返回 100 行再过滤。该预期与实际 Go master 不符，不应通过增加 Rust 无效扫描满足它。
+
+使用固定 master binary `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 启动独立 unistore（127.0.0.1:47891，路径 `/tmp/go-null-oracle.8cduRk`），执行真实 MySQL 协议 SQL：创建 clustered BIGINT 主键表、插入两行、EXPLAIN 和执行 NULL-bound 查询。`/tmp/go-null-oracle.8cduRk/results.txt` 保存版本和输出：`TableDual_6 0.00 root rows:0`，SELECT 返回空；正常 `a>97` 对照仍为 TableRangeScan。完整启动日志同目录。Go `logical_datasource.go::Conds2TableDual` 所在优化链路不能用旧注释中单独 `IsConstNull` 的行为替代。
+
+测试现在断言 NULL-bound 查询结果为空、`StorageOps::default()`（无 get/scan/cop 请求）、wire rows=0；正常 BETWEEN 98 AND 100 的三行远端读取对照保留。这是用 Go 实测更正并加强请求断言，不是放宽结果断言、改 golden 或跳过 case；Rust 生产逻辑未改。
+
+修复前失败见 `/tmp/executor-common-catalog.log`；`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request` 现在 1 passed（`/tmp/null-bound-green.log`）。`make lint` 退出 0（`/tmp/null-bound-lint.log`）。整体目标仍未完成。
+
 ## 2026-09-10 无显式 PRIMARY 索引的 common-handle catalog 修复
 
 稳定红色复现：`dirty_common_handle_reads_share_the_remote_staged_merge` 在 unsigned common-handle `a=18446744073709551615` 下返回空（`/tmp/common-remote-red.log`，退出 101）。表已保存 common-handle offsets，但 catalog 没有独立 PRIMARY KvIndex。Go 的 `TableInfo.Indices` 始终保留 clustered PRIMARY 元数据，是否维护独立索引记录是另一个问题；Rust `handle_range::clustered_primary_metadata` 已实现该重建，planner catalog 却漏用它。
