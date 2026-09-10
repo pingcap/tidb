@@ -575,7 +575,9 @@ impl DeferredSnapshot {
                         )
                     })
                     .map_err(StorageError::Backend)?;
-                let snapshot = if self.prelock_keys.is_empty() {
+                // Go enables point-write locking only for pessimistic
+                // transactions; a bound point key alone does not imply it.
+                let snapshot = if self.prelock_keys.is_empty() || !transaction.is_pessimistic() {
                     transaction.snapshot()
                 } else {
                     let outcome = transaction
