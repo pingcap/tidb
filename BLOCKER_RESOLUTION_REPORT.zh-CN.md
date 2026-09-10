@@ -55,3 +55,5 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 提交 `c058347ad5` 修复了 Go 语义中的统计装载条件：当缓存项 histogram 版本相同但处于 evicted（仅元数据）状态时，必须重新读取完整 histogram，而不能因版本比较直接复用。该修复已独立推送到 `origin/hparser-integration`。
 
 重跑 `run-realtikv-access-path.sh` 后仍观察到相同的 2 个 hard failure 与 7 个路径 divergence，说明当前剩余问题位于统计 payload 本身或 planner 的索引估算调用链，而非该缓存复用条件。证据已保留在 `/tmp/access-path-rerun.log`，下一步继续检查 index histogram payload 与 range 编码的一致性。
+
+追加提交 `5de8ec9007`：修正前一提交中的分支方向，evicted payload（`!is_full_load`）现在进入 `load_item(..., full_load=true)`，避免仅保留 metadata。已推送到 `origin/hparser-integration`。
