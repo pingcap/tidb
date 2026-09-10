@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 GLOBAL 临时表回归从 catalog 取得表 ID
+
+global_temporary_analyze_uses_session_rows_and_statistics 独立失败
+（1.24 秒，`/tmp/global-temp-analyze-red.log`）。定向探针发现生产
+ANALYZE 已正确发布 table_id=2、pseudo=false、row_count=0、columns=1；
+测试却选择了系统表 ID 281474976710588（`/tmp/global-temp-probe.log`）。
+原因是测试用“统计快照中新出现的第一个 key”识别临时表，后台首次
+统计加载同时补入多个系统表 key，这个差集不是表身份来源。
+
+现从 catalog 按 test.global_stats 获取真实表 ID。新增该 ID 在显式
+ANALYZE 前没有真实统计的断言，保留 ON COMMIT DELETE ROWS、分析前
+pseudo、分析后真实统计一列及空表查询仍用 pseudo 的所有断言。
+临时探针已删除；未修改生产统计或临时表实现。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/handletest/handle_test.go:1100` 的
+TestStatsCacheShouldNotCacheTemporaryTable 明确区分普通访问不缓存和
+显式 ANALYZE 后缓存增加；没有依赖异步缓存 key 差集推断表 ID。
+Rust 原临时表分析与发布分支已满足这里的行为，失败源于错误测试对象。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib global_temporary_analyze_uses_session_rows_and_statistics
+# 1 passed，1.35 秒，/tmp/global-temp-analyze-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/global-temp-analyze-{fmt,lint}.log
+```
+
+完整 server 回归为 **423 passed / 11 failed**，44.26 秒，日志
+`/tmp/server-global-temp-baseline.log`。本用例通过，剩余失败继续处理。
+完整目标仍包括其他 Rust 失败及原始外部集成门禁，尚未完成。
+
 ## 2026-09-11 写入索引精确范围的过时 Selection 断言
 
 a_write_reaches_the_index_path_like_a_select 独立失败（1.24 秒，

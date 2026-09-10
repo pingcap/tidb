@@ -991,13 +991,6 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
 #[test]
 fn global_temporary_analyze_uses_session_rows_and_statistics() {
     let (stack, _users) = cop_backed_stack();
-    let existing_stats_ids = stack
-        .factory
-        .stats()
-        .load()
-        .keys()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
     let mut session = stack
         .factory
         .open_session(session_context(139))
@@ -1007,13 +1000,23 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
         &mut session,
         "CREATE GLOBAL TEMPORARY TABLE global_stats (a INT) ON COMMIT DELETE ROWS",
     );
-    let temporary_id = *stack
+    // Statistics reloads can concurrently add system-table entries. Resolve
+    // this table from metadata rather than guessing from new cache keys.
+    let temporary_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "global_stats")
+        .expect("GLOBAL temporary DDL publishes its table metadata")
+        .1
+        .id;
+    assert!(stack
         .factory
         .stats()
         .load()
-        .keys()
-        .find(|table_id| !existing_stats_ids.contains(table_id))
-        .expect("GLOBAL temporary DDL publishes its statistics metadata row");
+        .get(&temporary_id)
+        .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
+        .is_none());
     rows(
         &mut session,
         "INSERT INTO global_stats VALUES (1), (2), (3)",
