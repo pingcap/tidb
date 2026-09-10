@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -23,11 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -181,6 +184,68 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+}
+
+func TestIssue70932ClusteredGlobalIndexes(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	if kerneltype.IsClassic() {
+		settings := tk.MustQuery("SELECT @@GLOBAL.tidb_enable_dist_task, @@GLOBAL.tidb_ddl_enable_fast_reorg").Rows()[0]
+		tk.MustExec("SET GLOBAL tidb_enable_dist_task = 0")
+		tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = 0")
+		t.Cleanup(func() {
+			tk.MustExec("SET GLOBAL tidb_enable_dist_task = " + settings[0].(string))
+			tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = " + settings[1].(string))
+		})
+	}
+	tk.MustExec("DROP DATABASE IF EXISTS issue70932")
+	tk.MustExec("CREATE DATABASE issue70932")
+	tk.MustExec("USE issue70932")
+	t.Cleanup(func() {
+		tk.MustExec("DROP DATABASE issue70932")
+	})
+	tk.MustExec("SET @@tidb_enable_exchange_partition = 1")
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(20) NOT NULL,
+		d INT,
+		payload INT NOT NULL,
+		PRIMARY KEY (a, b) CLUSTERED
+	) PARTITION BY RANGE (b) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t VALUES (1, 1, 'x', NULL, 10)")
+	tk.MustExec("CREATE TABLE tx LIKE t")
+	tk.MustExec("ALTER TABLE tx REMOVE PARTITIONING")
+	tk.MustExec("INSERT INTO tx VALUES (1, 1, 'x', NULL, 20)")
+	tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx WITHOUT VALIDATION")
+	tk.MustContainErrMsg("ALTER TABLE t ADD UNIQUE KEY ug(c) GLOBAL", "Duplicate entry")
+	tk.MustExec("ALTER TABLE t ADD INDEX idx_c(c) GLOBAL")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE KEY ug_d(d) GLOBAL")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("issue70932"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for _, indexName := range []string{"idx_c", "ug_d"} {
+		idx := tbl.Meta().FindIndexByName(indexName)
+		require.NotNil(t, idx)
+		require.Equal(t, model.GlobalIndexVersionV1, idx.GlobalIndexVersion)
+	}
+
+	// A covering scan makes TiKV decode both common-handle columns from the key.
+	coveringQuery := "SELECT a, b, c FROM t USE INDEX(idx_c) WHERE c = 'x'"
+	tk.MustHavePlan(coveringQuery, "IndexReader")
+	tk.MustQuery(coveringQuery).Check(testkit.Rows("1 1 x", "1 1 x"))
+
+	// The rows have equal handles but different payloads. Index lookup must use
+	// the physical partition ID returned by TiKV to fetch each corresponding row.
+	lookupQuery := "SELECT a, b, payload FROM t USE INDEX(idx_c) WHERE c = 'x'"
+	tk.MustHavePlan(lookupQuery, "IndexLookUp")
+	tk.MustQuery(lookupQuery).Sort().Check(testkit.Rows("1 1 10", "1 1 20"))
+	tk.MustQuery("SELECT a, b, payload FROM t USE INDEX(ug_d) WHERE d IS NULL").Sort().Check(testkit.Rows("1 1 10", "1 1 20"))
+	tk.MustQuery("SELECT a, b, payload FROM t IGNORE INDEX(idx_c, ug_d)").Sort().Check(testkit.Rows("1 1 10", "1 1 20"))
+	tk.MustExec("ADMIN CHECK TABLE t")
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {

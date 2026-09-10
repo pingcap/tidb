@@ -596,6 +596,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
+	info.SupportsClusteredGlobalIndexV1 = true
 
 	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 

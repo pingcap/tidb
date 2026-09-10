@@ -18,7 +18,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
@@ -299,4 +301,82 @@ func TestCommonHandleIndexOrdering(t *testing.T) {
 			"2 a 0",
 		))
 	})
+}
+
+func TestClusteredGlobalIndexHandleSuffix(t *testing.T) {
+	for _, version := range []struct {
+		name    string
+		version uint8
+	}{
+		{name: "legacy", version: model.GlobalIndexVersionLegacy},
+		{name: "v1", version: model.GlobalIndexVersionV1},
+	} {
+		t.Run(version.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			originalSupported := model.GetClusteredGlobalIndexV1Supported()
+			model.SetClusteredGlobalIndexV1Supported(version.version >= model.GlobalIndexVersionV1)
+			t.Cleanup(func() {
+				model.SetClusteredGlobalIndexV1Supported(originalSupported)
+			})
+			for _, handle := range []struct {
+				name      string
+				primary   string
+				partition string
+				orderBy   string
+			}{
+				{name: "int", primary: "a", partition: "HASH(a) PARTITIONS 2", orderBy: "a"},
+				{name: "common", primary: "a, b", partition: "RANGE(b) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)", orderBy: "a, b"},
+			} {
+				t.Run(handle.name, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("USE test")
+					tk.MustExec("SET tidb_partition_prune_mode = 'dynamic'")
+					tk.MustExec("SET tidb_analyze_version = 2")
+					tk.MustExec("DROP TABLE IF EXISTS t_global_handle")
+					tk.MustExec("CREATE TABLE t_global_handle (a INT, b INT, c INT, PRIMARY KEY (" + handle.primary + ") CLUSTERED) PARTITION BY " + handle.partition)
+					// Partition order is opposite to primary-key order for both handle types.
+					tk.MustExec("INSERT INTO t_global_handle VALUES (2, 1, 7), (1, 11, 7)")
+					tk.MustExec("ALTER TABLE t_global_handle ADD INDEX g(c) GLOBAL")
+					tk.MustExec("ANALYZE TABLE t_global_handle")
+					idx := external.GetTableByName(t, tk, "test", "t_global_handle").Meta().FindIndexByName("g")
+					require.NotNil(t, idx)
+					require.Equal(t, version.version, idx.GlobalIndexVersion)
+
+					t.Run("predicates", func(t *testing.T) {
+						tk := testkit.NewTestKit(t, store)
+						tk.MustExec("USE test")
+						tk.MustExec("SET tidb_partition_prune_mode = 'dynamic'")
+						for _, query := range []struct {
+							condition string
+							rows      []string
+						}{
+							{condition: "a = 1", rows: []string{"1 7"}},
+							{condition: "a BETWEEN 1 AND 2", rows: []string{"1 7", "2 7"}},
+						} {
+							sql := "SELECT a, c FROM t_global_handle FORCE INDEX(g) WHERE c = 7 AND " + query.condition + " ORDER BY " + handle.orderBy
+							tk.MustHavePlan(sql, "IndexReader")
+							tk.MustQuery(sql).Check(testkit.Rows(query.rows...))
+						}
+					})
+					t.Run("ordering", func(t *testing.T) {
+						tk := testkit.NewTestKit(t, store)
+						tk.MustExec("USE test")
+						tk.MustExec("SET tidb_partition_prune_mode = 'dynamic'")
+						for _, query := range []struct {
+							orderBy string
+							rows    []string
+						}{
+							{orderBy: handle.orderBy, rows: []string{"1 7", "2 7"}},
+							{orderBy: strings.ReplaceAll(handle.orderBy, ",", " DESC,") + " DESC", rows: []string{"2 7", "1 7"}},
+						} {
+							sql := "SELECT a, c FROM t_global_handle FORCE INDEX(g) WHERE c = 7 ORDER BY " + query.orderBy
+							tk.MustHavePlan(sql, "IndexReader")
+							tk.MustQuery(sql).Check(testkit.Rows(query.rows...))
+							tk.MustQuery(sql + " LIMIT 1").Check(testkit.Rows(query.rows[0]))
+						}
+					})
+				})
+			}
+		})
+	}
 }
