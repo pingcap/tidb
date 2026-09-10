@@ -1959,9 +1959,9 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 /// secondary index can use both equality keys. Go's `fixcontrol.Fix44855`
 /// raises the prefix path's probe row count to the average rows per leading
 /// key value; only with that floor does the complete-key secondary index win.
-/// Go reads the fix with `GetBoolWithDefault(..., false)`, so the DEFAULT
-/// session prices the broad clustered prefix as a one-row probe and keeps
-/// `TableRangeScan`; enabling `44855:ON` selects `idx_k1_k2` instead.
+/// Go's access-row floor reads `GetBoolWithDefault(..., true)`; its separate
+/// NDV upper bound defaults to false. Explicit OFF disables the floor and
+/// retains the broad clustered prefix; default and ON select idx_k1_k2.
 ///
 /// The shared planner must select the path the fix control asks for. Executor
 /// lowering receives that exact `inner_access_index_id`; it must not compare
@@ -2027,12 +2027,16 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
             .collect::<Vec<_>>()
     };
 
-    // Default session: `44855` is OFF, so the broad clustered prefix stays a
+    // Explicit OFF: the broad clustered prefix stays a
     // one-row probe and the index join reads the primary range scan.
-    let default_plan = explain(&ctx);
+    let (fix_control, warnings) =
+        tidb_planner::fix_control::OptimizerFixControl::parse("44855:OFF").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let fix_off = ctx.clone().with_optimizer_fix_control(fix_control);
+    let disabled_plan = explain(&fix_off);
     assert!(
-        !default_plan.iter().any(|line| line.contains("idx_k1_k2")),
-        "the default session must price the broad primary-key prefix as Go does: {default_plan:#?}"
+        !disabled_plan.iter().any(|line| line.contains("idx_k1_k2")),
+        "explicit OFF must retain the broad primary-key prefix: {disabled_plan:#?}"
     );
 
     // `44855:ON` raises the prefix probe to `rows / NDV(k1) = 1000`, so the
@@ -2042,6 +2046,11 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     assert!(warnings.is_empty(), "{warnings:?}");
     let fix_on = ctx.clone().with_optimizer_fix_control(fix_control);
     let fixed_plan = explain(&fix_on);
+    assert_eq!(
+        explain(&ctx),
+        fixed_plan,
+        "the access-row floor defaults to ON in Go master"
+    );
     assert!(
         fixed_plan
             .iter()

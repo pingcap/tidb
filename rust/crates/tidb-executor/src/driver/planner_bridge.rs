@@ -1496,7 +1496,7 @@ pub(crate) fn physical_plan_for_logical(
         )
         .with_index_join_probe_row_count_fix(
             ctx.optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_44855, false),
+                .get_bool_with_default(tidb_planner::fix_control::FIX_44855, true),
         )
         .with_column_ids(column_ids);
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;

@@ -1,5 +1,28 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 Fix44855 的 probe 下限默认开启
+
+固定 Go master `exhaust_physical_plans.go:868` 的 `indexJoinProbeAccessRowsFloor`
+读取 `GetBoolWithDefault(..., true)`，而同文件约 1182 行的 NDV 上限读取 false。
+Rust bridge 把下限也传为默认 false，混淆了两个不同默认值。现在下限默认 true，
+显式 OFF 仍禁用；未改变上限算法。
+
+原测试错误声称下限默认 OFF。保留其 OFF 行为断言，改为显式设置 OFF，再验证
+默认计划与 ON 计划完全一致，且 ON 使用完整 join-key 二级索引。恢复旧默认 false
+后新增默认一致性断言稳定失败（`/tmp/fix44855-default-red.log`，退出 101）；
+恢复 true 后测试通过（`/tmp/fix44855-default-green.log`）。命令：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib index_join_probe_rows_use_only_the_access_paths_join_keys
+make lint
+```
+
+该修复不代表 TPCC 已通过。condition nine 仍需核对 analyzed 计划：开启正确默认值后
+inner 候选形状变化；condition eleven 仍无预期 MergeJoin。另有本地 WIP 将错误的
+Column#0 常量断言改为 partial/final 实际绑定关系，依据 Go `BuildFinalModeAggregation`
+分配新 UniqueID、保留 original final schema 的源码；该 WIP 尚未作为完成修复提交。
+
 ## 2026-09-10 按当前谓词验证 DataSource 统计缓存
 
 修复 `InitStats`：把原 AST 谓词绑定到 DataSource 当前 schema，比对全部
