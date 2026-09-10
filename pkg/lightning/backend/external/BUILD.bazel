@@ -85,11 +85,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-<<<<<<< HEAD:pkg/lightning/backend/external/BUILD.bazel
     shard_count = 50,
-=======
-    shard_count = 49,
->>>>>>> ebcba3eefb0 (ingestor: prevent range splitter panic during shutdown (#70942)):pkg/ingestor/simplesst/BUILD.bazel
     deps = [
         "//pkg/config",
         "//pkg/dxf/framework/taskexecutor/execute",

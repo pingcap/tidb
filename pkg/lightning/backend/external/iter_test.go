@@ -743,7 +743,7 @@ func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
 
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		buf := encodeMultiProps(nil, []*RangeProperty{{FirstKey: []byte{byte(i)}}})
+		buf := encodeMultiProps(nil, []*rangeProperty{{firstKey: []byte{byte(i)}}})
 		_, err = writer.Write(ctx, buf)
 		require.NoError(t, err)
 		require.NoError(t, writer.Close(ctx))
