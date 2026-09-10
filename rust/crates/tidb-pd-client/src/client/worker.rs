@@ -24,6 +24,7 @@ use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use tidb_proto::pdpb;
 use tokio::sync::watch;
 
 use crate::tso::{
@@ -43,7 +44,7 @@ pub(super) struct TsoBatchSpec {
     pub(super) deadline: Instant,
     pub(super) count: u32,
 }
-use crate::{PdClientError, PdMemberSet};
+use crate::{PdClientError, PdMemberSet, PdOperation};
 
 use super::failover::{
     batch_scan_regions_with_failover, endpoint_attempt_order, foreground_leader_only,
@@ -55,6 +56,13 @@ use super::failover::{
 use super::requests::{get_members, get_prev_region, get_region, get_region_by_id, scan_regions};
 use super::topology::invalid_topology;
 use super::{wait_for_shutdown, PdSharedState, RpcControl, WorkerCommand};
+
+// Go pkg/store/store.go retries opening a store 30 times with a 500 ms
+// linearly increasing delay when PD reports NOT_BOOTSTRAPPED. PD client
+// servicediscovery.initRetry also waits through ErrServerNotStarted, which
+// PD encodes as UNKNOWN rather than NOT_BOOTSTRAPPED.
+const BOOTSTRAP_MAX_ATTEMPTS: usize = 30;
+const BOOTSTRAP_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(super) fn run_worker(
     runtime: tokio::runtime::Runtime,
@@ -536,26 +544,44 @@ pub(super) fn bootstrap_members(
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
 ) -> Result<PdMemberSet, PdClientError> {
-    let mut accepted = None;
     let mut cluster_id = None;
-    let mut last_error = None;
-    for seed in seeds {
-        match get_members(runtime, clients, seed, timeout, shutdown, cluster_id) {
-            Ok(observation) => {
-                cluster_id = Some(observation.cluster_id);
-                match observation.projected {
-                    Ok(members) => accepted = Some(members),
-                    Err(error) => last_error = Some(error),
+    for attempt in 1..=BOOTSTRAP_MAX_ATTEMPTS {
+        let mut accepted = None;
+        let mut last_error = None;
+        for seed in seeds {
+            match get_members(runtime, clients, seed, timeout, shutdown, cluster_id) {
+                Ok(observation) => {
+                    cluster_id = Some(observation.cluster_id);
+                    match observation.projected {
+                        Ok(members) => accepted = Some(members),
+                        Err(error) => last_error = Some(error),
+                    }
                 }
+                Err(error @ PdClientError::ClusterMismatch { .. }) => return Err(error),
+                Err(error) => last_error = Some(error),
             }
-            Err(error @ PdClientError::ClusterMismatch { .. }) => return Err(error),
-            Err(error) => last_error = Some(error),
+        }
+        if let Some(members) = accepted {
+            return Ok(members);
+        }
+        let error = last_error
+            .unwrap_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured"));
+        let retryable = matches!(
+            error,
+            PdClientError::HeaderError {
+                operation: PdOperation::GetMembers,
+                error_type,
+                ref message,
+            } if error_type == pdpb::ErrorType::NotBootstrapped as i32
+                || (error_type == pdpb::ErrorType::Unknown as i32
+                    && message.starts_with("[PD:server:ErrServerNotStarted]"))
+        );
+        if !retryable || attempt == BOOTSTRAP_MAX_ATTEMPTS {
+            return Err(error);
+        }
+        if wait_for_shutdown(runtime, shutdown, BOOTSTRAP_RETRY_INTERVAL * attempt as u32) {
+            return Err(PdClientError::Closed);
         }
     }
-    if let Some(members) = accepted {
-        Ok(members)
-    } else {
-        Err(last_error
-            .unwrap_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured")))
-    }
+    unreachable!("bounded bootstrap loop always returns")
 }

@@ -79,6 +79,7 @@ impl<T> Reply<T> {
 
 struct State {
     members: Reply<pdpb::GetMembersResponse>,
+    members_after_first: Option<Reply<pdpb::GetMembersResponse>>,
     region: Reply<pdpb::GetRegionResponse>,
     prev_region: Reply<pdpb::GetRegionResponse>,
     region_by_id: Reply<pdpb::GetRegionResponse>,
@@ -123,7 +124,9 @@ impl Pd for MockPd {
         let reply = {
             let mut state = self.state.lock().unwrap();
             state.member_requests.push(request.into_inner());
-            state.members.clone()
+            let reply = state.members.clone();
+            if let Some(next) = state.members_after_first.take() { state.members = next; }
+            reply
         };
         reply.send().await
     }
@@ -442,6 +445,7 @@ fn store_record(id: u64, state: metapb::StoreState, node_state: metapb::NodeStat
 
 fn valid_state() -> State {
     State {
+        members_after_first: None,
         members: Reply::Value(pdpb::GetMembersResponse {
             header: Some(header(CLUSTER_ID)),
             members: vec![pd_member(1, [SELF_URL])],
@@ -1368,7 +1372,7 @@ fn present_zero_epoch_is_preserved_without_invented_validation() {
 }
 
 #[test]
-fn bootstrap_timeout_transport_header_and_zero_cluster_never_retry() {
+fn bootstrap_timeout_transport_non_retryable_header_and_zero_cluster_never_retry() {
     let cases = [
         (
             Reply::Delayed(
@@ -1396,8 +1400,8 @@ fn bootstrap_timeout_transport_header_and_zero_cluster_never_retry() {
                 header: Some(pdpb::ResponseHeader {
                     cluster_id: CLUSTER_ID,
                     error: Some(pdpb::Error {
-                        r#type: pdpb::ErrorType::NotBootstrapped as i32,
-                        message: "not bootstrapped".to_owned(),
+                        r#type: pdpb::ErrorType::StoreTombstone as i32,
+                        message: "non-retryable bootstrap error".to_owned(),
                     }),
                 }),
                 ..pdpb::GetMembersResponse::default()
@@ -1421,6 +1425,30 @@ fn bootstrap_timeout_transport_header_and_zero_cluster_never_retry() {
             .expect("bootstrap must fail");
         assert_eq!(error.kind(), expected, "unexpected error: {error}");
         assert_eq!(server.state.lock().unwrap().member_requests.len(), 1);
+    }
+}
+
+#[test]
+fn bootstrap_retries_not_bootstrapped_until_pd_is_ready() {
+    for (error_type, message) in [
+        (pdpb::ErrorType::NotBootstrapped, "not bootstrapped"),
+        (pdpb::ErrorType::Unknown, "[PD:server:ErrServerNotStarted]server not started"),
+    ] {
+        let server = Server::start(valid_state());
+        let mut state = server.state.lock().unwrap();
+        let ready = state.members.clone();
+        state.members = Reply::Value(pdpb::GetMembersResponse {
+            header: Some(pdpb::ResponseHeader {
+                cluster_id: CLUSTER_ID,
+                error: Some(pdpb::Error { r#type: error_type as i32, message: message.to_owned() }),
+            }),
+            ..pdpb::GetMembersResponse::default()
+        });
+        state.members_after_first = Some(ready);
+        drop(state);
+        let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+        assert_eq!(client.cluster_id(), CLUSTER_ID);
+        assert_eq!(server.state.lock().unwrap().member_requests.len(), 2);
     }
 }
 
