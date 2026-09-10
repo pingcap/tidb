@@ -473,6 +473,32 @@ fn tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history() {
     );
     assert_eq!(all, [["11", "alice"], ["22", "bob"]]);
 
+    // Go LazyTxn.onStmtStart records one digest per execution, not per
+    // SetProcessInfo publication before planning and while draining results.
+    let history_len = || {
+        registry
+            .transaction_snapshot()
+            .into_iter()
+            .find(|transaction| transaction.session_id == 22)
+            .unwrap()
+            .all_sql_digests
+            .len()
+    };
+    let before = history_len();
+    for _ in 0..2 {
+        let running = bob.retain_process_statement("SELECT 1");
+        bob.run("SELECT 1").unwrap();
+        drop(running);
+    }
+    assert_eq!(history_len(), before + 2);
+
+    let running = bob.retain_process_statement("SELECT 1");
+    for _ in 0..2 {
+        bob.run("SELECT 1").unwrap();
+    }
+    drop(running);
+    assert_eq!(history_len(), before + 4);
+
     for _ in 0..60 {
         bob.run("SELECT 1").unwrap();
     }

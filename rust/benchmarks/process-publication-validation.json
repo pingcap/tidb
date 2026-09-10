@@ -1,0 +1,302 @@
+{
+  "date": "2026-09-10",
+  "status": "Scoped correctness validation and shared-host performance diagnostics; not full package parity or accepted performance baseline",
+  "base_revision": "5d48c8e9c42a24702e320ad0390194fd64009880",
+  "source_diff_sha256": "8b81b7e34f9e75be637860000729602b54283b6e635fd44625eafff6efdb2a51",
+  "source_diff_command": "git diff -- crates/tidb-session/src/process.rs crates/tidb-session/src/tests_system_schemas.rs | shasum -a 256",
+  "changed_sources": ["crates/tidb-session/src/process.rs", "crates/tidb-session/src/tests_system_schemas.rs"],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-post-lock-profile.VGAM1f/candidate-server",
+      "sha256": "8519c43d61f3abf28b57460e1b7d0670560f47c5648f456d49c324e2b4eeeabb"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-process-publication.JIYx20/process-server",
+      "sha256": "45e91603f15bd72a5beba09a5644ac3f2c8a14a39ad93196f6383137fdb04aff"
+    }
+  },
+  "go_reference": {
+    "source_revision": "5d48c8e9c42a24702e320ad0390194fd64009880",
+    "source_functions": ["pkg/session/session.go: SetProcessInfo", "pkg/sessionctx/stmtctx/stmtctx.go: SQLDigest", "pkg/session/txn.go: LazyTxn.onStmtStart and onStmtEnd"],
+    "live_version": "v9.0.0-beta.2.pre-nightly",
+    "live_binary_sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
+    "behavior": "Go publishes per-session processInfo using the memoized statement digest. Transaction history is appended once per execution, not per publication.",
+    "limitation": "The live Go binary differs from the checked-out Go source revision."
+  },
+  "root_fix": ["Replace the global process-entry mutation lock with independently synchronized per-session entries. Registry operations copy entry handles before locking entries.", "Retained result guards publish without appending transaction history. Execution starts append independently, including repeated identical executions inside one held command.", "Reuse the active held command's digest on duplicate publication; remove unused normalized-text storage and duplicated finish/release cleanup.", "Copy KILL targets under the entry lock and invoke callbacks after releasing it. Retain visibility, transaction history limit and result lifetime."],
+  "correctness": {
+    "test": "tests_system_schemas::tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history",
+    "extension": "Existing fixture checks one history item per execution, both with separate retention guards and multiple identical executions inside one retained command.",
+    "red": {
+      "log": "/private/tmp/tidb-after-index-profile.V83erd/process-red.log",
+      "left": 7,
+      "right": 5
+    },
+    "unchanged_baseline": {
+      "passed": 90,
+      "failed": 2,
+      "log": "/private/tmp/tidb-after-index-profile.V83erd/process-before-tests.log",
+      "note": "Includes the added duplicate-history regression and the pre-existing range-quota failure."
+    },
+    "final_session": {
+      "passed": 91,
+      "failed": 1,
+      "log": "/private/tmp/tidb-after-index-profile.V83erd/process-owner-tests.log"
+    },
+    "pre_existing_failure": "tests_prepared_plan_cache::logical_range_quota_rejects_unindexed_prepared_cache: expected 1, got 0 on both unchanged baseline and final source",
+    "final_server": {
+      "passed": 3,
+      "failed": 0,
+      "log": "/private/tmp/tidb-process-publication.JIYx20/server-tests.log"
+    },
+    "live_history": {
+      "sql": "BEGIN; SELECT c_id FROM customer WHERE c_w_id=1 AND c_d_id=1 AND c_id=1; SELECT ALL_SQL_DIGESTS FROM information_schema.TIDB_TRX WHERE SESSION_ID=CONNECTION_ID(); ROLLBACK;",
+      "select_digest": "94dccd211acd5482fd9b9bb7ad81bf92273a9893a9899271a66e6a7cfd145c8b",
+      "go_occurrences": 1,
+      "before_occurrences": 2,
+      "after_occurrences": 1,
+      "go_log": "/private/tmp/tidb-after-index-profile.V83erd/history-go.log",
+      "before_log": "/private/tmp/tidb-process-publication.JIYx20/process-history-before.log",
+      "after_log": "/private/tmp/tidb-process-publication.JIYx20/process-history-after.log",
+      "limitation": "Go also records BEGIN; the separate cluster-front BEGIN history gap in Rust remains."
+    }
+  },
+  "validation": {
+    "profile": "Ready",
+    "reason": "Completion checks for process publication and transaction-history code, including scoped unit/TCP tests, release build, lint and live TiKV workloads.",
+    "cargo_cwd": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+    "repository_cwd": "/private/tmp/tidb-upstream-merge.nzY42N",
+    "commands": {
+      "red": "cargo test --offline --locked --release -j12 -p tidb-session --lib tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history -- --test-threads=1",
+      "session": "cargo test --offline --locked --release -j12 -p tidb-session --lib --no-fail-fast -- process::tests tests_grants::processlist tests_core::transactions tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history tests_prepared_statements tests_prepared_plan_cache --test-threads=1",
+      "server": "cargo test --offline --locked --release -j12 -p tidb-server --test all -- mysql_client_reads_the_process_list_and_kills_by_id kill_connection_ends_the_targeted_peer prepared_transaction_control_answers_like_the_text_protocol --test-threads=1",
+      "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-session/src/process.rs rust/crates/tidb-session/src/tests_system_schemas.rs",
+      "diff": "git diff --check",
+      "cluster": "ruby /private/tmp/tidb-process-publication.JIYx20/cluster.rb",
+      "live": "ruby /private/tmp/tidb-process-publication.JIYx20/verify-process.rb"
+    },
+    "build_log": "/private/tmp/tidb-process-publication.JIYx20/build.log",
+    "lint_log": "/private/tmp/tidb-process-publication.JIYx20/lint.log",
+    "live_log": "/private/tmp/tidb-process-publication.JIYx20/live.log",
+    "bazel_prepare": "Not triggered: no Go sources, imports, dependencies or Bazel metadata changed.",
+    "outcome": "Release build, Ready lint, changed-file formatting and live workload checks passed. Scoped session tests retain one independently reproduced baseline failure."
+  },
+  "sysbench": {
+    "workload": "oltp_read_only, prepared statements auto, one 100000-row table, rand-seed 1",
+    "schedule": ["after", "before", "before", "after"],
+    "clients": [1, 8, 32],
+    "measured_events": 72000,
+    "warmup_events": 12000,
+    "per_sample": {
+      "warmup_events": 1000,
+      "measured_events": 6000
+    },
+    "errors": 0,
+    "reconnects": 0,
+    "selected_query_result_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "result_check": "Selected SQL result hash matches Go before and after every server run; not an exhaustive SQL comparison.",
+    "command_example": "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench /opt/homebrew/share/sysbench/oltp_read_only.lua --db-driver=mysql --mysql-ssl=off --mysql-host=127.0.0.1 --mysql-port=52569 --mysql-user=root --mysql-db=perf_sysbench --threads=1 --time=0 --table-size=100000 --tables=1 --db-ps-mode=auto --rand-seed=1 --percentile=95 --histogram=on --events=6000 run",
+    "sample_columns": ["server", "round", "threads", "transactions", "seconds", "tps", "sql_cpu_seconds", "tikv_cpu_seconds", "latency_mean_ms", "latency_p95_ms"],
+    "samples": [
+      ["after", "process-0", 1, 6000, 12.8488, 466.969678, 8.11, 7.9, 2.14, 2.26],
+      ["after", "process-0", 8, 6000, 3.4458, 1741.250218, 12.1, 11.75, 4.59, 5],
+      ["after", "process-0", 32, 6000, 2.1202, 2829.921705, 13.12, 12.41, 11.28, 12.52],
+      ["before", "process-1", 1, 6000, 12.8508, 466.897003, 8.13, 8.03, 2.14, 2.3],
+      ["before", "process-1", 8, 6000, 3.4902, 1719.099192, 12.52, 11.87, 4.65, 5],
+      ["before", "process-1", 32, 6000, 2.1547, 2784.610387, 13.88, 12.29, 11.46, 12.98],
+      ["before", "process-2", 1, 6000, 12.7943, 468.958833, 8.04, 8.09, 2.13, 2.26],
+      ["before", "process-2", 8, 6000, 3.508, 1710.376283, 12.5, 11.97, 4.67, 5.09],
+      ["before", "process-2", 32, 6000, 2.1715, 2763.067004, 14.07, 12.58, 11.55, 12.98],
+      ["after", "process-3", 1, 6000, 12.7761, 469.626881, 8.04, 7.99, 2.13, 2.26],
+      ["after", "process-3", 8, 6000, 3.4453, 1741.502917, 12.1, 11.89, 4.59, 5],
+      ["after", "process-3", 32, 6000, 2.1069, 2847.785847, 13.14, 12.32, 11.21, 12.52]
+    ],
+    "arithmetic_means": [
+      {
+        "threads": 1,
+        "before": {
+          "seconds": 12.82255,
+          "tps": 467.9279178758334,
+          "sql_cpu_seconds": 8.085,
+          "tikv_cpu_seconds": 8.060000000000002,
+          "latency_mean_ms": 2.135,
+          "latency_p95_ms": 2.28
+        },
+        "after": {
+          "seconds": 12.81245,
+          "tps": 468.2982797724645,
+          "sql_cpu_seconds": 8.075,
+          "tikv_cpu_seconds": 7.945000000000004,
+          "latency_mean_ms": 2.135,
+          "latency_p95_ms": 2.26
+        },
+        "change_percent": {
+          "seconds": -0.07876748384680887,
+          "tps": 0.0791493481116623,
+          "sql_cpu_seconds": -0.12368583797157662,
+          "tikv_cpu_seconds": -1.4267990074441461,
+          "latency_mean_ms": 0,
+          "latency_p95_ms": -0.8771929824561431
+        }
+      },
+      {
+        "threads": 8,
+        "before": {
+          "seconds": 3.4991000000000003,
+          "tps": 1714.7377374027958,
+          "sql_cpu_seconds": 12.510000000000002,
+          "tikv_cpu_seconds": 11.920000000000002,
+          "latency_mean_ms": 4.66,
+          "latency_p95_ms": 5.045
+        },
+        "after": {
+          "seconds": 3.44555,
+          "tps": 1741.3765673368316,
+          "sql_cpu_seconds": 12.1,
+          "tikv_cpu_seconds": 11.819999999999993,
+          "latency_mean_ms": 4.59,
+          "latency_p95_ms": 5
+        },
+        "change_percent": {
+          "seconds": -1.5303935297648064,
+          "tps": 1.5535221132057186,
+          "sql_cpu_seconds": -3.277378097521999,
+          "tikv_cpu_seconds": -0.8389261744967125,
+          "latency_mean_ms": -1.5021459227467893,
+          "latency_p95_ms": -0.8919722497522264
+        }
+      },
+      {
+        "threads": 32,
+        "before": {
+          "seconds": 2.1631,
+          "tps": 2773.838695485799,
+          "sql_cpu_seconds": 13.975000000000001,
+          "tikv_cpu_seconds": 12.435000000000002,
+          "latency_mean_ms": 11.505,
+          "latency_p95_ms": 12.98
+        },
+        "after": {
+          "seconds": 2.11355,
+          "tps": 2838.8537760019117,
+          "sql_cpu_seconds": 13.13,
+          "tikv_cpu_seconds": 12.364999999999998,
+          "latency_mean_ms": 11.245000000000001,
+          "latency_p95_ms": 12.52
+        },
+        "change_percent": {
+          "seconds": -2.290693911515884,
+          "tps": 2.3438666647025874,
+          "sql_cpu_seconds": -6.04651162790698,
+          "tikv_cpu_seconds": -0.5629272215521008,
+          "latency_mean_ms": -2.259887005649719,
+          "latency_p95_ms": -3.5439137134052445
+        }
+      }
+    ],
+    "interpretation": "32 clients: +2.34% TPS, -6.05% SQL CPU, -3.54% p95. One client is effectively flat. Shared-host diagnostic only.",
+    "tls": "Matched --mysql-ssl=off driver flags do not prove plaintext. This driver's false value leaves the client library default; true only selects SSL_MODE_REQUIRED. No TLS/security setting was disabled."
+  },
+  "tpcc": {
+    "database": "perf_lock_tpcc_5cg54c",
+    "warehouses": 1,
+    "fixture": "Existing fixture grows between runs; no reset between samples.",
+    "driver": {
+      "path": "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+      "revision": "a9ca4818625deef91ff80f6c395a575ccae22b7c",
+      "sha256": "1a60bfbbee49b818191448b9fe158c6750ca0b928443aacf31a40e8e99f7ec56",
+      "patch": "RNG seed hook only",
+      "env": {
+        "GOMAXPROCS": "12",
+        "GOTPC_TPCC_INPUT_SEED": "1"
+      }
+    },
+    "command_example": "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded tpcc run -H 127.0.0.1 -P 52569 -U root -D perf_lock_tpcc_5cg54c --warehouses 1 -T 8 --max-procs 12 --count 6000 --time 2m --interval 10s",
+    "sample_columns": ["server", "round", "threads", "transactions", "seconds", "sql_cpu_seconds", "tikv_cpu_seconds"],
+    "samples": [
+      ["after", 0, 8, 6000, 6.550592, 13.35, 33.57],
+      ["after", 0, 1, 6000, 18.200585, 9.98, 24.91],
+      ["before", 1, 8, 6000, 6.686085, 14.01, 33.92],
+      ["before", 2, 8, 6000, 6.776547, 13.93, 33.9],
+      ["after", 3, 8, 6000, 6.650542, 13.29, 34.18]
+    ],
+    "eight_client_mix": {
+      "DELIVERY": 220,
+      "NEW_ORDER": 2674,
+      "ORDER_STATUS": 229,
+      "PAYMENT": 2652,
+      "STOCK_LEVEL": 225
+    },
+    "one_client_mix": {
+      "DELIVERY": 244,
+      "NEW_ORDER": 2696,
+      "ORDER_STATUS": 227,
+      "PAYMENT": 2614,
+      "STOCK_LEVEL": 219
+    },
+    "eight_client_means": {
+      "before": {
+        "seconds": 6.731316000004881,
+        "sql_cpu_seconds": 13.969999999999999,
+        "tikv_cpu_seconds": 33.91000000000001
+      },
+      "after": {
+        "seconds": 6.600566999994044,
+        "sql_cpu_seconds": 13.319999999999997,
+        "tikv_cpu_seconds": 33.875
+      }
+    },
+    "candidate_fixed_transactions": 18000,
+    "baseline_fixed_transactions": 12000,
+    "candidate_profiled_transactions": 32000,
+    "profiled_mix": {
+      "DELIVERY": 1229,
+      "NEW_ORDER": 14373,
+      "ORDER_STATUS": 1254,
+      "PAYMENT": 13859,
+      "STOCK_LEVEL": 1285
+    },
+    "candidate_total_transactions": 50000,
+    "checks": "All five transaction types completed without driver errors. All 11 standard consistency checks through Go passed initially and after each fixed-work run and candidate profile.",
+    "limitation": "Only two eight-client samples per variant; the one-client candidate run is a correctness smoke, not a matched performance comparison."
+  },
+  "profile_attribution": {
+    "initial_root": "/private/tmp/tidb-after-index-profile.V83erd",
+    "final_root": "/private/tmp/tidb-process-publication.JIYx20",
+    "method": "Separate Time Profiler and native sample captures from fixed-work timing; count Running-state samples only.",
+    "before_tpcc": {
+      "total_running_cpu_seconds": 15.817,
+      "frame": "ProcessRegistry.statement_started",
+      "inclusive_cpu_seconds": 1.041
+    },
+    "after_tpcc": {
+      "total_running_cpu_seconds": 16.002,
+      "frame": "ProcessEntry.publish_statement",
+      "inclusive_cpu_seconds": 0.511
+    },
+    "nested_after_frame": {
+      "frame": "ProcessGuard.statement_started",
+      "inclusive_cpu_seconds": 0.507
+    },
+    "sysbench_running_cpu_seconds": {
+      "before": 28.266,
+      "after": 27.092
+    },
+    "limitation": "Nested inclusive weights must not be added. Capture windows contain different work rates, so sampled seconds are call-chain attribution, not a normalized throughput/latency comparison.",
+    "initial_comparison": "Go/Rust each completed 32000 seeded TPC-C transactions with the same five-type counts and 11 checks. Faster saved control was profiled only on read-only sysbench because its old locking is not a valid TPC-C baseline.",
+    "commands": ["/Users/qiliu/.codex/skills/instruments/scripts/trace-record.sh -t 'Time Profiler' -d 8 -p 6202 -o /private/tmp/tidb-process-publication.JIYx20/after-sysbench.trace", "sample 6202 5 -file /private/tmp/tidb-process-publication.JIYx20/after-sysbench-native.txt", "/Users/qiliu/.codex/skills/instruments/scripts/trace-record.sh -t 'Time Profiler' -d 8 -p 6202 -o /private/tmp/tidb-process-publication.JIYx20/after-tpcc.trace", "sample 6202 5 -file /private/tmp/tidb-process-publication.JIYx20/after-tpcc-native.txt"]
+  },
+  "limitations": ["Shared desktop: mediaanalysisd consumed 65.5-87.2% CPU at final round boundaries; no quiescent-host acceptance.", "Only two timing samples per variant/client; TPC-C fixture grows.", "No full Go-package/build-platform validation or complete performance parity claim.", "Prepared customer-detail residual Sort and the cluster-front BEGIN transaction-history gap remain open.", "Pre-existing unindexed prepared-cache range-quota failure remains; it was not removed or waived.", "Temporary scripts, raw traces and logs are retained at the artifact roots; this receipt records their commands, results and exact measured binary identity."],
+  "cleanup": {
+    "checked_pids": [4709, 4710, 4711, 5719, 5854, 6202, 6009, 5518],
+    "checked_ports": [57106, 57107, 57108, 57109, 52567, 52568, 52569, 52570, 52571, 52572],
+    "alive_pids": [],
+    "open_ports": [],
+    "manifests_stopped": true,
+    "forced_stops": [],
+    "evidence": "/private/tmp/tidb-process-publication.JIYx20/cleanup.json",
+    "preserved_fixture_paths": ["/private/tmp/tidb-live-workload.nIrZBe/pd-data", "/private/tmp/tidb-live-workload.nIrZBe/tikv-data"]
+  }
+}

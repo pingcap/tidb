@@ -142,7 +142,6 @@ struct ProcessEntry {
     state: String,
     info: Option<String>,
     digest: String,
-    digest_text: String,
     /// When the current command started, which `Time` counts from.
     since: Instant,
     started_at: DateTime<Utc>,
@@ -163,13 +162,70 @@ struct ProcessEntry {
     statement_holds: usize,
 }
 
+type SharedProcessEntry = Arc<Mutex<ProcessEntry>>;
+
+impl ProcessEntry {
+    fn publish_statement(&mut self, sql: &str, state: &str) {
+        // Go SetProcessInfo reuses StatementContext.SQLDigest when planning
+        // republishes the active command. LazyTxn.onStmtStart records that
+        // execution once, independently of process-list publication.
+        let same_held_statement = self.statement_holds > 0 && self.info.as_deref() == Some(sql);
+        if !same_held_statement {
+            self.info = Some(sql.to_owned());
+            self.digest = tidb_parser::normalize_digest(sql).1.to_string();
+            self.since = Instant::now();
+            self.started_at = Utc::now();
+        }
+        self.state = state.to_owned();
+        self.affected_rows = 0;
+        if let Some(transaction) = &mut self.transaction {
+            transaction.state = "Running";
+            transaction.current_sql_digest = (!self.digest.is_empty()).then(|| self.digest.clone());
+        }
+    }
+
+    fn statement_started(&mut self, sql: &str, state: &str) {
+        self.publish_statement(sql, state);
+        if let Some(transaction) = &mut self.transaction {
+            if !self.digest.is_empty()
+                && transaction.all_sql_digests.len() < MAX_TRANSACTION_STMT_HISTORY
+            {
+                transaction.all_sql_digests.push(self.digest.clone());
+            }
+        }
+    }
+
+    fn statement_finished(&mut self, db: &str, state: &str) {
+        if self.statement_holds > 0 {
+            return;
+        }
+        self.info = None;
+        self.digest.clear();
+        self.since = Instant::now();
+        self.started_at = Utc::now();
+        self.db = db.to_owned();
+        self.state = state.to_owned();
+        if let Some(transaction) = &mut self.transaction {
+            transaction.state = "Idle";
+            transaction.current_sql_digest = None;
+            transaction.waiting_start = None;
+        }
+    }
+
+    fn release_statement(&mut self, db: &str, state: &str) {
+        self.statement_holds = self.statement_holds.saturating_sub(1);
+        self.statement_finished(db, state);
+    }
+}
+
 /// The server's live connection registry, shared by every connection thread.
 ///
 /// Cloning shares one registry, as every session of one TiDB instance sees
-/// one `sessmgr.Manager`.
+/// one `sessmgr.Manager`. Like Go session.processInfo, each connection owns
+/// its publication state; the directory lock never covers entry updates.
 #[derive(Clone, Default)]
 pub struct ProcessRegistry {
-    entries: Arc<Mutex<HashMap<u64, ProcessEntry>>>,
+    entries: Arc<Mutex<HashMap<u64, SharedProcessEntry>>>,
 }
 
 impl std::fmt::Debug for ProcessRegistry {
@@ -181,10 +237,25 @@ impl std::fmt::Debug for ProcessRegistry {
 }
 
 impl ProcessRegistry {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, ProcessEntry>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, SharedProcessEntry>> {
         self.entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn with_entry<R>(&self, id: u64, access: impl FnOnce(&mut ProcessEntry) -> R) -> Option<R> {
+        let entry = self.lock().get(&id).cloned()?;
+        let mut entry = entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(access(&mut entry))
+    }
+
+    fn entry_snapshot(&self) -> Vec<(u64, SharedProcessEntry)> {
+        self.lock()
+            .iter()
+            .map(|(&id, entry)| (id, Arc::clone(entry)))
+            .collect()
     }
 
     /// Registers one connection and returns the guard that removes it again.
@@ -199,65 +270,41 @@ impl ProcessRegistry {
         db: String,
         kill: Option<Arc<dyn ProcessKillTarget>>,
     ) -> ProcessGuard {
-        self.lock().insert(
-            id,
-            ProcessEntry {
-                user,
-                host,
-                db,
-                state: String::new(),
-                info: None,
-                digest: String::new(),
-                digest_text: String::new(),
-                since: Instant::now(),
-                started_at: Utc::now(),
-                mem_tracker: None,
-                disk_tracker: None,
-                cur_txn_start_ts: 0,
-                resource_group_name: "default".to_owned(),
-                session_alias: String::new(),
-                redact_sql: tidb_parser::RedactMode::Disabled,
-                affected_rows: 0,
-                oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
-                kill,
-                transaction: None,
-                process_plan_info: None,
-                statement_holds: 0,
-            },
-        );
+        let entry = Arc::new(Mutex::new(ProcessEntry {
+            user,
+            host,
+            db,
+            state: String::new(),
+            info: None,
+            digest: String::new(),
+            since: Instant::now(),
+            started_at: Utc::now(),
+            mem_tracker: None,
+            disk_tracker: None,
+            cur_txn_start_ts: 0,
+            resource_group_name: "default".to_owned(),
+            session_alias: String::new(),
+            redact_sql: tidb_parser::RedactMode::Disabled,
+            affected_rows: 0,
+            oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
+            kill,
+            transaction: None,
+            process_plan_info: None,
+            statement_holds: 0,
+        }));
+        self.lock().insert(id, Arc::clone(&entry));
         ProcessGuard {
             registry: self.clone(),
             id,
+            entry,
         }
     }
 
-    /// Records the statement a connection just started, which becomes its
-    /// `Info` and restarts its `Time`.
+    /// Records one execution in transaction history and publishes its process
+    /// information. Retaining a result-set guard only publishes, without
+    /// recording another execution.
     pub fn statement_started(&self, id: u64, sql: &str, state: &str) {
-        if let Some(entry) = self.lock().get_mut(&id) {
-            let same_held_statement =
-                entry.statement_holds > 0 && entry.info.as_deref() == Some(sql);
-            entry.info = Some(sql.to_owned());
-            let (normalized, digest) = tidb_parser::normalize_digest(sql);
-            entry.digest = digest.to_string();
-            entry.digest_text = normalized;
-            if !same_held_statement {
-                entry.since = Instant::now();
-                entry.started_at = Utc::now();
-            }
-            entry.state = state.to_owned();
-            entry.affected_rows = 0;
-            if let Some(transaction) = &mut entry.transaction {
-                transaction.state = "Running";
-                let digest = entry.digest.clone();
-                transaction.current_sql_digest = (!digest.is_empty()).then(|| digest.clone());
-                if !digest.is_empty()
-                    && transaction.all_sql_digests.len() < MAX_TRANSACTION_STMT_HISTORY
-                {
-                    transaction.all_sql_digests.push(digest);
-                }
-            }
-        }
+        self.with_entry(id, |entry| entry.statement_started(sql, state));
     }
 
     pub(crate) fn statement_metadata(
@@ -269,76 +316,31 @@ impl ProcessRegistry {
         redact_sql: tidb_parser::RedactMode,
         oom_alarm_variables_info: OOMAlarmVariablesInfo,
     ) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             entry.cur_txn_start_ts = cur_txn_start_ts;
             entry.resource_group_name = resource_group_name;
             entry.session_alias = session_alias;
             entry.redact_sql = redact_sql;
             entry.oom_alarm_variables_info = oom_alarm_variables_info;
-        }
+        });
     }
 
     pub(crate) fn statement_affected_rows(&self, id: u64, affected_rows: u64) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             entry.affected_rows = affected_rows;
-        }
+        });
     }
 
     /// Records that a connection finished its statement: `Info` becomes NULL,
     /// and `db` and `State` are refreshed, since `USE` may have just changed
     /// the schema and the statement may have opened or closed a transaction.
     pub fn statement_finished(&self, id: u64, db: &str, state: &str) {
-        if let Some(entry) = self.lock().get_mut(&id) {
-            if entry.statement_holds > 0 {
-                return;
-            }
-            entry.info = None;
-            entry.digest.clear();
-            entry.digest_text.clear();
-            entry.since = Instant::now();
-            entry.started_at = Utc::now();
-            entry.db = db.to_owned();
-            entry.state = state.to_owned();
-            if let Some(transaction) = &mut entry.transaction {
-                transaction.state = "Idle";
-                transaction.current_sql_digest = None;
-                transaction.waiting_start = None;
-            }
-        }
-    }
-
-    fn hold_statement(&self, id: u64) {
-        if let Some(entry) = self.lock().get_mut(&id) {
-            entry.statement_holds = entry.statement_holds.saturating_add(1);
-        }
-    }
-
-    fn release_statement(&self, id: u64, db: &str, state: &str) {
-        let mut entries = self.lock();
-        let Some(entry) = entries.get_mut(&id) else {
-            return;
-        };
-        entry.statement_holds = entry.statement_holds.saturating_sub(1);
-        if entry.statement_holds > 0 {
-            return;
-        }
-        entry.info = None;
-        entry.digest.clear();
-        entry.digest_text.clear();
-        entry.since = Instant::now();
-        entry.started_at = Utc::now();
-        entry.db = db.to_owned();
-        entry.state = state.to_owned();
-        if let Some(transaction) = &mut entry.transaction {
-            transaction.state = "Idle";
-            transaction.current_sql_digest = None;
-            transaction.waiting_start = None;
-        }
+        self.with_entry(id, |entry| entry.statement_finished(db, state));
     }
 
     /// Publishes a newly activated transaction for `TIDB_TRX`.
     pub fn transaction_started(&self, id: u64, start_ts: u64) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             let running = entry.info.is_some();
             let digest = (!entry.digest.is_empty()).then(|| entry.digest.clone());
             entry.transaction = Some(TransactionEntry {
@@ -352,61 +354,58 @@ impl ProcessRegistry {
                 related_table_ids: std::collections::HashSet::new(),
             });
             entry.cur_txn_start_ts = start_ts;
-        }
+        });
     }
 
     /// Removes the transaction after commit or rollback.
     pub fn transaction_finished(&self, id: u64) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             entry.transaction = None;
             entry.cur_txn_start_ts = 0;
-        }
+        });
     }
 
     /// Changes the source transaction-running-state label.
     pub fn transaction_state(&self, id: u64, state: &'static str) {
-        if let Some(transaction) = self
-            .lock()
-            .get_mut(&id)
-            .and_then(|entry| entry.transaction.as_mut())
-        {
-            transaction.state = state;
-            transaction.waiting_start = (state == "LockWaiting").then(chrono::Utc::now);
-        }
+        self.with_entry(id, |entry| {
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.state = state;
+                transaction.waiting_start = (state == "LockWaiting").then(chrono::Utc::now);
+            }
+        });
     }
 
     /// Publishes the current transaction MemBuffer length and native memory
     /// footprint. Go updates these from `LazyTxn.Len` and the MemDB footprint
     /// hook while the transaction remains active.
     pub fn transaction_buffer_metrics(&self, id: u64, keys: u64, bytes: i64) {
-        if let Some(transaction) = self
-            .lock()
-            .get_mut(&id)
-            .and_then(|entry| entry.transaction.as_mut())
-        {
-            transaction.mem_buffer_keys = keys;
-            transaction.mem_buffer_bytes = bytes;
-        }
+        self.with_entry(id, |entry| {
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.mem_buffer_keys = keys;
+                transaction.mem_buffer_bytes = bytes;
+            }
+        });
     }
 
     /// Records one physical table used by the live transaction.
     pub fn transaction_related_table(&self, id: u64, table_id: i64) {
-        if let Some(transaction) = self
-            .lock()
-            .get_mut(&id)
-            .and_then(|entry| entry.transaction.as_mut())
-        {
-            transaction.related_table_ids.insert(table_id);
-        }
+        self.with_entry(id, |entry| {
+            if let Some(transaction) = &mut entry.transaction {
+                transaction.related_table_ids.insert(table_id);
+            }
+        });
     }
 
     /// Returns every live transaction in stable connection-ID order.
     #[must_use]
     pub fn transaction_snapshot(&self) -> Vec<TransactionRow> {
         let mut rows = self
-            .lock()
-            .iter()
+            .entry_snapshot()
+            .into_iter()
             .filter_map(|(id, entry)| {
+                let entry = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let transaction = entry.transaction.as_ref()?;
                 Some(TransactionRow {
                     start_ts: transaction.start_ts,
@@ -415,7 +414,7 @@ impl ProcessRegistry {
                     waiting_start: transaction.waiting_start,
                     mem_buffer_keys: transaction.mem_buffer_keys,
                     mem_buffer_bytes: transaction.mem_buffer_bytes,
-                    session_id: *id,
+                    session_id: id,
                     user: entry.user.clone(),
                     db: entry.db.clone(),
                     all_sql_digests: transaction.all_sql_digests.clone(),
@@ -432,23 +431,28 @@ impl ProcessRegistry {
     pub fn snapshot(&self) -> Vec<ProcessRow> {
         let now = Instant::now();
         let mut rows: Vec<ProcessRow> = self
-            .lock()
-            .iter()
-            .map(|(id, entry)| ProcessRow {
-                id: *id,
-                user: entry.user.clone(),
-                host: entry.host.clone(),
-                db: entry.db.clone(),
-                // Go reports `Query` while a statement runs and `Sleep` for a
-                // connection waiting on its next command.
-                command: if entry.info.is_some() {
-                    "Query".to_owned()
-                } else {
-                    "Sleep".to_owned()
-                },
-                time: now.saturating_duration_since(entry.since).as_secs(),
-                state: entry.state.clone(),
-                info: entry.info.clone(),
+            .entry_snapshot()
+            .into_iter()
+            .map(|(id, entry)| {
+                let entry = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                ProcessRow {
+                    id,
+                    user: entry.user.clone(),
+                    host: entry.host.clone(),
+                    db: entry.db.clone(),
+                    // Go reports `Query` while a statement runs and `Sleep` for a
+                    // connection waiting on its next command.
+                    command: if entry.info.is_some() {
+                        "Query".to_owned()
+                    } else {
+                        "Sleep".to_owned()
+                    },
+                    time: now.saturating_duration_since(entry.since).as_secs(),
+                    state: entry.state.clone(),
+                    info: entry.info.clone(),
+                }
             })
             .collect();
         rows.sort_by_key(|row| row.id);
@@ -463,8 +467,8 @@ impl ProcessRegistry {
     /// answers OK. (`ErrNoSuchThread`/1094 is raised by `EXPLAIN FOR
     /// CONNECTION`, not by `KILL`.)
     pub fn kill(&self, id: u64, query: bool) -> bool {
-        let target = match self.lock().get(&id) {
-            Some(entry) => entry.kill.clone(),
+        let target = match self.with_entry(id, |entry| entry.kill.clone()) {
+            Some(target) => target,
             None => return false,
         };
         let Some(target) = target else {
@@ -479,20 +483,20 @@ impl ProcessRegistry {
     }
 
     fn set_trackers(&self, id: u64, mem: Arc<Tracker>, disk: Arc<Tracker>) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             entry.mem_tracker = Some(mem);
             entry.disk_tracker = Some(disk);
-        }
+        });
     }
 
     fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {
-        if let Some(entry) = self.lock().get_mut(&id) {
+        self.with_entry(id, |entry| {
             entry.process_plan_info = Some(plan);
-        }
+        });
     }
 
     fn process_info(&self, id: u64) -> Option<Arc<ProcessInfo>> {
-        self.lock().get(&id).map(|entry| {
+        self.with_entry(id, |entry| {
             let plan_info = entry
                 .process_plan_info
                 .as_ref()
@@ -546,12 +550,12 @@ impl SessionManager for ProcessRegistry {
 pub struct ProcessGuard {
     registry: ProcessRegistry,
     id: u64,
+    entry: SharedProcessEntry,
 }
 
 /// Keeps one process-list statement active until its result set is finished.
 pub struct ProcessStatementGuard {
-    registry: ProcessRegistry,
-    id: u64,
+    entry: SharedProcessEntry,
     db: String,
     state: String,
     finished: bool,
@@ -560,8 +564,10 @@ pub struct ProcessStatementGuard {
 impl ProcessStatementGuard {
     /// Finishes the statement now. Dropping an unfinished guard does the same.
     pub fn finish(mut self) {
-        self.registry
-            .release_statement(self.id, &self.db, &self.state);
+        self.entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .release_statement(&self.db, &self.state);
         self.finished = true;
     }
 }
@@ -569,8 +575,10 @@ impl ProcessStatementGuard {
 impl Drop for ProcessStatementGuard {
     fn drop(&mut self) {
         if !self.finished {
-            self.registry
-                .release_statement(self.id, &self.db, &self.state);
+            self.entry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .release_statement(&self.db, &self.state);
         }
     }
 }
@@ -607,12 +615,18 @@ impl ProcessGuard {
         state: impl Into<String>,
     ) -> ProcessStatementGuard {
         let state = state.into();
-        self.registry.statement_started(self.id, sql, &state);
-        self.registry.hold_statement(self.id);
+        let db = db.into();
+        {
+            let mut entry = self
+                .entry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            entry.publish_statement(sql, &state);
+            entry.statement_holds = entry.statement_holds.saturating_add(1);
+        }
         ProcessStatementGuard {
-            registry: self.registry.clone(),
-            id: self.id,
-            db: db.into(),
+            entry: Arc::clone(&self.entry),
+            db,
             state,
             finished: false,
         }

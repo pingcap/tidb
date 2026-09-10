@@ -1,10 +1,10 @@
 # Remove unnecessary runtime crossings while preserving Go request ownership
 
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
-throughput and latency objective. Earlier increments improve measured sysbench
-throughput and CPU use and restore pessimistic row locking. The current increment
-aligns index coverage and statistics initialization with Go; it makes no
-performance or whole-Go-package completion claim.
+throughput and latency objective. Earlier increments restore pessimistic row
+locking and Go-shaped index/statistics planning. The current increment moves
+process publication to per-session state and avoids recording the same active
+statement twice. Full performance and whole-Go-package acceptance remain open.
 
 
 ## Purpose / Big Picture
@@ -18,6 +18,27 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Profile published 5d48c8e9c4 and Go on both workloads and the saved
+  control on read-only sysbench. All 84,000 fixed-work sysbench transactions
+  have zero errors/reconnects; each Go/Rust TPC-C run completes the same 32,000
+  seeded transaction mix and passes all 11 consistency checks. Artifact root:
+  /private/tmp/tidb-after-index-profile.V83erd. Shared-host timings are diagnostic.
+- [x] Attribute ProcessRegistry.statement_started to 1.041 seconds of 15.817
+  sampled running CPU-seconds in Rust TPC-C. Go SetProcessInfo reads a session
+  SQLDigest memo; Rust normalizes the same SQL twice under the global registry
+  mutex. A live transaction shows each SELECT digest once in Go and twice in Rust.
+- [x] Extend the retained transaction-history fixture: the original code records
+  seven digests instead of five. Separate publication from execution history,
+  including repeated identical executions inside one retained command. Keep entry
+  mutation/normalization outside the registry directory lock.
+- [x] Final session scope passes 91 cases with the same unindexed prepared-cache
+  range-quota failure as the unchanged baseline. All three final-source TCP
+  process-list/KILL/transaction-control cases, release build and Ready lint pass.
+  Final real-TiKV runs complete 72,000 measured read-only sysbench events with no
+  errors/reconnects and 50,000 candidate TPC-C transactions, with all 11 consistency
+  checks passing after every run. Exact binary, commands and measurements are in
+  benchmarks/process-publication-validation.json. All owned cluster PIDs are gone
+  and ports closed; full performance and whole-package acceptance remain open.
 - [x] Profile the corrected 2f292578af binary and Go on both sysbench and TPC-C,
   with fixed-work timing separated from CPU/native captures. Artifact root:
   /private/tmp/tidb-post-lock-profile.VGAM1f. Treat shared-host timings as
@@ -177,6 +198,14 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, process publication): mirror Go's per-session process
+state. The shared registry is only a connection directory, not the lock covering
+SQL normalization and every statement update. A retained command owns its entry
+directly; publication during that command reuses its digest but never appends
+transaction history. Session execution records history independently, including
+repeated identical executions within a retained command. Do not cache by workload text or
+discard process-list/transaction observability to reduce CPU.
 
 Decision (2026-09-10, cold access paths): follow Go IndexStatsIsInvalid's
 missing-or-zero-payload rule, not a stricter load-status gate. Common-handle
@@ -399,6 +428,18 @@ four real regions intersect that range. No task-count shortcut is justified.
 
 ## Plan of Work and Milestones
 
+Current process milestone: change tidb-session/src/process.rs so the registry
+contains independently synchronized entries, and process/result guards retain
+their own entry. Snapshot the directory before reading entries; release entry
+locks before invoking KILL targets. Consolidate statement finish/release cleanup.
+Normalize only once for an already-held statement with the same text; append
+history at execution start, not result retention. Every execution must append
+again, even when an outer command retains the same process entry. Extend the
+existing tests_system_schemas transaction-history case, then run retained
+process-list, KILL, transaction, prepared and result-lifecycle tests as a batch.
+Use the immutable 5d48 binary for before/after live comparisons and reprofile
+ProcessRegistry/normalization, with builds separated from measurements.
+
 Current correctness increment: follow pinned PD client afa43111d149
 client.go::Close -> inner_client.go::close (cancel, wait, close services), and
 client-go e4905600583b tikv/kv.go::Close (stop background tasks, region cache,
@@ -468,6 +509,25 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+The process-publication increment removes repeated normalization under the global
+registry lock and duplicate execution-history entries, following Go's separation
+between SetProcessInfo and LazyTxn.onStmtStart. The final live query records its
+SELECT digest once, matching Go, while repeated real executions remain separate.
+The cluster-front BEGIN-history gap remains open; this is not full transaction
+history or package parity. The extended existing fixture fails before and passes
+after; the separate range-quota failure is unchanged on the original baseline.
+
+Final after/before/before/after fixed-work trials show +2.34% sysbench throughput,
+-6.05% SQL CPU and -3.54% p95 at 32 clients; one client is effectively flat. These
+are shared-host diagnostics, not an accepted performance baseline: mediaanalysisd
+uses 65.5-87.2% CPU at round boundaries, only two samples exist per variant/client,
+and the TPC-C fixture grows. Separate Running-state profiles attribute 1.041s to
+the original statement-start path and 0.511s to final process publication; these
+windowed inclusive weights are not normalized performance comparisons. Final
+artifacts and verified cleanup are under /private/tmp/tidb-process-publication.JIYx20.
+The prepared customer-detail Sort investigation and broader optimization goal
+remain open. See benchmarks/process-publication-validation.json for exact evidence.
 
 The index-path increment restores Go's customer covering read and ordered
 order-status lookup on the first query, not just after statistics have warmed.
