@@ -23,14 +23,14 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
-use tidb_expr::Columns;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 use tidb_util::memory::Tracker;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{
-    AggFunc, AggState, eval_agg_input, expr_collation, group_concat_max_len, group_key_part,
+    eval_agg_input, expr_collation, group_concat_max_len, group_key_part, AggFunc, AggState,
 };
 use crate::mem_quota::StatementMemory;
 
@@ -168,7 +168,10 @@ impl<C: Columns> StreamAggExec<C> {
         // key construction and comparison.
         if self.group_by.is_empty() && self.current_key.is_some() {
             // The DECIMAL-SUM fast path: fold the raw cell coefficient.
-            if let Some(index) = self.decimal_sum_column {
+            if let Some(index) = self
+                .decimal_sum_column
+                .filter(|index| *index < chunk.num_cols())
+            {
                 let column = chunk.column(index);
                 if !column.is_null(self.row_cursor) {
                     if let Some((coefficient, scale)) =
@@ -213,7 +216,10 @@ impl<C: Columns> StreamAggExec<C> {
         // The global DECIMAL-SUM hot shape folds the raw cell coefficient:
         // no Datum, no `Decimal` build (Go's `sum4Decimal` also reads the
         // MyDecimal words directly).
-        if let Some(index) = self.decimal_sum_column {
+        if let Some(index) = self
+            .decimal_sum_column
+            .filter(|index| *index < chunk.num_cols())
+        {
             let column = chunk.column(index);
             if !column.is_null(self.row_cursor) {
                 if let Some((coefficient, scale)) =
@@ -379,8 +385,8 @@ impl<C: Columns> Executor for StreamAggExec<C> {
 mod tests {
     use super::*;
     use tidb_datatype::{Datum, Decimal, FieldTypeCode};
-    use tidb_expr::NoColumns;
     use tidb_expr::column::Column;
+    use tidb_expr::NoColumns;
 
     use crate::hash_agg::AggKind;
 
