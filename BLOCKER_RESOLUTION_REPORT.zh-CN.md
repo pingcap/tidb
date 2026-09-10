@@ -1,5 +1,29 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 远端读取保留隐藏 record handle
+
+`TableScanExec::open` 的旧逻辑认为远端不能提供 `_tidb_rowid`，无条件回退本地 cursor，
+导致两个 write-range 回归的 cop 请求数为 0。实际上 `RemoteRowCursor::next_keyed_row`
+已经在 staged merge 中保留真实 record key。现在从 codec 解码 Int handle，在虚拟列
+materialization 后插入输出；需要额外 handle 的扫描不走直接 chunk 交接，以保证输出 schema。
+这遵循 Go 以 record handle 定位 UPDATE/DELETE 行、保留 ExtraHandle 列的契约。
+
+新增 `remote_extra_handle_survives_pruning_and_staged_merge` 覆盖只选 `_tidb_rowid`、
+用户列值与物理 handle 不同、staged UPDATE 和 DELETE。临时恢复旧回退后测试稳定失败
+（cop_scans 0 != 1，`/tmp/remote-handle-red.log`）；恢复修复后完整 remote-scan 组
+28 passed（`/tmp/reader-final-green.log`），包括两个原始 write-range 失败和虚拟列回归。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib remote_scan::tests
+make lint
+git diff --check
+```
+
+以上通过，lint 日志 `/tmp/reader-final-lint.log`。同步远端 catalog 改动后重跑了该组。
+虚拟依赖独立提交 `9f18bd4f96`；本项独立提交。Ready 仅覆盖本项修复，整个目标仍有
+TPCC 计划选择、并行统计队列测试隔离和其他完整验收待完成；不能宣称所有 Rust cases 通过。
+
 ## 2026-09-10 Reader 虚拟列依赖补齐
 
 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的

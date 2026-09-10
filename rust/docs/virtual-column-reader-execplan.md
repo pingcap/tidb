@@ -15,7 +15,9 @@ SQL output width, row identity, staged replacements, and tombstones.
 - [x] Expand dependent columns at cop-to-root conversion and restore output.
 - [x] Remove the obsolete local-only restriction for extra record handles.
 - [x] Original two write_range_reader tests pass.
-- [ ] Finish independent red/green coverage, broad verification, and commits.
+- [x] Finish independent red/green coverage and reader/planner verification.
+- [x] Commit virtual dependency expansion separately as 9f18bd4f96.
+- [x] Prepare the independent remote record-handle commit.
 
 ## Discoveries And Decisions
 
@@ -47,9 +49,17 @@ Original failure log: /tmp/virtual-write-red.log. Stack evidence:
 to the UPDATE request-count assertion (/tmp/virtual-write-green.log). Both
 original cases pass after remote handle materialization (/tmp/write-range-green.log).
 Additional SQL coverage: virtual_dependency_expansion_preserves_reader_output.
-Run planner task tests, executor tests, and make lint before readiness claims.
+The disabled-expansion red regression is /tmp/virtual-reader-disabled-red.log.
+The restored old local-only handle gate fails the new handle regression with
+cop_scans 0 instead of 1 (/tmp/remote-handle-red.log). After restoring the fix,
+the complete remote_scan::tests group passes 28 tests on the synchronized
+293c474e25 base (/tmp/reader-final-green.log). Planner task tests pass 59 tests.
+make lint passes (/tmp/reader-final-lint.log); git diff --check passes.
 
 ## Outcome
 
-Work is in progress. Keep the two root causes independently reviewable and
-do not treat the remaining TPCC failures or other full gates as passing.
+The two reader root causes have independent red/green evidence. Serial executor
+validation before the remote catalog synchronization passed 1291 tests with
+two TPCC failures (/tmp/executor-virtual-handle-serial.log). Parallel execution
+also exposed a shared statistics-queue test race. Those and other full gates
+remain open; these reader fixes do not complete the overall goal.

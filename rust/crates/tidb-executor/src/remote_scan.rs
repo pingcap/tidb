@@ -1310,6 +1310,47 @@ mod tests {
     }
 
     #[test]
+    fn remote_extra_handle_survives_pruning_and_staged_merge() {
+        let mut fixture = fixture();
+        let mut handles = Vec::new();
+        for a in [100, 200] {
+            let handle = fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a + 10)], &tidb_expr::NoColumns)
+                .unwrap();
+            let crate::kv_table::TableHandle::Int(handle) = handle else {
+                unreachable!()
+            };
+            handles.push(handle);
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(
+            rows,
+            handles.iter().map(|id| vec![Datum::Int(*id)]).collect::<Vec<_>>()
+        );
+        assert_eq!(ops.cop_scans, 1);
+        assert_eq!(
+            crate::run_update_on("UPDATE t SET a=a+1 WHERE a=100", &mut catalog, &ctx).unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::run_delete_on("DELETE FROM t WHERE a=200", &mut catalog, &ctx).unwrap(),
+            1
+        );
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT _tidb_rowid,a FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(rows, vec![vec![Datum::Int(handles[0]), Datum::Int(101)]]);
+        assert_eq!(ops.cop_scans, 1);
+    }
+
+    #[test]
     fn write_range_reader_preserves_record_identity_and_staged_rows() {
         for mut fixture in [fixture(), clustered_fixture(), common_handle_fixture()] {
             fixture
