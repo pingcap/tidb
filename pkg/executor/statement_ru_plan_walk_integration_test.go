@@ -488,6 +488,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			wantJoinOutput bool
 			wantRootAndCop bool
 		}{
+			{name: "MemTable", query: "select concat(table_name, '') from information_schema.tables where table_schema = 'test' and table_name = 't'", rows: testkit.Rows("t"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMemTable], wantPublish: true, wantCPUWork: true},
 			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
 			{name: "TopN", query: "select * from t ignore index (idx_b) order by b desc limit 2", rows: testkit.Rows("3 30 300", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalTopN], wantPublish: true, wantCPUWork: true},
@@ -524,7 +525,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				calibrationMu.Lock()
 				calibration = calibrationObservation{}
 				calibrationMu.Unlock()
-				result := tk.MustQuery(tc.query)
+				// Execute once: MustQuery replays information_schema queries to test extractors.
+				result := tk.MustQueryWithContext(context.Background(), tc.query)
 				if tc.sortRows {
 					result = result.Sort()
 				}
@@ -602,6 +604,65 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("Lock supports RU explain without changing statement eligibility", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table lock_ru(a int primary key, b int)")
+		tk.MustExec("insert into lock_ru values (1, 10), (2, 20)")
+		for _, mode := range []string{"optimistic", "pessimistic"} {
+			t.Run(mode, func(t *testing.T) {
+				tk.MustExec("begin " + mode)
+				defer tk.MustExec("rollback")
+				rows := tk.MustQuery("explain analyze format='ru' select * from lock_ru where a >= 1 for update").Rows()
+				require.NotEmpty(t, rows)
+				require.Contains(t, rows[0][0], "SelectLock")
+				for _, row := range rows {
+					require.NotEmpty(t, row[3], "missing RU for Lock tree: %v", rows)
+				}
+			})
+		}
+	})
+
+	t.Run("explain analyze commit failure closes record set", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table commit_failure(a int primary key, b int)")
+		tk.MustExec("insert into commit_failure values (1, 10)")
+		tk.MustExec("set tidb_retry_limit = 0")
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		var closeCount int
+		var terminalErr error
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeCloseRecordSetForTest", func(stmt *executor.ExecStmt, err *error) {
+			if stmt.Ctx == tk.Session() {
+				closeCount++
+				terminalErr = *err
+			}
+		})
+		t.Run("injected commit error", func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
+			rs, err := tk.Exec("explain analyze update commit_failure set b = b + 1 where a = 1")
+			require.Error(t, err)
+			require.Nil(t, rs)
+			require.Equal(t, 1, closeCount)
+			require.EqualError(t, terminalErr, err.Error())
+			require.NotNil(t, observation)
+			// EXPLAIN ANALYZE DML has no production RU owner under current policy.
+			require.Nil(t, observation.owner)
+			vars := tk.Session().GetSessionVars()
+			require.Nil(t, vars.StmtCtx.CTEStorageMap)
+			require.Nil(t, vars.MemTracker.SearchTrackerWithoutLock(vars.StmtCtx.MemTracker.Label()))
+			require.Nil(t, vars.DiskTracker.SearchTrackerWithoutLock(vars.StmtCtx.DiskTracker.Label()))
+		})
+		tk.MustQuery("select b from commit_failure where a = 1").Check(testkit.Rows("10"))
 	})
 
 	t.Run("post-compile panic consumes owner", func(t *testing.T) {

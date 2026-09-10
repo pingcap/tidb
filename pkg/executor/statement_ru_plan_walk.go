@@ -752,6 +752,17 @@ func calculateStatementRUPlanChildFirst(
 		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+	case *physicalop.PhysicalMemTable:
+		// Memory-table access has no modeled self units. Its observed output
+		// still supplies input rows to parent operators.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalLock:
+		// Lock has no modeled self units; the child retains its read work.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *physicalop.PhysicalTableDual:
 		// TableDual has zero modeled self RU. Runtime evidence, rather than the
 		// optimizer estimate, distinguishes its actual zero/one output for a
