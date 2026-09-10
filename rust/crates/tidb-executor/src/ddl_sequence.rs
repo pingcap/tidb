@@ -279,10 +279,12 @@ pub fn run_create_sequence_in(
     // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
     // is an error there too). No check is needed here.
     let info = build_sequence_info(&create.options, &qualified(&database, &name))?;
+    let id = catalog.allocate_table_id();
     catalog.register_sequence_in(
         &database,
         &name,
         SequenceDef {
+            id,
             name: name.clone(),
             comment,
             allocator: SequenceAllocator::new(info),

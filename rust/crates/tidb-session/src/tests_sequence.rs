@@ -143,6 +143,15 @@ fn lastval_is_null_until_this_session_takes_a_value() {
     assert_eq!(scalar(&mut session, "select lastval(s11)"), "1");
     // `LASTVAL` does not consume, so reading it twice reports the same value.
     assert_eq!(scalar(&mut session, "select lastval(s11)"), "1");
+    // Go TestSequenceFunction drops/recreates the same name before checking
+    // LASTVAL again: SequenceState belongs to the sequence ID, not its name.
+    session.run("drop sequence s11").unwrap();
+    session
+        .run("create sequence s11 increment 3 start 3 maxvalue 14 cache 3 cycle")
+        .unwrap();
+    assert_eq!(scalar(&mut session, "select lastval(s11)"), "<nil>");
+    assert_eq!(scalar(&mut session, "select nextval(s11)"), "3");
+    assert_eq!(scalar(&mut session, "select lastval(s11)"), "3");
 }
 
 /// `SETVAL` moves the sequence forward and reports the new value; a backwards

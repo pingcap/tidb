@@ -66,9 +66,9 @@ fn query_error(catalog: &Catalog, ctx: &StmtContext, sql: &str) -> (u16, String)
 /// `GetSequenceBaseEndRound` without reserving another batch.
 fn sequence_cache(catalog: &Catalog) -> (i64, i64, i64) {
     catalog
-        .sequence_allocators()
-        .get("test.seq")
+        .sequence_in("test", "seq")
         .expect("test.seq sequence exists")
+        .allocator
         .base_end_round()
 }
 
@@ -91,12 +91,7 @@ fn run_seq(catalog: &mut Catalog, sql: &str) {
 /// `current_db`, with a FRESH session `LASTVAL` map -- Go's
 /// `tk := testkit.NewTestKit(t, store)` with its own `SessionVars.SequenceState`.
 fn session(catalog: &Catalog, current_db: &str) -> StmtContext {
-    let snapshot = SequenceSnapshot::new_with_objects(
-        catalog.sequence_allocators(),
-        catalog.object_names(),
-        current_db,
-        Arc::new(Mutex::new(HashMap::new())),
-    );
+    let snapshot = SequenceSnapshot::new(catalog, current_db, Arc::new(Mutex::new(HashMap::new())));
     StmtContext::for_query().with_sequences(Arc::new(snapshot))
 }
 
@@ -104,18 +99,12 @@ fn session(catalog: &Catalog, current_db: &str) -> StmtContext {
 /// `NewSequenceAllocator` table instance whose local cache starts empty but
 /// whose meta counter is shared (`src/sequence.rs` `SequenceAllocator::peer`).
 fn peer_session(catalog: &Catalog, current_db: &str) -> StmtContext {
-    let peers = catalog
-        .sequence_allocators()
-        .into_iter()
-        .map(|(name, allocator)| (name, allocator.peer()))
-        .collect();
-    let snapshot = SequenceSnapshot::new_with_objects(
-        peers,
-        catalog.object_names(),
-        current_db,
-        Arc::new(Mutex::new(HashMap::new())),
-    );
-    StmtContext::for_query().with_sequences(Arc::new(snapshot))
+    let mut peer = catalog.clone();
+    let sequence = peer
+        .sequence_mut_in(current_db, "seq")
+        .expect("sequence fixture");
+    sequence.allocator = sequence.allocator.peer();
+    session(&peer, current_db)
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:100-108`: the four spellings -- unqualified

@@ -254,6 +254,77 @@ pub struct Catalog {
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
 
+/// A statement's infoschema view for sequence lookup and session LASTVAL state.
+/// Sharing the schema map is constant-time; names are resolved only when a
+/// sequence expression is used, like Go's SequenceOperatorProvider.
+#[derive(Debug, Default)]
+pub struct SequenceSnapshot {
+    databases: Arc<HashMap<String, Arc<Database>>>,
+    current_db: String,
+    /// Go SessionVars.SequenceState is keyed by sequence ID, not its name.
+    pub(crate) last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
+}
+
+impl SequenceSnapshot {
+    /// Pins the catalog's copy-on-write schema map and shares the session's
+    /// LASTVAL state. Allocator handles remain shared with the catalog.
+    #[must_use]
+    pub fn new(
+        catalog: &Catalog,
+        current_db: &str,
+        last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
+    ) -> Self {
+        Self {
+            databases: Arc::clone(&catalog.databases),
+            current_db: current_db.go_to_lower(),
+            last_values,
+        }
+    }
+
+    /// Qualified name for Go's sequence error messages.
+    pub(crate) fn key(&self, path: &[String]) -> String {
+        match path {
+            [name] => format!("{}.{}", self.current_db, name.go_to_lower()),
+            [database, name] => format!("{}.{}", database.go_to_lower(), name.go_to_lower()),
+            other => other
+                .iter()
+                .map(|part| part.go_to_lower())
+                .collect::<Vec<_>>()
+                .join("."),
+        }
+    }
+
+    /// Go GetSequenceByName: look up one table in the statement's schema,
+    /// then distinguish an absent table (1146) from a wrong object (1347).
+    pub(crate) fn resolve(&self, path: &[String]) -> Result<&SequenceDef, tidb_expr::EvalError> {
+        let entry = match path {
+            [name] => self
+                .databases
+                .get(&self.current_db)
+                .and_then(|database| database.tables.get(&name.go_to_lower())),
+            [database, name] => self
+                .databases
+                .get(&database.go_to_lower())
+                .and_then(|database| database.tables.get(&name.go_to_lower())),
+            _ => None,
+        };
+        match entry.map(Arc::as_ref) {
+            Some(TableEntry::Sequence(sequence)) => Ok(sequence),
+            Some(_) => Err(tidb_expr::EvalError::Sequence(
+                tidb_expr::SequenceEvalError::WrongObject(self.key(path)),
+            )),
+            None => Err(tidb_expr::EvalError::Sequence(
+                tidb_expr::SequenceEvalError::NotASequence(self.key(path)),
+            )),
+        }
+    }
+
+    /// Resolves a sequence without advancing it or changing LASTVAL state.
+    pub fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+        self.resolve(path).map(|_| ())
+    }
+}
+
 /// An owned snapshot of the catalog fields Go's logical [`PlanBuilder`]
 /// reads. The executor catalog owns storage handles and mutable row state;
 /// the planner must see only immutable table/view metadata.
@@ -556,6 +627,8 @@ pub enum TableEntry {
 /// catalog copy does) shares the counter rather than forking it.
 #[derive(Clone, Debug)]
 pub struct SequenceDef {
+    /// Go TableInfo.ID, stable across ALTER and distinct after DROP/CREATE.
+    pub id: i64,
     /// The name as written, for `SHOW CREATE SEQUENCE` and `SHOW TABLES`.
     pub name: String,
     /// Go `model.SequenceInfo.Comment`, retained for sequence metadata and
@@ -2401,42 +2474,6 @@ impl Catalog {
     pub fn is_sequence_in(&self, database: &str, name: &str) -> bool {
         self.get_in(database, name)
             .is_some_and(TableEntry::is_sequence)
-    }
-
-    /// Every catalog object name, keyed by lowercase `db.name`. Sequence
-    /// expression resolution uses this alongside [`Self::sequence_allocators`]
-    /// so Go's 1347 wrong-object error is distinct from 1146 missing-table.
-    #[must_use]
-    pub fn object_names(&self) -> std::collections::HashSet<String> {
-        self.databases
-            .iter()
-            .flat_map(|(database_key, database)| {
-                database
-                    .tables
-                    .keys()
-                    .map(move |table_key| format!("{database_key}.{table_key}"))
-            })
-            .collect()
-    }
-
-    /// Every sequence in the catalog, keyed by lowercase `db.name`, with its
-    /// allocator handle. The handles are `Arc`-shared, so this is a snapshot of
-    /// the NAMES only -- a value consumed through one of them moves the
-    /// counter the catalog holds. See [`crate::SequenceSnapshot`].
-    #[must_use]
-    pub fn sequence_allocators(&self) -> HashMap<String, crate::sequence::SequenceAllocator> {
-        let mut out = HashMap::new();
-        for (database_key, database) in self.databases.iter() {
-            for (table_key, entry) in &database.tables {
-                if let TableEntry::Sequence(sequence) = entry.as_ref() {
-                    out.insert(
-                        format!("{database_key}.{table_key}"),
-                        sequence.allocator.clone(),
-                    );
-                }
-            }
-        }
-        out
     }
 
     /// Registers a sequence in `database`, replacing whatever the name held.

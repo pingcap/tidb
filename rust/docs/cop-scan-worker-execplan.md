@@ -1,8 +1,9 @@
 # Remove unnecessary runtime crossings while preserving Go request ownership
 
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
-throughput and latency objective. The current increment reduces CPU use but
-does not meet throughput acceptance or whole-Go-package completion.
+throughput and latency objective. The current increment improves measured
+sysbench throughput and CPU use, but does not meet overall performance
+acceptance or whole-Go-package completion.
 
 
 ## Purpose / Big Picture
@@ -16,6 +17,32 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Attribute the remaining merged-code profile to source: every statement
+  rebuilds all catalog names for sequence resolution (1.877s sampled CPU in an
+  eight-second trace), absent from the faster control's hot paths.
+- [x] Read Go SequenceOperatorProvider -> GetSequenceByName and SequenceState.
+  The lookup is per requested name; LASTVAL is keyed by sequence ID.
+- [x] Reproduce Go TestSequenceFunction's drop/recreate LASTVAL case: Rust
+  returns 1 instead of NULL. Preserve the failing log before implementation.
+- [x] Replace eager sequence/name maps with a shared immutable schema view,
+  preserve sequence IDs from creation/catalog loading, and validate retained
+  sequence SQL/allocator/error/transaction fixtures as a batch.
+- [x] Rebuild and measure this statement-context increment at 1/8/32 clients;
+  verify result parity and removal of the name-enumeration profile chain.
+- [x] Run 74 scoped retained tests, release build, formatting and Ready lint.
+  The Go-derived DROP/CREATE LASTVAL regression fails before and passes after.
+- [x] Prepare a fresh one-warehouse TPC-C fixture with all 12 prepare checks.
+  Go/before/after each complete 100 seeded transactions with identical type
+  counts and the driver's 11 standard post-run consistency checks.
+- [x] Broaden to 6,000-event one/eight-client TPC-C trials. Stop when the
+  pre-change Rust binary corrupts 377 customer balance relationships; retain
+  the failed fixture and reject the incomplete performance comparison.
+- [x] Reproduce the locking gap with two prepared connections: Go waits and
+  reads row 2 after row 1 is deleted; both Rust binaries immediately return
+  row 1. Find the uncalled build_select_lock and missing PhysicalLock
+  executor construction. This gap predates the sequence/context increment.
+- [ ] Wire Go's physical locking semantics through the real planner/executor,
+  then prove the two-connection case and rerun TPC-C on a fresh valid fixture.
 - [x] Rebuild and measure merged 6d26dab06d against the immutable control:
   fourteen fixed-work trials, 84,000 measured transactions, equal SQL hashes.
 - [x] Profile current Rust, control and Go separately. Current Rust has 1,044
@@ -105,6 +132,14 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+Decision (2026-09-10, statement-context profile): remove eager materialization,
+not add a cache or SQL-shape detection. SequenceSnapshot pins the catalog's
+copy-on-write schema map and resolves only the requested table name. The
+snapshot stays independent of catalog/service/history owners. Go's provider
+uses its infoschema table lookup; a standalone sequence-map plus all-object
+HashSet adds a full schema walk to every SELECT and DML even without sequences.
+Carry the actual sequence TableInfo.ID and key session LASTVAL by ID, so a
+DROP/CREATE naturally selects a different identity without name-specific cleanup.
 Decision (2026-09-10, initial merged-code profile): fix statistics worker ownership before
 batch-timer experiments. ClusterSessionFactory.open_storage_session creates a
 fresh statistics service/pool per catalog, including internal pooled sessions.
@@ -150,6 +185,74 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+The current statement-context probe is in
+/private/tmp/tidb-execution-attribution.blT99K. It reuses the immutable final/control
+CPU traces, attributes copy/allocation/hash/synchronization stacks to their nearest
+TiDB owner, and demangles Rust symbols with the pinned toolchain. The final trace
+contains 2.648s of sampled Running weight in statement_context_ignoring, including
+1.877s in Catalog.object_names; these are overlapping inclusive weights, not
+latency percentages. Go sequenceOperatorProp/infoschema.GetSequenceByName does one
+table lookup. Go TestSequenceFunction also reuses a session after dropping and
+recreating a sequence: sequence-red.log proves Rust leaked the old LASTVAL by name.
+
+The eef7d1b0a6-based context increment completes 20 read-only trials:
+120,000 measured plus 20,000 warmup transactions, zero errors/reconnects.
+At 1/8/32 clients, throughput improves 6.135/2.300/1.433 percent, fixed-work SQL
+CPU falls 9.178/6.375/3.992 percent, and p95 falls 5.350/3.475/0.894 percent.
+The faster Rust control still leads by 7.115/14.281/8.203 percent throughput.
+The parity hash covers selected point/range/aggregate queries plus whole-table
+COUNT/SUM, not a row-by-row comparison of all 100,000 rows.
+The separate candidate trace has 28,168 Running samples and no object_names
+enumeration chain. Measurements, source patch, binary identities and logs are
+under /private/tmp/tidb-execution-attribution.blT99K.
+
+TPC-C uses pinned go-tpc a9ca4818625deef91ff80f6c395a575ccae22b7c with the
+existing input-seed patch and a new perf_context_tpcc_blt99k database.
+Prepare passes all 12 checks. The driver's runtime default deliberately omits
+3.3.2.11: delivery deletes new_order rows, so its prepare-only count is no longer
+an invariant (the Go run demonstrates this too). The standard 11 checks pass
+after the short probes and longer Go run, but condition 3.3.2.12 finds 377
+inconsistent customers after the longer pre-change Rust run. No after-binary
+TPC-C throughput comparison was completed. A customer with one delivered order
+has two delivery credits; this is not decimal rounding. locking-probe.log
+records the deterministic Go/Rust locking divergence. The physical builder has
+no Lock arm; PlanBuilder::build_select_lock has only a unit-test caller, and
+the old AST select_lock::wrap has no callers. Repair the physical path rather
+than reviving that obsolete AST path.
+
+Exact increment commands (Cargo from rust; lint from repository root):
+
+    cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --lib --test all -- sequence --test-threads=12
+    cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server
+    GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint
+    ruby /private/tmp/tidb-execution-attribution.blT99K/measure.rb
+    ruby /private/tmp/tidb-execution-attribution.blT99K/profile.rb
+    ruby /private/tmp/tidb-execution-attribution.blT99K/tpcc-measure.rb
+    ruby /private/tmp/tidb-execution-attribution.blT99K/locking-probe.rb
+
+The last two commands intentionally expose non-green pre-existing behavior;
+their exit/result fields must not be reported as successful acceptance.
+
+Live sequence scope is narrower than the local-session tests. Go completes
+all nine CREATE/DROP/CREATE/ALTER values; Rust passes the initial three values
+from a Go-created cluster sequence. Rust-owned cluster sequence DDL returns
+1105 (unsupported), and Go-owned DROP with the retained Rust connection times
+out, so live DROP/CREATE identity refresh is not verified. Preserve that failure
+in sequence-catalog.log rather than treating the local test as cluster parity.
+All 16 owned server PIDs exited and ten ports closed; cleanup.json verifies
+this. The failed TPC-C database and probe artifacts remain available for the
+locking investigation. Current receipt: statement-sequence-lookup-baseline.json.
+
+Before publication, fast-forwarded collaborator commit 785ea28a61 (PD bootstrap
+readiness retries) without conflicts. All 45 PD-client tests, the combined
+release server build and Ready lint pass. The eight measured Rust diffs remain
+identical to the frozen source patch. The combined binary was not rebenchmarked;
+the sysbench numbers describe the immutable pre-integration candidate.
+Seven changed Rust files and the edited sequence-fixture helpers are formatted;
+the fixture's untouched tail retains pre-existing rustfmt differences.
+
+    cargo test --offline --locked --release -j12 -p tidb-pd-client --test all
 
 Fresh post-merge evidence is in /private/tmp/tidb-current-throughput.6qK3A7.
 At eight clients Rust averages 1,654 TPS versus the faster control's 1,963 TPS;

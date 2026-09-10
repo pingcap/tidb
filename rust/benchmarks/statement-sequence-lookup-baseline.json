@@ -1,0 +1,232 @@
+{
+  "base_commit": "eef7d1b0a6d1fa8fa40dbbef757888dac85cbb44",
+  "status": "Scoped Ready sequence/context increment; sysbench improves versus predecessor. Overall acceptance remains open; longer TPC-C reveals a pre-existing missing-lock correctness gap.",
+  "performance_accepted": false,
+  "integrated_upstream_commit": "785ea28a6112691cb98d5e73244dbb6ea44fadad",
+  "integrated_server_sha256": "1bdf41884471cb50d973682660e2c2933e34c693119971b5601a629f55ec8954",
+  "post_integration_validation": "Fast-forwarded disjoint collaborator PD-bootstrap changes without conflicts. All 45 PD-client tests pass; combined release server build and Ready lint pass. The eight measured Rust source/test diffs are unchanged. Timing/profile evidence is for the pre-integration frozen binary, not the combined binary; PD integration was not rebenchmarked.",
+  "changes": [
+    "Pin the catalog's copy-on-write schema map instead of enumerating all objects/sequences for every statement. Resolve only the requested name, like Go's SequenceOperatorProvider.",
+    "Preserve sequence TableInfo.ID through creation/catalog loading and key session LASTVAL by ID. DROP/CREATE naturally changes identity; remove obsolete object-name and allocator-map builders."
+  ],
+  "go_sources": [
+    "pkg/expression/expropt/sequence.go: SequenceOperatorProvider and GetSequenceID",
+    "pkg/expression/sessionexpr/sessionctx.go: sequenceOperatorProp",
+    "pkg/infoschema/infoschema.go: GetSequenceByName",
+    "pkg/sessionctx/variable/sequence_state.go: latestValueMap keyed by int64",
+    "pkg/ddl/sequence_test.go: TestSequenceFunction DROP/CREATE LASTVAL case"
+  ],
+  "tests": {
+    "profile": "Ready",
+    "formatting": "Seven other modified Rust files pass full rustfmt; the modified fixture helpers match rustfmt output. The untouched fixture tail has pre-existing formatting differences and was not reformatted.",
+    "red": "sequence-red.log: retained Go-derived same-session DROP/CREATE case returned 1 instead of NULL before the fix.",
+    "green": "74 scoped tests passed, zero failed/ignored, across executor/session/server lib and aggregate all targets (includes packet-sequence name matches). Release server build and Ready lint passed.",
+    "bazel_prepare": "Not required: no Go/Bazel/module inputs changed.",
+    "live_sequence": "Go completes nine DROP/CREATE/ALTER sequence values. Rust-loaded sequence passes initial LASTVAL/NEXTVAL/LASTVAL checks. Full live cluster DROP/CREATE remains unverified: Rust-owned sequence DDL is unsupported (1105); Go-owned DROP during a retained Rust connection times out. Local-session DROP/CREATE regression is green; do not claim full cluster lifecycle parity."
+  },
+  "measurement": {
+    "artifact_root": "/private/tmp/tidb-execution-attribution.blT99K",
+    "binaries": {
+      "before": {
+        "path": "/private/tmp/tidb-stats-lifecycle.BPa0w4/final-server",
+        "sha256": "27c9b05fe9476821aea654a7e9578faa6c679667e9a4abd674a754b078902fa3"
+      },
+      "after": {
+        "path": "/private/tmp/tidb-execution-attribution.blT99K/final-server",
+        "sha256": "41e90f4782ca8eae9c62eea619aca1cbfa56e48893004fc071316cd4ba0a18c1"
+      }
+    },
+    "references": "Immutable faster Rust control SHA256 84c39b216dcd53d3007615ba84f0f49423587625b114515f9d4fcd9e859567b8; Go SHA256 e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2, runtime version 8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318 (different from checkout).",
+    "method": "Fresh before/after/after/before servers; 1/8/32 clients per block. Go-eight and faster-control trials bracket the run. Shared host, two samples per server/concurrency, no builds/profiles during timing. Standard sysbench oltp_read_only.lua; one 100000-row table, prepared auto, seed 1, 6000 fixed events after 1000 warmup.",
+    "trials": 20,
+    "measured_transactions": 120000,
+    "warmup_transactions": 20000,
+    "sql_errors": 0,
+    "reconnects": 0,
+    "sql_result_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "parity_scope": "Selected point/range/SUM/distinct queries plus whole-table COUNT/SUM; not an ordered comparison of all 100000 rows.",
+    "means": {
+      "control-1": {
+        "tps": 500.260561,
+        "sql_cpu_seconds": 6.135,
+        "tikv_cpu_seconds": 7.66,
+        "latency_mean_ms": 2,
+        "latency_p95_ms": 2.11,
+        "trials": 2
+      },
+      "control-8": {
+        "tps": 2002.177725,
+        "sql_cpu_seconds": 8.23,
+        "tikv_cpu_seconds": 11.765,
+        "latency_mean_ms": 3.99,
+        "latency_p95_ms": 4.33,
+        "trials": 2
+      },
+      "control-32": {
+        "tps": 3059.63571,
+        "sql_cpu_seconds": 9.7,
+        "tikv_cpu_seconds": 12.24,
+        "latency_mean_ms": 10.435,
+        "latency_p95_ms": 11.55,
+        "trials": 2
+      },
+      "go-8": {
+        "tps": 1886.658709,
+        "sql_cpu_seconds": 14.09,
+        "tikv_cpu_seconds": 14.37,
+        "latency_mean_ms": 4.24,
+        "latency_p95_ms": 4.695,
+        "trials": 2
+      },
+      "before-1": {
+        "tps": 437.805685,
+        "sql_cpu_seconds": 8.88,
+        "tikv_cpu_seconds": 8.17,
+        "latency_mean_ms": 2.285,
+        "latency_p95_ms": 2.43,
+        "trials": 2
+      },
+      "before-8": {
+        "tps": 1677.665164,
+        "sql_cpu_seconds": 13.255,
+        "tikv_cpu_seconds": 11.955,
+        "latency_mean_ms": 4.765,
+        "latency_p95_ms": 5.18,
+        "trials": 2
+      },
+      "before-32": {
+        "tps": 2768.980852,
+        "sql_cpu_seconds": 14.28,
+        "tikv_cpu_seconds": 12.01,
+        "latency_mean_ms": 11.53,
+        "latency_p95_ms": 12.865,
+        "trials": 2
+      },
+      "after-1": {
+        "tps": 464.664671,
+        "sql_cpu_seconds": 8.065,
+        "tikv_cpu_seconds": 8.145,
+        "latency_mean_ms": 2.155,
+        "latency_p95_ms": 2.3,
+        "trials": 2
+      },
+      "after-8": {
+        "tps": 1716.252365,
+        "sql_cpu_seconds": 12.41,
+        "tikv_cpu_seconds": 11.985,
+        "latency_mean_ms": 4.66,
+        "latency_p95_ms": 5,
+        "trials": 2
+      },
+      "after-32": {
+        "tps": 2808.660037,
+        "sql_cpu_seconds": 13.71,
+        "tikv_cpu_seconds": 12.36,
+        "latency_mean_ms": 11.365,
+        "latency_p95_ms": 12.75,
+        "trials": 2
+      }
+    },
+    "candidate_change_percent": {
+      "before": {
+        "1": {
+          "tps": 6.13491,
+          "sql_cpu_seconds": -9.177928,
+          "tikv_cpu_seconds": -0.305998,
+          "latency_mean_ms": -5.689278,
+          "latency_p95_ms": -5.349794
+        },
+        "8": {
+          "tps": 2.300054,
+          "sql_cpu_seconds": -6.374953,
+          "tikv_cpu_seconds": 0.250941,
+          "latency_mean_ms": -2.203568,
+          "latency_p95_ms": -3.474903
+        },
+        "32": {
+          "tps": 1.432989,
+          "sql_cpu_seconds": -3.991597,
+          "tikv_cpu_seconds": 2.914238,
+          "latency_mean_ms": -1.431049,
+          "latency_p95_ms": -0.893898
+        }
+      },
+      "control": {
+        "1": {
+          "tps": -7.11547,
+          "sql_cpu_seconds": 31.458843,
+          "tikv_cpu_seconds": 6.331593,
+          "latency_mean_ms": 7.75,
+          "latency_p95_ms": 9.004739
+        },
+        "8": {
+          "tps": -14.280718,
+          "sql_cpu_seconds": 50.789793,
+          "tikv_cpu_seconds": 1.869953,
+          "latency_mean_ms": 16.79198,
+          "latency_p95_ms": 15.473441
+        },
+        "32": {
+          "tps": -8.202796,
+          "sql_cpu_seconds": 41.340206,
+          "tikv_cpu_seconds": 0.980392,
+          "latency_mean_ms": 8.912314,
+          "latency_p95_ms": 10.38961
+        }
+      }
+    },
+    "interpretation": "At 1/8/32 clients throughput +6.135/+2.300/+1.433%, SQL CPU -9.178/-6.375/-3.992%, p95 -5.350/-3.475/-0.894%. Faster Rust control still leads by 7.115/14.281/8.203% throughput. These scoped shared-host gains do not establish overall acceptance.",
+    "profiling": "Separate eight-second CPU trace: 28168 Running samples; old Catalog.object_names scan removed from production and absent in the trace. Predecessor: 28855 Running samples, 1.877s overlapping inclusive sampled weight in object_names. Samples are diagnostic, not latency percentages.",
+    "cleanup": "All 16 owned server PIDs exited and ten ports closed; no compared server needed forced termination. Fixture/data/evidence preserved; cleanup.json."
+  },
+  "tpcc": {
+    "database": "perf_context_tpcc_blt99k",
+    "warehouses": 1,
+    "driver_revision": "a9ca4818625deef91ff80f6c395a575ccae22b7c",
+    "driver_sha256": "1a60bfbbee49b818191448b9fe158c6750ca0b928443aacf31a40e8e99f7ec56",
+    "input_seed_patch": "rust/benchmarks/tpcc-input-seed.patch",
+    "prepare": "Fresh owned database; all 12 prepare checks passed.",
+    "diagnostic": "100 transactions each on Go/before/after: identical counts DELIVERY 4, NEW_ORDER 41, ORDER_STATUS 2, PAYMENT 49, STOCK_LEVEL 4; standard 11 post-run checks passed.",
+    "runtime_check_scope": "Pinned driver intentionally excludes prepare-only condition 3.3.2.11 after transactions: deliveries delete new_order rows. The initial --check-all after Go exposes that non-invariant; use the standard upstream runtime checks.",
+    "long_run": "Stopped before after-binary timing: 24000 measured + 4000 warmup events across Go and predecessor at 1/8 clients. After Go, all 11 checks pass. After predecessor, condition 3.3.2.12 reports 377 inconsistent customers. No TPC-C performance gain claimed.",
+    "reproduction": "locking-probe.log: two prepared common-handle range SELECT ... ORDER BY id LIMIT 1 FOR UPDATE connections. Go waits, then reads row 2 after row 1 deletion. Both Rust binaries immediately return row 1. This predates the context change.",
+    "source_gap": "PlanBuilder::build_select_lock has only a unit-test caller; physical_builder::build_with_state has no PhysicalPlan::Lock arm; obsolete driver::select_lock::wrap has no callers. Missing production lock wiring is the next root fix.",
+    "raw_artifacts": [
+      "tpcc-prepare.log",
+      "tpcc-diagnostic.json",
+      "tpcc-runtime.json",
+      "tpcc2-measure.json",
+      "tpcc2-measure-check-0-before.log",
+      "tpcc-inconsistency.log",
+      "tpcc-delivery-attribution.log",
+      "tpcc-direct-customer.log",
+      "locking-probe.log"
+    ],
+    "caveats": "Input seeds match, but data, timestamps and scheduling evolve. Initial local Ruby parser attempt completed an extra 1000-event Go warmup; its failed receipt is preserved. Runtime diagnostic log printed '12 conditions' incorrectly; code and individual check logs verify 11. No server errors are hidden."
+  },
+  "validation_commands": {
+    "rust_cwd": [
+      "cargo test --offline --locked --release -j12 -p tidb-pd-client --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-session --lib tests_sequence::lastval_is_null_until_this_session_takes_a_value",
+      "cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --lib --test all -- sequence --test-threads=12",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server"
+    ],
+    "root_cwd": [
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-executor/src/ddl_sequence.rs rust/crates/tidb-executor/src/driver/catalog.rs rust/crates/tidb-executor/src/stmt_context.rs rust/crates/tidb-server/src/cluster_auto_id_seam.rs rust/crates/tidb-session/src/lib.rs rust/crates/tidb-session/src/stmt_ctx.rs rust/crates/tidb-session/src/tests_sequence.rs",
+      "git diff --check"
+    ],
+    "scratch": [
+      "ruby /private/tmp/tidb-execution-attribution.blT99K/measure.rb",
+      "ruby /private/tmp/tidb-execution-attribution.blT99K/profile.rb",
+      "ruby /private/tmp/tidb-execution-attribution.blT99K/tpcc-measure.rb",
+      "ruby /private/tmp/tidb-execution-attribution.blT99K/locking-probe.rb",
+      "ruby /private/tmp/tidb-execution-attribution.blT99K/sequence-catalog.rb"
+    ]
+  },
+  "not_verified": [
+    "Whole Go-package/platform parity and broad non-green workspace suites",
+    "TPC-C and mixed-write performance acceptance; reproduced SELECT FOR UPDATE gap remains unfixed",
+    "Complete cluster sequence DDL/lifecycle; local-session regression only"
+  ]
+}

@@ -697,7 +697,7 @@ pub struct Session {
     /// reports. It is SESSION state, not the sequence's stored counter -- a
     /// fresh session reads `NULL` from a sequence other sessions have advanced
     /// (captured: `lastval` before any `nextval` is `<nil>`).
-    sequence_last_values: Arc<std::sync::Mutex<HashMap<String, i64>>>,
+    sequence_last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,

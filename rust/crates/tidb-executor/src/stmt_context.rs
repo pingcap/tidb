@@ -782,103 +782,7 @@ pub struct StmtContext {
     cop_lite_worker: Arc<AtomicBool>,
 }
 
-/// The sequence state one statement can see: the allocators it may read and
-/// the session's `LASTVAL` map, which every statement of a session shares.
-#[derive(Debug, Default)]
-pub struct SequenceSnapshot {
-    /// Every sequence in the catalog, keyed by lowercase `db.name`.
-    by_name: HashMap<String, crate::sequence::SequenceAllocator>,
-    /// Every table/view/sequence name in the same catalog snapshot. A name
-    /// present here but absent from `by_name` is Go's 1347 wrong-object case.
-    object_names: std::collections::HashSet<String>,
-    /// The schema an unqualified name resolves in.
-    current_db: String,
-    /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
-    /// each sequence. Shared with the session, so a `NEXTVAL` in one statement
-    /// is visible to a `LASTVAL` in the next.
-    last_values: Arc<Mutex<HashMap<String, i64>>>,
-}
-
-impl SequenceSnapshot {
-    /// A snapshot over `by_name`, resolving unqualified names in `current_db`
-    /// and recording `LASTVAL` into the session's shared `last_values`.
-    #[must_use]
-    pub fn new(
-        by_name: HashMap<String, crate::sequence::SequenceAllocator>,
-        current_db: &str,
-        last_values: Arc<Mutex<HashMap<String, i64>>>,
-    ) -> Self {
-        Self::new_with_objects(
-            by_name,
-            std::collections::HashSet::new(),
-            current_db,
-            last_values,
-        )
-    }
-
-    /// Builds a snapshot with the complete catalog-name set needed to
-    /// distinguish Go's `ErrWrongObject` (1347) from `ErrTableNotExists`
-    /// (1146) for sequence builtins.
-    #[must_use]
-    pub fn new_with_objects(
-        by_name: HashMap<String, crate::sequence::SequenceAllocator>,
-        object_names: std::collections::HashSet<String>,
-        current_db: &str,
-        last_values: Arc<Mutex<HashMap<String, i64>>>,
-    ) -> Self {
-        SequenceSnapshot {
-            by_name,
-            object_names,
-            current_db: current_db.to_ascii_lowercase(),
-            last_values,
-        }
-    }
-
-    /// The key a written name path resolves to: `db.name`, lowercased, with an
-    /// unqualified name taking the session's current database.
-    fn key(&self, path: &[String]) -> String {
-        match path {
-            [name] => format!("{}.{}", self.current_db, name.to_ascii_lowercase()),
-            [database, name] => format!(
-                "{}.{}",
-                database.to_ascii_lowercase(),
-                name.to_ascii_lowercase()
-            ),
-            // A longer path cannot name a sequence, and joining it produces a
-            // key nothing matches -- which is the 1146 below.
-            other => other
-                .iter()
-                .map(|part| part.to_ascii_lowercase())
-                .collect::<Vec<_>>()
-                .join("."),
-        }
-    }
-
-    /// The allocator `path` names, or Go's 1146 for an absent name / 1347 for
-    /// an existing table or view that is not a sequence.
-    fn resolve(
-        &self,
-        path: &[String],
-    ) -> Result<(String, &crate::sequence::SequenceAllocator), tidb_expr::EvalError> {
-        let key = self.key(path);
-        match self.by_name.get(&key) {
-            Some(allocator) => Ok((key, allocator)),
-            None if self.object_names.contains(&key) => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::WrongObject(key),
-            )),
-            None => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::NotASequence(key),
-            )),
-        }
-    }
-
-    /// Resolves `path` without touching the allocator or session `LASTVAL`
-    /// state. This is the plan-build counterpart to the value-consuming
-    /// sequence methods below.
-    pub fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
-        self.resolve(path).map(|_| ())
-    }
-}
+pub use crate::driver::SequenceSnapshot;
 
 impl StmtContext {
     /// Initializes common state once. Query/DML constructors resolve error
@@ -3710,9 +3614,11 @@ impl Columns for StmtContext {
     }
 
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let (key, allocator) = self.sequences.resolve(path)?;
-        let value = allocator.next_val().map_err(|_| {
-            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(key.clone()))
+        let sequence = self.sequences.resolve(path)?;
+        let value = sequence.allocator.next_val().map_err(|_| {
+            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(
+                self.sequences.key(path),
+            ))
         })?;
         // Go records the value in the SESSION's sequence state, which is what
         // `LASTVAL` reads back.
@@ -3720,27 +3626,27 @@ impl Columns for StmtContext {
             .last_values
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key, value);
+            .insert(sequence.id, value);
         Ok(Datum::Int(value))
     }
 
     fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
-        let (key, _) = self.sequences.resolve(path)?;
+        let sequence = self.sequences.resolve(path)?;
         Ok(self
             .sequences
             .last_values
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key)
+            .get(&sequence.id)
             .copied()
             .map_or(Datum::Null, Datum::Int))
     }
 
     fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
-        let (_, allocator) = self.sequences.resolve(path)?;
+        let sequence = self.sequences.resolve(path)?;
         // Go `SetSequenceVal`: the reported value is NULL when the stored
         // counter was already at or past `value` (`alreadySatisfied`).
-        let reported = allocator.set_val(value).map_err(|_| {
+        let reported = sequence.allocator.set_val(value).map_err(|_| {
             tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(
                 self.sequences.key(path),
             ))
