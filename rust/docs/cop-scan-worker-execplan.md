@@ -3,10 +3,11 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment reconciles column-statistics validity. Go distinguishes
-loaded distributions from retained headers and evicted payloads; Rust admitted
-unusable columns into range costing and index exponential backoff. The preceding
-increment restored the current execution context for prepared range costing.
+The current increment preserves statistics-loading services through catalog
+refresh. Live request logging proved a refreshed catalog has histogram demand
+but no service; Go's domain owns the loading handle independently of InfoSchema.
+The preceding increments reconcile column-statistics validity and restore the
+current execution context for prepared range costing.
 Full performance and whole-Go-package acceptance remain open.
 
 
@@ -89,10 +90,39 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   checks. Remove all instrumentation; verify 11 owned PIDs absent and ten ports
   closed, retaining the fixture. Exact evidence and commands are in
   benchmarks/column-statistics-validity-validation.json.
-- [ ] Preserve domain statistics-loading ownership across catalog refresh.
-  Reproduce using the existing refresh/load test surface, then verify the actual
-  prepared customer scan-plus-sort chain and remeasure matched workloads. The
-  column-validity change alone does not fix this independent lifecycle gap.
+- [x] Preserve domain statistics-loading ownership across catalog refresh.
+  Reproduce through the existing refresh/load test surface and verify actual
+  prepared execution plus matched workloads. The lifecycle gap is repaired;
+  some scan-plus-sort choices remain and the full performance goal stays open.
+- [x] Extend the existing Go-derived DDL-after-load case with evicted-column
+  and index demand after stats-only and schema refresh. It fails before the
+  fix because the column payload is not reloaded. Retain the storage loader
+  and domain pool on the connection, attaching both through one helper to
+  every rebuilt catalog. All 16 selected statistics tests pass afterward.
+- [x] All-target workspace compilation, release build, Ready lint and scoped
+  changed-line formatting pass. Eight prepared results match Go. Artifacts:
+  /private/tmp/tidb-stats-load-lifetime.PIJjEK. Original sandbox attempts fail
+  on sysctl hw.memsize (test harness) and Go module download (lint); authorized
+  reruns pass. Neither is a semantic regression result.
+- [x] Diagnostic TPC-C: 6,000 transactions and 11 consistency checks pass.
+  All 33 captured nonempty requests have a load service. Actual customer
+  execution now includes an ordered IndexLookUp (6.30 rows); another execution
+  still uses scan-plus-sort (3,000 access rows, 19.90 output rows). Remove probes.
+- [x] Finish 72,000 measured Rust and 24,000 Go sysbench events, 50,000
+  uninstrumented candidate TPC-C transactions and fresh Go/Rust CPU profiles.
+  All consistency checks pass. TPC-C SortExec::next is 343ms / 15.136s Running
+  versus prior 614ms / 15.757s; fresh Go has no SortExec::Next sample. Sysbench
+  SortExec::next remains 2.565s versus Go's 170ms; inclusive call boundaries
+  differ, so these are not normalized per-transaction cost comparisons.
+  End-to-end timings overlap; no performance acceptance or baseline promotion.
+  Verify ten owned PIDs absent and ten ports closed, retaining the fixture.
+  Receipt: benchmarks/statistics-loading-lifetime-validation.json.
+- [ ] Reproduce cross-catalog statistics publication under concurrent loads.
+  Global singleflight wakes all listeners, but Rust handle_task publishes only
+  to the initiating catalog's cache. Go updateCachedItem uses the domain cache.
+  The existing concurrent-identical-request test returns no table payload and
+  checks only call count, so it cannot prove every waiter sees loaded statistics.
+  Establish the relation to remaining cached scan-plus-sort before fixing it.
 - [x] Inspect final 6ef4aea7aa source/profile and Go GetGlobalConfig/UpdateGlobal.
   Statement context's instance-variable read deep-copies the full Rust Config;
   Go reads a published pointer and clones only in UpdateGlobal.
@@ -318,6 +348,14 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, statistics-loading lifetime): retain an immutable pair of
+the cluster storage loader and domain-owned worker pool on ClusterServerSession.
+ClusterStatisticsLoading::attach is the only path that installs those resources
+into both the initial and rebuilt catalogs. Do not put schema-version state in
+the loader or make refresh depend on query shape. This follows Go's separation
+of Domain.StatsHandle from InfoSchema and avoids a worker-to-loader reference
+cycle: load tasks own the loader, not the connection's pair of resources.
 
 Decision (2026-09-10, column-statistics validity): keep eviction metadata with
 the owning TableStatistics and expose one validated column lookup. Match Go's
@@ -683,6 +721,17 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+Statistics loading now survives catalog refresh through retained loading
+resources and one attachment path. The existing Go-derived regression fails
+before and passes afterward; 16 selected tests, all-target compilation and
+Ready lint pass. The live request probe no longer loses its service and actual
+customer executions include ordered lookups. Sampled TPC-C sort time falls but
+is not eliminated. Eight-client fixed-work timings overlap (after 6.28/6.51s,
+before 6.43/6.41s; Go 6.05/6.23s), with background CPU and auto-analyze present.
+The performance goal remains open. All owned services are stopped. The next
+source-backed gap is publication to concurrent catalog waiters, not request
+collection or lifetime; see statistics-loading-lifetime-validation.json.
 
 Column validity now follows Go's loaded-distribution gate, including the valid
 evicted all-NULL case. Three obsolete Rust-only tests and their misplaced index

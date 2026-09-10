@@ -1645,6 +1645,53 @@ fn ddl_after_loaded_statistics_matches_go() {
         .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
         .is_some_and(|stats| !stats.hist_coll.pseudo));
 
+    // Go keeps Domain.StatsHandle independently of an InfoSchema refresh.
+    // Demand must still reload evicted payloads after a stats-only refresh
+    // and after the DDL below replaces the connection's schema catalog.
+    let check_reload = |session: &mut ClusterServerSession| {
+        let snapshot = stack.factory.stats().load();
+        let table = snapshot.get(&table_id).unwrap().loaded().unwrap();
+        for column in table.hist_coll.stable_columns() {
+            column.write().unwrap().drop_unnecessary_data();
+        }
+        for index in table.hist_coll.stable_indices() {
+            index.write().unwrap().evict_all_stats();
+        }
+        stack
+            .factory
+            .stats()
+            .store_after_analyze((*snapshot).clone());
+        rows(
+            session,
+            "EXPLAIN SELECT * FROM stats_ddl_after_load WHERE c1 = 42 AND c2 = 43",
+        );
+        let snapshot = stack.factory.stats().load();
+        let table = snapshot.get(&table_id).unwrap().loaded().unwrap();
+        assert!(
+            table
+                .hist_coll
+                .get_column(1)
+                .unwrap()
+                .read()
+                .unwrap()
+                .stats_loaded_status
+                .is_full_load(),
+            "column payload must reload after catalog refresh"
+        );
+        assert!(
+            table
+                .hist_coll
+                .get_index(1)
+                .unwrap()
+                .read()
+                .unwrap()
+                .stats_loaded_status
+                .is_full_load(),
+            "index payload must reload after catalog refresh"
+        );
+    };
+    check_reload(&mut session);
+
     rows(
         &mut session,
         "ALTER TABLE stats_ddl_after_load ADD COLUMN c10 INT",
@@ -1659,6 +1706,7 @@ fn ddl_after_loaded_statistics_matches_go() {
             .name
             .lowercase()
             == "c10")));
+    check_reload(&mut session);
 }
 
 /// Pinned `pkg/statistics/handle/ddl.TestTruncateAPartitionedTable`: whole

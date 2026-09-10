@@ -1,0 +1,147 @@
+{
+  "base_revision": "cc832167b2d928d6775e18c33c570a97704d266f",
+  "scope": "Preserve statistics-loading resources across catalog refresh. Not whole-package parity or accepted workload-performance completion.",
+  "artifact_root": "/private/tmp/tidb-stats-load-lifetime.PIJjEK",
+  "source_diff_sha256": "6a197e972d682f7e449fb624857ba4ffa832125480ef5baf3d31f39eda795434",
+  "source_diff_scope": "Both changed Rust files, excluding ExecPlan and receipt.",
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-column-validity.EXqPAR/candidate-server",
+      "sha256": "304482c3ca2b019384dad83f6fa7f366f1df4526a81f9d038df11a6b68fa9113"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/candidate-server",
+      "sha256": "32abcca425371c6d600e4d4227e79973e67935e64ace710db4c27b70efa1f0bf"
+    },
+    "diagnostic": {
+      "path": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/candidate-diagnostic-server",
+      "sha256": "b6fbace5a7157fe5a2e29ff0cd2eec46170e6ac9726a6099bd429daa46ea15ae"
+    }
+  },
+  "root_cause": {
+    "go": "pkg/domain/domain.go StatsHandle and pkg/statistics/handle/syncload/stats_syncload.go: domain loading lives independently of InfoSchema.",
+    "before": "Factory construction installed the loader and shared pool. rebuild_catalog_now replaced the catalog without that attachment. Nonempty synchronous requests returned without loading because sync_load was absent.",
+    "after": "ClusterStatisticsLoading retains the loader and domain pool outside the replaceable catalog. One attach method serves initial construction and refresh.",
+    "scope": "No estimator, hint, batch-size, retry, protocol or workload-specific branch changed."
+  },
+  "validation": {
+    "profile": "Ready",
+    "red": "reload-red-verified.log: existing ddl_after_loaded_statistics_matches_go fails: column payload must reload after catalog refresh.",
+    "green": "server-tests.log: 16 passed, 0 failed.",
+    "scope": "Existing Go-derived DDL-after-load test extended with evicted column/index demand after stats-only and schema refresh; existing statistics suite retained.",
+    "passed_logs": [
+      "workspace-check.log",
+      "build.log",
+      "lint.log"
+    ],
+    "environment_failures": "Initial test hit sandbox sysctl hw.memsize before its assertions; first lint attempt could not resolve proxy.golang.org. Authorized reruns passed. Neither environment error is a semantic reproducer.",
+    "bazel_prepare": "Not triggered: no Go/module/Bazel changes.",
+    "commands": {
+      "tests": "cargo test --offline --locked --release -j12 -p tidb-server --lib -- cluster_session_node::tests::statistics:: cluster_session_node::tests::unistore_cop::ddl_after_loaded_statistics_matches_go --test-threads=1",
+      "red": "cargo test --offline --locked --release -j12 -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --test-threads=1",
+      "workspace": "cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "rustfmt --unstable-features --check --edition 2021 --config skip_children=true --file-lines '[{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[394,405]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[3097,3098]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[3104,3104]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[3108,3109]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[3177,3177]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[4228,4228]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[5389,5389]},{\"file\":\"crates/tidb-server/src/cluster_session_node/mod.rs\",\"range\":[5391,5391]},{\"file\":\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\",\"range\":[1648,1694]},{\"file\":\"crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs\",\"range\":[1709,1709]}]' crates/tidb-server/src/cluster_session_node/mod.rs crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs",
+      "diff": "git diff --check",
+      "prepared": "ruby /private/tmp/tidb-stats-load-lifetime.PIJjEK/verify-prepared-candidate.rb",
+      "diagnostic": "ruby /private/tmp/tidb-stats-load-lifetime.PIJjEK/candidate-sort-plans.rb",
+      "live": "ruby /private/tmp/tidb-stats-load-lifetime.PIJjEK/verify-range-cost.rb",
+      "go_profiles": "ruby /private/tmp/tidb-stats-load-lifetime.PIJjEK/profile-go.rb",
+      "profile_export": "python3 /private/tmp/tidb-stats-load-lifetime.PIJjEK/profile-cost.py /private/tmp/tidb-stats-load-lifetime.PIJjEK/after-sysbench.trace /private/tmp/tidb-stats-load-lifetime.PIJjEK/after-tpcc.trace /private/tmp/tidb-stats-load-lifetime.PIJjEK/go-sysbench.trace /private/tmp/tidb-stats-load-lifetime.PIJjEK/go-tpcc.trace",
+      "cleanup": "ruby /private/tmp/tidb-stats-load-lifetime.PIJjEK/verify-cleanup.rb"
+    },
+    "working_directories": {
+      "cargo_and_format": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+      "other": "/private/tmp/tidb-upstream-merge.nzY42N"
+    },
+    "unverified": "No full-workspace test pass or package-parity claim. Prior six session failures were not rerun for this server-only change."
+  },
+  "live": {
+    "prepared": {
+      "comparisons": 8,
+      "results_equal": true,
+      "log": "candidate-prepared-plans.jsonl",
+      "scope": "Bound EXPLAIN is separate planning; actual operators captured below."
+    },
+    "diagnostic": {
+      "log": "server-candidate-cold-tpcc-diagnostic.log",
+      "transactions": 6000,
+      "load_requests": 33,
+      "all_captured_requests_have_service": true,
+      "actual_plans": [
+        "Customer ordered IndexLookUp, estimate 6.30, keep order true",
+        "Another customer execution retains Sort -> TableRangeScan, access 3000.00 and output 19.90"
+      ],
+      "instrumentation": "Removed before publication; diagnostic binary excluded from timings."
+    },
+    "sysbench": {
+      "measured_rust_events": 72000,
+      "measured_go_events": 24000,
+      "warmup_events": 16000,
+      "rust_profile_events": 48858,
+      "go_profile_events": 54444
+    },
+    "tpcc": {
+      "candidate_transactions": 50000,
+      "baseline_transactions": 12000,
+      "go_transactions": 50000,
+      "diagnostic_transactions": 6000,
+      "consistency": "All 11 checks passed after each workload; all five transaction types present."
+    },
+    "selected_parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "timing_log": "process-validation.json",
+    "tpcc_eight_client_seconds": {
+      "after": [
+        6.282097,
+        6.505024
+      ],
+      "before": [
+        6.434241,
+        6.412675
+      ],
+      "go": [
+        6.047786,
+        6.23432
+      ]
+    },
+    "profiles": [
+      {
+        "trace": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/after-sysbench.trace",
+        "running_ns": 26605000000,
+        "sort_next_ns": 2565000000
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/after-tpcc.trace",
+        "running_ns": 15136000000,
+        "sort_next_ns": 343000000
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/go-sysbench.trace",
+        "running_ns": 34165000000,
+        "sort_next_ns": 170000000
+      },
+      {
+        "trace": "/private/tmp/tidb-stats-load-lifetime.PIJjEK/go-tpcc.trace",
+        "running_ns": 18566000000,
+        "sort_next_ns": 0
+      }
+    ],
+    "previous_tpcc_profile": {
+      "trace": "/private/tmp/tidb-column-validity.EXqPAR/after-tpcc.trace",
+      "running_ns": 15757000000,
+      "sort_next_ns": 614000000
+    },
+    "profile_limit": "Sampled inclusive weights from separate windows are not per-transaction normalized timings.",
+    "performance_accepted": false,
+    "baseline_promoted": false,
+    "limitations": "Shared host: mediaanalysisd at 74.6% CPU at a round boundary; Go auto-analyze ran during comparison; growing fixture. Timing overlaps baseline; sysbench effectively flat."
+  },
+  "cleanup": {
+    "owned_pids_absent": 10,
+    "ports_closed": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe",
+    "log": "cleanup.json"
+  },
+  "next_evidence_gap": "Trace remaining cached scan-plus-sort choices. Global singleflight notifies all listeners but handle_task publishes only into the initiating catalog cache; Go updates the domain cache. Cross-catalog publication is a source discrepancy; its contribution to the remaining live sort is not yet reproduced."
+}

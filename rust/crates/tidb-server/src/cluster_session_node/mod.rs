@@ -391,6 +391,18 @@ struct ClusterStatisticsItemLoader {
     global_vars: GlobalSysvars,
 }
 
+/// The domain loading resources outlive each connection's schema catalog.
+struct ClusterStatisticsLoading {
+    loader: Arc<ClusterStatisticsItemLoader>,
+    workers: Arc<tidb_executor::driver::StatisticsLoadWorkers>,
+}
+
+impl ClusterStatisticsLoading {
+    fn attach(&self, catalog: &mut tidb_executor::Catalog) {
+        catalog.set_statistics_item_loader(self.loader.clone(), Arc::clone(&self.workers));
+    }
+}
+
 struct ClusterColumnStatsUsageProvider {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
@@ -3082,18 +3094,19 @@ impl ClusterSessionFactory {
             &template_storage,
             Some(&mut kv_templates),
         );
-        built.catalog.set_statistics_item_loader(
-            Arc::new(ClusterStatisticsItemLoader {
+        let statistics_loading = ClusterStatisticsLoading {
+            loader: Arc::new(ClusterStatisticsItemLoader {
                 transactions: Arc::clone(&self.transactions),
                 catalog: Arc::clone(&self.catalog),
                 stats: Arc::clone(&self.stats),
                 global_vars: self.global_vars.clone(),
             }),
-            Arc::clone(
+            workers: Arc::clone(
                 self.stats_load_workers
                     .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
             ),
-        );
+        };
+        statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(self.stats_usage.index_usage_collector());
         if self
@@ -3161,6 +3174,7 @@ impl ClusterSessionFactory {
 
         Ok(ClusterServerSession {
             session,
+            statistics_loading,
             bindings: self.bindings.clone(),
             stats_usage: Arc::clone(&self.stats_usage),
             global_vars: self.global_vars.clone(),
@@ -4211,6 +4225,7 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
 /// One connection's wide-SQL session over cluster storage.
 pub struct ClusterServerSession {
     session: Session,
+    statistics_loading: ClusterStatisticsLoading,
     bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
     /// Go Domain's node-global pending statistics deltas.
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
@@ -5371,8 +5386,9 @@ impl ClusterServerSession {
         {
             return;
         }
-        let built =
+        let mut built =
             cluster_session_catalog(&loaded, &self.storage, &statistics, self.auto_ids.as_ref());
+        self.statistics_loading.attach(&mut built.catalog);
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;
