@@ -276,7 +276,10 @@
       "tests_views::lateral_derived_table_join_shapes"
     ],
     "logs": ["merge-tests.log", "merge-build.log", "merge-check.log", "merge-lint-confirmed.log", "baseline-views.log"],
-    "live_scope": "Live workloads and profiles above cover the pre-merge point-read implementation committed as 211a1e5ae3, not the later collaborator virtual-column and hidden-handle changes. Those changes are source-reviewed and covered by the post-merge test/build/check/lint batch, not a repeated live benchmark."
+    "live_scope": "Live workloads and profiles above cover the pre-merge point-read implementation committed as 211a1e5ae3, not the later collaborator virtual-column and hidden-handle changes. Those changes are source-reviewed and covered by the post-merge test/build/check/lint batch, not a repeated live benchmark.",
+    "publication_race": "A normal push was rejected after collaborator cd4514ae09 isolated async-loader test fixtures by physical table ID. Merged as f15f3d6216; this later delta changes tests and reporting only, not production behavior.",
+    "publication_race_command": "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor --lib -- index_async_load_queue_tests --test-threads=12",
+    "publication_race_log": "queue-merge-tests.log"
   },
   "remaining": [
     "Five pre-existing view failures remain; a selected test batch is not a full workspace test pass.",

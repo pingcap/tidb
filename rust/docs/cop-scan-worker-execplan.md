@@ -48,6 +48,16 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   pass correctness checks but show no accepted overall speedup. Post-merge:
   284 pass, five baseline-identical view failures; build/check/Ready lint pass.
   Evidence and exact revision boundaries: benchmarks/point-read-owner-validation.json.
+- [ ] Align transaction keep-alive task ownership with pinned client-go's
+  ttlManager. Go starts a goroutine, ticks at ManagedLockTTL/2 and closes a
+  channel without joining. Rust transaction/ttl.rs still starts and joins an
+  OS thread per transaction. Current SharedReadRuntime and BackgroundRegionCache
+  use synchronized Arc owners; comments claiming Rc/thread-local ownership are
+  stale and must not be used to justify that thread. Trace blocking TSO and
+  heartbeat completion, then preserve cancellation, actual long-transaction
+  refresh and the live lock-expired flag when changing scheduling. Current
+  TPC-C profiling attributes 302 ms of 13.873 s sampled Running time to
+  keep-alive; this is a causal investigation target, not an accepted speedup.
 
 - [x] Reproduce mutable/immutable catalog name disagreement in the retained
   prepared-point test: validation accepts `İΣ` as Go-folded `iσ`, but execution
