@@ -77,6 +77,7 @@ run_sql_file "${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}-schema.sql"
 
 echo "Test projected schemas against TiDB DDL variants."
 export DUMPLING_TEST_PORT=4000
+export DUMPLING_TEST_DATABASE=""
 TIDB_DB_NAME="column_filter_tidb"
 TIDB_FILTER_FILE="${DUMPLING_TEST_DIR}/column-filter-tidb.toml"
 
