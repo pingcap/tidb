@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 ADD PARTITION 两种 prune mode 的事件同步
+
+add_partition_statistics_follow_global_prune_mode_like_go 独立失败于
+CREATE 后分区 stats_meta 行数 0、预期 1（`/tmp/add-partition-red.log`）。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/ddl_test.go:413` TestDDLPartition 在 static 和
+dynamic 两轮中，都显式消费 CREATE 与 ADD PARTITION 的 DDL 事件。
+
+Rust fixture 现补齐两个消费点，使用已有真实 notifier。保留原分区
+统计存在、static 无全局行、dynamic 有全局行、新分区统计和三个
+histogram 的全部断言，未改生产统计逻辑或期望值。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib add_partition_statistics_follow_global_prune_mode_like_go`
+通过，1 passed，5.24 秒（`/tmp/add-partition-green.log`）；`make lint`
+通过（`/tmp/add-partition-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 HASH 分区截断统计事件同步
 
 truncate_hash_partition_statistics_match_go 独立失败：截断 p0 后全局

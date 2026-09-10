@@ -1963,6 +1963,7 @@ fn add_partition_statistics_follow_global_prune_mode_like_go() {
                  PARTITION p1 VALUES LESS THAN (11))"
             ),
         );
+        drain_stats_ddl_events(&stack.factory, &mut session);
         let (logical_id, original) =
             partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
                 .expect("table is partitioned");
@@ -1992,6 +1993,7 @@ fn add_partition_statistics_follow_global_prune_mode_like_go() {
                  (PARTITION p2 VALUES LESS THAN (16))"
             ),
         );
+        drain_stats_ddl_events(&stack.factory, &mut session);
         let new_id = partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
             .expect("table remains partitioned")
             .1
