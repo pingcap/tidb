@@ -542,7 +542,7 @@ func TestAlterUserPreservesRequire(t *testing.T) {
 	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
 	tk.MustQuery(`SELECT Account_locked FROM mysql.user WHERE User='require_user' AND Host='%'`).Check(testkit.Rows("Y"))
 	tk.MustQuery(`SHOW CREATE USER 'require_user'@'%'`).Check(testkit.Rows(
-		`CREATE USER 'require_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo' PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+		"CREATE USER `require_user`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo' PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	// A few more attribute-only ALTERs must also preserve the requirements.
 	tk.MustExec(`ALTER USER 'require_user'@'%' ACCOUNT UNLOCK`)
@@ -566,7 +566,7 @@ func TestAlterUserPreservesRequire(t *testing.T) {
 	tk.MustExec(`ALTER USER 'token_only'@'%' ACCOUNT LOCK`)
 	tk.MustQuery(`SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SHOW CREATE USER 'token_only'@'%'`).Check(testkit.Rows(
-		`CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-abc PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+		"CREATE USER `token_only`@`%` IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-abc PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 }
 
 func TestSetPwd(t *testing.T) {

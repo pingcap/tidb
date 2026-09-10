@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -196,6 +197,34 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.Contains(t, rootStatsStr, "RU:")
 
 		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
+	})
+
+	t.Run("RU format snapshots committed writes before normal finalization", func(t *testing.T) {
+		ctx := mock.NewContext()
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = coll
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruMetrics := execdetails.RUV2MetricsFromContext(goCtx)
+		ctx.GetSessionVars().RUV2Metrics = ruMetrics
+		targetPlan := physicalop.Insert{}.Init(ctx)
+		coll.RegisterStats(targetPlan.ID(), &execdetails.WriteRuntimeStats{CPUWork: 6})
+		ctx.GetSessionVars().StmtCtx.MergeExecDetails(&clientutil.CommitDetails{WriteKeys: 2, WriteSize: 100})
+		explainExec := &ExplainExec{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
+			explain:      &core.Explain{Analyze: true, Format: "ru", TargetPlan: targetPlan, RuntimeStatsColl: coll},
+			analyzeExec:  &mockEmptyOperator{BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), targetPlan.ID())},
+		}
+		wantRU := calculateStatementRUResultOnly(statementRURawUnits{
+			CPUWork: 6, WriteStatement: 1, OperatorNum: 1, WriteKeys: 2, WriteBytes: 100,
+		}).TotalRU
+		for range 2 {
+			require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
+			require.NoError(t, explainExec.explain.RenderResult())
+			require.Len(t, explainExec.explain.Rows, 1)
+			require.Equal(t, strconv.FormatFloat(wantRU, 'f', 2, 64), explainExec.explain.Rows[0][3])
+			require.Zero(t, ruMetrics.WriteKeys(), "EXPLAIN must not consume or duplicate the normal commit counters")
+			require.Zero(t, ruMetrics.WriteSize())
+		}
 	})
 
 	t.Run("explain analyze drains pending raw ruv2 before snapshot", func(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,6 +47,7 @@ const (
 	envStarterKeyspaceObs      = "TIDB_STARTER_KEYSPACE_OBSERVABILITY"
 	envStarterMetaTenant       = "TIDB_STARTER_KEYSPACE_META_TENANT"
 	envStarterMetaProject      = "TIDB_STARTER_KEYSPACE_META_PROJECT"
+	envStarterColumnarAP       = "TIDB_STARTER_COLUMNAR_AP"
 
 	starterServiceScope = "dxf_service"
 )
@@ -387,6 +389,96 @@ func TestExternalStarterSysVarContracts(t *testing.T) {
 		"require_secure_transport can not be set in starter mode")
 	requireErrorContains(t, execSQL(ctx, db, "set @@global.require_secure_transport = off"),
 		"require_secure_transport can not be set in starter mode")
+
+	t.Run("columnar_ap_fulltext", func(t *testing.T) {
+		requireStarterColumnarAP(t)
+		requireStarterColumnarAPReadStore(t)
+		columnarCtx, columnarCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer columnarCancel()
+
+		const tableName = "starter_external.fts_columnar_ap"
+		require.NoError(t, execSQL(columnarCtx, db, "drop table if exists "+tableName))
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cleanupCancel()
+			require.NoError(t, execSQL(cleanupCtx, db, "drop table if exists "+tableName))
+		})
+		require.NoError(t, execSQL(columnarCtx, db, "create table "+tableName+" (id int primary key, title text, fulltext key ft_title(title))"))
+		require.NoError(t, execSQL(columnarCtx, db, "insert into "+tableName+" values (1, 'columnar AP baseline'), (2, 'starter columnar search')"))
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var replicaCount int
+			var available int
+			var progress float64
+			err := db.QueryRowContext(columnarCtx, "select REPLICA_COUNT, AVAILABLE, PROGRESS from information_schema.tiflash_replica where table_schema = 'starter_external' and table_name = 'fts_columnar_ap'").Scan(&replicaCount, &available, &progress)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, replicaCount)
+			assert.Equal(collect, 1, available)
+			assert.Equal(collect, float64(1), progress)
+		}, 2*time.Minute, time.Second, "columnar replica did not finish building")
+
+		apQuery := "select /*+ set_var(tidb_allow_mpp=1) set_var(tidb_enforce_mpp=1) */ count(*) from " + tableName
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			plan, err := queryPlanText(columnarCtx, db, apQuery)
+			assert.NoError(collect, err)
+			assert.Contains(collect, plan, "mpp[tiflash]")
+		}, 2*time.Minute, time.Second, "basic AP query was not planned through the columnar execution path")
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var count int
+			err := db.QueryRowContext(columnarCtx, apQuery).Scan(&count)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 2, count)
+		}, 2*time.Minute, time.Second, "basic AP query did not execute through the columnar AP topology")
+
+		ftsQuery := "select count(*) from " + tableName + " where fts_match_word('starter', title)"
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			plan, err := queryPlanText(columnarCtx, db, ftsQuery)
+			assert.NoError(collect, err)
+			assert.Contains(collect, plan, "mpp[tiflash]")
+			assert.Contains(collect, plan, "ftsIndex:")
+		}, 2*time.Minute, time.Second, "fulltext query was not planned through the columnar execution path")
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var matches int
+			err := db.QueryRowContext(columnarCtx, ftsQuery).Scan(&matches)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, matches)
+		}, 2*time.Minute, time.Second, "fulltext query did not execute through the columnar AP topology")
+
+		const alterTableName = "starter_external.fts_columnar_ap_alter"
+		require.NoError(t, execSQL(columnarCtx, db, "drop table if exists "+alterTableName))
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cleanupCancel()
+			require.NoError(t, execSQL(cleanupCtx, db, "drop table if exists "+alterTableName))
+		})
+		require.NoError(t, execSQL(columnarCtx, db, "create table "+alterTableName+" (id int primary key, title text)"))
+		require.NoError(t, execSQL(columnarCtx, db, "insert into "+alterTableName+" values (1, 'columnar AP baseline'), (2, 'starter columnar search')"))
+		require.NoError(t, execSQL(columnarCtx, db, "alter table "+alterTableName+" set tiflash replica 1"))
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var replicaCount int
+			var available int
+			var progress float64
+			err := db.QueryRowContext(columnarCtx, "select REPLICA_COUNT, AVAILABLE, PROGRESS from information_schema.tiflash_replica where table_schema = 'starter_external' and table_name = 'fts_columnar_ap_alter'").Scan(&replicaCount, &available, &progress)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, replicaCount)
+			assert.Equal(collect, 1, available)
+			assert.Equal(collect, float64(1), progress)
+		}, 2*time.Minute, time.Second, "columnar replica did not finish building before adding fulltext index")
+		require.NoError(t, execSQL(columnarCtx, db, "alter table "+alterTableName+" add fulltext key ft_title(title)"))
+
+		alterFTSQuery := "select count(*) from " + alterTableName + " where fts_match_word('starter', title)"
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			plan, err := queryPlanText(columnarCtx, db, alterFTSQuery)
+			assert.NoError(collect, err)
+			assert.Contains(collect, plan, "mpp[tiflash]")
+			assert.Contains(collect, plan, "ftsIndex:")
+		}, 2*time.Minute, time.Second, "fulltext index added after table creation was not planned through the columnar execution path")
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var matches int
+			err := db.QueryRowContext(columnarCtx, alterFTSQuery).Scan(&matches)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, matches)
+		}, 2*time.Minute, time.Second, "fulltext index added after table creation did not execute through the columnar AP topology")
+	})
 }
 
 func TestExternalStarterMaxAllowedPacketIsEnforcedAtProtocolBoundary(t *testing.T) {
@@ -648,6 +740,56 @@ func requireStarterKeyspaceObservability(t *testing.T) {
 	if os.Getenv(envStarterKeyspaceObs) != "1" {
 		t.Skipf("%s is not 1; run tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh with starter keyspace observability enabled", envStarterKeyspaceObs)
 	}
+}
+
+func requireStarterColumnarAP(t *testing.T) {
+	t.Helper()
+	if os.Getenv(envStarterColumnarAP) != "1" {
+		t.Skipf("%s is not 1; run tests/realtikvtest/scripts/next-gen/run-tests.sh startertest", envStarterColumnarAP)
+	}
+}
+
+func requireStarterColumnarAPReadStore(t *testing.T) {
+	t.Helper()
+	pdStatusURL := requireStarterPDStatusURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	type label struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	type store struct {
+		Labels []label `json:"labels"`
+	}
+	type storesResponse struct {
+		Stores []struct {
+			Store store `json:"store"`
+		} `json:"stores"`
+	}
+
+	require.Eventually(t, func() bool {
+		statusCode, body, err := tryStarterStatusPath(ctx, pdStatusURL, "/pd/api/v1/stores")
+		if err != nil || statusCode != http.StatusOK {
+			return false
+		}
+
+		var stores storesResponse
+		if json.Unmarshal(body, &stores) != nil {
+			return false
+		}
+
+		var hasCompute, hasWrite bool
+		for _, item := range stores.Stores {
+			labels := make(map[string]string, len(item.Store.Labels))
+			for _, label := range item.Store.Labels {
+				labels[label.Key] = label.Value
+			}
+			hasCompute = hasCompute || labels["engine"] == "tiflash_compute"
+			hasWrite = hasWrite || (labels["engine"] == "tiflash" && labels["engine_role"] == "write")
+		}
+		return hasCompute && !hasWrite
+	}, 2*time.Minute, time.Second, "TiFlash compute/read node was not registered in PD, or an unexpected TiFlash write node was registered")
 }
 
 func requireStarterMetaTenant(t *testing.T) string {
@@ -912,6 +1054,42 @@ func queryInt(ctx context.Context, t *testing.T, db *sql.DB, query string) int {
 	var value int
 	require.NoError(t, db.QueryRowContext(ctx, query).Scan(&value))
 	return value
+}
+
+func queryPlanText(ctx context.Context, db *sql.DB, query string) (string, error) {
+	rows, err := db.QueryContext(ctx, "explain format = 'brief' "+query)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", err
+	}
+	values := make([]any, len(columns))
+	scanArgs := make([]any, len(columns))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+
+	var plan strings.Builder
+	for rows.Next() {
+		if err := rows.Scan(scanArgs...); err != nil {
+			return "", err
+		}
+		for _, value := range values {
+			switch v := value.(type) {
+			case nil:
+			case []byte:
+				plan.Write(v)
+			default:
+				plan.WriteString(fmt.Sprint(v))
+			}
+			plan.WriteByte('\n')
+		}
+	}
+	return plan.String(), rows.Err()
 }
 
 func requireErrorContains(t *testing.T, err error, contains string) {

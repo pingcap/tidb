@@ -15,11 +15,15 @@
 package ddl
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -84,7 +88,7 @@ func rebuildStorageClassForPartitions(tbInfo *model.TableInfo, partitions []mode
 	return BuildStorageClassForPartitions(partitions, tbInfo, settings)
 }
 
-func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetModifyTableEngineAttributeArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -106,6 +110,7 @@ func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64
 		job.MarkNonRevertible()
 		return ver, nil
 	}
+	oldState := snapshotPhysicalStorageClasses(tblInfo)
 
 	// Keep the original string for SHOW CREATE TABLE.
 	tblInfo.EngineAttribute = args.EngineAttribute
@@ -114,13 +119,167 @@ func onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job) (ver int64
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if attr.StorageClass != nil && kerneltype.IsNextGen() {
+		pending, err := prepareExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		pending.schemaVersion = ver
+		if pending.schemaVersion == 0 && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.SkipVersion {
+			pending.schemaVersion = jobCtx.sharedMultiSchemaVersion
+		}
+		if pending.schemaVersion <= 0 {
+			return ver, errors.New("storage class transition schema version is unavailable")
+		}
+		if jobCtx.deferStorageClassTransitionStaging {
+			jobCtx.pendingStorageClassTransitions = append(jobCtx.pendingStorageClassTransitions, pending)
+		} else if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+// storageClassTransitionStagingError marks failures that require rolling back
+// history SQL and the metadata changes released by its preceding statements.
+type storageClassTransitionStagingError struct {
+	cause error
+}
+
+func (e *storageClassTransitionStagingError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *storageClassTransitionStagingError) Unwrap() error {
+	return e.cause
+}
+
+func (e *storageClassTransitionStagingError) Cause() error {
+	return e.cause
+}
+
+// checkpointStorageClassTransitionStep captures the whole outer DDL step, since
+// a multi-schema batch can change metadata before it stages transition history.
+// Other DDL jobs retain their existing statement rollback behavior.
+func checkpointStorageClassTransitionStep(se *sess.Session, txn kv.Transaction, job *model.Job) func() {
+	if !kerneltype.IsNextGen() {
+		return nil
+	}
+	stagesHistory := job.Type == model.ActionModifyEngineAttribute
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			if sub.Type == model.ActionModifyEngineAttribute {
+				stagesHistory = true
+				break
+			}
+		}
+	}
+	if !stagesHistory {
+		return nil
+	}
+
+	checkpoint := txn.GetMemDBCheckpoint()
+	txnCtx := se.GetSessionVars().TxnCtx
+	txnCtxSavepoint := txnCtx.GetCurrentSavepoint()
+	binlogInfo := job.BinlogInfo
+	if binlogInfo != nil {
+		saved := *binlogInfo
+		binlogInfo = &saved
+	}
+	resumeReason := job.ResumeReason
+	var subJobs []model.SubJob
+	if job.MultiSchemaInfo != nil {
+		subJobs = make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			subJobs[i] = *sub.Clone()
+		}
+	}
+
+	return func() {
+		txnCtx.RestoreBySavepoint(txnCtxSavepoint)
+		txn.RollbackMemDBToCheckpoint(checkpoint)
+		job.BinlogInfo = binlogInfo
+		job.ResumeReason = resumeReason
+		job.LastSchemaVersion = 0
+		for i := range subJobs {
+			job.MultiSchemaInfo.SubJobs[i] = &subJobs[i]
+		}
+		// Keep error accounting, the cancellation decision, and durable choices
+		// such as ReorgMeta.UseCloudStorage made while executing the step.
+	}
+}
+
+type pendingStorageClassTransition struct {
+	tblInfo       *model.TableInfo
+	old           map[int64]physicalStorageClass
+	schemaVersion int64
+	startTS       uint64
+	schemaName    string
+	tableName     string
+}
+
+func prepareExplicitStorageClassTransition(
+	jobCtx *jobContext,
+	job *model.Job,
+	tblInfo *model.TableInfo,
+	old map[int64]physicalStorageClass,
+) (pendingStorageClassTransition, error) {
+	startTS := job.RealStartTS
+	if startTS == 0 {
+		startTS = job.StartTS
+	}
+	if startTS == 0 {
+		startTS = jobCtx.metaMut.StartTS
+	}
+	if startTS == 0 {
+		return pendingStorageClassTransition{}, errors.New("storage class transition start TSO is unavailable")
+	}
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return pendingStorageClassTransition{}, errors.Trace(err)
+	}
+	return pendingStorageClassTransition{
+		tblInfo:    tblInfo.Clone(),
+		old:        old,
+		startTS:    startTS,
+		schemaName: dbInfo.Name.O,
+		tableName:  tblInfo.Name.O,
+	}, nil
+}
+
+func (pending pendingStorageClassTransition) stage(
+	ctx context.Context,
+	se *sess.Session,
+) error {
+	err := stageStorageClassTransitions(
+		ctx,
+		se,
+		pending.tblInfo,
+		pending.old,
+		pending.schemaVersion,
+		pending.startTS,
+		pending.schemaName,
+		pending.tableName,
+	)
+	if err != nil {
+		return &storageClassTransitionStagingError{cause: err}
+	}
+	return nil
+}
+
+func (w *worker) flushPendingStorageClassTransitions(jobCtx *jobContext) error {
+	for _, pending := range jobCtx.pendingStorageClassTransitions {
+		if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	jobCtx.pendingStorageClassTransitions = nil
+	return nil
 }
 
 func onAlterTableStorageClassSettings(storageClass json.RawMessage, tblInfo *model.TableInfo) error {

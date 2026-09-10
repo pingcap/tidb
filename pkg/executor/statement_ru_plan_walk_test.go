@@ -21,16 +21,20 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -58,6 +62,60 @@ func newStatementRUOwnerForTest() (*ExecStmt, *statementRUOwner) {
 type statementRUPanicOnceContext struct {
 	context.Context
 	panicked atomic.Bool
+}
+
+type statementRUPointResponseStatsForTest struct {
+	stats util.PointResponseStats
+}
+
+func (s *statementRUPointResponseStatsForTest) String() string {
+	return ""
+}
+
+func (s *statementRUPointResponseStatsForTest) Merge(other execdetails.RuntimeStats) {
+	otherStats, ok := other.(*statementRUPointResponseStatsForTest)
+	if !ok {
+		return
+	}
+	s.stats.Merge(otherStats.stats)
+}
+
+func (s *statementRUPointResponseStatsForTest) Clone() execdetails.RuntimeStats {
+	return &statementRUPointResponseStatsForTest{stats: s.stats}
+}
+
+func (s *statementRUPointResponseStatsForTest) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
+}
+
+func (s *statementRUPointResponseStatsForTest) GetPointResponseStats() util.PointResponseStats {
+	return s.stats
+}
+
+func statementRUPointResponseStatsForTestFromResponse(
+	detail *kvrpcpb.ScanDetailV2,
+	payloadBytes uint64,
+) util.PointResponseStats {
+	stats := util.PointResponseStats{}
+	stats.RecordResponse(detail, payloadBytes)
+	return stats
+}
+
+func newStatementRUPointLookupPlanForTest(
+	fixture statementRUSimpleSelectFixture,
+	batch bool,
+) base.PhysicalPlan {
+	planCtx := fixture.stmt.Ctx.(*mock.Context)
+	stats := &property.StatsInfo{RowCount: 1}
+	tblInfo := &model.TableInfo{}
+	if batch {
+		return (&physicalop.BatchPointGetPlan{TblInfo: tblInfo}).Init(
+			planCtx, stats, expression.NewSchema(), nil, 0,
+		)
+	}
+	pointPlan := physicalop.PointGetPlan{TblInfo: tblInfo}
+	pointPlan.SetSchema(expression.NewSchema())
+	return pointPlan.Init(planCtx, stats, 0)
 }
 
 func (ctx *statementRUPanicOnceContext) Value(key any) any {
@@ -102,6 +160,37 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
+	t.Run("DML requires typed processed work", func(t *testing.T) {
+		ctx := mock.NewContext()
+		plan := physicalop.Insert{}.Init(ctx)
+		tree := plannercore.FlattenPhysicalPlan(plan, false).Main
+		for _, tc := range []struct {
+			name  string
+			stats *execdetails.WriteRuntimeStats
+			want  statementRUOperatorState
+		}{
+			{"missing", nil, statementRUOperatorUnsupported},
+			{"zero", &execdetails.WriteRuntimeStats{}, statementRUOperatorComplete},
+			{"processed", &execdetails.WriteRuntimeStats{CPUWork: 6}, statementRUOperatorComplete},
+			{"negative", &execdetails.WriteRuntimeStats{CPUWork: -1}, statementRUOperatorInvalid},
+			{"overflow", &execdetails.WriteRuntimeStats{CPUWork: math.Inf(1)}, statementRUOperatorInvalid},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				coll := execdetails.NewRuntimeStatsColl(nil)
+				if tc.stats != nil {
+					coll.RegisterStats(plan.ID(), tc.stats)
+				}
+				calculator := &statementRUCalculator{}
+				result := calculateStatementRUPlanChildFirst(tree, 0, coll, calculator, 10, statementRURawUnits{}, nil)
+				require.Equal(t, tc.want, result.state)
+				if tc.want == statementRUOperatorComplete {
+					require.Equal(t, tc.stats.CPUWork, calculator.units.CPUWork)
+				}
+			})
+		}
+		result := calculateStatementRUPlanChildFirst(tree, 0, nil, &statementRUCalculator{}, 10, statementRURawUnits{}, nil)
+		require.Equal(t, statementRUOperatorUnsupported, result.state)
+	})
 	setPlan := func(fixture statementRUSimpleSelectFixture, plan base.PhysicalPlan) {
 		fixture.stmt.Plan = plan
 		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
@@ -110,11 +199,13 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 	}
 	recordRootRows := func(fixture statementRUSimpleSelectFixture, plan base.Plan, rows int64) {
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-			GetBasicRuntimeStats(plan.ID(), true).SetRowNum(rows)
+			GetBasicRuntimeStats(plan.ID(), true).Record(0, int(rows))
 	}
 	recordCopRows := func(fixture statementRUSimpleSelectFixture, plan base.Plan, rows uint64) {
 		zero := uint64(0)
-		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(
+		coll := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		coll.RecordExpectedCopResponseSummaries([]int{plan.ID()})
+		coll.RecordOneCopTask(
 			plan.ID(),
 			kv.TiKV,
 			&tipb.ExecutorExecutionSummary{
@@ -165,6 +256,69 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		}).Init(planCtx, 0, plannerutil.IndexLookUpPushDownNone)
 		return indexLookup, indexScan, tableScan
 	}
+	newIndexMergePlan := func(fixture statementRUSimpleSelectFixture) (
+		*physicalop.PhysicalIndexMergeReader,
+		*physicalop.PhysicalIndexScan,
+		*physicalop.PhysicalIndexScan,
+		*physicalop.PhysicalTableScan,
+	) {
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		newIndexScan := func() *physicalop.PhysicalIndexScan {
+			return (&physicalop.PhysicalIndexScan{
+				Table:            &model.TableInfo{},
+				Index:            &model.IndexInfo{},
+				DataSourceSchema: expression.NewSchema(),
+			}).Init(planCtx, 0)
+		}
+		firstIndexScan := newIndexScan()
+		secondIndexScan := newIndexScan()
+		tableScan := (&physicalop.PhysicalTableScan{
+			Table:     &model.TableInfo{},
+			StoreType: kv.TiKV,
+		}).Init(planCtx, 0)
+		tableScan.SetSchema(expression.NewSchema())
+		reader := (physicalop.PhysicalIndexMergeReader{
+			PartialPlansRaw: []base.PhysicalPlan{firstIndexScan, secondIndexScan},
+			TablePlan:       tableScan,
+		}).Init(planCtx, 0)
+		reader.SetSchema(expression.NewSchema())
+		return reader, firstIndexScan, secondIndexScan, tableScan
+	}
+	newTableReader := func(fixture statementRUSimpleSelectFixture) (*physicalop.PhysicalTableReader, *physicalop.PhysicalTableScan) {
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		scan := (&physicalop.PhysicalTableScan{
+			Table:     &model.TableInfo{},
+			StoreType: kv.TiKV,
+		}).Init(planCtx, 0)
+		scan.SetSchema(expression.NewSchema())
+		reader := (&physicalop.PhysicalTableReader{
+			TablePlan:  scan,
+			TablePlans: []base.PhysicalPlan{scan},
+			StoreType:  kv.TiKV,
+		}).Init(planCtx, 0)
+		reader.SetSchema(expression.NewSchema())
+		return reader, scan
+	}
+	recordHashState := func(
+		fixture statementRUSimpleSelectFixture,
+		plan base.Plan,
+		rows int64,
+		complete bool,
+		invalid bool,
+	) {
+		stats := execdetails.NewHashStateRuntimeStats()
+		stats.AddRows(uint64(rows))
+		if complete {
+			stats.Complete()
+		}
+		if invalid {
+			stats.Invalidate()
+		}
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			stats,
+		)
+	}
 	requirePublication := func(
 		t *testing.T,
 		fixture statementRUSimpleSelectFixture,
@@ -182,6 +336,17 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.stmt.finishStatementRUForTest(nil)
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		flat, _ := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		if flat == nil {
+			flat = plannercore.FlattenPhysicalPlan(fixture.stmt.Plan, false)
+		}
+		wantUnits.OperatorNum = float64(len(flat.Main))
+		for _, tree := range flat.CTEs {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
+		for _, tree := range flat.ScalarSubQueries {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
 		require.Equal(t, wantUnits, snapshot.Units)
 		require.InDelta(t, calculateStatementRUResultOnly(wantUnits).TotalRU,
 			testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
@@ -198,6 +363,211 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 	}
+	calculateFixtureState := func(fixture statementRUSimpleSelectFixture) statementRUOperatorState {
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		calculator := newStatementRUCalculator(statementRUCalculationSetup{})
+		return calculateStatementRUPlan(
+			flat.Main,
+			0,
+			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
+			&calculator,
+			statementRURawUnits{},
+			nil,
+		).state
+	}
+	registerPointStats := func(
+		fixture statementRUSimpleSelectFixture,
+		plan base.Plan,
+		stats util.PointResponseStats,
+	) {
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			&statementRUPointResponseStatsForTest{stats: stats},
+		)
+	}
+	pointLookupFixture := func(t *testing.T, batch bool) (statementRUSimpleSelectFixture, base.PhysicalPlan) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(29)
+		fixture.stmt.Ctx.GetSessionVars().RUV2Metrics = metrics
+		plan := newStatementRUPointLookupPlanForTest(fixture, batch)
+		fixture.stmt.Plan = plan
+		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		stmtCtx.SetPlan(plan)
+		stmtCtx.SetFlatPlan(nil)
+		return fixture, plan
+	}
+
+	t.Run("PointGet uses complete point response evidence", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{
+				TotalVersions:         2,
+				ProcessedVersions:     1,
+				ProcessedVersionsSize: 37,
+			},
+			17,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			ScanBytes:            74,
+			NetBytes:             46,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("BatchPointGet uses complete point response evidence", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, true)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{
+				TotalVersions:         5,
+				ProcessedVersions:     3,
+				ProcessedVersionsSize: 111,
+			},
+			23,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			ScanBytes:            185,
+			NetBytes:             52,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("registered point operator with no remote response contributes zero", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, util.PointResponseStats{})
+
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("recognized point miss contributes zero payload and unavailable scan bytes", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{TotalVersions: 1},
+			0,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("missing point response provider fails closed", func(t *testing.T) {
+		fixture, _ := pointLookupFixture(t, false)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("point response with missing scan detail fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(nil, 17))
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("invalid point response fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		stats := util.PointResponseStats{}
+		stats.Invalidate()
+		registerPointStats(fixture, plan, stats)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("point evidence registered under a different plan fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID()+1,
+			&statementRUPointResponseStatsForTest{stats: statementRUPointResponseStatsForTestFromResponse(
+				&kvrpcpb.ScanDetailV2{}, 0,
+			)},
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("uncovered nonzero point response values fail closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, util.PointResponseStats{PayloadBytes: 1})
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("nil point snapshot runtime stats fail closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			&runtimeStatsWithSnapshot{},
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("nil point runtime stats wrapper fails closed", func(t *testing.T) {
+		stats, ok := statementRUPointResponseStatsSnapshot((*runtimeStatsWithSnapshot)(nil))
+		require.True(t, ok)
+		require.False(t, stats.IsValid())
+
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			(*runtimeStatsWithSnapshot)(nil),
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	for _, batch := range []bool{false, true} {
+		name := "PointGet"
+		if batch {
+			name = "BatchPointGet"
+		}
+		t.Run(name+" direct and general calculators match", func(t *testing.T) {
+			fixture, plan := pointLookupFixture(t, batch)
+			registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+				&kvrpcpb.ScanDetailV2{
+					TotalVersions:         3,
+					ProcessedVersions:     2,
+					ProcessedVersionsSize: 50,
+				},
+				19,
+			))
+			stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+			direct, directOK := calculateStatementRUPointLookup(
+				plan.ID(), stmtCtx.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+				fixture.owner.calculationSetup, true,
+			)
+			general, generalOK := calculateStatementRU(
+				plannercore.FlattenPhysicalPlan(plan, false),
+				stmtCtx.RuntimeStatsColl,
+				fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+				statementRUWriteSnapshot{},
+				fixture.owner.calculationSetup,
+				true,
+			)
+			require.True(t, directOK)
+			require.True(t, generalOK)
+			require.Equal(t, general, direct)
+		})
+	}
+
+	t.Run("point terminal error consumes the direct path", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+		var calibrationCount atomic.Int64
+		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+		})
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(errors.New("terminal error"))
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Zero(t, calibrationCount.Load())
+	})
+
+	t.Run("point terminal without root EOF fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+		fixture.owner.rootEOF.Store(false)
+		requireNoPublication(t, fixture)
+	})
 
 	t.Run("Analyze uses the sum of logical request estimates", func(t *testing.T) {
 		ctx := mock.NewContext()
@@ -228,6 +598,413 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			ScanBytes: 1009,
 		})
 	})
+
+	t.Run("forest totals and occurrence aliases stay independent", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		newDual := func(id int, rows int64) *physicalop.PhysicalTableDual {
+			dual := physicalop.PhysicalTableDual{RowCount: int(rows)}.Init(
+				planCtx,
+				&property.StatsInfo{RowCount: float64(rows)},
+				0,
+			)
+			dual.SetID(id)
+			recordRootRows(fixture, dual, rows)
+			return dual
+		}
+		newProjection := func(expressionCount int) *physicalop.PhysicalProjection {
+			exprs := make([]expression.Expression, expressionCount)
+			for i := range exprs {
+				exprs[i] = &expression.Column{}
+			}
+			projection := physicalop.PhysicalProjection{Exprs: exprs}.Init(
+				planCtx,
+				&property.StatsInfo{},
+				0,
+			)
+			// Legal CTE/scalar shallow copies can share a runtime lookup ID. The
+			// result must still retain a distinct value at every forest coordinate.
+			projection.SetID(101)
+			return projection
+		}
+
+		mainProjection := newProjection(1)
+		cteProjection := newProjection(2)
+		scalarProjection := newProjection(3)
+		recordRootRows(fixture, mainProjection, 4)
+		cteRoot := physicalop.PhysicalUnionAll{}.Init(planCtx, &property.StatsInfo{}, 0)
+		scalarRoot := plannercore.ScalarSubqueryEvalCtx{}.Init(planCtx, 0)
+		mainDual := newDual(201, 2)
+		cteDual := newDual(202, 3)
+		scalarDual := newDual(203, 4)
+		flat := &plannercore.FlatPhysicalPlan{
+			Main: plannercore.FlatPlanTree{
+				{Origin: mainProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: mainDual, IsRoot: true, StoreType: kv.TiDB},
+			},
+			CTEs: []plannercore.FlatPlanTree{{
+				{Origin: cteRoot, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: cteProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{2}},
+				{Origin: cteDual, IsRoot: true, StoreType: kv.TiDB},
+			}},
+			ScalarSubQueries: []plannercore.FlatPlanTree{{
+				{Origin: scalarRoot, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{1}},
+				{Origin: scalarProjection, IsRoot: true, StoreType: kv.TiDB, ChildrenIdx: []int{2}},
+				{Origin: scalarDual, IsRoot: true, StoreType: kv.TiDB},
+			}},
+		}
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(11)
+		finalized, operators, ok := calculateStatementRUWithOperators(
+			flat,
+			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
+			metrics,
+			statementRUWriteSnapshot{},
+			statementRUCalculationSetup{frontendCompileBytes: 7},
+			true,
+		)
+		require.True(t, ok)
+		require.Equal(t, statementRURawUnits{
+			OperatorNum:          8,
+			CPUWork:              20,
+			NetBytes:             11,
+			FrontendCompileBytes: 7,
+		}, finalized.units)
+		require.Equal(t, float64(46), finalized.result.TotalRU)
+		require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(22), operators.Main[0].CumRU)
+		require.Equal(t, float64(9), operators.CTEs[0][0].CumRU)
+		require.Equal(t, float64(15), operators.ScalarSubQueries[0][0].CumRU)
+		require.Equal(t, 101, operators.Main[0].Operator.Origin.ID())
+		require.Equal(t, 101, operators.CTEs[0][1].Operator.Origin.ID())
+		require.Equal(t, 101, operators.ScalarSubQueries[0][1].Operator.Origin.ID())
+		require.NotSame(t, operators.Main[0].Operator, operators.CTEs[0][1].Operator)
+		require.NotSame(t, operators.Main[0].Operator, operators.ScalarSubQueries[0][1].Operator)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(7), operators.CTEs[0][1].SelfRU)
+		require.Equal(t, float64(13), operators.ScalarSubQueries[0][1].SelfRU)
+	})
+	newJoin := func(
+		fixture statementRUSimpleSelectFixture,
+		kind string,
+	) (base.PhysicalPlan, *physicalop.PhysicalTableReader, *physicalop.PhysicalTableReader) {
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		left, _ := newTableReader(fixture)
+		right, _ := newTableReader(fixture)
+		leftKey := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+		rightKey := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+		baseJoin := physicalop.BasePhysicalJoin{
+			JoinType:      base.InnerJoin,
+			InnerChildIdx: 1,
+			LeftJoinKeys:  []*expression.Column{leftKey},
+			RightJoinKeys: []*expression.Column{rightKey},
+		}
+		var join base.PhysicalPlan
+		switch kind {
+		case "hash":
+			join = physicalop.PhysicalHashJoin{
+				BasePhysicalJoin: baseJoin,
+				EqualConditions:  []*expression.ScalarFunction{{}},
+			}.Init(planCtx, &property.StatsInfo{}, 0)
+		case "merge":
+			join = physicalop.PhysicalMergeJoin{
+				BasePhysicalJoin: baseJoin,
+				CompareFuncs:     make([]expression.CompareFunc, 1),
+			}.Init(planCtx, &property.StatsInfo{}, 0)
+		case "index":
+			indexJoin := physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin}
+			indexJoin.OuterJoinKeys = []*expression.Column{leftKey}
+			indexJoin.InnerJoinKeys = []*expression.Column{rightKey}
+			join = indexJoin.Init(planCtx, &property.StatsInfo{}, 0)
+		case "index_hash":
+			indexJoin := physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin}
+			indexJoin.OuterHashKeys = []*expression.Column{leftKey}
+			indexJoin.InnerHashKeys = []*expression.Column{rightKey}
+			join = physicalop.PhysicalIndexHashJoin{PhysicalIndexJoin: indexJoin}.Init(planCtx)
+		case "index_merge":
+			indexJoin := physicalop.PhysicalIndexJoin{BasePhysicalJoin: baseJoin}
+			join = physicalop.PhysicalIndexMergeJoin{
+				PhysicalIndexJoin: indexJoin,
+				CompareFuncs:      make([]expression.CompareFunc, 1),
+			}.Init(planCtx)
+		default:
+			require.FailNow(t, "unknown join kind", kind)
+		}
+		join.SetChildren(left, right)
+		return join, left, right
+	}
+	recordJoinRows := func(
+		fixture statementRUSimpleSelectFixture,
+		join base.PhysicalPlan,
+		left, right *physicalop.PhysicalTableReader,
+	) {
+		recordRootRows(fixture, left, 3)
+		recordRootRows(fixture, right, 2)
+		recordRootRows(fixture, join, 4)
+	}
+
+	for _, tc := range []struct {
+		kind            string
+		expressionCount int64
+	}{
+		{kind: "hash", expressionCount: 12},
+		{kind: "merge", expressionCount: 10},
+		{kind: "index", expressionCount: 15},
+		{kind: "index_hash", expressionCount: 15},
+		{kind: "index_merge", expressionCount: 21},
+	} {
+		t.Run("Join formula counts every expression family "+tc.kind, func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			join, left, right := newJoin(fixture, tc.kind)
+			setCommonConditions := func(baseJoin *physicalop.BasePhysicalJoin) {
+				baseJoin.LeftConditions = make(expression.CNFExprs, 2)
+				baseJoin.RightConditions = make(expression.CNFExprs, 3)
+				baseJoin.OtherConditions = make(expression.CNFExprs, 4)
+			}
+			switch typed := join.(type) {
+			case *physicalop.PhysicalHashJoin:
+				setCommonConditions(&typed.BasePhysicalJoin)
+				typed.NAEqualConditions = make([]*expression.ScalarFunction, 2)
+				typed.LeftNAJoinKeys = make([]*expression.Column, 2)
+				typed.RightNAJoinKeys = make([]*expression.Column, 2)
+			case *physicalop.PhysicalMergeJoin:
+				setCommonConditions(&typed.BasePhysicalJoin)
+			case *physicalop.PhysicalIndexJoin:
+				setCommonConditions(&typed.BasePhysicalJoin)
+				typed.CompareFilters = &physicalop.ColWithCmpFuncManager{OpType: make([]string, 5)}
+			case *physicalop.PhysicalIndexHashJoin:
+				setCommonConditions(&typed.BasePhysicalJoin)
+				typed.CompareFilters = &physicalop.ColWithCmpFuncManager{OpType: make([]string, 5)}
+			case *physicalop.PhysicalIndexMergeJoin:
+				setCommonConditions(&typed.BasePhysicalJoin)
+				typed.NeedOuterSort = true
+				typed.OuterCompareFuncs = make([]expression.CompareFunc, 2)
+				typed.LeftConditions = make(expression.CNFExprs, 3)
+				typed.RightConditions = make(expression.CNFExprs, 4)
+				typed.OtherConditions = make(expression.CNFExprs, 5)
+				typed.CompareFilters = &physicalop.ColWithCmpFuncManager{OpType: make([]string, 6)}
+			}
+			recordJoinRows(fixture, join, left, right)
+			if tc.kind == "hash" {
+				recordHashState(fixture, join, 2, true, false)
+			}
+			setPlan(fixture, join)
+			want := statementRURawUnits{
+				CPUWork:              5 * float64(tc.expressionCount),
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+				JoinOutputRows:       4,
+			}
+			if tc.kind == "hash" {
+				want.HashStateRows = 2
+			}
+			requirePublication(t, fixture, want)
+		})
+	}
+
+	t.Run("Join accepts build-side-first display order", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, right := newJoin(fixture, "hash")
+		recordJoinRows(fixture, join, left, right)
+		recordHashState(fixture, join, 2, true, false)
+		setPlan(fixture, join)
+		flat := plannercore.FlattenPhysicalPlan(join, true)
+		require.Len(t, flat.Main[0].ChildrenIdx, 2)
+		firstChild := flat.Main[flat.Main[0].ChildrenIdx[0]]
+		require.Equal(t, plannercore.BuildSide, firstChild.Label)
+		require.Same(t, right, firstChild.Origin)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(flat)
+
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              5,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			HashStateRows:        2,
+			JoinOutputRows:       4,
+		})
+	})
+
+	t.Run("HashJoin fails closed on incomplete state", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, right := newJoin(fixture, "hash")
+		recordJoinRows(fixture, join, left, right)
+		recordHashState(fixture, join, 2, false, false)
+		setPlan(fixture, join)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("HashJoin fails closed on invalid state", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, right := newJoin(fixture, "hash")
+		recordJoinRows(fixture, join, left, right)
+		recordHashState(fixture, join, 2, true, true)
+		setPlan(fixture, join)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("Join fails closed on missing child rows", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, _ := newJoin(fixture, "merge")
+		recordRootRows(fixture, left, 3)
+		recordRootRows(fixture, join, 4)
+		setPlan(fixture, join)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("Join fails closed on FULL OUTER source drift", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, left, right := newJoin(fixture, "hash")
+		join.(*physicalop.PhysicalHashJoin).JoinType = base.FullOuterJoin
+		recordJoinRows(fixture, join, left, right)
+		recordHashState(fixture, join, 2, true, false)
+		setPlan(fixture, join)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("operator unit delta merge is atomic", func(t *testing.T) {
+		calculator := statementRUCalculator{units: statementRURawUnits{
+			CPUWork:   7,
+			ScanBytes: math.MaxFloat64,
+		}}
+		before := calculator
+		require.False(t, mergeStatementRUUnitDelta(&calculator, statementRURawUnits{
+			CPUWork:   5,
+			ScanBytes: math.MaxFloat64,
+		}))
+		require.Equal(t, before, calculator)
+	})
+
+	newAggregation := func(
+		fixture statementRUSimpleSelectFixture,
+		hash bool,
+		child base.PhysicalPlan,
+	) base.PhysicalPlan {
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		baseAgg := &physicalop.BasePhysicalAgg{
+			GroupByItems: []expression.Expression{expression.NewOne(), expression.NewOne()},
+			AggFuncs:     make([]*aggregation.AggFuncDesc, 3),
+		}
+		var agg base.PhysicalPlan
+		if hash {
+			agg = baseAgg.InitForHash(planCtx, &property.StatsInfo{}, 0, expression.NewSchema())
+		} else {
+			agg = baseAgg.InitForStream(planCtx, &property.StatsInfo{}, 0, expression.NewSchema())
+		}
+		agg.SetChildren(child)
+		return agg
+	}
+
+	for _, hash := range []bool{true, false} {
+		name := "StreamAgg"
+		if hash {
+			name = "HashAgg"
+		}
+		t.Run("root "+name+" occurrence", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			reader, _ := newTableReader(fixture)
+			agg := newAggregation(fixture, hash, reader)
+			recordRootRows(fixture, reader, 3)
+			recordRootRows(fixture, agg, 2)
+			if hash {
+				recordHashState(fixture, agg, 2, true, false)
+			}
+			setPlan(fixture, agg)
+			want := statementRURawUnits{
+				CPUWork:              15,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			}
+			if hash {
+				want.HashStateRows = 2
+			}
+			requirePublication(t, fixture, want)
+		})
+	}
+
+	t.Run("root HashAgg distinguishes observed zero from missing rows", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader, _ := newTableReader(fixture)
+		agg := newAggregation(fixture, true, reader)
+		recordRootRows(fixture, reader, 0)
+		recordRootRows(fixture, agg, 0)
+		recordHashState(fixture, agg, 0, true, false)
+		setPlan(fixture, agg)
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+
+		missing := newStatementRUSimpleSelectFixture(t)
+		missingReader, _ := newTableReader(missing)
+		missingAgg := newAggregation(missing, true, missingReader)
+		recordRootRows(missing, missingAgg, 0)
+		recordHashState(missing, missingAgg, 0, true, false)
+		setPlan(missing, missingAgg)
+		requireNoPublication(t, missing)
+	})
+
+	t.Run("TiKV cop HashAgg charges valid responses when another summary is missing", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader, scan := newTableReader(fixture)
+		agg := newAggregation(fixture, true, scan)
+		reader.TablePlan = agg
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(agg)
+		recordCopRows(fixture, scan, 3)
+		recordCopRows(fixture, agg, 2)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
+		recordScan(fixture, agg, 1, 1, 10)
+		setPlan(fixture, reader)
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              15,
+			HashStateRows:        2,
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("TiKV cop HashAgg still requires one valid summary", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader, scan := newTableReader(fixture)
+		agg := newAggregation(fixture, true, scan)
+		reader.TablePlan = agg
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(agg)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
+		recordScan(fixture, agg, 1, 1, 10)
+		setPlan(fixture, reader)
+		requireNoPublication(t, fixture)
+	})
+
+	for _, hash := range []bool{true, false} {
+		name := "StreamAgg"
+		if hash {
+			name = "HashAgg"
+		}
+		t.Run("TiKV cop "+name+" occurrence", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			reader, scan := newTableReader(fixture)
+			agg := newAggregation(fixture, hash, scan)
+			reader.TablePlan = agg
+			reader.TablePlans = physicalop.FlattenListPushDownPlan(agg)
+			recordCopRows(fixture, scan, 3)
+			recordCopRows(fixture, agg, 2)
+			recordScan(fixture, agg, 1, 1, 10)
+			setPlan(fixture, reader)
+			want := statementRURawUnits{
+				CPUWork:              15,
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			}
+			if hash {
+				want.HashStateRows = 2
+			}
+			requirePublication(t, fixture, want)
+		})
+	}
 
 	t.Run("Reader scan evidence is collected during calculation", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
@@ -382,6 +1159,402 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			ScanBytes:            10,
 			NetBytes:             20,
 			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("new operator coverage", func(t *testing.T) {
+		t.Run("root UnionScan uses direct child output rows", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			planCtx := fixture.stmt.Ctx.(*mock.Context)
+			reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+			unionScan := physicalop.PhysicalUnionScan{}.Init(planCtx, &property.StatsInfo{RowCount: 8}, 0)
+			unionScan.SetChildren(reader)
+			recordRootRows(fixture, reader, 8)
+			setPlan(fixture, unionScan)
+
+			requirePublication(t, fixture, statementRURawUnits{
+				CPUWork:              8,
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+		})
+
+		t.Run("root Window uses direct child rows and expression slots", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			planCtx := fixture.stmt.Ctx.(*mock.Context)
+			reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+			window := physicalop.PhysicalWindow{
+				WindowFuncDescs: []*aggregation.WindowFuncDesc{{}, {}},
+				PartitionBy:     []property.SortItem{{}},
+				OrderBy:         []property.SortItem{{}},
+				Frame: &logicalop.WindowFrame{
+					Start: &logicalop.FrameBound{CalcFuncs: []expression.Expression{expression.NewOne()}},
+					End: &logicalop.FrameBound{CalcFuncs: []expression.Expression{
+						expression.NewOne(), expression.NewOne(),
+					}},
+				},
+			}.Init(planCtx, &property.StatsInfo{RowCount: 8}, 0)
+			window.SetChildren(reader)
+			recordRootRows(fixture, reader, 8)
+			setPlan(fixture, window)
+
+			requirePublication(t, fixture, statementRURawUnits{
+				CPUWork:              56,
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+		})
+
+		t.Run("root Shuffle charges each data source once", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			planCtx := fixture.stmt.Ctx.(*mock.Context)
+			reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+			receiver := physicalop.PhysicalShuffleReceiverStub{DataSource: reader}.
+				Init(planCtx, &property.StatsInfo{RowCount: 3}, 0)
+			shuffle := physicalop.PhysicalShuffle{
+				Concurrency:  4,
+				Tails:        []base.PhysicalPlan{receiver},
+				DataSources:  []base.PhysicalPlan{reader},
+				SplitterType: physicalop.PartitionHashSplitterType,
+				ByItemArrays: [][]expression.Expression{{expression.NewOne()}},
+			}.Init(planCtx, &property.StatsInfo{RowCount: 3}, 0)
+			shuffle.SetChildren(receiver)
+			recordRootRows(fixture, reader, 3)
+			recordRootRows(fixture, receiver, 3)
+			setPlan(fixture, shuffle)
+
+			requirePublication(t, fixture, statementRURawUnits{
+				CPUWork:              6,
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+		})
+
+		t.Run("IndexMergeReader owns every partial and table request once", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			reader, firstIndexScan, secondIndexScan, tableScan := newIndexMergePlan(fixture)
+			for _, evidence := range []struct {
+				plan  base.Plan
+				rows  uint64
+				bytes int64
+			}{
+				{plan: firstIndexScan, rows: 2, bytes: 12},
+				{plan: secondIndexScan, rows: 3, bytes: 18},
+				{plan: tableScan, rows: 4, bytes: 21},
+			} {
+				recordCopRows(fixture, evidence.plan, evidence.rows)
+				recordScan(fixture, evidence.plan, int64(evidence.rows), int64(evidence.rows), evidence.bytes)
+			}
+			setPlan(fixture, reader)
+
+			requirePublication(t, fixture, statementRURawUnits{
+				ScanBytes:            51,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+		})
+
+		t.Run("UnionScan uses available child rows", func(t *testing.T) {
+			newUnionScan := func(fixture statementRUSimpleSelectFixture) (*physicalop.PhysicalUnionScan, base.PhysicalPlan) {
+				planCtx := fixture.stmt.Ctx.(*mock.Context)
+				child := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+				unionScan := physicalop.PhysicalUnionScan{}.Init(planCtx, &property.StatsInfo{}, 0)
+				unionScan.SetChildren(child)
+				setPlan(fixture, unionScan)
+				return unionScan, child
+			}
+
+			zero := newStatementRUSimpleSelectFixture(t)
+			_, zeroChild := newUnionScan(zero)
+			recordRootRows(zero, zeroChild, 0)
+			requirePublication(t, zero, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			missing := newStatementRUSimpleSelectFixture(t)
+			newUnionScan(missing)
+			requirePublication(t, missing, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			invalid := newStatementRUSimpleSelectFixture(t)
+			_, invalidChild := newUnionScan(invalid)
+			recordRootRows(invalid, invalidChild, -1)
+			require.Equal(t, statementRUOperatorInvalid, calculateFixtureState(invalid))
+			requireNoPublication(t, invalid)
+		})
+
+		t.Run("Window uses available child rows", func(t *testing.T) {
+			newWindow := func(fixture statementRUSimpleSelectFixture) (*physicalop.PhysicalWindow, base.PhysicalPlan) {
+				planCtx := fixture.stmt.Ctx.(*mock.Context)
+				child := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+				window := physicalop.PhysicalWindow{
+					WindowFuncDescs: []*aggregation.WindowFuncDesc{{}},
+				}.Init(planCtx, &property.StatsInfo{}, 0)
+				window.SetChildren(child)
+				setPlan(fixture, window)
+				return window, child
+			}
+
+			zero := newStatementRUSimpleSelectFixture(t)
+			_, zeroChild := newWindow(zero)
+			recordRootRows(zero, zeroChild, 0)
+			requirePublication(t, zero, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			missing := newStatementRUSimpleSelectFixture(t)
+			newWindow(missing)
+			requirePublication(t, missing, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			invalid := newStatementRUSimpleSelectFixture(t)
+			_, invalidChild := newWindow(invalid)
+			recordRootRows(invalid, invalidChild, -1)
+			require.Equal(t, statementRUOperatorInvalid, calculateFixtureState(invalid))
+			requireNoPublication(t, invalid)
+		})
+
+		t.Run("Shuffle merges data-source fan-in without a concurrency multiplier", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			planCtx := fixture.stmt.Ctx.(*mock.Context)
+			firstReader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+			secondReader, secondScan := newTableReader(fixture)
+			recordScan(fixture, secondScan, 1, 1, 7)
+			firstReceiver := physicalop.PhysicalShuffleReceiverStub{DataSource: firstReader}.
+				Init(planCtx, &property.StatsInfo{RowCount: 3}, 0)
+			secondReceiver := physicalop.PhysicalShuffleReceiverStub{DataSource: secondReader}.
+				Init(planCtx, &property.StatsInfo{RowCount: 5}, 0)
+			workerHead := physicalop.PhysicalUnionAll{}.Init(planCtx, &property.StatsInfo{RowCount: 8}, 0)
+			workerHead.SetChildren(firstReceiver, secondReceiver)
+			shuffle := physicalop.PhysicalShuffle{
+				Concurrency:  8,
+				Tails:        []base.PhysicalPlan{firstReceiver, secondReceiver},
+				DataSources:  []base.PhysicalPlan{firstReader, secondReader},
+				SplitterType: physicalop.PartitionHashSplitterType,
+				ByItemArrays: [][]expression.Expression{
+					{expression.NewOne()},
+					{expression.NewOne(), expression.NewOne()},
+				},
+			}.Init(planCtx, &property.StatsInfo{RowCount: 8}, 0)
+			shuffle.SetChildren(workerHead)
+			recordRootRows(fixture, firstReader, 3)
+			recordRootRows(fixture, secondReader, 5)
+			recordRootRows(fixture, firstReceiver, 3)
+			recordRootRows(fixture, secondReceiver, 5)
+			setPlan(fixture, shuffle)
+
+			requirePublication(t, fixture, statementRURawUnits{
+				CPUWork:              21,
+				ScanBytes:            17,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+		})
+
+		t.Run("Shuffle uses available source rows", func(t *testing.T) {
+			newShuffle := func(fixture statementRUSimpleSelectFixture) (
+				*physicalop.PhysicalShuffle,
+				base.PhysicalPlan,
+				*physicalop.PhysicalShuffleReceiverStub,
+			) {
+				planCtx := fixture.stmt.Ctx.(*mock.Context)
+				source := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+				receiver := physicalop.PhysicalShuffleReceiverStub{DataSource: source}.
+					Init(planCtx, &property.StatsInfo{}, 0)
+				shuffle := physicalop.PhysicalShuffle{
+					Concurrency:  4,
+					Tails:        []base.PhysicalPlan{receiver},
+					DataSources:  []base.PhysicalPlan{source},
+					SplitterType: physicalop.PartitionHashSplitterType,
+					ByItemArrays: [][]expression.Expression{{expression.NewOne()}},
+				}.Init(planCtx, &property.StatsInfo{}, 0)
+				shuffle.SetChildren(receiver)
+				setPlan(fixture, shuffle)
+				return shuffle, source, receiver
+			}
+
+			zero := newStatementRUSimpleSelectFixture(t)
+			_, zeroSource, zeroReceiver := newShuffle(zero)
+			recordRootRows(zero, zeroSource, 0)
+			recordRootRows(zero, zeroReceiver, 0)
+			requirePublication(t, zero, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			missing := newStatementRUSimpleSelectFixture(t)
+			_, _, missingReceiver := newShuffle(missing)
+			recordRootRows(missing, missingReceiver, 0)
+			requirePublication(t, missing, statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			unobservedReceiver := newStatementRUSimpleSelectFixture(t)
+			_, source, _ := newShuffle(unobservedReceiver)
+			recordRootRows(unobservedReceiver, source, 3)
+			requirePublication(t, unobservedReceiver, statementRURawUnits{
+				CPUWork:              6,
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			noStats := newStatementRUSimpleSelectFixture(t)
+			newShuffle(noStats)
+			noStats.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+			requirePublication(t, noStats, statementRURawUnits{
+				NetBytes:             20,
+				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			})
+
+			invalidRows := newStatementRUSimpleSelectFixture(t)
+			_, negativeSource, _ := newShuffle(invalidRows)
+			recordRootRows(invalidRows, negativeSource, -1)
+			requireNoPublication(t, invalidRows)
+		})
+
+		t.Run("IndexMergeReader uses available scan evidence", func(t *testing.T) {
+			for _, tc := range []struct {
+				name              string
+				first             *util.ScanDetail
+				table             *util.ScanDetail
+				incompleteSummary bool
+				wantScanBytes     float64
+				invalid           bool
+			}{
+				{name: "no request evidence"},
+				{name: "partial without table request", first: &util.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 12}, wantScanBytes: 12},
+				{name: "table without partial evidence", table: &util.ScanDetail{TotalKeys: 3, ProcessedKeys: 3, ProcessedKeysSize: 21}, wantScanBytes: 21},
+				{name: "scan without summary", first: &util.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 12}, incompleteSummary: true, wantScanBytes: 12},
+				{name: "unavailable partial scan", first: &util.ScanDetail{TotalKeys: 2, ProcessedKeys: 2}, table: &util.ScanDetail{TotalKeys: 3, ProcessedKeys: 3, ProcessedKeysSize: 21}, wantScanBytes: 21},
+				{name: "invalid partial scan", first: &util.ScanDetail{TotalKeys: -1, ProcessedKeys: 1, ProcessedKeysSize: 4}, invalid: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					fixture := newStatementRUSimpleSelectFixture(t)
+					reader, first, _, table := newIndexMergePlan(fixture)
+					if tc.incompleteSummary {
+						fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+							RecordExpectedCopResponseSummaries([]int{first.ID()})
+					}
+					for _, evidence := range []struct {
+						plan   base.Plan
+						detail *util.ScanDetail
+					}{{first, tc.first}, {table, tc.table}} {
+						if evidence.detail != nil {
+							recordScan(fixture, evidence.plan, evidence.detail.TotalKeys, evidence.detail.ProcessedKeys, evidence.detail.ProcessedKeysSize)
+						}
+					}
+					setPlan(fixture, reader)
+					if tc.invalid {
+						require.Equal(t, statementRUOperatorInvalid, calculateFixtureState(fixture))
+						requireNoPublication(t, fixture)
+						return
+					}
+					requirePublication(t, fixture, statementRURawUnits{
+						ScanBytes:            tc.wantScanBytes,
+						NetBytes:             20,
+						FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+					})
+				})
+			}
+		})
+
+		t.Run("combined new operators share one finalized total and occurrence attribution", func(t *testing.T) {
+			fixture := newStatementRUSimpleSelectFixture(t)
+			planCtx := fixture.stmt.Ctx.(*mock.Context)
+			indexMerge, firstIndexScan, secondIndexScan, tableScan := newIndexMergePlan(fixture)
+			for _, evidence := range []struct {
+				plan  base.Plan
+				rows  uint64
+				bytes int64
+			}{
+				{plan: firstIndexScan, rows: 2, bytes: 12},
+				{plan: secondIndexScan, rows: 3, bytes: 18},
+				{plan: tableScan, rows: 4, bytes: 21},
+			} {
+				recordCopRows(fixture, evidence.plan, evidence.rows)
+				recordScan(fixture, evidence.plan, int64(evidence.rows), int64(evidence.rows), evidence.bytes)
+			}
+			unionScan := physicalop.PhysicalUnionScan{}.Init(planCtx, &property.StatsInfo{RowCount: 5}, 0)
+			unionScan.SetChildren(indexMerge)
+			receiver := physicalop.PhysicalShuffleReceiverStub{DataSource: unionScan}.
+				Init(planCtx, &property.StatsInfo{RowCount: 5}, 0)
+			window := physicalop.PhysicalWindow{
+				WindowFuncDescs: []*aggregation.WindowFuncDesc{{}},
+				PartitionBy:     []property.SortItem{{}},
+			}.Init(planCtx, &property.StatsInfo{RowCount: 5}, 0)
+			window.SetChildren(receiver)
+			shuffle := physicalop.PhysicalShuffle{
+				Concurrency:  4,
+				Tails:        []base.PhysicalPlan{receiver},
+				DataSources:  []base.PhysicalPlan{unionScan},
+				SplitterType: physicalop.PartitionHashSplitterType,
+				ByItemArrays: [][]expression.Expression{{expression.NewOne()}},
+			}.Init(planCtx, &property.StatsInfo{RowCount: 5}, 0)
+			shuffle.SetChildren(window)
+			recordRootRows(fixture, indexMerge, 5)
+			recordRootRows(fixture, unionScan, 5)
+			recordRootRows(fixture, receiver, 5)
+			setPlan(fixture, shuffle)
+
+			flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+			finalized, operators, ok := calculateStatementRUWithOperators(
+				flat,
+				fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
+				nil,
+				statementRUWriteSnapshot{},
+				statementRUCalculationSetup{},
+				true,
+			)
+			require.True(t, ok)
+			require.Equal(t, statementRURawUnits{CPUWork: 25, ScanBytes: 51, OperatorNum: 8}, finalized.units)
+			require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
+
+			operatorIndex := func(plan base.Plan) int {
+				for index, operator := range flat.Main {
+					if operator.Origin == plan {
+						return index
+					}
+				}
+				return -1
+			}
+			wantRU := func(units statementRURawUnits) float64 {
+				return calculateStatementRUResultOnly(units).TotalRU
+			}
+			indexMergeIndex := operatorIndex(indexMerge)
+			unionScanIndex := operatorIndex(unionScan)
+			receiverIndex := operatorIndex(receiver)
+			windowIndex := operatorIndex(window)
+			shuffleIndex := operatorIndex(shuffle)
+			for _, index := range []int{indexMergeIndex, unionScanIndex, receiverIndex, windowIndex, shuffleIndex} {
+				require.NotEqual(t, -1, index)
+			}
+			require.Equal(t, wantRU(statementRURawUnits{ScanBytes: 51, OperatorNum: 1}), operators.Main[indexMergeIndex].SelfRU)
+			require.Equal(t, wantRU(statementRURawUnits{ScanBytes: 51, OperatorNum: 4}), operators.Main[indexMergeIndex].CumRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5, OperatorNum: 1}), operators.Main[unionScanIndex].SelfRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5, ScanBytes: 51, OperatorNum: 5}), operators.Main[unionScanIndex].CumRU)
+			require.Equal(t, wantRU(statementRURawUnits{OperatorNum: 1}), operators.Main[receiverIndex].SelfRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 5, ScanBytes: 51, OperatorNum: 6}), operators.Main[receiverIndex].CumRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 10, OperatorNum: 1}), operators.Main[windowIndex].SelfRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 15, ScanBytes: 51, OperatorNum: 7}), operators.Main[windowIndex].CumRU)
+			require.Equal(t, wantRU(statementRURawUnits{CPUWork: 10, OperatorNum: 1}), operators.Main[shuffleIndex].SelfRU)
+			require.Equal(t, finalized.result.TotalRU, operators.Main[shuffleIndex].CumRU)
 		})
 	})
 
@@ -632,6 +1805,22 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		requireNoPublication(t, fixture)
 	})
 
+	t.Run("duplicate child reference fails closed", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		flat.Main[0].ChildrenIdx = []int{1, 1}
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("unreachable operator fails closed", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		flat.Main[0].ChildrenIdx = nil
+
+		requireNoPublication(t, fixture)
+	})
+
 	t.Run("present negative child rows fail closed", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		planCtx := fixture.stmt.Ctx.(*mock.Context)
@@ -651,13 +1840,14 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		planCtx := fixture.stmt.Ctx.(*mock.Context)
 		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
 		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
-		projection := physicalop.PhysicalProjection{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
-		projection.SetChildren(scan)
-		reader.TablePlan = projection
-		reader.TablePlans = physicalop.FlattenListPushDownPlan(projection)
+		window := physicalop.PhysicalWindow{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		window.SetChildren(scan)
+		reader.TablePlan = window
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(window)
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		setPlan(fixture, reader)
 
+		require.Equal(t, statementRUOperatorUnsupported, calculateFixtureState(fixture))
 		requireNoPublication(t, fixture)
 	})
 }

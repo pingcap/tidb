@@ -261,7 +261,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	}
 
 	// XXX: this should be handled after any bindings are setup.
-	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) && !sessVars.InMViewMaintenance {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -778,7 +778,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// Build the logical plan from the raw AST. The hint processor only keeps
 	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
-	node.Node.Accept(hintProcessor)
+	ast.Walk(node.Node, hintProcessor)
 
 	// build multi logical plan from raw AST.
 	var (

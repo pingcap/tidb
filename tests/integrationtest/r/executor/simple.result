@@ -54,7 +54,7 @@ SET ROLE r29473;
 DROP ROLE r29473;
 SHOW GRANTS;
 Grants for User
-GRANT CREATE USER ON *.* TO 'u29473'@'%'
+GRANT CREATE USER ON *.* TO `u29473`@`%`
 DROP USER IF EXISTS u29473;
 drop table if exists t1;
 drop user if exists u1;
@@ -78,11 +78,11 @@ COUNT(1)
 1
 SHOW GRANTS FOR u1;
 Grants for u1@%
-GRANT USAGE ON *.* TO 'u1'@'%'
-GRANT CREATE ON `executor__simple`.* TO 'u1'@'%'
-GRANT UPDATE ON `executor__simple`.`t1` TO 'u1'@'%'
-GRANT SELECT(v), UPDATE(v) ON `executor__simple`.`t1` TO 'u1'@'%'
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'
+GRANT USAGE ON *.* TO `u1`@`%`
+GRANT CREATE ON `executor__simple`.* TO `u1`@`%`
+GRANT UPDATE ON `executor__simple`.`t1` TO `u1`@`%`
+GRANT SELECT(v), UPDATE(v) ON `executor__simple`.`t1` TO `u1`@`%`
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO `u1`@`%`
 DROP USER u1;
 SHOW GRANTS FOR u1;
 Error 1141 (42000): There is no such grant defined for user 'u1' on host '%'
@@ -155,7 +155,7 @@ drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
 SHOW GRANTS FOR 'testflush'@'localhost';
 Grants for testflush@localhost
-GRANT USAGE ON *.* TO 'testflush'@'localhost'
+GRANT USAGE ON *.* TO `testflush`@`localhost`
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 Error 1142 (42000): SELECT command denied to user 'testflush'@'localhost' for table 'user'
@@ -463,7 +463,7 @@ set global default_authentication_plugin = 'tidb_sm3_password';
 create user default_sm3_user;
 show create user default_sm3_user;
 CREATE USER for default_sm3_user@%
-CREATE USER 'default_sm3_user'@'%' IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `default_sm3_user`@`%` IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'default_sm3_user';
 plugin
 tidb_sm3_password
@@ -473,19 +473,19 @@ create user native_plugin_user identified with 'mysql_native_password';
 create role default_sha2_role;
 show create user default_sha2_user;
 CREATE USER for default_sha2_user@%
-CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `default_sha2_user`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'default_sha2_user';
 plugin
 caching_sha2_password
 show create user native_plugin_user;
 CREATE USER for native_plugin_user@%
-CREATE USER 'native_plugin_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `native_plugin_user`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'native_plugin_user';
 plugin
 mysql_native_password
 show create user default_sha2_role;
 CREATE USER for default_sha2_role@%
-CREATE USER 'default_sha2_role'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `default_sha2_role`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'default_sha2_role';
 plugin
 caching_sha2_password
@@ -499,7 +499,7 @@ count(distinct authentication_string)
 alter user default_sha2_user identified with 'tidb_sm3_password';
 show create user default_sha2_user;
 CREATE USER for default_sha2_user@%
-CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `default_sha2_user`@`%` IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 select plugin from mysql.user where user = 'default_sha2_user';
 plugin
 tidb_sm3_password
@@ -532,12 +532,12 @@ set @@sql_mode = default;
 alter user non_exist_user identified with 'mysql_native_password';
 show create user non_exist_user;
 CREATE USER for non_exist_user@%
-CREATE USER 'non_exist_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `non_exist_user`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 update mysql.user set plugin = '' where user = 'non_exist_user';
 flush privileges;
 show create user non_exist_user;
 CREATE USER for non_exist_user@%
-CREATE USER 'non_exist_user'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER `non_exist_user`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
 drop user non_exist_user;
 drop user default_sm3_user;
 drop user default_sha2_user;
