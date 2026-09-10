@@ -1,103 +1,102 @@
-# Align transport scheduling with client-go
+# Align transport response ownership with client-go
 
 This living ExecPlan follows root PLANS.md.
 
 ## Purpose / Big Picture
 
-Remove serialization of independent TiKV send and receive tasks on a dedicated
-Rust I/O thread. Pinned client-go e4905600583b internal/client/conn_batch.go and
-client_batch.go run these loops as independently scheduled goroutines. Rust
-should use its existing multi-thread execution scheduler while keeping explicit
-connection task scopes and transport shutdown ownership. This is a scoped
-alignment experiment, not a whole-package parity claim.
+Use Go's batch receive loop as the source of truth for Rust response ownership,
+retirement and stream acknowledgement. Avoid inferring an equivalent native
+scheduler from Go goroutine syntax. This is scoped RPC alignment, not completion
+of a whole Go package or of the throughput/latency goal.
 
 ## Progress
 
-- [x] Read Go collector and Rust admission, transport, completion and scheduler
-  ownership. Retained diagnostic artifacts: /private/tmp/tidb-rpc-stages.pWypr5.
-- [x] Observe eight-client mean batch wait of 49.5 microseconds in Rust versus
-  25.2 in Go, and caller wake delay of 9.7 versus 6.0 microseconds. Instrumented
-  samples identify stages, not a proven scheduling cause or performance win.
-- [x] Remove dedicated TransportIo runtime/thread and spawn the transport owner
-  on execution_runtime. Retain joins of worker and connection task scopes.
-- [x] Run retained transport tests, compare matched live workloads, and remove
-  temporary stage logging before accepting production changes.
-- [x] Pass 24 RPC unit tests and the final 97-test transport/batching batch;
-  release build, all-target txnkv check, formatting and Ready lint pass.
-- [x] Complete 84,000 sysbench and 36,000 TPC-C measured transactions, preserving
-  exact work, bounded Go equality, all eleven consistency checks and settings.
-- [x] Finish validation after preserving upstream planner commits through
-  a075207030. Two planner checks pass; condition-nine fails at its analyzed
-  inner-selection assertion. The unchanged parent fails identically. Preserve
-  that failure; do not weaken the test or claim complete planner parity.
-- [x] Final merged release build and Ready lint pass. Run another 6,000 sysbench
-  and 6,000 TPC-C events; bounded Go equality and eleven consistency conditions
-  pass. Restore auto-analyze, verify ten owned PIDs absent and ten ports closed,
-  and retain the fixture.
-- [x] Complete scoped source and validation for publication on
-  origin/hparser-integration; full performance acceptance remains open.
+- [x] Compare client-go e4905600583b internal/client/client_batch.go batchRecvLoop
+  with Rust batch/wire.rs, batch/inflight.rs and batch/transport.rs.
+- [x] Attribute the preceding shared-scheduler regression with matched Rust CPU
+  traces and Go pprof. Artifacts: /private/tmp/tidb-shared-scheduler.fEsNL7.
+- [x] Reject connection-future grouping after 120,000 sysbench and 48,000 TPC-C
+  measured events. It removes the sampled h2 lock-wait chain but increases
+  32-client elapsed 2.39% and CPU 3.92% against f53ad10ae4.
+- [x] Reject separate I/O-driver ownership after 84,000 sysbench and 36,000 TPC-C
+  events. CPU decreases in serial/TPC-C, but serial throughput regresses.
+  Both experimental patches and binaries remain only in the artifact directory.
+- [x] Remove per-response body cloning, the separate maximum-ID scan, and the
+  response packet's unique-ID HashSet. Preserve outgoing-ID validation.
+- [x] Reproduce the outdated-ID regression before changing wire acceptance.
+  An existing test's packet [0, 11, 10, 10] fails with ZeroRequestId even though
+  request 10 is pending. After the fix it completes once, counts three outdated
+  responses and advances the watermark to 11.
+- [x] Pass all 97 retained transport/batching tests with the response fix.
+- [x] Complete release build, all-target check, formatting and Ready lint.
+  All 84,000 sysbench and 36,000 TPC-C measured events pass bounded Go equality
+  and all eleven consistency checks. Record ../benchmarks/batch-response-baseline.json.
+- [x] Restore auto-analyze, stop owned services, verify 20 PIDs absent and ten
+  ports closed, and retain the fixture.
+- [x] Prepare the validated increment for normal publication to
+  origin/hparser-integration; verify the published SHA in the task handoff.
 
 ## Surprises & Discoveries
 
-Rust send/receive timing setters were not connected to production. The temporary
-probe connects them to actual submission and receipt boundaries. Submission into
-tonic's stream is not the same boundary as grpc-go Send returning, so individual
-send latency is not directly comparable. Approximately 130,000 RPCs per 6,000
-transactions are observed on both sides; range requests span multiple regions.
+Globally parallel h2 body/driver polling adds mutex contention. Grouping these
+futures removes that sampled chain but leaves scheduler wake/park overhead and
+does not improve fixed-work performance. A dedicated I/O driver likewise does
+not yield an overall throughput improvement. Neither experiment is retained.
+
+Rust also rejects an entire response packet for unknown zero or duplicate IDs,
+where Go looks up each ID and continues when it is no longer pending. That
+Rust-only rejection retires the stream and fails unrelated pending requests.
+Its per-packet HashSet allocation and response-body clones are unnecessary.
 
 ## Decision Log
 
-Use the existing execution scheduler, not another tunable runtime or a workload
-specific batch policy. Tasks already have connection-scoped cancellation and
-joining; scheduler lifetime need not equal connection lifetime. Accept only after
-lifecycle tests and measured workloads; investigate a regression before deciding
-whether to retain or discard the experiment. Retain the simpler Go-shaped task
-ownership, but do not promote overall performance: two clean pairs show 32/8
-client TPS +2.18%/+1.28%, serial TPS -1.66%, TPC-C elapsed +1.00% and SQL CPU
-+12.38%. The extra CPU requires further attribution, not arbitrary worker tuning.
+Retain the existing shared runtime and connection JoinSet lifecycle. Change the
+actual Go/Rust response semantic mismatch, not scheduler worker counts or batch
+policy constants. Deliver owned response bodies directly and compute the maximum
+ID in the same pass, including outdated IDs. Publish the watermark afterward as
+Go does. Keep cardinality and missing-command handling outside this increment.
 
 ## Context and Orientation
 
-rpc/execution.rs owns execution_runtime and ConnectionTasks. rpc/transport_runtime.rs
-owns the command task, which closes all batch and channel owners before replying
-to shutdown. ConnectionTasks retains tonic/h2 tasks in a JoinSet. Ordinary SQL
-waits and synchronous heartbeat calls already release Tokio workers through
-block_in_place. Do not change those response/cancellation contracts.
+rpc/batch/wire.rs owns decoded packet bodies and exposes a consuming iterator.
+rpc/batch/inflight.rs owns pending request retirement, cancellation and completion.
+rpc/batch/transport.rs feeds decoded packets into that table and retires a stream
+on decode/protocol errors. No call deadlines, connection identities, forwarding,
+batch policy, retry rules or runtime ownership change in the accepted candidate.
 
 ## Plan of Work
 
-First remove TransportIo and its extra shutdown stage, retaining the existing
-worker and connection scopes. Then run transport and batching tests as a batch,
-build the release server, and compare fixed-work sysbench at one/eight/32 clients
-and TPC-C with the retained unmodified 308af binary. Finally remove probes and
-run Ready validation before a final completion claim.
+Run the retained suite as one batch. Build one immutable release server, then
+compare fixed-work sysbench at one/eight/32 clients and TPC-C at eight clients
+against the unchanged f53ad10ae4 parent. Keep profiling separate from timing.
+Report measured tradeoffs and do not promote noise into a performance win.
 
 ## Concrete Steps
 
 From rust/: CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12
--p tidb-txnkv --lib -- rpc:: --test-threads=12. Build using cargo build with the
-same flags and -p tidb-server --bin tidb-server. At checkout root run
-GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint for Ready validation.
+-p tidb-txnkv --lib --test all --no-fail-fast -- batch_ transport_ connection_
+--test-threads=12. Build with the same Cargo flags and -p tidb-server
+--bin tidb-server; check with -p tidb-txnkv --all-targets. At repository root:
+GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint. The live harness is
+/private/tmp/tidb-shared-scheduler.fEsNL7/response/verify.rb.
 
 ## Validation and Acceptance
 
-Retained shutdown/panic/connection-generation tests must keep passing. Live
-requests must preserve exact counts, zero errors and bounded Go SQL equality;
-TPC-C must pass all eleven supported consistency conditions. Reject speedup
-claims from instrumented or overlapping noisy samples. Preserve the fixture,
-restore auto-analyze and stop only owned processes after the experiment.
+Use the Ready profile for scoped publication. Exact work counts, zero errors,
+bounded Go SQL equality and all eleven TPC-C consistency conditions must pass.
+The earlier planner condition-nine inner-selection failure also reproduces on
+unchanged a075207030; do not remove it or claim full-workspace parity.
 
 ## Idempotence and Recovery
 
-Keep the unmodified binary and probe artifact immutable. Use apply_patch to
-remove this experiment if evidence rejects it; do not reset unrelated files.
-Only origin/hparser-integration may be pushed, normally and without force.
+Preserve all immutable controls and the fixture. Restore auto-analyze and stop
+only owned processes. Use apply_patch to discard experiments, never reset
+unrelated files. Only normal pushes to origin/hparser-integration are authorized.
 
 ## Outcomes & Retrospective
 
-Shared scheduling removes 77 net lines of runtime/thread plumbing, preserves
-connection-scoped lifetime and reduces sampled batch/caller wait. Clean workload
-results expose a serial and CPU tradeoff, so this is implementation alignment,
-not overall performance acceptance. Evidence and exact commands are retained in
-../benchmarks/transport-scheduler-baseline.json. Full Go-package parity and the
-throughput/latency goal remain open.
+Response correctness and Ready checks pass. Serial/eight/32-client throughput
+changes +0.29%/0%/-0.52%; TPC-C elapsed changes -1.50%. SQL CPU differences are
+small (-0.09% to -1.23%). These local pairs are mixed/near-neutral, not an overall
+performance win. Full Go-package parity, the shared-scheduler CPU regression and
+the persistent throughput/latency goal remain open.

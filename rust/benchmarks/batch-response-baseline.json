@@ -1,0 +1,122 @@
+{
+  "status": "Scoped Go response alignment verified. Performance mixed/near-neutral; no overall throughput or whole-package completion claim.",
+  "source_authority": "client-go e4905600583b internal/client/client_batch.go batchRecvLoop: lookup each ID, ignore outdated responses, transfer the original response, compute maximum ID in the same loop, then advance the stream watermark.",
+  "base_revision": "f53ad10ae464f858782ac702e9e27011f82934fa",
+  "change": "Move response bodies into completion; remove the second ID scan and response-only uniqueness HashSet. Zero and repeated IDs no longer fail the entire stream. Outgoing validation, cardinality, missing-command handling, batching policy and scheduler remain unchanged.",
+  "files": [
+    "crates/tidb-txnkv/src/rpc/batch/inflight.rs",
+    "crates/tidb-txnkv/src/rpc/batch/wire.rs",
+    "crates/tidb-txnkv/tests/batch_inflight_source.rs",
+    "crates/tidb-txnkv/tests/batch_wire_source.rs",
+    "docs/transport-scheduler-execplan.md",
+    "benchmarks/batch-response-baseline.json"
+  ],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-rpc-stages.pWypr5/merged-server",
+      "sha256": "50b098bac8196e5f060d7be9f0ee0440a3cb019d1af6c314a6ea358f91c8d9b6"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-shared-scheduler.fEsNL7/response/candidate-server",
+      "sha256": "fbc4f6ea06c17669dd5e7349028b6ad0aff50c4400d525c06020b215e7d58c2f"
+    }
+  },
+  "validation": {
+    "profile": "Ready scoped",
+    "retained_tests": 97,
+    "regression": "The existing outdated-ID test with [0,11,10,10] fails before wire acceptance changes with ZeroRequestId. Afterward request 10 completes once, three IDs are outdated, and watermark 11 remains monotonic.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv --test all outdated_ids_still_advance_the_monotonic_stream_acknowledgement -- --test-threads=12 (expected failure before fix)",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv --lib --test all --no-fail-fast -- batch_ transport_ connection_ --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 -p tidb-txnkv --all-targets",
+      "rustfmt --edition 2021 --check --config skip_children=true crates/tidb-txnkv/src/rpc/batch/inflight.rs crates/tidb-txnkv/src/rpc/batch/wire.rs crates/tidb-txnkv/tests/batch_inflight_source.rs crates/tidb-txnkv/tests/batch_wire_source.rs",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "ruby /private/tmp/tidb-shared-scheduler.fEsNL7/response/verify.rb",
+      "ruby /private/tmp/tidb-shared-scheduler.fEsNL7/verify-all-cleanup.rb",
+      "git diff --check"
+    ],
+    "working_directory": "Cargo and rustfmt from rust/; make and git from checkout root. Local socket tests and workloads run with socket permissions."
+  },
+  "workloads": {
+    "sysbench_measured_events": 84000,
+    "tpcc_measured_events": 36000,
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "sample_size": 6000,
+    "sysbench": "1/8/32 clients; 1000 warmup events, fixed seed 1, prepared statements auto, one 100000-row table.",
+    "tpcc": "8 clients, one warehouse, fixed input seed 1; each sample has delivery 220, new-order 2674, order-status 229, payment 2652, stock-level 225.",
+    "correctness": "Exact work, zero errors, bounded Go SQL digest ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c and all eleven TPC-C consistency conditions pass.",
+    "summary": [
+      {
+        "workload": "sysbench",
+        "threads": 1,
+        "before_seconds": 12.88655,
+        "after_seconds": 12.84975,
+        "tps_change_percent": 0.2863868946866521,
+        "cpu_change_percent": -0.7092198581560072,
+        "before_cpu": 9.165,
+        "after_cpu": 9.100000000000001,
+        "before_p95_ms": 2.3,
+        "after_p95_ms": 2.3
+      },
+      {
+        "workload": "sysbench",
+        "threads": 8,
+        "before_seconds": 3.3639,
+        "after_seconds": 3.3639,
+        "tps_change_percent": 0,
+        "cpu_change_percent": -0.08557980316644676,
+        "before_cpu": 11.685,
+        "after_cpu": 11.675,
+        "before_p95_ms": 4.82,
+        "after_p95_ms": 4.82
+      },
+      {
+        "workload": "sysbench",
+        "threads": 32,
+        "before_seconds": 2.1379,
+        "after_seconds": 2.1491499999999997,
+        "tps_change_percent": -0.52346276434867,
+        "cpu_change_percent": -1.228209191759111,
+        "before_cpu": 12.62,
+        "after_cpu": 12.465,
+        "before_p95_ms": 12.41,
+        "after_p95_ms": 12.3
+      },
+      {
+        "workload": "tpcc",
+        "threads": 8,
+        "before_seconds": 6.672105999998166,
+        "after_seconds": 6.571779500009143,
+        "elapsed_change_percent": -1.503670654948397,
+        "before_cpu": 14.170000000000002,
+        "after_cpu": 14.150000000000002,
+        "cpu_change_percent": -0.14114326040931546
+      }
+    ]
+  },
+  "measurement_limits": "Two pairs on a local shared-host fixture. No builds or profiling overlapped timing. Small differences are not a broad performance claim. Live Go is TiDB 23bff313186b8ceb61fcbe9faac43ae700e7fb14 with client-go 61ecd7c11416, not checkout Go master.",
+  "artifacts": {
+    "root": "/private/tmp/tidb-shared-scheduler.fEsNL7",
+    "raw_validation": "/private/tmp/tidb-shared-scheduler.fEsNL7/response/validation.json",
+    "raw_validation_sha256": "d3dc84612695001cacbfdbbaf1312be91c7a204d87e255d915a7abd5531dcaed",
+    "regression_before": "/private/tmp/tidb-shared-scheduler.fEsNL7/response-regression-before.log"
+  },
+  "cleanup": {
+    "auto_analyze_before": "1",
+    "auto_analyze_during": 0,
+    "auto_analyze_restored": "1",
+    "owned_pids_absent": 20,
+    "ports_closed": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe"
+  },
+  "not_verified": "No full-workspace test or whole-Go-package parity claim. The earlier planner condition-nine inner-selection failure also reproduces on unchanged a075207030; it is not fixed by this change. The shared-scheduler CPU regression remains open.",
+  "rejected_experiments": "Connection-future grouping and separate I/O driver passed retained tests and live consistency but did not improve overall throughput. Both are fully removed; immutable patches/binaries and results remain in the artifact root."
+}

@@ -157,20 +157,6 @@ fn zero_and_duplicate_request_ids_are_rejected_at_wire_construction() {
             request_id: 7,
         })
     );
-    assert_eq!(
-        BatchWireResponse::new(commands(), vec![0, 2], 0, None, 0),
-        Err(BatchWireError::ZeroRequestId {
-            kind: BatchEnvelopeKind::Response,
-            index: 0,
-        })
-    );
-    assert_eq!(
-        BatchWireResponse::new(commands(), vec![8, 8], 0, None, 0),
-        Err(BatchWireError::DuplicateRequestId {
-            kind: BatchEnvelopeKind::Response,
-            request_id: 8,
-        })
-    );
 }
 
 // client-go/tikvrpc/tikvrpc_test.go:55 TestBatchResponse.

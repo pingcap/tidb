@@ -190,10 +190,10 @@ fn outdated_ids_still_advance_the_monotonic_stream_acknowledgement() {
     inflight.publish(route.clone(), vec![request]).unwrap();
 
     assert_eq!(
-        inflight.receive(&route, response(vec![11, 10])),
+        inflight.receive(&route, response(vec![0, 11, 10, 10])),
         BatchRetirementReport {
             completed: 1,
-            outdated: 1,
+            outdated: 3,
             max_response_request_id: 11,
             ..BatchRetirementReport::default()
         }

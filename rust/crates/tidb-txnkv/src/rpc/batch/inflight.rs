@@ -405,24 +405,10 @@ impl BatchInflightTable {
         route: &BatchRoute,
         response: BatchWireResponse,
     ) -> BatchRetirementReport {
-        let max_response_request_id = response.request_ids().iter().copied().max().unwrap_or(0);
         let state = self.routes.entry(route.clone()).or_default();
-        if max_response_request_id > 0 {
-            state
-                .stream_state
-                .record_max_response_request_id(max_response_request_id);
-        }
-
-        let mut report = BatchRetirementReport {
-            max_response_request_id,
-            ..BatchRetirementReport::default()
-        };
-        for (request_id, response) in response
-            .request_ids()
-            .iter()
-            .copied()
-            .zip(response.commands().iter().cloned())
-        {
+        let mut report = BatchRetirementReport::default();
+        for (request_id, response) in response.into_responses() {
+            report.max_response_request_id = report.max_response_request_id.max(request_id);
             let Some(pending) = state.pending.remove(&request_id) else {
                 report.outdated += 1;
                 continue;
@@ -433,6 +419,11 @@ impl BatchInflightTable {
                 pending.completion.schedule(Ok(response));
                 report.completed += 1;
             }
+        }
+        if report.max_response_request_id > 0 {
+            state
+                .stream_state
+                .record_max_response_request_id(report.max_response_request_id);
         }
         report
     }

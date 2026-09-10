@@ -386,6 +386,11 @@ pub struct BatchWireResponse {
 }
 
 impl BatchWireResponse {
+    /// Transfer each original response body to its request owner in wire order.
+    pub(super) fn into_responses(self) -> impl Iterator<Item = (u64, OpaqueBatchCommand)> {
+        self.request_ids.into_iter().zip(self.commands)
+    }
+
     /// Creates a response with exactly one ID for each opaque command.
     pub fn new(
         commands: Vec<OpaqueBatchCommand>,
@@ -399,7 +404,8 @@ impl BatchWireResponse {
             commands.len(),
             request_ids.len(),
         )?;
-        validate_request_ids(BatchEnvelopeKind::Response, &request_ids)?;
+        // client-go demultiplexes IDs against pending requests. Unknown and
+        // repeated responses are outdated, not failures of the whole stream.
         Ok(Self {
             commands,
             request_ids,
