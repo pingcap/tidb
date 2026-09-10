@@ -2347,6 +2347,14 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     };
+    let district_filter = (0..plan.len())
+        .find(|row| cell(*row, 4).contains("not(isnull(cast(test.district.d_ytd"))
+        .expect("district NULL filter retained after aggregation elimination");
+    assert_eq!(
+        cell(district_filter, 1),
+        "8.00",
+        "Go master applies the optimizer-added NULL filter to the ten-row access range"
+    );
     let operators = plan
         .iter()
         .map(|row| match &row[0] {
@@ -2517,6 +2525,47 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
         "only the key admitted by the history index belongs in IndexJoin access keys: \
          {analyzed:#?}"
     );
+}
+
+#[test]
+fn derived_aggregate_null_filter_refreshes_source_statistics() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+         d_ytd DECIMAL(12,2), PRIMARY KEY(d_w_id,d_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10),(2,1,NULL),(1,2,20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT d_id FROM (SELECT d_id,d_w_id,SUM(d_ytd) s \
+               FROM district GROUP BY d_id,d_w_id) d WHERE d_w_id=1 AND s IS NOT NULL";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+    let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+        panic!("query")
+    };
+    let QueryStmt::Select(select) = &*query else {
+        panic!("select")
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let filter = plan
+        .iter()
+        .find(|row| {
+            matches!(&row[4], Datum::Bytes(bytes) if String::from_utf8_lossy(bytes).contains("not(isnull(cast("))
+        })
+        .expect("optimizer-added cast NULL filter");
+    assert_eq!(filter[1], Datum::Bytes(b"8.00".to_vec()), "{plan:#?}");
 }
 
 /// TPCC condition 11 pushes its outer predicates through two levels of

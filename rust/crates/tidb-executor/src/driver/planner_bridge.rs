@@ -935,6 +935,43 @@ struct InitStats<'a> {
     context: &'a crate::StmtContext,
 }
 
+fn same_statistics_predicate(
+    left: &tidb_expr::expression::Expression,
+    right: &tidb_expr::expression::Expression,
+) -> bool {
+    use tidb_expr::expression::Expression;
+    if left.equal(right) {
+        return true;
+    }
+    let (Expression::ScalarFunction(lhs), Expression::ScalarFunction(rhs)) = (left, right)
+    else {
+        return false;
+    };
+    if lhs.func_name.lowercase() != rhs.func_name.lowercase() {
+        return false;
+    }
+    let split = match lhs.func_name.lowercase() {
+        "and" => tidb_expr::expr_util::split_cnf_items,
+        "or" => tidb_expr::expr_util::split_dnf_items,
+        _ => return false,
+    };
+    let left = split(left);
+    let mut right = split(right);
+    if left.len() != right.len() {
+        return false;
+    }
+    for item in left {
+        let Some(index) = right
+            .iter()
+            .position(|other| same_statistics_predicate(&item, other))
+        else {
+            return false;
+        };
+        right.swap_remove(index);
+    }
+    true
+}
+
 impl InitStats<'_> {
     /// The `(column ids, index ids)` Go's lite statistics initialization
     /// loads for this source: the columns its own predicates compare against
@@ -1257,10 +1294,49 @@ impl OwnedRewrite for InitStats<'_> {
                 },
                 self.range_context,
             );
-            source.base.base.set_stats(Some(table_stats.scale(
-                selectivity,
-                tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
-            )));
+            let cached_predicate_matches = source.pushed_down_conds.is_empty()
+                || source.base.base.schema().is_some_and(|schema| {
+                    let names = source
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
+                                table: tidb_datatype::IdentifierMetadata::new(
+                                    source.table_as_name.as_deref().unwrap_or(&source.table_name),
+                                ),
+                                column: tidb_datatype::IdentifierMetadata::new(&column.name),
+                                ..Default::default()
+                            })
+                        })
+                        .collect();
+                    let options = tidb_expr::simple_expr::BuildOptions::new()
+                        .with_input_schema_and_names(schema.clone(), names);
+                    tidb_expr::simple_expr::build_simple_expr(&resolver, predicate, &options)
+                        .ok()
+                        .is_some_and(|expression| {
+                            let conditions = tidb_expr::expr_util::split_cnf_items(&expression);
+                            let mut unmatched = source.pushed_down_conds.iter().collect::<Vec<_>>();
+                            conditions.len() == source.pushed_down_conds.len()
+                                && conditions.iter().all(|condition| {
+                                    let Some(index) = unmatched.iter().position(|pushed| {
+                                        same_statistics_predicate(condition, pushed)
+                                    }) else {
+                                        return false;
+                                    };
+                                    unmatched.swap_remove(index);
+                                    true
+                                })
+                        })
+                });
+            // A source estimate belongs to its predicates. Optimizer-added
+            // filters must be derived from the current expressions, not the
+            // original statement's WHERE clause.
+            if cached_predicate_matches {
+                source.base.base.set_stats(Some(table_stats.scale(
+                    selectivity,
+                    tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                )));
+            }
         }
         source.table_scan_penalty = tidb_planner::plan_cost_ver2::TableScanPenaltyInput {
             has_range_info: false,

@@ -1,5 +1,73 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 按当前谓词验证 DataSource 统计缓存
+
+修复 `InitStats`：把原 AST 谓词绑定到 DataSource 当前 schema，比对全部
+pushed_down_conds。仅等价时复用原有 histogram/range 估算；新增或改变条件时交给
+planner 当前表达式推导。AND/OR 允许结合顺序和排列变化，叶子保持现有类型/列身份
+相等检查，条件一对一匹配。原 handle/index 路径估算保留。
+
+新增 `derived_aggregate_null_filter_refreshes_source_statistics`，固定 master 在
+全新数据库用完全相同 DDL/三行数据验证 Selection=8、scan=10、结果 d_id=1；
+证据 `/tmp/tpcc-master-oracle.0t3pI6/derived-null-exact.out`。复用旧数据库的另一份
+结果为 1/1.25，统计状态不同，明确不采用为此 fixture 的 oracle。
+恢复旧无条件缓存写入后新增测试稳定失败 10 != 8
+（`/tmp/predicate-cache-derived-red.log`）；修复后通过。
+
+完整 executor `/tmp/predicate-cache-final-full.log`：1293 passed / 2 failed。
+两个剩余失败是 TPCC condition eleven，以及 condition nine 已推进到 analyzed SUM
+合成列编号断言（Column#27 -> Column#24 与旧 Column#0 -> Column#0）。
+没有更改这些断言。global-count OR-of-BETWEEN 的 5.75 估算也通过，避免了直接清空
+stats 实验的额外回归。`make lint` 退出 0（`/tmp/predicate-cache-lint.log`）。
+命令：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib`。
+Ready 仅覆盖本项，仍不代表整体目标或统计 package 完整移植完成。
+
+## 2026-09-10 验证并否决直接重新推导统计
+
+可撤销实验：`InitStats::descend` 在已有 pushed_down_conds 时清除预填 DataSource stats，
+使后续 planner 从当前条件推导。condition-nine 的 district 8.00 和 IndexHashJoin 断言
+均通过，测试推进到 analyzed 阶段 SUM 的合成列编号断言：实际 Column#27 -> Column#24，
+旧测试要求 Column#0 -> Column#0。日志 `/tmp/tpcc-native-stats-experiment.log`。
+这证明遗漏优化后条件影响实际成本选择，但不证明直接清空统计是可用修复。
+
+完整 executor 实验 `/tmp/native-stats-full-experiment.log` 为 1286 passed / 8 failed，
+较此前新增 global-count/index-range、TPCH Q14、common-handle ordered-limit、join-filter、
+TPCC 两点查、TPCH Q2 六项失败。命令如下：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib
+```
+
+实验代码已撤销，原有 AST histogram/range 估算能力保留，红色回归断言保留。
+正式接入应让优化后表达式复用完整估算入口；不能用只支持部分算子的
+`logical/rewrite.rs::analyzed_filter_selectivity` 替代完整统计路径。
+`ColumnResolver::resolve_expression` 可返回完整绑定表达式，值得用于接入设计，
+但仅把整棵表达式包装成 opaque Column 会绕过 AST 条件分类，也不能作为修复。
+
+## 2026-09-10 TPCC NULL 过滤估算的精确红色入口
+
+在当前 `9197fccf9b` 上确认工作树干净后继续诊断。`InitStats::descend` 的临时探针
+证明：第二次统计初始化时 district 的 `pushed_down_conds` 已包含 `d_w_id=1` 和
+`NOT ISNULL(CAST(d_ytd AS DECIMAL(34,2)))`，但传给 access_cost 的原始 AST 仍只有
+`d_w_id=1`，得到 selectivity=0.001。日志 `/tmp/tpcc-source-stats.log`。
+`PlannerStatisticsLoad::initialize` 复用 `InitStats`，随后 `recursive_derive_stats`
+发现 DataSource 已有 stats 就直接返回，遗漏新增过滤。
+
+在原 condition-nine 回归中新增针对 district NULL Selection 的 estRows 断言，保持
+原计划、结果行和其他断言。固定 master 的 `/tmp/tpcc-master-oracle.0t3pI6/condition-nine.out`
+证明期望为 8.00。以下命令已执行，退出 101，耗时 0.03 秒，实际 10.00 != 8.00：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml \
+  -p tidb-executor --lib tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup
+```
+
+日志 `/tmp/tpcc-nine-filter-red.log`。临时 `[DEBUG-tpcc-source]` 探针已移除。
+新增测试断言仍为本地 WIP，尚无生产修复，不将此项当作 green 或完成提交。
+下一步应让统计初始化消费当前优化后的条件，并保留已有 column/index histogram、
+参数上下文和路径估算；直接清空 stats 或只修 pseudo 分支不能证明完整修复。
+
 ## 2026-09-10 TPCC condition nine 的 master 实测取证
 
 以同一固定 master binary 启动独立 unistore，完整 DDL、数据和 SQL 位于
