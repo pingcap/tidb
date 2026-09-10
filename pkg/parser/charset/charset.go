@@ -620,6 +620,13 @@ var collations = []*Collation{
 	{308, "utf8mb4", "utf8mb4_zh_0900_as_cs", false, 1, PadNone},
 	{309, "utf8mb4", "utf8mb4_0900_bin", false, 1, PadNone},
 	{2048, "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs", false, 1, PadNone},
+	// TiDB-specific ICU-derived locale collations: accent-sensitive, case-insensitive (ks-level2),
+	// numeric ordering (kn). MySQL has no name for the numeric option, so these use TiDB IDs >= 2048.
+	{2049, "utf8mb4", "utf8mb4_da_0900_as_ci_kn", false, 1, PadNone},
+	{2050, "utf8mb4", "utf8mb4_de_0900_as_ci_kn", false, 1, PadNone},
+	{2051, "utf8mb4", "utf8mb4_es_0900_as_ci_kn", false, 1, PadNone},
+	{2052, "utf8mb4", "utf8mb4_fr_0900_as_ci_kn", false, 1, PadNone},
+	{2053, "utf8mb4", "utf8mb4_sv_0900_as_ci_kn", false, 1, PadNone},
 }
 
 // AddCharset adds a new charset.
