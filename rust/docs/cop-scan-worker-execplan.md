@@ -41,13 +41,14 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 - [ ] Beat the faster control on throughput/latency and validate TPC-C/mixed writes.
 - [ ] Complete required whole-package/platform validation before parity claims.
 - [x] Compile the merged executor/session/server and all their test targets.
-- [x] Remove 52 identified Rust-only tests and obsolete helper scaffolding.
+- [x] Remove 56 identified Rust-only tests and obsolete helper scaffolding.
 - [x] Run retained Go memory-cleanup, sort-spill and session-variable tests:
   three passed, zero failed. Ready lint passed.
 - [ ] Complete the repository-wide Go-test provenance audit.
 - [x] Reconcile the upstream merge through b77c90cde6 with no unresolved entries.
 - [x] Build release server/smoke binaries and compare 81 live Go/Rust SQL cases.
-- [ ] Finish consolidated socket-enabled tests and verify normal remote publication.
+- [x] Pass 78 scoped socket/executor/planner tests, workspace all-target compilation,
+  formatting, shell syntax and Ready lint.
 
 
 ## Context and Orientation
@@ -227,7 +228,7 @@ No string marker or substring-based error-code parsing remains.
 Client identity, authentication, privilege attachment and connection kill
 handling remain in public open_session. Both boot paths configure the factory
 before sharing it; the binding writer borrows a weak factory reference.
-The cleanup removes 52 identified Rust-only tests and obsolete scaffolding,
+The cleanup removes 56 identified Rust-only tests and obsolete scaffolding,
 not every test lacking a completed provenance audit. Retained shared fixtures
 must still compile against the current public interfaces.
 
@@ -250,12 +251,33 @@ This proves the exercised SQL comparisons, not pushdown/batching acceptance.
 Playground cleanup completed and ports 46199/47820/47920 are closed.
 Evidence: merge-live-scan-pushdown.log under /private/tmp/tidb-counter-window.jbkXVN.
 
-Final socket-enabled client/executor checks are in progress. An earlier
-sandboxed run passed the non-socket checks; all 31 socket failures were
-PermissionDenied at bind. The authorized rerun is merge-final-verified.log.
-Ready lint passed in merge-final-lint-2.log with
-GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint. Publication remains pending a normal
-push to origin/hparser-integration and remote SHA verification.
+Scoped Ready verification passed: 71 client/executor/recordset tests, seven
+Go-derived planner fixtures, workspace compilation with all targets, formatting,
+shell syntax and lint. Logs are merge-final-verified.log,
+merge-planner-fixtures-final.log, merge-workspace-ready-2.log and
+merge-final-lint-2.log. The final live rerun is merge-live-scan-final.log;
+it compares full Go error text and explicitly reports incomplete receipts.
+The earlier 31 socket failures were PermissionDenied at bind and all passed
+with authorized localhost access.
+
+The final workspace check also reconciled explicit callback completion types,
+native expression-backed sort items and reader explain arguments in retained
+fixtures. Four tests of the retired Rust-only ProjectionInlineExpr model were
+removed; real-plan join-reorder tests remain. Production merge da0bf5ab86
+preserves both local history and the shared upstream head b77c90cde6.
+Publication target is origin/hparser-integration, normal push only.
+
+Exact final commands (Cargo commands from the isolated worktree's rust directory;
+lint and formatting from its root):
+
+    cargo check --offline --locked --release -j12 --workspace --all-targets
+    cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-exec -p tidb-server --no-fail-fast --lib --tests -- coprocessor_cot_error_matches_go select_response_errno_survives_recordset_mapping resultset_writer_source mysql_client_lifecycle_source initial_database_tcp_source concurrent_mysql_sessions_source mysql_native_auth_lifecycle_source prepared_typed_markers tests_executor_part19_source shared_physical
+    cargo test --offline --locked --release -j12 -p difftest-planner-tests --test all -- physical_sort physical_table_reader
+    KEEP_LOGS=1 SCAN_PUSHDOWN_PORT_OFFSET=43820 CARGO_BUILD_JOBS=12 bash scripts/run-realtikv-scan-pushdown.sh
+    GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint
+    git diff --name-only --diff-filter=ACM -- '*.rs' | xargs rustfmt --check --edition 2021 --config skip_children=true
+    bash -n rust/scripts/run-realtikv-scan-pushdown.sh rust/scripts/run-realtikv-lock-recovery.sh
+    git diff --check
 
 Remaining semantic work includes statement-context-aware cached-plan rebuilding,
 physical selected-row locking, unsupported aggregate/window/subquery shapes,

@@ -19,6 +19,8 @@
 //! - `TestCloneFineGrainedShuffleStreamCount` at `pkg/planner/core/plan_test.go:681`
 //! - `TestDeepClone` at `pkg/planner/core/planbuilder_test.go:277`
 
+use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_expr::{aggregation::ByItems, column::Column, expression::Expression};
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner::physical_property::SortItem;
 
@@ -27,7 +29,10 @@ fn sort(items: Vec<SortItem>, partial: bool, offset: i32, stream_count: u64) -> 
     base.tiflash_fine_grained_shuffle_stream_count = stream_count;
     PhysicalSort {
         base,
-        by_items: items,
+        by_items: items
+            .into_iter()
+            .map(|item| ByItems::new(Expression::Column(item.col), item.desc))
+            .collect(),
         is_partial_sort: partial,
     }
 }
@@ -62,12 +67,23 @@ fn deep_clone_keeps_sort_items_independent() {
     let PhysicalPlan::Sort(cloned_sort) = &mut cloned else {
         unreachable!();
     };
-    cloned_sort.by_items[0].col = 2;
+    cloned_sort.by_items[0].expr =
+        Expression::Column(Column::new(2, FieldType::new(FieldTypeCode::LongLong)));
     let PhysicalPlan::Sort(original_sort) = &plan else {
         unreachable!();
     };
-    assert_eq!(original_sort.by_items[0].col, 1);
-    assert_eq!(cloned_sort.by_items[0].col, 2);
+    assert_eq!(
+        original_sort.by_items[0]
+            .expr
+            .as_column()
+            .unwrap()
+            .unique_id,
+        1
+    );
+    assert_eq!(
+        cloned_sort.by_items[0].expr.as_column().unwrap().unique_id,
+        2
+    );
 }
 
 #[test]

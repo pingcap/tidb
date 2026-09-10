@@ -43,8 +43,8 @@ fn table_scan(id: i32) -> PhysicalTableScan {
 fn request_type_supported_off_keeps_wired_table_reader_shape() {
     let plan = PhysicalTableReader::from_table_scan(table_scan(1)).expect("resolved table scan");
     assert_eq!(plan.plan_type(), "TableReader");
-    assert_eq!(plan.explain_info(), "data:TableFullScan");
-    assert_eq!(plan.operator_info(), "data:TableFullScan");
+    assert_eq!(plan.explain_info(false), "data:TableFullScan");
+    assert_eq!(plan.operator_info(false), "data:TableFullScan");
     assert_eq!(plan.read_req_name(), "cop");
 }
 

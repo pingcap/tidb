@@ -713,13 +713,17 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
 
     let mut client = TonicCoprocessorClient::new().expect("construct production tonic client");
     let direct_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
-    let (direct_completion, mut direct_pull) = completion_pair(CompletionRunLoop::new(), || {});
+    let (direct_completion, mut direct_pull) = completion_pair::<
+        OpaqueBatchCommand,
+        tidb_txnkv::BatchInflightError,
+        _,
+    >(CompletionRunLoop::new(), || {});
     let direct_receipts = client
         .submit_batch_commands(
             &physical_store.address,
             vec![BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
-                direct_completion.into(),
+                direct_completion,
             )],
         )
         .expect("publish production direct BatchCommands request");
@@ -816,13 +820,16 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
 
     let direct_survival_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
     let (direct_survival_completion, mut direct_survival_pull) =
-        completion_pair(CompletionRunLoop::new(), || {});
+        completion_pair::<OpaqueBatchCommand, tidb_txnkv::BatchInflightError, _>(
+            CompletionRunLoop::new(),
+            || {},
+        );
     let direct_survival_receipts = client
         .submit_batch_commands(
             &physical_store.address,
             vec![BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
-                direct_survival_completion.into(),
+                direct_survival_completion,
             )],
         )
         .expect("forwarded failure must not retire the sibling direct stream");
