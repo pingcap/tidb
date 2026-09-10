@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrs "errors"
 	"fmt"
 	"math"
 	"runtime/trace"
@@ -73,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -841,9 +843,12 @@ func NormalizeStmtCancellationError(sessVars *variable.SessionVars, err error) e
 	if err == nil || terror.ErrResultUndetermined.Equal(err) {
 		return err
 	}
+	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+		return err
+	}
 	cause := errors.Cause(err)
 	code := status.Code(cause)
-	if cause != context.Canceled && cause != context.DeadlineExceeded &&
+	if !stderrs.Is(cause, context.Canceled) && !stderrs.Is(cause, context.DeadlineExceeded) &&
 		code != codes.Canceled && code != codes.DeadlineExceeded {
 		return err
 	}
