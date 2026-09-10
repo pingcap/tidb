@@ -6818,7 +6818,7 @@ impl QuerySession for ClusterServerSession {
             });
         let direct_dml = cached_dml.is_some();
         let direct = fast || fast_select || direct_dml;
-        let bound_template = if direct {
+        let bound_template = if direct && !fast_select {
             None
         } else {
             effective
@@ -6831,8 +6831,11 @@ impl QuerySession for ClusterServerSession {
         } else if fast_select {
             // A retained physical SELECT still needs the locking statement's
             // fresh for-update snapshot and lock-value cache on every replay.
-            self.session
-                .statement_read_shape_bound(effective.expect("cached SELECT retains its statement"))
+            // Classify this execution's values, not the unbound PREPARE
+            // markers: a complete point key may use MaxTS even on cache hits.
+            self.session.statement_read_shape_bound(
+                bound_template.as_ref().expect("cached SELECT is bound"),
+            )
         } else if direct_dml {
             StatementReadShape::AutocommitWrite
         } else {

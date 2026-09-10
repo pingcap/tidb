@@ -1,5 +1,38 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 缓存 SELECT 用本次绑定值判定读取形状
+
+`a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp` 独立失败：
+`SELECT v FROM t WHERE id = ? LIMIT 1` 申请了普通时间戳，而完整主键点读应
+使用 MaxTS，`/tmp/prepared-bound-shape-red.log`，0.05 秒。
+缓存 SELECT 分支把未绑定的 PREPARE 模板交给读取形状判定，无法证明完整键。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/sessiontxn/isolation/optimistic.go:144-148` 检查 Execute.Plan，
+`pkg/planner/core/common_plans.go:1687` 检查本次物理计划是否为完整点范围。
+Rust 本次修复仍使用现有读取形状判定器，但输入改成本次参数绑定后的 AST；
+不重解析 SQL，不改缓存物理计划执行。该绑定副本也供已有预加锁键判定复用。
+
+原回归不变：`id >= ? LIMIT 1` 的范围查询保持一个普通时间戳，
+`id = ? LIMIT 1` 完整点查询使用 MaxTS；每条 PREPARE 以 1、2 两组参数执行，
+验证返回值、读取结束和连接关闭。修复后 1 passed，0.05 秒，
+`/tmp/prepared-bound-shape-green.log`。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/prepared-bound-shape-{green,fmt,lint}.log
+```
+
+完整 server 回归见 `/tmp/server-prepared-bound-shape-baseline.log`，
+其他失败仍单独跟踪。
+边界：增加普通缓存 SELECT 的 AST 绑定副本成本；尚未把现有 AST 读取形状
+判定器整体替换为 Go 的物理计划判定器，fix52592 的独立失败仍需处理。
+
 ## 2026-09-11 mock transaction 接入点写入返回值锁接口
 
 四个事务测试在点写入阶段报 1105：only a pessimistic transaction locks
