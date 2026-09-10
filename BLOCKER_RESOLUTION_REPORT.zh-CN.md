@@ -1,5 +1,42 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 未知全局变量回归使用真实 scratch 快照
+
+refresh_failure_skips_a_future_unknown_global_without_panicking 单独运行
+通过，但 reloader_tests 并行运行时失败：live.overrides() 意外包含
+secure-transport 覆盖项（`/tmp/future-sysvar-module-red.log`，21/1）。
+该测试使用 GlobalSysvars::new() 构造 scratch，get 会读取进程级 TLS
+开关；其他测试的 ON 会被当作当前事务快照中的持久 ON 预发布。
+生产 RealClusterSysvars::begin（cluster_sysvar_seam.rs:383）实际使用
+GlobalSysvars::from_cluster_rows，读取的是隔离的存储快照。
+
+现将该回归的 scratch 改为生产构造方式，并断言空存储快照的
+require_secure_transport 为 OFF。保留未知变量不能 panic、失败警告
+内容和 live.overrides() 为空的所有断言，未修改生产变量发布逻辑。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/domain/sysvar_cache.go:138` 从已知变量注册表与表中值构造缓存，
+随后单独运行全局 getter/setter 对应的运行时钩子；未知未来变量不会
+凭空成为已知变量的持久更改。
+
+验证命令：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib refresh_failure_skips_a_future_unknown_global_without_panicking
+# 1 passed，/tmp/future-sysvar-target-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib cluster_sysvar_seam::reloader_tests
+# 目标用例通过；模块仍 21 passed / 1 failed
+# /tmp/future-sysvar-module-green.log 名称不代表模块全绿
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 退出 0，/tmp/future-sysvar-{fmt,lint}.log
+```
+
+模块剩余失败为 an_older_local_commit_publishing_last_rereads_the_newer_durable_value：
+全局 TLS getter 期望 OFF 却读到并发测试的 ON。尚需修复其测试隔离；
+全局变量加载、登录验证及完整目标均未宣布完成。本项使用 Ready 的
+定向验证与 lint，明确保留扩大验证中发现的未解决失败。
+
 ## 2026-09-11 分区 ANALYZE 回归中的 DDL 事件与缓存同步
 
 partition_scoped_analyze_refreshes_global_count_and_modify_count 在 DROP p2

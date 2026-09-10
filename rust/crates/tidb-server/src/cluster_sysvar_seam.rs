@@ -1468,7 +1468,13 @@ mod reloader_tests {
     fn refresh_failure_skips_a_future_unknown_global_without_panicking() {
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
-        let scratch = GlobalSysvars::new();
+        // RealClusterSysvars::begin uses a stored snapshot, not live process
+        // getters that can observe a peer test's secure-transport setting.
+        let scratch = GlobalSysvars::from_cluster_rows([]);
+        assert_eq!(
+            scratch.get("require_secure_transport").as_deref(),
+            Ok("OFF")
+        );
 
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             fence.publish_local_after_commit_with_read(
