@@ -1,0 +1,242 @@
+{
+  "base_revision": "0a61b84af5f6e7ed638b655aba45888f6de30068",
+  "scope": "Prepared access-path costing now uses the current statement context. Not whole-package parity or a verified performance win.",
+  "artifact_root": "/private/tmp/tidb-prepared-order.Y13Xya",
+  "source_diff_sha256": "097dcaaecf1d9945c44df8474aa201e1f6417a9483cd6a3652caf920e12f707f",
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-statement-metadata.caYXkP/metadata-server",
+      "sha256": "e008264dca0c1aad9ce8c2eb6bc2ed13cfd2ffc33b57e824d43c77db93a2f4cf"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-prepared-order.Y13Xya/candidate-server",
+      "sha256": "02c996989ffde30f078789aa6915b1bb643f0110fc066a9a69e03a7239417b0d"
+    }
+  },
+  "source_evidence": [
+    "Go stats.go:397 supplies sctx.GetRangerCtx() to index range building, as table range building also does.",
+    "Go constant.go:176 reads parameters from the current context, not embedded AST values.",
+    "Rust ScopeResolver.param_value requires constant_context. InitStats previously constructed a name-only scope with only a time zone. It now borrows StmtContext and reuses one statement-aware scope for predicate extraction, ranges and selectivity."
+  ],
+  "validation": {
+    "profile": "Ready scope; known failures retained, not a fully green release.",
+    "session_pair": {
+      "baseline": {
+        "passed": 119,
+        "failed": 9,
+        "ignored": 1,
+        "log": "range-cost-baseline-tests.log"
+      },
+      "candidate": {
+        "passed": 121,
+        "failed": 7,
+        "ignored": 1,
+        "log": "range-cost-session-verified.log"
+      },
+      "resolved": [
+        "New analyzed composite-index prepared estimate regression: 20.00 before versus literal 1.00; first execution and cache hit pass afterward.",
+        "Existing logical_range_quota_rejects_unindexed_prepared_cache"
+      ],
+      "remaining": "The other seven failure bodies are identical. See paired logs.",
+      "red_log": "composite-range-cost-red.log",
+      "note": "The initial simpler unanalyzed fixture passed and was not a reproducer (range-cost-red.log)."
+    },
+    "ranges": {
+      "passed": 65,
+      "failed": 0,
+      "log": "cost-range-final.log"
+    },
+    "retired_test": "execute_bound_markers_use_the_same_handle_selectivity_as_literals used embedded parameter values without an evaluation context. Obsolete Rust-only protection test removed under user authorization; end-to-end coverage retained. No Go fixture removed.",
+    "workspace_log": "workspace-final.log",
+    "build_log": "build.log",
+    "lint_log": "lint.log",
+    "bazel_prepare": "Not triggered: no Go/module/Bazel changes.",
+    "binary_note": "candidate-server frozen before test-only removal. Production sources match the final diff. Subsequent temporary instrumentation removed; diagnostic binaries excluded from timing.",
+    "commands": {
+      "session": "cargo test --offline --locked --release -j12 -p tidb-session --lib --no-fail-fast -- tests_prepared_plan_cache tests_prepared_statements tests_explain::explain_select tests_non_prepared_plan_cache tests_timezone_storage tests_cte tests_explain_derived tests_explain_merge_join --test-threads=1",
+      "ranges": "cargo test --offline --locked --release -j12 -p tidb-executor --lib --no-fail-fast -- access_cost:: index_range:: handle_range:: --test-threads=1",
+      "workspace": "cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "git diff --name-only --diff-filter=ACM -- '*.rs' | xargs rustfmt --check --edition 2021 --config skip_children=true",
+      "diff": "git diff --check",
+      "live": "ruby /private/tmp/tidb-prepared-order.Y13Xya/verify-range-cost.rb",
+      "prepared": "ruby /private/tmp/tidb-prepared-order.Y13Xya/verify-prepared-candidate.rb",
+      "diagnostic": "ruby /private/tmp/tidb-prepared-order.Y13Xya/candidate-sort-plans.rb",
+      "profiles": "python3 /private/tmp/tidb-prepared-order.Y13Xya/profile-cost.py /private/tmp/tidb-prepared-order.Y13Xya/after-sysbench.trace /private/tmp/tidb-prepared-order.Y13Xya/after-tpcc.trace",
+      "cleanup": "ruby /private/tmp/tidb-prepared-order.Y13Xya/verify-cleanup.rb"
+    },
+    "working_directories": {
+      "cargo": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+      "other": "/private/tmp/tidb-upstream-merge.nzY42N"
+    }
+  },
+  "live": {
+    "topology": "Owned local PD/TiKV/Go v9.0.0-beta.2.pre-nightly; sequential Rust nodes on existing one-warehouse fixture.",
+    "prepared": {
+      "comparisons": 8,
+      "all_results_equal": true,
+      "log": "candidate-prepared-plans.jsonl",
+      "note": "Bound order-status and delivery plans match Go exactly. Bound EXPLAIN is a separate planning operation; EXPLAIN FOR CONNECTION returned empty for both."
+    },
+    "sysbench": {
+      "measured_events": 72000,
+      "warmup_events": 12000,
+      "profile_events": 49333,
+      "errors": 0,
+      "clients": [
+        1,
+        8,
+        32
+      ],
+      "order": [
+        "after",
+        "before",
+        "before",
+        "after"
+      ]
+    },
+    "tpcc": {
+      "candidate_uninstrumented_transactions": 50000,
+      "baseline_transactions": 12000,
+      "candidate_diagnostic_transactions": 6000,
+      "baseline_diagnostic_transactions": 6000,
+      "consistency_conditions": 11,
+      "all_checks_passed": true,
+      "eight_client_fixed_mix": {
+        "DELIVERY": 220,
+        "NEW_ORDER": 2674,
+        "ORDER_STATUS": 229,
+        "PAYMENT": 2652,
+        "STOCK_LEVEL": 225
+      }
+    },
+    "means": [
+      {
+        "group": "sysbench/after/1",
+        "samples": 2,
+        "mean_seconds": 12.817699999999999,
+        "mean_sql_cpu_seconds": 7.93,
+        "mean_tps": 468.1773954259528,
+        "mean_p95_ms": 2.28
+      },
+      {
+        "group": "sysbench/after/8",
+        "samples": 2,
+        "mean_seconds": 3.4389000000000003,
+        "mean_sql_cpu_seconds": 11.8,
+        "mean_tps": 1744.7677549343862,
+        "mean_p95_ms": 4.955
+      },
+      {
+        "group": "sysbench/after/32",
+        "samples": 2,
+        "mean_seconds": 2.0884,
+        "mean_sql_cpu_seconds": 12.269999999999998,
+        "mean_tps": 2873.3553099855617,
+        "mean_p95_ms": 12.3
+      },
+      {
+        "group": "sysbench/before/1",
+        "samples": 2,
+        "mean_seconds": 12.946950000000001,
+        "mean_sql_cpu_seconds": 8.07,
+        "mean_tps": 463.42991855379523,
+        "mean_p95_ms": 2.325
+      },
+      {
+        "group": "sysbench/before/8",
+        "samples": 2,
+        "mean_seconds": 3.4678,
+        "mean_sql_cpu_seconds": 12.09,
+        "mean_tps": 1730.2182642299995,
+        "mean_p95_ms": 5
+      },
+      {
+        "group": "sysbench/before/32",
+        "samples": 2,
+        "mean_seconds": 2.08935,
+        "mean_sql_cpu_seconds": 12.684999999999999,
+        "mean_tps": 2872.047023227422,
+        "mean_p95_ms": 12.41
+      },
+      {
+        "group": "tpcc/after/8",
+        "samples": 2,
+        "mean_seconds": 6.316300500002399,
+        "mean_sql_cpu_seconds": 13.27
+      },
+      {
+        "group": "tpcc/after/1",
+        "samples": 1,
+        "mean_seconds": 15.791937999994843,
+        "mean_sql_cpu_seconds": 8.980000000000004
+      },
+      {
+        "group": "tpcc/before/8",
+        "samples": 2,
+        "mean_seconds": 6.415004000009503,
+        "mean_sql_cpu_seconds": 13.235
+      }
+    ],
+    "raw_timing": "process-validation.json",
+    "parity_hash": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "parity_scope": "Selected point/range/aggregate and checksum queries; not full SQL parity."
+  },
+  "profiles": {
+    "method": "8-second Time Profiler plus 5-second native sample, Running-state export only. Inclusive costs overlap; not normalized work or wall time.",
+    "baseline": {
+      "artifact_root": "/private/tmp/tidb-statement-metadata.caYXkP",
+      "sysbench_running_ns": 27423000000,
+      "sysbench_sort_next_ns": 2553000000,
+      "tpcc_running_ns": 16580000000,
+      "tpcc_sort_next_ns": 643000000
+    },
+    "candidate": [
+      {
+        "trace": "/private/tmp/tidb-prepared-order.Y13Xya/after-sysbench.trace",
+        "running_ns": 26604000000,
+        "sort_next_ns": 2473000000
+      },
+      {
+        "trace": "/private/tmp/tidb-prepared-order.Y13Xya/after-tpcc.trace",
+        "running_ns": 15646000000,
+        "sort_next_ns": 627000000
+      }
+    ],
+    "go_reference": {
+      "artifact_root": "/private/tmp/tidb-after-index-profile.V83erd",
+      "tpcc_running_ns": 19920000000,
+      "sort_open_ns": 4000000,
+      "sort_next_sampled": false,
+      "note": "Prior diagnostic window, not matched timing."
+    },
+    "actual_plan": {
+      "before_scan_estimate": 30000,
+      "after_scan_estimate": 1,
+      "range": "[1 3,1 3]",
+      "shape": "Sort -> TableReader -> Projection -> Selection -> TableRangeScan",
+      "before_log": "server-cold-tpcc-diagnostic.log",
+      "after_log": "server-candidate-cold-tpcc-diagnostic.log",
+      "diagnostic_sha256": "422b8407d55c21955b58c205cf99555d4fecf23fb3629dd75ba4f0e2ff4eb4a0"
+    },
+    "conclusion": "The prepared context bug is repaired, but the TPC-C sort hotspot remains: 627ms versus baseline 643ms, around 4% of Running samples in both. No performance baseline promotion."
+  },
+  "remaining": [
+    "Trace the underestimated common-handle prefix and cold statistics ownership; exact causal layer is not yet proven.",
+    "Compare Go ColumnStatsIsInvalid with Rust row_count_estimator::get_row_count_by_column_ranges, which currently checks only Option presence.",
+    "CachedSelectPlan::bind still uses a parameter-only range rebuild context.",
+    "Seven unchanged paired session failures and broader previously recorded unsupported semantics remain."
+  ],
+  "limitations": [
+    "Shared mediaanalysisd at roughly 90% CPU, Go auto-analyze during paired rounds and growing fixture confound small timing deltas.",
+    "No controlled faster-Rust-control comparison, full Go performance parity, whole-package or all-tests-pass claim.",
+    "No forced index, query-specific hint, batching constant, protocol/security setting or stale-parameter fallback added."
+  ],
+  "cleanup": {
+    "owned_pids_absent": 11,
+    "ports_closed": 10,
+    "log": "cleanup.json",
+    "fixture_retained": true
+  }
+}

@@ -106,6 +106,53 @@ fn the_second_execute_of_a_cacheable_statement_reports_a_hit() {
     session.run("SET @a = 20").unwrap();
     session.run("EXECUTE s1 USING @a").unwrap();
     assert_eq!(cache_flag(&mut session), "1");
+
+    // Go derives access-path statistics with the current ranger context.
+    // Parameterized equality must cost the same range as its literal form;
+    // retaining a full-table estimate can cache a scan+sort for an index read.
+    let registry = crate::process::ProcessRegistry::default();
+    session.attach_process(
+        41,
+        registry.register(41, "root".into(), "local".into(), "test".into(), None),
+    );
+    session.run("CREATE TABLE range_customer(c_id INT NOT NULL,c_d_id INT NOT NULL,c_w_id INT NOT NULL,c_first VARCHAR(16),c_last VARCHAR(16),PRIMARY KEY(c_w_id,c_d_id,c_id) CLUSTERED,INDEX idx_customer(c_w_id,c_d_id,c_last,c_first))").unwrap();
+    let rows = (1..=20)
+        .map(|id| {
+            format!(
+                "({id},1,1,'C{id:02}','{}')",
+                if id <= 2 { "match" } else { "other" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO range_customer VALUES {rows}"))
+        .unwrap();
+    session.run("ANALYZE TABLE range_customer").unwrap();
+    session.run("SET @w=1,@d=1,@last='match'").unwrap();
+    let literal = row_text(session.run("EXPLAIN SELECT c_id FROM range_customer WHERE c_w_id=1 AND c_d_id=1 AND c_last='match' ORDER BY c_first"));
+    let expected = literal
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap()[1]
+        .clone();
+    session.run("PREPARE range_cost FROM 'SELECT c_id FROM range_customer WHERE c_w_id=? AND c_d_id=? AND c_last=? ORDER BY c_first'").unwrap();
+    for _ in 0..2 {
+        session.run("EXECUTE range_cost USING @w,@d,@last").unwrap();
+        let info =
+            tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41).unwrap();
+        let plan = tidb_util::plancodec::decode_binary_plan_for_connection(
+            info.brief_binary_plan.clone(),
+            "row",
+            true,
+        )
+        .unwrap();
+        let actual = &plan
+            .iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap()[1];
+        assert_eq!(actual, &expected, "prepared range estimate: {plan:?}");
+    }
 }
 
 #[test]
@@ -829,8 +876,11 @@ fn range_quota_max_min_respects_filtered_index_paths() {
         // Index hints remove physical candidates, but Go Selectivity still
         // builds the ordinary-column histogram range for a=1.
         assert_eq!(
-            warnings.iter().flatten()
-                .filter(|text| text.contains("tidb_opt_range_max_size")).count(),
+            warnings
+                .iter()
+                .flatten()
+                .filter(|text| text.contains("tidb_opt_range_max_size"))
+                .count(),
             1,
             "{warnings:?}"
         );

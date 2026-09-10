@@ -3929,37 +3929,6 @@ mod tests {
         assert!((actual - 99.0 / 10_000.0).abs() < 1e-12, "{actual}");
     }
 
-    #[test]
-    fn execute_bound_markers_use_the_same_handle_selectivity_as_literals() {
-        let mut table = KvTable::with_storage(
-            82,
-            vec![long_column("id", 1)],
-            Box::new(MemTableStorage::new()),
-        );
-        table.set_pk_handle_offset(0);
-        let marker = |order, value| tidb_ast::Expr::ParamMarker {
-            offset: order,
-            order,
-            in_execute: true,
-            value: Some(Datum::Int(value)),
-            projection_offset: 0,
-        };
-        let predicate = tidb_ast::Expr::Between {
-            expr: Box::new(tidb_ast::Expr::Column(vec!["id".to_owned()])),
-            low: Box::new(marker(0, 1)),
-            high: Box::new(marker(1, 100)),
-            not: false,
-        };
-
-        let actual = selectivity(
-            &predicate,
-            &table,
-            &NamedColumnResolver { table: &table },
-            None,
-        );
-        assert!((actual - 99.0 / 10_000.0).abs() < 1e-12, "{actual}");
-    }
-
     /// Go's DataSource call supplies `filledPaths`, so a clustered PRIMARY
     /// mapped to the not-yet-filled table path cannot replace the secondary
     /// composite estimate. The later IndexFilters call supplies nil paths and

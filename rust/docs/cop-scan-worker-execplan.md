@@ -3,10 +3,11 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment shares published configuration and version-owned index
-metadata. Go retains the configuration pointer and makes its domain available
-independently of statement kind; Rust was copying both metadata payloads and
-conditionally omitting the domain for EXPLAIN of a locking read.
+The current increment restores statement-context-aware access-path costing.
+Go builds ranges through the current ranger context; Rust's statistics pass
+used a name-only resolver, so EXECUTE parameters could not constrain estimates.
+The preceding increment shares configuration and version-owned index metadata
+and makes the domain available independently of statement kind.
 Full performance and whole-Go-package acceptance remain open.
 
 
@@ -21,6 +22,48 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Trace the remaining TPC-C SortExec to the actual prepared non-covering
+  customer query: instrumented 0a61b84af5 chooses a table scan with 30,000-row
+  access estimate. The 6,000-transaction cold probe and all 11 consistency
+  checks pass. Temporary instrumentation is removed; evidence is retained in
+  /private/tmp/tidb-prepared-order.Y13Xya. Ordinary bound EXPLAIN uses the index.
+- [x] Locate the generic costing cause: InitStats constructs a name-only
+  FromScope and copies only its time zone. index_range::constant_value asks
+  resolver.param_value for EXECUTE markers, which fails without the statement
+  context; range costing falls back to the table row count. Go stats.go builds
+  ranges through ds.SCtx().GetRangerCtx(). Execution has the real context, so
+  row correctness does not expose the costing error.
+- [x] Extend retained prepared-cache coverage: analyzed composite-index EXECUTE
+  estimates 20 rows before the fix versus literal EXPLAIN's 1 row. Carry the
+  current statement context through InitStats and reuse one per-source scope
+  for predicate extraction and costing. The paired session batch improves from
+  119 passed / 9 failed to 121 passed / 7 failed; the range-estimate regression
+  and existing range-quota case pass. The other seven failure bodies are identical.
+- [x] Remove the obsolete Rust-only access-cost test that embeds marker values
+  but supplies no parameter context. Go Constant.GetUserVar reads current
+  context parameters; the retained end-to-end cache test covers that path.
+  Do not restore a stale-AST-value fallback to satisfy the removed test.
+- [x] Final range batch: 65 passed; all-target check, release build, Ready lint
+  and changed-source formatting pass. Eight prepared result comparisons match
+  Go. Complete 72,000 measured sysbench events and 50,000 uninstrumented
+  candidate TPC-C transactions with all 11 consistency checks. The paired
+  session batch still has seven unchanged failures; this is not a green release.
+- [x] Re-profile the original TPC-C chain: SortExec::next remains 627ms versus
+  baseline 643ms, about 4% of Running samples in both. A separately instrumented
+  6,000-transaction candidate run proves the actual cached customer scan now
+  estimates 1 row rather than 30,000, yet retains scan-plus-sort. The parameter
+  context bug is fixed; the remaining costing discrepancy is not. Separate
+  bound EXPLAIN uses the same ordered lookup as Go. No speedup acceptance or
+  baseline promotion: timing overlaps, mediaanalysisd uses roughly 90% CPU,
+  Go auto-analyze runs during the pair and the fixture grows.
+- [x] Remove temporary instrumentation; verify all 11 owned PIDs absent and
+  ten ports closed, retaining the fixture. Receipt and exact commands:
+  benchmarks/prepared-range-context-validation.json.
+- [ ] Trace the remaining common-handle prefix estimate and cold statistics
+  ownership. Compare Go ColumnStatsIsInvalid with Rust cardinality's
+  get_row_count_by_column_ranges, which checks only Option presence. This is
+  a source-backed next investigation, not yet a proven causal fix. Preserve
+  the full throughput/latency goal and existing semantic failures.
 - [x] Inspect final 6ef4aea7aa source/profile and Go GetGlobalConfig/UpdateGlobal.
   Statement context's instance-variable read deep-copies the full Rust Config;
   Go reads a published pointer and clones only in UpdateGlobal.
@@ -246,6 +289,13 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, prepared range costing): InitStats borrows StmtContext
+instead of only SessionTimeZone. Use FromScope::for_statement once per filtered
+data source for handle ranges, index ranges and selectivity, matching Go's
+stats.go ranger-context ownership. No query-specific plan hint, forced index,
+extra batching limit or cached-marker fallback is introduced. Removing the
+duplicate scope also removes a duplicate catalog lookup and column-name copy.
 
 Decision (2026-09-10, global configuration ownership): use a shared Arc<Config>
 published under the existing short-lived RwLock. GetGlobalConfig clones only the

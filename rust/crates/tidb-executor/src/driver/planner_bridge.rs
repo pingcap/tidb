@@ -932,7 +932,7 @@ struct InitStats<'a> {
     default_string_match_selectivity: f64,
     selectivity_factor: f64,
     enable_pseudo_for_outdated_stats: bool,
-    zone: &'a tidb_datatype::SessionTimeZone,
+    context: &'a crate::StmtContext,
 }
 
 impl InitStats<'_> {
@@ -1156,7 +1156,7 @@ impl OwnedRewrite for InitStats<'_> {
         // conjuncts that resolve against THIS source, so a cross-table
         // equality cannot scale either side's profile.
         let source_table = self.catalog.get_in(&source.db_name, &source.table_name);
-        let single_table_where = self.select.and_then(|select| {
+        let scoped_predicate = self.select.and_then(|select| {
             let where_clause = select.where_clause.as_ref()?;
             let TableEntry::Kv(table) = source_table? else {
                 return None;
@@ -1165,38 +1165,30 @@ impl OwnedRewrite for InitStats<'_> {
                 .table_as_name
                 .as_deref()
                 .unwrap_or(&source.table_name);
-            let scope = super::from::single_table_scope(
-                visible,
-                Some(source.db_name.clone()),
-                table
+            // Go uses the data source's current ranger/evaluation context.
+            // A name-only scope cannot evaluate EXECUTE parameters or apply
+            // the statement's conversion policy while deriving path costs.
+            let mut scope = FromScope::for_statement(self.context);
+            scope.tables.push(FromTable {
+                name: visible.to_owned(),
+                database: Some(source.db_name.clone()),
+                columns: table
                     .visible_columns()
                     .iter()
                     .map(|column| (column.name.clone(), column.field_type.clone()))
                     .collect(),
-            );
-            let resolver = crate::driver::from::scope_resolver(&scope);
-            single_table_predicate(where_clause, &resolver)
+                offset: 0,
+            });
+            let predicate =
+                single_table_predicate(where_clause, &crate::driver::from::scope_resolver(&scope))?;
+            Some((predicate, scope))
         });
-        if let (Some(predicate), Some(TableEntry::Kv(table)), Some(table_stats)) = (
-            single_table_where.as_ref(),
-            self.catalog.get_in(&source.db_name, &source.table_name),
+        if let (Some((predicate, scope)), Some(TableEntry::Kv(table)), Some(table_stats)) = (
+            scoped_predicate.as_ref(),
+            source_table,
             source.table_stats.clone(),
         ) {
-            let visible = source
-                .table_as_name
-                .as_deref()
-                .unwrap_or(&source.table_name);
-            let mut scope = super::from::single_table_scope(
-                visible,
-                Some(source.db_name.clone()),
-                table
-                    .visible_columns()
-                    .iter()
-                    .map(|column| (column.name.clone(), column.field_type.clone()))
-                    .collect(),
-            );
-            scope.zone = self.zone.clone();
-            let resolver = crate::driver::from::scope_resolver(&scope);
+            let resolver = crate::driver::from::scope_resolver(scope);
             source.table_path_count_after_access =
                 crate::handle_range::build_handle_ranges(table, predicate, &resolver)
                     .map(|built| {
@@ -1245,7 +1237,7 @@ impl OwnedRewrite for InitStats<'_> {
             let selectivity = crate::access_cost::selectivity_with_range_context(
                 predicate,
                 table,
-                &crate::driver::from::scope_resolver(&scope),
+                &resolver,
                 statistics,
                 tidb_planner::selectivity_greedy::SelectivityDefaults {
                     trigger_load: false,
@@ -1513,7 +1505,7 @@ fn optimize_cte_tree(
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
             selectivity_factor: ctx.selectivity_factor(),
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
-            zone,
+            context: ctx,
         },
         optimized,
         (),
@@ -1995,7 +1987,6 @@ fn optimize_built_logical(
         catalog: &'a Catalog,
         context: &'a crate::StmtContext,
         select: Option<&'a tidb_ast::SelectStmt>,
-        zone: &'a tidb_expr::SessionTimeZone,
     }
 
     impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
@@ -2035,7 +2026,7 @@ fn optimize_built_logical(
                     enable_pseudo_for_outdated_stats: self
                         .context
                         .enable_pseudo_for_outdated_stats(),
-                    zone: self.zone,
+                    context: self.context,
                 },
                 plan,
                 (),
@@ -2089,7 +2080,6 @@ fn optimize_built_logical(
         catalog,
         context: ctx,
         select: select_hint,
-        zone: session_zone,
     };
     let partition_pruning = PlannerPartitionPruning {
         catalog,
