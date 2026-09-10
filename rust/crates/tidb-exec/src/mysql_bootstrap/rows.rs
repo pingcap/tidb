@@ -433,6 +433,12 @@ pub fn local_now_datetime6() -> Time {
     calendar_time(chrono::Local::now(), TimeType::DateTime, 6)
 }
 
+/// The internal SYSTEM session's `NOW()`, truncated to whole seconds.
+#[must_use]
+pub fn local_now_datetime() -> Time {
+    calendar_time(chrono::Local::now(), TimeType::DateTime, 0)
+}
+
 fn calendar_time<Tz: chrono::TimeZone>(
     now: chrono::DateTime<Tz>,
     time_type: TimeType,

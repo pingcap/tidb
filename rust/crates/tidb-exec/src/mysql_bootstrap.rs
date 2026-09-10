@@ -67,7 +67,10 @@ use crate::table_info_build::{
 
 mod rows;
 
-pub use rows::{local_now_datetime6, utc_now_timestamp, BootstrapEnvironment, SeedRow, SeedValue};
+pub use rows::{
+    local_now_datetime, local_now_datetime6, utc_now_timestamp, BootstrapEnvironment, SeedRow,
+    SeedValue,
+};
 
 /// Go `mysql.DefaultCharset` / the collation TiDB's own `mysql` schema carries.
 const SYSTEM_DB_CHARSET: &str = "utf8mb4";

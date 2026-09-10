@@ -4082,6 +4082,28 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
 /// explicit historical metadata and payload cleanup.
 #[test]
 fn clear_outdated_history_stats_uses_the_go_retention_duration() {
+    const TIMEZONE_TEST: &str = "TIDB_HISTORY_GC_TIMEZONE_TEST";
+    if std::env::var_os(TIMEZONE_TEST).is_none() {
+        let thread = std::thread::current();
+        let name = thread.name().expect("named test thread");
+        // Each child initializes its local clock in this zone without changing
+        // the environment beneath other concurrently running tests.
+        for timezone in ["UTC", "Asia/Shanghai", "America/Los_Angeles"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env(TIMEZONE_TEST, "1")
+                .env("TZ", timezone)
+                .output()
+                .expect("start history GC timezone test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed; 0 failed"),
+                "history GC in {timezone}: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    }
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let mut session = stack
@@ -4118,6 +4140,23 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         );
     }
 
+    rows(
+        &mut session,
+        "SET GLOBAL tidb_historical_stats_duration = '1h'",
+    );
+    stack
+        .factory
+        .clear_outdated_history_stats()
+        .expect("fresh history survives GC");
+    for table in ["stats_meta_history", "stats_history"] {
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}")
+            )),
+            [["1"]]
+        );
+    }
     rows(
         &mut session,
         "SET GLOBAL tidb_historical_stats_duration = '1s'",

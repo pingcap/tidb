@@ -1,5 +1,42 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 历史统计 GC 使用与写入相同的本地 DATETIME
+
+`clear_outdated_history_stats_uses_the_go_retention_duration` 独立复现：
+过期记录仍保留，`/tmp/history-gc-red.log`，3.26 秒。根因是历史统计的
+create_time 写入本地 DATETIME(6)，清理却用 UTC TIMESTAMP 计算 cutoff。
+上海时区延迟清理，洛杉矶时区提前清理；均与索引扫描和保留时间解析无关。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 证据：
+`pkg/meta/metadef/system_tables_def.go:381,392` 两表均为 DATETIME(6)；
+`pkg/statistics/handle/history/history_stats.go:165,201` 分别用内部会话
+NOW(6) 和本地 time.Now() 写入；`storage/gc.go:192` 用 NOW() 减保留期；
+`pkg/expression/builtin_time.go:2672,2752` 明确 NOW() 截断到整秒并转换
+到会话时区。
+
+修复仅将历史 GC cutoff 改用内部 SYSTEM 会话的本地 DATETIME 整秒时间。
+UTC TIMESTAMP 辅助函数及其他清理调用保持原语义。回归在独立子进程中
+分别设置 UTC、Asia/Shanghai、America/Los_Angeles，避免修改并发测试进程
+环境。保留原过期删除断言，新增一小时保留期下新记录不得删除的断言。
+修复前上海过期保留（`/tmp/history-gc-zones-red.log`），洛杉矶新记录误删
+（`/tmp/history-gc-west-red.log`，1.23 秒）；修复后三个时区全部通过。
+
+Ready 验证命令：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib clear_outdated_history_stats_uses_the_go_retention_duration
+# 1 passed，内部执行三个时区，/tmp/history-gc-zones-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/history-gc-{fmt,lint}.log
+```
+
+完整 server 回归 **424 passed / 10 failed**，44.78 秒，
+`/tmp/server-history-gc-baseline.log`；历史 GC 用例通过。
+这是历史统计 GC 时区修复，不是整个 storage Go package 的完成声明。
+整体目标仍包含其他 Rust 失败和原始外部集成门禁。
+
 ## 2026-09-11 GLOBAL 临时表回归从 catalog 取得表 ID
 
 global_temporary_analyze_uses_session_rows_and_statistics 独立失败

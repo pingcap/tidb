@@ -2352,7 +2352,9 @@ impl ClusterHistoricalStatsHandle {
             .ok_or_else(|| "tidb_historical_stats_duration is out of range".to_owned())?;
         let retention = tidb_datatype::MySqlDuration::from_nanoseconds(retention_nanos, 0)
             .map_err(|error| error.to_string())?;
-        let cutoff = tidb_exec::mysql_bootstrap::utc_now_timestamp()
+        // Historical create_time is DATETIME in the internal SYSTEM session,
+        // so Go's NOW() cutoff must use that same wall clock, not UTC.
+        let cutoff = tidb_exec::mysql_bootstrap::local_now_datetime()
             .add_duration(retention)
             .map_err(|error| error.to_string())?;
         let catalog = self.catalog.load();
