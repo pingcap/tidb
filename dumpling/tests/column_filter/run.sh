@@ -74,3 +74,43 @@ check_schema_output
 echo "Test projected schema can be executed."
 run_sql "drop table \`$DB_NAME\`.\`$TABLE_NAME\`;"
 run_sql_file "${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}-schema.sql"
+
+echo "Test projected schemas against TiDB DDL variants."
+export DUMPLING_TEST_PORT=4000
+TIDB_DB_NAME="column_filter_tidb"
+TIDB_FILTER_FILE="${DUMPLING_TEST_DIR}/column-filter-tidb.toml"
+
+run_sql "drop database if exists \`$TIDB_DB_NAME\`;"
+run_sql "create database \`$TIDB_DB_NAME\`;"
+run_sql "create table \`$TIDB_DB_NAME\`.\`partitioned\` (id int, tenant_id int, secret int, primary key (id)) partition by hash (id) partitions 2;"
+run_sql "create table \`$TIDB_DB_NAME\`.\`subpartitioned\` (id int, tenant_id int, secret int, primary key (id, tenant_id)) partition by range (id) subpartition by hash (tenant_id) subpartitions 2 (partition p0 values less than (100), partition pmax values less than maxvalue);"
+run_sql "create table \`$TIDB_DB_NAME\`.\`checked\` (id int, kept int, removed int, check (kept > 0), check (removed > 0));"
+run_sql "create table \`$TIDB_DB_NAME\`.\`auto_random\` (id bigint auto_random primary key, secret int);"
+
+cat > "$TIDB_FILTER_FILE" << EOF
+[[filters]]
+matcher = ["$TIDB_DB_NAME.partitioned"]
+columns = ["id", "tenant_id"]
+
+[[filters]]
+matcher = ["$TIDB_DB_NAME.subpartitioned"]
+columns = ["id", "tenant_id"]
+
+[[filters]]
+matcher = ["$TIDB_DB_NAME.checked"]
+columns = ["id", "kept"]
+
+[[filters]]
+matcher = ["$TIDB_DB_NAME.auto_random"]
+columns = ["id"]
+EOF
+
+rm -rf "$DUMPLING_OUTPUT_DIR"
+export DUMPLING_TEST_DATABASE="$TIDB_DB_NAME"
+run_dumpling --filetype csv --column-filter-file "$TIDB_FILTER_FILE"
+
+for table in partitioned subpartitioned checked auto_random; do
+	file_should_exist "${DUMPLING_OUTPUT_DIR}/${TIDB_DB_NAME}.${table}-schema.sql"
+	run_sql "drop table \`$TIDB_DB_NAME\`.\`$table\`;"
+	run_sql_file "${DUMPLING_OUTPUT_DIR}/${TIDB_DB_NAME}.${table}-schema.sql"
+done

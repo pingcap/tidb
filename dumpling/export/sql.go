@@ -1068,7 +1068,7 @@ type columnProjection struct {
 	schemaSQL     string
 }
 
-func (p columnProjection) isProjected() bool {
+func (p columnProjection) hasFilteredColumns() bool {
 	return len(p.sourceTypes) != len(p.selectedTypes)
 }
 

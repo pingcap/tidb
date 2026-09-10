@@ -8,19 +8,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/meta/metabuild"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	_ "github.com/pingcap/tidb/pkg/planner/core" // initialize expression builders used by DDL validation
 )
 
 type projectedTableSchema struct {
 	createTable     *ast.CreateTableStmt
 	retainedColumns map[string]struct{}
-	tableInfo       *model.TableInfo
 }
 
 type projectedTableSchemas map[tableName]*projectedTableSchema
@@ -29,6 +24,7 @@ func buildProjectedTableSchema(
 	p *parser.Parser,
 	originSQL string,
 	selectedColumns []string,
+	projected bool,
 ) (*projectedTableSchema, error) {
 	stmt, err := p.ParseOneStmt(originSQL, "", "")
 	if err != nil {
@@ -38,6 +34,7 @@ func buildProjectedTableSchema(
 	if !ok {
 		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
+	partitionColumns, unsupportedPartition := collectPartitionColumns(createTable)
 
 	retainedColumns := make(map[string]struct{}, len(selectedColumns))
 	for _, selectedColumn := range selectedColumns {
@@ -46,7 +43,7 @@ func buildProjectedTableSchema(
 	// A generated column can only depend on generated columns defined before it.
 	for _, column := range createTable.Cols {
 		for _, option := range column.Options {
-			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsCovered(option.Expr, retainedColumns) {
+			if option.Tp == ast.ColumnOptionGenerated && usesOnlyRetainedColumns(option.Expr, retainedColumns) {
 				retainedColumns[column.Name.Name.L] = struct{}{}
 				break
 			}
@@ -75,8 +72,16 @@ func buildProjectedTableSchema(
 	}
 	createTable.Constraints = constraints
 
-	if err := validatePartitionColumns(createTable.Partition, retainedColumns); err != nil {
-		return nil, err
+	if projected && unsupportedPartition {
+		return nil, errors.New("PARTITION BY KEY() is not supported with column filtering")
+	}
+	if projected {
+		if err := validateAutoRandomColumns(createTable); err != nil {
+			return nil, err
+		}
+	}
+	if !allColumnsRetained(partitionColumns, retainedColumns) {
+		return nil, errors.New("partition definition references a removed column")
 	}
 	if err := validateTTLColumns(createTable.Options, retainedColumns); err != nil {
 		return nil, err
@@ -85,52 +90,6 @@ func buildProjectedTableSchema(
 		createTable:     createTable,
 		retainedColumns: retainedColumns,
 	}, nil
-}
-
-func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
-	if s.tableInfo != nil {
-		return s.tableInfo, nil
-	}
-
-	createTable := *s.createTable
-	createTable.Cols = make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
-	// DEFAULT and ON UPDATE expressions do not affect structural validation and may use source-specific semantics.
-	for _, column := range s.createTable.Cols {
-		columnCopy := *column
-		columnCopy.Tp = column.Tp.Clone()
-		columnCopy.Options = make([]*ast.ColumnOption, 0, len(column.Options))
-		for _, option := range column.Options {
-			switch option.Tp {
-			case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
-				continue
-			default:
-				columnCopy.Options = append(columnCopy.Options, option)
-			}
-		}
-		createTable.Cols = append(createTable.Cols, &columnCopy)
-	}
-	createTable.Constraints = make([]*ast.Constraint, 0, len(s.createTable.Constraints))
-	// Columnar indexes cannot support foreign key lookups.
-	for _, constraint := range s.createTable.Constraints {
-		switch constraint.Tp {
-		case ast.ConstraintColumnar, ast.ConstraintFulltext:
-			continue
-		default:
-			createTable.Constraints = append(createTable.Constraints, constraint)
-		}
-	}
-	tableInfo, err := ddl.BuildTableInfoWithStmt(
-		metabuild.NewContext(),
-		&createTable,
-		mysql.DefaultCharset,
-		"",
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-	s.tableInfo = tableInfo
-	return tableInfo, nil
 }
 
 func restoreProjectedSchema(createTable *ast.CreateTableStmt) (string, error) {
@@ -154,11 +113,11 @@ func filterColumnOptions(
 		switch option.Tp {
 		case ast.ColumnOptionCheck:
 			// CHECK constraints can be removed as a whole; expressions on retained columns cannot.
-			if !allReferencedColumnsCovered(option.Expr, retained) {
+			if !usesOnlyRetainedColumns(option.Expr, retained) {
 				continue
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
-			if !allReferencedColumnsCovered(option.Expr, retained) {
+			if !usesOnlyRetainedColumns(option.Expr, retained) {
 				return nil, errors.Errorf(
 					"column `%s` expression references a removed column",
 					column.Name.Name.O,
@@ -180,55 +139,55 @@ func filterTableConstraint(
 				return false
 			}
 		}
-		if !allReferencedColumnsCovered(key.Expr, retained) {
+		if !usesOnlyRetainedColumns(key.Expr, retained) {
 			return false
 		}
 	}
-	if !allReferencedColumnsCovered(constraint.Expr, retained) {
+	if !usesOnlyRetainedColumns(constraint.Expr, retained) {
 		return false
 	}
-	if constraint.Option != nil && !allReferencedColumnsCovered(constraint.Option.Condition, retained) {
+	if constraint.Option != nil && !usesOnlyRetainedColumns(constraint.Option.Condition, retained) {
 		return false
 	}
 	return true
 }
 
-func validateForeignKeys(
-	database string,
-	schema *projectedTableSchema,
+func validateForeignKeyParents(
+	childDB string,
+	child *projectedTableSchema,
 	schemas projectedTableSchemas,
 ) error {
-	for _, column := range schema.createTable.Cols {
+	for _, column := range child.createTable.Cols {
 		for _, option := range column.Options {
 			if option.Tp != ast.ColumnOptionReference {
 				continue
 			}
 			// MySQL 9.7 supports inline foreign keys as column-level REFERENCES options.
-			if err := validateForeignKeyReference(option.Refer, database, schemas); err != nil {
+			if err := validateForeignKeyParent(option.Refer, childDB, schemas); err != nil {
 				return err
 			}
 		}
 	}
-	for _, constraint := range schema.createTable.Constraints {
-		if err := validateForeignKeyReference(constraint.Refer, database, schemas); err != nil {
+	for _, constraint := range child.createTable.Constraints {
+		if err := validateForeignKeyParent(constraint.Refer, childDB, schemas); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateForeignKeyReference(reference *ast.ReferenceDef, database string, schemas projectedTableSchemas) error {
+func validateForeignKeyParent(reference *ast.ReferenceDef, childDB string, schemas projectedTableSchemas) error {
 	if reference == nil || reference.Table == nil {
 		return nil
 	}
 
-	referenceTable := reference.Table.Name.O
-	referenceDatabase := reference.Table.Schema.O
-	if referenceDatabase == "" {
-		referenceDatabase = database
+	parentTable := reference.Table.Name.O
+	parentDB := reference.Table.Schema.O
+	if parentDB == "" {
+		parentDB = childDB
 	}
 
-	targetSchema, ok, err := schemas.lookup(referenceDatabase, referenceTable)
+	parent, ok, err := schemas.lookup(parentDB, parentTable)
 	if err != nil {
 		return err
 	}
@@ -236,23 +195,24 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		// The referenced table is outside this dump and is not rewritten here.
 		return nil
 	}
-	referencedColumns := make([]ast.CIStr, 0, len(reference.IndexPartSpecifications))
+	parentColumns := make([]ast.CIStr, 0, len(reference.IndexPartSpecifications))
 	// Foreign key references from SHOW CREATE TABLE contain only column index parts.
 	for _, key := range reference.IndexPartSpecifications {
-		if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
-			return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
+		if _, ok := parent.retainedColumns[key.Column.Name.L]; !ok {
+			return errors.Errorf(
+				"foreign key references removed column `%s`.`%s`.`%s`",
+				escapeString(parentDB),
+				escapeString(parentTable),
+				escapeString(key.Column.Name.O),
+			)
 		}
-		referencedColumns = append(referencedColumns, key.Column.Name)
+		parentColumns = append(parentColumns, key.Column.Name)
 	}
-	targetTableInfo, err := targetSchema.buildTableInfo()
-	if err != nil {
-		return err
-	}
-	if !hasForeignKeyIndex(targetTableInfo, referencedColumns) {
+	if !hasParentIndex(parent, parentColumns) {
 		return errors.Errorf(
 			"foreign key referenced columns are not indexed in table `%s`.`%s`",
-			escapeString(referenceDatabase),
-			escapeString(referenceTable),
+			escapeString(parentDB),
+			escapeString(parentTable),
 		)
 	}
 	return nil
@@ -280,43 +240,106 @@ func (schemas projectedTableSchemas) lookup(database, table string) (*projectedT
 	return matched, matched != nil, nil
 }
 
-func hasForeignKeyIndex(tableInfo *model.TableInfo, referencedColumns []ast.CIStr) bool {
-	if len(referencedColumns) == 1 {
-		column := model.FindColumnInfo(tableInfo.Columns, referencedColumns[0].L)
-		if column != nil && tableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.GetFlag()) {
-			return true
+func hasParentIndex(parent *projectedTableSchema, parentColumns []ast.CIStr) bool {
+	for _, column := range parent.createTable.Cols {
+		if len(parentColumns) != 1 || column.Name.Name.L != parentColumns[0].L {
+			continue
+		}
+		for _, option := range column.Options {
+			if option.Tp == ast.ColumnOptionPrimaryKey || option.Tp == ast.ColumnOptionUniqKey {
+				return true
+			}
 		}
 	}
-	return model.FindIndexByColumnsForForeignKey(tableInfo, tableInfo.Indices, referencedColumns...) != nil
-}
 
-func removedReferenceColumnError(database, table, column string) error {
-	return errors.Errorf(
-		"foreign key references removed column `%s`.`%s`.`%s`",
-		escapeString(database),
-		escapeString(table),
-		escapeString(column),
-	)
-}
-
-func validatePartitionColumns(partition *ast.PartitionOptions, retained map[string]struct{}) error {
-	if partition == nil {
-		return nil
+	for _, constraint := range parent.createTable.Constraints {
+		switch constraint.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
+			ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			if indexCoversColumns(constraint.Keys, parentColumns) {
+				return true
+			}
+		}
 	}
-	if !partitionColumnsRetained(&partition.PartitionMethod, retained) ||
-		(partition.Sub != nil && !partitionColumnsRetained(partition.Sub, retained)) {
-		return errors.New("partition definition references a removed column")
+	return false
+}
+
+func indexCoversColumns(indexColumns []*ast.IndexPartSpecification, columns []ast.CIStr) bool {
+	if len(indexColumns) < len(columns) {
+		return false
+	}
+	for i, column := range columns {
+		indexColumn := indexColumns[i]
+		if indexColumn.Column == nil || indexColumn.Length > 0 || indexColumn.Column.Name.L != column.L {
+			return false
+		}
+	}
+	return true
+}
+
+func validateAutoRandomColumns(createTable *ast.CreateTableStmt) error {
+	for _, column := range createTable.Cols {
+		hasAutoRandom := false
+		for _, option := range column.Options {
+			hasAutoRandom = hasAutoRandom || option.Tp == ast.ColumnOptionAutoRandom
+		}
+		if !hasAutoRandom || hasClusteredPrimaryKey(createTable, column.Name.Name.L) {
+			continue
+		}
+		return errors.New("auto_random is only supported on the tables with clustered primary key")
 	}
 	return nil
 }
 
-func partitionColumnsRetained(method *ast.PartitionMethod, retained map[string]struct{}) bool {
-	for _, column := range method.ColumnNames {
-		if _, ok := retained[column.Name.L]; !ok {
-			return false
+func hasClusteredPrimaryKey(createTable *ast.CreateTableStmt, columnName string) bool {
+	for _, column := range createTable.Cols {
+		if column.Name.Name.L != columnName {
+			continue
+		}
+		for _, option := range column.Options {
+			if option.Tp == ast.ColumnOptionPrimaryKey {
+				return option.PrimaryKeyTp != ast.PrimaryKeyTypeNonClustered
+			}
 		}
 	}
-	return allReferencedColumnsCovered(method.Expr, retained)
+	for _, constraint := range createTable.Constraints {
+		if constraint.Tp != ast.ConstraintPrimaryKey {
+			continue
+		}
+		for _, key := range constraint.Keys {
+			if key.Column != nil && key.Column.Name.L == columnName {
+				return constraint.Option == nil || constraint.Option.PrimaryKeyTp != ast.PrimaryKeyTypeNonClustered
+			}
+		}
+	}
+	return false
+}
+
+func collectPartitionColumns(createTable *ast.CreateTableStmt) (map[string]struct{}, bool) {
+	columns := make(map[string]struct{})
+	if createTable.Partition == nil {
+		return columns, false
+	}
+
+	methods := []*ast.PartitionMethod{&createTable.Partition.PartitionMethod}
+	if createTable.Partition.Sub != nil {
+		methods = append(methods, createTable.Partition.Sub)
+	}
+	for _, method := range methods {
+		for _, column := range method.ColumnNames {
+			columns[column.Name.L] = struct{}{}
+		}
+		if method.Expr != nil {
+			for _, column := range ddl.FindColumnNamesInExpr(method.Expr) {
+				columns[column.Name.L] = struct{}{}
+			}
+		}
+		if method.Tp != ast.PartitionTypeKey || len(method.ColumnNames) != 0 {
+			continue
+		}
+		return columns, true
+	}
+	return columns, false
 }
 
 func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}) error {
@@ -330,32 +353,23 @@ func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}
 	return nil
 }
 
-func allReferencedColumnsCovered(expr ast.ExprNode, retained map[string]struct{}) bool {
+func usesOnlyRetainedColumns(expr ast.ExprNode, retainedColumns map[string]struct{}) bool {
 	if expr == nil {
 		return true
 	}
-	collector := &columnNameCollector{columns: make(map[string]struct{})}
-	expr.Accept(collector)
-	for column := range collector.columns {
-		if _, ok := retained[column]; !ok {
+	for _, column := range ddl.FindColumnNamesInExpr(expr) {
+		if _, ok := retainedColumns[column.Name.L]; !ok {
 			return false
 		}
 	}
 	return true
 }
 
-type columnNameCollector struct {
-	columns map[string]struct{}
-}
-
-func (c *columnNameCollector) Enter(node ast.Node) (ast.Node, bool) {
-	column, ok := node.(*ast.ColumnNameExpr)
-	if ok {
-		c.columns[column.Name.Name.L] = struct{}{}
+func allColumnsRetained(columns, retained map[string]struct{}) bool {
+	for column := range columns {
+		if _, ok := retained[column]; !ok {
+			return false
+		}
 	}
-	return node, false
-}
-
-func (*columnNameCollector) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+	return true
 }

@@ -178,6 +178,12 @@ columns = ["*", "!c3"]
 	require.ErrorContains(t, err, "can't specify both --sql and --column-filter-file at the same time")
 }
 
+func TestSessionParamKeys(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t, "--params", "SQL_MODE=ANSI_QUOTES")
+	require.Equal(t, "ANSI_QUOTES", conf.SessionParams["sql_mode"])
+	require.NotContains(t, conf.SessionParams, "SQL_MODE")
+}
+
 func TestParseColumnFilterFlag(t *testing.T) {
 	conf := parseConfigFromArgsForTest(t,
 		"--no-schemas",

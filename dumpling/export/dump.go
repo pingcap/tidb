@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -513,7 +514,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 
 func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
 	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
-	hasProjection := false
+	anyFilteredColumns := false
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
@@ -521,10 +522,10 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
-			hasProjection = hasProjection || projection.isProjected()
+			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
 		}
 	}
-	if conf.NoSchemas || !hasProjection {
+	if conf.NoSchemas || !anyFilteredColumns {
 		return nil
 	}
 
@@ -537,6 +538,13 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 	}
 
 	schemaParser := parser.New()
+	if value, ok := conf.SessionParams["sql_mode"]; ok {
+		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
+		if err != nil {
+			return errors.Annotate(err, "failed to parse session sql_mode")
+		}
+		schemaParser.SetSQLMode(sqlMode)
+	}
 	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
@@ -553,6 +561,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				schemaParser,
 				createTableSQL,
 				columnNames(projection.selectedTypes),
+				projection.hasFilteredColumns(),
 			)
 			if err != nil {
 				return errors.Annotatef(
@@ -563,7 +572,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				)
 			}
 			projection.schemaSQL = createTableSQL
-			if projection.isProjected() {
+			if projection.hasFilteredColumns() {
 				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
 				if err != nil {
 					return errors.Annotatef(
@@ -584,18 +593,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				continue
 			}
 			key := tableName{db: dbName, table: table.Name}
-			schema := schemas[key]
-			if conf.columnProjection[key].isProjected() {
-				if _, err := schema.buildTableInfo(); err != nil {
-					return errors.Annotatef(
-						err,
-						"failed to validate schema projection for table `%s`.`%s`",
-						escapeString(dbName),
-						escapeString(table.Name),
-					)
-				}
-			}
-			if err := validateForeignKeys(dbName, schema, schemas); err != nil {
+			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
 				return errors.Annotatef(
 					err,
 					"failed to validate schema projection for table `%s`.`%s`",

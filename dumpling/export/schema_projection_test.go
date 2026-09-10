@@ -20,6 +20,7 @@ func TestPrepareColumnProjectionSchema(t *testing.T) {
 	conf.columnFilter = newColumnFilterConfigForTest(t,
 		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"id", "name"}},
 	)
+	conf.SessionParams["sql_mode"] = "ANSI"
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -44,10 +45,10 @@ func TestPrepareColumnProjectionSchema(t *testing.T) {
 	))).WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
 		sqlmock.NewColumn("id").OfType("INT", int64(0)),
 	).AddRow(1))
-	createSQL := "CREATE TABLE `test_table` (`id` INT PRIMARY KEY, `name` VARCHAR(12), `secret` VARCHAR(12))"
+	createSQL := "CREATE TABLE \"test_table\" (\"id\" INT PRIMARY KEY, \"name\" VARCHAR(12), \"secret\" VARCHAR(12))"
 	mock.ExpectQuery("SHOW CREATE TABLE").
 		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(table, createSQL))
-	plainCreateSQL := "CREATE TABLE `plain` (`id` INT PRIMARY KEY)"
+	plainCreateSQL := "CREATE TABLE \"plain\" (\"id\" INT PRIMARY KEY)"
 	mock.ExpectQuery("SHOW CREATE TABLE").
 		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("plain", plainCreateSQL))
 
@@ -151,6 +152,52 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
 		require.NoError(t, err)
 		require.Contains(t, projectedSQL, "PARTITION BY HASH (`a`) PARTITIONS 4")
+	})
+
+	t.Run("explicit key partition remains unchanged", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT) PARTITION BY KEY (`a`) PARTITIONS 4"
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "PARTITION BY KEY (`a`) PARTITIONS 4")
+	})
+
+	t.Run("partition key without columns is unsupported", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT," +
+			"`tenant_id` INT," +
+			"`secret` INT," +
+			"PRIMARY KEY (`id`, `tenant_id`)" +
+			") PARTITION BY KEY() PARTITIONS 2"
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"id"}, true, nil)
+		require.ErrorContains(t, err, "PARTITION BY KEY() is not supported with column filtering")
+	})
+
+	t.Run("unprojected partition key is preserved", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT," +
+			"`tenant_id` INT," +
+			"`secret` INT," +
+			"PRIMARY KEY (`id`, `tenant_id`)" +
+			") PARTITION BY KEY() PARTITIONS 2"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "tenant_id", "secret"}, false, nil,
+		)
+		require.NoError(t, err)
+		require.Equal(t, createSQL, projectedSQL)
+	})
+
+	t.Run("vector index remains unchanged", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT PRIMARY KEY," +
+			"`embedding` VECTOR(3)," +
+			"`secret` INT," +
+			"VECTOR INDEX `idx_embedding` ((VEC_COSINE_DISTANCE(`embedding`)))" +
+			")"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "embedding"}, true, nil,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "VECTOR INDEX `idx_embedding`")
 	})
 
 	t.Run("subpartition dependency", func(t *testing.T) {
@@ -314,6 +361,24 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Contains(t, projectedSQL, "ON DELETE CASCADE ON UPDATE SET NULL")
 	})
 
+	t.Run("inline foreign key and unique key", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`parent_name` VARCHAR(32) REFERENCES `parent` (`name`))"
+		schemas := projectedTableSchemas{
+			{db: "test", table: "parent"}: projectedTableSchemaForTest(
+				t,
+				"CREATE TABLE `parent` (`name` VARCHAR(32) UNIQUE KEY, `secret` INT)",
+				[]string{"name"},
+			),
+		}
+
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"parent_name"}, true, schemas,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "REFERENCES `parent`(`name`)")
+	})
+
 	t.Run("foreign key supporting index removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `child` (" +
 			"`id` INT PRIMARY KEY," +
@@ -434,7 +499,7 @@ func generateProjectedSchemaForTest(
 	if schemas == nil {
 		schemas = make(projectedTableSchemas)
 	}
-	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
+	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns, rewriteSchema)
 	if err != nil {
 		return "", err
 	}
@@ -446,11 +511,8 @@ func generateProjectedSchemaForTest(
 		if err != nil {
 			return "", err
 		}
-		if _, err = schema.buildTableInfo(); err != nil {
-			return "", err
-		}
 	}
-	if err := validateForeignKeys(database, schema, schemas); err != nil {
+	if err := validateForeignKeyParents(database, schema, schemas); err != nil {
 		return "", err
 	}
 	if !rewriteSchema {
@@ -462,7 +524,7 @@ func generateProjectedSchemaForTest(
 
 func projectedTableSchemaForTest(t *testing.T, originSQL string, selectedColumns []string) *projectedTableSchema {
 	t.Helper()
-	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
+	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns, true)
 	require.NoError(t, err)
 	return schema
 }

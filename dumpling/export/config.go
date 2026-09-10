@@ -737,7 +737,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	for k, v := range params {
-		conf.SessionParams[k] = v
+		conf.SessionParams[strings.ToLower(k)] = v
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)
