@@ -22,8 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
+// topNMetaToDatum decodes a TopN value back into a datum. The result is compared with, and can end
+// up as, a histogram bucket bound, so it is decoded in UTC rather than in the time zone of the
+// session that happens to run the merge. See issue #52429.
 func topNMetaToDatum(val TopNMeta,
-	ft *types.FieldType, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
+	ft *types.FieldType, isIndex bool) (dat types.Datum, err error) {
 	if isIndex {
 		dat.SetBytes(val.Encoded)
 		return dat, nil
@@ -36,7 +39,7 @@ func topNMetaToDatum(val TopNMeta,
 	// float64. Unflatten restores the kind the column's own values
 	// carry, which matters because Datum.Compare dispatches on kind and
 	// because a histogram's chunk column is typed.
-	return tablecodec.Unflatten(dat, ft, loc)
+	return tablecodec.Unflatten(dat, ft, time.UTC)
 }
 
 // DecodeColumnTopNValue decodes an encoded column TopN value for consumers that
