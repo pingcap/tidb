@@ -1649,6 +1649,7 @@ impl ClusterSessionFactory {
                                     keys,
                                     presume_not_exists,
                                     duplicate_hints,
+                                    tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
                                 )
                             },
                             |snapshot, _start_ts| {
@@ -1711,6 +1712,7 @@ impl ClusterSessionFactory {
                                         keys,
                                         presume_not_exists,
                                         duplicate_hints,
+                                        tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
                                     )
                                 },
                                 |snapshot, _start_ts| {
@@ -1739,6 +1741,7 @@ impl ClusterSessionFactory {
                                         keys,
                                         presume_not_exists,
                                         duplicate_hints,
+                                        tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
                                     )
                                 },
                                 |snapshot, _start_ts| {
@@ -2779,6 +2782,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                             keys,
                             presume_not_exists,
                             duplicate_hints,
+                            tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
                         )
                     },
                     |snapshot, _start_ts| {
@@ -4454,7 +4458,19 @@ impl ClusterServerSession {
             self.explicit
                 .as_ref()
                 .filter(|transaction| transaction.is_pessimistic())
-                .map(|_| tidb_executor::select_lock::SelectedLockKeys::default()),
+                .map(|_| {
+                    tidb_executor::select_lock::SelectedLockKeys::new(
+                        tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(
+                            self.session
+                                .vars()
+                                .get_system("innodb_lock_wait_timeout")
+                                .expect("registered lock wait variable")
+                                .parse()
+                                .expect("validated lock wait variable"),
+                        )),
+                        self.session.vars().shared_lock_promotion_enabled(),
+                    )
+                }),
         );
         let delta_savepoint = self.session.table_delta_savepoint();
         let mut retried: u32 = 0;
@@ -4811,16 +4827,38 @@ impl ClusterServerSession {
             return Ok(PessimisticStep::Done);
         }
         let (before, after) = self.buffer.delta_since(*savepoint);
-        let mut keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
-        let selected = self.session.take_selected_lock_keys();
-        if !selected.is_empty() {
-            keys.extend(selected);
-            keys.sort_unstable();
-            keys.dedup();
+        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
+        let mut requests = self.session.take_selected_lock_requests();
+        if !keys.is_empty() {
+            let seconds = self
+                .session
+                .vars()
+                .get_system("innodb_lock_wait_timeout")
+                .expect("registered lock wait variable")
+                .parse()
+                .expect("validated lock wait variable");
+            requests.push((
+                tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(seconds)),
+                keys,
+            ));
         }
-        if keys.is_empty() {
-            return Ok(PessimisticStep::Done);
+        for (wait, keys) in requests {
+            match self.lock_pessimistic_keys(savepoint, statement_locked, keys, wait)? {
+                PessimisticStep::Done => {}
+                retry => return Ok(retry),
+            }
         }
+        Ok(PessimisticStep::Done)
+    }
+
+    fn lock_pessimistic_keys(
+        &mut self,
+        savepoint: &BufferCheckpoint,
+        statement_locked: &mut std::collections::BTreeSet<Vec<u8>>,
+        mut keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<PessimisticStep, SqlQueryError> {
+        let transaction = self.explicit.as_ref().expect("pessimistic transaction");
         // Go `getPessimisticLazyCheckMode` (`pkg/executor/insert.go:346-350`):
         // the default ON checks lazy INSERT assertions in LockKeys, while OFF
         // inside an explicit client transaction defers them to prewrite.
@@ -4856,8 +4894,12 @@ impl ClusterServerSession {
         // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
         // runs on any statement error, transport failures included.
         self.session.publish_transaction_lock_waiting(true);
-        let lock_result =
-            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints);
+        let lock_result = transaction.lock_staged_keys_with_assertions(
+            keys,
+            presume_not_exists,
+            duplicate_hints,
+            wait,
+        );
         self.session.publish_transaction_lock_waiting(false);
         let outcome = match lock_result {
             Ok(outcome) => outcome,
@@ -6788,7 +6830,10 @@ impl QuerySession for ClusterServerSession {
         let shape = if fast {
             point_read_shape.unwrap_or(StatementReadShape::Unknown)
         } else if fast_select {
-            StatementReadShape::Unknown
+            // A retained physical SELECT still needs the locking statement's
+            // fresh for-update snapshot and lock-value cache on every replay.
+            self.session
+                .statement_read_shape_bound(effective.expect("cached SELECT retains its statement"))
         } else if direct_dml {
             StatementReadShape::AutocommitWrite
         } else {

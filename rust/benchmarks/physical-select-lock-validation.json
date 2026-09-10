@@ -1,0 +1,136 @@
+{
+  "date": "2026-09-10",
+  "status": "Scoped pessimistic physical SELECT locking validation; not whole-package parity or performance acceptance.",
+  "performance_accepted": false,
+  "artifact_root": "/private/tmp/tidb-physical-lock.5cG54c",
+  "reproduced_base_commit": "70bafc8ec6ba224ad13b9f15a649de78b4c1b36b",
+  "live_test_upstream_commit": "1da08c426a991dfe084822c0f6118139a3704df9",
+  "publication_upstream_commit": "c13931936c0de39c4a7f82ecd112863a7d793360",
+  "source_diff_sha256": "95f9fbd4c944fc51bc2cbc717566dbacfe6d7272977020013d504276c287b658",
+  "source_diff_method": "git diff --binary -- rust/crates | shasum -a 256; identical before/after the final two-line collaborator stats-reload revert.",
+  "changes": [
+    "Build SelectLock after WHERE, before projection/aggregation, with retained record-handle identities; instantiate the physical executor and delete the uncalled AST wrapper.",
+    "Resolve FOR UPDATE OF targets and alias/base-name compatibility warnings; preserve per-operator NOWAIT/WAIT and the session timeout through statement lock acquisition.",
+    "Supply latest-index metadata to locking query planning and retain LockingRead classification on prepared-cache replay, so conflicts re-execute against the fresh for-update snapshot."
+  ],
+  "go_sources": [
+    "pkg/planner/core/logical_plan_builder.go: buildSelect",
+    "pkg/planner/core/planbuilder.go: buildSelectLock",
+    "pkg/planner/core/preprocess.go: checkLockClauseTables",
+    "pkg/executor/builder.go: buildSelectLock",
+    "pkg/executor/select.go: SelectLockExec.Next",
+    "tests/realtikvtest/pessimistictest/pessimistic_test.go: TestSelectForUpdateNoWait",
+    "pkg/executor/test/txn/txn_test.go: TestInnodbLockWaitTimeout",
+    "pkg/planner/core/casetest/instanceplancache/concurrency_tpcc_test.go: prepared new_order range locking"
+  ],
+  "validation": {
+    "profile": "Ready",
+    "targeted": "Nine server locking tests passed before and after integrating upstream through 1da08c426a. Four executor and two session component tests passed. The planner library filter selected zero tests; planner behavior is exercised through server integration.",
+    "red": "locking-red.log: four existing range/aggregate cases fail before the fix; text and prepared replay pass after it.",
+    "broad": {
+      "baseline": "77 passed, 27 failed on committed 70bafc8",
+      "candidate": "81 passed, 23 failed before and after the first upstream merge",
+      "new_failures": [],
+      "remaining_failures": "Same 23 pre-existing statistics, row-codec and EXPLAIN-domain failures; names and errors in merged-broad.log.",
+      "excluded": "check_constraint_runs_through_the_owner_job_queue stalled in the initial run and was interrupted; not verified."
+    },
+    "sandbox": "Initial final test run could not execute sysctl hw.memsize in the sandbox; all nine passed with authorized host probes. Initial lint dependency lookup was network-blocked; authorized lint passed.",
+    "final_publication_checks": "After c13931936c: nine scoped locking tests pass; release server build, Ready lint, modified-file rustfmt, shell syntax and git diff --check pass. Published binary SHA256 c5dcf3c2a86398d6ff80f3e683c55488a1f5f0e03d2956cb2b8d8f111da6c3a7 is frozen at artifact_root/published-server. Live TPC-C was not rerun after the collaborator-only stats revert.",
+    "bazel_prepare": "Not required; no Go source/import/module or Bazel inputs changed."
+  },
+  "real_tikv": {
+    "rust_binary_sha256": "46505d730bbfa1f420c8c65e37c6c5f702dec0a284da868a2fb64ba7fad9f6d0",
+    "baseline_rust_sha256": "1bdf41884471cb50d973682660e2c2933e34c693119971b5601a629f55ec8954",
+    "go_version": "8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318 (installed binary; not the checkout revision)",
+    "prepared_probe": {
+      "query": "SELECT id FROM locking_probe_<server> WHERE a=? AND b=? ORDER BY id ASC LIMIT 1 FOR UPDATE",
+      "procedure": "Warm both retained prepared handles. Owner locks row 1. Contender executes; owner deletes row 1 and commits after 250 ms. Contender must wait and reselect row 2.",
+      "go": {
+        "waited": true,
+        "second_row": 2
+      },
+      "committed_rust": {
+        "waited": false,
+        "second_row": 1
+      },
+      "corrected_rust": {
+        "waited": true,
+        "second_row": 2
+      }
+    },
+    "tpcc": {
+      "database": "perf_lock_tpcc_5cg54c",
+      "driver_revision": "a9ca4818625deef91ff80f6c395a575ccae22b7c",
+      "driver_sha256": "1a60bfbbee49b818191448b9fe158c6750ca0b928443aacf31a40e8e99f7ec56",
+      "driver_patch": "rust/benchmarks/tpcc-input-seed.patch; input RNG only",
+      "prepare": "Fresh one-warehouse fixture through Go; all 12 prepare checks pass.",
+      "runs": [
+        {
+          "server": "Go",
+          "clients": 8,
+          "transactions": 6000,
+          "counts": {
+            "DELIVERY": 220,
+            "NEW_ORDER": 2674,
+            "ORDER_STATUS": 229,
+            "PAYMENT": 2652,
+            "STOCK_LEVEL": 225
+          },
+          "post_run_checks": 11
+        },
+        {
+          "server": "Rust",
+          "clients": 1,
+          "transactions": 6000,
+          "counts": {
+            "DELIVERY": 244,
+            "NEW_ORDER": 2696,
+            "ORDER_STATUS": 227,
+            "PAYMENT": 2614,
+            "STOCK_LEVEL": 219
+          },
+          "post_run_checks": 11
+        },
+        {
+          "server": "Rust",
+          "clients": 8,
+          "transactions": 6000,
+          "counts": {
+            "DELIVERY": 220,
+            "NEW_ORDER": 2674,
+            "ORDER_STATUS": 229,
+            "PAYMENT": 2652,
+            "STOCK_LEVEL": 225
+          },
+          "post_run_checks": 11
+        }
+      ],
+      "result": "All runs finish without SQL errors; all 11 standard post-run checks pass, including customer balances. Prepare-only condition 3.3.2.11 is intentionally not a post-run invariant.",
+      "performance": "Correctness only. Builds overlapped some runs and the old Rust binary omitted required locks; no throughput/latency comparison is accepted."
+    },
+    "unchanged_sysbench_fixture_sql_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "online_ddl": "Preparing the before-probe table while Rust was online timed out after 10 seconds despite schema_sync_acked. Go reports the CREATE synced after Rust stopped. Probe tables were then prepared before Rust startup; online DDL coordination remains unresolved.",
+    "cleanup": "Both baseline nodes and the corrected node stopped without forced termination. PD, TiKV and Go stopped; ps and lsof confirmed all six owned PIDs absent and eight listener ports closed. Fixture data retained."
+  },
+  "remaining": [
+    "Physical partition-ID propagation for partitioned locking reads is unimplemented and fails explicitly.",
+    "Shared-lock promotion, nested locking-read timestamp classification, optimistic locking semantics and unsupported lock modes are not fully validated.",
+    "Statement lock detection currently clones the AST for its mutable visitor; performance cost is unmeasured.",
+    "Online cross-node DDL coordination and the 23 unchanged broad integration failures remain open.",
+    "Live evidence precedes the final collaborator-only stats-reload revert; the locking diff is identical, but final combined-binary live TPC-C was not rerun."
+  ],
+  "commands": [
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-server --lib -- a_locking_ locking_queries_retain_unprojected_record_handles unchanged_updates_lock_only_matched_rows --test-threads=12",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-server --lib -- unistore_cop --skip check_constraint_runs_through_the_owner_job_queue --test-threads=12 --nocapture",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-planner -p tidb-executor -p tidb-session --lib -- select_lock prepared_select read_committed_connected_session_captures_latest_index_schema --test-threads=12",
+    "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+    "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+    "git diff --name-only --diff-filter=ACM -- '*.rs' | xargs rustfmt --check --edition 2021 --config skip_children=true",
+    "git diff --check",
+    "bash -n rust/scripts/run-realtikv-lock-recovery.sh",
+    "RUNTIME_PHASE=before ruby /private/tmp/tidb-physical-lock.5cG54c/runtime.rb",
+    "RUNTIME_PHASE=after ruby /private/tmp/tidb-physical-lock.5cG54c/runtime.rb",
+    "GOMAXPROCS=12 GOTPC_TPCC_INPUT_SEED=1 /private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded tpcc run -H 127.0.0.1 -P 58514 -U root -D perf_lock_tpcc_5cg54c --warehouses 1 -T <1-or-8> --max-procs 12 --count 6000 --time 2m --interval 10s",
+    "GOMAXPROCS=12 /private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded tpcc check -H 127.0.0.1 -P 58512 -U root -D perf_lock_tpcc_5cg54c --warehouses 1 -T 1 --max-procs 12"
+  ]
+}

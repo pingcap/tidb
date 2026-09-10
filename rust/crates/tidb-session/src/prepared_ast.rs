@@ -220,7 +220,7 @@ impl Session {
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
-        let planner_context = self.statement_context(false);
+        let planner_context = self.statement_context_for_stmt(&statement, false);
         let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
             let cacheable = {
@@ -479,7 +479,7 @@ impl Session {
         }
         // Go's miss arm (plan_cache.go:366).
         tidb_planner::metrics::plan_cache_miss_counter(false).inc();
-        let ctx = self.statement_context(false);
+        let ctx = self.statement_context_for_stmt(statement, false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
             values,

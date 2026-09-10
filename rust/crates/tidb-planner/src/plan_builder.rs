@@ -3540,7 +3540,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// # Errors
     ///
-    /// Any clause's error, or an unported clause (locking, `INTO OUTFILE`) or
+    /// Any clause's error, or an unported clause (`INTO OUTFILE`) or
     /// unported shape inside one, each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
         let owns_hint_build =
@@ -3569,6 +3569,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &mut self,
         select: &SelectStmt,
     ) -> Result<(LogicalPlan, u64), PlanError> {
+        // Go sets this before FROM so data sources and their access paths
+        // use the statement's for-update snapshot.
+        if select
+            .lock
+            .as_ref()
+            .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update)
+        {
+            self.is_for_update_read = true;
+        }
         // `:4264` the recursive-query-block guards. Each is a shape whose
         // fixpoint is not defined, and Go refuses all four before building
         // anything. `b.buildingLateralSubquery` is a 6b narrowing (see
@@ -3732,6 +3741,96 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(where_clause) = &select.where_clause {
             plan = self.build_selection(plan, where_clause, &markers)?;
         }
+
+        if let Some(lock) = &select.lock {
+            use crate::logical::SelectLockType;
+            use tidb_ast::{LockKind, LockWait};
+            let lock_type = match (lock.kind, lock.wait) {
+                (LockKind::Update, LockWait::Default) => SelectLockType::ForUpdate,
+                (LockKind::Update, LockWait::NoWait) => SelectLockType::ForUpdateNoWait,
+                (LockKind::Update, LockWait::Wait(_)) => SelectLockType::ForUpdateWaitN,
+                (LockKind::Share, LockWait::Default) => SelectLockType::ForShare,
+                (LockKind::Share, LockWait::NoWait) => SelectLockType::ForShareNoWait,
+                _ => return Err(PlanError::not_supported_yet("SELECT lock mode")),
+            };
+            let wait_sec = match lock.wait {
+                LockWait::Wait(seconds) => seconds,
+                _ => 0,
+            };
+            let (schema, names) = snapshot_schema_and_names(&plan);
+            plan = self.build_select_lock(plan, lock_type, wait_sec)?;
+            if !lock.of.is_empty() {
+                let LogicalPlan::Lock(operator) = &mut plan else {
+                    unreachable!()
+                };
+                let mut table_ids = std::collections::BTreeSet::new();
+                let mut warned = std::collections::BTreeSet::new();
+                for target in &lock.of {
+                    // Go checkLockClauseTables: alias, unaliased name, then
+                    // compatible base-name lookup, in left-to-right FROM order.
+                    let matched = schema
+                        .columns
+                        .iter()
+                        .zip(&names)
+                        .enumerate()
+                        .filter_map(|(position, (column, name))| {
+                            let (database, target) = match target.as_slice() {
+                                [table] => (None, table),
+                                [database, table] => (Some(database), table),
+                                _ => return None,
+                            };
+                            if database.is_some_and(|database| {
+                                !name.names.database.lower.eq_ignore_ascii_case(database)
+                            }) {
+                                return None;
+                            }
+                            let aliased = name.names.table.lower != name.names.original_table.lower;
+                            let direct = name.names.table.lower.eq_ignore_ascii_case(target);
+                            let rank = if direct && aliased {
+                                0
+                            } else if direct {
+                                1
+                            } else if name.names.original_table.lower.eq_ignore_ascii_case(target) {
+                                2
+                            } else {
+                                return None;
+                            };
+                            let table_id = operator.tbl_id_to_handle_cols.iter().find_map(
+                                |(id, handles)| {
+                                    handles
+                                        .iter()
+                                        .any(|handle| handle.unique_id == column.unique_id)
+                                        .then_some(*id)
+                                },
+                            )?;
+                            Some((rank, position, table_id, name, !direct && aliased))
+                        })
+                        .min_by_key(|(rank, position, ..)| (*rank, *position));
+                    let Some((_, _, table_id, name, compatibility)) = matched else {
+                        return Err(PlanError::unknown_table_in_clause(
+                            target.join("."),
+                            "locking clause",
+                        ));
+                    };
+                    table_ids.insert(table_id);
+                    if compatibility
+                        && warned.insert((target.clone(), name.names.table.lower.clone()))
+                    {
+                        self.ctx.append_warning(1105, &format!(
+                            "FOR UPDATE OF references the base table name while the table is aliased. Use the alias '{}' in OF to make the lock target explicit.",
+                            name.names.table.original,
+                        ));
+                    }
+                }
+                operator
+                    .tbl_id_to_handle_cols
+                    .retain(|id, _| table_ids.contains(id));
+            }
+        }
+        // A derived SELECT does not expose its base-table handles to its
+        // enclosing block. Go clears this map after building SelectLock.
+        self.handle_helper.pop_map();
+        self.handle_helper.push_empty();
 
         // `:4487` the aggregation. Go's `detectSelectAgg` is "an aggregate
         // anywhere in the select list, HAVING or ORDER BY", which after the

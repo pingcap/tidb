@@ -1,9 +1,10 @@
 # Remove unnecessary runtime crossings while preserving Go request ownership
 
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
-throughput and latency objective. The current increment improves measured
-sysbench throughput and CPU use, but does not meet overall performance
-acceptance or whole-Go-package completion.
+throughput and latency objective. Earlier increments improve measured sysbench
+throughput and CPU use. The current increment restores missing pessimistic row
+locking so TPC-C validation is meaningful; it makes no performance or
+whole-Go-package completion claim.
 
 
 ## Purpose / Big Picture
@@ -41,8 +42,31 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
   reads row 2 after row 1 is deleted; both Rust binaries immediately return
   row 1. Find the uncalled build_select_lock and missing PhysicalLock
   executor construction. This gap predates the sequence/context increment.
-- [ ] Wire Go's physical locking semantics through the real planner/executor,
+- [x] Wire Go's physical locking semantics through the real planner/executor,
   then prove the two-connection case and rerun TPC-C on a fresh valid fixture.
+- [x] Reproduce four existing range/aggregate lock regressions before edits:
+  `locking-red.log` in `/private/tmp/tidb-physical-lock.5cG54c` (four pass,
+  four fail). The losing transaction returns the deleted row or stale sum.
+- [x] Build SelectLock after WHERE and before projection/aggregation, retain
+  physical row identities, construct the executor from the physical plan,
+  and delete the uncalled AST wrapper. Verify text and prepared execution,
+  including hidden handles, LIMIT, retry, and lock wait policy as one batch.
+- [x] Nine scoped locking tests pass, including prepared replay, OF targets,
+  NOWAIT and WAIT. The same 104-case integration scope improves from 77/27
+  pass/fail on committed 70bafc8 to 81/23, with no newly failing cases.
+- [x] Fast-forward collaborator commits through c13931936c without conflicts,
+  including the final two-line stats-reload revert. The locking diff is identical.
+- [x] Validate the 1da08c426a-based binary on fresh real TiKV: prepared contender
+  waits and reselects row 2 like Go; Rust completes 6,000 TPC-C transactions at
+  each of one/eight clients and passes all 11 checks after each run. Preserve
+  evidence in benchmarks/physical-select-lock-validation.json; no timing claim.
+- [x] Stop owned Rust/Go/PD/TiKV nodes and verify PIDs absent and ports closed.
+- [x] Prepare the scoped locking checkpoint after post-revert validation: nine
+  locking tests, release build, Ready lint and formatting pass. Publish only to
+  origin/hparser-integration, retaining the collaborator revert.
+  Partition-ID propagation, shared-lock promotion, nested locking-read timestamps,
+  optimistic locking and online DDL coordination remain open. Live TPC-C evidence
+  precedes the collaborator-only stats revert; do not relabel it as a final-binary run.
 - [x] Rebuild and measure merged 6d26dab06d against the immutable control:
   fourteen fixed-work trials, 84,000 measured transactions, equal SQL hashes.
 - [x] Profile current Rust, control and Go separately. Current Rust has 1,044
@@ -131,6 +155,13 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, physical locking): restore the missing Go planner and
+executor connection, not a TPC-C query special case or a storage scan heuristic.
+Go buildSelectLock runs before projection/aggregation; optimizer TopN pushdown
+determines the locked rows. Existing session statement replay already owns
+fresh for-update snapshots and lock conflicts. Partition identities, explicit
+table targets and wait policy must be preserved, not silently guessed.
 
 Decision (2026-09-10, statement-context profile): remove eager materialization,
 not add a cache or SQL-shape detection. SequenceSnapshot pins the catalog's
@@ -547,7 +578,7 @@ lint and formatting from its root):
     git diff --check
 
 Remaining semantic work includes statement-context-aware cached-plan rebuilding,
-physical selected-row locking, unsupported aggregate/window/subquery shapes,
+partitioned/nested selected-row locking, unsupported aggregate/window/subquery shapes,
 and the broad failures listed above. CachedSelectPlan::bind and CachedDmlPlan::bind
 still use parameter-only rebuild context, whereas Go plan_cache.go::adjustCachedPlan
 uses the current session's ranger context. One current statement context must own

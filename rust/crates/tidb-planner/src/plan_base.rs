@@ -294,6 +294,8 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
+    /// Go ErrUnknownTable (1109), with the clause owning name resolution.
+    UnknownTableInClause(String, String),
     /// Go `table.ErrUnknownPartition` (1735).
     UnknownPartition {
         /// The lower-cased partition name, matching `FindPartitionByName`.
@@ -374,6 +376,16 @@ impl PlanError {
         Self {
             message: format!("Table '{table}' doesn't exist"),
             kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// A table reference that is absent from this clause's visible sources.
+    pub fn unknown_table_in_clause(table: impl Into<String>, clause: impl Into<String>) -> Self {
+        let table = table.into();
+        let clause = clause.into();
+        Self {
+            message: format!("Unknown table '{table}' in {clause}"),
+            kind: PlanErrorKind::UnknownTableInClause(table, clause),
         }
     }
 

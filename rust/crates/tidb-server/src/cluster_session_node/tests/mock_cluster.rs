@@ -542,6 +542,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
         keys: Vec<Vec<u8>>,
         _presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
         _duplicate_hints: std::collections::BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        _wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
         if !self.pessimistic {
             return Err("only a pessimistic transaction locks statement keys".to_owned());

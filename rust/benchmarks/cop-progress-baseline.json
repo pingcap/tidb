@@ -1,6 +1,6 @@
 {
   "date": "2026-09-10",
-  "measurement_scope": "Current eef7d1b0a6-based sequence/context evidence is in statement-sequence-lookup-baseline.json. This file retains immutable earlier candidates, not current-binary evidence. The new increment improves sysbench; TPC-C exposes pre-existing missing SELECT FOR UPDATE locking.",
+  "measurement_scope": "Sequence/context timing evidence is in statement-sequence-lookup-baseline.json; these are immutable earlier binaries, not current-binary timings. The subsequent physical locking correction and real-TiKV TPC-C correctness evidence are in physical-select-lock-validation.json. No new performance acceptance is claimed.",
   "statistics_load_lifecycle": {
     "base_commit": "6d26dab06d6773c425bceaf2700ba8ca333c2f4f",
     "status": "Scoped Ready lifecycle fix. Throughput/latency objective remains open; faster control still wins.",

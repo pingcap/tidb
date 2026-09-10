@@ -21,32 +21,90 @@ use std::sync::{Arc, Mutex};
 use tidb_chunk::{chunk::Chunk, row::Row};
 use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
+use tidb_txnkv::transaction::LockWaitTime;
 
 use crate::{ExecError, Executor};
 
 /// Keys selected by all locking operators in one statement attempt.
 /// The owner must drain this set at every attempt boundary, including errors.
-#[derive(Clone, Debug, Default)]
-pub struct SelectedLockKeys(Arc<Mutex<BTreeSet<Vec<u8>>>>);
+#[derive(Clone, Debug)]
+pub struct SelectedLockKeys {
+    state: Arc<Mutex<SelectedLocks>>,
+    default_wait: LockWaitTime,
+    shared_lock_promotion: bool,
+}
+
+#[derive(Debug, Default)]
+struct SelectedLocks {
+    dml: BTreeSet<Vec<u8>>,
+    reads: Vec<(LockWaitTime, Vec<Vec<u8>>)>,
+}
+
+impl Default for SelectedLockKeys {
+    fn default() -> Self {
+        Self::new(LockWaitTime::session_lock_wait_timeout(), false)
+    }
+}
 
 impl SelectedLockKeys {
+    /// Captures the session policy shared by this attempt's locking operators.
+    pub fn new(default_wait: LockWaitTime, shared_lock_promotion: bool) -> Self {
+        Self {
+            state: Arc::default(),
+            default_wait,
+            shared_lock_promotion,
+        }
+    }
+
+    /// Whether FOR SHARE is promoted to a real lock instead of Go's no-op.
+    pub fn shared_lock_promotion(&self) -> bool {
+        self.shared_lock_promotion
+    }
+
+    /// This statement's SET-able innodb_lock_wait_timeout.
+    pub fn default_wait(&self) -> LockWaitTime {
+        self.default_wait
+    }
+
     /// Adds a matched DML row that needs a lock even without a mutation.
     pub(crate) fn insert(&self, key: Vec<u8>) {
-        self.0.lock().unwrap_or_else(|p| p.into_inner()).insert(key);
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dml
+            .insert(key);
     }
 
     /// Takes the attempt's unique keys in encoded-key order.
     pub fn take(&self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()))
+        self.take_requests()
+            .into_iter()
+            .flat_map(|(_, keys)| keys)
+            .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
     }
 
-    fn extend(&self, keys: BTreeSet<Vec<u8>>) {
-        self.0
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .extend(keys);
+    /// Drains operators in EOF order, preserving each operator's wait policy.
+    /// Matched DML rows follow locking reads, as in Go's statement lock step.
+    pub fn take_requests(&self) -> Vec<(LockWaitTime, Vec<Vec<u8>>)> {
+        let mut state = std::mem::take(&mut *self.state.lock().unwrap_or_else(|p| p.into_inner()));
+        if !state.dml.is_empty() {
+            state
+                .reads
+                .push((self.default_wait, state.dml.into_iter().collect()));
+        }
+        state.reads
+    }
+
+    fn extend(&self, keys: BTreeSet<Vec<u8>>, wait: LockWaitTime) {
+        if !keys.is_empty() {
+            self.state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .reads
+                .push((wait, keys.into_iter().collect()));
+        }
     }
 }
 
@@ -63,6 +121,7 @@ pub struct SelectLockExec {
     expressions: Vec<SelectedRecordKey>,
     selected: SelectedLockKeys,
     pending: BTreeSet<Vec<u8>>,
+    wait: LockWaitTime,
 }
 
 impl SelectLockExec {
@@ -73,12 +132,20 @@ impl SelectLockExec {
         expressions: Vec<SelectedRecordKey>,
         selected: SelectedLockKeys,
     ) -> Self {
+        let wait = selected.default_wait();
         Self {
             child,
             expressions,
             selected,
             pending: BTreeSet::new(),
+            wait,
         }
+    }
+
+    /// The physical lock's NOWAIT/WAIT policy, resolved by executorBuilder.
+    pub fn with_wait(mut self, wait: LockWaitTime) -> Self {
+        self.wait = wait;
+        self
     }
 }
 
@@ -91,7 +158,8 @@ impl Executor for SelectLockExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         self.child.next(req)?;
         if req.num_rows() == 0 {
-            self.selected.extend(std::mem::take(&mut self.pending));
+            self.selected
+                .extend(std::mem::take(&mut self.pending), self.wait);
         } else {
             for index in 0..req.num_rows() {
                 for expression in &self.expressions {

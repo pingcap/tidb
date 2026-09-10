@@ -248,6 +248,7 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     presume_not_exists: &BTreeSet<Vec<u8>>,
     duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
     return_values: bool,
+    wait: LockWaitTime,
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
     let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
@@ -303,19 +304,9 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         // NotExist assertion lands here (`DupKeyCheckInAcquireLock`) or is
         // retained for prewrite (`DupKeyCheckInPrewrite`).
         match if return_values {
-            transaction.acquire_locks_returning_values(
-                &added,
-                &presume_not_exists,
-                LockWaitTime::session_lock_wait_timeout(),
-                call,
-            )
+            transaction.acquire_locks_returning_values(&added, &presume_not_exists, wait, call)
         } else {
-            transaction.acquire_locks(
-                &added,
-                &presume_not_exists,
-                LockWaitTime::session_lock_wait_timeout(),
-                call,
-            )
+            transaction.acquire_locks(&added, &presume_not_exists, wait, call)
         } {
             Ok(acquired) => {
                 // Rows that rode back with the locks enter the cache now:
@@ -960,7 +951,13 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// lock step. The outcome tells the session layer whether the statement
     /// stands, must be re-executed at an advanced timestamp, or failed.
     pub fn lock_keys(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, StorageError> {
-        self.lock_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), false)
+        self.lock_keys_with_assertions(
+            keys,
+            BTreeSet::new(),
+            BTreeMap::new(),
+            false,
+            LockWaitTime::session_lock_wait_timeout(),
+        )
     }
 
     /// [`Self::lock_keys`], asking TiKV to answer each newly locked key's row
@@ -972,7 +969,13 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         keys: Vec<Vec<u8>>,
         return_values: bool,
     ) -> Result<LockKeysOutcome, StorageError> {
-        self.lock_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), return_values)
+        self.lock_keys_with_assertions(
+            keys,
+            BTreeSet::new(),
+            BTreeMap::new(),
+            return_values,
+            LockWaitTime::session_lock_wait_timeout(),
+        )
     }
 
     /// Acquires statement locks with the lazy INSERT assertions selected by
@@ -983,6 +986,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         presume_not_exists: BTreeSet<Vec<u8>>,
         duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
         return_values: bool,
+        wait: LockWaitTime,
     ) -> Result<LockKeysOutcome, StorageError> {
         let mut state = self
             .state
@@ -1005,6 +1009,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
                 &presume_not_exists,
                 &duplicate_hints,
                 return_values,
+                wait,
                 &call,
             ),
             SessionTransactionState::Optimistic(_) => {
@@ -1358,7 +1363,13 @@ pub fn lock_pessimistic_statement<
         },
         |keys, presume_not_exists, duplicate_hints| {
             transaction
-                .lock_keys_with_assertions(keys, presume_not_exists, duplicate_hints, false)
+                .lock_keys_with_assertions(
+                    keys,
+                    presume_not_exists,
+                    duplicate_hints,
+                    false,
+                    LockWaitTime::session_lock_wait_timeout(),
+                )
                 .map_err(|error| error.to_string())
         },
         build,

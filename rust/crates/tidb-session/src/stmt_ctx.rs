@@ -25,6 +25,25 @@ use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
+fn statement_has_lock(statement: &tidb_ast::Stmt) -> bool {
+    use tidb_ast::{Visitable, Visitor};
+    struct LockVisitor(bool);
+    impl Visitor for LockVisitor {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
+                self.0 |= select.lock.is_some();
+            }
+            self.0
+        }
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            !self.0
+        }
+    }
+    let mut visitor = LockVisitor(false);
+    statement.clone().accept(&mut visitor);
+    visitor.0
+}
+
 /// The statement context's SESSION-VARIABLE half, parsed once per
 /// variable-table generation instead of once per statement.
 ///
@@ -120,6 +139,16 @@ impl Session {
         self.selected_lock_keys
             .as_ref()
             .map_or_else(Vec::new, tidb_executor::select_lock::SelectedLockKeys::take)
+    }
+
+    /// Drains physical locking operators without discarding their wait modes.
+    pub fn take_selected_lock_requests(
+        &self,
+    ) -> Vec<(tidb_txnkv::transaction::LockWaitTime, Vec<Vec<u8>>)> {
+        self.selected_lock_keys.as_ref().map_or_else(
+            Vec::new,
+            tidb_executor::select_lock::SelectedLockKeys::take_requests,
+        )
     }
 
     fn optimizer_cost_env(
@@ -503,9 +532,19 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         is_dml: bool,
     ) -> tidb_executor::StmtContext {
-        self.statement_context(is_dml)
+        let mut context = self
+            .statement_context(is_dml)
             .with_statement_priority(crate::statement_priority_of(stmt))
-            .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
+            .with_not_fill_cache(crate::statement_not_fill_cache(stmt));
+        if self.connection_id.is_some_and(|id| id > 0)
+            && context.latest_index_schema().is_none()
+            && statement_has_lock(stmt)
+        {
+            if let Some(latest) = self.latest_index_schema_snapshot() {
+                context = context.with_latest_index_schema(latest);
+            }
+        }
+        context
     }
 
     fn latest_index_schema_snapshot(

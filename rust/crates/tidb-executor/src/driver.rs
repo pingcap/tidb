@@ -481,6 +481,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }
+        tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
+            DriverError::Mysql(MysqlError::new(
+                1109,
+                format!("Unknown table '{table}' in {clause}"),
+            ))
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownPartition { partition, table } => {
             DriverError::UnknownPartition {
                 partition: partition.clone(),

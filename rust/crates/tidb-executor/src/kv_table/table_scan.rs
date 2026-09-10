@@ -3793,6 +3793,26 @@ impl TableScanExec {
         Ok(())
     }
 
+    /// Preserve the retained physical scan's column identities, including
+    /// synthetic handles appended by the scan configuration above.
+    pub(crate) fn with_physical_schema(mut self, mut schema: Schema) -> Result<Self, ExecError> {
+        if schema.columns.len() != self.meta.schema().columns.len() {
+            return Err(ExecError::internal(
+                "physical scan output width differs from its configured columns",
+            ));
+        }
+        for (index, column) in schema.columns.iter_mut().enumerate() {
+            column.index = index as i64;
+        }
+        self.meta = ExecutorMeta::new(
+            schema,
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        Ok(self)
+    }
+
     fn has_virtual_projection(&self) -> bool {
         self.keep
             .iter()

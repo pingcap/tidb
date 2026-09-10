@@ -312,6 +312,7 @@ pub trait OpenClusterTransaction: Send {
         keys: Vec<Vec<u8>>,
         _presume_not_exists: BTreeSet<Vec<u8>>,
         _duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        _wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
         self.lock_staged_keys(keys)
     }
@@ -353,7 +354,12 @@ pub(crate) fn stage_pessimistic_statement<T>(
             Ok(overlay_staged_mutations(snapshot, staged))
         },
         |keys, presume_not_exists, duplicate_hints| {
-            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints)
+            transaction.lock_staged_keys_with_assertions(
+                keys,
+                presume_not_exists,
+                duplicate_hints,
+                tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
+            )
         },
         build,
     )
@@ -1152,6 +1158,7 @@ where
         keys: Vec<Vec<u8>>,
         presume_not_exists: BTreeSet<Vec<u8>>,
         duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
         SessionTransaction::lock_keys_with_assertions(
             self,
@@ -1159,6 +1166,7 @@ where
             presume_not_exists,
             duplicate_hints,
             false,
+            wait,
         )
         .map_err(|error| error.to_string())
     }

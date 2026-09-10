@@ -306,6 +306,17 @@ fn unchanged_updates_lock_only_matched_rows() {
     reader
         .control_transaction("BEGIN PESSIMISTIC")
         .expect("begin reader");
+    // Go TestSelectForUpdateNoWait and TestInnodbLockWaitTimeout: range
+    // locking must preserve NOWAIT, WAIT n and the session timeout.
+    for (clause, code) in [("NOWAIT", 3572), ("WAIT 1", 1205), ("", 1205)] {
+        let sql = format!("SELECT v FROM test.unchanged_lock WHERE v=20 FOR UPDATE {clause}");
+        let result = reader.execute(&sql);
+        assert!(
+            matches!(result, Err(ref error) if error.code == code),
+            "locking range {clause} must report {code}; got {:?}",
+            result.as_ref().err()
+        );
+    }
     let result = reader.execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=1");
     assert!(
         matches!(result, Err(ref error) if error.code == 1205),
@@ -7768,6 +7779,21 @@ fn a_locking_aggregate_reselects_its_input_rows() {
 }
 
 fn locking_range_reselects(projection: &str, window: &str, before: &[&str], after: &[&str]) {
+    // Go TestSelectLockForPartitionTable exercises the concurrent LIMIT
+    // interleaving; concurrency_tpcc_test uses the prepared composite range.
+    for prepared in [false, true] {
+        locking_range_reselects_with_protocol(projection, window, before, after, prepared);
+    }
+}
+
+fn locking_range_reselects_with_protocol(
+    projection: &str,
+    window: &str,
+    before: &[&str],
+    after: &[&str],
+    prepared: bool,
+) {
+    use crate::resultset_source::ResultSetSource;
     let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
     let mut first = factory
@@ -7786,6 +7812,40 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
         .expect("begin");
     let query =
         format!("SELECT {projection} FROM test.lock_range WHERE w=1 AND d=1 {window} FOR UPDATE");
+    let query_rows = |session: &mut ClusterServerSession| {
+        if !prepared {
+            return rows(session, &query);
+        }
+        let statement = session
+            .prepare_general(&query.replace("w=1 AND d=1", "w=? AND d=?"))
+            .expect("prepare locking range");
+        let mut selected = Vec::new();
+        // Execute the same prepared handle twice, covering retained-plan
+        // reconstruction as well as fresh physical executor construction.
+        for _ in 0..2 {
+            let crate::sql_node::GeneralExecuteOutcome::Rows(mut result) = session
+                .execute_general(
+                    &statement,
+                    &[1, 1].map(tidb_protocol::PreparedValue::SignedLongLong),
+                )
+                .expect("execute locking range")
+            else {
+                panic!("SELECT returns rows")
+            };
+            let source = result.source();
+            selected.clear();
+            loop {
+                let batch = source.next_batch(8).expect("locking rows");
+                if batch.is_empty() {
+                    break;
+                }
+                selected.extend(batch);
+            }
+            source.finish().expect("finish locking rows");
+            source.close().expect("close locking rows");
+        }
+        selected
+    };
     let flatten = |rows: Vec<Vec<Datum>>| {
         let mut ids: Vec<String> = displayed(rows)
             .into_iter()
@@ -7794,7 +7854,7 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
         ids.sort();
         ids
     };
-    assert_eq!(flatten(rows(&mut first, &query)), before);
+    assert_eq!(flatten(query_rows(&mut first)), before);
 
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let result = std::thread::scope(|scope| {
@@ -7806,7 +7866,7 @@ fn locking_range_reselects(projection: &str, window: &str, before: &[&str], afte
                 .control_transaction("BEGIN PESSIMISTIC")
                 .expect("begin");
             started_tx.send(()).expect("signal begin");
-            let result = flatten(rows(&mut second, &query));
+            let result = flatten(query_rows(&mut second));
             second.control_transaction("ROLLBACK").expect("rollback");
             result
         });
@@ -7866,6 +7926,33 @@ fn locking_queries_retain_unprojected_record_handles() {
         );
         session.control_transaction("ROLLBACK").expect("rollback");
     }
+    // Go checkLockClauseTables / planner_issue_test's aliased OF targets:
+    // the untargeted joined table must remain available to another locker.
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    for target in ["h", "test.lock_heap"] {
+        assert_eq!(displayed(rows(&mut session, &format!(
+            "SELECT h.v FROM test.lock_heap h JOIN test.lock_integer i ON h.id=i.id FOR UPDATE OF {target}"
+        ))), [["10"]]);
+    }
+    let mut contender = stack.factory.open_session(session_context(115)).unwrap();
+    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut contender,
+            "SELECT v FROM test.lock_integer WHERE id=1 FOR UPDATE NOWAIT"
+        )),
+        [["10"]]
+    );
+    assert!(
+        matches!(contender.execute("SELECT v FROM test.lock_heap WHERE v>0 FOR UPDATE NOWAIT"),
+        Err(error) if error.code == 3572)
+    );
+    contender.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    assert!(
+        matches!(session.execute("SELECT v FROM test.lock_heap FOR UPDATE OF missing"),
+        Err(error) if error.code == 1109)
+    );
 }
 
 #[test]

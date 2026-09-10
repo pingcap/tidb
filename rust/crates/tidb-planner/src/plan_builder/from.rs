@@ -1756,9 +1756,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go's `TblID2Handle` is `map[int64][]util.HandleCols`; 6a's
     /// [`PlanHandleCols`] carries handle IDENTITIES rather than whole
     /// [`Column`]s, and [`LogicalLock`] wants the columns, so each identity is
-    /// resolved back against the child's schema by unique id. An identity with
-    /// no column in the child's schema is DROPPED rather than invented, which
-    /// is the only case Go cannot reach (its map holds the very pointers).
+    /// resolved back against the child's schema by unique id. Losing an
+    /// identity is a planning error, never permission to omit a row lock.
     ///
     /// boundary: `setExtraPhysTblIDColsOnDataSource` /
     /// `addExtraPhysTblIDColumn4DS`; see this module's boundaries.
@@ -1782,13 +1781,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut columns = Vec::new();
             for handle in handles {
                 for unique_id in handle_unique_ids(handle) {
-                    if let Some(column) = schema
+                    let column = schema
                         .columns
                         .iter()
                         .find(|column| column.unique_id == unique_id)
-                    {
-                        columns.push(column.clone());
-                    }
+                        .ok_or_else(|| {
+                            PlanError::internal(format!(
+                                "SelectLock lost handle column {unique_id} for table {table_id}"
+                            ))
+                        })?;
+                    columns.push(column.clone());
                 }
             }
             if !columns.is_empty() {
