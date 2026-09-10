@@ -34,11 +34,17 @@ const (
 type ttlJobVersionCheckResult int
 
 const (
-	// Unknown version state falls back to the old primary-key scan path. This
-	// keeps TTL available without creating index scan tasks that an old worker
-	// may not understand.
+	// ttlJobVersionFallbackToPK uses the old primary-key scan task format. The
+	// caller selects it without a version check when index scan is disabled or
+	// unavailable; the checker also selects it when server version information
+	// cannot be obtained reliably. This keeps TTL available without creating an
+	// index scan task that an old worker may not understand.
 	ttlJobVersionFallbackToPK ttlJobVersionCheckResult = iota
 	ttlJobVersionAllowIndexScan
+	// ttlJobVersionBlockJob means a mixed TiDB build is known to exist. Unlike an
+	// unknown version state, it blocks this submission so the timer retries after
+	// the rolling upgrade converges and can then create the intended index scan
+	// job instead of silently running a potentially much more expensive PK scan.
 	ttlJobVersionBlockJob
 )
 
@@ -97,8 +103,9 @@ func (c *ttlJobVersionChecker) cacheResult(now time.Time, result ttlJobVersionCh
 // version string and Git hash) with the current server. Index scan tasks use a
 // new range format that old workers cannot interpret, so they are enabled only
 // when every server has the same build. A known mismatch blocks the current job
-// submission so the timer can retry it after the rolling upgrade converges.
-// Lookup failures fall back to the old PK scan task format.
+// submission so the timer can retry it after the rolling upgrade converges and
+// preserve the index-scan choice. Lookup failures fall back to the old PK scan
+// task format because there is no positive evidence of a mixed build.
 func (c *ttlJobVersionChecker) check(ctx context.Context) ttlJobVersionCheckResult {
 	now := time.Now()
 	if result, ok := c.cachedResult(now); ok {

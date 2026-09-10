@@ -389,11 +389,18 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
+	// The legacy PK scan task format is safe across TiDB builds. Use it directly
+	// when index scan is disabled or this table has no eligible TTL index, so a
+	// rolling upgrade does not unnecessarily block such jobs.
 	versionCheckResult := ttlJobVersionFallbackToPK
 	if vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil {
 		versionCheckResult = m.jobVersionChecker.check(m.ctx)
 	}
 	if versionCheckResult == ttlJobVersionBlockJob {
+		// Do not silently replace the selected index scan with a potentially much
+		// more expensive PK scan for a known mixed build. Returning an error keeps
+		// the timer event retrying; after the upgrade converges, a later attempt can
+		// create the job with index scan as intended.
 		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server build versions are inconsistent")
 		return
 	}
