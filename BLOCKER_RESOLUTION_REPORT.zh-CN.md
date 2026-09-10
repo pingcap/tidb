@@ -1,5 +1,31 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 binary prepared SELECT 使用保留的缓存计划
+
+pipeline `prepared_execution_retains_ast_and_reuses_current_handles` 独立
+失败：第二次参数执行行值正确，但 last_plan_from_cache 为 0，预期 1
+（`/tmp/pipeline-cache-red.log`）。run_prepared_with_result_authority 只绑定
+AST 并走普通规划，漏掉 PreparedAst 已保存的 select_plan；SQL EXECUTE
+已有完整的缓存准入、binding 和物理计划执行路径。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/planner/optimize.go:950` 在 Execute 规划中调用 GetPlanFromPlanCache。
+Rust binary 入口现在复用同一 select-plan 绑定与执行路径，保留 statement
+hint、binding 标记和缓存关闭策略。共享执行 helper 可在原 statement
+生命周期内捕获 ResultMaterializationAuthority，不从恢复后的变量重建策略。
+未直接设置虚假的命中状态；仍以物理计划确实被执行和 cache_hit 为准。
+
+新增 session API 回归，检查换参返回行（包括重复投影列）、首次未命中、
+再次命中、结果 authority 非空及关闭缓存后未命中。旧实现第二次执行
+失败（`/tmp/binary-cache-unit-red.log`），修复后通过。
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-session --lib prepared` 为
+**103 passed / 0 failed / 2 ignored**（`/tmp/binary-cache-prepared-green.log`）；
+同参数 `-p tidb-server --lib pipeline_session::tests` 为 **14 passed / 0 failed**
+（`/tmp/binary-cache-pipeline-green.log`）。`make lint` 通过
+（`/tmp/binary-cache-lint.log`），`git diff --check` 通过。
+其余 server、session 与外部集成门禁仍需按原目标继续验证和修复。
+
 ## 2026-09-11 pipeline 测试身份使用明确的安全传输
 
 生命周期测试独立运行通过（`/tmp/pipeline-auth-single.log`），同进程运行

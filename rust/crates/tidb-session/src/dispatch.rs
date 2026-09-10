@@ -1191,10 +1191,20 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
+        self.execute_prepared_select_internal(execution, sql, false)
+            .map(|(output, _)| output)
+    }
+
+    pub(crate) fn execute_prepared_select_internal(
+        &mut self,
+        execution: &tidb_executor::PreparedSelectExecution,
+        sql: &str,
+        capture_authority: bool,
+    ) -> Result<(StmtOutput, Option<crate::ResultMaterializationAuthority>), DriverError> {
         let mut used = false;
         let output = execution
             .with_plan(|statement, physical| {
-                self.run_with_columns_using(sql, false, |session| {
+                self.run_with_columns_using(sql, capture_authority, |session| {
                     session
                         .begin_prepared_statement_boundary(statement, Some(execution.parameters()));
                     for (level, code, message) in execution.take_planning_warnings() {
@@ -1213,7 +1223,6 @@ impl Session {
                         &mut used,
                     )
                 })
-                .map(|(output, _)| output)
             })
             .ok_or_else(|| {
                 DriverError::unsupported(

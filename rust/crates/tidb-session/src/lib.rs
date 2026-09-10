@@ -1631,6 +1631,26 @@ impl Session {
         params: &[Datum],
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         let statement = prepared.bind(params)?;
+        let (mut effective_statement, binding_sql) =
+            self.prepared_statement_with_binding(prepared.statement());
+        self.rewrite_fts_for_planning(&mut effective_statement);
+        if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
+            if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
+                self.bind_cached_prepared_select_for_statement(
+                    plan,
+                    params,
+                    &effective_statement,
+                    binding_sql.as_deref(),
+                )
+            }) {
+                let result = self.execute_prepared_select_internal(&cached, prepared.sql(), true);
+                // The nested statement boundary consumes the binding flag.
+                if binding_sql.is_some() {
+                    self.found_in_binding = true;
+                }
+                return result;
+            }
+        }
         self.run_with_columns_using(prepared.sql(), true, |session| {
             session.execute_prepared_ast(prepared.sql(), statement)
         })

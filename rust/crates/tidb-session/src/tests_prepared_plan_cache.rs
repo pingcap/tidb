@@ -22,6 +22,52 @@ use crate::tests_support::row_text;
 use crate::Session;
 
 #[test]
+fn binary_prepared_result_authority_path_reuses_select_plan() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE authority_cache (id BIGINT PRIMARY KEY, v BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO authority_cache VALUES (1,10),(2,20)")
+        .unwrap();
+    let prepared = session
+        .prepare_ast("SELECT id,v,v FROM authority_cache WHERE id=?")
+        .unwrap();
+    for (id, expected_hit) in [(1, 0), (2, 1)] {
+        let (output, authority) = session
+            .run_prepared_with_result_authority(&prepared, &[Datum::Int(id)])
+            .unwrap();
+        let crate::StmtOutput::Rows { rows, .. } = output else {
+            panic!("expected rows");
+        };
+        assert_eq!(
+            rows,
+            vec![vec![
+                Datum::Int(id),
+                Datum::Int(id * 10),
+                Datum::Int(id * 10)
+            ]]
+        );
+        assert!(authority.is_some());
+        assert_eq!(
+            session.run("SELECT @@last_plan_from_cache").unwrap(),
+            crate::StmtResult::Rows(vec![vec![Datum::Int(expected_hit)]])
+        );
+    }
+    session
+        .run("SET tidb_enable_prepared_plan_cache=OFF")
+        .unwrap();
+    let (_, authority) = session
+        .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
+        .unwrap();
+    assert!(authority.is_some());
+    assert_eq!(
+        session.run("SELECT @@last_plan_from_cache").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(0)]])
+    );
+}
+
+#[test]
 fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
     let mut session = Session::new();
     let first = session.prepared_plan_cache_environment().unwrap();
