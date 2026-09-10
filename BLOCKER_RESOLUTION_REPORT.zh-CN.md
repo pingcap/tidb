@@ -1,5 +1,37 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 三个遗漏 runner 的 readiness 竞争
+
+发现 convergence、analyze、repeatable-read 仍在 TCP 端口开放后只 grep 一次
+ready。与此前 access-path 相同，不能据此推断服务端死锁。将四个 runner
+统一接到 `cluster-session-readiness.sh`：等待原始 ready 事件，180 秒上限，
+进程提前退出立即失败。Go master `pkg/server/server.go::Run` 先建 listener、
+后发布 health 的依据保持不变，没有更改服务端启动语义。
+
+回归读取每个生产脚本的实际启动调用段。三个遗漏脚本修复前均报
+`the Rust node never reported ready`，日志仅有 mysql_tls；日志分别为
+`/tmp/{convergence,analyze,repeatable-read}-readiness-red.log`。
+修复后四个入口均通过延迟 ready、提前退出、持续无 ready 三个场景：
+`/tmp/shared-readiness-green.log`。Ready 验证：
+
+```bash
+for name in access-path convergence analyze repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${name}.sh || exit
+done
+bash -n rust/scripts/cluster-session-readiness.sh rust/scripts/test-access-path-readiness.sh rust/scripts/run-realtikv-{access-path,convergence,analyze,repeatable-read}.sh
+make lint
+git diff --check
+```
+
+真实运行 `/tmp/convergence-shared-readiness.log` 已通过 ENUM、join、聚合、
+子查询、窗口、Rust 提交由 Go 读回、双向 CREATE/DROP 后读写，停在旧断言
+`ALTER was accepted, but this mode must refuse it`。
+`/tmp/repeatable-read-shared-readiness.log` 明确输出 ready（46700，schema 57），
+随后 Python 3.9 在认证 token 的 `zip(strict=True)` 抛 TypeError，服务端 EOF
+是客户端退出的结果。两个脚本都结束并清理，不能将后续失败再归为 readiness。
+真实集群为脚本原有 v8.5.6，未冒充固定 master 差分验证；analyze 真实全程未在
+本次重跑。整体目标继续推进。lint 日志 `/tmp/shared-readiness-lint.log`。
+
 ## 2026-09-11 optimistic 2PC 异步 secondary 完成证据
 
 原真实测试在 `secondary_publications.len() == 1` 失败（实际 0），

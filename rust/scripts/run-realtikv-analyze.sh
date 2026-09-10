@@ -177,8 +177,8 @@ echo "starting the Rust node in cluster-session mode"
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 wait_for_port "${RUST_SQL_PORT}" "${RUST_LOG_FILE}"
-grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" >/dev/null \
-  || { echo "the Rust node never reported ready"; cat "${RUST_LOG_FILE}"; exit 1; }
+source "${RUST_ROOT}/scripts/cluster-session-readiness.sh"
+wait_for_cluster_session_ready "${RUST_PID}" "${RUST_LOG_FILE}"
 
 # ---------------------------------------------------------------- the write
 echo

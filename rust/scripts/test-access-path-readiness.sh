@@ -2,6 +2,8 @@
 # Exercise the production startup check with a listener preceding its ready event.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+RUST_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
+STARTUP_SCRIPT=${1:-run-realtikv-access-path.sh}
 WORK_DIR=$(mktemp -d)
 RUST_PID=""
 trap 'if [[ -n "$RUST_PID" ]]; then kill "$RUST_PID" 2>/dev/null || true; wait "$RUST_PID" 2>/dev/null || true; fi; rm -rf "$WORK_DIR"' EXIT
@@ -9,7 +11,7 @@ RUST_LOG_FILE="${WORK_DIR}/node.log"
 RUST_SQL_PORT=0
 wait_for_port() { return 0; }
 # Keep this test attached to the actual call site, including its exit behavior.
-startup_check=$(awk '/^RUST_PID=\$!$/ { capture=1; next } capture && /^# The chosen/ { exit } capture { print }' "${SCRIPT_DIR}/run-realtikv-access-path.sh")
+startup_check=$(awk '/^RUST_PID=\$!$/ { capture=1; next } capture && /^$/ { exit } capture { print }' "${SCRIPT_DIR}/${STARTUP_SCRIPT}")
 [[ -n "$startup_check" ]]
 printf '%s\n' '{"event":"mysql_tls","enabled":true}' >"$RUST_LOG_FILE"
 (
