@@ -2041,6 +2041,7 @@ fn drop_partitions_statistics_match_go() {
          PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), \
          PARTITION p3 VALUES LESS THAN (21))",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO stats_drop_partitions VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
@@ -2072,6 +2073,7 @@ fn drop_partitions_statistics_match_go() {
         &mut session,
         "ALTER TABLE stats_drop_partitions DROP PARTITION p0, p1",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     assert_eq!(
         displayed(rows(
             &mut session,

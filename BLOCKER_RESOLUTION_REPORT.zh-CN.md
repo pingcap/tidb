@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DROP PARTITION 统计事件同步
+
+drop_partitions_statistics_match_go 独立失败：删除 p0/p1 后全局统计仍为
+count=5、modify_count=0，预期 2/3（`/tmp/drop-partitions-red.log`）。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/ddl_test.go:1031` TestDropPartitions 在检查前
+显式消费 ActionDropTablePartition，随后验证 2/3 及两个旧分区版本变化。
+
+Rust fixture 现于 CREATE 和 DROP PARTITION 后驱动已有真实 notifier。
+保留原插入、ANALYZE、全局统计及两个旧分区版本递增断言；生产统计
+逻辑未修改，预期值未调整。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib drop_partitions_statistics_match_go`
+通过，1 passed，3.25 秒（`/tmp/drop-partitions-green.log`）；`make lint`
+通过（`/tmp/drop-partitions-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 ADD PARTITION 两种 prune mode 的事件同步
 
 add_partition_statistics_follow_global_prune_mode_like_go 独立失败于
