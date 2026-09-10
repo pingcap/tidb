@@ -119,18 +119,32 @@ func (uc *unicode0900ASCSCollator) collationElements(str string) []uint64 {
 	return ces
 }
 
+// maxNumericSegmentDigits bounds the digits encoded as one number so the digit-count primary
+// stays below the digit primaries (0x0100) and cannot wrap the uint16. It is ICU's limit for the
+// kn option; like ICU, a longer run is encoded as consecutive numbers of this many digits.
+const maxNumericSegmentDigits = 254
+
 // appendNumericCEs appends collation elements that sort a run of decimal digits by numeric
 // value. Leading zeros are ignored. The run is encoded as one element for the count of
 // significant digits, followed by one element per digit; all primaries are below any real
-// character weight (count < 0x0100, digits in 0x0100..0x0109), so two runs compare
-// count-first then digit-by-digit, i.e. by numeric value. Correct for up to 255 significant
-// digits, which is far beyond any practical number.
+// character weight (count <= maxNumericSegmentDigits < 0x0100, digits in 0x0100..0x0109), so
+// two runs compare count-first then digit-by-digit, i.e. by numeric value. A run longer than
+// maxNumericSegmentDigits is split into segments, each encoded as its own number.
 func appendNumericCEs(ces []uint64, digits string) []uint64 {
 	i := 0
 	for i < len(digits)-1 && digits[i] == '0' {
 		i++
 	}
 	sig := digits[i:]
+	for len(sig) > maxNumericSegmentDigits {
+		ces = appendNumericSegmentCEs(ces, sig[:maxNumericSegmentDigits])
+		sig = sig[maxNumericSegmentDigits:]
+	}
+	return appendNumericSegmentCEs(ces, sig)
+}
+
+// appendNumericSegmentCEs encodes at most maxNumericSegmentDigits digits as one number.
+func appendNumericSegmentCEs(ces []uint64, sig string) []uint64 {
 	ces = append(ces, packCE(uint16(len(sig)), 0x0020, 0x0002))
 	for k := range len(sig) {
 		ces = append(ces, packCE(0x0100+uint16(sig[k]-'0'), 0x0020, 0x0002))
@@ -287,9 +301,10 @@ func buildMultiLevelKey(ces []uint64, cf caseFirst, st strengthLevel) []byte {
 	return buf
 }
 
-// Pattern implements Collator interface.
-func (*unicode0900ASCSCollator) Pattern() WildcardPattern {
-	return &unicode0900ASCSPattern{}
+// Pattern implements Collator interface. Matching is per-rune at the collator's strength, so
+// LIKE agrees with Compare on case and accent sensitivity. Numeric runs are not folded in LIKE.
+func (uc *unicode0900ASCSCollator) Pattern() WildcardPattern {
+	return &unicode0900ASCSPattern{strength: uc.strength}
 }
 
 // MaxKeyLen implements Collator interface. A rune expands to at most 8 collation elements,
@@ -300,6 +315,7 @@ func (*unicode0900ASCSCollator) MaxKeyLen(s string) int {
 }
 
 type unicode0900ASCSPattern struct {
+	strength strengthLevel
 	patChars []rune
 	patTypes []byte
 }
@@ -309,22 +325,17 @@ func (p *unicode0900ASCSPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
-// DoMatch implements WildcardPattern interface. Two runes match only when their full
-// multi-level weights are identical, so matching is accent- and case-sensitive.
+// DoMatch implements WildcardPattern interface. Two runes match when their sort keys at the
+// collator's strength are equal, which is exactly Compare's equality: at full strength matching
+// is accent- and case-sensitive, at secondary strength case-insensitive, at primary strength
+// both. Case-first only permutes the case level, which never changes equality, so it is not needed.
 func (p *unicode0900ASCSPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		if a == b {
 			return true
 		}
-		wa, wb := asCSWeights(a), asCSWeights(b)
-		if len(wa) != len(wb) {
-			return false
-		}
-		for i := range wa {
-			if wa[i] != wb[i] {
-				return false
-			}
-		}
-		return true
+		return bytes.Equal(
+			buildMultiLevelKey(asCSWeights(a), caseFirstOff, p.strength),
+			buildMultiLevelKey(asCSWeights(b), caseFirstOff, p.strength))
 	})
 }

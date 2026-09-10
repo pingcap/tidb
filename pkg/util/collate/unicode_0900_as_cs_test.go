@@ -17,6 +17,7 @@ package collate
 import (
 	"bytes"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -111,6 +112,23 @@ func TestUnicode0900NumericCollation(t *testing.T) {
 	// Non-digit context still uses full accent/case-sensitive ordering.
 	require.Equal(t, -1, sign(num.Compare("a1", "A1"))) // lowercase before uppercase
 	require.Equal(t, -1, sign(num.Compare("e1", "é1"))) // accent-sensitive
+
+	// Runs longer than maxNumericSegmentDigits are split into segments so the digit-count
+	// primary never reaches a real character primary or wraps the uint16. Before the split, a
+	// 600-digit run's count primary (0x0258) exceeded the SPACE primary and sorted after " ",
+	// unlike every shorter number, and a 65537-digit run's count wrapped to 1 and sorted before "99".
+	require.Equal(t, -1, sign(num.Compare("1", " ")))
+	require.Equal(t, -1, sign(num.Compare(strings.Repeat("9", 600), " ")))
+	require.Equal(t, 1, sign(num.Compare(strings.Repeat("9", 1<<16+1), "99")))
+	long := strings.Repeat("9", 1<<16)
+	require.Equal(t, 0, num.Compare(long, "0"+long)) // leading zeros still ignored
+	for _, ce := range num.collationElements(long) {
+		require.Less(t, uint16(ce>>32), uint16(0x0100+10)) // count and digit primaries stay in range
+	}
+	// The segment boundary keeps the fast path: exactly maxNumericSegmentDigits digits is one
+	// number, one more digit becomes two.
+	require.Len(t, num.collationElements(strings.Repeat("1", maxNumericSegmentDigits)), maxNumericSegmentDigits+1)
+	require.Len(t, num.collationElements(strings.Repeat("1", maxNumericSegmentDigits+1)), maxNumericSegmentDigits+3)
 }
 
 // TestUnicode0900CaseFirstCollation verifies the case-first (kf) option. Expected orderings
@@ -174,4 +192,20 @@ func TestUnicode0900StrengthLevels(t *testing.T) {
 	require.Equal(t, 0, combo.Compare("Item-2", "item-2"))         // case-insensitive
 	require.Equal(t, -1, sign(combo.Compare("item-2", "Item-10"))) // numeric, case-insensitive
 	require.Equal(t, -1, sign(combo.Compare("cafe-1", "café-1")))  // accent-sensitive
+
+	// LIKE matches runes at the collator's strength, so it agrees with Compare's equality.
+	like := func(c Collator, str, pattern string) bool {
+		p := c.Pattern()
+		p.Compile(pattern, '\\')
+		return p.DoMatch(str)
+	}
+	full := &unicode0900ASCSCollator{}
+	require.False(t, like(full, "A", "a"))           // full strength: case-sensitive
+	require.False(t, like(full, "é", "e"))           // full strength: accent-sensitive
+	require.True(t, like(level2, "A", "a"))          // level 2: case-insensitive
+	require.True(t, like(level2, "Ab", "a_"))        // level 2 with a wildcard
+	require.False(t, like(level2, "é", "e"))         // level 2: accent-sensitive
+	require.True(t, like(level1, "é", "e"))          // level 1: accent-insensitive
+	require.True(t, like(level1, "A", "a%"))         // level 1: case-insensitive
+	require.True(t, like(combo, "Item-2", "item-_")) // case-first does not affect matching
 }

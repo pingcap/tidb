@@ -58,6 +58,10 @@ static int ce_of(const char* locale, const char* utf8, int32_t* out, int cap) {
 
 static const char* icu_version() { return U_ICU_VERSION; }
 
+// contractions_of writes the locale's contraction strings to out, one per line, and returns the
+// number of bytes written. Failure codes: -1 ICU error (collator open or contraction lookup),
+// -2 an item did not fit in out (cap too small), -3 an item could not be read or converted to
+// UTF-8. It never drops an item silently: the caller must treat any negative result as fatal.
 static int contractions_of(const char* locale, char* out, int cap) {
     UErrorCode s = U_ZERO_ERROR;
     UCollator* c = ucol_open(locale, &s);
@@ -65,21 +69,27 @@ static int contractions_of(const char* locale, char* out, int cap) {
     USet* contr = uset_openEmpty();
     USet* exp = uset_openEmpty();
     ucol_getContractionsAndExpansions(c, contr, exp, 0, &s);
-    int cnt = uset_getItemCount(contr);
+    int rc = 0;
     int pos = 0;
-    for (int i = 0; i < cnt; i++) {
-        UChar ustr[64]; UChar32 start, end; UErrorCode se = U_ZERO_ERROR;
-        int32_t slen = uset_getItem(contr, i, &start, &end, ustr, 64, &se);
-        if (slen > 0) {
+    if (U_FAILURE(s)) {
+        rc = -1;
+    } else {
+        int cnt = uset_getItemCount(contr);
+        for (int i = 0; i < cnt && rc == 0; i++) {
+            UChar ustr[64]; UChar32 start, end; UErrorCode se = U_ZERO_ERROR;
+            int32_t slen = uset_getItem(contr, i, &start, &end, ustr, 64, &se);
+            if (U_FAILURE(se)) { rc = -3; break; }
+            if (slen <= 0) continue; // a code point range, not a contraction string
             char u8[256]; int32_t u8len = 0; UErrorCode s2 = U_ZERO_ERROR;
             u_strToUTF8(u8, 256, &u8len, ustr, slen, &s2);
-            if (U_SUCCESS(s2) && pos + u8len + 1 < cap) {
-                for (int k = 0; k < u8len; k++) out[pos++] = u8[k];
-                out[pos++] = '\n';
-            }
+            if (U_FAILURE(s2)) { rc = -3; break; }
+            if (pos + u8len + 1 >= cap) { rc = -2; break; }
+            for (int k = 0; k < u8len; k++) out[pos++] = u8[k];
+            out[pos++] = '\n';
         }
     }
     uset_close(contr); uset_close(exp); ucol_close(c);
+    if (rc != 0) return rc;
     out[pos] = 0;
     return pos;
 }
@@ -130,11 +140,18 @@ func contractionsOf(locale string) []string {
 	defer C.free(unsafe.Pointer(cl))
 	const cap = 1 << 16
 	buf := make([]C.char, cap)
-	C.contractions_of(cl, &buf[0], C.int(cap))
-	raw := C.GoString(&buf[0])
-	if raw == "" {
+	n := int(C.contractions_of(cl, &buf[0], C.int(cap)))
+	switch {
+	case n == -2:
+		panic(fmt.Sprintf("ICU contractions_of output for locale %q exceeds buffer capacity %d", locale, cap))
+	case n == -3:
+		panic(fmt.Sprintf("ICU contractions_of could not read or convert a contraction for locale %q", locale))
+	case n < 0:
+		panic(fmt.Sprintf("ICU contractions_of failed for locale %q (code %d)", locale, n))
+	case n == 0:
 		return nil
 	}
+	raw := C.GoStringN(&buf[0], C.int(n))
 	return strings.Split(strings.TrimRight(raw, "\n"), "\n")
 }
 
