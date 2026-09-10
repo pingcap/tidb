@@ -524,7 +524,11 @@ impl<S: BindingStore> BindingCache<S> {
     /// Go's note survives verbatim in behaviour: due to eviction the store may
     /// hold fewer digests than the bi-map, and that is acceptable because the
     /// optimizer reloads on a cache miss.
-    pub fn set_binding(&mut self, sql_digest: &str, mut binding: Binding) -> Result<(), DriverError> {
+    pub fn set_binding(
+        &mut self,
+        sql_digest: &str,
+        mut binding: Binding,
+    ) -> Result<(), DriverError> {
         let stmt = tidb_parser::parse(&binding.bind_sql).map_err(|err| {
             DriverError::unsupported(format!(
                 "cannot parse binding SQL {:?}: {}",

@@ -1670,10 +1670,7 @@ fn ddl_after_loaded_statistics_matches_go() {
             table_id,
             tidb_exec::stats_watch::TableStatsState::Loaded(Arc::new(table)),
         );
-        stack
-            .factory
-            .stats()
-            .store_after_analyze(snapshot);
+        stack.factory.stats().store_after_analyze(snapshot);
         assert!(peer_catalog
             .lock()
             .unwrap()

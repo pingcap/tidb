@@ -31,9 +31,11 @@ fn fix52592_disables_unique_index_point_conversion() {
     ] {
         let sql = format!("SELECT v FROM t WHERE {predicate}");
         for enabled in [false, true, false] {
-            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse(
-                if enabled { "52592:ON" } else { "52592:OFF" },
-            )
+            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse(if enabled {
+                "52592:ON"
+            } else {
+                "52592:OFF"
+            })
             .unwrap();
             let execution = ctx.clone().with_optimizer_fix_control(fix);
             let (rows, ops) = crate::storage::capture_storage_ops(|| {
@@ -1568,8 +1570,12 @@ fn primary_batch_reads_use_written_common_handle_encoding() {
             _ => "0",
         };
         assert_eq!(
-            run_select_on(&format!("SELECT v FROM {name} WHERE k={key}"), &catalog, &ctx)
-                .unwrap(),
+            run_select_on(
+                &format!("SELECT v FROM {name} WHERE k={key}"),
+                &catalog,
+                &ctx
+            )
+            .unwrap(),
             vec![vec![Datum::Int(10)]],
             "single point: {name}"
         );

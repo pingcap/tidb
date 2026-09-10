@@ -75,8 +75,6 @@ pub mod deadlock_history;
 pub mod driver;
 pub mod error_context;
 pub mod executor;
-pub mod max_one_row;
-pub mod union_all;
 pub mod explain;
 pub mod expression_index;
 mod farmhash;
@@ -95,8 +93,8 @@ pub mod joiner;
 pub mod keydecoder;
 pub mod kv_table;
 pub mod limit;
-pub mod select_lock;
 pub mod load_stats;
+pub mod max_one_row;
 pub mod mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
@@ -107,6 +105,7 @@ pub mod partition_pruning;
 pub mod partition_routing;
 mod physical_cte;
 pub(crate) mod ranger_detacher;
+pub mod select_lock;
 #[cfg(test)]
 mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
@@ -154,6 +153,7 @@ mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_table_part2_source;
 mod tidb_decode_key;
+pub mod union_all;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 pub mod fts_like_rewrite;
 mod plan_trace;

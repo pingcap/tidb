@@ -1328,11 +1328,19 @@ mod tests {
         let mut catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
         let (rows, ops) = capture_storage_ops(|| {
-            run_select_on("SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+            run_select_on(
+                "SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid",
+                &catalog,
+                &ctx,
+            )
+            .unwrap()
         });
         assert_eq!(
             rows,
-            handles.iter().map(|id| vec![Datum::Int(*id)]).collect::<Vec<_>>()
+            handles
+                .iter()
+                .map(|id| vec![Datum::Int(*id)])
+                .collect::<Vec<_>>()
         );
         assert_eq!(ops.cop_scans, 1);
         assert_eq!(
@@ -1344,7 +1352,12 @@ mod tests {
             1
         );
         let (rows, ops) = capture_storage_ops(|| {
-            run_select_on("SELECT _tidb_rowid,a FROM t ORDER BY _tidb_rowid", &catalog, &ctx).unwrap()
+            run_select_on(
+                "SELECT _tidb_rowid,a FROM t ORDER BY _tidb_rowid",
+                &catalog,
+                &ctx,
+            )
+            .unwrap()
         });
         assert_eq!(rows, vec![vec![Datum::Int(handles[0]), Datum::Int(101)]]);
         assert_eq!(ops.cop_scans, 1);
@@ -1856,16 +1869,16 @@ mod tests {
                 )
                 .unwrap();
             let catalog = catalog_of(fixture.table);
-            for (condition, expected) in [
-                ("b=1", vec![110]),
-                ("b IN (1,4,1,99)", vec![110, 40]),
-            ] {
+            for (condition, expected) in [("b=1", vec![110]), ("b IN (1,4,1,99)", vec![110, 40])] {
                 let sql = format!("SELECT c FROM t WHERE {predicate} AND {condition}");
                 let (rows, ops) =
                     capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
                 assert_eq!(
                     rows,
-                    expected.into_iter().map(|v| vec![Datum::Int(v)]).collect::<Vec<_>>(),
+                    expected
+                        .into_iter()
+                        .map(|v| vec![Datum::Int(v)])
+                        .collect::<Vec<_>>(),
                     "{sql}"
                 );
                 assert_eq!((ops.scans, ops.cop_scans), (0, 0), "{sql}");

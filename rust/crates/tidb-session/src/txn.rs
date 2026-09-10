@@ -344,8 +344,11 @@ impl Session {
     /// open transaction. Before a lazy transaction starts, use its setting.
     pub(crate) fn read_committed_locking(&self) -> bool {
         self.txn.as_ref().map_or_else(
-            || self.vars.get_system("transaction_isolation")
-                .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED")),
+            || {
+                self.vars
+                    .get_system("transaction_isolation")
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED"))
+            },
             |txn| txn.read_committed,
         )
     }
@@ -371,7 +374,10 @@ impl Session {
         let local_temporary_at_open = self.local_temporary_tables.clone();
         let read_committed = self.read_committed_locking();
         let txn = Transaction::open(
-            &*self.lock_catalog()?, mode, read_committed, local_temporary_at_open,
+            &*self.lock_catalog()?,
+            mode,
+            read_committed,
+            local_temporary_at_open,
         );
         // Go publishes `TxnCtx.StartTS` the moment the transaction
         // activates; `@@tidb_current_ts` reads exactly that.

@@ -1130,9 +1130,9 @@ impl ClusterSessionFactory {
             server_info: None,
             global_vars,
             boot_skipped,
-            statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(
-                Arc::new(ClusterStatisticsSource(Arc::clone(&stats))),
-            )),
+            statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
+                ClusterStatisticsSource(Arc::clone(&stats)),
+            ))),
             stats,
             spill_storage: None,
             mem_arbitrator: None,

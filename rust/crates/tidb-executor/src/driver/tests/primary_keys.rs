@@ -410,7 +410,12 @@ fn analyzed_composite_index_dominates_single_equality_index() {
         .map(|id| format!("({id}, {}, {id}, 'payload')", id % 4))
         .collect::<Vec<_>>()
         .join(",");
-    run_insert_on(&format!("INSERT INTO t VALUES {values}"), &mut catalog, &ctx).unwrap();
+    run_insert_on(
+        &format!("INSERT INTO t VALUES {values}"),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
     let (table_id, statistics) = {
         let TableEntry::Kv(table) = catalog.table_mut_in(DEFAULT_DATABASE, "t").unwrap() else {
             panic!("expected KV table");

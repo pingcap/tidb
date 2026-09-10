@@ -111,7 +111,8 @@ pub use charset::{
     get_collation_by_id, get_collation_by_name, get_default_charset_and_collate,
     get_default_collation, get_default_collation_legacy, get_supported_charsets,
     get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
-    CharsetInfo, CharsetName, Collation, CollationInfo, PAD_NONE, PAD_SPACE, TIFLASH_SUPPORTED_CHARSETS,
+    CharsetInfo, CharsetName, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
+    TIFLASH_SUPPORTED_CHARSETS,
 };
 pub use collation::{
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
@@ -189,10 +190,11 @@ pub use field_name::{
 };
 pub use field_type::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    enum_set_display_length_from_lengths, field_type_has_charset, infer_param_type_from_datum, merge_field_type,
-    parser_default_field_type_for_value, set_type_flag, str_to_type, type_str, type_to_str,
-    FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, FieldTypeValue, MAX_DECIMAL_SCALE,
-    MAX_DECIMAL_WIDTH, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
+    enum_set_display_length_from_lengths, field_type_has_charset, infer_param_type_from_datum,
+    merge_field_type, parser_default_field_type_for_value, set_type_flag, str_to_type, type_str,
+    type_to_str, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
+    MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
+    VAR_STORAGE_LEN,
 };
 pub use format::{output_format, FlatFormatter, FormatFragment, Formatter, IndentFormatter};
 pub use fsp::{

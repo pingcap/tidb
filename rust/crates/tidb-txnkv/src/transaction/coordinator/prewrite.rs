@@ -36,9 +36,8 @@ use super::super::mutation::OptimisticMutation;
 use super::super::region_batches::RegionMutationBatch;
 use super::super::state::TransactionCause;
 use super::{
-    classify_key_error, wait_with_call, RealOptimisticTransaction,
-    ASYNC_COMMIT_KEYS_LIMIT, ASYNC_COMMIT_SAFE_WINDOW_MS, ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT,
-    TSO_LOGICAL_BITS,
+    classify_key_error, wait_with_call, RealOptimisticTransaction, ASYNC_COMMIT_KEYS_LIMIT,
+    ASYNC_COMMIT_SAFE_WINDOW_MS, ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT, TSO_LOGICAL_BITS,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -244,12 +243,13 @@ where
                 // client-go prewrite.go: resolveLocks uses BoTxnLock with
                 // TTL as a cap, not a sleep. Recheck a released lock without
                 // waiting for its old TTL to expire; share the region budget.
-                let delay = self.forward_backoff.next_delay_capped(
-                    crate::retry::RegionBackoffKind::TxnLock, recovery.ttl,
-                ).map_err(|error| TransactionCause::Lock {
-                    key: eligible_locks[0].key().to_vec(),
-                    detail: format!("Prewrite lock retry budget exhausted: {error:?}"),
-                })?;
+                let delay = self
+                    .forward_backoff
+                    .next_delay_capped(crate::retry::RegionBackoffKind::TxnLock, recovery.ttl)
+                    .map_err(|error| TransactionCause::Lock {
+                        key: eligible_locks[0].key().to_vec(),
+                        detail: format!("Prewrite lock retry budget exhausted: {error:?}"),
+                    })?;
                 wait_with_call(call, delay).map_err(|error| TransactionCause::Lock {
                     key: eligible_locks[0].key().to_vec(),
                     detail: format!("Prewrite lock wait failed: {error:?}"),

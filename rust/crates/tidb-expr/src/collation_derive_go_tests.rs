@@ -55,10 +55,7 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
     let field_type = string_field_type(UTF8MB4, UTF8MB4_UNICODE_CI);
     let expressions = [
         Expression::Column(Column::new(1, field_type.clone())),
-        Expression::Constant(Constant::new(
-            Datum::new_string("a"),
-            field_type.clone(),
-        )),
+        Expression::Constant(Constant::new(Datum::new_string("a"), field_type.clone())),
         Expression::CorrelatedColumn(crate::column::CorrelatedColumn {
             column: Column::new(2, field_type.clone()),
             data: Default::default(),
@@ -90,10 +87,7 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
             super::collation_of_node(&expression),
             tidb_datatype::Collation::Utf8Mb4UnicodeCi
         );
-        super::set_explicit_collation(
-            &mut expression,
-            tidb_datatype::Collation::Utf8Mb4GeneralCi,
-        );
+        super::set_explicit_collation(&mut expression, tidb_datatype::Collation::Utf8Mb4GeneralCi);
         assert_eq!(
             super::collation_of_node(&expression),
             tidb_datatype::Collation::Utf8Mb4GeneralCi

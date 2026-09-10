@@ -480,7 +480,10 @@ mod tests {
             assert_eq!(result.code(), FieldTypeCode::VectorFloat32, "{name}");
             assert_eq!((result.flen(), result.decimal()), (-1, 0), "{name}");
             assert_eq!(result.flags(), FieldTypeFlags::BINARY, "{name}");
-            assert_eq!((result.charset_name(), result.collation_name()), ("binary", "binary"));
+            assert_eq!(
+                (result.charset_name(), result.collation_name()),
+                ("binary", "binary")
+            );
         }
         assert!(infer_arithmetic_type("div", &vector_expr(vec![1.0]), &int_expr(1)).is_none());
     }

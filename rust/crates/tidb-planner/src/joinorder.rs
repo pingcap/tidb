@@ -677,11 +677,8 @@ impl ConflictDetector {
                     .ok_or_else(|| PlanError::internal("failed to make join plan"))?,
             )
         };
-        let (plan, stats_result) = crate::logical::rewrite::recursive_derive_stats_with_context(
-            plan,
-            Vec::new(),
-            context,
-        );
+        let (plan, stats_result) =
+            crate::logical::rewrite::recursive_derive_stats_with_context(plan, Vec::new(), context);
         let (stats, _) = stats_result?;
         let cumulative_cost = stats.row_count()
             + check_result.node1.cumulative_cost
@@ -1334,11 +1331,7 @@ fn check_connection_and_make_join(
         };
         result = cartesian;
     }
-    let node = detector.make_join(
-        context,
-        result.clone(),
-        vertex_hints,
-    )?;
+    let node = detector.make_join(context, result.clone(), vertex_hints)?;
     Ok(Some((result, node)))
 }
 
@@ -1419,11 +1412,7 @@ fn make_join_with_detector(
                 PlanError::internal("failed to construct bushy tree: no valid join edge found")
             })?;
     }
-    detector.make_join(
-        context,
-        connection,
-        vertex_hints,
-    )
+    detector.make_join(context, connection, vertex_hints)
 }
 
 fn make_bushy_tree(

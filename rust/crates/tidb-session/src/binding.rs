@@ -309,7 +309,10 @@ pub trait GlobalBindingWriter: Send + Sync {
 impl Binding {
     /// Decode the stored binding projection used by both catalog and node loaders.
     /// Invalid SQL and builtin rows are ignored; tombstones reach cache resolution.
-    pub fn from_storage_row(row: &[tidb_datatype::Datum], mode: tidb_parser::SqlMode) -> Option<Self> {
+    pub fn from_storage_row(
+        row: &[tidb_datatype::Datum],
+        mode: tidb_parser::SqlMode,
+    ) -> Option<Self> {
         let text = |index: usize| crate::datum_text(row.get(index)?);
         let status = match text(3)?.as_str() {
             STATUS_ENABLED => STATUS_ENABLED,
@@ -336,7 +339,6 @@ impl Binding {
             hints: collect_hints(&hinted),
         })
     }
-
 }
 
 /// Go's `sessionBindingHandle`: one binding per normalized origin statement,

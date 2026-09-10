@@ -550,11 +550,13 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             .flat_map(|region| &region.peers)
             .filter_map(|peer| {
                 self.stores.get(&peer.store_id).map(|store| {
-                    let metadata = (store.resolve_state() != StoreResolveState::Removed)
-                        .then(|| StoreMetadata {
-                            id: store.id(),
-                            address: store.address().to_owned(),
-                            labels: store.labels().to_vec(),
+                    let metadata =
+                        (store.resolve_state() != StoreResolveState::Removed).then(|| {
+                            StoreMetadata {
+                                id: store.id(),
+                                address: store.address().to_owned(),
+                                labels: store.labels().to_vec(),
+                            }
                         });
                     (peer.store_id, metadata)
                 })

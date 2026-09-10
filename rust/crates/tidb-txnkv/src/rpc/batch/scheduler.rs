@@ -406,14 +406,11 @@ where
                     normal_count += 1;
                 }
 
-                let request_id = self.id_alloc.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-                groups.push(
-                    ScheduledEntry {
-                        request_id,
-                        entry,
-                    },
-                    selected_at,
-                );
+                let request_id = self
+                    .id_alloc
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1);
+                groups.push(ScheduledEntry { request_id, entry }, selected_at);
             }
         }
 

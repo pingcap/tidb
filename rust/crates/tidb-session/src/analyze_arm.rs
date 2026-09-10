@@ -749,7 +749,10 @@ impl Session {
                         analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
                             .map_err(|error| DriverError::unsupported(error.to_string()))?;
                     let statistics = merge_independent_index_statistics(
-                        analyzed.get(&table_id).cloned().or_else(|| catalog.table_statistics(table_id)),
+                        analyzed
+                            .get(&table_id)
+                            .cloned()
+                            .or_else(|| catalog.table_statistics(table_id)),
                         statistics,
                     );
                     analyzed.insert(table_id, Arc::new(statistics));

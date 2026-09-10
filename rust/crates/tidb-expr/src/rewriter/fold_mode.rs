@@ -133,7 +133,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.fold_constant(expression, mode);
     }
 
-    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, crate::EvalError> {
+    fn eval_constant(
+        &self,
+        expression: &Expression,
+    ) -> Result<tidb_datatype::Datum, crate::EvalError> {
         self.base.eval_constant(expression)
     }
 }

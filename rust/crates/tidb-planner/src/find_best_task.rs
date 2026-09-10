@@ -493,7 +493,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
         child_props[outer_idx] = PhysicalProperty {
-                sort_items: prop.sort_items.clone(),
+            sort_items: prop.sort_items.clone(),
             task_tp: TaskType::Root,
             expected_cnt: prop.expected_cnt,
             can_add_enforcer: false,
@@ -647,8 +647,8 @@ pub(crate) fn project_one_join(
     })
 }
 
-pub mod coster;
 pub mod candidate;
+pub mod coster;
 pub mod dispatch;
 
 #[cfg(test)]

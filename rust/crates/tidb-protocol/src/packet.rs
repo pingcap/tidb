@@ -523,9 +523,8 @@ impl<W: Write> PacketIoWriter<W> {
         let mut remaining = payload;
         loop {
             let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
-            self.framed.extend_from_slice(
-                &PacketHeader::new(frame_len, self.sequence)?.encode(),
-            );
+            self.framed
+                .extend_from_slice(&PacketHeader::new(frame_len, self.sequence)?.encode());
             self.framed.extend_from_slice(&remaining[..frame_len]);
             self.sequence = self.sequence.wrapping_add(1);
             remaining = &remaining[frame_len..];

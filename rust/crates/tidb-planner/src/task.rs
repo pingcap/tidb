@@ -656,12 +656,14 @@ impl CopTask {
             base.base.set_stats(plan.stats_info().cloned());
             base.base.set_schema(Some(schema.clone()));
             base.set_children(vec![plan]);
-            root.set_plan(PhysicalPlan::Projection(crate::physical::PhysicalProjection {
-                base,
-                exprs: schema.columns.into_iter().map(Expression::Column).collect(),
-                calculate_no_delay: false,
-                avoid_column_evaluator: false,
-            }));
+            root.set_plan(PhysicalPlan::Projection(
+                crate::physical::PhysicalProjection {
+                    base,
+                    exprs: schema.columns.into_iter().map(Expression::Column).collect(),
+                    calculate_no_delay: false,
+                    avoid_column_evaluator: false,
+                },
+            ));
         }
         Ok(task)
     }

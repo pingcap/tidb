@@ -3836,14 +3836,16 @@ impl TableScanExec {
             let next = if self.extra_handle_slot.is_some() {
                 remote.next_keyed_row().and_then(|entry| {
                     entry
-                        .map(|(key, row)| match tidb_codec::table_key::decode_row_key(&key) {
-                            Ok(RecordHandle::Int(handle)) => {
-                                Ok((row, Some(TableHandle::Int(handle))))
-                            }
-                            other => Err(KvTableError::Decode(format!(
-                                "remote extra handle is not an integer record key: {other:?}"
-                            ))),
-                        })
+                        .map(
+                            |(key, row)| match tidb_codec::table_key::decode_row_key(&key) {
+                                Ok(RecordHandle::Int(handle)) => {
+                                    Ok((row, Some(TableHandle::Int(handle))))
+                                }
+                                other => Err(KvTableError::Decode(format!(
+                                    "remote extra handle is not an integer record key: {other:?}"
+                                ))),
+                            },
+                        )
                         .transpose()
                 })
             } else {

@@ -240,7 +240,6 @@ fn session_stages(iterations: usize) {
     report("(cluster only) stored_state_change (parse)", stored);
 }
 
-
 fn main() {
     let iterations: usize = std::env::args()
         .nth(1)

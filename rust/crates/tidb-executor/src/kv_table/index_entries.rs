@@ -696,11 +696,7 @@ impl KvTable {
         values: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Option<UniquePointRead>, KvTableError> {
-        let Some(index) = self
-            .indexes
-            .iter()
-            .find(|index| index.id == index_id)
-        else {
+        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
         if !index.unique || values.contains(&Datum::Null) {

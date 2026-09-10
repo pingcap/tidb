@@ -274,14 +274,7 @@ pub fn cluster_session_catalog(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
-    cluster_session_catalog_with_templates(
-        loaded,
-        storage,
-        Some(stats),
-        auto_ids,
-        storage,
-        None,
-    )
+    cluster_session_catalog_with_templates(loaded, storage, Some(stats), auto_ids, storage, None)
 }
 
 /// One schema version's worth of fully built [`KvTable`]s, reused by every
@@ -410,8 +403,9 @@ pub fn cluster_session_catalog_with_templates(
                     // (`TableStatsState::Pseudo`) or one this node has not
                     // loaded yet is left OUT of the map, which is exactly what
                     // makes the planner treat it as `statistics.PseudoTable`.
-                    if let Some(loaded_stats) =
-                        stats.and_then(|stats| stats.get(&table.id)).and_then(TableStatsState::loaded)
+                    if let Some(loaded_stats) = stats
+                        .and_then(|stats| stats.get(&table.id))
+                        .and_then(TableStatsState::loaded)
                     {
                         let statistics = Arc::new(planner_statistics(loaded_stats, table));
                         catalog.set_table_statistics(table.id, statistics);
@@ -419,8 +413,9 @@ pub fn cluster_session_catalog_with_templates(
                     if let Some(partition) = &table.partition {
                         for definition in partition.read().definitions.snapshot() {
                             let physical_id = definition.id;
-                            if let Some(loaded_stats) =
-                                stats.and_then(|stats| stats.get(&physical_id)).and_then(TableStatsState::loaded)
+                            if let Some(loaded_stats) = stats
+                                .and_then(|stats| stats.get(&physical_id))
+                                .and_then(TableStatsState::loaded)
                             {
                                 let statistics = Arc::new(planner_statistics(loaded_stats, table));
                                 catalog.set_table_statistics(physical_id, statistics);

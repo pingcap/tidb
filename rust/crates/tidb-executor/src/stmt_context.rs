@@ -1808,8 +1808,15 @@ impl StmtContext {
         memory: StatementMemory,
         session: StmtContextSessionState,
     ) -> Self {
-        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false, memory, session)
-            .with_statement_class(StatementClass::Select)
+        Self::new(
+            ErrorLevel::Warn,
+            ErrorLevel::Warn,
+            true,
+            false,
+            memory,
+            session,
+        )
+        .with_statement_class(StatementClass::Select)
     }
 
     /// Sets whether this statement runs under a strict SQL mode.

@@ -1,5 +1,41 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 最新 readiness 实测与格式门禁
+
+在 `2337e56a36` 修复上重跑真实集群，完整 access-path 对照退出 0，
+末行 `the access-path differential passed`。Rust 日志实际输出
+`cluster_session_node_ready`，地址 127.0.0.1:47600，schema_version 68，
+stats_loaded 4；不能再将 readiness 描述为尚未解除的 blocker。
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-pruned-probe-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-pruned-probe.log 2>&1
+bash rust/scripts/test-access-path-readiness.sh
+# delayed ready / exited / stuck 全部符合预期
+```
+
+继续复验历史质量门禁，`cargo fmt --all -- --check` 检出 78 个格式差异块，
+涉及 40 个 Rust 文件（`/tmp/pruned-probe-fmt-check.log`）。仅用 cargo fmt
+自动格式化；同一检查随后退出 0（`/tmp/pruned-probe-fmt-green.log`），
+作为独立格式类别提交，不改变 SQL 断言或 golden。
+
+`RUSTUP_TOOLCHAIN=1.97 cargo check --manifest-path rust/Cargo.toml --offline
+--locked -j12 --workspace` 从仓库根目录执行并退出 0，日志
+`/tmp/pruned-probe-workspace-check.log`。从 rust 子目录直接使用稳定版
+会读取 `.cargo/config.toml` 的 nightly 专用 `-Zthreads=8` 而失败；这是
+工具链与入口不匹配，采用既有根目录入口即可，不修改 nightly 配置。
+格式修正后 `make lint` 退出 0（`/tmp/quality-format-lint.log`），
+`git diff --check` 通过。整体目标仍保留外部脚本、Go suites、Bazel 等
+完整验收项；此处不宣称全部集成测试完成。
+
+历史 parser 命令亦重跑：`RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml --offline --locked -j12 -p tidb-parser --lib --test all`
+退出 0，integration target 为 100 passed、0 failed、1 ignored，日志
+`/tmp/quality-parser-tests.log`；没有新增 ignore。
+
 ## 2026-09-10 IndexJoin 保留裁剪后的可用索引前缀
 
 condition eleven 剩余 customer 路径差异并非成本偏低：候选日志证明只有

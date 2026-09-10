@@ -618,7 +618,10 @@ impl Column {
         let (start, end) = if self.offsets.is_empty() {
             (0, 0)
         } else {
-            (self.offsets[row_id] as usize, self.offsets[row_id + 1] as usize)
+            (
+                self.offsets[row_id] as usize,
+                self.offsets[row_id + 1] as usize,
+            )
         };
         ColumnBytes {
             storage: ColumnBytesStorage::Borrowed(self.data.read()),

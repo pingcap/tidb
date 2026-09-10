@@ -74,7 +74,9 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
 
     let (mut session, node) = open_session();
     session
-        .execute_write("CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
+        .execute_write(
+            "CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))",
+        )
         .unwrap();
     session
         .execute_write("INSERT INTO indexed_read VALUES (1, 7, 10), (2, 7, 20), (3, 8, 30)")
@@ -124,20 +126,36 @@ fn cached_prepared_index_lookup_uses_one_timestamp() {
 fn prepared_cursor_retains_its_statement_overlay() {
     let (mut session, _) = open_session();
     seed(&mut session);
-    session.execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024").unwrap();
+    session
+        .execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024")
+        .unwrap();
     let prepared = session.prepare_general(
         "SELECT /*+ SET_VAR(tidb_init_chunk_size=8) SET_VAR(tidb_max_chunk_size=128) */ v FROM t WHERE id=?",
     ).unwrap();
     let GeneralExecuteOutcome::Rows(mut result) = session
-        .execute_general(&prepared, &[tidb_protocol::PreparedValue::SignedLongLong(1)])
-        .unwrap() else { panic!("expected rows") };
+        .execute_general(
+            &prepared,
+            &[tidb_protocol::PreparedValue::SignedLongLong(1)],
+        )
+        .unwrap()
+    else {
+        panic!("expected rows")
+    };
     let authority = result.take_cursor_materialization().unwrap();
     assert_eq!(authority.init_chunk_size, 8);
     assert_eq!(authority.max_chunk_size, 128);
-    assert_eq!(result.source().next_batch(8).unwrap(), vec![vec![Datum::Int(10)]]);
+    assert_eq!(
+        result.source().next_batch(8).unwrap(),
+        vec![vec![Datum::Int(10)]]
+    );
     drop(result);
-    assert_eq!(rows(&mut session, "SELECT @@tidb_init_chunk_size, @@tidb_max_chunk_size"),
-        vec![vec![Datum::Int(32), Datum::Int(1024)]]);
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT @@tidb_init_chunk_size, @@tidb_max_chunk_size"
+        ),
+        vec![vec![Datum::Int(32), Datum::Int(1024)]]
+    );
 }
 
 // -- #140's pins, re-run against this path ---------------------------------
@@ -190,7 +208,10 @@ fn a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp() {
                     panic!("expected rows");
                 };
                 let source = result.source();
-                assert_eq!(source.next_batch(8).unwrap(), vec![vec![Datum::Int(value * 10)]]);
+                assert_eq!(
+                    source.next_batch(8).unwrap(),
+                    vec![vec![Datum::Int(value * 10)]]
+                );
                 assert!(source.next_batch(8).unwrap().is_empty());
                 source.finish().unwrap();
                 source.close().unwrap();
@@ -480,7 +501,10 @@ fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
         }
         assert_eq!(answer, vec![vec![Datum::Int(20)]]);
     });
-    assert_eq!(opens, FREE, "a prepared full-key TableReader is eligible for MaxTS");
+    assert_eq!(
+        opens, FREE,
+        "a prepared full-key TableReader is eligible for MaxTS"
+    );
 }
 
 /// A second equality beside the handle is NOT this tier's point get: the

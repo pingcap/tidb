@@ -539,9 +539,7 @@ fn run_alter_table_in_inner(
             // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
             // table's TTL config; a table without one is a no-op.
             tidb_ast::AlterTableAction::RemoveTtl(_) => {
-                if let Some(crate::TableEntry::Kv(table)) =
-                    catalog.table_mut_in(&database, &name)
-                {
+                if let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) {
                     table.set_ttl_info(None);
                 }
             }
@@ -1009,7 +1007,10 @@ fn add_hash_partitions_action(
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
-        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+        if !matches!(
+            partition.kind,
+            crate::partition_routing::PartitionKind::Hash
+        ) {
             return Err(DriverError::unsupported(
                 "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
             ));
@@ -1021,7 +1022,9 @@ fn add_hash_partitions_action(
         grown
     };
     // Every partition gets a FRESH physical id, matching Go's reorganize.
-    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let new_ids: Vec<i64> = (0..new_count)
+        .map(|_| catalog.allocate_table_id())
+        .collect();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };
@@ -1046,7 +1049,10 @@ fn coalesce_partition_action(
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
-        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+        if !matches!(
+            partition.kind,
+            crate::partition_routing::PartitionKind::Hash
+        ) {
             return Err(DriverError::CoalesceOnlyOnHashPartition);
         }
         if count < 1 {
@@ -1057,7 +1063,9 @@ fn coalesce_partition_action(
         }
         partition.definitions.len() - count as usize
     };
-    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let new_ids: Vec<i64> = (0..new_count)
+        .map(|_| catalog.allocate_table_id())
+        .collect();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was resolved above")
     };

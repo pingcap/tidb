@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Mutex;
 use std::fmt;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tidb_proto::{

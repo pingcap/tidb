@@ -75,7 +75,10 @@ impl RegionRecoveryLoader for StaticLoader {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
-        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        _resolved_stores: &mut std::collections::BTreeMap<
+            u64,
+            Option<tidb_txnkv::region::StoreMetadata>,
+        >,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -352,7 +355,10 @@ fn lock_epoch_recovery_leaves_cache_available_during_metadata_loading() {
             &mut self,
             metadata: &RegionMetadata,
             _leader_store_id: u64,
-            _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+            _resolved_stores: &mut std::collections::BTreeMap<
+                u64,
+                Option<tidb_txnkv::region::StoreMetadata>,
+            >,
         ) -> Result<RegionLocation, RegionLoadError> {
             assert_eq!(metadata.region, self.replacement.region);
             self.entered.send(()).unwrap();
@@ -447,12 +453,21 @@ fn lock_epoch_recovery_leaves_cache_available_during_metadata_loading() {
     observer.join().unwrap();
     assert_eq!(
         result.unwrap(),
-        accessing(vec![ResolvedTxnStatus::Committed(commit_ts)], vec![1_000 << 18])
+        accessing(
+            vec![ResolvedTxnStatus::Committed(commit_ts)],
+            vec![1_000 << 18]
+        )
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 2);
-    assert_eq!(recorded.checks[0].2.region_epoch.as_ref().unwrap().version, 21);
-    assert_eq!(recorded.checks[1].2.region_epoch.as_ref().unwrap().version, 22);
+    assert_eq!(
+        recorded.checks[0].2.region_epoch.as_ref().unwrap().version,
+        21
+    );
+    assert_eq!(
+        recorded.checks[1].2.region_epoch.as_ref().unwrap().version,
+        22
+    );
     assert!(
         cache_available.load(Ordering::SeqCst),
         "lock recovery must not hold the shared cache mutex during metadata I/O"
