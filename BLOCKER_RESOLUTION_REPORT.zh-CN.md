@@ -1,5 +1,26 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 pipeline 测试身份使用明确的安全传输
+
+生命周期测试独立运行通过（`/tmp/pipeline-auth-single.log`），同进程运行
+时却在 session_context 的明文认证处报 SecureTransportRequired。
+其他测试会设置进程级 require_secure_transport，普通 SQL fixture 的
+身份创建因此依赖测试调度。Go master 固定版本的 `pkg/server/conn.go:669`
+仅拒绝不满足安全传输条件的连接；不应为修测试关闭此生产检查。
+
+测试 helper 改用 DirectTls 认证，并一致地设置 secure_transport=true。
+这只是已完成握手的 session fixture；没有增加或声称网络 TLS 集成覆盖。
+安全策略测试仍以 authenticate_native 验证明文连接被拒绝。
+该测试新增在策略 ON 后打开普通 fixture 的回归，旧 helper 独立失败
+（`/tmp/pipeline-transport-unit-red.log`），修复后通过。
+
+Ready 检查：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib pipeline_session::tests`
+为 **13 passed / 1 failed**（`/tmp/pipeline-transport-green.log`）。
+剩余 prepared_execution_retains_ast_and_reuses_current_handles 已越过认证，
+失败为缓存命中状态实际 0、预期 1，尚未解决，不能称为 pipeline 全绿。
+`make lint` 通过（`/tmp/pipeline-transport-lint.log`）。
+
 ## 2026-09-11 prepared GROUP BY 表头测试比较无序行
 
 prepared 扩展验证发现 `a_group_by_field_keeps_its_written_alias_in_the_header`

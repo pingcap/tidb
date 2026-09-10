@@ -712,7 +712,13 @@ mod tests {
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
                 .expect("configured user store");
         let identity = users
-            .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
+            .authenticate(
+                "root",
+                "127.0.0.1",
+                &SALT,
+                &scramble(b"abc", &SALT),
+                crate::secure_transport::TransportKind::DirectTls,
+            )
             .expect("authenticated identity");
         let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
         SessionContext {
@@ -720,7 +726,7 @@ mod tests {
             peer_addr,
             identity,
             client_found_rows: false,
-            secure_transport: false,
+            secure_transport: true,
             tls_status: None,
             cancellation: ConnectionCancellation::default(),
             close: crate::sql_node::ConnectionClose::default(),
@@ -847,6 +853,9 @@ mod tests {
             login_store.authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT)),
             Err(crate::configured_user_store::AuthenticationFailure::SecureTransportRequired)
         ));
+        // Ordinary pipeline fixtures model secure sessions, so enabling the
+        // process-wide gate must not prevent another fixture from opening.
+        let _independent_session = open_session();
     }
 
     /// Go's sessions read the instance-wide schema state, so a table created
