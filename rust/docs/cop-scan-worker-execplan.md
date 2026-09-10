@@ -16,6 +16,24 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Rebuild and measure merged 6d26dab06d against the immutable control:
+  fourteen fixed-work trials, 84,000 measured transactions, equal SQL hashes.
+- [x] Profile current Rust, control and Go separately. Current Rust has 1,044
+  statistics-load workers among 1,164 native threads; control has none.
+- [x] Move statistics-load worker ownership from session catalog creation to
+  the domain-shaped factory, and replace mutex-held timed receives with Go's
+  channel-select shutdown/task lifecycle. Retained catalog/statistics tests pass.
+- [x] Reproduce the commit-history ownership cycle, then store data-only catalog
+  snapshots and reattach live owners when serving stale reads. All 52 scoped
+  catalog, statistics and transaction tests pass; Ready lint passes.
+- [x] Measure the combined worker/history lifecycle fix against immutable current
+  and faster-control binaries: 20 trials, 120,000 measured transactions and matching
+  SQL hashes. At 32 clients, throughput +6.87%, SQL CPU -12.74%, p95 -6.94% versus
+  pre-fix. One/eight-client throughput remains effectively flat; control still wins.
+- [x] Profile after repeated connection churn: six named statistics workers,
+  126 total native threads. No per-session worker growth or receiver-mutex polling.
+- [x] Stop this increment's owned services: verify 19 PIDs exited and 16 ports
+  closed. No compared server required forced termination; preserve fixture data.
 - [x] Read pinned Go batch send/receive and cop-worker ownership.
 - [x] Preserve native result replies, notification and absolute-deadline parking
   from the earlier increment.
@@ -72,16 +90,36 @@ scopes before stopping and joining TransportIo, including panic reporting.
 
 Cop workers continue on the shared multi-thread execution_runtime. No SQL or
 blocking recovery is moved onto the transport event loop. Batch policy,
-identities, retries and deadlines are unchanged. The increment changes two
-production files, plus this plan and the current benchmark receipt.
+identities, retries and deadlines are unchanged. The earlier transport-only increment changed two
+production files. Current statistics/history ownership changes are described below.
 
 rust/crates/tidb-distsql/src/cop_paging/cop_iterator.rs owns independent workers,
 ordered two-response buffers, unordered producer/consumer rendezvous and join.
 rust/crates/tidb-exec/src/cop_scan.rs decodes responses on the SQL consumer.
 These are real Go responsibilities, not optional synchronization to remove.
 
+The current statistics increment is owned by executor catalog/sync_load.rs and
+server ClusterSessionFactory. The factory shares one worker pool across catalogs;
+commit history stores CatalogSnapshot data without back-references to its ring.
+
 
 ## Decision Log
+
+Decision (2026-09-10, initial merged-code profile): fix statistics worker ownership before
+batch-timer experiments. ClusterSessionFactory.open_storage_session creates a
+fresh statistics service/pool per catalog, including internal pooled sessions.
+Go Domain.StartLoadStatsSubWorkers starts one pool for its StatsHandle. The
+Rust workers also serialize recv_timeout(10ms) behind a shared receiver mutex;
+Go selects tasks or domain shutdown without idle polling. Make the worker pool
+an explicit shared domain-owned argument and use native multi-consumer channels.
+Preserve per-request cache publication, urgent/expired priority, queue limits,
+singleflight, retry and worker join semantics.
+Decision (2026-09-10, catalog lifecycle): committed snapshots held the same
+Arc<CommitHistory> that contained them. This retained session catalogs and their
+statistics services indefinitely. Store only committed data in the ring; attach
+statistics, analyze-options and history owners to returned live views, matching
+Go's distinction between snapshot infoschema and domain services. Do not clear
+history at session shutdown or add reference-count gates.
 
 Decision (2026-09-10, user request): remove tests absent from the Go suites,
 including Rust-only source-text protection checks and retired implementation
@@ -112,6 +150,50 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+Fresh post-merge evidence is in /private/tmp/tidb-current-throughput.6qK3A7.
+At eight clients Rust averages 1,654 TPS versus the faster control's 1,963 TPS;
+SQL CPU is 14.20 versus 8.62 seconds for equal 6,000-transaction trials.
+The separate CPU trace attributes 11.472 seconds of sampled Running weight to
+statistics-loader synchronization chains, out of 43.211 seconds total. This
+is not a latency percentage. The native sample confirms 1,044 such workers,
+created per session/internal catalog, whereas Go owns its pool per domain.
+No current throughput acceptance is claimed; the older baseline stays intact.
+
+The worker-only fresh-process ABBA run is in /private/tmp/tidb-stats-workers.WDt2ZF:
+20 trials, 120,000 measured transactions, zero errors/reconnects and identical
+full SQL hashes. A separate native sample shows six statistics workers, rather
+than 1,044. Throughput changes are small and do not establish a performance win.
+The original simultaneous-server profile is diagnostic, not comparable fixed-work
+CPU evidence; observing thousands of native threads can itself be expensive.
+
+A second fail-before test proves the catalog history cycle. After data-only
+snapshots, the last stale view releases both history and statistics workers.
+The original stale-read transaction fixtures still pass. Evidence:
+catalog-cycle-red.log and catalog-cycle-green.log under the worker artifact root;
+Ready lint and the final binary are tracked under
+/private/tmp/tidb-stats-lifecycle.BPa0w4. The final binary SHA256 is
+27c9b05fe9476821aea654a7e9578faa6c679667e9a4abd674a754b078902fa3.
+
+The final matched-work run uses fresh compared servers in before/after/after/before
+order, and brackets the run with faster-control and Go trials. All 120,000 measured
+plus 20,000 warmup transactions finish without errors or reconnects; every full SQL
+hash matches. At 1/8/32 clients, throughput changes versus pre-fix are
+-0.69/-0.38/+6.87 percent; SQL CPU changes are -0.05/-1.61/-12.74 percent; p95 changes
+are +0.78/0/-6.94 percent. The candidate still trails the faster control by
+11.81/15.26/10.03 percent throughput. These are shared-host measurements with two
+samples per server/concurrency, not general performance acceptance. TPC-C/mixed
+writes and full Go-package parity remain open. The current receipt contains exact
+commands, binary identities and aggregate measurements; raw traces remain separate.
+
+Catalog/statistics/transaction validation used:
+
+    cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --lib -- driver::catalog tests_core::transactions cluster_session_node::tests::statistics --test-threads=12
+    cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server
+    GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint
+    ruby /private/tmp/tidb-stats-lifecycle.BPa0w4/measure.rb
+    ruby /private/tmp/tidb-stats-lifecycle.BPa0w4/profile.rb
+
 
 Tokio 1.53.0 current_thread::Handle.schedule pushes same-runtime wakes into its
 local task queue. External wakes enter the remote queue and unpark the driver.

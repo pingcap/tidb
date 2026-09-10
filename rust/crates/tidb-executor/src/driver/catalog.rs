@@ -27,6 +27,7 @@ use crate::kv_table::TableCharset;
 use tidb_hack::GoToLower;
 
 pub(crate) mod sync_load;
+pub use sync_load::StatisticsLoadWorkers;
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -316,7 +317,68 @@ pub struct CommitHistory {
     last_tso: u64,
     /// `(commit_ts, the catalog as of that commit)`, oldest first, capped at
     /// [`COMMIT_HISTORY_CAP`].
-    entries: std::collections::VecDeque<(u64, Catalog)>,
+    entries: std::collections::VecDeque<(u64, CatalogSnapshot)>,
+}
+
+/// Committed data without live service owners. Go's snapshot infoschema is
+/// separate from its domain: retaining a version must not retain the history
+/// that contains it or the domain's statistics workers.
+#[derive(Clone, Debug)]
+struct CatalogSnapshot {
+    databases: Arc<HashMap<String, Arc<Database>>>,
+    max_index_length: i64,
+    enable_enum_length_limit: bool,
+    table_column_count_limit: usize,
+    policies: HashMap<String, tidb_model::PolicyInfo>,
+    next_policy_id: i64,
+    next_database_id: i64,
+    next_table_id: i64,
+    foreign_keys_present: bool,
+    version: u64,
+    metadata_version: u64,
+    shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
+    temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
+}
+
+impl CatalogSnapshot {
+    fn capture(catalog: &Catalog) -> Self {
+        Self {
+            databases: Arc::clone(&catalog.databases),
+            max_index_length: catalog.max_index_length,
+            enable_enum_length_limit: catalog.enable_enum_length_limit,
+            table_column_count_limit: catalog.table_column_count_limit,
+            policies: catalog.policies.clone(),
+            next_policy_id: catalog.next_policy_id,
+            next_database_id: catalog.next_database_id,
+            next_table_id: catalog.next_table_id,
+            foreign_keys_present: catalog.foreign_keys_present,
+            version: catalog.version,
+            metadata_version: catalog.metadata_version,
+            shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
+            temporary_sweep: catalog.temporary_sweep.clone(),
+        }
+    }
+
+    fn restore(&self, owner: &Catalog) -> Catalog {
+        Catalog {
+            databases: Arc::clone(&self.databases),
+            max_index_length: self.max_index_length,
+            enable_enum_length_limit: self.enable_enum_length_limit,
+            table_column_count_limit: self.table_column_count_limit,
+            policies: self.policies.clone(),
+            next_policy_id: self.next_policy_id,
+            next_database_id: self.next_database_id,
+            next_table_id: self.next_table_id,
+            foreign_keys_present: self.foreign_keys_present,
+            version: self.version,
+            metadata_version: self.metadata_version,
+            shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
+            statistics: Arc::clone(&owner.statistics),
+            analyze_options: Arc::clone(&owner.analyze_options),
+            commit_history: Arc::clone(&owner.commit_history),
+            temporary_sweep: self.temporary_sweep.clone(),
+        }
+    }
 }
 
 /// How many committed snapshots the ring keeps. The corpus needs the last
@@ -1413,10 +1475,9 @@ impl Catalog {
 
     /// Records this catalog as the state committed at `commit_ts`.
     ///
-    /// The snapshot's own history handle still points at the SHARED ring --
-    /// snapshots never read it, and sharing keeps the clone shallow there.
+    /// History owns data only; a returned view reattaches the live owners.
     pub fn record_commit(&self, commit_ts: u64) {
-        let snapshot = self.clone();
+        let snapshot = CatalogSnapshot::capture(self);
         let mut history = self
             .commit_history
             .lock()
@@ -1441,7 +1502,7 @@ impl Catalog {
             .iter()
             .rev()
             .find(|(commit_ts, _)| *commit_ts <= ts)
-            .map(|(_, snapshot)| snapshot.clone())
+            .map(|(_, snapshot)| snapshot.restore(self))
     }
 
     /// Captures only the immutable schema metadata needed by `TIDB_DECODE_KEY`.
@@ -1530,7 +1591,11 @@ impl Catalog {
     }
 
     /// Installs the domain statistics worker used by logical optimization.
-    pub fn set_statistics_item_loader(&mut self, loader: Arc<dyn StatisticsItemLoader>) {
+    pub fn set_statistics_item_loader(
+        &mut self,
+        loader: Arc<dyn StatisticsItemLoader>,
+        workers: Arc<StatisticsLoadWorkers>,
+    ) {
         let service_loader = Arc::clone(&loader);
         *self
             .statistics
@@ -1538,7 +1603,11 @@ impl Catalog {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
         self.statistics.sync_load.get_or_init(|| {
-            sync_load::SyncLoadService::new(service_loader, Arc::downgrade(&self.statistics))
+            sync_load::SyncLoadService::with_pool(
+                service_loader,
+                Arc::downgrade(&self.statistics),
+                workers,
+            )
         });
     }
 
@@ -2735,7 +2804,7 @@ mod statistics_request_tests {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
@@ -2765,10 +2834,13 @@ mod statistics_request_tests {
     fn a_singleflight_transport_timeout_is_diagnostic_not_pseudo_fallback() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
-            delay: std::time::Duration::from_millis(40),
-            ..RecordingLoader::default()
-        }));
+        catalog.set_statistics_item_loader(
+            Arc::new(RecordingLoader {
+                delay: std::time::Duration::from_millis(40),
+                ..RecordingLoader::default()
+            }),
+            StatisticsLoadWorkers::new(),
+        );
         let requested = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -2806,10 +2878,13 @@ mod statistics_request_tests {
     fn histograms_in_flight_cleans_completed_statistics_items() {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
-        catalog.set_statistics_item_loader(Arc::new(RecordingLoader {
-            delay: std::time::Duration::from_millis(40),
-            ..RecordingLoader::default()
-        }));
+        catalog.set_statistics_item_loader(
+            Arc::new(RecordingLoader {
+                delay: std::time::Duration::from_millis(40),
+                ..RecordingLoader::default()
+            }),
+            StatisticsLoadWorkers::new(),
+        );
         let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
             predicate_columns: [(
                 tidb_model::TableItemID {
@@ -2842,7 +2917,7 @@ mod statistics_request_tests {
         clear_async_statistics_items();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -2888,7 +2963,7 @@ mod statistics_request_tests {
         statistics.index_stats_existence.insert(index_id, true);
         catalog.set_table_statistics(table_id, Arc::new(statistics));
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -2921,7 +2996,7 @@ mod statistics_request_tests {
             failure: Some("corrupted histogram bound".to_owned()),
             ..RecordingLoader::default()
         });
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let requested = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -2961,7 +3036,7 @@ mod statistics_request_tests {
         clear_async_statistics_items();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader);
+        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -2998,7 +3073,7 @@ mod statistics_request_tests {
             .expect("fixture column b")
             .id;
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader);
+        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: column_id,
@@ -3034,7 +3109,7 @@ mod statistics_request_tests {
             .expect("fixture index ia")
             .id;
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader);
+        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -3071,7 +3146,7 @@ mod statistics_request_tests {
             .expect("fixture index ia")
             .id;
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader);
+        catalog.set_statistics_item_loader(loader, StatisticsLoadWorkers::new());
         let dropped = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -3251,7 +3326,7 @@ mod statistics_request_tests {
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
-        catalog.set_statistics_item_loader(loader.clone());
+        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let usage_list = tidb_stats_handle_usage::SessionStatsList::new();
         let usage = usage_list.new_session_stats_item();
         let context = crate::StmtContext::for_query()

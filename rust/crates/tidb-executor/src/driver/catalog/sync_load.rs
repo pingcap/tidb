@@ -17,10 +17,7 @@
 //! the one-retry worker contract.
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc, Arc, LazyLock, Mutex, Weak,
-};
+use std::sync::{mpsc, Arc, LazyLock, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{StatisticsCache, StatisticsItemLoader};
@@ -69,61 +66,19 @@ static GLOBAL_SINGLEFLIGHT: LazyLock<Mutex<HashMap<String, Vec<Listener>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// One statistics handle's synchronous-load queues and workers.
-struct SyncLoadPool {
-    needed_items: mpsc::SyncSender<NeededItemTask>,
-    _needed_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
-    _timeout_items_receiver: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
-    stop: Arc<AtomicBool>,
+pub struct StatisticsLoadWorkers {
+    needed_items: crossbeam_channel::Sender<NeededItemTask>,
+    _needed_items_receiver: crossbeam_channel::Receiver<NeededItemTask>,
+    _timeout_items_receiver: crossbeam_channel::Receiver<NeededItemTask>,
+    stop: Option<crossbeam_channel::Sender<()>>,
     workers: Vec<std::thread::JoinHandle<()>>,
 }
 
-impl SyncLoadPool {
-    fn new(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
-        let (needed_tx, needed_rx) = mpsc::sync_channel(queue_size);
-        let (timeout_tx, timeout_rx) = mpsc::sync_channel(queue_size);
-        let needed_rx = Arc::new(Mutex::new(needed_rx));
-        let timeout_rx = Arc::new(Mutex::new(timeout_rx));
-        let stop = Arc::new(AtomicBool::new(false));
-        let mut workers = Vec::with_capacity(concurrency);
-        for _ in 0..concurrency {
-            let needed_rx = Arc::clone(&needed_rx);
-            let timeout_rx = Arc::clone(&timeout_rx);
-            let timeout_tx = timeout_tx.clone();
-            let stop = Arc::clone(&stop);
-            workers.push(std::thread::spawn(move || {
-                worker_loop(needed_rx, timeout_rx, timeout_tx, retry_backoff, stop);
-            }));
-        }
-        Arc::new(Self {
-            needed_items: needed_tx,
-            _needed_items_receiver: needed_rx,
-            _timeout_items_receiver: timeout_rx,
-            stop,
-            workers,
-        })
-    }
-}
-
-impl Drop for SyncLoadPool {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
-        }
-    }
-}
-
-pub(crate) struct SyncLoadService {
-    pool: Arc<SyncLoadPool>,
-    loader: Arc<dyn StatisticsItemLoader>,
-    cache: Weak<StatisticsCache>,
-}
-
-impl SyncLoadService {
-    pub(super) fn new(
-        loader: Arc<dyn StatisticsItemLoader>,
-        cache: Weak<StatisticsCache>,
-    ) -> Arc<Self> {
+impl StatisticsLoadWorkers {
+    /// Starts the configured domain pool. Sessions share this owner instead
+    /// of constructing workers when they build their schema catalog.
+    #[must_use]
+    pub fn new() -> Arc<Self> {
         let performance = tidb_config::config_tree::config::get_global_config().performance;
         let concurrency = match performance.stats_load_concurrency {
             configured if configured < 0 => 0,
@@ -138,10 +93,56 @@ impl SyncLoadService {
         .map(Duration::from_nanos)
         .filter(|duration| !duration.is_zero())
         .unwrap_or(Duration::from_secs(3));
-        let pool = SyncLoadPool::new(concurrency, performance.stats_load_queue_size, lease / 10);
-        Self::with_pool(loader, cache, pool)
+        Self::with_settings(concurrency, performance.stats_load_queue_size, lease / 10)
     }
 
+    fn with_settings(concurrency: usize, queue_size: usize, retry_backoff: Duration) -> Arc<Self> {
+        let (needed_tx, needed_rx) = crossbeam_channel::bounded(queue_size);
+        let (timeout_tx, timeout_rx) = crossbeam_channel::bounded(queue_size);
+        let (stop, stopped) = crossbeam_channel::bounded(0);
+        let mut workers = Vec::with_capacity(concurrency);
+        for _ in 0..concurrency {
+            let needed_rx = needed_rx.clone();
+            let timeout_rx = timeout_rx.clone();
+            let timeout_tx = timeout_tx.clone();
+            let stopped = stopped.clone();
+            workers.push(
+                std::thread::Builder::new()
+                    .name("stats-sync-load".to_owned())
+                    .spawn(move || {
+                        worker_loop(needed_rx, timeout_rx, timeout_tx, retry_backoff, stopped)
+                    })
+                    .expect("spawning statistics load worker"),
+            );
+        }
+        Arc::new(Self {
+            needed_items: needed_tx,
+            _needed_items_receiver: needed_rx,
+            _timeout_items_receiver: timeout_rx,
+            stop: Some(stop),
+            workers,
+        })
+    }
+}
+
+impl Drop for StatisticsLoadWorkers {
+    fn drop(&mut self) {
+        // Closing the domain exit channel wakes every idle worker immediately.
+        self.stop.take();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
+pub(crate) struct SyncLoadService {
+    pool: Arc<StatisticsLoadWorkers>,
+    loader: Arc<dyn StatisticsItemLoader>,
+    cache: Weak<StatisticsCache>,
+}
+
+impl SyncLoadService {
+    #[cfg(test)]
     fn with_settings(
         loader: Arc<dyn StatisticsItemLoader>,
         cache: Weak<StatisticsCache>,
@@ -152,14 +153,14 @@ impl SyncLoadService {
         Self::with_pool(
             loader,
             cache,
-            SyncLoadPool::new(concurrency, queue_size, retry_backoff),
+            StatisticsLoadWorkers::with_settings(concurrency, queue_size, retry_backoff),
         )
     }
 
-    fn with_pool(
+    pub(super) fn with_pool(
         loader: Arc<dyn StatisticsItemLoader>,
         cache: Weak<StatisticsCache>,
-        pool: Arc<SyncLoadPool>,
+        pool: Arc<StatisticsLoadWorkers>,
     ) -> Arc<Self> {
         Arc::new(Self {
             pool,
@@ -223,7 +224,7 @@ impl SyncLoadService {
         let now = Instant::now();
         let deadline = now.checked_add(timeout).unwrap_or(now);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
-        let mut task = NeededItemTask {
+        let task = NeededItemTask {
             item,
             resource_group,
             to_timeout: deadline,
@@ -231,24 +232,22 @@ impl SyncLoadService {
             loader: Arc::clone(&self.loader),
             cache: self.cache.clone(),
         };
-        loop {
-            match self.pool.needed_items.try_send(task) {
-                Ok(()) => break,
-                Err(mpsc::TrySendError::Full(returned)) => {
-                    task = returned;
-                    if Instant::now() >= deadline {
-                        return SyncLoadOutcome::TransportError(
-                            "sync load stats channel is full and timeout sending task to channel"
-                                .to_owned(),
-                        );
-                    }
-                    std::thread::sleep(Duration::from_micros(100));
-                }
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    return SyncLoadOutcome::TransportError(
-                        "sync load stats channel closed unexpectedly".to_owned(),
-                    );
-                }
+        match self
+            .pool
+            .needed_items
+            .send_timeout(task, deadline.saturating_duration_since(Instant::now()))
+        {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+                return SyncLoadOutcome::TransportError(
+                    "sync load stats channel is full and timeout sending task to channel"
+                        .to_owned(),
+                );
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                return SyncLoadOutcome::TransportError(
+                    "sync load stats channel closed unexpectedly".to_owned(),
+                );
             }
         }
         wait_for_task_result(result_rx, deadline)
@@ -276,64 +275,47 @@ fn wait_for_task_result(
 }
 
 fn worker_loop(
-    needed_rx: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
-    timeout_rx: Arc<Mutex<mpsc::Receiver<NeededItemTask>>>,
-    timeout_tx: mpsc::SyncSender<NeededItemTask>,
+    needed_rx: crossbeam_channel::Receiver<NeededItemTask>,
+    timeout_rx: crossbeam_channel::Receiver<NeededItemTask>,
+    timeout_tx: crossbeam_channel::Sender<NeededItemTask>,
     retry_backoff: Duration,
-    stop: Arc<AtomicBool>,
+    stopped: crossbeam_channel::Receiver<()>,
 ) {
-    while let Some(task) = drain_task(&needed_rx, &timeout_rx, &timeout_tx, &stop) {
+    while let Some(task) = drain_task(&needed_rx, &timeout_rx, &timeout_tx, &stopped) {
         handle_task(task, retry_backoff);
     }
 }
 
 fn drain_task(
-    needed_rx: &Mutex<mpsc::Receiver<NeededItemTask>>,
-    timeout_rx: &Mutex<mpsc::Receiver<NeededItemTask>>,
-    timeout_tx: &mpsc::SyncSender<NeededItemTask>,
-    stop: &AtomicBool,
+    needed_rx: &crossbeam_channel::Receiver<NeededItemTask>,
+    timeout_rx: &crossbeam_channel::Receiver<NeededItemTask>,
+    timeout_tx: &crossbeam_channel::Sender<NeededItemTask>,
+    stopped: &crossbeam_channel::Receiver<()>,
 ) -> Option<NeededItemTask> {
     loop {
-        if stop.load(Ordering::Acquire) {
-            return None;
-        }
-        if let Ok(task) = needed_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .try_recv()
-        {
-            if Instant::now() > task.to_timeout {
-                let _ = timeout_tx.try_send(task);
-                continue;
+        // Go drainColTask waits on both queues and domain shutdown. Each
+        // worker receives independently; no receiver lock or idle timer.
+        crossbeam_channel::select! {
+            recv(stopped) -> _ => return None,
+            recv(needed_rx) -> task => {
+                let task = task.ok()?;
+                if Instant::now() > task.to_timeout {
+                    let _ = timeout_tx.try_send(task);
+                    continue;
+                }
+                return Some(task);
             }
-            return Some(task);
-        }
-        if let Ok(task) = timeout_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .try_recv()
-        {
-            if let Ok(urgent) = needed_rx
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .try_recv()
-            {
-                let _ = timeout_tx.try_send(task);
-                return Some(urgent);
+            recv(timeout_rx) -> task => {
+                let task = task.ok()?;
+                crossbeam_channel::select! {
+                    recv(stopped) -> _ => return None,
+                    recv(needed_rx) -> urgent => {
+                        let _ = timeout_tx.try_send(task);
+                        return urgent.ok();
+                    }
+                    default => return Some(task),
+                }
             }
-            return Some(task);
-        }
-        match needed_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .recv_timeout(Duration::from_millis(10))
-        {
-            Ok(task) if Instant::now() > task.to_timeout => {
-                let _ = timeout_tx.try_send(task);
-            }
-            Ok(task) => return Some(task),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
         }
     }
 }
@@ -391,6 +373,7 @@ fn handle_task(task: NeededItemTask, retry_backoff: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Default)]
     struct TestLoader {
@@ -492,19 +475,37 @@ mod tests {
     }
 
     #[test]
-    fn production_services_own_independent_worker_pools() {
-        let first_cache = Arc::new(StatisticsCache::default());
-        let second_cache = Arc::new(StatisticsCache::default());
-        let first = SyncLoadService::new(
-            Arc::new(TestLoader::default()),
-            Arc::downgrade(&first_cache),
+    fn domain_catalogs_share_statistics_load_workers() {
+        // Go Domain.StartLoadStatsSubWorkers owns one pool for every session
+        // using its StatsHandle; opening catalogs does not start more workers.
+        let loader: Arc<dyn StatisticsItemLoader> = Arc::new(TestLoader::default());
+        let workers = StatisticsLoadWorkers::new();
+        let weak_workers = Arc::downgrade(&workers);
+        let mut first = super::super::Catalog::default();
+        let mut second = super::super::Catalog::default();
+        first.set_statistics_item_loader(Arc::clone(&loader), Arc::clone(&workers));
+        second.set_statistics_item_loader(loader, workers);
+        assert!(Arc::ptr_eq(
+            &first.statistics.sync_load.get().unwrap().pool,
+            &second.statistics.sync_load.get().unwrap().pool,
+        ));
+        // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
+        // committed session must not retain its workers after its last view.
+        let history = Arc::downgrade(&first.commit_history);
+        first.record_commit(1);
+        let snapshot = first.state_as_of(1).unwrap();
+        drop(first);
+        drop(second);
+        assert!(history.upgrade().is_some());
+        drop(snapshot);
+        assert!(
+            history.upgrade().is_none(),
+            "history retains its own catalog"
         );
-        let second = SyncLoadService::new(
-            Arc::new(TestLoader::default()),
-            Arc::downgrade(&second_cache),
+        assert!(
+            weak_workers.upgrade().is_none(),
+            "closed catalog retains workers"
         );
-
-        assert!(!Arc::ptr_eq(&first.pool, &second.pool));
     }
 
     #[test]
@@ -517,7 +518,7 @@ mod tests {
             release: Mutex::new(release_rx),
             finished: Arc::clone(&finished),
         });
-        let pool = SyncLoadPool::new(1, 1, Duration::ZERO);
+        let pool = StatisticsLoadWorkers::with_settings(1, 1, Duration::ZERO);
         let (result, _receiver) = mpsc::sync_channel(1);
         pool.needed_items
             .send(NeededItemTask {
@@ -624,8 +625,8 @@ mod tests {
 
     #[test]
     fn urgent_queue_preempts_an_expired_task() {
-        let (needed_tx, needed_rx) = mpsc::sync_channel(2);
-        let (timeout_tx, timeout_rx) = mpsc::sync_channel(2);
+        let (needed_tx, needed_rx) = crossbeam_channel::bounded(2);
+        let (timeout_tx, timeout_rx) = crossbeam_channel::bounded(2);
         timeout_tx
             .send(task(107, Instant::now()))
             .expect("expired task");
@@ -633,14 +634,8 @@ mod tests {
             .send(task(108, Instant::now() + Duration::from_secs(1)))
             .expect("urgent task");
 
-        let stop = AtomicBool::new(false);
-        let drained = drain_task(
-            &Mutex::new(needed_rx),
-            &Mutex::new(timeout_rx),
-            &timeout_tx,
-            &stop,
-        )
-        .expect("one task");
+        let (_stop, stopped) = crossbeam_channel::bounded(0);
+        let drained = drain_task(&needed_rx, &timeout_rx, &timeout_tx, &stopped).expect("one task");
         assert_eq!(drained.item, item(108, true));
     }
 

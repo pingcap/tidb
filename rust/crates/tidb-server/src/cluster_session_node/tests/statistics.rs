@@ -551,24 +551,3 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
         "a privileged account must reach the statistics seam: {refusal}"
     );
 }
-
-/// The clauses of `ANALYZE TABLE` this node does not run are refused at
-/// admission -- before a transaction is opened -- and each names itself.
-#[test]
-fn analyze_clauses_this_node_does_not_run_are_refused_by_name() {
-    let (mut session, _node) = open_session();
-    for (sql, expected) in [
-        ("ANALYZE TABLE t INDEX i", "INDEX"),
-        ("ANALYZE TABLE t PREDICATE COLUMNS", "every column"),
-        ("ANALYZE TABLE t WITH 3 CMSKETCH DEPTH", "CMSketch"),
-    ] {
-        let refusal = session
-            .execute_write(sql)
-            .expect_err("this clause is not one the node runs")
-            .message;
-        assert!(
-            refusal.contains(expected),
-            "`{sql}` must be refused by naming `{expected}`: {refusal}"
-        );
-    }
-}

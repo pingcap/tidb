@@ -3645,6 +3645,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crc32fast",
+ "crossbeam-channel",
  "flate2",
  "prost 0.14.4",
  "serde",

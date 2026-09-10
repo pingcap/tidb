@@ -1,6 +1,161 @@
 {
   "date": "2026-09-10",
-  "measurement_scope": "The measurements below describe the immutable pre-merge candidate, not the current upstream integration worktree.",
+  "measurement_scope": "statistics_load_lifecycle is the current 6d26dab06d-based increment. Other measurement sections retain immutable earlier candidates and are not current-binary evidence.",
+  "statistics_load_lifecycle": {
+    "base_commit": "6d26dab06d6773c425bceaf2700ba8ca333c2f4f",
+    "status": "Scoped Ready lifecycle fix. Throughput/latency objective remains open; faster control still wins.",
+    "performance_accepted": false,
+    "changes": [
+      "One statistics-load pool owned by ClusterSessionFactory and shared by user/internal catalogs, matching Go Domain.StartLoadStatsSubWorkers.",
+      "Bounded multi-consumer channels select work or shutdown; removed receiver mutexes, 10ms idle polling and 100us admission polling.",
+      "Commit history contains data-only snapshots, not catalogs pointing back to their own history. Returned stale views reattach live owners."
+    ],
+    "go_sources": [
+      "pkg/domain/domain.go: Domain.StartLoadStatsSubWorkers and GetSnapshotInfoSchema",
+      "pkg/statistics/handle/syncload/stats_syncload.go: drainColTask and writeToTimeoutChan",
+      "pkg/session/tidb_test.go: TestSysSessionPoolGoroutineLeak",
+      "pkg/session/syssession/pool_test.go: TestSessionPoolClose"
+    ],
+    "tests": {
+      "red": "Shared-domain worker assertion failed before the pool fix; history-release assertion failed before data-only snapshots. Both captured in /private/tmp/tidb-current-throughput.6qK3A7/stats-workers-red.log and /private/tmp/tidb-stats-workers.WDt2ZF/catalog-cycle-red.log.",
+      "green": "25 catalog + 15 server statistics + 12 session transaction tests passed; zero failed, including stale-read history.",
+      "cleanup": "Replaced the Rust-only independent-pools protection test; removed the Rust-only ANALYZE-clause refusal test, which conflicts with Go's TestAnalyzeIndex.",
+      "profile": "Ready",
+      "ready_lint": true,
+      "bazel_prepare": "Not required: no Go, Bazel or Go-module inputs changed. Cargo reuses the existing pinned crossbeam-channel dependency."
+    },
+    "measurement": {
+      "artifact_root": "/private/tmp/tidb-stats-lifecycle.BPa0w4",
+      "binaries": {
+        "before": {
+          "path": "/private/tmp/tidb-current-throughput.6qK3A7/before-server",
+          "sha256": "5a03061678aa31d78067eb07c85078e39f17e23112064b631d02f4c1a7145121"
+        },
+        "after": {
+          "path": "/private/tmp/tidb-stats-lifecycle.BPa0w4/final-server",
+          "sha256": "27c9b05fe9476821aea654a7e9578faa6c679667e9a4abd674a754b078902fa3"
+        }
+      },
+      "references": "Immutable faster Rust control and Go binary are identified in the legacy binaries section below. Go binary differs from source checkout.",
+      "method": "Fresh compared server per before/after/after/before block; 1/8/32 clients in each block. Faster control at all three concurrencies and Go at eight bracket the run. 6000 fixed transactions after 1000 warmup. Shared desktop; no profiles or builds overlap timing.",
+      "trials": 20,
+      "measured_transactions": 120000,
+      "warmup_transactions": 20000,
+      "sql_errors": 0,
+      "reconnects": 0,
+      "full_sql_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "means": {
+        "control-1": {
+          "tps": 478.47,
+          "sql_cpu_seconds": 6.46,
+          "latency_p95_ms": 2.28
+        },
+        "control-8": {
+          "tps": 1945.76,
+          "sql_cpu_seconds": 8.445,
+          "latency_p95_ms": 4.49
+        },
+        "control-32": {
+          "tps": 2991.35,
+          "sql_cpu_seconds": 9.515,
+          "latency_p95_ms": 11.865
+        },
+        "go-8": {
+          "tps": 1866.59,
+          "sql_cpu_seconds": 14.01,
+          "latency_p95_ms": 4.695
+        },
+        "before-1": {
+          "tps": 424.9,
+          "sql_cpu_seconds": 9.335,
+          "latency_p95_ms": 2.57
+        },
+        "before-8": {
+          "tps": 1655.27,
+          "sql_cpu_seconds": 13.64,
+          "latency_p95_ms": 5.23
+        },
+        "before-32": {
+          "tps": 2518.38,
+          "sql_cpu_seconds": 16.09,
+          "latency_p95_ms": 14.335
+        },
+        "after-1": {
+          "tps": 421.95,
+          "sql_cpu_seconds": 9.33,
+          "latency_p95_ms": 2.59
+        },
+        "after-8": {
+          "tps": 1648.92,
+          "sql_cpu_seconds": 13.42,
+          "latency_p95_ms": 5.23
+        },
+        "after-32": {
+          "tps": 2691.28,
+          "sql_cpu_seconds": 14.04,
+          "latency_p95_ms": 13.34
+        }
+      },
+      "candidate_change_percent": {
+        "before": {
+          "1": {
+            "tps": -0.693,
+            "sql_cpu_seconds": -0.054,
+            "latency_p95_ms": 0.778
+          },
+          "8": {
+            "tps": -0.383,
+            "sql_cpu_seconds": -1.613,
+            "latency_p95_ms": 0
+          },
+          "32": {
+            "tps": 6.866,
+            "sql_cpu_seconds": -12.741,
+            "latency_p95_ms": -6.941
+          }
+        },
+        "control": {
+          "1": {
+            "tps": -11.813,
+            "sql_cpu_seconds": 44.427,
+            "latency_p95_ms": 13.596
+          },
+          "8": {
+            "tps": -15.256,
+            "sql_cpu_seconds": 58.911,
+            "latency_p95_ms": 16.481
+          },
+          "32": {
+            "tps": -10.031,
+            "sql_cpu_seconds": 47.556,
+            "latency_p95_ms": 12.432
+          }
+        }
+      },
+      "interpretation": "At 32 clients this run measures +6.866% throughput, -12.741% SQL CPU and -6.941% p95 versus pre-fix. At one/eight clients throughput is -0.693/-0.383%; no general throughput win. Candidate remains 10.031-15.256% slower than the faster control.",
+      "profiling": "After 1/8/32/8-client connection churn, the separate native sample has six named statistics workers and 126 total threads. CPU trace has 28,855 Running samples; no statistics-worker Running entries. These are diagnostic samples, not fixed-work CPU or latency percentages.",
+      "cleanup": "All 19 owned PIDs exited and 16 ports closed. Compared servers needed no forced stop. Fixture data and evidence preserved; see cleanup.json."
+    },
+    "validation_commands": {
+      "rust_cwd": [
+        "cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-server --lib -- driver::catalog tests_core::transactions cluster_session_node::tests::statistics --test-threads=12",
+        "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server"
+      ],
+      "root_cwd": [
+        "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+        "rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-executor/src/driver/catalog.rs rust/crates/tidb-executor/src/driver/catalog/sync_load.rs rust/crates/tidb-server/src/cluster_session_node/mod.rs rust/crates/tidb-server/src/cluster_session_node/tests/statistics.rs",
+        "git diff --check",
+        "ruby /private/tmp/tidb-stats-lifecycle.BPa0w4/measure.rb",
+        "ruby /private/tmp/tidb-stats-lifecycle.BPa0w4/profile.rb"
+      ]
+    },
+    "not_verified": [
+      "Whole Go-package/platform parity",
+      "Broad non-green workspace runtime suites",
+      "TPC-C and mixed-write performance",
+      "Remaining SQL/cop-worker and transport scheduling latency"
+    ]
+  },
   "integration_validation": {
     "status": "Integration merge with scoped Ready checks passed; broad runtime suites remain non-green; no complete parity or performance acceptance",
     "local_parent": "59700b3180dfb00747c0f18114428f1b0d7cfbdd",

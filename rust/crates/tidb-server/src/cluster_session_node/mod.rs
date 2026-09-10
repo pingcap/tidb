@@ -1006,6 +1006,8 @@ pub struct ClusterSessionFactory {
     /// session opened against it, the way Go's domain-level `StatsHandle`
     /// serves one `statistics.Table` per table to all sessions.
     session_stats_cache: Arc<Mutex<StatsTemplates>>,
+    /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
+    stats_load_workers: std::sync::OnceLock<Arc<tidb_executor::driver::StatisticsLoadWorkers>>,
     /// Fully built tables of one schema version, shared by every session
     /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
     /// shared `infoschema`. A session clones its table and swaps in its own
@@ -1123,6 +1125,7 @@ impl ClusterSessionFactory {
             mem_arbitrator: None,
             schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
             session_stats_cache: Arc::new(Mutex::new(StatsTemplates::default())),
+            stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
             workload_repository: std::sync::OnceLock::new(),
             stats_usage,
@@ -3075,14 +3078,18 @@ impl ClusterSessionFactory {
             &template_storage,
             Some(&mut kv_templates),
         );
-        built
-            .catalog
-            .set_statistics_item_loader(Arc::new(ClusterStatisticsItemLoader {
+        built.catalog.set_statistics_item_loader(
+            Arc::new(ClusterStatisticsItemLoader {
                 transactions: Arc::clone(&self.transactions),
                 catalog: Arc::clone(&self.catalog),
                 stats: Arc::clone(&self.stats),
                 global_vars: self.global_vars.clone(),
-            }));
+            }),
+            Arc::clone(
+                self.stats_load_workers
+                    .get_or_init(tidb_executor::driver::StatisticsLoadWorkers::new),
+            ),
+        );
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_index_usage_collector(self.stats_usage.index_usage_collector());
         if self

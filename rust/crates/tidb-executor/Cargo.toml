@@ -16,6 +16,7 @@ stacker = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 crc32fast = { workspace = true }
+crossbeam-channel = "0.5"
 flate2 = { workspace = true }
 prost = { workspace = true }
 smallvec = { workspace = true }
