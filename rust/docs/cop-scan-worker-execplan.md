@@ -542,17 +542,14 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Context and Orientation
 
-rust/crates/tidb-txnkv/src/rpc/execution.rs::TransportIo owns one native thread
-running a Tokio current-thread event loop. transport_runtime.rs spawns the
-existing command task on that loop and supplies the same Handle to all configured
-connection slots. Connection count still controls sockets. ConnectionTasks keeps
-each physical channel generation's independent task scope; shutdown closes those
-scopes before stopping and joining TransportIo, including panic reporting.
-
-Cop workers continue on the shared multi-thread execution_runtime. No SQL or
-blocking recovery is moved onto the transport event loop. Batch policy,
-identities, retries and deadlines are unchanged. The earlier transport-only increment changed two
-production files. Current statistics/history ownership changes are described below.
+rust/crates/tidb-txnkv/src/rpc/execution.rs::execution_runtime schedules cop
+workers, transport owners and connection I/O independently, as client-go runs
+send/receive goroutines on its shared scheduler. ConnectionTasks keeps each
+physical channel generation's task scope; transport shutdown closes those
+scopes and joins the command task, including panic reporting. Connection count
+still controls sockets. The dedicated TransportIo runtime/thread is removed.
+Batch policy, identities, retries and deadlines are unchanged. Current scheduling
+validation is tracked in transport-scheduler-execplan.md.
 
 rust/crates/tidb-distsql/src/cop_paging/cop_iterator.rs owns independent workers,
 ordered two-response buffers, unordered producer/consumer rendezvous and join.
@@ -1331,7 +1328,8 @@ are not accepted performance evidence. All probe services are stopped.
 The measured co-location increment changed internal scheduling ownership, not
 protocol rules. The subsequent full upstream merge changes public Rust
 interfaces and dependencies; its API reconciliation and validation are tracked
-separately above. TransportIo remains the native transport scheduling owner.
+separately above. The shared-scheduler increment removes TransportIo while
+retaining transport and physical-channel task ownership.
 
 Updated 2026-09-10 after the co-location measurement: replaced the earlier
 per-connection experiment's active status with current source, evidence,

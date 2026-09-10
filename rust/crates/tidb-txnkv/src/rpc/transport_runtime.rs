@@ -24,7 +24,7 @@ use tidb_pd_client::ClusterSecurity;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use super::execution::{wait, TransportIo};
+use super::execution::{execution_runtime, wait};
 
 use crate::region::StoreLiveness;
 
@@ -86,7 +86,6 @@ pub(super) struct TransportRuntime {
     commands: Option<mpsc::UnboundedSender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
     cancellation: TransportShutdownCancellation,
-    io: Option<TransportIo>,
 }
 
 /// Cloneable request capability for the retained transport worker.
@@ -122,11 +121,11 @@ impl TransportRuntime {
         security: Arc<ClusterSecurity>,
         connection_count: NonZeroUsize,
     ) -> Result<Self, DirectUnaryClientError> {
-        let io = TransportIo::new().map_err(DirectUnaryClientError::Runtime)?;
+        let runtime = execution_runtime().map_err(DirectUnaryClientError::Runtime)?;
         let (commands, receiver) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let worker = io.handle.spawn(run_worker(
-            io.handle.clone(),
+        let worker = runtime.spawn(run_worker(
+            runtime.handle().clone(),
             connection_count,
             receiver,
             commands.clone(),
@@ -137,7 +136,6 @@ impl TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: TransportShutdownCancellation { shutdown },
-            io: Some(io),
         })
     }
 
@@ -185,13 +183,6 @@ impl TransportRuntime {
             }
             shutdown_errors
         });
-        if let Some(mut driver) = self.io.take() {
-            if let Err(panic) = driver.shutdown() {
-                shutdown_errors.push(TransportShutdownError::WorkerPanicked {
-                    message: format!("transport I/O: {}", panic_message(&panic)),
-                });
-            }
-        }
         match shutdown_errors.len() {
             0 => Ok(()),
             1 => Err(DirectUnaryClientError::Shutdown(
@@ -899,7 +890,6 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: None,
         };
 
         assert_eq!(
@@ -924,7 +914,6 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: None,
         };
 
         assert_eq!(
@@ -950,7 +939,6 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: None,
         };
 
         assert_eq!(
@@ -978,7 +966,6 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: None,
         };
 
         assert_eq!(

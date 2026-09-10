@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native scheduling, with transport-owned I/O and connection task lifetimes.
+//! Shared native scheduling with connection-scoped task lifetimes.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,8 +21,9 @@ use std::task::{Context, Poll, Wake, Waker};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::{AbortHandle, JoinSet};
 
-/// Native scheduler shared by independent coprocessor workers.
-/// Transport command and I/O tasks have an independently joined lifetime.
+/// Shared scheduler for SQL work, transport owners and connection I/O tasks.
+/// Like Go goroutines, independent send/receive loops can run concurrently;
+/// connection scopes and transport joins own their lifetime, not this runtime.
 pub fn execution_runtime() -> Result<&'static Runtime, String> {
     static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
     RUNTIME
@@ -35,71 +36,6 @@ pub fn execution_runtime() -> Result<&'static Runtime, String> {
         })
         .as_ref()
         .map_err(Clone::clone)
-}
-
-/// The transport owner's command loop and connection I/O share one driver.
-/// Publication and stream wakeups stay local instead of crossing a runtime for
-/// every packet. Connection count controls sockets, not native driver threads.
-/// SQL, cop workers and blocking recovery remain outside this event loop.
-pub(in crate::rpc) struct TransportIo {
-    pub(in crate::rpc) handle: Handle,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl TransportIo {
-    pub(in crate::rpc) fn new() -> Result<Self, String> {
-        let (ready, receiver) = std::sync::mpsc::sync_channel(1);
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let thread = std::thread::Builder::new()
-            .name("tikv-transport".to_owned())
-            .spawn(move || {
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => {
-                        if ready.send(Ok(runtime.handle().clone())).is_ok() {
-                            runtime.block_on(async {
-                                let _ = stopped.await;
-                            });
-                        }
-                    }
-                    Err(error) => {
-                        let _ = ready.send(Err(error.to_string()));
-                    }
-                }
-            })
-            .map_err(|error| error.to_string())?;
-        match receiver
-            .recv()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result)
-        {
-            Ok(handle) => Ok(Self {
-                handle,
-                stop: Some(stop),
-                thread: Some(thread),
-            }),
-            Err(error) => {
-                let _ = thread.join();
-                Err(error)
-            }
-        }
-    }
-
-    pub(in crate::rpc) fn shutdown(&mut self) -> std::thread::Result<()> {
-        self.stop.take();
-        self.thread.take().map_or(Ok(()), |thread| thread.join())
-    }
-}
-
-impl Drop for TransportIo {
-    fn drop(&mut self) {
-        // The transport joins all connection task scopes before stopping I/O.
-        // Dropping the runtime on its own thread also works for async callers.
-        let _ = self.shutdown();
-    }
 }
 
 /// One physical channel generation, including tonic/h2 background work.

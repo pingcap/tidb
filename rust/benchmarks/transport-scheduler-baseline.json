@@ -1,0 +1,428 @@
+{
+  "status": "Go-aligned shared scheduling verified in scoped tests and pre-merge workloads; mixed performance, no overall goal completion.",
+  "source_authority": "client-go e4905600583b internal/client/conn_pool.go batchSendLoop and client_batch.go batchRecvLoop: independently scheduled goroutines, not a dedicated serial transport runtime.",
+  "change": "Remove TransportIo and its native thread/runtime/stop channel. Schedule transport command and connection I/O tasks on the existing execution_runtime; retain connection JoinSet shutdown and command-task joins. Batch policy, identities, retry and cancellation contracts unchanged.",
+  "measurement_base": "308af72dd6c0812fa1488964bd96ef3fccd1a34a",
+  "merged_parent": "a075207030e0f7ebb5eb763df61dc01f305cdd01",
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-ttl-task.SRHWlp/candidate-server",
+      "sha256": "309cf52f50108e80981d5a83e15d8f12f3166cb9564e1f2256af9e84fca4029c"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-rpc-stages.pWypr5/candidate-server",
+      "sha256": "ac4bd53cd27762bd0c9e108443129a98b893f3fd2d6c7ca3d4bb1c81636a730a"
+    }
+  },
+  "validation": {
+    "profile": "Ready scoped",
+    "unit_tests": 24,
+    "final_transport_batch_tests": 97,
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv --lib -- rpc:: --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv --lib --test all --no-fail-fast -- batch_ transport_ connection_ --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 -p tidb-txnkv --all-targets",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "rustfmt --edition 2021 --check --config skip_children=true crates/tidb-txnkv/src/rpc/execution.rs crates/tidb-txnkv/src/rpc/transport_runtime.rs",
+      "ruby /private/tmp/tidb-rpc-stages.pWypr5/verify.rb",
+      "git diff --check",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor --lib -- index_join_probe_rows_use_only_the_access_paths_join_keys tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup derived_aggregate_null_filter_refreshes_source_statistics --test-threads=12",
+      "ruby /private/tmp/tidb-rpc-stages.pWypr5/verify-merged.rb",
+      "ruby /private/tmp/tidb-rpc-stages.pWypr5/verify-cleanup.rb"
+    ],
+    "working_directory": "Cargo and rustfmt commands from rust/, make and git from checkout root.",
+    "artifacts": "/private/tmp/tidb-rpc-stages.pWypr5",
+    "merged_checks": "Final merged release build and Ready lint pass. Three planner tests give two pass and one failure; unchanged a075207030 parent gives identical two pass/one failure at aggregates.rs:2479 (grouped IndexJoin inner selection). No assertion removed or weakened. Final transport source exactly matches the built/tested candidate after baseline comparison."
+  },
+  "workloads": {
+    "sysbench_events": 84000,
+    "tpcc_events": 36000,
+    "configuration": "6000 measured events per sample. Sysbench has 1000 warmup events, seed 1, prepared statements auto, one/eight/32 clients. TPC-C: eight clients, seed 1, one warehouse, exact identical five-transaction mix. No builds or profile analysis overlap measured work.",
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "sysbench": [
+      {
+        "server": "go",
+        "round": "start",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.165,
+        "tps": 1895.7345971563982,
+        "sql_cpu_seconds": 13.810000000000016,
+        "tikv_cpu_seconds": 14.110000000000014,
+        "latency_mean_ms": 4.22,
+        "latency_p95_ms": 4.57
+      },
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.7569,
+        "tps": 470.3337017613997,
+        "sql_cpu_seconds": 9.13,
+        "tikv_cpu_seconds": 9.819999999999993,
+        "latency_mean_ms": 2.13,
+        "latency_p95_ms": 2.3
+      },
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.3848,
+        "tps": 1772.630583786339,
+        "sql_cpu_seconds": 11.809999999999999,
+        "tikv_cpu_seconds": 12.720000000000027,
+        "latency_mean_ms": 4.51,
+        "latency_p95_ms": 4.91
+      },
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.0548,
+        "tps": 2919.9922133540977,
+        "sql_cpu_seconds": 12.220000000000002,
+        "tikv_cpu_seconds": 12.370000000000005,
+        "latency_mean_ms": 10.93,
+        "latency_p95_ms": 12.3
+      },
+      {
+        "server": "before",
+        "round": 1,
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.5783,
+        "tps": 477.0119968517208,
+        "sql_cpu_seconds": 7.69,
+        "tikv_cpu_seconds": 8.089999999999975,
+        "latency_mean_ms": 2.1,
+        "latency_p95_ms": 2.26
+      },
+      {
+        "server": "before",
+        "round": 1,
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4033,
+        "tps": 1762.9947403990243,
+        "sql_cpu_seconds": 11.45,
+        "tikv_cpu_seconds": 12.080000000000041,
+        "latency_mean_ms": 4.53,
+        "latency_p95_ms": 4.91
+      },
+      {
+        "server": "before",
+        "round": 1,
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1005,
+        "tps": 2856.4627469650086,
+        "sql_cpu_seconds": 12.420000000000002,
+        "tikv_cpu_seconds": 12.720000000000027,
+        "latency_mean_ms": 11.17,
+        "latency_p95_ms": 12.52
+      },
+      {
+        "server": "before",
+        "round": 2,
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.565,
+        "tps": 477.516912057302,
+        "sql_cpu_seconds": 7.640000000000001,
+        "tikv_cpu_seconds": 8.759999999999991,
+        "latency_mean_ms": 2.09,
+        "latency_p95_ms": 2.22
+      },
+      {
+        "server": "before",
+        "round": 2,
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.415,
+        "tps": 1756.9546120058565,
+        "sql_cpu_seconds": 11.49,
+        "tikv_cpu_seconds": 12.350000000000023,
+        "latency_mean_ms": 4.55,
+        "latency_p95_ms": 4.91
+      },
+      {
+        "server": "before",
+        "round": 2,
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1139,
+        "tps": 2838.3556459624388,
+        "sql_cpu_seconds": 12.5,
+        "tikv_cpu_seconds": 12.960000000000036,
+        "latency_mean_ms": 11.25,
+        "latency_p95_ms": 12.52
+      },
+      {
+        "server": "after",
+        "round": 3,
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.8096,
+        "tps": 468.39870097426933,
+        "sql_cpu_seconds": 9.14,
+        "tikv_cpu_seconds": 8.75,
+        "latency_mean_ms": 2.13,
+        "latency_p95_ms": 2.3
+      },
+      {
+        "server": "after",
+        "round": 3,
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.3476,
+        "tps": 1792.328832596487,
+        "sql_cpu_seconds": 11.659999999999998,
+        "tikv_cpu_seconds": 12.299999999999955,
+        "latency_mean_ms": 4.46,
+        "latency_p95_ms": 4.82
+      },
+      {
+        "server": "after",
+        "round": 3,
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.0697,
+        "tps": 2898.9708653428033,
+        "sql_cpu_seconds": 12.509999999999998,
+        "tikv_cpu_seconds": 12.340000000000032,
+        "latency_mean_ms": 11.01,
+        "latency_p95_ms": 12.3
+      },
+      {
+        "server": "go",
+        "round": "end",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.1691,
+        "tps": 1893.2820043545487,
+        "sql_cpu_seconds": 13.96999999999997,
+        "tikv_cpu_seconds": 14.269999999999982,
+        "latency_mean_ms": 4.22,
+        "latency_p95_ms": 4.57
+      }
+    ],
+    "tpcc": [
+      {
+        "server": "go",
+        "round": "start",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 5.858975000010105,
+        "sql_cpu_seconds": 16.44999999999999,
+        "tikv_cpu_seconds": 32.80000000000001
+      },
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.264561999996658,
+        "sql_cpu_seconds": 14.519999999999996,
+        "tikv_cpu_seconds": 35.28000000000003
+      },
+      {
+        "server": "before",
+        "round": 1,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.21104400002514,
+        "sql_cpu_seconds": 12.779999999999994,
+        "tikv_cpu_seconds": 33.60000000000002
+      },
+      {
+        "server": "before",
+        "round": 2,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.203860000008717,
+        "sql_cpu_seconds": 12.979999999999997,
+        "tikv_cpu_seconds": 35.180000000000064
+      },
+      {
+        "server": "after",
+        "round": 3,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.2750969999760855,
+        "sql_cpu_seconds": 14.43,
+        "tikv_cpu_seconds": 34.73000000000002
+      },
+      {
+        "server": "go",
+        "round": "end",
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.074157999973977,
+        "sql_cpu_seconds": 16.52000000000004,
+        "tikv_cpu_seconds": 33.74000000000001
+      }
+    ],
+    "auto_analyze": [
+      "1",
+      0,
+      "1"
+    ],
+    "parity": "Zero errors/reconnects; bounded Go fixture digest ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c and all eleven TPC-C consistency conditions pass."
+  },
+  "interpretation": "32-client mean elapsed decreases 2.1072 -> 2.06225 seconds (TPS +2.18%); eight-client 3.40915 -> 3.3662 (TPS +1.28%); serial 12.57165 -> 12.78325 (TPS -1.66%). Serial SQL CPU rises 7.665 -> 9.135 seconds (+19.18%); TPC-C elapsed 6.207452 -> 6.2698295 (+1.00%) and SQL CPU 12.88 -> 14.475 (+12.38%). Retain as Go implementation/ownership alignment, not a universal optimization. Shared-host two-pair measurements, not isolated-host performance guarantees.",
+  "diagnostic": {
+    "path": "/private/tmp/tidb-rpc-stages.pWypr5",
+    "probe_patch": "stage-probe.patch",
+    "scope": "Temporary sample every 64th request, not randomized. Extra timestamp/logging overhead; all probes removed from production. Rust sent boundary is tonic queue submission, not grpc-go Send completion.",
+    "columns": [
+      "batch wait us",
+      "consumer delay us"
+    ],
+    "go": {
+      "1": [
+        2.7703,
+        1.2698
+      ],
+      "8": [
+        25.1975,
+        5.9649
+      ],
+      "32": [
+        75.5748,
+        11.2134
+      ]
+    },
+    "rust_dedicated": {
+      "1": [
+        4.5323,
+        4.8924
+      ],
+      "8": [
+        49.5111,
+        9.7331
+      ],
+      "32": [
+        91.6137,
+        16.0255
+      ]
+    },
+    "rust_shared": {
+      "1": [
+        4.7517,
+        2.3864
+      ],
+      "8": [
+        43.498,
+        6.2518
+      ],
+      "32": [
+        57.4844,
+        8.2168
+      ]
+    }
+  },
+  "remaining": [
+    "Full throughput/latency goal and whole-Go-package parity remain open.",
+    "Increased CPU and lower serial throughput require further causal profiling; do not infer their root cause from scheduling alone.",
+    "Full workspace test suite and production cluster behavior are not verified by this scoped increment.",
+    "Existing analyzed TPC-C condition-nine planner assertion fails identically on the merged parent; not fixed in this transport increment."
+  ],
+  "cleanup": "Ten owned benchmark PIDs absent and ten ports closed. Auto-analyze restored to 1 after each live phase. Fixture /private/tmp/tidb-live-workload.nIrZBe retained.",
+  "merged_live": {
+    "binary": {
+      "path": "/private/tmp/tidb-rpc-stages.pWypr5/merged-server",
+      "sha256": "50b098bac8196e5f060d7be9f0ee0440a3cb019d1af6c314a6ea358f91c8d9b6"
+    },
+    "sysbench": [
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.3451,
+        "tps": 1793.6683507219516,
+        "sql_cpu_seconds": 11.690000000000001,
+        "tikv_cpu_seconds": 12.3900000000001,
+        "latency_mean_ms": 4.46,
+        "latency_p95_ms": 4.82
+      }
+    ],
+    "tpcc": [
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.363175000005867,
+        "sql_cpu_seconds": 14.349999999999998,
+        "tikv_cpu_seconds": 34.6099999999999
+      }
+    ],
+    "auto_analyze": [
+      "1",
+      0,
+      "1"
+    ],
+    "scope": "Additional 6000 sysbench and 6000 TPC-C events; bounded Go equality and eleven consistency conditions pass. Not a new matched performance comparison."
+  }
+}
