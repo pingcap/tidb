@@ -21,7 +21,7 @@
 
 use std::sync::{
     atomic::{AtomicBool as StdAtomicBool, Ordering},
-    OnceLock, RwLock,
+    Arc, OnceLock, RwLock,
 };
 
 use base64::engine::general_purpose::URL_SAFE;
@@ -430,20 +430,17 @@ pub fn new_config() -> Config {
     Config::default()
 }
 
-static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
+static GLOBAL_CONFIG: OnceLock<RwLock<Arc<Config>>> = OnceLock::new();
 static CHECK_TABLE_BEFORE_DROP: StdAtomicBool = StdAtomicBool::new(false);
 
-fn global_config() -> &'static RwLock<Config> {
-    GLOBAL_CONFIG.get_or_init(|| RwLock::new(new_config()))
+fn global_config() -> &'static RwLock<Arc<Config>> {
+    GLOBAL_CONFIG.get_or_init(|| RwLock::new(Arc::new(new_config())))
 }
 
-/// Go `GetGlobalConfig`. Rust returns an owned snapshot so readers never
-/// retain a lock while using the configuration.
-pub fn get_global_config() -> Config {
-    global_config()
-        .read()
-        .expect("global config lock poisoned")
-        .clone()
+/// Go `GetGlobalConfig`: retain the published configuration without copying
+/// its contents. Readers release the publication lock before using the snapshot.
+pub fn get_global_config() -> Arc<Config> {
+    Arc::clone(&global_config().read().expect("global config lock poisoned"))
 }
 
 /// Go `GetErrorMessageExtensions`.
@@ -452,7 +449,8 @@ pub fn get_error_message_extensions() -> Vec<ErrorMessageExtension> {
 }
 
 /// Go `StoreGlobalConfig`.
-pub fn store_global_config(config: Config) {
+pub fn store_global_config(config: impl Into<Arc<Config>>) {
+    let config = config.into();
     let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
         .expect("ignore-invalid preparation cannot fail");
     let tikv_config = config.get_tikv_config();
@@ -479,7 +477,7 @@ pub fn init_by_ld_flags(_edition: &str, check_before_drop_ld_flag: &str) {
 
 /// Go `UpdateGlobal`.
 pub fn update_global(update: impl FnOnce(&mut Config)) {
-    let mut config = get_global_config();
+    let mut config = (*get_global_config()).clone();
     update(&mut config);
     store_global_config(config);
 }

@@ -27,7 +27,7 @@ const OPERATIONS: usize = 1_000;
 const BENCHMARK_QUOTA: i64 = 256 * 1024 * 1024;
 
 struct RestoreCacheConfig {
-    config: Config,
+    config: Arc<Config>,
     quota: i64,
 }
 

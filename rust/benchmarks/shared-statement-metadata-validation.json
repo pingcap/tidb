@@ -1,0 +1,931 @@
+{
+  "date": "2026-09-10",
+  "status": "Scoped Go-aligned ownership fixes; shared-host measurements are diagnostics, not full package parity or accepted performance baseline",
+  "base_revision": "6ef4aea7aa5504fdf79865f3812194bfb1ad7a99",
+  "source_diff_sha256": "024b7229befa41fff974fb9c3fb3db9a3bfb6b41a862440cda813f42adbaa39e",
+  "source_diff_command": "git diff -- '*.rs' | shasum -a 256",
+  "artifact_root": "/private/tmp/tidb-statement-metadata.caYXkP",
+  "roots_fixed": [
+    "GetGlobalConfig returns a shared published snapshot; mutation/load paths clone explicitly and restore guards retain their snapshot. Publication side effects remain.",
+    "Latest index metadata is shared per Catalog metadata version, including cloned and historical catalogs. Central DDL invalidation clears only the mutated owner; temporary shadow restoration also invalidates.",
+    "Every statement context has the session domain view. Delete the AST clone/walk and duplicated RC/locking/DML attachment branches that omitted locking EXPLAIN."
+  ],
+  "go_source": {
+    "revision": "6ef4aea7aa5504fdf79865f3812194bfb1ad7a99",
+    "functions": [
+      "pkg/config/config.go: GetGlobalConfig, StoreGlobalConfig, UpdateGlobal, RestoreFunc",
+      "pkg/planner/util/domainmisc/info.go: GetLatestIndexInfo",
+      "pkg/planner/core/integration_test.go: TestPointGetWithSelectLock",
+      "pkg/session/session.go: binary-protocol execution intentionally clears currentPlan"
+    ],
+    "live_version": "v9.0.0-beta.2.pre-nightly",
+    "limitation": "Live Go nightly binary is not the checked-out source revision."
+  },
+  "validation": {
+    "profile": "Ready",
+    "reason": "Configuration consumers, schema ownership, locking EXPLAIN, prepared statements, temporary tables and historical reads require targeted tests plus live Go comparison, all-target check, build and lint.",
+    "cargo_cwd": "/private/tmp/tidb-upstream-merge.nzY42N/rust",
+    "commands": {
+      "config": "cargo test --offline --locked --release -j12 -p tidb-config -p tidb-errmsg --lib --test all --no-fail-fast -- --test-threads=1",
+      "consumers": "cargo test --offline --locked --release -j12 -p tidb-session -p tidb-stmtsummary -p tidb-util -p tidb-server --lib --test all --no-fail-fast -- tests_session_var_hooks test_stmt_record disk::temp_dir printer:: error_packets_apply_configured_suffixes_and_preserve_raw_bytes --test-threads=1",
+      "red": "cargo test --offline --locked --release -j12 -p tidb-session --lib -- tests_explain::explain_select --exact --test-threads=1",
+      "paired_schema": "cargo test --offline --locked --release -j12 -p tidb-session --lib --no-fail-fast -- tests_explain tests_temporary_tables tests_non_prepared_plan_cache prepared_statements:: stmt_ctx:: tests_stale tests_snapshot tests_session_var_hooks --test-threads=1",
+      "final_session": "cargo test --offline --locked --release -j12 -p tidb-session --lib --no-fail-fast -- tests_explain::explain_select tests_temporary_tables tests_non_prepared_plan_cache tests_prepared_statements tests_prepared_plan_cache stmt_ctx:: tests_core::transactions tests_session_var_hooks --test-threads=1",
+      "workspace": "cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+      "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "format": "git diff --name-only --diff-filter=ACM -- '*.rs' | xargs rustfmt --check --edition 2021 --config skip_children=true",
+      "diff": "git diff --check",
+      "live": "ruby /private/tmp/tidb-statement-metadata.caYXkP/verify-metadata.rb",
+      "prepared": "ruby /private/tmp/tidb-statement-metadata.caYXkP/prepared-plans.rb"
+    },
+    "config_stage": {
+      "passed": 125,
+      "failed": 0,
+      "artifact_root": "/private/tmp/tidb-config-owner.z3Qh01",
+      "logs": [
+        "config-tests-verified.log",
+        "consumer-tests.log"
+      ]
+    },
+    "schema_red": {
+      "error": "domain not found for ctx",
+      "log": "/private/tmp/tidb-config-owner.z3Qh01/schema-connected-red.log"
+    },
+    "paired_schema": {
+      "baseline_passed": 149,
+      "candidate_passed": 148,
+      "failed_both": 18,
+      "ignored_both": 1,
+      "baseline_log": "/private/tmp/tidb-config-owner.z3Qh01/metadata-baseline-tests.log",
+      "candidate_log": "/private/tmp/tidb-config-owner.z3Qh01/metadata-tests.log",
+      "interpretation": "Same 18 failing names. Other 17 failure bodies are identical. Candidate explain_select passes the new domain cases then fails existing USE INDEX() assertion; that assertion also failed before metadata changes in schema-red.log. One retired Rust-only domain-absence test removed, not a failing Go fixture."
+    },
+    "final_session": {
+      "passed": 160,
+      "failed": 2,
+      "ignored": 1,
+      "log": "/private/tmp/tidb-statement-metadata.caYXkP/session-tests.log",
+      "retained_failures": [
+        "tests_explain::explain_select: existing USE INDEX() common-handle hint assertion",
+        "tests_prepared_plan_cache::logical_range_quota_rejects_unindexed_prepared_cache: independently reproduced baseline failure recorded in process-publication-validation.json"
+      ]
+    },
+    "bazel_prepare": "Not triggered; no Go source/import/dependency or Bazel metadata changes.",
+    "limitations": [
+      "Workspace is not fully green; existing semantic failures retained.",
+      "No standalone Rust-only protection test added. Existing Go-derived EXPLAIN fixture extended.",
+      "Global configuration AtomicBool is still the existing plain-bool wrapper; external tikvcfg clone path is unchanged.",
+      "Prepared EXPLAIN is a separate planning operation, not proof of the actual cached execution plan. Go suppresses binary-protocol plan publication; Rust EXPLAIN FOR CONNECTION remains unsupported."
+    ],
+    "workspace_log": "/private/tmp/tidb-statement-metadata.caYXkP/workspace-check.log",
+    "build_log": "/private/tmp/tidb-statement-metadata.caYXkP/build.log",
+    "lint_log": "/private/tmp/tidb-statement-metadata.caYXkP/lint-verified.log",
+    "outcome": "Release build, all-target check, Ready lint, changed-source formatting and live comparisons passed. Final focused unit batch retains two independently reproduced baseline failures. No full-release or performance-acceptance claim."
+  },
+  "prepared_probe": {
+    "queries": 4,
+    "executions_each": 2,
+    "result_comparisons": 8,
+    "all_results_equal": true,
+    "log": "/private/tmp/tidb-statement-metadata.caYXkP/prepared-plans.jsonl",
+    "delivery_bound_plan_equal": true,
+    "other_differences": [
+      "payment-customer: operator IDs only",
+      "latest-order: Rust table-probe includes stats:pseudo"
+    ],
+    "all_plans_use_ordered_index_or_table_ranges": true,
+    "limitations": "Bound EXPLAIN is not cached execution plan evidence. Go intentionally clears binary-protocol currentPlan; Rust EXPLAIN FOR CONNECTION is unsupported."
+  },
+  "config_only_intermediate": {
+    "binary_sha256": "e6cab568dafc1c4c6cd03994fd07b565b8d6c7bf5516b87db1cc01777473c998",
+    "source_diff_sha256": "e6d575a66a048ecf800fe6b0c2cb1ce784f5b70866f7f8dfb522fbfdc92d5a08",
+    "artifact_root": "/private/tmp/tidb-config-owner.z3Qh01",
+    "measured_sysbench_events": 72000,
+    "candidate_tpcc_transactions": 50000,
+    "validation": "Zero sysbench errors/reconnects, selected result/history equality and all 11 TPC-C consistency checks.",
+    "sampled_get_global_config_inclusive_ms": {
+      "before_sysbench": 103,
+      "after_sysbench": 1,
+      "before_tpcc": 57,
+      "after_tpcc": 1
+    },
+    "timing_note": "Intermediate binary only; not the combined candidate. About +2.00% 32-client TPS and -1.80% p95, with SQL CPU flat. Shared-host, auto-analyze and growing-fixture confounds; not accepted speedup."
+  },
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-process-publication.JIYx20/process-server",
+      "sha256": "45e91603f15bd72a5beba09a5644ac3f2c8a14a39ad93196f6383137fdb04aff"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-statement-metadata.caYXkP/metadata-server",
+      "sha256": "e008264dca0c1aad9ce8c2eb6bc2ed13cfd2ffc33b57e824d43c77db93a2f4cf"
+    }
+  },
+  "sysbench": {
+    "workload": "oltp_read_only, prepared statements auto, one 100000-row table, seed 1",
+    "schedule": [
+      "after",
+      "before",
+      "before",
+      "after"
+    ],
+    "clients": [
+      1,
+      8,
+      32
+    ],
+    "measured_events": 72000,
+    "warmup_events": 12000,
+    "errors": 0,
+    "reconnects": 0,
+    "selected_query_result_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "samples": [
+      {
+        "server": "after",
+        "round": "process-0",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.8358,
+        "tps": 467.4426214182209,
+        "sql_cpu_seconds": 8.05,
+        "tikv_cpu_seconds": 8.019999999999982,
+        "latency_mean_ms": 2.14,
+        "latency_p95_ms": 2.35,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=1",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-0-1-after.log"
+      },
+      {
+        "server": "after",
+        "round": "process-0",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4417,
+        "tps": 1743.3245198593718,
+        "sql_cpu_seconds": 12.03,
+        "tikv_cpu_seconds": 11.840000000000032,
+        "latency_mean_ms": 4.58,
+        "latency_p95_ms": 5,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=8",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-0-8-after.log"
+      },
+      {
+        "server": "after",
+        "round": "process-0",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1694,
+        "tps": 2765.7416797271135,
+        "sql_cpu_seconds": 12.64,
+        "tikv_cpu_seconds": 11.960000000000036,
+        "latency_mean_ms": 11.13,
+        "latency_p95_ms": 12.52,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=32",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-0-32-after.log"
+      },
+      {
+        "server": "before",
+        "round": "process-1",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.8216,
+        "tps": 467.96031696512136,
+        "sql_cpu_seconds": 8.08,
+        "tikv_cpu_seconds": 8.099999999999909,
+        "latency_mean_ms": 2.14,
+        "latency_p95_ms": 2.35,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=1",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-1-1-before.log"
+      },
+      {
+        "server": "before",
+        "round": "process-1",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4398,
+        "tps": 1744.287458573173,
+        "sql_cpu_seconds": 12.07,
+        "tikv_cpu_seconds": 11.929999999999836,
+        "latency_mean_ms": 4.58,
+        "latency_p95_ms": 5,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=8",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-1-8-before.log"
+      },
+      {
+        "server": "before",
+        "round": "process-1",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1369,
+        "tps": 2807.805699845571,
+        "sql_cpu_seconds": 12.650000000000002,
+        "tikv_cpu_seconds": 11.829999999999927,
+        "latency_mean_ms": 11.04,
+        "latency_p95_ms": 12.3,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=32",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-1-32-before.log"
+      },
+      {
+        "server": "before",
+        "round": "process-2",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.9,
+        "tps": 465.1162790697674,
+        "sql_cpu_seconds": 8.06,
+        "tikv_cpu_seconds": 8.120000000000118,
+        "latency_mean_ms": 2.15,
+        "latency_p95_ms": 2.3,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=1",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-2-1-before.log"
+      },
+      {
+        "server": "before",
+        "round": "process-2",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.5685,
+        "tps": 1681.3787305590586,
+        "sql_cpu_seconds": 12.32,
+        "tikv_cpu_seconds": 14.900000000000091,
+        "latency_mean_ms": 4.75,
+        "latency_p95_ms": 5.37,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=8",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-2-8-before.log"
+      },
+      {
+        "server": "before",
+        "round": "process-2",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1722,
+        "tps": 2762.1765951569837,
+        "sql_cpu_seconds": 12.899999999999999,
+        "tikv_cpu_seconds": 12.509999999999991,
+        "latency_mean_ms": 11.28,
+        "latency_p95_ms": 12.52,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=32",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-2-32-before.log"
+      },
+      {
+        "server": "after",
+        "round": "process-3",
+        "threads": 1,
+        "transactions": 6000,
+        "seconds": 12.8359,
+        "tps": 467.4389797365202,
+        "sql_cpu_seconds": 8.02,
+        "tikv_cpu_seconds": 8.059999999999945,
+        "latency_mean_ms": 2.14,
+        "latency_p95_ms": 2.26,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=1",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-3-1-after.log"
+      },
+      {
+        "server": "after",
+        "round": "process-3",
+        "threads": 8,
+        "transactions": 6000,
+        "seconds": 3.4451,
+        "tps": 1741.6040172999333,
+        "sql_cpu_seconds": 12.05,
+        "tikv_cpu_seconds": 12.009999999999991,
+        "latency_mean_ms": 4.58,
+        "latency_p95_ms": 5,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=8",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-3-8-after.log"
+      },
+      {
+        "server": "after",
+        "round": "process-3",
+        "threads": 32,
+        "transactions": 6000,
+        "seconds": 2.1941,
+        "tps": 2734.606444555854,
+        "sql_cpu_seconds": 12.980000000000004,
+        "tikv_cpu_seconds": 12.519999999999982,
+        "latency_mean_ms": 11.26,
+        "latency_p95_ms": 12.52,
+        "command": [
+          "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+          "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "--db-driver=mysql",
+          "--mysql-ssl=off",
+          "--mysql-host=127.0.0.1",
+          "--mysql-port=54500",
+          "--mysql-user=root",
+          "--mysql-db=perf_sysbench",
+          "--threads=32",
+          "--time=0",
+          "--table-size=100000",
+          "--tables=1",
+          "--db-ps-mode=auto",
+          "--rand-seed=1",
+          "--percentile=95",
+          "--histogram=on",
+          "--events=6000",
+          "run"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/trial-process-3-32-after.log"
+      }
+    ],
+    "arithmetic_means": [
+      {
+        "threads": 1,
+        "before": {
+          "tps": 466.5382980174444,
+          "sql_cpu_seconds": 8.07,
+          "tikv_cpu_seconds": 8.110000000000014,
+          "latency_p95_ms": 2.325
+        },
+        "after": {
+          "tps": 467.4408005773705,
+          "sql_cpu_seconds": 8.035,
+          "tikv_cpu_seconds": 8.039999999999964,
+          "latency_p95_ms": 2.3049999999999997
+        },
+        "change_percent": {
+          "tps": 0.19344661815789976,
+          "sql_cpu_seconds": -0.4337050805452325,
+          "tikv_cpu_seconds": -0.8631319358822442,
+          "latency_p95_ms": -0.8602150537634579
+        }
+      },
+      {
+        "threads": 8,
+        "before": {
+          "tps": 1712.8330945661157,
+          "sql_cpu_seconds": 12.195,
+          "tikv_cpu_seconds": 13.414999999999964,
+          "latency_p95_ms": 5.1850000000000005
+        },
+        "after": {
+          "tps": 1742.4642685796525,
+          "sql_cpu_seconds": 12.04,
+          "tikv_cpu_seconds": 11.925000000000011,
+          "latency_p95_ms": 5
+        },
+        "change_percent": {
+          "tps": 1.7299510447071675,
+          "sql_cpu_seconds": -1.2710127101271063,
+          "tikv_cpu_seconds": -11.106969809913947,
+          "latency_p95_ms": -3.567984570877536
+        }
+      },
+      {
+        "threads": 32,
+        "before": {
+          "tps": 2784.9911475012773,
+          "sql_cpu_seconds": 12.775,
+          "tikv_cpu_seconds": 12.169999999999959,
+          "latency_p95_ms": 12.41
+        },
+        "after": {
+          "tps": 2750.174062141484,
+          "sql_cpu_seconds": 12.810000000000002,
+          "tikv_cpu_seconds": 12.240000000000009,
+          "latency_p95_ms": 12.52
+        },
+        "change_percent": {
+          "tps": -1.250168618705727,
+          "sql_cpu_seconds": 0.273972602739736,
+          "tikv_cpu_seconds": 0.5751848808549731,
+          "latency_p95_ms": 0.8863819500402936
+        }
+      }
+    ],
+    "interpretation": "Mixed diagnostic outcome: 8-client TPS +1.73%, 32-client TPS -1.25%; no accepted speedup. One baseline 8-client sample had increased TiKV CPU.",
+    "tls": "No TLS/security setting disabled; driver --mysql-ssl=off leaves the library default, not proof of plaintext."
+  },
+  "tpcc": {
+    "database": "perf_lock_tpcc_5cg54c",
+    "warehouses": 1,
+    "fixture": "Existing growing fixture, not reset between runs",
+    "driver": {
+      "path": "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+      "revision": "a9ca4818625deef91ff80f6c395a575ccae22b7c",
+      "sha256": "1a60bfbbee49b818191448b9fe158c6750ca0b928443aacf31a40e8e99f7ec56",
+      "patch": "RNG seed hook only",
+      "environment": {
+        "GOMAXPROCS": "12",
+        "GOTPC_TPCC_INPUT_SEED": "1"
+      }
+    },
+    "fixed_samples": [
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.188087999995332,
+        "sql_cpu_seconds": 13.329999999999998,
+        "tikv_cpu_seconds": 32.639999999999986,
+        "command": [
+          "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "54500",
+          "-U",
+          "root",
+          "-D",
+          "perf_lock_tpcc_5cg54c",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--max-procs",
+          "12",
+          "--count",
+          "6000",
+          "--time",
+          "2m",
+          "--interval",
+          "10s"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/process-tpcc-0-after-8.log"
+      },
+      {
+        "server": "after",
+        "round": 0,
+        "threads": 1,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 244,
+          "NEW_ORDER": 2696,
+          "ORDER_STATUS": 227,
+          "PAYMENT": 2614,
+          "STOCK_LEVEL": 219
+        },
+        "seconds": 16.340127000003122,
+        "sql_cpu_seconds": 9.560000000000002,
+        "tikv_cpu_seconds": 23.120000000000005,
+        "command": [
+          "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "54500",
+          "-U",
+          "root",
+          "-D",
+          "perf_lock_tpcc_5cg54c",
+          "--warehouses",
+          "1",
+          "-T",
+          "1",
+          "--max-procs",
+          "12",
+          "--count",
+          "6000",
+          "--time",
+          "2m",
+          "--interval",
+          "10s"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/process-tpcc-0-after-1.log"
+      },
+      {
+        "server": "before",
+        "round": 1,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.350455000007059,
+        "sql_cpu_seconds": 13.559999999999995,
+        "tikv_cpu_seconds": 32.63000000000011,
+        "command": [
+          "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "54500",
+          "-U",
+          "root",
+          "-D",
+          "perf_lock_tpcc_5cg54c",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--max-procs",
+          "12",
+          "--count",
+          "6000",
+          "--time",
+          "2m",
+          "--interval",
+          "10s"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/process-tpcc-1-before-8.log"
+      },
+      {
+        "server": "before",
+        "round": 2,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.523463999998057,
+        "sql_cpu_seconds": 13.649999999999999,
+        "tikv_cpu_seconds": 32.8900000000001,
+        "command": [
+          "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "54500",
+          "-U",
+          "root",
+          "-D",
+          "perf_lock_tpcc_5cg54c",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--max-procs",
+          "12",
+          "--count",
+          "6000",
+          "--time",
+          "2m",
+          "--interval",
+          "10s"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/process-tpcc-2-before-8.log"
+      },
+      {
+        "server": "after",
+        "round": 3,
+        "threads": 8,
+        "transactions": 6000,
+        "counts": {
+          "DELIVERY": 220,
+          "NEW_ORDER": 2674,
+          "ORDER_STATUS": 229,
+          "PAYMENT": 2652,
+          "STOCK_LEVEL": 225
+        },
+        "seconds": 6.382771000004141,
+        "sql_cpu_seconds": 13.229999999999997,
+        "tikv_cpu_seconds": 33.02999999999997,
+        "command": [
+          "/private/tmp/tidb-execution-attribution.blT99K/go-tpc-seeded",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "54500",
+          "-U",
+          "root",
+          "-D",
+          "perf_lock_tpcc_5cg54c",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--max-procs",
+          "12",
+          "--count",
+          "6000",
+          "--time",
+          "2m",
+          "--interval",
+          "10s"
+        ],
+        "log": "/private/tmp/tidb-statement-metadata.caYXkP/process-tpcc-3-after-8.log"
+      }
+    ],
+    "arithmetic_means_8_clients": {
+      "before": {
+        "seconds": 6.436959500002558,
+        "sql_cpu_seconds": 13.604999999999997,
+        "tikv_cpu_seconds": 32.760000000000105
+      },
+      "after": {
+        "seconds": 6.285429499999736,
+        "sql_cpu_seconds": 13.279999999999998,
+        "tikv_cpu_seconds": 32.83499999999998
+      }
+    },
+    "baseline_fixed_transactions": 12000,
+    "candidate_fixed_transactions": 18000,
+    "candidate_profile_transactions": 32000,
+    "candidate_total_transactions": 50000,
+    "standard_postconditions": 11,
+    "all_postconditions_passed": true,
+    "profile_counts": {
+      "DELIVERY": 1229,
+      "NEW_ORDER": 14373,
+      "ORDER_STATUS": 1254,
+      "PAYMENT": 13859,
+      "STOCK_LEVEL": 1285
+    }
+  },
+  "performance_acceptance": {
+    "accepted": false,
+    "reason": [
+      "Background mediaanalysisd consumed 69.6-93.7% CPU in host snapshots.",
+      "Go auto-analyze remained active and ran during the experiment.",
+      "TPC-C fixture grows; two fixed-work samples per variant/client are diagnostics only.",
+      "Eight-client speed increase and 32-client decrease are mixed; fixed-work baseline not updated as a verified win.",
+      "CPU profiles use separate time windows and work rates; inclusive sampled weights are not end-to-end speedup evidence."
+    ],
+    "host_logs": "/private/tmp/tidb-statement-metadata.caYXkP/process-host-*.log",
+    "autoanalyze_log": "/private/tmp/tidb-config-owner.z3Qh01/go.log"
+  },
+  "changed_files": [
+    "rust/crates/tidb-config/src/config_tree/config.rs",
+    "rust/crates/tidb-config/src/config_tree/load.rs",
+    "rust/crates/tidb-config/tests/auto_scaler_source.rs",
+    "rust/crates/tidb-domain/src/plan_replayer.rs",
+    "rust/crates/tidb-errmsg/tests/errmsg_test.rs",
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/driver/catalog/sync_load.rs",
+    "rust/crates/tidb-server/src/connection_writers.rs",
+    "rust/crates/tidb-server/src/real_tikv_node/schema_following.rs",
+    "rust/crates/tidb-session/src/stmt_ctx.rs",
+    "rust/crates/tidb-session/src/tests_explain.rs",
+    "rust/crates/tidb-stats-handle-cache/benches/statscache.rs",
+    "rust/crates/tidb-stmtsummary/src/v2/record.rs",
+    "rust/crates/tidb-util/src/disk/temp_dir.rs",
+    "rust/crates/tidb-util/src/memoryusagealarm.rs",
+    "rust/crates/tidb-util/src/printer.rs",
+    "rust/docs/cop-scan-worker-execplan.md"
+  ],
+  "profiles": {
+    "method": "Instruments Time Profiler; Running-state samples only. Each frame counted once per stack. Inclusive frames overlap; never sum them. Separate workload windows, not normalized performance acceptance.",
+    "export_command": "python3 /private/tmp/tidb-statement-metadata.caYXkP/profile-config.py /private/tmp/tidb-statement-metadata.caYXkP/after-sysbench.trace /private/tmp/tidb-statement-metadata.caYXkP/after-tpcc.trace",
+    "before_export": "/private/tmp/tidb-config-owner.z3Qh01/before-profile.jsonl",
+    "after_export": "/private/tmp/tidb-statement-metadata.caYXkP/after-profile.jsonl",
+    "go_export": "/private/tmp/tidb-config-owner.z3Qh01/go-profile.jsonl",
+    "sampled_inclusive_ms": [
+      {
+        "workload": "sysbench",
+        "before_running_total": 27092,
+        "after_running_total": 27423,
+        "global_config_before": 103,
+        "global_config_after": 3,
+        "statement_context_before": 707,
+        "statement_context_after": 536
+      },
+      {
+        "workload": "tpcc",
+        "before_running_total": 16002,
+        "after_running_total": 16580,
+        "global_config_before": 57,
+        "global_config_after": null,
+        "latest_index_schema_snapshot_before": 375,
+        "catalog_latest_index_schema_before": 354,
+        "latest_index_schema_initialization_after": 1,
+        "statement_context_before": 332,
+        "statement_context_after": 258
+      }
+    ],
+    "interpretation": "Source removes repeated payload copies/AST traversal; sampled copy/rebuild chains collapse. Null means no named sample, not a measured zero. The 1ms initialization frames overlap; not additive. End-to-end timing remains mixed.",
+    "remaining": "Rust TPC-C SortExec still appears despite ordered bound EXPLAIN plans; actual cached plan attribution and current-context range rebuilding remain open."
+  },
+  "cleanup": {
+    "command": "ruby /private/tmp/tidb-statement-metadata.caYXkP/verify-cleanup.rb",
+    "log": "/private/tmp/tidb-statement-metadata.caYXkP/cleanup.json",
+    "owned_pids_absent": 17,
+    "ports_closed": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe"
+  }
+}

@@ -21,11 +21,11 @@ use tidb_config::config_tree::new_config;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-struct RestoreGlobal(Config);
+struct RestoreGlobal(std::sync::Arc<Config>);
 
 impl Drop for RestoreGlobal {
     fn drop(&mut self) {
-        update_global(|config| *config = self.0.clone());
+        tidb_config::config_tree::config::store_global_config(self.0.clone());
     }
 }
 

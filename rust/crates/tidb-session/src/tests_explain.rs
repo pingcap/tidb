@@ -70,6 +70,25 @@ fn ordinary_execution_publishes_the_brief_binary_plan() {
 #[test]
 fn explain_select() {
     let mut session = Session::new();
+    session.set_connection_id(41);
+    // Go-TPC deliverySelectNewOrder, planned through EXPLAIN with a domain.
+    session.run("CREATE TABLE explain_new_order(no_w_id INT, no_d_id INT, no_o_id INT, PRIMARY KEY(no_w_id, no_d_id, no_o_id))").unwrap();
+    let plan = row_text(session.run("EXPLAIN SELECT no_o_id FROM explain_new_order WHERE no_w_id = 1 AND no_d_id = 1 ORDER BY no_o_id ASC LIMIT 1 FOR UPDATE"));
+    assert!(!plan.is_empty());
+    // Go TestPointGetWithSelectLock plans locking reads through the same
+    // domain as ordinary execution, including the EXPLAIN wrapper.
+    session
+        .run("CREATE TABLE explain_lock(c INT UNIQUE, d INT)")
+        .unwrap();
+    session.run("BEGIN").unwrap();
+    for sql in [
+        "EXPLAIN SELECT c, d FROM explain_lock WHERE c = 1 FOR UPDATE",
+        "EXPLAIN SELECT c, d FROM explain_lock WHERE (c = 1 OR c = 2) AND d = 1 FOR UPDATE",
+    ] {
+        let plan = row_text(session.run(sql));
+        assert!(!plan.is_empty(), "{sql}");
+    }
+    session.run("ROLLBACK").unwrap();
     session
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(64), c INT, INDEX ub(b))")
         .unwrap();

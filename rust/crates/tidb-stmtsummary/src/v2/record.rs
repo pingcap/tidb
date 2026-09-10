@@ -1537,7 +1537,6 @@ mod tests {
     use std::collections::HashMap as StdHashMap;
 
     use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
-    use tidb_config::config_tree::Config;
     use tidb_config::keyspace_observability::{KeyspaceObservability, KeyspaceObservabilityField};
 
     use super::*;
@@ -1636,7 +1635,7 @@ mod tests {
         assert_eq!(record2.sum_ia_remote_read_segment_count, 6);
         assert_eq!(record2.max_ia_remote_read_segment_count, 3);
 
-        let restore: Config = get_global_config();
+        let restore = get_global_config();
         update_global(|conf| {
             conf.keyspace_observability = KeyspaceObservability {
                 fields: vec![KeyspaceObservabilityField {

@@ -536,7 +536,7 @@ mod tests {
         }
     }
 
-    struct ConfigRestore(Option<Config>);
+    struct ConfigRestore(Option<std::sync::Arc<Config>>);
 
     impl Drop for ConfigRestore {
         fn drop(&mut self) {
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn error_packets_apply_configured_suffixes_and_preserve_raw_bytes() {
         let _restore = ConfigRestore(Some(get_global_config()));
-        let mut config = get_global_config();
+        let mut config = (*get_global_config()).clone();
         config.error_message_extensions = vec![ErrorMessageExtension {
             pattern: "^Access denied$".to_owned(),
             suffix: "see the operator guide.".to_owned(),

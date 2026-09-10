@@ -510,7 +510,7 @@ pub fn initialize_config(
     config_strict: bool,
     enforce_cmd_args: impl FnOnce(&mut Config) -> Result<(), String>,
 ) -> Result<Vec<String>, String> {
-    let mut config = super::config::get_global_config();
+    let mut config = (*super::config::get_global_config()).clone();
     let mut warnings = Vec::new();
 
     if let Some(path) = conf_path {

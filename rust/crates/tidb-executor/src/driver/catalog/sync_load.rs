@@ -79,14 +79,15 @@ impl StatisticsLoadWorkers {
     /// of constructing workers when they build their schema catalog.
     #[must_use]
     pub fn new() -> Arc<Self> {
-        let performance = tidb_config::config_tree::config::get_global_config().performance;
+        let config = tidb_config::config_tree::config::get_global_config();
+        let performance = &config.performance;
         let concurrency = match performance.stats_load_concurrency {
             configured if configured < 0 => 0,
             0 => concurrency_by_cpu(),
             configured => usize::try_from(configured).unwrap_or(usize::MAX),
         };
         let lease = serde_json::from_value::<tidb_config::configtypes::Duration>(
-            serde_json::Value::String(performance.stats_lease),
+            serde_json::Value::String(performance.stats_lease.clone()),
         )
         .ok()
         .and_then(|duration| u64::try_from(duration.0).ok())

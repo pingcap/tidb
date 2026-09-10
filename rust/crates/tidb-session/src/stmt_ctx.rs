@@ -25,25 +25,6 @@ use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
-fn statement_has_lock(statement: &tidb_ast::Stmt) -> bool {
-    use tidb_ast::{Visitable, Visitor};
-    struct LockVisitor(bool);
-    impl Visitor for LockVisitor {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
-                self.0 |= select.lock.is_some();
-            }
-            self.0
-        }
-        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
-            !self.0
-        }
-    }
-    let mut visitor = LockVisitor(false);
-    statement.clone().accept(&mut visitor);
-    visitor.0
-}
-
 /// The statement context's SESSION-VARIABLE half, parsed once per
 /// variable-table generation instead of once per statement.
 ///
@@ -532,19 +513,9 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         is_dml: bool,
     ) -> tidb_executor::StmtContext {
-        let mut context = self
-            .statement_context(is_dml)
+        self.statement_context(is_dml)
             .with_statement_priority(crate::statement_priority_of(stmt))
-            .with_not_fill_cache(crate::statement_not_fill_cache(stmt));
-        if self.connection_id.is_some_and(|id| id > 0)
-            && context.latest_index_schema().is_none()
-            && statement_has_lock(stmt)
-        {
-            if let Some(latest) = self.latest_index_schema_snapshot() {
-                context = context.with_latest_index_schema(latest);
-            }
-        }
-        context
+            .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
     }
 
     fn latest_index_schema_snapshot(
@@ -552,7 +523,7 @@ impl Session {
     ) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
         let mut schema = self.catalog.lock().ok()?.latest_index_schema();
         for (_, _, table) in &self.local_temporary_tables {
-            schema.table_indexes.insert(
+            Arc::make_mut(&mut schema).table_indexes.insert(
                 table.table_id,
                 table
                     .indexes()
@@ -565,20 +536,14 @@ impl Session {
                     .collect(),
             );
         }
-        Some(Arc::new(schema))
+        Some(schema)
     }
 
     pub(crate) fn statement_context_for_update_read(
         &self,
         ignore_err: bool,
     ) -> tidb_executor::StmtContext {
-        let mut ctx = self.statement_context_ignoring(true, ignore_err);
-        if self.connection_id.is_some_and(|id| id > 0) && ctx.latest_index_schema().is_none() {
-            if let Some(latest_index_schema) = self.latest_index_schema_snapshot() {
-                ctx = ctx.with_latest_index_schema(latest_index_schema);
-            }
-        }
-        ctx
+        self.statement_context_ignoring(true, ignore_err)
     }
 
     /// [`Self::statement_context`] for a DML statement that carries the
@@ -967,10 +932,9 @@ impl Session {
             .txn
             .as_ref()
             .is_some_and(|transaction| transaction.is_stale_read());
-        let latest_index_schema = (!index_lookup_push_down_session.repeatable_read
-            && self.connection_id.is_some_and(|id| id > 0))
-        .then(|| self.latest_index_schema_snapshot())
-        .flatten();
+        // Go attaches the domain to the session, not to selected AST kinds.
+        // EXPLAIN and ordinary planning must see the same latest infoschema.
+        let latest_index_schema = self.latest_index_schema_snapshot();
         let join_reorder_through_proj = snapshot.join_reorder_through_proj;
         let join_reorder_through_sel = snapshot.join_reorder_through_sel;
         let outer_join_reorder = snapshot.outer_join_reorder;
@@ -1548,36 +1512,6 @@ mod tests {
         assert_eq!(snapshot.max_keys_read, 7);
         assert!(!snapshot.staleness);
         assert!(!snapshot.historical_read);
-    }
-
-    #[test]
-    fn read_committed_connected_session_captures_latest_index_schema() {
-        let mut session = Session::new();
-        assert!(session
-            .statement_context(false)
-            .latest_index_schema()
-            .is_none());
-
-        session.set_connection_id(7);
-        session
-            .run("SET transaction_isolation = 'READ-COMMITTED'")
-            .unwrap();
-
-        let latest = session
-            .statement_context(false)
-            .latest_index_schema()
-            .expect("connected READ-COMMITTED statement has a domain snapshot");
-        assert_eq!(
-            latest.schema_meta_version,
-            session.lock_catalog().unwrap().metadata_version()
-        );
-
-        let mut repeatable_read = Session::new();
-        repeatable_read.set_connection_id(8);
-        assert!(repeatable_read
-            .statement_context_for_update_read(false)
-            .latest_index_schema()
-            .is_some());
     }
 
     #[test]

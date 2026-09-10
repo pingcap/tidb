@@ -213,7 +213,8 @@ where
     // The read closure needs its own handle to compare against what is
     // published; the caller keeps the original for queries.
     let published = Arc::clone(&shared);
-    let performance = tidb_config::config_tree::config::get_global_config().performance;
+    let config = tidb_config::config_tree::config::get_global_config();
+    let performance = &config.performance;
     let initial_mode = if performance.lite_init_stats {
         InitialStatsLoad::Lite
     } else {

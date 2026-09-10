@@ -2188,7 +2188,7 @@ mod dump_seed_tests {
 /// # Errors
 /// Whatever the TOML serializer reports.
 pub fn build_config_toml() -> Result<String, toml::ser::Error> {
-    toml::to_string(&tidb_config::config_tree::config::get_global_config())
+    toml::to_string(&*tidb_config::config_tree::config::get_global_config())
 }
 
 /// Go `dumpMeta`'s file body: `printer.GetTiDBInfo()` verbatim.

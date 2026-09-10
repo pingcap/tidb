@@ -205,6 +205,9 @@ pub struct Catalog {
     /// each mutator's ENTRY, so a call that declines still invalidates: the
     /// cost of a spurious rebuild is one snapshot walk, never staleness.
     metadata_version: u64,
+    /// The immutable domain index view belongs to this metadata version.
+    /// Catalog clones share the view; DDL invalidates only the mutated owner.
+    latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     /// The entries a session's LOCAL temporary tables are DISPLACING while
     /// they are attached: `(folded database, folded name, the entry that was
     /// there)`.
@@ -407,6 +410,7 @@ struct CatalogSnapshot {
     foreign_keys_present: bool,
     version: u64,
     metadata_version: u64,
+    latest_index_schema: std::sync::OnceLock<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
     shadowed_by_local_temporary: Vec<(String, String, Arc<TableEntry>)>,
     temporary_sweep: Option<(u64, Vec<(String, String)>, Vec<(String, String)>)>,
 }
@@ -425,6 +429,7 @@ impl CatalogSnapshot {
             foreign_keys_present: catalog.foreign_keys_present,
             version: catalog.version,
             metadata_version: catalog.metadata_version,
+            latest_index_schema: catalog.latest_index_schema.clone(),
             shadowed_by_local_temporary: catalog.shadowed_by_local_temporary.clone(),
             temporary_sweep: catalog.temporary_sweep.clone(),
         }
@@ -443,6 +448,7 @@ impl CatalogSnapshot {
             foreign_keys_present: self.foreign_keys_present,
             version: self.version,
             metadata_version: self.metadata_version,
+            latest_index_schema: self.latest_index_schema.clone(),
             shadowed_by_local_temporary: self.shadowed_by_local_temporary.clone(),
             statistics: Arc::clone(&owner.statistics),
             analyze_options: Arc::clone(&owner.analyze_options),
@@ -541,6 +547,7 @@ impl Default for Catalog {
             next_table_id: 0,
             version: 0,
             metadata_version: 0,
+            latest_index_schema: std::sync::OnceLock::new(),
             shadowed_by_local_temporary: Vec::new(),
             statistics: Arc::default(),
             analyze_options: Arc::default(),
@@ -1456,33 +1463,35 @@ impl Catalog {
     /// Snapshots the latest-domain metadata read by Go
     /// `planner/util/domainmisc.GetLatestIndexInfo`.
     #[must_use]
-    pub fn latest_index_schema(&self) -> tidb_planner::domain_misc::LatestIndexSchema {
+    pub fn latest_index_schema(&self) -> Arc<tidb_planner::domain_misc::LatestIndexSchema> {
         use tidb_planner::plan_builder::catalog::SourceIndex;
 
-        let mut table_indexes = std::collections::BTreeMap::new();
-        for database in self.databases.values() {
-            for entry in database.tables.values() {
-                let TableEntry::Kv(table) = &**entry else {
-                    continue;
-                };
-                table_indexes.insert(
-                    table.table_id,
-                    table
-                        .indexes()
-                        .iter()
-                        .map(|index| SourceIndex {
-                            id: index.id,
-                            is_public: true,
-                            ..SourceIndex::default()
-                        })
-                        .collect(),
-                );
+        Arc::clone(self.latest_index_schema.get_or_init(|| {
+            let mut table_indexes = std::collections::BTreeMap::new();
+            for database in self.databases.values() {
+                for entry in database.tables.values() {
+                    let TableEntry::Kv(table) = &**entry else {
+                        continue;
+                    };
+                    table_indexes.insert(
+                        table.table_id,
+                        table
+                            .indexes()
+                            .iter()
+                            .map(|index| SourceIndex {
+                                id: index.id,
+                                is_public: true,
+                                ..SourceIndex::default()
+                            })
+                            .collect(),
+                    );
+                }
             }
-        }
-        tidb_planner::domain_misc::LatestIndexSchema {
-            schema_meta_version: self.metadata_version,
-            table_indexes,
-        }
+            Arc::new(tidb_planner::domain_misc::LatestIndexSchema {
+                schema_meta_version: self.metadata_version,
+                table_indexes,
+            })
+        }))
     }
 
     /// A mutable handle for the referential-integrity paths, which reach
@@ -1529,6 +1538,7 @@ impl Catalog {
 
     fn bump_metadata_version(&mut self) {
         self.metadata_version += 1;
+        self.latest_index_schema.take();
     }
 
     /// Hands out the next TSO -- PD's shape (`now_ms << 18`), strictly
@@ -2321,7 +2331,7 @@ impl Catalog {
         // metadata epoch must not move either. The list itself comes from the
         // memoized sweep rather than a fresh walk.
         let slots = self.ensure_temporary_sweep().0.to_vec();
-        let moved_entries = !slots.is_empty();
+        let moved_entries = !slots.is_empty() || !self.shadowed_by_local_temporary.is_empty();
         if moved_entries {
             self.bump_metadata_version();
         }

@@ -41,7 +41,7 @@ fn extension(pattern: &str, suffix: &str) -> ErrorMessageExtension {
 fn with_extensions(extensions: Vec<ErrorMessageExtension>, test: impl FnOnce()) {
     let _guard = CONFIG_LOCK.lock().unwrap();
     let original = get_global_config();
-    let mut config = original.clone();
+    let mut config = (*original).clone();
     config.error_message_extensions = extensions;
     store_global_config(config);
     test();

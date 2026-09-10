@@ -177,11 +177,9 @@ impl ConfigProvider for TiDBConfigProvider {
     }
 
     fn get_log_dir(&self) -> PathBuf {
-        let filename = tidb_config::config_tree::config::get_global_config()
-            .log
-            .file
-            .filename;
-        let path = Path::new(&filename);
+        let config = tidb_config::config_tree::config::get_global_config();
+        let filename = &config.log.file.filename;
+        let path = Path::new(filename);
         path.parent().map_or_else(
             || {
                 if path.has_root() {

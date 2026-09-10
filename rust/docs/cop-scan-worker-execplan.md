@@ -2,9 +2,12 @@
 
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
-locking and Go-shaped index/statistics planning. The current increment moves
-process publication to per-session state and avoids recording the same active
-statement twice. Full performance and whole-Go-package acceptance remain open.
+locking, Go-shaped index/statistics planning and per-session process publication.
+The current increment shares published configuration and version-owned index
+metadata. Go retains the configuration pointer and makes its domain available
+independently of statement kind; Rust was copying both metadata payloads and
+conditionally omitting the domain for EXPLAIN of a locking read.
+Full performance and whole-Go-package acceptance remain open.
 
 
 ## Purpose / Big Picture
@@ -18,6 +21,51 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Inspect final 6ef4aea7aa source/profile and Go GetGlobalConfig/UpdateGlobal.
+  Statement context's instance-variable read deep-copies the full Rust Config;
+  Go reads a published pointer and clones only in UpdateGlobal.
+- [x] Publish shared configuration snapshots and reconcile consumers: readers
+  borrow fields, writers explicitly clone, restore guards retain the old snapshot.
+  Keep publication side effects and serialization semantics unchanged.
+- [x] Validate config/load/restore/error-extension/session variable consumers as
+  one batch, compile all targets, and remeasure sysbench/TPC-C with exact binaries.
+  Profile the original configuration-copy chain before publishing the increment.
+- [x] Configuration-only candidate passes 125 retained tests, all-target
+  compilation and Ready lint. Its 72,000 measured sysbench events and 50,000
+  candidate TPC-C transactions pass result/history and 11 consistency checks.
+  Profiled global-config read cost falls from 103/57ms to 1/1ms (sysbench/TPC-C).
+  Timings remain diagnostic: shared CPU, growing data and live auto-analyze.
+- [x] Prepared-query probe returns matching customer/order rows but fails on
+  Rust's EXPLAIN of the delivery locking read: domain not found for ctx. Go's
+  bound EXPLAIN succeeds. The wrapper misses the conditionally attached schema;
+  statement_has_lock also clones/walks every ordinary AST just to decide attachment.
+- [x] Reuse immutable latest-index metadata per catalog version and attach it to
+  every statement context, like Go's domain availability. Delete the AST lock
+  probe and duplicate RC/locking/DML attachment branches. Extend the retained
+  Go-derived EXPLAIN fixture, prove failure before, and validate after alongside
+  DDL, temporary-table and prepared-plan behavior before the final live rerun.
+- [x] The exact delivery EXPLAIN fails with domain-not-found before the index
+  change and passes afterward; the enclosing fixture then hits its existing
+  USE INDEX() assertion. The paired broad batch has identical 18 failing test
+  names and identical other 17 failure bodies, with 149 baseline / 148 candidate
+  passes (one obsolete Rust-only domain-absence test removed). Final focused
+  session batch passes 160 cases with the existing index-hint and range-quota
+  failures retained. Historical reads, temporary tables and prepared statements
+  are included. All-target compilation, changed-source format and Ready lint pass.
+- [x] Freeze the combined binary; compare bound locking EXPLAIN and prepared
+  results against Go, rerun matched sysbench/TPC-C, export CPU profiles and record
+  limitations. Stop owned services and verify cleanup before normal publication
+  to origin/hparser-integration. No accepted speedup or whole-package claim yet.
+- [x] Combined binary e008264dca0c passes eight prepared result comparisons;
+  delivery locking EXPLAIN matches Go exactly. Complete 72,000 fixed sysbench
+  events without errors and 50,000 candidate TPC-C transactions across all five
+  types with all 11 consistency checks. Profiles reduce global configuration
+  lookup from 103ms to 3ms in sysbench and index-schema rebuild from 354ms to a
+  1ms initialization sample in TPC-C. Samples are not normalized speedup proof.
+  Eight-client sysbench TPS rises 1.73%, but 32-client falls 1.25%; active Go
+  auto-analyze and mediaanalysisd at 69.6-93.7% CPU confound timing. No performance
+  baseline promotion. Receipt: benchmarks/shared-statement-metadata-validation.json.
+  All 17 owned PIDs are absent and ten ports closed; retain the fixture.
 - [x] Profile published 5d48c8e9c4 and Go on both workloads and the saved
   control on read-only sysbench. All 84,000 fixed-work sysbench transactions
   have zero errors/reconnects; each Go/Rust TPC-C run completes the same 32,000
@@ -198,6 +246,27 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 
 ## Decision Log
+
+Decision (2026-09-10, global configuration ownership): use a shared Arc<Config>
+published under the existing short-lived RwLock. GetGlobalConfig clones only the
+handle; UpdateGlobal and file loading clone the config before mutation. Store and
+restore accept published snapshots without copying their contents. Consumers must
+borrow substructures or copy only fields they actually own, not reintroduce full
+tree clones. Do not change SQL variable precedence or add a stale per-session
+configuration cache. Existing config atomic-boolean semantics and eager latest
+index-schema construction were separate source gaps; the live prepared-plan
+probe now ties index metadata ownership to a concrete EXPLAIN failure below.
+
+Decision (2026-09-10, index metadata ownership): Catalog already centralizes
+metadata-version changes, including local temporary-table attachment/detachment.
+Retain one lazily built Arc<LatestIndexSchema> in that catalog version and clear
+it at the central metadata mutation boundary. Clones and historical snapshots
+retain their own version's immutable value. Statement contexts always have their
+catalog's domain view; planner predicates still decide when to consult it.
+This removes AST cloning and special attachment rules instead of adding an
+EXPLAIN-only exception. Overlay local temporary indexes through copy-on-write.
+Replace the obsolete Rust-only test asserting absent standalone domain metadata
+with real Go locking-EXPLAIN behavior in the existing SQL fixture.
 
 Decision (2026-09-10, process publication): mirror Go's per-session process
 state. The shared registry is only a connection directory, not the lock covering
@@ -428,7 +497,15 @@ four real regions intersect that range. No task-count shortcut is justified.
 
 ## Plan of Work and Milestones
 
-Current process milestone: change tidb-session/src/process.rs so the registry
+Current configuration milestone: change tidb-config/src/config_tree/config.rs and
+its consumers so read ownership matches Go's shared GetGlobalConfig pointer.
+Keep config parsing/update and error-extension publication behavior. Run retained
+tidb-config, tidb-errmsg and scoped session-variable fixtures, then workspace
+all-target compilation with twelve jobs. Build the release server and compare
+fixed-work sysbench/TPC-C and Running-state profiles against frozen 6ef4aea7aa;
+keep shared-host limitations explicit and stop all owned services afterward.
+
+Completed process milestone: change tidb-session/src/process.rs so the registry
 contains independently synchronized entries, and process/result guards retain
 their own entry. Snapshot the directory before reading entries; release entry
 locks before invoking KILL targets. Consolidate statement finish/release cleanup.

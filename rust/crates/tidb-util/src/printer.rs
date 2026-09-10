@@ -67,7 +67,7 @@ pub fn get_tidb_info() -> String {
 pub fn print_tidb_info() {
     let logger = crate::logutil::bg_logger();
     logger.info("Welcome to TiDB.", &tidb_info_fields());
-    let config_json = serde_json::to_vec(&tidb_config::config_tree::config::get_global_config())
+    let config_json = serde_json::to_vec(&*tidb_config::config_tree::config::get_global_config())
         .expect("global config is serializable");
     logger.info(
         "loaded config",

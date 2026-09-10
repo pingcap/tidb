@@ -31,9 +31,7 @@ fn temp_dir_lock() -> &'static Mutex<Option<TempDirLock>> {
 }
 
 fn configured_temp_dir() -> PathBuf {
-    tidb_config::config_tree::config::get_global_config()
-        .temp_storage_path
-        .into()
+    PathBuf::from(&tidb_config::config_tree::config::get_global_config().temp_storage_path)
 }
 
 /// Go `CheckAndInitTempDir`.
