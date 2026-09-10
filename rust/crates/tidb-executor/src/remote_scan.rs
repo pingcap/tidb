@@ -1530,6 +1530,11 @@ mod tests {
             run_select_on("SELECT * FROM t ORDER BY a DESC LIMIT 2", &catalog, &ctx).unwrap(),
             descending[..2]
         );
+        assert_eq!(
+            run_select_on("SELECT b FROM t WHERE a>=1 ORDER BY a", &catalog, &ctx).unwrap(),
+            vec![vec![Datum::Int(20)], vec![Datum::Int(140)]],
+            "pruning the output handle must preserve unsigned range order"
+        );
         let mut unordered = run_select_on("SELECT * FROM t", &catalog, &ctx).unwrap();
         unordered.sort_by_key(|row| match row[0] {
             Datum::UInt(value) => value,

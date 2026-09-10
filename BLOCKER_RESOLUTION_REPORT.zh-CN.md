@@ -1,5 +1,29 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 unsigned staged ORDER BY 元数据修复
+
+`unsigned_staged_rows_merge_in_the_readers_value_order` 修复前返回 `u64::MAX, 0, 1`，期望 `0, 1, u64::MAX`。已用单测独立复现，`/tmp/unsigned-merge-red.log` 退出 101。
+
+定点探针排除了 ORDER BY 未传入和合并器 unsigned 比较缺失：reader 实际收到 keep_order=true、unsigned=true，但只有一段扫描；planner 传入的是 `Int(i64::MIN)..Int(i64::MAX)`。证据 `/tmp/unsigned-ranges-probe.log`。根因在 `Catalog::planner_catalog`：`SourceTable.pk_is_handle` 来自 `KvTable.pk_handle_offset`，`SourceColumn.is_primary_key` 只取 PRI_KEY flag。通过 `register_kv` 安装的表已设置 handle offset，但未复制该 flag，导致 planner 找不到 primary handle 列并以 signed LongLong 生成范围。
+
+Go master `fdfadb96b2c` 的 `pkg/planner/core/operator/logicalop/logical_datasource.go::getPKIsHandleColFromSchema` 要求 PKIsHandle 和 primary-column flag 一致；`pkg/distsql/request_builder.go::SplitRangesAcrossInt64Boundary` 随后按 unsigned 值顺序拆成两段。Rust catalog 转换现在将 integer/common handle offsets 同时用于 primary-column 标识，保留已有 PRI_KEY 标识，保证传给 planner 的元数据与实际 storage handle 一致。未修改 signed/unsigned 编码或合并器比较，也没有给结果额外排序来遮盖问题。
+
+原回归覆盖 staged UPDATE/DELETE、升降序、LIMIT、无序结果集合以及两段远端请求数。新增投影裁掉主键的 `SELECT b FROM t WHERE a>=1 ORDER BY a` 断言，结果仍按 unsigned 主键正确排序。所有 `[DEBUG-unsigned-merge]` 探针已删除。
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib \
+unsigned_staged_rows_merge_in_the_readers_value_order
+# 1 passed；/tmp/unsigned-merge-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib -- --test-threads=1
+# 1282 passed / 8 failed；/tmp/executor-unsigned-metadata.log
+make lint
+# 退出 0；/tmp/unsigned-metadata-lint.log
+```
+
+remote_scan 模块运行 20 passed / 6 failed（`/tmp/remote-metadata-green.log`）；另外两项稳定失败仍为 TPCC 聚合。并行统计队列干扰仍未修复，串行结果不能代替并行门禁。其他 BLOCKER_RESOLUTION.md 完整验收项继续保留，整体目标未完成。
+
 ## 2026-09-10 clustered PRIMARY 点查返回空修复
 
 `primary_batch_reads_use_written_common_handle_encoding` 在修复前稳定失败：DECIMAL(8,2) 主键插入 `(5.00,10),(6.00,20)` 后，IN 查询返回空，期望为 10、20。日志 `/tmp/common-handle-red.log`，退出 101。
