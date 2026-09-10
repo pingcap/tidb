@@ -1,5 +1,28 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 IndexJoin fractional outer 平均 probe 修复
+
+Go master `exhaust_physical_plans.go::enumerateIndexJoinByOuterIdx` 对正数
+buildRows 直接计算 `EqualCondOutCnt / buildRows`，零或缺失统计时为零。
+Rust dispatcher 错误地先将 outer 行数钳到至少 1，导致 outer 0.8、join 0.8
+时平均 probe 为 0.8 而非 1。现移除此下限并保留 Go 的零值分支。
+新增回归直接检查真实 `exhaust_physical_plans` 生成的 IndexJoin runtime
+property；同时覆盖 outer 0.8 和 0，不以孤立公式测试代替接线验证。
+
+修复前 `index_join_probe_average_preserves_fractional_outer_rows` 失败
+（left 0.8 / right 1.0），日志 `/tmp/fractional-outer-red.log`。
+修复后 `RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml
+-p tidb-planner --lib` 全量 **926 passed**，日志 `/tmp/fractional-outer-planner.log`；
+`make lint` 退出 0，日志 `/tmp/fractional-outer-lint.log`，采用 Ready profile。
+TPCC 定向组仍 **5 passed / 2 failed**，日志 `/tmp/fractional-outer-tpcc.log`。
+
+已记录 condition nine 的候选成本 `/tmp/nine-candidate-costs.log`：analyzed
+district outer 的 IndexHashJoin 18564874.10，history outer 的 IndexJoin
+6981768.48，双方输出估算均 0.8000267。此前相同 JSON 统计的 Go master
+district outer IndexHashJoin 成本 1869948.23。因此后续应检查 inner 子计划
+成本及 probe 缩放；不能为通过测试直接固定 join 方向。临时成本日志代码已移除。
+两个 TPCC 的完整修复及其余 BLOCKER_RESOLUTION.md gates 仍未完成。
+
 ## 2026-09-10 physical 深链 ResolveIndices 栈溢出修复
 
 原有 `physical::tests::deep_chain_walks_and_tears_down_without_recursion`
