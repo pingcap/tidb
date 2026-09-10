@@ -58,6 +58,16 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 
 追加提交 `5de8ec9007`：修正前一提交中的分支方向，evicted payload（`!is_full_load`）现在进入 `load_item(..., full_load=true)`，避免仅保留 metadata。已推送到 `origin/hparser-integration`。
 
+## 2026-09-10 access-path 的 Go 基准版本缺口
+
+脚本的 Go 节点固定为 TiUP **v8.5.6**，不是用户要求的 Go master。对照 `origin/master` 的 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，`pkg/planner/cardinality/selectivity.go` 在返回前明确执行 `ret = max(ret, 1.0/float64(coll.RealtimeCount))`。该下限来自 `11b8149926`（2026-05-28，#67841）。随后 `pkg/planner/core/stats.go::adjustCountAfterAccess` 将较低的路径估算调整为 `ds.StatsInfo().RowCount / cost.SelectionFactor`。
+
+因此 `bucket=1 AND rare=7` 的原始 pseudo index 估算虽为 `0.10`，经 master 一行下限和 `0.8` selection factor 调整后为 `1.25`。Rust 现有结果与这段 master 源码一致，不能为追平 v8.5.6 的 `0.10` 删除下限。本轮保留生产估算逻辑，并增加 EXPLAIN characterization 测试 `pseudo_composite_index_applies_master_selectivity_floor`，核对实际 scan 节点（不是 reader 的 operator info 引用）及 idx_cover。
+
+脚本新增 `ACCESS_PATH_TIDB_SERVER`：指定可执行的 Go binary 后使用 TiUP 的 `--db.binpath`，并打印该 binary 的 `-V`；未指定时明确打印旧版本基准提示。PD/TiKV 仍为原版本，SQL 断言与 golden 均未修改。当前可见本地 Go binary 为 `7a8404bd17-dirty`，不能称为固定 master 的验证。尚需构建指定 master revision 并用此入口重跑，剩余 ANALYZE 后统计估算错误也未解决。
+
+验证：`RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib pseudo_composite_index_applies_master_selectivity_floor`；`bash -n rust/scripts/run-realtikv-access-path.sh`；`bash rust/scripts/test-access-path-readiness.sh`；`git diff --check`；`make lint`。这是基准版本取证和测试入口改进，不是全部 access-path failures 的完成声明。
+
 ## 2026-09-10 readiness 竞争修复与证据更正
 
 此前对话将一次 `never reported ready` 输出反复描述为已复现的服务端死锁，证据不足，应撤回。旧脚本只等待 TCP 端口开放，然后立即执行一次 ready 日志 grep；grep 失败就触发 EXIT trap 杀掉节点。因此日志停在 `mysql_tls` 不足以证明节点持续阻塞。

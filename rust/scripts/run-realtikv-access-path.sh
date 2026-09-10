@@ -174,7 +174,17 @@ check() {
 }
 
 echo "starting playground (tag ${TAG})"
+GO_BINARY_ARGS=()
+if [[ -n "${ACCESS_PATH_TIDB_SERVER:-}" ]]; then
+  [[ -x "${ACCESS_PATH_TIDB_SERVER}" ]] \
+    || { echo "ACCESS_PATH_TIDB_SERVER must name an executable TiDB binary" >&2; exit 1; }
+  "${ACCESS_PATH_TIDB_SERVER}" -V
+  GO_BINARY_ARGS=(--db.binpath "${ACCESS_PATH_TIDB_SERVER}")
+else
+  echo "Go baseline: TiUP v8.5.6 (set ACCESS_PATH_TIDB_SERVER to compare with Go master)"
+fi
 tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+  "${GO_BINARY_ARGS[@]}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
