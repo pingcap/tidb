@@ -1,5 +1,28 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 adaptive-forwarding 测试入口修复
+
+原命令实测退出 1（`/tmp/quality-adaptive-forwarding.log`）：
+`no test target named realtikv_replica_read`。当前 Cargo manifest 使用
+`autotests=false` 和共享 aggregate-tests.rs，普通集成源已归入 `all`。
+脚本改用 `--test all` 与完整模块测试名
+`realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct`。
+新增执行数量断言，必须恰好 1 passed、0 failed，保留全部行为 marker。
+此次仅修复测试接线，没有修改 Rust RPC 行为或 Go 对照预期。
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 \
+bash rust/scripts/run-realtikv-adaptive-forwarding.sh
+# exit 0; /tmp/quality-adaptive-forwarding-green.log
+bash -n rust/scripts/run-realtikv-adaptive-forwarding.sh
+make lint
+# exit 0; /tmp/quality-adaptive-lint.log
+```
+
+真实三节点 TiKV 证明 forwarded_header=tikv-forwarded-host、首次与复用
+响应可用、busy_sequence=500,800,150、恢复直连且 preference_cleared=true。
+清理检查亦通过。原始失败已由同一端到端脚本复验关闭。
+
 ## 2026-09-10 最新 readiness 实测与格式门禁
 
 在 `2337e56a36` 修复上重跑真实集群，完整 access-path 对照退出 0，

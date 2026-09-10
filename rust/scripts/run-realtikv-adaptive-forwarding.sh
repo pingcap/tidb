@@ -125,13 +125,19 @@ fi
 export ADAPTIVE_FORWARDING_PD_ADDR="${PD_ADDR}"
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
-  --test realtikv_replica_read \
-  adaptive_forwarding_reuses_proxy_then_recovers_direct \
+  --test all \
+  realtikv_replica_read::adaptive_forwarding_reuses_proxy_then_recovers_direct \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
   echo "adaptive-forwarding Rust adaptive-forwarding proof failed" >&2
   tail -200 "${RUST_LOG}" >&2
   exit 1
 }
+
+if ! grep -F 'test result: ok. 1 passed; 0 failed;' "${RUST_LOG}" >/dev/null; then
+  echo "adaptive-forwarding expected exactly one successful Rust test" >&2
+  tail -200 "${RUST_LOG}" >&2
+  exit 1
+fi
 
 MARKER=$(grep '^campaign14_adaptive_forwarding ' "${RUST_LOG}" | tail -1 || true)
 if [[ -z "${MARKER}" ]] \
