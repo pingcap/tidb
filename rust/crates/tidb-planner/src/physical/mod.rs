@@ -2889,16 +2889,20 @@ impl PhysicalPlan {
     /// while it is still childless.
     #[must_use]
     pub fn schema(&self) -> Option<&Schema> {
-        if let Self::Sequence(_) = self {
-            if let Some(child) = self.children().last() {
-                return child.schema();
+        let mut node = self;
+        loop {
+            if let Self::Sequence(_) = node {
+                if let Some(child) = node.children().last() {
+                    node = child;
+                    continue;
+                }
+                return node.base().base.schema();
             }
-            return self.base().base.schema();
+            if let Some(schema) = node.base().base.schema() {
+                return Some(schema);
+            }
+            node = node.children().first()?;
         }
-        if let Some(schema) = self.base().base.schema() {
-            return Some(schema);
-        }
-        self.children().first().and_then(Self::schema)
     }
 
     /// Go `Plan.StatsInfo()` (`<11th>`, inherited from `baseimpl.Plan`).

@@ -372,15 +372,19 @@ impl LogicalProjection {
         self_schema: &Schema,
         reloads: &[bool],
     ) -> Option<(StatsInfo, bool)> {
-        let reload = reloads.len() == 1 && reloads[0];
-        if !reload {
-            if let Some(existing) = self.base.base.stats_info() {
-                return Some((existing.clone(), false));
-            }
-        }
         let child = child_stats
             .first()
             .expect("projection derive_stats requires a child");
+        let group_ndvs = self.project_group_ndvs(child, self_schema);
+        let reload = reloads.len() == 1 && reloads[0];
+        if !reload {
+            if let Some(existing) = self.base.base.stats_info() {
+                let mut stats = existing.clone();
+                stats.set_group_ndvs(group_ndvs);
+                self.base.base.set_stats(Some(stats.clone()));
+                return Some((stats, false));
+            }
+        }
         let mut col_ndvs = Vec::new();
         for (i, expr) in self.exprs.iter().enumerate() {
             // Go indexes `selfSchema.Columns[i]` directly
@@ -393,9 +397,43 @@ impl LogicalProjection {
                 }
             }
         }
-        let stats = StatsInfo::new(child.row_count(), col_ndvs);
+        let mut stats = StatsInfo::new(child.row_count(), col_ndvs);
+        stats.set_group_ndvs(group_ndvs);
         self.base.base.set_stats(Some(stats.clone()));
         Some((stats, true))
+    }
+
+    /// Go `LogicalProjection.getGroupNDVs`: only bare columns preserve groups.
+    fn project_group_ndvs(
+        &self,
+        child: &StatsInfo,
+        schema: &Schema,
+    ) -> Vec<crate::cardinality::ndv::GroupNdv> {
+        let mapping: std::collections::HashMap<_, _> = self
+            .exprs
+            .iter()
+            .zip(&schema.columns)
+            .filter_map(|(expr, output)| match expr {
+                Expression::Column(input) => Some((input.unique_id, output.unique_id)),
+                _ => None,
+            })
+            .collect();
+        child
+            .group_ndvs()
+            .iter()
+            .filter_map(|group| {
+                let mut columns = group
+                    .columns
+                    .iter()
+                    .map(|id| mapping.get(id).copied())
+                    .collect::<Option<Vec<_>>>()?;
+                columns.sort_unstable();
+                Some(crate::cardinality::ndv::GroupNdv {
+                    columns,
+                    ndv: group.ndv,
+                })
+            })
+            .collect()
     }
 
     /// Go `LogicalProjection.Hash64(h)`
@@ -446,5 +484,65 @@ impl LogicalProjection {
             proj4_expand: self.proj4_expand,
             fd_expression_ids_registered: self.fd_expression_ids_registered,
         }
+    }
+}
+
+#[cfg(test)]
+mod statistics_tests {
+    use super::*;
+    use crate::cardinality::ndv::GroupNdv;
+
+    #[test]
+    fn projection_preserves_and_refreshes_renamed_group_ndvs() {
+        let column = |unique_id| {
+            Column::new(
+                unique_id,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )
+        };
+        let mut projection = LogicalProjection {
+            exprs: vec![Expression::Column(column(1)), Expression::Column(column(2))],
+            ..LogicalProjection::default()
+        };
+        let schema = Schema::new(vec![column(12), column(11)]);
+        let mut child = StatsInfo::new(8.0, [(1, 0.8), (2, 0.8)]);
+        child.set_group_ndvs(vec![GroupNdv {
+            columns: vec![1, 2],
+            ndv: 8.0,
+        }]);
+        let (stats, _) = projection
+            .derive_stats(&[child.clone()], &schema, &[true])
+            .unwrap();
+        assert_eq!(
+            stats.group_ndvs(),
+            &[GroupNdv {
+                columns: vec![11, 12],
+                ndv: 8.0
+            }]
+        );
+        assert_eq!(
+            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&[11, 12], &stats),
+            (8.0, 2)
+        );
+
+        child.set_group_ndvs(vec![GroupNdv {
+            columns: vec![1, 2],
+            ndv: 4.0,
+        }]);
+        let (stats, reloaded) = projection
+            .derive_stats(&[child.clone()], &schema, &[false])
+            .unwrap();
+        assert!(!reloaded);
+        assert_eq!(stats.group_ndvs()[0].ndv, 4.0);
+
+        // A computed output cannot carry a group that requires its input.
+        projection.exprs[1] =
+            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("plus"),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                vec![Expression::Column(column(2)), Expression::Column(column(2))],
+            ));
+        let (stats, _) = projection.derive_stats(&[child], &schema, &[true]).unwrap();
+        assert!(stats.group_ndvs().is_empty());
     }
 }

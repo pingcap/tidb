@@ -1,5 +1,94 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 physical 深链 ResolveIndices 栈溢出修复
+
+原有 `physical::tests::deep_chain_walks_and_tears_down_without_recursion`
+构造 40000 层 Selection，在 `resolve_indices()` 递归访问普通子节点时栈溢出，
+32 MiB 栈仍失败，单独复现日志 `/tmp/resolve-depth-red.log`。
+`schema()` 的继承路径也使用递归。本次将两处改为显式迭代，保留节点 schema
+优先、Sequence 使用末子节点以及 Go 的子节点先于父节点绑定顺序。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`operator/physicalop/base_physical_plan.go::ResolveIndices` 遇首个错误返回；
+Rust 在首个错误后停止绑定并重新组装全部普通子节点，新增回归验证树及后续
+兄弟表达式未丢失或被继续绑定。`core/resolve_indices.go::resolveIndices4PhysicalSelection`
+只在 Conditions 循环中查询子节点 schema，因此 Rust 空 Selection 同样直接返回，
+避免空条件深链反复查找 schema 的二次开销。reader/CTE 等特殊字段的既有绑定
+顺序未修改，本次不声称所有特殊嵌套字段均已去递归。
+
+验证使用 Ready profile：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib
+# 925 passed / 0 failed，默认栈；/tmp/resolve-depth-planner-suite.log
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib physical::tests::deep_chain_walks_and_tears_down_without_recursion -- --exact
+# 最终增加深层 schema 断言后 1 passed，0.13 秒；/tmp/resolve-depth-final.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1293 passed / 2 failed；/tmp/resolve-depth-executor-suite.log
+make lint
+# exit 0；/tmp/resolve-depth-lint.log
+git diff --check
+# exit 0
+```
+
+executor 两项失败仍为 condition nine / eleven 的物理计划差异，未修改其计划
+期望。前一轮 Projection 修复另已通过 381 项逻辑规划器测试，独立提交为
+`12ea885d12`。原始 readiness blocker 不再存在；整体目标仍未完成。
+
+## 2026-09-10 Projection 组合 NDV 传播修复
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，使用 Rust
+`statistics_table_from_planner_statistics` 和 `gen_json_table_from_stats` 导出
+condition nine 的原始 fixture，随后以 Go `LOAD STATS` 导入同一份 JSON。
+证据目录 `/tmp/tpcc-master-oracle.0t3pI6/`：`district-rust-stats.json`、
+`history-rust-stats.json`、`load-analyzed.sql`、`load-analyzed.out`。
+Go 估算 join 0.80 行，district 8 行，history probe 24000 行；实际选择
+IndexHashJoin。历史测试中的 IndexJoin 类型及 `Column#0` 不是该 master 的输出。
+
+Rust 根因之一已定位到 `logical/projection.rs::derive_stats`：新建 StatsInfo
+丢弃子节点 GroupNDVs，缓存路径也没有按 Go 刷新组合统计。Go
+`logical_projection.go::getGroupNDVs` 仅映射直接列引用，丢弃无法完整映射的组合，
+并按输出 UniqueID 排序。修复严格沿用此规则，包括缓存刷新和重复投影最后映射语义。
+修复前 district 单列 NDV 都为 0.8，join 以分母 1 得到 6.400213；修复后
+保留主键组合 NDV 8，join 得到 0.8000267，显示为 0.80，与 Go 一致。
+
+回归 `projection_preserves_and_refreshes_renamed_group_ndvs` 修复前失败：
+实际 `[]`，期望 `[GroupNdv { columns: [11, 12], ndv: 8.0 }]`；修复后通过。
+日志 `/tmp/projection-group-red.log`、`/tmp/projection-group-green.log`。
+定向命令 `RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml
+-p tidb-planner --lib projection_preserves_and_refreshes_renamed_group_ndvs`。
+`make lint` 退出 0，日志 `/tmp/projection-group-lint.log`。
+
+TPCC 定向组仍为 5 passed / 2 failed，命令使用 `RUST_MIN_STACK=33554432`
+及 `RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml
+-p tidb-executor --lib tpcc_condition_`。condition nine 仍存在物理路径选择差异，
+condition eleven 仍缺少预期 MergeJoin，未放宽断言。
+额外 planner 全量分别在默认栈和 32 MiB 栈触发
+`physical::tests::deep_chain_walks_and_tears_down_without_recursion` 栈溢出；
+日志 `/tmp/projection-group-planner-suite.log` 和
+`/tmp/projection-group-planner-suite-stack.log`，不计为通过。
+原始 readiness 竞态已由 `1f89c30b65` 修复，真实 access-path 已有通过证据；
+当前失败不得再次归为 readiness 外部阻塞。整体目标保持未完成。
+
+## 2026-09-10 condition nine analyzed 统计链路取证
+
+当前提交 a075207030，聚合列绑定断言仍为本地 WIP。开启 Go master 正确的
+Fix44855 默认值后，计划选择 history 为 Build、district 为 Probe，而非测试要求的
+district 为 Build。日志 `/tmp/tpcc-nine-floor-probe.log`：history 全表 300000，
+Selection 30000.50，HashAgg 1.00，过滤后 0.80；顶层 IndexJoin 6.40。
+
+进一步 probe `/tmp/tpcc-nine-ndv-probe.log` 显示分组列 ID 正确为 17/18，输入行
+30000.50000833347，两列 NDV 都为 1.000033334166685，group NDV 为空。
+这来自 fixture 的原 NDV 10 按默认 skew=1 的选择率约 0.1 缩放，并非列 ID 丢失。
+Go master `cardinality/ndv.go::estimateSkewedNDV` 和 Rust 对应公式均为
+originalNDV * selectedRows / originalRows。此前称“一行分组异常”只是待验证假设，
+不能直接认定该数字为实现 bug。
+
+下步需要将同一 fixture 的 histogram/NDV/realtime 数据导入 Go master 并录制 analyzed
+计划，核对历史断言的 0.80 join 行和 24000 probe 行。当前实际生产修复没有新增，
+没有放宽这些断言；临时 DEBUG 探针已移除。完成了候选方向与统计来源的取证，
+并不表示两个 TPCC failures 或整体 gates 已通过。
+
 ## 2026-09-10 Fix44855 的 probe 下限默认开启
 
 固定 Go master `exhaust_physical_plans.go:868` 的 `indexJoinProbeAccessRowsFloor`

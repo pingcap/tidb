@@ -331,9 +331,36 @@ impl PhysicalMergeJoin {
 impl PhysicalPlan {
     /// Go resolves children first, then binds expressions against their final schemas.
     pub fn resolve_indices(&mut self) -> Result<(), PlanError> {
-        for child in self.base_mut().children_mut() {
-            child.resolve_indices()?;
+        enum Step {
+            Enter(PhysicalPlan),
+            Exit(PhysicalPlan, usize),
         }
+        let root = std::mem::replace(self, Self::TableDual(Default::default()));
+        let mut work = vec![Step::Enter(root)];
+        let mut resolved = Vec::new();
+        let mut result = Ok(());
+        while let Some(step) = work.pop() {
+            match step {
+                Step::Enter(mut node) => {
+                    let children = node.base_mut().take_children();
+                    work.push(Step::Exit(node, children.len()));
+                    work.extend(children.into_iter().rev().map(Step::Enter));
+                }
+                Step::Exit(mut node, child_count) => {
+                    node.set_children(resolved.split_off(resolved.len() - child_count));
+                    // Reassemble every node after an error without binding later siblings.
+                    if result.is_ok() {
+                        result = node.resolve_indices_itself();
+                    }
+                    resolved.push(node);
+                }
+            }
+        }
+        *self = resolved.pop().expect("resolved root");
+        result
+    }
+
+    fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         match self {
             Self::Projection(op) => {
                 let input = child_schema(&op.base, 0)?;
@@ -355,6 +382,9 @@ impl PhysicalPlan {
                 }
             }
             Self::Selection(op) => {
+                if op.conditions.is_empty() {
+                    return Ok(());
+                }
                 let input = child_schema(&op.base, 0)?;
                 for expr in &mut op.conditions {
                     if let Err(error) = bind(expr, input) {
