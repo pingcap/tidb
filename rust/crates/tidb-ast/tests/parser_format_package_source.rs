@@ -298,4 +298,36 @@ fn restore_keyword_matches_every_non_identity_go_simple_case_mapping() {
         mapped_rows += 1;
     }
     assert_eq!(mapped_rows, 2_879, "oracle must not be truncated");
+    // Go strings.ToUpper/ToLower handles every ASCII byte directly, including
+    // non-letters, and unicode.ToUpper/ToLower does the same in mixed strings.
+    let ascii: String = (0..=127).map(char::from).collect();
+    for suffix in ["", "straße İı Σσς ﬃ 𐐨"] {
+        let input = format!("{ascii}{suffix}{ascii}");
+        let upper_suffix = if suffix.is_empty() {
+            ""
+        } else {
+            "STRAßE İI ΣΣΣ ﬃ 𐐀"
+        };
+        let lower_suffix = if suffix.is_empty() {
+            ""
+        } else {
+            "straße iı σσς ﬃ 𐐨"
+        };
+        assert_eq!(
+            tidb_mysql::to_uppercase(&input),
+            format!(
+                "{}{upper_suffix}{}",
+                ascii.to_ascii_uppercase(),
+                ascii.to_ascii_uppercase()
+            )
+        );
+        assert_eq!(
+            tidb_mysql::to_lowercase(&input),
+            format!(
+                "{}{lower_suffix}{}",
+                ascii.to_ascii_lowercase(),
+                ascii.to_ascii_lowercase()
+            )
+        );
+    }
 }

@@ -373,6 +373,14 @@ pub fn to_lowercase(value: &str) -> String {
 }
 
 fn map_string(value: &str, case: u8) -> String {
+    // Go strings.ToUpper/ToLower handles ASCII without Unicode table searches.
+    if value.is_ascii() {
+        return if case == UPPER_CASE {
+            value.to_ascii_uppercase()
+        } else {
+            value.to_ascii_lowercase()
+        };
+    }
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {
         output.push(map_character(character, case));
@@ -381,6 +389,14 @@ fn map_string(value: &str, case: u8) -> String {
 }
 
 fn map_character(character: char, case: u8) -> char {
+    // Go unicode.ToUpper/ToLower keeps ASCII cheap inside mixed UTF-8 too.
+    if character.is_ascii() {
+        return if case == UPPER_CASE {
+            character.to_ascii_uppercase()
+        } else {
+            character.to_ascii_lowercase()
+        };
+    }
     let codepoint = character as u32;
     let mut low = 0;
     let mut high = CASE_RANGES.len();

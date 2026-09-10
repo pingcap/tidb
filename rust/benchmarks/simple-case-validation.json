@@ -1,0 +1,303 @@
+{
+  "status": "Generic case mapping aligned with Go ASCII handling; sampled mapper cost reduced, broad throughput/latency improvement not established.",
+  "base_revision": "7218bea2f1cd56c5bf21ffaf0872354cefb1c178",
+  "change": "Update generate-go-simple-case.py and regenerate the mapper. ASCII strings use native ASCII mapping; ASCII characters inside mixed UTF-8 bypass Unicode table search. Preserve the generated Unicode 15.0.0 table, simple mappings and String-returning API.",
+  "source_authority": [
+    "Go 1.26.0 src/strings/strings.go: ToUpper and ToLower",
+    "Go 1.26.0 src/unicode/letter.go: ToUpper and ToLower",
+    "pkg/infoschema/infoschema.go: TableByName consumes CIStr.L"
+  ],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-context-inputs.7zHfFE/candidate-server",
+      "sha256": "9047ff11a60f32cbc1cc06ad376c8397ce202eebabbc24cf084153d9b650eda2"
+    },
+    "after": {
+      "path": "./candidate-server",
+      "sha256": "f17467dff32cc5378af8d0d932ef167187a6701a9f945fd4dc8e4f1d6fdbefae"
+    }
+  },
+  "validation": {
+    "profile": "Ready",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-mysql -p tidb-ast --test parser_mysql_package_source --test all -- parser_format_package_source:: test_sql_mode --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "python3 rust/scripts/generate-go-simple-case.py --check",
+      "rustfmt --check --unstable-features --edition 2021 --config skip_children=true --file-lines '[{\"file\":\"crates/tidb-ast/tests/parser_format_package_source.rs\",\"range\":[300,334]},{\"file\":\"crates/tidb-mysql/src/simple_case.rs\",\"range\":[375,412]}]' crates/tidb-ast/tests/parser_format_package_source.rs crates/tidb-mysql/src/simple_case.rs",
+      "git diff --check"
+    ],
+    "working_directory": "Cargo/rustfmt: rust. make/python/git: repository root.",
+    "results": "10 selected tests pass before and after, including 2,879 non-identity Go mapping fixtures plus expanded ASCII/mixed text checks. Build, all-target check, lint, generation and formatting pass.",
+    "logs": [
+      "/private/tmp/tidb-case-mapping.wcNW4E/baseline-tests.log",
+      "/private/tmp/tidb-case-mapping.wcNW4E/tests.log",
+      "/private/tmp/tidb-case-mapping.wcNW4E/build.log",
+      "/private/tmp/tidb-case-mapping.wcNW4E/check.log",
+      "/private/tmp/tidb-case-mapping.wcNW4E/lint.log"
+    ],
+    "unicode_oracle": {
+      "go_version": "go1.26.0 darwin/arm64",
+      "inputs": "All 128 ASCII values; every valid Unicode scalar concatenated in ascending order (surrogates excluded). Both uppercase and lowercase match the running Go implementation.",
+      "commands": [
+        "GOMAXPROCS=12 go run -p=12 /private/tmp/tidb-case-mapping.wcNW4E/oracle.go",
+        "rustc -C opt-level=3 --edition=2021 /private/tmp/tidb-case-mapping.wcNW4E/oracle.rs -o /private/tmp/tidb-case-mapping.wcNW4E/oracle",
+        "/private/tmp/tidb-case-mapping.wcNW4E/oracle ascii upper | shasum -a 256",
+        "/private/tmp/tidb-case-mapping.wcNW4E/oracle ascii lower | shasum -a 256",
+        "/private/tmp/tidb-case-mapping.wcNW4E/oracle unicode upper | shasum -a 256",
+        "/private/tmp/tidb-case-mapping.wcNW4E/oracle unicode lower | shasum -a 256"
+      ],
+      "sha256": [
+        "cf4e4b49cfa6c92fdff0c21576b5983addce5ad87fa525e9609f679102e8107e",
+        "fc5b9b2c32b0ecc0354c66f03e60790599a8fbae3511b2b60b2c0f7f27b6ceae",
+        "e53032f7945c39d39df0f06015707fcf9f669dc42b5b7caa31f07080e176a017",
+        "137590953b837f1ec8b7c02b3a0425d0789df789a59ad256e7a63416f9fc4c11"
+      ]
+    }
+  },
+  "live_comparison": {
+    "command": "ruby /private/tmp/tidb-case-mapping.wcNW4E/verify.rb",
+    "artifact_root": "/private/tmp/tidb-case-mapping.wcNW4E",
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "sysbench": {
+      "events": 84000,
+      "events_per_sample": 6000,
+      "warmup_events": 1000,
+      "threads": [
+        1,
+        8,
+        32
+      ],
+      "table_rows": 100000,
+      "prepared_statements": "auto",
+      "seed": 1,
+      "samples": [
+        {
+          "server": "go",
+          "threads": 8,
+          "seconds": [
+            3.1671,
+            3.2193
+          ],
+          "sql_cpu_seconds": [
+            13.92,
+            13.89
+          ],
+          "latency_p95_ms": [
+            4.57,
+            4.65
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 1,
+          "seconds": [
+            12.6361,
+            12.8062
+          ],
+          "sql_cpu_seconds": [
+            7.81,
+            7.87
+          ],
+          "latency_p95_ms": [
+            2.26,
+            2.3
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "seconds": [
+            3.417,
+            3.3954
+          ],
+          "sql_cpu_seconds": [
+            11.62,
+            11.53
+          ],
+          "latency_p95_ms": [
+            4.91,
+            4.91
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 32,
+          "seconds": [
+            2.1521,
+            2.1576
+          ],
+          "sql_cpu_seconds": [
+            12.11,
+            12.24
+          ],
+          "latency_p95_ms": [
+            12.75,
+            12.98
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 1,
+          "seconds": [
+            12.8862,
+            12.8196
+          ],
+          "sql_cpu_seconds": [
+            7.96,
+            7.89
+          ],
+          "latency_p95_ms": [
+            2.3,
+            2.3
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "seconds": [
+            3.4082,
+            3.406
+          ],
+          "sql_cpu_seconds": [
+            11.58,
+            11.59
+          ],
+          "latency_p95_ms": [
+            4.91,
+            4.91
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 32,
+          "seconds": [
+            2.1017,
+            2.172
+          ],
+          "sql_cpu_seconds": [
+            12.48,
+            12.03
+          ],
+          "latency_p95_ms": [
+            12.52,
+            12.98
+          ]
+        }
+      ]
+    },
+    "tpcc": {
+      "events": 36000,
+      "profile_events": 32000,
+      "warehouses": 1,
+      "threads": 8,
+      "seed": 1,
+      "counts_per_sample": {
+        "DELIVERY": 220,
+        "NEW_ORDER": 2674,
+        "ORDER_STATUS": 229,
+        "PAYMENT": 2652,
+        "STOCK_LEVEL": 225
+      },
+      "samples": [
+        {
+          "server": "go",
+          "threads": 8,
+          "seconds": [
+            6.291278,
+            6.318071
+          ],
+          "sql_cpu_seconds": [
+            16.54,
+            16.17
+          ],
+          "latency_p95_ms": []
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "seconds": [
+            6.334122,
+            6.402324
+          ],
+          "sql_cpu_seconds": [
+            12.71,
+            12.73
+          ],
+          "latency_p95_ms": []
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "seconds": [
+            6.314928,
+            6.462498
+          ],
+          "sql_cpu_seconds": [
+            12.85,
+            12.89
+          ],
+          "latency_p95_ms": []
+        }
+      ],
+      "driver": "/private/tmp/tidb-shared-context.K1zPdw/go-tpc-measured",
+      "driver_sha256": "9c558a7ea42ace84d653c9f6c6de4a062a1e2c80c6d6159653ba45a0916dda07"
+    },
+    "verification": "Exact TPC-C counts, all eleven consistency checks initially/after every measured TPC-C run/after profiling, and bounded Go result equality pass.",
+    "parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "auto_analyze": [
+      "1",
+      0,
+      "1"
+    ],
+    "interpretation": "Eight/32-thread sysbench and TPC-C ranges overlap. Two single-thread samples trend down but do not establish robust broad acceptance. No throughput/latency baseline promotion. The fixture is retained and host scheduling remains a variation source."
+  },
+  "profiles": {
+    "command": "python3 /private/tmp/tidb-case-mapping.wcNW4E/callers.py /private/tmp/tidb-context-inputs.7zHfFE/after-sysbench.trace /private/tmp/tidb-context-inputs.7zHfFE/after-tpcc.trace after-sysbench.trace after-tpcc.trace",
+    "totals": [
+      {
+        "trace": "/private/tmp/tidb-context-inputs.7zHfFE/after-sysbench.trace",
+        "running_ns": 26477000000,
+        "mapping_ns": 232000000
+      },
+      {
+        "trace": "/private/tmp/tidb-context-inputs.7zHfFE/after-tpcc.trace",
+        "running_ns": 14629000000,
+        "mapping_ns": 230000000
+      },
+      {
+        "trace": "after-sysbench.trace",
+        "running_ns": 26706000000,
+        "mapping_ns": 60000000
+      },
+      {
+        "trace": "after-tpcc.trace",
+        "running_ns": 14611000000,
+        "mapping_ns": 32000000
+      }
+    ],
+    "scope": "Running samples whose stack contains simple_case::map_string. Complete totals, not the truncated top-15 caller sum. Diagnostic CPU evidence, not normalized transaction speed ratios.",
+    "remaining": "Allocation and repeated catalog name folding remain; Go consumes the pre-folded CIStr.L. Rust CiString exists, but executor get_in accepts plain strings and folds them anew."
+  },
+  "cleanup": {
+    "command": "ruby /private/tmp/tidb-case-mapping.wcNW4E/verify-cleanup.rb",
+    "evidence": "/private/tmp/tidb-case-mapping.wcNW4E/cleanup.json",
+    "verified_absent_pids": 8,
+    "verified_closed_ports": 10,
+    "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe"
+  },
+  "limitations": [
+    "No allocation-free unchanged-string return; existing owned String API retained.",
+    "No full Go-package parity claim. Unrelated baseline session failures were not rerun or resolved in this mapper increment.",
+    "UTF-8 scalar mapping verified; invalid UTF-8 is outside this str-based API.",
+    "Full requested sysbench/TPC-C throughput and latency acceptance remains open."
+  ]
+}

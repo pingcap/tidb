@@ -3,7 +3,9 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment constructs statement state from existing session inputs,
+The current increment aligns shared case mapping with Go's direct ASCII
+handling, reducing Unicode-table work across catalog, digest and statement
+paths. The preceding increment constructs statement state from existing session inputs,
 avoiding standalone defaults immediately replaced by assignment-only setters.
 The preceding increment shares statement configuration by reference instead of
 copying it through builders and executor clones. The preceding point-read
@@ -24,6 +26,25 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 
 ## Progress
+
+- [x] Trace the remaining simple-case mapper to catalog lookup, prepared-plan
+  validation, statement setup, digest normalization and collation lookup.
+  Go strings.ToUpper/ToLower and unicode.ToUpper/ToLower bypass Unicode table
+  searches for ASCII. Rust's generated mapper searches the table for every
+  character, including already-normalized identifiers. Evidence:
+  /private/tmp/tidb-case-mapping.wcNW4E/callers.jsonl.
+- [x] Align both all-ASCII strings and ASCII inside mixed UTF-8 with Go's
+  direct handling. Change the generator, regenerate, preserve the Unicode
+  table and owned-string API, validate the full mapping oracle and matched
+  sysbench/TPC-C workloads. Ten selected tests, every valid Unicode scalar
+  against Go, build, all-target check, Ready lint and generation checks pass.
+  Complete 84,000 sysbench and 36,000 TPC-C measured transactions, plus 32,000
+  profile transactions; exact counts, eleven consistency checks and bounded
+  Go result equality pass. Mapper Running samples fall 232ms to 60ms on
+  sysbench and 230ms to 32ms on TPC-C; timings overlap, so no broad speedup
+  claim. Verify eight owned PIDs absent and ten ports closed. Evidence and
+  commands: benchmarks/simple-case-validation.json. No allocation-free string
+  borrowing or whole-package parity is claimed.
 
 - [x] Trace remaining setup work after 6ee06c31b7. StmtContext::new parses
   DefaultSQLMode and allocates standalone advisory-lock state, ID channels,
@@ -475,6 +496,12 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+- Decision: Fix generic generated case mapping, not variable-cache machinery.
+  Rationale: Rust already caches statement snapshots and borrows lowercase
+  registry names. Profiles instead reach the shared mapper across multiple
+  SQL paths; Go's ASCII handling applies to all those callers.
+  Date/Author: 2026-09-10 / Codex.
+
 - Decision: Retain public assignment APIs while removing the redundant calls
   from production session construction. Do not claim performance acceptance
   from small directional timings or sampled setup reductions.
@@ -639,6 +666,15 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+Case-mapping profile frames are not evidence of a missing variable-name cache:
+the registry already borrows lowercase ASCII names. Most sampled mapper
+callers instead include catalog lookup and digest normalization. Go
+infoschema.TableByName consumes CIStr.L directly; Rust has CiString but its
+executor catalog get_in still accepts plain strings and folds them again.
+The current generic mapper change preserves that API; removing repeated name
+folding requires tracing identifier ownership through prepared plans, not
+assuming arbitrary input is already normalized.
 
 - The unchanged Rust control reported 5,999 of 6,000 TPC-C transactions.
   go-tpc creates histogram pairs after releasing its read lock, without
@@ -903,6 +939,13 @@ checkout; selected SQL equality does not establish full source parity.
 
 ## Outcomes & Retrospective
 
+The generated mapper now follows Go's ASCII handling for both ASCII-only and
+mixed Unicode strings. Full scalar comparison preserves the exact simple-case
+semantics. Profiles confirm less mapper work across catalog, digest and
+statement paths, but matched timings do not establish the full performance
+goal. The next ownership gap is repeated catalog name folding versus Go's
+CIStr.L lookup; do not bypass normalization for arbitrary plain strings.
+
 Constructor inputs now carry the existing session owners and captured values
 directly into query/DML state. This removes discarded default construction and
 default SQL-mode parsing without sharing new effects across statements. The
@@ -1162,3 +1205,7 @@ Updated 2026-09-10 after the approved constructor-input transfer: recorded
 unchanged baseline failures, live Go comparisons, excluded/replaced sample,
 actual ignored-probe deletion and verified service cleanup. No broad speedup
 or whole-package parity is claimed.
+
+Updated 2026-09-10 after generic ASCII case-mapping validation: recorded Go
+source, unchanged Unicode oracle, matched workload results, full profile
+totals and verified cleanup. Repeated catalog name folding remains next.
