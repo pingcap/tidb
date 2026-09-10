@@ -134,6 +134,9 @@ pub struct DispatchContext<'a> {
     /// OFF unless the session's `tidb_opt_fix_control` turns it on. Callers
     /// that resolve the session fix-control map pass its value.
     pub index_join_probe_row_count_fix: bool,
+    /// Whether normal optimization may convert scans to PointGet/BatchPointGet.
+    /// Go fix 52592 disables both conversions when enabled by the session.
+    pub enable_point_get_conversion: bool,
     /// Go `fixcontrol.Fix45132`: the row-count ratio at which skyline pruning
     /// prefers one IndexJoin inner access path over another. A non-positive
     /// value disables the empirical rule, matching Go's fix-control getter.
@@ -182,6 +185,7 @@ impl<'a> DispatchContext<'a> {
             hash_join_concurrency: 5,
             apply_cache_capacity: 0,
             index_join_probe_row_count_fix: false,
+            enable_point_get_conversion: true,
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
@@ -302,6 +306,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_index_join_skyline_threshold(mut self, threshold: f64) -> Self {
         self.index_join_skyline_threshold = threshold;
+        self
+    }
+
+    /// Carries the session's resolved Go fix 52592 conversion permission.
+    #[must_use]
+    pub const fn with_point_get_conversion(mut self, enabled: bool) -> Self {
+        self.enable_point_get_conversion = enabled;
         self
     }
 
@@ -2193,6 +2204,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .all(|range| range.low_val.len() == index.columns.len())
                 });
                 if prop.index_join_prop.is_none()
+                    && ctx.enable_point_get_conversion
                     && point_handle_ok
                     && !ranges.is_empty()
                     && ranges.iter().all(|range| {
@@ -2625,6 +2637,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // IndexReader/IndexLookUp candidate. Residual conditions stay
                 // as the ordinary root Selection above it.
                 if prop.index_join_prop.is_none()
+                    && ctx.enable_point_get_conversion
                     && (ds.partition_definition_ids.is_empty()
                         || ds.physical_table_id != ds.table_id)
                     && source_index.unique

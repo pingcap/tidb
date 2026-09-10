@@ -15,6 +15,41 @@ use std::sync::Arc;
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_txnkv::Key;
 
+#[test]
+fn fix52592_disables_unique_index_point_conversion() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t (id INT PRIMARY KEY, u INT UNIQUE, v INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO t VALUES (1,5,50),(2,7,70)", &mut catalog, &ctx).unwrap();
+    for (predicate, expected) in [
+        ("u>=5 AND u<=5 AND v>1", vec![vec![Datum::Int(50)]]),
+        ("u IN (5,7,99) AND v>50", vec![vec![Datum::Int(70)]]),
+    ] {
+        let sql = format!("SELECT v FROM t WHERE {predicate}");
+        for enabled in [false, true, false] {
+            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse(
+                if enabled { "52592:ON" } else { "52592:OFF" },
+            )
+            .unwrap();
+            let execution = ctx.clone().with_optimizer_fix_control(fix);
+            let (rows, ops) = crate::storage::capture_storage_ops(|| {
+                run_select_on(&sql, &catalog, &execution).unwrap()
+            });
+            assert_eq!(rows, expected, "{sql}, fix={enabled}");
+            if enabled {
+                assert!(ops.scans > 0 || ops.cop_scans > 0, "{sql}: {ops:?}");
+            } else {
+                assert!(ops.gets > 0, "{sql}: {ops:?}");
+                assert_eq!((ops.scans, ops.cop_scans), (0, 0), "{sql}");
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct BatchGetCountingStorage {
     inner: MemTableStorage,
