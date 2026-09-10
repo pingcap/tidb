@@ -2499,6 +2499,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
         "CREATE TABLE partitioned (a INT) PARTITION BY RANGE (a) (\
          PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     let retired_ids = {
         let catalog = stack.factory.catalog.load();
         let database = catalog
@@ -2536,6 +2537,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
         .collect::<Vec<_>>();
 
     rows(&mut session, "DROP DATABASE stats_drop_schema");
+    drain_stats_ddl_events(&stack.factory, &mut session);
     for (physical_id, old_version) in retired_ids.iter().zip(old_versions) {
         let retired_version = displayed(rows(
             &mut session,

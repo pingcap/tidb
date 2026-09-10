@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DROP SCHEMA 统计测试消费对应事件
+
+drop_schema_ddl_retires_all_statistics_like_go 独立运行在读取初始统计版本时
+越界：CREATE 的统计事件未消费，stats_meta 查询为空
+（`/tmp/stats-drop-schema-red.log`）。
+Go master 固定版本 `pkg/statistics/handle/ddl/ddl_test.go:1472` 的
+TestDropSchema 先建立统计，再于 DROP DATABASE 后显式调用
+HandleDDLEventWithTxn 处理 ActionDropSchema，才检查版本变化。
+
+Rust fixture 现于两个表建好后、DROP DATABASE 后分别驱动已有真实 notifier。
+普通表、分区表全局 ID 和两个分区 ID 共四项版本递增断言全部保留。
+没有直接补写统计、跳过 ID 或忽略空结果。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib drop_schema_ddl_retires_all_statistics_like_go`
+通过，1 passed，3.25 秒（`/tmp/stats-drop-schema-green.log`）；
+`make lint` 通过（`/tmp/stats-drop-schema-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 表生命周期统计测试消费 DDL 事件
 
 最新修改前 server 基线正常结束，397 passed / 34 failed，40.79 秒
