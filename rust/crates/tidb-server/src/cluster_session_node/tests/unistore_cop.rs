@@ -498,23 +498,78 @@ fn drain_stats_ddl_events(
     session: &mut ClusterServerSession,
 ) {
     let notifier = super::super::ddl_notifier::build_notifier(factory, Duration::ZERO);
+    drain_stats_ddl_events_with_notifier(session, notifier);
+}
+
+fn drain_stats_ddl_events_with_notifier(
+    session: &mut ClusterServerSession,
+    notifier: Arc<tidb_ddl_notifier::DdlNotifier>,
+) {
     tidb_owner::Listener::on_become_owner(notifier.as_ref());
+    // Go HandleNextDDLEventWithTxn waits for the statistics transaction,
+    // not for an uninitialized auto-analyze queue or another subscriber.
+    // This bit is committed in the same transaction as the stats changes.
+    let stats_bit = 1_u64 << tidb_ddl_notifier::STATS_META_HANDLER_ID.0;
+    let pending_stats_sql = format!(
+        "SELECT count(*) FROM mysql.tidb_ddl_notifier WHERE processed_by_flag & {stats_bit} = 0"
+    );
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let pending = displayed(rows(
-            session,
-            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
-        ));
+        let pending = displayed(rows(session, &pending_stats_sql));
         if pending == [["0"]] {
             notifier.stop();
             return;
         }
         if std::time::Instant::now() >= deadline {
             notifier.stop();
-            panic!("DDL notifier did not finish pending events: {pending:?}");
+            panic!("DDL notifier did not commit pending statistics events: {pending:?}");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(125))
+        .expect("session");
+    rows(&mut session, "CREATE TABLE test.stats_wait (a INT)");
+    let table_id = stack
+        .factory
+        .catalog
+        .load()
+        .find_table("test", "stats_wait")
+        .unwrap()
+        .1
+        .id;
+    let notifier = super::super::ddl_notifier::build_notifier(&stack.factory, Duration::ZERO);
+    // Deterministically model the uninitialized priority queue's retry result
+    // without modifying process-global auto-analyze settings in parallel tests.
+    notifier.register_handler(
+        tidb_ddl_notifier::TEST_HANDLER_ID,
+        Arc::new(|_, _| Err(tidb_ddl_notifier::NotifierError::NotReadyRetryLater)),
+    );
+    drain_stats_ddl_events_with_notifier(&mut session, notifier);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT modify_count, count FROM mysql.stats_meta WHERE table_id = {table_id}"
+            )
+        )),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier"
+        )),
+        [["1"]],
+        "the unfinished subscriber's event must remain durable"
+    );
 }
 
 fn partition_payload(ids: &[i64]) -> PartitionInfo {

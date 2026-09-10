@@ -1,5 +1,43 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 统计 DDL 测试等待正确订阅者的事务
+
+已确认此前四个并发超时不是统计写入未完成。辅助函数等待整个 notifier
+表清空，而生产 notifier 还注册了自动分析队列订阅者；未初始化的队列
+在自动分析启用时返回 NotReadyRetryLater，使事件继续留存。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/testutil/util.go:29-39` 的
+HandleNextDDLEventWithTxn 只调用统计 handler 并等待其事务完成。
+
+辅助函数现只等待 STATS_META_HANDLER_ID 对应的 processed_by_flag 位。
+生产 process_event_for_handler 在同一事务内更新统计和该位，然后提交，
+所以查询到完成位才代表统计提交完成。保留原五秒上限与全部统计结果
+断言，不禁用自动分析、不删除其他订阅者仍需处理的事件，也不修改生产
+notifier 的重试逻辑。
+
+新增 stats_ddl_wait_does_not_require_an_unready_other_subscriber：用始终
+返回 NotReadyRetryLater 的额外 handler 确定性复现等待路径，避免改动
+进程级自动分析开关干扰并行测试。修复前 6.27 秒后仍有一条事件而失败
+（`/tmp/stats-subscriber-wait-red.log`）；修复后 2.25 秒通过，且明确
+断言 stats_meta 存在 0/0 记录、未完成订阅者的事件仍在 notifier 表中。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib stats_ddl_wait_does_not_require_an_unready_other_subscriber
+# 1 passed，/tmp/stats-subscriber-wait-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 415 passed / 18 failed，43.30 秒，/tmp/server-stats-subscriber-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/stats-subscriber-wait-{fmt,lint}.log
+```
+
+table_lifecycle、truncate_hash_partition、truncate_partitioned_table、
+truncate_partitions_refreshes_global_stats_meta 四个用例在默认并发全套中
+全部通过。新增回归也在全套通过。剩余 18 项及外部集成门禁尚未完成。
+
 ## 2026-09-11 分区 EXPLAIN 修复后的全套结果
 
 在 22b9dcf9cf 上执行
