@@ -545,8 +545,7 @@ fn exhaust_physical_plans(
                         .children()
                         .get(*outer_idx)
                         .and_then(LogicalPlan::stats_info)
-                        .map_or(1.0, crate::stats_info::StatsInfo::row_count)
-                        .max(1.0);
+                        .map_or(0.0, crate::stats_info::StatsInfo::row_count);
                     // Go `enumerateIndexJoinByOuterIdx`: `avgInnerRowCnt =
                     // p.EqualCondOutCnt / buildRows`. The equal-condition
                     // output is what the per-outer-row probe sees; the join's
@@ -557,7 +556,11 @@ fn exhaust_physical_plans(
                             other_conditions: op.other_conditions.clone(),
                             outer_join_keys,
                             inner_join_keys,
-                            avg_inner_row_count: (joined_rows / outer_rows).max(0.0),
+                            avg_inner_row_count: if outer_rows > 0.0 {
+                                joined_rows / outer_rows
+                            } else {
+                                0.0
+                            },
                             table_range_scan: *table_range_scan,
                         });
                 }
@@ -2861,27 +2864,30 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             let mut pairs = std::collections::BTreeMap::new();
                             for condition in &detached.access_conds {
                                 for column in tidb_expr::simple_expr::extract_columns(condition) {
-                                    if let Some(position) = index_cols.iter()
-                                        .position(|index| index.unique_id == column.unique_id) {
+                                    if let Some(position) = index_cols
+                                        .iter()
+                                        .position(|index| index.unique_id == column.unique_id)
+                                    {
                                         pairs.insert(column.unique_id, index_lengths[position]);
                                     }
                                 }
                             }
                             let columns = crate::column_length::Col2Len::from_pairs(pairs);
-                            candidate_metrics = Some(crate::find_best_task::candidate::CandidateMetrics {
-                                access_columns: columns.clone(),
-                                index_columns: columns,
-                                single_scan,
-                                multi_valued: source_index.is_multi_valued,
-                                global: source_index.global,
-                                matches_property: !ordered || keep_order,
-                                eq_or_in_count: detached.eq_or_in_count,
-                                count_after_access: access,
-                                count_after_index: access,
-                                min_count_after_access: estimate.min_est.min(estimate.est),
-                                max_count_after_access: estimate.max_est.max(access),
-                                ..Default::default()
-                            });
+                            candidate_metrics =
+                                Some(crate::find_best_task::candidate::CandidateMetrics {
+                                    access_columns: columns.clone(),
+                                    index_columns: columns,
+                                    single_scan,
+                                    multi_valued: source_index.is_multi_valued,
+                                    global: source_index.global,
+                                    matches_property: !ordered || keep_order,
+                                    eq_or_in_count: detached.eq_or_in_count,
+                                    count_after_access: access,
+                                    count_after_index: access,
+                                    min_count_after_access: estimate.min_est.min(estimate.est),
+                                    max_count_after_access: estimate.max_est.max(access),
+                                    ..Default::default()
+                                });
                         }
                     }
                 }
@@ -3080,7 +3086,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         if prop.index_join_prop.is_none() {
             crate::find_best_task::candidate::insert_skyline_candidate(
                 &mut ordinary_candidates,
-                (cur, candidate_metrics, cur_preferred_range, cur_is_full_range),
+                (
+                    cur,
+                    candidate_metrics,
+                    cur_preferred_range,
+                    cur_is_full_range,
+                ),
                 |candidate| candidate.1.as_ref(),
                 ds.table_scan_penalty.pseudo_stats,
                 prop.expected_cnt,
@@ -3657,6 +3668,65 @@ mod tests {
             unreachable!();
         };
         assert_eq!(cloned.concurrency, 13, "cached-plan clones retain it");
+    }
+
+    #[test]
+    fn index_join_probe_average_preserves_fractional_outer_rows() {
+        use crate::logical::LogicalJoin;
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let left = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        let right = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+        for outer_rows in [0.8, 0.0] {
+            let mut outer = dual(&allocator, outer_rows);
+            outer
+                .base_mut()
+                .base
+                .set_schema(Some(Schema::new(vec![left.clone()])));
+            let mut inner = dual(&allocator, 8.0);
+            inner
+                .base_mut()
+                .base
+                .set_schema(Some(Schema::new(vec![right.clone()])));
+            let mut base = BaseLogicalPlan::new(&allocator, LogicalJoin::TYPE, 0);
+            base.base.set_stats(Some(StatsInfo::new(0.8, [])));
+            base.set_children(vec![outer, inner]);
+            let join = LogicalPlan::Join(LogicalJoin {
+                base,
+                equal_cond_out_cnt: 0.8,
+                equal_conditions: vec![ScalarFunction::new(
+                    tidb_ast::CiString::new("eq"),
+                    FieldType::new(FieldTypeCode::Tiny),
+                    vec![
+                        Expression::Column(left.clone()),
+                        Expression::Column(right.clone()),
+                    ],
+                )],
+                ..LogicalJoin::default()
+            });
+            let candidates =
+                exhaust_physical_plans(&join, &PhysicalProperty::default(), &ctx).unwrap();
+            let mut checked = 0;
+            for candidate in candidates.iter().flatten() {
+                let Some(runtime) = candidate
+                    .base()
+                    .child_req_prop(1)
+                    .and_then(|prop| prop.index_join_prop.as_ref())
+                else {
+                    continue;
+                };
+                assert_eq!(
+                    runtime.avg_inner_row_count,
+                    if outer_rows > 0.0 { 1.0 } else { 0.0 }
+                );
+                checked += 1;
+            }
+            assert!(checked > 0, "must inspect actual IndexJoin candidates");
+        }
     }
 
     #[test]
