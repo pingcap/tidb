@@ -381,12 +381,8 @@ type Job struct {
 	// ErrorCount will be increased, every time we meet an error when running job.
 	ErrorCount int64 `json:"err_count"`
 	// RowCount means the number of rows that are processed.
-	RowCount int64 `json:"row_count"`
-	// RU stores the resource units accounted for this DDL job. The calculated RU,
-	// rather than the raw buffered KV byte count, is stored so it stays fixed after
-	// the job finishes even if the accounting weight or formula changes later.
-	RU float64    `json:"ru"`
-	Mu sync.Mutex `json:"-"`
+	RowCount int64      `json:"row_count"`
+	Mu       sync.Mutex `json:"-"`
 
 	// NeedReorg indicates whether the job needs reorg.
 	// It's only used by modify column and not the accurate value.
@@ -481,6 +477,11 @@ type Job struct {
 	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
 	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
 	LastSchemaVersion int64 `json:"last_schema_version"`
+
+	// RU stores the resource units accounted for this DDL job. The calculated RU,
+	// rather than the raw buffered KV byte count, is stored so it stays fixed after
+	// the job finishes even if the accounting weight or formula changes later.
+	RU float64 `json:"ru,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.

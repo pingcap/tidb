@@ -204,7 +204,9 @@ const (
 	backgroundWorker workerType = 2
 )
 
-const ddlJobRUPerKVByte = 1.0
+// TODO: Refactor this weight and the statement RU weights in
+// pkg/executor/statement_ru_result.go into a shared location, then make them configurable.
+const ddlTxnRUKVBytesWeight = 1.0
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -621,6 +623,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) accountJobRU(job *model.Job) error {
+	// Only general DDL jobs calculate RU for now.
 	if w.tp != generalWorker {
 		return nil
 	}
@@ -628,7 +631,7 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job.RU += float64(txn.Size()) * ddlJobRUPerKVByte
+	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
 	return nil
 }
 
@@ -753,7 +756,6 @@ func (w *worker) transitOneJobStep(
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
-	ruBeforeUpdate := job.RU
 	if err = w.accountJobRU(job); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -761,9 +763,6 @@ func (w *worker) transitOneJobStep(
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	if err != nil {
-		job.RU = ruBeforeUpdate
-	}
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)

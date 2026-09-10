@@ -113,6 +113,9 @@ func TestJobCodec(t *testing.T) {
 	legacyJob := &Job{}
 	require.NoError(t, legacyJob.Decode([]byte(`{"id":1}`)))
 	require.Zero(t, legacyJob.RU)
+	zeroRUJobBytes, err := legacyJob.Encode(true)
+	require.NoError(t, err)
+	require.NotContains(t, string(zeroRUJobBytes), `"ru"`)
 
 	job.State = JobStateDone
 	require.True(t, job.IsDone())
