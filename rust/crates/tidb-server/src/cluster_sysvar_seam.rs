@@ -743,6 +743,9 @@ mod reloader_tests {
 
     #[test]
     fn a_reload_pass_publishes_a_fresh_read_into_the_live_table() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let read_calls = Arc::clone(&calls);
@@ -773,6 +776,9 @@ mod reloader_tests {
 
     #[test]
     fn a_failed_read_leaves_the_live_table_untouched() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         live.set("autocommit", "OFF".to_owned())
             .expect("a known GLOBAL-scoped variable sets cleanly");
@@ -809,6 +815,9 @@ mod reloader_tests {
 
     #[test]
     fn a_reload_read_started_before_a_local_commit_cannot_publish_after_it() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let (read_started_tx, read_started_rx) = std::sync::mpsc::sync_channel(0);
@@ -864,6 +873,9 @@ mod reloader_tests {
 
     #[test]
     fn secure_transport_on_is_live_before_the_post_commit_reread_finishes() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let committed = GlobalSysvars::from_cluster_rows([
@@ -922,6 +934,9 @@ mod reloader_tests {
 
     #[test]
     fn secure_transport_on_prepublishes_while_an_earlier_refresh_holds_the_fence() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let first_scratch = GlobalSysvars::new();
@@ -1047,6 +1062,9 @@ mod reloader_tests {
 
     #[test]
     fn secure_transport_off_waits_for_the_post_commit_reread() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::from_cluster_rows([(
             "require_secure_transport".to_owned(),
             "ON".to_owned(),
@@ -1096,6 +1114,9 @@ mod reloader_tests {
 
     #[test]
     fn local_commits_from_the_same_old_image_merge_their_distinct_changes() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let first = GlobalSysvars::from_cluster_rows([(
@@ -1140,6 +1161,9 @@ mod reloader_tests {
 
     #[test]
     fn an_older_local_commit_publishing_last_rereads_the_newer_durable_value() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let older = GlobalSysvars::from_cluster_rows([(
@@ -1181,6 +1205,9 @@ mod reloader_tests {
 
     #[test]
     fn a_noop_local_set_refreshes_a_stale_live_table() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([(
@@ -1202,6 +1229,9 @@ mod reloader_tests {
 
     #[test]
     fn a_mixed_global_and_instance_set_publishes_both_after_the_durable_reread() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([]);
@@ -1227,6 +1257,9 @@ mod reloader_tests {
 
     #[test]
     fn a_mixed_global_and_instance_set_publishes_both_when_the_reread_fails() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([]);
@@ -1252,6 +1285,9 @@ mod reloader_tests {
 
     #[test]
     fn an_instance_only_noop_commit_still_publishes_the_instance_change() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([]);
@@ -1270,6 +1306,9 @@ mod reloader_tests {
 
     #[test]
     fn repeated_instance_changes_publish_in_statement_order() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         live.set_instance("tidb_general_log", "ON".to_owned())
             .expect("the live instance value sets");
@@ -1293,6 +1332,9 @@ mod reloader_tests {
 
     #[test]
     fn an_older_mixed_commit_publishing_last_cannot_overwrite_a_newer_instance_value() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let older = GlobalSysvars::from_cluster_rows([]);
@@ -1316,6 +1358,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_publishes_changed_secure_transport_on_and_fences_stale_reload() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let stale_reload_epoch = fence.observed_epoch();
@@ -1341,6 +1386,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_on_noop_secure_transport_fails_closed() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([(
@@ -1359,6 +1407,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_publishes_an_ordinary_changed_global() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch =
@@ -1378,6 +1429,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_does_not_let_an_older_commit_overwrite_a_newer_fallback() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let newer = GlobalSysvars::from_cluster_rows([(
@@ -1417,6 +1471,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_with_an_unrelated_change_still_publishes_durable_secure_transport_on() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let scratch = GlobalSysvars::from_cluster_rows([
@@ -1439,6 +1496,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_from_an_old_local_off_cannot_undo_a_peer_reload_of_on() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         let old_local_scratch = GlobalSysvars::from_cluster_rows([(
@@ -1466,6 +1526,9 @@ mod reloader_tests {
 
     #[test]
     fn refresh_failure_skips_a_future_unknown_global_without_panicking() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let live = GlobalSysvars::new();
         let fence = SysvarPublicationFence::default();
         // RealClusterSysvars::begin uses a stored snapshot, not live process

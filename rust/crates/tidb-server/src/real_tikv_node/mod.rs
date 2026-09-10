@@ -2220,6 +2220,9 @@ mod tests {
 
     #[test]
     fn configured_account_policy_makes_skip_grant_table_a_real_login_authority() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let mut config = NodeConfig::parse([
             "tidb-server",
             "--path",
@@ -2257,6 +2260,9 @@ mod tests {
 
     #[test]
     fn skip_grant_sysvar_runtime_is_fail_closed_at_first_login_and_reloads_without_accounts() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let mut config = NodeConfig::parse([
             "tidb-server",
             "--path",
@@ -2342,6 +2348,9 @@ mod tests {
 
     #[test]
     fn ordinary_cluster_sysvars_are_also_installed_before_login_and_reloaded() {
+        if crate::isolate_process_globals() {
+            return;
+        }
         let mut config = NodeConfig::parse([
             "tidb-server",
             "--path",

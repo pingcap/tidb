@@ -1,5 +1,42 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 TLS 进程级变量测试隔离
+
+重跑 reloader_tests 再次暴露共享进程状态竞争，19 passed / 3 failed
+（`/tmp/tls-process-red.log`）。失败包括 noop 刷新、旧提交发布和
+ON 预发布；各测试都创建自己的 GlobalSysvars，但实际 getter/setter
+共享 REQUIRE_SECURE_TRANSPORT 原子值，其他模拟节点可在断言前改写它。
+
+保留真实运行时钩子，未改成检查局部快照：新增仅测试可用的
+isolate_process_globals，用当前测试可执行文件的 --exact 参数在独立
+进程执行原测试体；父进程要求成功退出且恰好一项通过，否则带 stdout/
+stderr 报错，不能因错误过滤到零测试而假绿。用例内部线程、channel
+时序、提交顺序及全部登录断言保持不变，没有 #[ignore] 或串行化整个
+测试套件。21 个变量发布/重载用例及 3 个启动登录用例采用该入口；
+不使用全局变量的 zero_interval 用例仍直接运行。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/server/tests/tls/tls_test.go:187` 的 TestTLSVerify 没有 t.Parallel，
+在同一受控开关状态下验证 ON 拒绝明文、允许 TLS（:320-335）。
+Rust 默认并行 harness 中的独立进程隔离保留这一前提；不改变 Go 的
+进程级变量语义。这里的 Rust 登录用例仍是其原有 admission 覆盖，
+不宣称替代 Go 的真实网络 TLS 集成测试。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib cluster_sysvar_seam::reloader_tests
+# 22 passed / 0 failed，/tmp/tls-process-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 421 passed / 13 failed，43.86 秒，/tmp/server-tls-process-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/tls-process-{fmt,lint}.log
+```
+
+生产代码和安全检查未改变；未解决的其他失败及外部集成门禁继续保留。
+
 ## 2026-09-11 未知全局变量回归使用真实 scratch 快照
 
 refresh_failure_skips_a_future_unknown_global_without_panicking 单独运行

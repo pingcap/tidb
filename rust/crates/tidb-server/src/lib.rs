@@ -48,6 +48,32 @@
 //! when a unit changes what this crate accepts, correct this list in the
 //! same commit.
 
+// Tests of process-global sysvar hooks must not share those hooks with other
+// simulated nodes. Run the original test body in its own harness process;
+// threads created inside the body still exercise the real publication races.
+#[cfg(test)]
+pub(crate) fn isolate_process_globals() -> bool {
+    const MARKER: &str = "TIDB_SERVER_ISOLATED_GLOBALS_TEST";
+    let thread = std::thread::current();
+    let name = thread.name().expect("named Rust test thread");
+    if std::env::var(MARKER).as_deref() == Ok(name) {
+        return false;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", name, "--nocapture"])
+        .env(MARKER, name)
+        .output()
+        .expect("start isolated global-state test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed; 0 failed"),
+        "isolated test {name} failed or was not selected: {}\n{stdout}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 mod aggregate_result_set;
 mod auth_exchange;
 mod auth_identity;
