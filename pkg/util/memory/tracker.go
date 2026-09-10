@@ -1090,8 +1090,8 @@ func (m *memArbitrator) growBigBudget() {
 		if used > growThreshold {
 			// expect next cap := used * 2.718
 			extra := max(((used*2783)>>10)-capacity, upper.Pool.allocAlignSize)
-			extra = min(extra, m.poolAllocStats.MaxPoolAllocUnit)
-			extra = max(extra, used-capacity)
+			unit := m.poolAllocStats.MaxPoolAllocUnit
+			extra = min(extra, (used-capacity+unit-1)/unit*unit)
 			m.AwaitAlloc.StartUtime = time.Now().UnixNano()
 			m.AwaitAlloc.Size = extra
 			if err := upper.Pool.allocate(extra); err == nil {
