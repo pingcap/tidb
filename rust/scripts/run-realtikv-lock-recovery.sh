@@ -111,16 +111,8 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   echo "LOCK_RECOVERY_TIDB_SERVER must name an executable failpoint-enabled tidb-server" >&2
   exit 1
 fi
-TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
-TIDB_AUTH_FILE="${TMPDIR:-/tmp}/lock-recovery-auth-${$}.tsv"
-printf 'root\tlocalhost\tmysql_native_password\t\n' >"${TIDB_AUTH_FILE}"
-chmod 600 "${TIDB_AUTH_FILE}"
-cat >"${TIDB_SERVER_WRAPPER}" <<EOF
-#!/bin/sh
-exec "${TIDB_SERVER}" "\$@" --auth-file "${TIDB_AUTH_FILE}" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
-EOF
-chmod +x "${TIDB_SERVER_WRAPPER}"
-TIDB_SERVER="${TIDB_SERVER_WRAPPER}"
+# The Go server creates the unfinished-secondary fixture; the Rust test below
+# is the system under test. Do not pass Rust-only auth/read-table arguments.
 if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
   echo "LOCK_RECOVERY_MYSQL_CLIENT must name an executable MySQL client" >&2
   exit 1
@@ -208,7 +200,7 @@ fi
 
 cd "${RUST_ROOT}"
 CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
-  --test realtikv_lock_recovery \
+  --test all \
   committed_primary_resolves_secondary_then_publishes_one_cop_response \
   -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
   echo "lock-recovery Rust lock-recovery proof failed" >&2
