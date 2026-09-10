@@ -7185,9 +7185,22 @@ fn a_write_reaches_the_index_path_like_a_select() {
             plan.contains("IndexRangeScan") && plan.contains("index:ka(a)"),
             "`{sql}` did not reach the index path:\n{plan}"
         );
-        // Divergence 7: the ranges are a superset, so the filter stays above.
-        assert!(plan.contains("Selection"), "{plan}");
+        // Go's exact integer equality is fully enforced by the index range.
+        assert!(plan.contains("range:[10,10]"), "{plan}");
+        assert!(!plan.contains("Selection"), "{plan}");
     }
+
+    // A predicate on a non-access column must still filter the looked-up rows.
+    let residual = plan_of(
+        &mut session,
+        "EXPLAIN UPDATE test.wi SET b = b + 1 WHERE a = 10 AND b > 100",
+    );
+    assert!(
+        residual.contains("index:ka(a)")
+            && residual.contains("Selection")
+            && residual.contains("gt(test.wi.b, 100)"),
+        "{residual}"
+    );
 
     // A WHERE that pins a whole UNIQUE index still takes the point plan.
     let plan = plan_of(

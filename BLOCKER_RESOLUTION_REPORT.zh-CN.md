@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 写入索引精确范围的过时 Selection 断言
+
+a_write_reaches_the_index_path_like_a_select 独立失败（1.24 秒，
+`/tmp/write-index-red.log`）：实际已有 ka(a) IndexRangeScan [10,10]，
+但测试仍将历史“superset range 必须有 Selection”当作必需行为。
+
+已用 `bin/tidb-server -V` 确认 Go oracle commit 为
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，启动独立 unistore 并执行
+完全相同的 CREATE/INSERT/EXPLAIN/UPDATE/DELETE。原始 SQL 和结果位于
+`/tmp/write-index-oracle/query.sql`、`/tmp/write-index-oracle/go.out`。
+Go UPDATE/DELETE 都是 IndexLookUp → ka(a) IndexRangeScan [10,10] +
+TableRowIDScan，没有 Selection；额外条件 a=10 AND b>100 则在 Probe
+端有 Selection gt(test.wi.b,100)。unique b=100 仍是 Point_Get。
+实际更新结果为 (1,101),(2,201),(3,300)，删除后仅 id=3，均与原断言一致。
+oracle 进程已正常终止，未留后台节点。
+
+测试现要求精确范围 [10,10] 且不含 Selection，并新增非访问列条件
+必须保留 Selection 的正向检查。原索引选择、唯一键 Point_Get、写后
+所有行值和删除结果断言保留。未修改生产实现、SQL golden 或估算值。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib a_write_reaches_the_index_path_like_a_select
+# 1 passed，1.23 秒，/tmp/write-index-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 422 passed / 12 failed，44.06 秒，/tmp/server-write-index-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/write-index-{fmt,lint}.log
+```
+
+其他 Rust failures 与完整外部集成门禁继续保持未完成。
+
 ## 2026-09-11 TLS 进程级变量测试隔离
 
 重跑 reloader_tests 再次暴露共享进程状态竞争，19 passed / 3 failed
