@@ -4124,6 +4124,53 @@ mod index_async_load_queue_tests {
     use tidb_model::TableItemID;
     use tidb_stats::Histogram;
 
+    fn queue_test_table(columns: Vec<KvColumn>) -> KvTable {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        // The loader queue is process-global and keyed by physical table ID.
+        static NEXT_TABLE_ID: AtomicI64 = AtomicI64::new(1 << 60);
+        KvTable::new(NEXT_TABLE_ID.fetch_add(1, Ordering::Relaxed), columns)
+    }
+
+    #[test]
+    fn cleaning_loaded_fixture_preserves_other_fixture_pending_load() {
+        let unloaded_table = queue_test_table(vec![long_column("a", 1)]);
+        let loaded_table = queue_test_table(vec![long_column("a", 1)]);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats.column_stats_existence.insert(1, true);
+        let unloaded_item = TableItemID {
+            table_id: unloaded_table.table_id,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let loaded_item = TableItemID {
+            table_id: loaded_table.table_id,
+            ..unloaded_item
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        queue_column_stats_load_if_invalid(&unloaded_table, &stats, 1, None);
+        // Replay the cleanup of a second fixture between enqueue and assertion.
+        needed.delete(loaded_item);
+        stats
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
+        let loaded = ColumnStats {
+            histogram: Histogram::default(),
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        queue_column_stats_load_if_invalid(&loaded_table, &stats, 1, Some(&loaded));
+        let items = needed.all_items();
+        needed.delete(unloaded_item);
+        needed.delete(loaded_item);
+        assert!(items.iter().any(|item| item.table_item_id == unloaded_item));
+        assert!(!items.iter().any(|item| item.table_item_id == loaded_item));
+    }
+
     fn long_column(name: &str, id: i64) -> KvColumn {
         KvColumn {
             name: name.to_owned(),
@@ -4155,7 +4202,7 @@ mod index_async_load_queue_tests {
             global_index_version: 0,
             clustered_primary: false,
         };
-        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let table = queue_test_table(vec![long_column("a", 1)]);
         // No index_load_status entry: the index was never loaded. The
         // existence map DOES know it (the persisted stats row exists), which
         // is what makes the load genuinely needed.
@@ -4166,7 +4213,7 @@ mod index_async_load_queue_tests {
         stats.cache_pseudo = false;
         stats.index_stats_existence.insert(7, true);
         let item = TableItemID {
-            table_id: 11,
+            table_id: table.table_id,
             id: 7,
             is_index: true,
             is_sync_load_failed: false,
@@ -4223,14 +4270,14 @@ mod index_async_load_queue_tests {
     /// are missing or not fully loaded is queued for the async loader.
     #[test]
     fn an_unloaded_column_is_queued_for_async_load() {
-        let mut table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut table = queue_test_table(vec![long_column("a", 1)]);
         table.set_common_handle_offsets(vec![0]);
         let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
         stats.pseudo = false;
         stats.cache_pseudo = false;
         stats.column_stats_existence.insert(1, true);
         let item = TableItemID {
-            table_id: 11,
+            table_id: table.table_id,
             id: 1,
             is_index: false,
             is_sync_load_failed: false,
@@ -4286,7 +4333,7 @@ mod index_async_load_queue_tests {
     /// A fully loaded column is not queued.
     #[test]
     fn a_fully_loaded_column_is_not_queued() {
-        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let table = queue_test_table(vec![long_column("a", 1)]);
         let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
         stats.pseudo = false;
         stats.cache_pseudo = false;
@@ -4295,7 +4342,7 @@ mod index_async_load_queue_tests {
             .column_load_status
             .insert(1, tidb_stats::StatsLoadedStatus::full_load());
         let item = TableItemID {
-            table_id: 11,
+            table_id: table.table_id,
             id: 1,
             is_index: false,
             is_sync_load_failed: false,
@@ -4325,10 +4372,10 @@ mod index_async_load_queue_tests {
     /// Internal pseudo columns (`_tidb_rowid`, ID <= 0) are never queued.
     #[test]
     fn internal_pseudo_columns_are_never_queued() {
-        let table = KvTable::new(11, Vec::new());
+        let table = queue_test_table(Vec::new());
         let stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
         let item = TableItemID {
-            table_id: 11,
+            table_id: table.table_id,
             id: -1,
             is_index: false,
             is_sync_load_failed: false,
@@ -4351,7 +4398,7 @@ mod index_async_load_queue_tests {
     /// skipped as well — only the index statistics are used for it.
     #[test]
     fn a_hidden_column_is_skipped_by_the_selectivity_engine() {
-        let mut table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut table = queue_test_table(vec![long_column("a", 1)]);
         let mut hidden_field = FieldType::new(FieldTypeCode::LongLong);
         hidden_field.set_collation_name("binary");
         let hidden = KvColumn {
@@ -4389,7 +4436,7 @@ mod index_async_load_queue_tests {
             comment: String::new(),
             generated: None,
         };
-        let table = KvTable::new(11, vec![json_column]);
+        let table = queue_test_table(vec![json_column]);
         assert_eq!(
             table.columns[0].field_type.code(),
             FieldTypeCode::Json,
@@ -4411,7 +4458,7 @@ mod index_async_load_queue_tests {
             global_index_version: 0,
             clustered_primary: false,
         };
-        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let table = queue_test_table(vec![long_column("a", 1)]);
         let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
         stats.pseudo = false;
         stats.cache_pseudo = false;
@@ -4419,7 +4466,7 @@ mod index_async_load_queue_tests {
             .index_load_status
             .insert(8, tidb_stats::StatsLoadedStatus::full_load());
         let item = TableItemID {
-            table_id: 11,
+            table_id: table.table_id,
             id: 8,
             is_index: true,
             is_sync_load_failed: false,
