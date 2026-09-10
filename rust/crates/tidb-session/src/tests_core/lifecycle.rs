@@ -5,38 +5,6 @@ use crate::tests_support::*;
 use crate::*;
 use std::sync::Arc;
 
-/// Isolates context construction from parsing, execution and network/storage.
-/// This reports local cost, not a throughput verdict or a correctness threshold.
-#[test]
-#[ignore = "explicit serial diagnostic; not a workload benchmark"]
-fn statement_context_construction_cost_probe() {
-    use std::hint::black_box;
-    use std::time::Instant;
-
-    let mut session = Session::new();
-    assert_eq!(
-        session.run("SELECT 1").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
-    let iterations = 10_000;
-    for round in 0..5 {
-        for offset in 0..3 {
-            let case = (round + offset) % 3;
-            let start = Instant::now();
-            for _ in 0..iterations {
-                match case {
-                    0 => drop(black_box(session.statement_context(false))),
-                    1 => drop(black_box(session.statement_context(true))),
-                    _ => drop(black_box(session.run(black_box("SELECT 1")).unwrap())),
-                }
-            }
-            let nanos = start.elapsed().as_nanos() as f64 / f64::from(iterations);
-            let name = ["query_context", "dml_context", "select_one"][case];
-            println!("context_cost round={round} case={name} iterations={iterations} ns_per_op={nanos:.2}");
-        }
-    }
-}
-
 #[derive(Default)]
 struct NoopMemStateRecorder;
 

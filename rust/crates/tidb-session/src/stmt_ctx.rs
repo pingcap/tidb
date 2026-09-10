@@ -988,9 +988,25 @@ impl Session {
             no_zero_in_date: sql_mode.has_no_zero_in_date_mode(),
             allow_invalid_dates: sql_mode.has_allow_invalid_dates_mode(),
         };
+        let session_state = tidb_executor::StmtContextSessionState {
+            advisory_locks: self.advisory_locks.clone(),
+            before_executor_first_run: Arc::clone(&self.executor_first_run_breakpoint),
+            breakpoint_notify_func: self.breakpoint_notify_func(),
+            last_insert_id: Arc::clone(&self.published_last_insert_id),
+            current_tso: self.current_tso(),
+            retry_auto_ids: Arc::clone(&self.retry_auto_ids),
+            row_id_shards: Arc::clone(&self.row_id_shards),
+            planned_apply: Arc::clone(&self.planned_apply),
+            sequences: self.sequence_snapshot(),
+            resource_group_name: self.active_resource_group.clone(),
+            isolation_read_engines,
+            connection_charset,
+            connection_collation,
+            ddl_sql_mode: sql_mode.0,
+        };
         if !is_dml {
             let mut ctx =
-                tidb_executor::StmtContext::for_query_with_memory(statement_memory.clone())
+                tidb_executor::StmtContext::for_query_with_session(statement_memory, session_state)
                     // A read's error levels do not depend on the mode, but DDL
                     // takes this same context and Go's DDL checks DO read
                     // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
@@ -1016,7 +1032,6 @@ impl Session {
                     .with_outer_join_reorder(outer_join_reorder)
                     .with_index_merge(index_merge)
                     .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
-                    .with_planned_apply_channel(Arc::clone(&self.planned_apply))
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)
@@ -1024,11 +1039,6 @@ impl Session {
                     .with_new_only_full_group_by_check(new_only_full_group_by_check)
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                     .with_session_state(current_db, version)
-                    .with_isolation_read_engines(isolation_read_engines)
-                    .with_connection_charset_info(
-                        connection_charset.clone(),
-                        connection_collation.clone(),
-                    )
                     .with_user(self.current_user.clone(), self.login_user.clone())
                     .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
                     .with_active_roles(
@@ -1037,27 +1047,20 @@ impl Session {
                             .map(|_| Arc::clone(&self.active_roles)),
                     )
                     .with_connection_id(self.connection_id)
-                    .with_advisory_locks(self.advisory_locks.clone())
                     .with_selected_lock_keys(self.selected_lock_keys.clone())
                     .with_rand_session(Arc::clone(&self.rand))
-                    .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
-                    .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
-                    .with_row_id_shards(Arc::clone(&self.row_id_shards))
                     .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                     .with_user_vars(Arc::clone(&self.user_vars))
                     .with_previous_statement(self.last_insert_id, self.prev_row_count)
                     .with_last_found_rows(self.last_found_rows)
                     .with_client_found_rows(self.client_found_rows)
-                    .with_current_tso(self.current_tso())
                     .with_week_and_division_scale(week_format, div_scale)
                     .with_max_allowed_packet(max_allowed_packet)
                     .with_group_concat_max_len(group_concat_max_len)
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_block_encryption_mode(block_encryption_mode)
-                    .with_sequences(self.sequence_snapshot())
                     .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                     .with_sql_mode(snapshot.scanner_sql_mode)
-                    .with_ddl_sql_mode(sql_mode.0)
                     .with_ddl_job_context(
                         snapshot.ddl_cdc_write_source,
                         snapshot.ddl_reorg_priority,
@@ -1093,12 +1096,7 @@ impl Session {
                     ))
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_sysdate_is_now(sysdate_is_now)
-                    .with_resource_group_name(self.active_resource_group.clone())
                     .with_replica_read(replica_read)
-                    .with_executor_first_run_breakpoint(
-                        Arc::clone(&self.executor_first_run_breakpoint),
-                        self.breakpoint_notify_func(),
-                    )
                     .with_lazy_clock(snapshot.timestamp, zone);
             if let Some(latest_index_schema) = latest_index_schema {
                 ctx = ctx.with_latest_index_schema(latest_index_schema);
@@ -1109,23 +1107,21 @@ impl Session {
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
-        let mut ctx = tidb_executor::StmtContext::for_dml_with_memory(
+        let mut ctx = tidb_executor::StmtContext::for_dml_with_session(
             sql_mode.has_error_for_division_by_zero_mode(),
             sql_mode.has_strict_mode(),
             ignore_err,
-            statement_memory.clone(),
+            statement_memory,
+            session_state,
         )
         .with_date_modes(date_modes)
         .with_string_type_flags(string_type_flags)
-        .with_planned_apply_channel(Arc::clone(&self.planned_apply))
         .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
         .with_session_state(current_db, version)
-        .with_isolation_read_engines(isolation_read_engines)
-        .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvar_accessor(global_sysvar_accessor)
         .with_active_roles(
@@ -1134,35 +1130,23 @@ impl Session {
                 .map(|_| Arc::clone(&self.active_roles)),
         )
         .with_connection_id(self.connection_id)
-        .with_advisory_locks(self.advisory_locks.clone())
         .with_selected_lock_keys(self.selected_lock_keys.clone())
         .with_rand_session(Arc::clone(&self.rand))
-        .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
-        .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
-        .with_row_id_shards(Arc::clone(&self.row_id_shards))
         .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
         .with_user_vars(Arc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_last_found_rows(self.last_found_rows)
         .with_client_found_rows(self.client_found_rows)
-        .with_current_tso(self.current_tso())
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
         .with_group_concat_max_len(group_concat_max_len)
         .with_apply_cache_capacity(apply_cache_capacity)
         .with_block_encryption_mode(block_encryption_mode)
-        .with_sequences(self.sequence_snapshot())
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
-        .with_resource_group_name(self.active_resource_group.clone())
         .with_replica_read(tidb_executor::ReplicaReadType::Leader)
-        .with_executor_first_run_breakpoint(
-            Arc::clone(&self.executor_first_run_breakpoint),
-            self.breakpoint_notify_func(),
-        )
         .with_lazy_clock(snapshot.timestamp, zone)
         .with_sql_mode(snapshot.scanner_sql_mode)
-        .with_ddl_sql_mode(sql_mode.0)
         .with_ddl_job_context(
             snapshot.ddl_cdc_write_source,
             snapshot.ddl_reorg_priority,
@@ -1560,5 +1544,14 @@ mod tests {
         assert_eq!(context.ddl_cdc_write_source(), 9);
         assert_eq!(context.ddl_reorg_priority(), 2);
         assert_eq!(context.ddl_session_alias(), "ddl-owner");
+        let original_mode = context.ddl_sql_mode();
+        for (mode, expected) in [("", 0), ("ANSI_QUOTES", tidb_mysql::ModeANSIQuotes.0)] {
+            session.run(&format!("SET sql_mode = '{mode}'")).unwrap();
+            for is_dml in [false, true] {
+                assert_eq!(session.statement_context(is_dml).ddl_sql_mode(), expected);
+            }
+            // Go's captured Job.SQLMode is independent of later SETs.
+            assert_eq!(context.ddl_sql_mode(), original_mode);
+        }
     }
 }

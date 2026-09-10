@@ -3,7 +3,9 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment shares statement configuration by reference instead of
+The current increment constructs statement state from existing session inputs,
+avoiding standalone defaults immediately replaced by assignment-only setters.
+The preceding increment shares statement configuration by reference instead of
 copying it through builders and executor clones. The preceding point-read
 increment reports usage through IDs instead of a cloned table. Earlier increments
 preserve domain statistics ownership,
@@ -22,6 +24,32 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 
 ## Progress
+
+- [x] Trace remaining setup work after 6ee06c31b7. StmtContext::new parses
+  DefaultSQLMode and allocates standalone advisory-lock state, ID channels,
+  TSO, retry/shard state, Apply publication and sequence defaults. Both session
+  branches overwrite them before execution through assignment-only setters.
+  The captured session SQL mode is already typed; parsing the default is
+  discarded work, not evidence of a stale session-variable cache.
+  Repeat the unchanged selected baseline: 185 pass, nine fail as before.
+  Evidence: /private/tmp/tidb-context-inputs.7zHfFE/baseline-tests.log.
+- [x] Pass these already-selected inputs into construction without allocating
+  replacement defaults. Preserve statement-local warnings, clocks, counters
+  and retry behavior; this is not cross-statement context pooling. The user
+  approved the constructor-only transfer after the owner audit. Implementation
+  removes the corresponding query/DML replacement calls. Broad selected tests:
+  261 pass, nine baseline failures have identical assertions. Release build,
+  workspace all-target check and Ready lint pass. Remove the leftover Rust-only
+  ignored construction probe; the preceding receipt incorrectly said it was
+  already removed. Retain public assignment APIs for external compatibility.
+- [x] Compare 84,000 measured sysbench and 36,000 measured TPC-C transactions,
+  plus 32,000 TPC-C profile transactions. All eleven consistency conditions
+  and bounded Go result equality pass. Add 36,000 accepted serial confirmation
+  events; exclude and replace one 6,000-event baseline that overlapped trace
+  analysis. Five accepted samples per variant give serial medians 12.7153s
+  before and 12.6859s after; ranges overlap, so do not claim a broad speedup.
+  Restore auto-analyze and verify 15 owned PIDs absent and ten ports closed.
+  Current commands and evidence: benchmarks/statement-context-cost-baseline.json.
 
 - [x] Share StmtContext's configuration by reference, matching Go's session
   expression-context ownership. Keep existing effect cells shared; changing
@@ -447,6 +475,20 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+- Decision: Retain public assignment APIs while removing the redundant calls
+  from production session construction. Do not claim performance acceptance
+  from small directional timings or sampled setup reductions.
+  Rationale: External Rust callers are unverified; serial confirmation ranges
+  overlap and the eight-thread Rust workload remains slower than Go.
+  Date/Author: 2026-09-10 / Codex.
+
+- Decision: Do not treat repeated default SQL-mode parsing as a missing
+  SessionVars typed cache, and do not substitute pooling for direct input
+  construction. Preserve the existing owners and assignment semantics.
+  Rationale: vars.rs already stores typed SQLMode; the redundant parse is
+  in StmtContext::new, whose result is overwritten by with_ddl_sql_mode.
+  Date/Author: 2026-09-10 / Codex.
+
 - Decision: Keep StmtContext as one shared configuration handle. Copy only
   when a clone changes its flags; retain existing shared owners for warnings,
   statement time and memory cleanup. Cross-statement context reuse is separate
@@ -861,6 +903,15 @@ checkout; selected SQL equality does not establish full source parity.
 
 ## Outcomes & Retrospective
 
+Constructor inputs now carry the existing session owners and captured values
+directly into query/DML state. This removes discarded default construction and
+default SQL-mode parsing without sharing new effects across statements. The
+261 passing tests, nine unchanged failures, exact live transaction counts and
+Go fixture equality support this scoped change, not whole-package acceptance.
+Clean serial timings overlap; the full performance goal remains open. Current
+profiles still show variable normalization and lookup costs. Compare those
+paths with Go's typed fields and direct GetSystemVar before the next edit.
+
 The shared-context increment removes full-value builder copies and makes
 executor clones share configuration until mutation. Existing warning, clock
 and final-memory-owner behavior is preserved. The corrected workload driver
@@ -1106,3 +1157,8 @@ rejected hypotheses and next latency-attribution work.
 Updated 2026-09-10 during the authorized full upstream merge: corrected the
 publication remote, recorded source-backed resolutions and counter visibility,
 and separated prior-binary evidence from pending merged-code validation.
+
+Updated 2026-09-10 after the approved constructor-input transfer: recorded
+unchanged baseline failures, live Go comparisons, excluded/replaced sample,
+actual ignored-probe deletion and verified service cleanup. No broad speedup
+or whole-package parity is claimed.

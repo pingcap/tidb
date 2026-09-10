@@ -1,7 +1,7 @@
 {
-  "status": "Validated shared-context ownership change; no demonstrated throughput or latency improvement. The full performance and whole-package goals remain open.",
-  "change": "One Arc-backed StmtContext configuration replaces 1,104-byte builder moves and deep executor clones. Copy-on-write preserves per-clone configuration isolation and existing shared warning, clock and memory-lifetime owners. Existing Go-derived tests are extended; no Rust-only test functions added.",
-  "base_revision": "3d531689c0410300102ef9221cf9504a2cab9df9",
+  "status": "Constructor-input ownership aligned with Go; no demonstrated throughput or latency improvement. Full performance and whole-package goals remain open.",
+  "change": "Session passes its existing lock, timestamp, ID, retry, sequence and publication owners, strings and typed SQL mode into statement construction. Avoids defaults immediately overwritten by assignment-only setters; preserves statement-local effects and standalone constructors. Extends existing Go-derived SQL-mode coverage and removes the leftover Rust-only ignored construction probe.",
+  "base_revision": "6ee06c31b7df90c65b6b73206135056f18c392f2",
   "source_authority": [
     "pkg/expression/sessionexpr/sessionctx.go: expressions retain session context by reference",
     "pkg/executor/select.go: ResetContextOfStmt",
@@ -10,12 +10,12 @@
   ],
   "binaries": {
     "before": {
-      "path": "/private/tmp/tidb-context-cost.omI0Sw/candidate-server",
-      "sha256": "e4c81b7049524d74cc5a864481b99b1618b624101389dff560a4946f49b441ca"
-    },
-    "after": {
       "path": "/private/tmp/tidb-shared-context.K1zPdw/candidate-server",
       "sha256": "eeb156a5e2f466fc920a540f73721f6858c0a6f737e35502a9e838c5642a1876"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-context-inputs.7zHfFE/candidate-server",
+      "sha256": "9047ff11a60f32cbc1cc06ad376c8397ce202eebabbc24cf084153d9b650eda2"
     },
     "go": {
       "path": "/Users/qiliu/.tiup/components/tidb/v9.0.0-beta.2.pre-nightly/tidb-server",
@@ -27,7 +27,7 @@
     "commands": [
       "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
       "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
-      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session --lib --no-fail-fast -- stmt_context:: mem_quota:: stmt_ctx:: tests_sysbench_access:: tests_prepared_plan_cache:: tests_prepared_statements:: tests_memory tests_time tests_warning tests_transaction tests_insert tests_update tests_delete tests_sql_mode tests_set tests_last_insert tests_autocommit tests_pessimistic tests_parallel --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session --lib --no-fail-fast -- stmt_context:: mem_quota:: stmt_ctx:: tests_sysbench_access:: tests_prepared_plan_cache:: tests_prepared_statements:: tests_memory tests_time tests_warning tests_transaction tests_insert tests_update tests_delete tests_sql_mode tests_set tests_last_insert tests_autocommit tests_pessimistic tests_parallel tests_core::advisory_locks:: tests_core::lifecycle:: tests_core::session_state:: tests_core::dml:: tests_core::transactions:: tests_sequence:: --test-threads=1",
       "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
       "git diff --check"
     ],
@@ -39,24 +39,26 @@
       "changed_line_rustfmt": "pass",
       "diff_check": "pass",
       "baseline_tests": {
-        "passed": 149,
+        "passed": 261,
         "failed": 9,
-        "note": "Same filter except mem_quota:: omitted."
+        "ignored": 1,
+        "note": "Union of initial and expanded unchanged-baseline runs; test-name and normalized assertion comparison retained."
       },
       "candidate_tests": {
-        "passed": 185,
+        "passed": 261,
         "failed": 9
       },
       "failure_assertions": "All nine normalized failure bodies identical; see test-comparison.json."
     },
     "logs": [
-      "/private/tmp/tidb-shared-context.K1zPdw/build-final.log",
-      "/private/tmp/tidb-shared-context.K1zPdw/check-final.log",
-      "/private/tmp/tidb-shared-context.K1zPdw/lint.log",
-      "/private/tmp/tidb-shared-context.K1zPdw/baseline-tests.log",
-      "/private/tmp/tidb-shared-context.K1zPdw/tests.log",
-      "/private/tmp/tidb-shared-context.K1zPdw/test-comparison.json",
-      "/private/tmp/tidb-shared-context.K1zPdw/format.log"
+      "/private/tmp/tidb-context-inputs.7zHfFE/build.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/check-final.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/lint.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/baseline-tests.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/baseline-expanded.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/tests.log",
+      "/private/tmp/tidb-context-inputs.7zHfFE/test-comparison.json",
+      "/private/tmp/tidb-context-inputs.7zHfFE/format-final.log"
     ]
   },
   "measurement_driver": {
@@ -75,8 +77,8 @@
     "scope": "Benchmark tool only; transaction SQL, seeded input streams and TiDB Go source are unchanged. Apply both patches to the pinned go-tpc checkout before building. No external upstream submission is claimed."
   },
   "live_comparison": {
-    "command": "ruby /private/tmp/tidb-shared-context.K1zPdw/verify-fixed.rb",
-    "artifact_root": "/private/tmp/tidb-shared-context.K1zPdw/fixed",
+    "command": "ruby /private/tmp/tidb-context-inputs.7zHfFE/verify.rb",
+    "artifact_root": "/private/tmp/tidb-context-inputs.7zHfFE",
     "order": [
       "go",
       "after",
@@ -97,12 +99,12 @@
           "server": "go",
           "threads": 8,
           "seconds": [
-            3.1843,
-            3.1573
+            3.2152,
+            3.1716
           ],
           "sql_cpu_seconds": [
-            14.09,
-            13.94
+            14.02,
+            13.79
           ],
           "latency_p95_ms": [
             4.74,
@@ -113,15 +115,15 @@
           "server": "after",
           "threads": 1,
           "seconds": [
-            12.7804,
-            12.9095
+            12.5904,
+            12.8335
           ],
           "sql_cpu_seconds": [
-            7.89,
-            7.93
+            7.68,
+            7.89
           ],
           "latency_p95_ms": [
-            2.35,
+            2.22,
             2.3
           ]
         },
@@ -129,60 +131,12 @@
           "server": "after",
           "threads": 8,
           "seconds": [
-            3.4402,
-            3.439
+            3.4361,
+            3.3957
           ],
           "sql_cpu_seconds": [
-            11.64,
-            11.72
-          ],
-          "latency_p95_ms": [
-            4.91,
-            5
-          ]
-        },
-        {
-          "server": "after",
-          "threads": 32,
-          "seconds": [
-            2.0805,
-            2.1415
-          ],
-          "sql_cpu_seconds": [
-            12.38,
-            12.71
-          ],
-          "latency_p95_ms": [
-            12.3,
-            12.75
-          ]
-        },
-        {
-          "server": "before",
-          "threads": 1,
-          "seconds": [
-            12.7853,
-            12.9152
-          ],
-          "sql_cpu_seconds": [
-            7.9,
-            8.07
-          ],
-          "latency_p95_ms": [
-            2.26,
-            2.35
-          ]
-        },
-        {
-          "server": "before",
-          "threads": 8,
-          "seconds": [
-            3.4401,
-            3.4124
-          ],
-          "sql_cpu_seconds": [
-            11.83,
-            11.72
+            11.6,
+            11.51
           ],
           "latency_p95_ms": [
             5,
@@ -190,19 +144,67 @@
           ]
         },
         {
+          "server": "after",
+          "threads": 32,
+          "seconds": [
+            2.1322,
+            2.134
+          ],
+          "sql_cpu_seconds": [
+            12.26,
+            12.41
+          ],
+          "latency_p95_ms": [
+            12.3,
+            12.3
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 1,
+          "seconds": [
+            12.8797,
+            12.83
+          ],
+          "sql_cpu_seconds": [
+            7.92,
+            7.89
+          ],
+          "latency_p95_ms": [
+            2.3,
+            2.26
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "seconds": [
+            3.3987,
+            3.4544
+          ],
+          "sql_cpu_seconds": [
+            11.55,
+            11.7
+          ],
+          "latency_p95_ms": [
+            4.91,
+            5
+          ]
+        },
+        {
           "server": "before",
           "threads": 32,
           "seconds": [
-            2.1737,
-            2.0706
+            2.1587,
+            2.2237
           ],
           "sql_cpu_seconds": [
-            12.29,
-            12.28
+            12.26,
+            12.23
           ],
           "latency_p95_ms": [
-            12.98,
-            12.3
+            12.3,
+            12.98
           ]
         }
       ]
@@ -224,12 +226,12 @@
           "server": "go",
           "threads": 8,
           "seconds": [
-            6.187751,
-            5.988098
+            6.115773,
+            6.516007
           ],
           "sql_cpu_seconds": [
-            16.22,
-            16.09
+            16.25,
+            16.24
           ],
           "latency_p95_ms": []
         },
@@ -237,12 +239,12 @@
           "server": "after",
           "threads": 8,
           "seconds": [
-            6.579336,
-            6.33018
+            6.541364,
+            6.540503
           ],
           "sql_cpu_seconds": [
-            13.05,
-            13.13
+            12.87,
+            12.66
           ],
           "latency_p95_ms": []
         },
@@ -250,12 +252,12 @@
           "server": "before",
           "threads": 8,
           "seconds": [
-            6.6569,
-            6.204017
+            6.627441,
+            6.589709
           ],
           "sql_cpu_seconds": [
-            13.15,
-            13.11
+            13.11,
+            12.95
           ],
           "latency_p95_ms": []
         }
@@ -264,53 +266,122 @@
     "verification": "All 11 TPC-C consistency conditions pass initially, after each measured TPC-C run, and after profiling. All Rust before/after bounded result digests match the Go fixture digest.",
     "parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
     "auto_analyze": "1 -> 0 during comparison -> 1 verified in ensure",
-    "interpretation": "Paired timing ranges overlap. Do not promote a performance improvement or treat profile samples as normalized transactions. The fixture was retained, not reset; concurrent scheduling and host background work remain variation sources."
+    "interpretation": "Serial timing ranges overlap; five accepted samples per Rust variant have median 12.7153s before and 12.6859s after (about 0.23%). Eight-thread sysbench overlaps; two-sample 32-thread/TPC-C directional improvements are insufficient to establish a broad win. Go remains faster at eight threads. Retained fixture and host scheduling remain variation sources.",
+    "serial_confirmation": {
+      "commands": [
+        "ruby /private/tmp/tidb-context-inputs.7zHfFE/confirm-serial.rb",
+        "ruby /private/tmp/tidb-context-inputs.7zHfFE/confirm-replacement.rb"
+      ],
+      "samples": [
+        {
+          "server": "after",
+          "threads": 1,
+          "seconds": [
+            12.6859,
+            12.6519,
+            12.7045
+          ],
+          "sql_cpu_seconds": [
+            7.76,
+            7.71,
+            7.77
+          ],
+          "latency_p95_ms": [
+            2.3,
+            2.26,
+            2.3
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 1,
+          "seconds": [
+            12.7005,
+            12.7153,
+            12.6651
+          ],
+          "sql_cpu_seconds": [
+            7.76,
+            7.77,
+            7.75
+          ],
+          "latency_p95_ms": [
+            2.26,
+            2.3,
+            2.26
+          ]
+        }
+      ],
+      "measured_transactions_accepted": 36000,
+      "excluded": {
+        "round": "confirm-0-before",
+        "seconds": 13.0504,
+        "transactions": 6000,
+        "reason": "Overlapped trace export/analysis; preserved in serial-confirmation.json, replaced after analysis terminated."
+      },
+      "combined_with_abba": {
+        "samples_per_variant": 5,
+        "median_seconds": {
+          "before": 12.7153,
+          "after": 12.6859
+        },
+        "median_sql_cpu_seconds": {
+          "before": 7.77,
+          "after": 7.76
+        }
+      },
+      "auto_analyze": "1 -> 0 -> 1 verified for each confirmation invocation"
+    }
   },
   "machine_code": {
     "function": "Session::statement_context_ignoring",
-    "before_instructions": 4826,
-    "after_instructions": 3312,
-    "explicit_1104_byte_copy_sites_before": 34,
+    "before_instructions": 3312,
+    "after_instructions": 3395,
+    "explicit_1104_byte_copy_sites_before": 0,
     "explicit_1104_byte_copy_sites_after": 0,
-    "scope": "Static caller sites, not dynamic executed copy counts; unrelated string/payload copies remain.",
+    "scope": "Static caller size increases; no instruction-count reduction claim. Removed default construction is supported by source ownership audit.",
     "artifacts": [
-      "/private/tmp/tidb-shared-context.K1zPdw/context-before.asm",
-      "/private/tmp/tidb-shared-context.K1zPdw/context-after.asm"
+      "/private/tmp/tidb-shared-context.K1zPdw/context-after.asm",
+      "/private/tmp/tidb-context-inputs.7zHfFE/context-after.asm"
     ]
   },
   "profiles": {
-    "comparison_file": "/private/tmp/tidb-shared-context.K1zPdw/profile-setup.jsonl",
-    "before_file": "/private/tmp/tidb-context-cost.omI0Sw/profiles.jsonl",
-    "sysbench_context_inclusive_ms": {
-      "before": 600,
-      "after": 509
+    "comparison_file": "/private/tmp/tidb-context-inputs.7zHfFE/profile-setup.jsonl",
+    "before_file": "/private/tmp/tidb-shared-context.K1zPdw/profile-setup.jsonl",
+    "sysbench": {
+      "running_seconds": {
+        "before": 26.458,
+        "after": 26.477
+      },
+      "context_inclusive_ms": {
+        "before": 509,
+        "after": 440
+      }
     },
-    "sysbench_context_memmove_ms": {
-      "before": 130,
-      "after": 25
+    "tpcc": {
+      "running_seconds": {
+        "before": 16.072,
+        "after": 14.629
+      },
+      "context_inclusive_ms": {
+        "before": 260,
+        "after": 198
+      }
     },
-    "tpcc_context_inclusive_ms": {
-      "before": 238,
-      "after": 260
-    },
-    "tpcc_context_memmove_ms": {
-      "before": 49,
-      "after": 10
-    },
-    "interpretation": "Copies decrease, but total setup remains material. Go reset reuses eligible context storage; Rust still allocates state and performs variable lookups. Retained Go profiles are diagnostic call-chain comparisons, not matched-work speed ratios."
+    "interpretation": "Diagnostic sampling only, not normalized transaction speed ratios. Default SQL-mode parsing is removed from the session constructor path by source inspection; variable normalization and registry lookups remain prominent. Go eligible-context reuse is not implemented."
   },
   "cleanup": {
-    "verified_absent_pids": 11,
+    "verified_absent_pids": 15,
     "verified_closed_ports": 10,
     "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe",
-    "command": "ruby /private/tmp/tidb-shared-context.K1zPdw/verify-cleanup.rb",
-    "evidence": "/private/tmp/tidb-shared-context.K1zPdw/cleanup.json"
+    "command": "ruby /private/tmp/tidb-context-inputs.7zHfFE/verify-cleanup.rb",
+    "evidence": "/private/tmp/tidb-context-inputs.7zHfFE/cleanup.json"
   },
   "remaining": [
     "No cross-statement context pooling/reuse implemented.",
-    "Forty-two context helper methods are no longer const; workspace all-target compilation passes, external Rust const callers are unverified.",
-    "Nine selected pre-existing failures remain. Full-package semantic parity and broad performance acceptance are unverified.",
-    "Trace remaining allocation/variable-lookup work against Go ownership before the next change."
+    "Public assignment setters retained for external compatibility; session construction no longer uses the replaced setters. External Rust consumers are unverified.",
+    "Nine baseline failures remain; no full-package semantic parity or broad performance acceptance claim.",
+    "Next source comparison: Rust variable-name normalization and registry lookup versus Go cached fields/GetSystemVar/GetSysVar."
   ],
-  "supersedes": "Replaces the stale diagnostic for the removed statement_context_construction_cost_probe; does not restore that Rust-only test or promote its obsolete microbenchmark numbers."
+  "supersedes": "Updates the shared-context receipt at 6ee06c31b7. That receipt incorrectly described the construction probe as already removed; its actual deletion is part of this increment. No obsolete microbenchmark result is promoted."
 }

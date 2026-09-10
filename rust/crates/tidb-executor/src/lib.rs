@@ -223,8 +223,8 @@ pub use driver::{
         PreparedPlanCacheEnvironment, PreparedPointGetExecution, PreparedPointGetPlan,
         PreparedSelectExecution, PreparedSelectPlan,
     },
-    bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values, build_prepared_dml_plan,
-    fts_columns_are_strings, parameter_count, parsed_parameter_count,
+    bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
+    build_prepared_dml_plan, fts_columns_are_strings, parameter_count, parsed_parameter_count,
     physical_plan_needs_table_storage_column_lengths, physical_plan_needs_table_storage_statistics,
     plan_query_meta_stmt, plan_select_meta_stmt, run_delete_in, run_delete_on, run_delete_stmt,
     run_delete_stmt_with_physical, run_insert_in, run_insert_on, run_insert_reporting,
@@ -262,7 +262,7 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
     GlobalSysvarAccessor, ProcessPlanInfo, RetryAutoIds, RowIdShardGenerator, SequenceSnapshot,
-    StatementClass, StmtContext,
+    StatementClass, StmtContext, StmtContextSessionState,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

@@ -310,6 +310,64 @@ impl std::ops::DerefMut for StmtContext {
     }
 }
 
+/// Existing session inputs moved directly into a newly constructed context.
+///
+/// These are the same owners installed by the `with_*` assignment methods;
+/// supplying them here only avoids constructing and discarding defaults.
+/// Statement-local effects are still initialized separately for every context.
+pub struct StmtContextSessionState {
+    /// Session advisory-lock ownership.
+    pub advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
+    /// Statement-attempt executor-first-run latch.
+    pub before_executor_first_run: Arc<AtomicBool>,
+    /// Session's executor breakpoint callback.
+    pub breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
+    /// Statement publication cell retained by the session.
+    pub last_insert_id: Arc<Mutex<Option<u64>>>,
+    /// Live transaction timestamp authority.
+    pub current_tso: CurrentTso,
+    /// Retry ID history retained across attempts.
+    pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
+    /// Session row-ID shard generator.
+    pub row_id_shards: Arc<Mutex<RowIdShardGenerator>>,
+    /// Session's statement-plan Apply publication cell.
+    pub planned_apply: Arc<AtomicBool>,
+    /// Current catalog sequence snapshot.
+    pub sequences: Arc<SequenceSnapshot>,
+    /// Resolved statement resource group.
+    pub resource_group_name: String,
+    /// Captured storage-engine policy.
+    pub isolation_read_engines: String,
+    /// Captured connection character set.
+    pub connection_charset: String,
+    /// Captured connection collation.
+    pub connection_collation: String,
+    /// Complete typed SQL mode used by DDL.
+    pub ddl_sql_mode: i64,
+}
+
+impl Default for StmtContextSessionState {
+    fn default() -> Self {
+        Self {
+            advisory_locks: Default::default(),
+            before_executor_first_run: Arc::default(),
+            breakpoint_notify_func: None,
+            last_insert_id: Arc::default(),
+            current_tso: CurrentTso::default(),
+            retry_auto_ids: Arc::default(),
+            row_id_shards: Arc::default(),
+            planned_apply: Arc::default(),
+            sequences: Arc::default(),
+            resource_group_name: "default".to_owned(),
+            isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
+            connection_charset: "utf8mb4".to_owned(),
+            connection_collation: "utf8mb4_bin".to_owned(),
+            ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
+                .map_or(0, |mode| mode.0),
+        }
+    }
+}
+
 /// Private configuration payload exposed only as the context's dereference
 /// target. Access and mutation remain on [`StmtContext`].
 #[doc(hidden)]
@@ -816,14 +874,15 @@ impl StmtContext {
         strict: bool,
         ignore_err: bool,
         memory: StatementMemory,
+        session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
             warnings: Arc::default(),
             message: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
-            before_executor_first_run: Arc::new(AtomicBool::new(false)),
-            breakpoint_notify_func: None,
+            before_executor_first_run: session.before_executor_first_run,
+            breakpoint_notify_func: session.breakpoint_notify_func,
             division_by_zero,
             bad_null: if strict {
                 ErrorLevel::Error
@@ -844,33 +903,33 @@ impl StmtContext {
             global_sysvars: None,
             connection_id: None,
             tidb_decode_key_snapshot: None,
-            advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
+            advisory_locks: session.advisory_locks,
             selected_lock_keys: None,
             statement_clock: None,
             statement_timestamp: None,
             sysdate_is_now: false,
             time_zone: None,
-            resource_group_name: "default".to_owned(),
+            resource_group_name: session.resource_group_name,
             replica_read: ReplicaReadType::Leader,
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
-            isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
-            connection_charset: "utf8mb4".to_owned(),
-            connection_collation: "utf8mb4_bin".to_owned(),
+            isolation_read_engines: session.isolation_read_engines,
+            connection_charset: session.connection_charset,
+            connection_collation: session.connection_collation,
             rand_session: None,
             user_vars: None,
             prepared_params: None,
             current_insert_values: Arc::default(),
             rand_seeded: Arc::default(),
-            last_insert_id: Arc::default(),
+            last_insert_id: session.last_insert_id,
             prev_last_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: None,
             client_found_rows: false,
-            current_tso: CurrentTso::default(),
+            current_tso: session.current_tso,
             given_insert_id: Arc::default(),
-            retry_auto_ids: Arc::default(),
-            row_id_shards: Arc::default(),
+            retry_auto_ids: session.retry_auto_ids,
+            row_id_shards: session.row_id_shards,
             auto_increment_step: (1, 1),
             auto_increment_zero_is_explicit: false,
             allow_auto_random_explicit_insert: false,
@@ -916,18 +975,17 @@ impl StmtContext {
             outer_join_reorder: true,
             // Go `vardef.DefTiDBEnableIndexMerge = true`.
             index_merge: true,
-            planned_apply: Arc::default(),
+            planned_apply: session.planned_apply,
             process_plan_info: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
-            sequences: Arc::default(),
+            sequences: session.sequences,
             memory,
             sql_mode: tidb_parser::SqlMode::default(),
-            ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
-                .map_or(0, |mode| mode.0),
+            ddl_sql_mode: session.ddl_sql_mode,
             ddl_query: String::new(),
             ddl_cdc_write_source: 0,
             // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
@@ -1741,7 +1799,16 @@ impl StmtContext {
     /// constructing and replacing standalone roots would only discard them.
     #[must_use]
     pub fn for_query_with_memory(memory: StatementMemory) -> Self {
-        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false, memory)
+        Self::for_query_with_session(memory, StmtContextSessionState::default())
+    }
+
+    /// Builds query state without constructing temporary session owners.
+    #[must_use]
+    pub fn for_query_with_session(
+        memory: StatementMemory,
+        session: StmtContextSessionState,
+    ) -> Self {
+        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false, memory, session)
             .with_statement_class(StatementClass::Select)
     }
 
@@ -2686,6 +2753,24 @@ impl StmtContext {
         ignore_err: bool,
         memory: StatementMemory,
     ) -> Self {
+        Self::for_dml_with_session(
+            error_for_division_by_zero,
+            strict,
+            ignore_err,
+            memory,
+            StmtContextSessionState::default(),
+        )
+    }
+
+    /// Resolves DML policy without constructing temporary session owners.
+    #[must_use]
+    pub fn for_dml_with_session(
+        error_for_division_by_zero: bool,
+        strict: bool,
+        ignore_err: bool,
+        memory: StatementMemory,
+        session: StmtContextSessionState,
+    ) -> Self {
         let strict_sql_mode = strict;
         let strict = strict_sql_mode && !ignore_err;
         let level = if !error_for_division_by_zero {
@@ -2700,7 +2785,7 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        let mut context = Self::new(level, truncate, strict, ignore_err, memory);
+        let mut context = Self::new(level, truncate, strict, ignore_err, memory, session);
         context.strict_sql_mode = strict_sql_mode;
         context
     }
