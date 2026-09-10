@@ -2322,6 +2322,32 @@ fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extr
     assert_eq!(rows[0][1], Datum::Int(3), "{rows:#?}");
 }
 
+#[test]
+fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE topn_cast (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO topn_cast VALUES (1,7),(2,42),(3,9),(4,NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let rows = run_select_on(
+        "SELECT id FROM (SELECT id,SUM(v) AS total FROM topn_cast GROUP BY id) d \
+         WHERE total=(SELECT MAX(total) FROM \
+         (SELECT id,SUM(v) AS total FROM topn_cast GROUP BY id) x)",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(rows, vec![vec![Datum::Int(2)]]);
+}
+
 /// The other half of TPCC condition 09 is a grouped `history` derived table.
 /// Go retains that aggregation while rebuilding its indexed base-table read
 /// for each district probe.  The lookup path must therefore aggregate the

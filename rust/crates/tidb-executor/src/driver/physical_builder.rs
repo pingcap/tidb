@@ -86,6 +86,8 @@ struct BuildState {
     /// the region request; the local cursor has no request, so the scan build
     /// consumes it here. Set only while the reader's own subtree is built.
     index_scan_limit: Option<u64>,
+    /// Reader subplans use coprocessor expression semantics.
+    in_reader: bool,
 }
 
 pub(crate) type PhysicalRuntimeStats = HashMap<usize, Rc<Cell<u64>>>;
@@ -1119,12 +1121,69 @@ fn build_reader(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    build_with_state(
-        embedded.ok_or_else(|| DriverError::unsupported("a physical reader has no pushed plan"))?,
-        catalog,
-        ctx,
-        state,
-    )
+    let plan =
+        embedded.ok_or_else(|| DriverError::unsupported("a physical reader has no pushed plan"))?;
+    let previous = std::mem::replace(&mut state.in_reader, true);
+    let result = build_with_state(plan, catalog, ctx, state);
+    state.in_reader = previous;
+    result
+}
+
+/// Go's coprocessor TopN evaluates its ordering expressions into a separate
+/// key row. Materialize those keys privately when executing a reader locally;
+/// the ordinary TopN still receives only columns and constants.
+fn materialize_reader_topn_keys(
+    plan: &PhysicalPlan,
+    child: Box<dyn Executor>,
+    by_items: &mut [SortByItem],
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    if by_items
+        .iter()
+        .all(|item| matches!(item.expr, Expression::Column(_) | Expression::Constant(_)))
+    {
+        return Ok(child);
+    }
+    let mut schema = child.schema().clone();
+    let mut expressions: Vec<_> = schema
+        .columns
+        .iter()
+        .cloned()
+        .map(Expression::Column)
+        .collect();
+    let mut next_id = schema
+        .columns
+        .iter()
+        .map(|column| column.unique_id)
+        .max()
+        .unwrap_or(0);
+    for item in by_items {
+        if matches!(item.expr, Expression::Column(_) | Expression::Constant(_)) {
+            continue;
+        }
+        let field_type =
+            item.expr.static_type().cloned().ok_or_else(|| {
+                DriverError::unsupported("a coprocessor TopN key has no result type")
+            })?;
+        next_id = next_id
+            .checked_add(1)
+            .ok_or_else(|| DriverError::unsupported("coprocessor TopN key column ID overflow"))?;
+        // These IDs are local to the private projection and are pruned from
+        // TopN output; they never enter the retained physical plan.
+        let mut column = Column::new(next_id, field_type);
+        column.index = schema.columns.len() as i64;
+        schema.columns.push(column.clone());
+        expressions.push(std::mem::replace(
+            &mut item.expr,
+            Expression::Column(column),
+        ));
+    }
+    Ok(Box::new(ProjectionExec::new(
+        meta(plan, schema),
+        expressions,
+        child,
+        ctx.clone(),
+    )))
 }
 
 /// Extracts the partial aggregation carried by an index-lookup table plan.
@@ -3483,7 +3542,7 @@ fn build_with_state(
         }
         PhysicalPlan::TopN(topn) => {
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
-            let by_items = topn
+            let mut by_items = topn
                 .by_items
                 .iter()
                 .map(|item| {
@@ -3494,6 +3553,11 @@ fn build_with_state(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let schema = unary_schema(plan, child.as_ref());
+            let child = if state.in_reader {
+                materialize_reader_topn_keys(plan, child, &mut by_items, ctx)?
+            } else {
+                child
+            };
             let output_offsets = inline_projection_offsets(&schema, child.schema());
             let child_schema = child.schema().clone();
             let child_field_types = child.ret_field_types().to_vec();

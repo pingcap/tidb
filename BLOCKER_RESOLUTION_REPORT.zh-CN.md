@@ -1,5 +1,32 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 reader 内 TopN 的标量排序键
+
+独立复现 `cluster_views_are_registered_from_go_table_info`：包含
+SUM 视图和 MAX 标量子查询的 EXPLAIN 返回 `Get unexpected expression`
+（`/tmp/cluster-view-red.log`）。探针证明报错节点是 reader 内的
+coprocessor TopN，排序表达式是聚合消除后保留的 cast_decimal(v)。
+root 的投影注入未遗漏：Go 的对应 pass 本来不进入 TiKV reader。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/store/mockstore/unistore/cophandler/closure_exec.go:1037` 对
+orderByExprs 逐项 Eval 并保存独立的排序 key；普通 Go Sort/TopN 则要求列键。
+Rust 的本地 reader 此前直接将 coprocessor 表达式交给普通 TopN。
+现在仅在 reader 执行适配中以私有投影物化排序键，并从输出裁去额外列。
+原物理计划、EXPLAIN、普通 TopN 限制及断言均保持不变；诊断日志已移除。
+
+新增 `max_over_a_derived_sum_materializes_coprocessor_topn_keys`：
+以主键聚合的派生 SUM 再取 MAX，包含非主键顺序的最大值及 NULL。
+关闭修复后独立失败（`/tmp/cop-topn-unit-red.log`），开启修复后
+executor 全量 **1297 passed / 0 failed**（`/tmp/cop-topn-executor-green.log`）。
+原 server 视图用例通过（`/tmp/cluster-view-green.log`），`make lint`
+通过（`/tmp/cop-topn-lint.log`）。命令使用
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-executor --lib`，按 Ready 范围验证。
+其他 server 和外部集成失败仍不据此宣称完成。
+本轮 server 全量正常结束，**374 passed / 56 failed**，耗时 40.93 秒
+（`/tmp/server-after-cop-topn.log`），无 readiness 或 DDL owner 永久等待。
+
 ## 2026-09-11 HashJoin 保留规划表达式的比较规则
 
 server 原始用例独立失败：`a_case_insensitive_cluster_column_orders_groups_and_dedups_by_its_collation`
