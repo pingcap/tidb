@@ -666,6 +666,10 @@ fn deep_chain_walks_and_tears_down_without_recursion() {
         node = selection(i as i32, node);
     }
     assert_eq!(node.plan_count(), DEPTH);
+    assert_eq!(
+        node.schema().expect("deep inherited schema").columns[0].unique_id,
+        1
+    );
     node.resolve_indices().expect("the base body cannot fail");
 
     let copy = node.deep_clone();
@@ -682,6 +686,36 @@ fn clone_shallow_keeps_the_node_and_drops_the_children() {
     assert_eq!(shallow.join_type(), Some(LogicalJoinType::Inner));
     assert_eq!(shallow.children().len(), 0);
     assert_eq!(tree.children().len(), 2);
+    tree.dismantle();
+}
+
+#[test]
+fn resolve_indices_restores_tree_and_stops_after_first_child_error() {
+    let mut left = selection(2, scan(1, &[1]));
+    if let PhysicalPlan::Selection(op) = &mut left {
+        op.conditions.push(Expression::Column(Column::new(
+            99,
+            FieldType::new(FieldTypeCode::LongLong),
+        )));
+    }
+    let mut right = selection(4, scan(3, &[2]));
+    if let PhysicalPlan::Selection(op) = &mut right {
+        let mut column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+        column.index = 77;
+        op.conditions.push(Expression::Column(column));
+    }
+    let mut tree = hash_join(5, left, right);
+    assert!(tree.resolve_indices().is_err());
+    assert_eq!(tree.plan_count(), 5);
+    assert_eq!(tree.children()[0].id(), 2);
+    assert_eq!(tree.children()[1].id(), 4);
+    let PhysicalPlan::Selection(right) = &tree.children()[1] else {
+        panic!("right selection must be preserved");
+    };
+    let Expression::Column(column) = &right.conditions[0] else {
+        panic!("right expression must be preserved");
+    };
+    assert_eq!(column.index, 77, "Go stops before binding the next sibling");
     tree.dismantle();
 }
 

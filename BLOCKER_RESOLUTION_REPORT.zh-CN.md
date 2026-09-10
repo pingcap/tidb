@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 physical 深链 ResolveIndices 栈溢出修复
+
+原有 `physical::tests::deep_chain_walks_and_tears_down_without_recursion`
+构造 40000 层 Selection，在 `resolve_indices()` 递归访问普通子节点时栈溢出，
+32 MiB 栈仍失败，单独复现日志 `/tmp/resolve-depth-red.log`。
+`schema()` 的继承路径也使用递归。本次将两处改为显式迭代，保留节点 schema
+优先、Sequence 使用末子节点以及 Go 的子节点先于父节点绑定顺序。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`operator/physicalop/base_physical_plan.go::ResolveIndices` 遇首个错误返回；
+Rust 在首个错误后停止绑定并重新组装全部普通子节点，新增回归验证树及后续
+兄弟表达式未丢失或被继续绑定。`core/resolve_indices.go::resolveIndices4PhysicalSelection`
+只在 Conditions 循环中查询子节点 schema，因此 Rust 空 Selection 同样直接返回，
+避免空条件深链反复查找 schema 的二次开销。reader/CTE 等特殊字段的既有绑定
+顺序未修改，本次不声称所有特殊嵌套字段均已去递归。
+
+验证使用 Ready profile：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib
+# 925 passed / 0 failed，默认栈；/tmp/resolve-depth-planner-suite.log
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib physical::tests::deep_chain_walks_and_tears_down_without_recursion -- --exact
+# 最终增加深层 schema 断言后 1 passed，0.13 秒；/tmp/resolve-depth-final.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib
+# 1293 passed / 2 failed；/tmp/resolve-depth-executor-suite.log
+make lint
+# exit 0；/tmp/resolve-depth-lint.log
+git diff --check
+# exit 0
+```
+
+executor 两项失败仍为 condition nine / eleven 的物理计划差异，未修改其计划
+期望。前一轮 Projection 修复另已通过 381 项逻辑规划器测试，独立提交为
+`12ea885d12`。原始 readiness blocker 不再存在；整体目标仍未完成。
+
 ## 2026-09-10 Projection 组合 NDV 传播修复
 
 固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，使用 Rust
