@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -495,13 +496,18 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter    *mergeIter[*KVPair, kvReaderProxy]
-	memPool *membuf.Pool
+	iter      *mergeIter[*KVPair, kvReaderProxy]
+	memPool   *membuf.Pool
+	inputSize int64
 }
 
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
 // Next() then Key() or Values(). readBufferSize is the buffer size for each file
 // reader, which means the total memory usage is readBufferSize * len(paths).
+// readerMemorySize bounds the memory used to read a hotspot file concurrently.
+// The range-read fan-out for one file is capped at concurrentReaderTotalConcurrency.
+// If readerMemorySize is smaller than one concurrent-reader buffer, hotspot
+// detection and concurrent reading are disabled.
 func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
@@ -509,20 +515,15 @@ func NewMergeKVIter(
 	exStorage storeapi.Storage,
 	readBufferSize int,
 	checkHotspot bool,
-	outerConcurrency int,
+	readerMemorySize int64,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*KVPair, kvReaderProxy], 0, len(paths))
-	if outerConcurrency <= 0 {
-		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
-	}
-	concurrentReaderConcurrency := max(concurrentReaderTotalConcurrency/outerConcurrency, 8)
-	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
-	// too large when checkHotspot = true(add-index).
-	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
+	concurrentReaderConcurrency := getConcurrentReaderConcurrency(readerMemorySize)
 	memPool := membuf.NewPool(
-		membuf.WithBlockNum(1), // currently only one reader will become hotspot
-		membuf.WithBlockSize(largeBufSize),
+		membuf.WithBlockNum(concurrentReaderConcurrency), // currently only one reader will become hotspot
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
+	var inputSize atomic.Int64
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
@@ -530,20 +531,42 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
+			fileSize, err := rd.getFileSize()
+			if err != nil {
+				_ = rd.Close()
+				return nil, err
+			}
+			inputSize.Add(fileSize - int64(pathsStartOffset[i]))
 			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
-			rd.byteReader.enableConcurrentRead(
-				exStorage,
-				paths[i],
-				concurrentReaderConcurrency,
-				ConcurrentReaderBufferSizePerConc,
-				memPool.NewBuffer(),
-			)
+			if concurrentReaderConcurrency > 0 {
+				rd.byteReader.enableConcurrentRead(
+					exStorage,
+					paths[i],
+					concurrentReaderConcurrency,
+					ConcurrentReaderBufferSizePerConc,
+					memPool.NewBuffer(),
+				)
+			}
 			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
 
-	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot)
-	return &MergeKVIter{iter: it, memPool: memPool}, err
+	it, err := newMergeIter[*KVPair, kvReaderProxy](ctx, readerOpeners, checkHotspot && concurrentReaderConcurrency > 0)
+	if err != nil {
+		memPool.Destroy()
+		return nil, err
+	}
+	return &MergeKVIter{iter: it, memPool: memPool, inputSize: inputSize.Load()}, nil
+}
+
+func getConcurrentReaderConcurrency(readerMemorySize int64) int {
+	concurrency := max(readerMemorySize/int64(ConcurrentReaderBufferSizePerConc), 0)
+	return int(min(concurrency, int64(concurrentReaderTotalConcurrency)))
+}
+
+// InputSize returns the total unread size of input files when the iterator was created.
+func (i *MergeKVIter) InputSize() int64 {
+	return i.inputSize
 }
 
 // Error returns the error of the iterator.
