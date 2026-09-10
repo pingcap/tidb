@@ -662,6 +662,26 @@ func (s *slowOpenStorage) Open(
 	return s.MemStorage.Open(ctx, filePath, o)
 }
 
+type asyncFailStorage struct {
+	*objstore.MemStorage
+	failingPaths map[string]struct{}
+	openStarted  chan struct{}
+	continueOpen chan struct{}
+}
+
+func (s *asyncFailStorage) Open(
+	ctx context.Context,
+	filePath string,
+	o *storeapi.ReaderOption,
+) (objectio.Reader, error) {
+	if _, ok := s.failingPaths[filePath]; ok {
+		s.openStarted <- struct{}{}
+		<-s.continueOpen
+		return nil, fmt.Errorf("injected open failure for %s", filePath)
+	}
+	return s.MemStorage.Open(ctx, filePath, o)
+}
+
 func TestMergePropBaseIter(t *testing.T) {
 	// this test should be finished around 1 second. However, due to CI is not
 	// stable, we don't check the time.
@@ -703,6 +723,56 @@ func TestMergePropBaseIter(t *testing.T) {
 	_, err = iter.next()
 	require.ErrorIs(t, err, io.EOF)
 	require.EqualValues(t, fileNum, store.openCnt.Load())
+}
+
+func TestMergePropBaseIterCloseWithAsyncOpenError(t *testing.T) {
+	const readerLimit = 32
+	const fileNum = readerLimit * 2
+
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	failingPaths := make(map[string]struct{}, readerLimit)
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filename := fmt.Sprintf("/test%06d", i)
+		filenames[i] = filename
+		if i >= readerLimit {
+			failingPaths[filename] = struct{}{}
+			continue
+		}
+
+		writer, err := memStore.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		buf := encodeMultiProps(nil, []*rangeProperty{{firstKey: []byte{byte(i)}}})
+		_, err = writer.Write(ctx, buf)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close(ctx))
+	}
+
+	store := &asyncFailStorage{
+		MemStorage:   memStore,
+		failingPaths: failingPaths,
+		openStarted:  make(chan struct{}, readerLimit),
+		continueOpen: make(chan struct{}),
+	}
+	multiStat := MultipleFilesStat{MaxOverlappingNum: readerLimit - 1}
+	for _, filename := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", filename})
+	}
+
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+	for range readerLimit {
+		<-store.openStarted
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- iter.close()
+	}()
+	<-iter.closeCh
+	close(store.continueOpen)
+	require.NoError(t, <-closeDone)
 }
 
 func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
