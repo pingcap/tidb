@@ -2867,6 +2867,12 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .iter()
         .map(|operator| operator.trim_start_matches(&[' ', '│', '├', '└', '─'][..]))
         .collect::<Vec<_>>();
+    assert!(
+        analyzed_details
+            .iter()
+            .all(|detail| !detail.contains("ScalarQueryCol#")),
+        "aggregate repair outputs require allocated plan-column IDs: {analyzed_details:#?}"
+    );
     for (row, access) in analyzed_access.iter().enumerate() {
         if access == "table:new_order" {
             assert_eq!(
@@ -2891,7 +2897,8 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
     assert_eq!(
         analyzed_operator_names
             .iter()
-            .filter(|operator| operator.starts_with("MergeJoin"))
+            .filter(|operator| operator.starts_with("IndexJoin")
+                || operator.starts_with("IndexHashJoin"))
             .count(),
         2,
         "{analyzed:#?}"
@@ -2899,19 +2906,18 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
     assert!(
         analyzed_operator_names
             .iter()
-            .all(|operator| !operator.starts_with("IndexJoin")
-                && !operator.starts_with("IndexHashJoin")
+            .all(|operator| !operator.starts_with("MergeJoin")
                 && !operator.starts_with("HashJoin")),
         "{analyzed:#?}"
     );
     let top_merge = analyzed_operator_names
         .iter()
-        .position(|operator| operator.starts_with("MergeJoin"))
-        .expect("top MergeJoin");
+        .position(|operator| operator.starts_with("IndexHashJoin"))
+        .expect("top IndexHashJoin");
     assert!(
         analyzed_details[top_merge].contains(
-            "left key:test.new_order.no_w_id, test.new_order.no_d_id, \
-             right key:test.customer.c_w_id, test.customer.c_d_id"
+            "outer key:test.new_order.no_d_id, test.new_order.no_w_id, \
+             inner key:test.customer.c_d_id, test.customer.c_w_id"
         ),
         "top merge keys must come from the shared physical receipt: {}",
         analyzed_details[top_merge]
@@ -2920,12 +2926,12 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .iter()
         .enumerate()
         .skip(top_merge + 1)
-        .find_map(|(index, operator)| operator.starts_with("MergeJoin").then_some(index))
-        .expect("nested MergeJoin");
+        .find_map(|(index, operator)| operator.starts_with("IndexJoin").then_some(index))
+        .expect("nested IndexJoin");
     assert!(
         analyzed_details[nested_merge].contains(
-            "left key:test.new_order.no_w_id, test.new_order.no_d_id, \
-             right key:test.orders.o_w_id, test.orders.o_d_id"
+            "outer key:test.new_order.no_d_id, test.new_order.no_w_id, \
+             inner key:test.orders.o_d_id, test.orders.o_w_id"
         ),
         "nested merge keys must come from the shared physical receipt: {}",
         analyzed_details[nested_merge]
@@ -2985,9 +2991,8 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
             .zip(&analyzed_access)
             .zip(&analyzed_details)
             .any(|((operator, access), detail)| {
-                *operator == "IndexRangeScan"
+                *operator == "TableRangeScan"
                     && access.contains("table:orders")
-                    && access.contains("idx_order")
                     && detail.contains("keep order:true")
             }),
         "{analyzed:#?}"

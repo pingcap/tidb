@@ -312,6 +312,8 @@ impl LogicalAggregation {
     /// column is given the sentinel id `i64::MIN`, the same device
     /// [`super::LogicalProjection::build_schema_by_exprs`] uses: it can never
     /// collide with a real allocation and can never match a child key.
+    /// The whole-tree pruning caller replaces it with a statement allocation
+    /// before publishing the schema to the rest of the optimizer.
     /// `aggregation.NewAggFuncDesc`'s return-type inference is likewise not
     /// reachable here, so the repair descriptor inherits the pruned schema's
     /// type when there is one.

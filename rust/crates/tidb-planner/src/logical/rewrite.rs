@@ -1398,6 +1398,13 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             // Go `LogicalAggregation.PruneColumns` (`logical_aggregation.go:113`).
             LogicalPlan::Aggregation(op) => {
                 let child_used = op.prune_columns_local(&parent_used_cols, &mut own_schema);
+                // The local helper marks its repair output; Go allocates it
+                // from the statement's plan-column sequence at this point.
+                for column in &mut own_schema.columns {
+                    if column.unique_id == i64::MIN {
+                        column.unique_id = self.ctx.column_allocator.alloc();
+                    }
+                }
                 set_own_schema(node, own_schema);
                 self.stash.push(PendingColumns::Nothing);
                 Descend::Children(vec![child_used])

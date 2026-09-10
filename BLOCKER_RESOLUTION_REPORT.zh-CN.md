@@ -1,5 +1,27 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 aggregate repair 输出 ID 修复
+
+Go master `logical_aggregation.go::PruneColumns` 在补充 COUNT/FIRST_ROW 时调用
+AllocPlanColumnID；Rust local helper 使用 i64::MIN 占位，整树调用者未完成分配，
+物理 EXPLAIN 泄漏 ScalarQueryCol#-9223372036854775808。本次在整树裁剪点使用
+既有 RuleContext.column_allocator 分配，保持 local helper 接口。新增完整
+condition eleven 计划断言禁止 repair 输出出现 ScalarQueryCol，占位旧实现
+失败于该断言（`/tmp/aggregate-repair-id-red.log`），修复后通过。
+
+按同 JSON 统计 Go 证据同步更正历史测试：顶层 IndexHashJoin、下层 IndexJoin，
+键顺序 district/warehouse，orders 使用 TableRangeScan；保持 customer 的
+idx_customer 和全部扫描行数断言。当前测试因此停在 customer 索引路径断言，
+而不再被错误 MergeJoin 预期遮挡。未修改 Go golden。
+
+Ready 验证：`RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml
+-p tidb-planner --lib` 927 passed（`/tmp/aggregate-repair-id-planner.log`）；
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-executor --lib` 1294 passed / 1 failed
+（`/tmp/aggregate-repair-id-executor.log`）；`make lint` 退出 0
+（`/tmp/aggregate-repair-id-lint.log`）；`git diff --check` 通过。
+condition eleven 尚未完成，下一项为 customer index/table 候选成本差异。
+
 ## 2026-09-10 propagated predicate 访问路径估算修复
 
 condition eleven 的 new_order 扫描新断言要求 Go 实测 9000 行，旧实现为
