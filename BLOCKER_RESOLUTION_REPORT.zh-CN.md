@@ -1,5 +1,17 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 binding 修复后的全套结果
+
+在 cbb0565e7c 上执行
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib`：
+407 passed / 25 failed，42.14 秒，日志 `/tmp/server-binding-baseline.log`。
+三个原有时间戳 panic 用例与新增时区回归均通过；其余失败仍须推进。
+下一组已核实的源码差异是动态分区 EXPLAIN：Rust explain.rs 的 reader
+分支直接返回 None，而固定 Go master 的 physical_table_reader.go:168、
+physical_index_reader.go:141 明确返回动态分区 AccessObject；Rust 已有
+dynamic_partition_access helper，但该 reader 分支没有调用。这里只记录
+定位证据，尚未修改或验证该组修复。
+
 ## 2026-09-11 binding 缓存 TIMESTAMP 解码 panic
 
 `global_binding_commands_commit_outside_the_user_transaction` 独立复现
