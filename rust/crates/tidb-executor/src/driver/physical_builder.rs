@@ -2336,6 +2336,16 @@ fn build_join_over_children(
         .zip(right_join_keys)
         .enumerate()
         .map(|(index, (left, right))| {
+            // Go's hash-join builder takes the comparison collation from
+            // EqualConditions, not from a freshly constructed boolean type.
+            if let PhysicalPlan::HashJoin(join) = plan {
+                if let Some(condition) = join.equal_conditions.get(index) {
+                    return resolve_expression(
+                        Expression::ScalarFunction(condition.clone()),
+                        &condition_schema,
+                    );
+                }
+            }
             join_equality_with_null(
                 left,
                 right,

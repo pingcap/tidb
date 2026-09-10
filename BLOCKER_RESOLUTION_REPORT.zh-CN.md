@@ -1,5 +1,28 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 HashJoin 保留规划表达式的比较规则
+
+server 原始用例独立失败：`a_case_insensitive_cluster_column_orders_groups_and_dedups_by_its_collation`
+自连接 COUNT 实际 4、预期 6（`/tmp/server-collation-red.log`）。
+两侧列保留 utf8mb4_general_ci，但 executor 的 physical_builder
+丢弃 EqualConditions，按列重建 Tiny 类型 eq，比较规则成为 Binary。
+因此 B/b 两行未产生应有的交叉匹配。诊断探针已全部移除。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/executor/builder.go:1950` 明确从 EqualConditions[i].CharsetAndCollation()
+设置左右 HashJoin key 的比较规则。Rust HashJoin 现在 resolve 原有
+等值表达式，保留规划阶段的规则及表达式元数据；没有修改预期结果。
+
+新增 `hash_join_preserves_the_planned_comparison_collation` 回归，用
+B/b 两行同时核对默认 CI 自连接 4 行和显式 utf8mb4_bin 自连接 2 行。
+旧实现前者返回 2，red 日志 `/tmp/hash-collation-unit-red.log`；
+修复后新旧两个 server 用例均通过（`/tmp/hash-collation-server-green.log`）。
+`make lint` 通过（`/tmp/hash-collation-lint.log`）。
+`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path
+rust/Cargo.toml -p tidb-executor --lib` 全量 1296 passed / 0 failed
+（`/tmp/hash-collation-executor-green.log`），使用 Ready 验证范围。
+本次修复范围为物理 HashJoin，其他 join 类型和整体剩余门禁不据此声明完成。
+
 ## 2026-09-11 HAVING 子查询区分结果集合与排序契约
 
 executor 剩余 subqueries 失败独立复现于 `/tmp/subquery-order-red.log`：
