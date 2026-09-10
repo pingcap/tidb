@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 HASH 分区截断统计事件同步
+
+truncate_hash_partition_statistics_match_go 独立失败：截断 p0 后全局
+count/modify_count 仍为 5/0，预期 4/1（`/tmp/hash-partition-red.log`）。
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/statistics/handle/ddl/ddl_test.go:830` TestTruncateAHashPartition 在
+断言前显式处理 ActionTruncateTablePartition 事件。
+
+Rust 测试现于 CREATE 和 TRUNCATE PARTITION 后驱动已有真实 notifier。
+原来的 4/1 统计值、新旧 p0 ID 不同及旧统计版本递增断言均保持不变。
+未更改生产统计更新，也未直接写入预期值。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib truncate_hash_partition_statistics_match_go`
+通过，1 passed，3.32 秒（`/tmp/hash-partition-green.log`）；`make lint`
+通过（`/tmp/hash-partition-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 TRUNCATE 分区表统计事件同步
 
 truncate_partitioned_table_statistics_match_go 独立失败：新分区 ID 已发布，

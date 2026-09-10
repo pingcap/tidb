@@ -1880,6 +1880,7 @@ fn truncate_hash_partition_statistics_match_go() {
         "CREATE TABLE stats_truncate_hash (a BIGINT PRIMARY KEY, b INT, INDEX idx(b)) \
          PARTITION BY HASH(a) PARTITIONS 4",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO stats_truncate_hash VALUES (1,2),(2,2),(6,2),(11,2),(16,2)",
@@ -1904,6 +1905,7 @@ fn truncate_hash_partition_statistics_match_go() {
         &mut session,
         "ALTER TABLE stats_truncate_hash TRUNCATE PARTITION p0",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     assert_eq!(
         displayed(rows(
             &mut session,
