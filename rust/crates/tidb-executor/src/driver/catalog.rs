@@ -1224,28 +1224,6 @@ impl Catalog {
             .map(|entry| &**entry)
     }
 
-    /// A mutable table handle for a read whose storage API advances internal
-    /// state. Unlike [`Self::get_mut_in`], a read does not move the catalog's
-    /// schema/data version.
-    pub(crate) fn get_mut_in_for_read(
-        &mut self,
-        database: &str,
-        name: &str,
-    ) -> Option<&mut TableEntry> {
-        self.get_mut_by_key_for_read(&CatalogTableKey::new(database, name))
-    }
-
-    pub(crate) fn get_mut_by_key_for_read(
-        &mut self,
-        key: &CatalogTableKey,
-    ) -> Option<&mut TableEntry> {
-        let entry = self
-            .database_mut(&key.database)?
-            .tables
-            .get_mut(&key.table)?;
-        Some(Arc::make_mut(entry))
-    }
-
     fn get(&self, name: &str) -> Option<&TableEntry> {
         self.get_in(DEFAULT_DATABASE, name)
     }
@@ -1557,9 +1535,14 @@ impl Catalog {
     /// allow, never the reverse.
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
+        let key = CatalogTableKey::new(database, name);
+        let entry = self
+            .database_mut(&key.database)?
+            .tables
+            .get_mut(&key.table)?;
         // Go's write paths build a new `TableInfo` rather than editing the
         // shared one; `make_mut` is the same copy-on-write at the entry level.
-        self.get_mut_in_for_read(database, name)
+        Some(Arc::make_mut(entry))
     }
 
     /// The catalog's mutation counter.

@@ -28,6 +28,7 @@
 //! snapshot. [`ValueEntry`]'s `commit_ts` is therefore always `0`.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::batch_getter::{BatchGetError, GetOptions, Getter, ValueEntry};
 use crate::iteration::KvIterator;
@@ -44,9 +45,10 @@ pub enum MemStorageError {
 }
 
 /// A sorted in-memory key/value store.
+/// Clones retain a read image; writes detach it before changing stored bytes.
 #[derive(Clone, Debug, Default)]
 pub struct MemStorage {
-    data: BTreeMap<Key, Vec<u8>>,
+    data: Arc<BTreeMap<Key, Vec<u8>>>,
 }
 
 impl MemStorage {
@@ -90,12 +92,12 @@ impl Mutator for MemStorage {
     type Error = MemStorageError;
 
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), Self::Error> {
-        self.data.insert(key, value);
+        Arc::make_mut(&mut self.data).insert(key, value);
         Ok(())
     }
 
     fn delete(&mut self, key: Key) -> Result<(), Self::Error> {
-        self.data.remove(&key);
+        Arc::make_mut(&mut self.data).remove(&key);
         Ok(())
     }
 }

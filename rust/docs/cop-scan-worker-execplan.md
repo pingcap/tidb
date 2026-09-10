@@ -3,7 +3,10 @@
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments restore pessimistic row
 locking, Go-shaped index/statistics planning and per-session process publication.
-The current increment retains Go-folded catalog identities in prepared plans
+The current increment borrows immutable catalog metadata during point reads
+and gives execution its own storage handle, as Go separates TableInfo from
+the executor snapshot. In-process handles retain copy-on-write map images.
+The preceding increment retains Go-folded catalog identities in prepared plans
 and uses those same identities for reads, writes and planner lookup. The
 preceding case-mapping increment uses Go's direct ASCII handling across
 catalog, digest and statement paths. An earlier increment constructs statement state from existing session inputs,
@@ -27,6 +30,20 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 
 ## Progress
+
+- [x] Attribute retained Rust/Go syscall and copy chains. Scheduling totals
+  alone do not establish excess Rust work. Prepared point reads demonstrably
+  clone Arc<TableEntry> through get_mut_by_key_for_read; Go PointGetExecutor
+  instead borrows TableInfo and owns its transaction/snapshot handle separately.
+  Evidence: /private/tmp/tidb-hotpath.q5gFVI/chains.jsonl and attribution.json.
+- [ ] Separate point-read storage ownership from immutable catalog metadata.
+  Share the existing record/index lookup kernels with mutable callers, preserve
+  partition probing, snapshot counters and residual filtering, and remove the
+  catalog's mutable-read path. Validate retained point/primary/cache/KvTable
+  tests, live Go equality and matched workloads before performance acceptance.
+  In-process MemStorage must also retain immutable map images on clone and
+  detach on writes, preserving value isolation without copying every row on
+  each point read. This keeps one storage-handle ownership rule for both backends.
 
 - [x] Reproduce mutable/immutable catalog name disagreement in the retained
   prepared-point test: validation accepts `İΣ` as Go-folded `iσ`, but execution
@@ -707,6 +724,13 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 ## Surprises & Discoveries
 
+PointRead cannot blindly inherit the in-process backend's old deep-copy Clone:
+that would copy all rows on every prepared execution. MemStorage now shares an
+immutable BTreeMap image and uses Arc::make_mut only for set/delete. This retains
+clone value isolation, unlike sharing a mutable map, and avoids backend-specific
+branches in point execution. Selected tests: 100 executor, 78 session and four
+MemStorage tests pass; final build and matched live validation remain pending.
+
 Case-mapping profile frames are not evidence of a missing variable-name cache:
 the registry already borrows lowercase ASCII names. Most sampled mapper
 callers instead include catalog lookup and digest normalization. Go
@@ -978,6 +1002,11 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+The point-read increment removes mutable catalog lookup from prepared execution
+and separates encoded unique-key preparation from storage consumption, without
+cloning index metadata. Record and unique-index read kernels remain shared with
+mutable table callers. No performance gain is accepted before matched workloads.
 
 Catalog lookup now follows Go's retained CIStr.L identity rather than folding
 prepared names on each lookup. Planner snapshots use the same normalized keys

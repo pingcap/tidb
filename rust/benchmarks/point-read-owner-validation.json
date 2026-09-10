@@ -1,0 +1,268 @@
+{
+  "status": "Point-read ownership mechanism verified; no broad performance win accepted.",
+  "base_revision": "293c474e2541aec59d46851cb319193b1cd442ab",
+  "change": "Prepared execution borrows catalog metadata and owns only a storage handle. Remove mutable-read catalog lookup. Share record and unique-index kernels; borrow index metadata. MemStorage clones retain immutable map images and writes detach them, preserving value isolation without read-time row copies.",
+  "source_authority": [
+    "pkg/executor/point_get.go: PointGetExecutor retains tblInfo separately from txn/snapshot; Open obtains the transaction and Close reads snapshot RPC counters",
+    "ClusterTableStorage::clone_box shares the existing session snapshot, mutation buffer and statement read-key collector"
+  ],
+  "files": [
+    "rust/crates/tidb-executor/src/driver/access.rs",
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/driver/tests/point_get.rs",
+    "rust/crates/tidb-executor/src/kv_table.rs",
+    "rust/crates/tidb-executor/src/kv_table/index_entries.rs",
+    "rust/crates/tidb-executor/src/storage.rs",
+    "rust/crates/tidb-txnkv/src/mem_storage.rs"
+  ],
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/tidb-hotpath.q5gFVI/control-server",
+      "sha256": "958589433fb95fed805a2cb1da7765ed268cdcd6de3ce7d54f489a3c5ed6d7a6"
+    },
+    "after": {
+      "path": "/private/tmp/tidb-hotpath.q5gFVI/candidate-server",
+      "sha256": "3d8c9b07c7a3bccca71ed10e160b76977d21ffe3d81ca09970592dcda8a4c37d"
+    }
+  },
+  "validation": {
+    "profile": "Ready",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-executor -p tidb-session -p tidb-txnkv --lib --no-fail-fast -- driver::tests::point_get:: driver::tests::primary_keys:: kv_table:: tests_prepared_plan_cache:: tests_prepared_statements:: mem_storage:: tests_core::transactions --test-threads=1",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "CARGO_BUILD_JOBS=12 cargo check --offline --locked --release -j12 --workspace --all-targets",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "git diff --check",
+      "ruby /private/tmp/tidb-hotpath.q5gFVI/verify-unicode.rb",
+      "ruby /private/tmp/tidb-hotpath.q5gFVI/verify.rb",
+      "python3 /private/tmp/tidb-hotpath.q5gFVI/profile-point.py /private/tmp/tidb-catalog-names.nJeEZI/after-sysbench.trace /private/tmp/tidb-catalog-names.nJeEZI/after-tpcc.trace /private/tmp/tidb-hotpath.q5gFVI/after-sysbench.trace /private/tmp/tidb-hotpath.q5gFVI/after-tpcc.trace",
+      "ruby /private/tmp/tidb-hotpath.q5gFVI/verify-cleanup.rb"
+    ],
+    "working_directory": "Cargo: isolated checkout/rust; make/git: root.",
+    "results": "182 selected tests pass (100 executor, 78 session, four MemStorage). Build, all-target check and lint pass. The 178 executor/session cases also pass on frozen baseline executables. Formatting-only edits followed the compiled semantic change.",
+    "artifacts": "/private/tmp/tidb-hotpath.q5gFVI",
+    "live": "Go Unicode schema/table SELECT, PREPARE/EXECUTE, UPDATE, DELETE, INSERT match. Exact counts, all eleven TPC-C consistency conditions and bounded Go fixture digest pass. Unique probe database removed and absence verified.",
+    "parity_sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+  },
+  "workloads": {
+    "order": [
+      "go",
+      "after",
+      "before",
+      "before",
+      "after",
+      "go"
+    ],
+    "sysbench_events": 84000,
+    "tpcc_events": 36000,
+    "tpcc_profile_events": 32000,
+    "sysbench": "6000 measured plus 1000 warmup per sample; 100000 rows; PS auto; seed 1.",
+    "tpcc": "6000 measured per sample; eight clients, one warehouse, seed 1; measured driver SHA 9c558a7ea42ace84d653c9f6c6de4a062a1e2c80c6d6159653ba45a0916dda07.",
+    "columns": [
+      "seconds",
+      "SQL CPU seconds",
+      "TiKV CPU seconds"
+    ],
+    "sysbench_samples": [
+      [
+        "go/8",
+        [
+          [
+            3.1608,
+            14.079999999999998,
+            15.349999999999994
+          ],
+          [
+            3.1334,
+            13.939999999999998,
+            14.330000000000041
+          ]
+        ]
+      ],
+      [
+        "after/1",
+        [
+          [
+            12.5713,
+            7.72,
+            8.079999999999984
+          ],
+          [
+            12.6153,
+            7.73,
+            7.980000000000018
+          ]
+        ]
+      ],
+      [
+        "after/8",
+        [
+          [
+            3.3782,
+            11.379999999999999,
+            11.919999999999987
+          ],
+          [
+            3.3731,
+            11.400000000000002,
+            11.930000000000064
+          ]
+        ]
+      ],
+      [
+        "after/32",
+        [
+          [
+            2.0522,
+            11.890000000000004,
+            12.110000000000014
+          ],
+          [
+            2.1555,
+            11.79,
+            12.159999999999968
+          ]
+        ]
+      ],
+      [
+        "before/1",
+        [
+          [
+            12.5926,
+            7.719999999999999,
+            7.980000000000018
+          ],
+          [
+            12.7553,
+            7.819999999999999,
+            8.069999999999993
+          ]
+        ]
+      ],
+      [
+        "before/8",
+        [
+          [
+            3.4207,
+            11.590000000000002,
+            12.120000000000005
+          ],
+          [
+            3.3865,
+            11.499999999999998,
+            11.939999999999998
+          ]
+        ]
+      ],
+      [
+        "before/32",
+        [
+          [
+            2.0504,
+            12.349999999999998,
+            12.310000000000002
+          ],
+          [
+            2.0688,
+            12.190000000000001,
+            12.310000000000002
+          ]
+        ]
+      ]
+    ],
+    "tpcc_samples": [
+      [
+        "go/8",
+        [
+          [
+            6.353103000001283,
+            16.610000000000007,
+            34.81
+          ],
+          [
+            6.415798000001814,
+            16.100000000000023,
+            35.45999999999992
+          ]
+        ]
+      ],
+      [
+        "after/8",
+        [
+          [
+            6.558600999996997,
+            12.68,
+            34.66999999999999
+          ],
+          [
+            6.704572999995435,
+            12.5,
+            34.72000000000003
+          ]
+        ]
+      ],
+      [
+        "before/8",
+        [
+          [
+            6.6149549999972805,
+            12.730000000000004,
+            35.02999999999997
+          ],
+          [
+            6.676383999991231,
+            12.509999999999998,
+            34.80000000000001
+          ]
+        ]
+      ]
+    ],
+    "auto_analyze": [
+      "1",
+      0,
+      "1"
+    ],
+    "interpretation": "Small eight-client sysbench improvement, overlapping serial/TPC-C ranges and one slower 32-client candidate. No overall throughput/latency promotion."
+  },
+  "profiles": [
+    {
+      "trace": "/private/tmp/tidb-catalog-names.nJeEZI/after-sysbench.trace",
+      "running_ns": 26366000000,
+      "inclusive_ns": {
+        "prepared_point": 1599000000,
+        "table_detach_under_prepared_point": 74000000,
+        "table_copy_under_prepared_point": 57000000
+      }
+    },
+    {
+      "trace": "/private/tmp/tidb-catalog-names.nJeEZI/after-tpcc.trace",
+      "running_ns": 13043000000,
+      "inclusive_ns": {
+        "lock_keep_alive": 261000000,
+        "prepared_point": 25000000,
+        "table_detach_under_prepared_point": 1000000
+      }
+    },
+    {
+      "trace": "/private/tmp/tidb-hotpath.q5gFVI/after-sysbench.trace",
+      "running_ns": 26468000000,
+      "inclusive_ns": {
+        "prepared_point": 1538000000
+      }
+    },
+    {
+      "trace": "/private/tmp/tidb-hotpath.q5gFVI/after-tpcc.trace",
+      "running_ns": 13873000000,
+      "inclusive_ns": {
+        "lock_keep_alive": 302000000,
+        "prepared_point": 19000000
+      }
+    }
+  ],
+  "profile_scope": "Running inclusive samples. Missing counters mean no observed samples, not zero-runtime proof. Historical catalog-name profiles are diagnostic, not the exact 293c474e25 timing-control binary or normalized equal work. Source inspection proves the mutable catalog lookup is absent.",
+  "cleanup": "Nine owned PIDs absent, ten ports closed; /private/tmp/tidb-live-workload.nIrZBe retained. cleanup.json verified.",
+  "remaining": [
+    "Post-merge validation of collaborator virtual-column/hidden-handle fixes remains.",
+    "Whole Go-package parity and the full sysbench/TPC-C performance goal remain unproven."
+  ]
+}

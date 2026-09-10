@@ -649,6 +649,64 @@ pub struct KvTable {
     dirty_content: DirtyMark,
 }
 
+/// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
+/// A read owns only the backend handle, never a detached catalog/table image.
+pub(crate) struct PointRead<'a> {
+    table: &'a KvTable,
+    store: Box<dyn TableStorage>,
+}
+
+impl PointRead<'_> {
+    pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.store.point_rpc_counts()
+    }
+
+    pub(crate) fn lookup_unique(
+        &mut self,
+        index_id: i64,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<TableHandle>, KvTableError> {
+        match self.table.unique_point_read(index_id, values, zone)? {
+            Some(read) => read.get(self.store.as_mut()),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn get_prepared_point_row(
+        &mut self,
+        handle: &TableHandle,
+        decoder: &PreparedPointGetRowDecoder,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let Some((_, entry)) = read_stored_record(
+            self.store.as_mut(),
+            self.table.record_physical_ids(),
+            handle,
+        )?
+        else {
+            return Ok(None);
+        };
+        decoder.decode(handle, &entry, context).map(Some)
+    }
+}
+
+fn read_stored_record(
+    store: &mut dyn TableStorage,
+    physical_ids: Vec<i64>,
+    handle: &TableHandle,
+) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
+    for id in physical_ids {
+        let key = Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle()));
+        match store.get(&key) {
+            Ok(entry) => return Ok(Some((key, entry))),
+            Err(StorageError::NotFound) => {}
+            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+        }
+    }
+    Ok(None)
+}
+
 /// The staged-write mark, interior-mutable ON PURPOSE: a staged-undo image
 /// walks SHARED `Arc<TableEntry>` handles to reset it without detaching
 /// entries. A write DETACHES its entry (`Arc::make_mut`) before setting the
@@ -1397,15 +1455,8 @@ impl KvTable {
         &mut self,
         handle: &TableHandle,
     ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
-        for id in self.record_physical_ids() {
-            let key = Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle()));
-            match self.store.get(&key) {
-                Ok(entry) => return Ok(Some((key, entry))),
-                Err(StorageError::NotFound) => {}
-                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
-            }
-        }
-        Ok(None)
+        let physical_ids = self.record_physical_ids();
+        read_stored_record(self.store.as_mut(), physical_ids, handle)
     }
 
     /// [`KvTable::stored_record`] without the bytes.
@@ -1581,6 +1632,13 @@ impl KvTable {
     /// statement snapshot.
     pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.store.point_rpc_counts()
+    }
+
+    pub(crate) fn point_reader(&self) -> PointRead<'_> {
+        PointRead {
+            table: self,
+            store: self.store.clone(),
+        }
     }
 
     /// Records Go `TableInfo.TempTableType` (`setTemporaryType`).

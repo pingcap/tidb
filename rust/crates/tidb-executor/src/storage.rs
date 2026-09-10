@@ -56,8 +56,9 @@
 //!   container".
 //! * [`clone_box`](TableStorage::clone_box) exists because `KvTable` is
 //!   `Clone` (the catalog hands out copies). Cloning an in-process store
-//!   copies bytes; a real backend clones a *handle* to shared storage, which
-//!   is why the method is on the trait rather than a `Clone` bound.
+//!   retains an immutable map image, detached on the next write; a real backend
+//!   clones a handle to the session snapshot and staged buffer. Reads therefore
+//!   retain storage without copying table metadata or in-process row bytes.
 //!
 //! # What is threaded, and what is still concrete
 //!

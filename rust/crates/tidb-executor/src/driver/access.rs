@@ -1545,7 +1545,7 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
 /// `None` means the schema identity moved after the cache decision.
 pub fn run_prepared_point_get(
     execution: &PreparedPointGetExecution,
-    catalog: &mut Catalog,
+    catalog: &Catalog,
     current_database: &str,
     ctx: &crate::kv_table::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
@@ -1567,14 +1567,15 @@ pub fn run_prepared_point_get(
     let decode_error = |error: crate::kv_table::KvTableError| {
         ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
     };
-    let Some(TableEntry::Kv(table)) = catalog.get_mut_by_key_for_read(&plan.table_key) else {
+    let Some(TableEntry::Kv(table)) = catalog.get_by_key(&plan.table_key) else {
         return Ok(None);
     };
-    let before = table.point_rpc_counts();
+    let mut reader = table.point_reader();
+    let before = reader.point_rpc_counts();
     let rows = match plan.target {
         PreparedPointTarget::RowHandle => {
             let handle = execution.handle.as_ref().expect("row-handle arm binds one");
-            match table
+            match reader
                 .get_prepared_point_row(handle, &plan.row_decoder, ctx)
                 .map_err(decode_error)?
             {
@@ -1588,11 +1589,11 @@ pub fn run_prepared_point_get(
                 .range_values
                 .as_deref()
                 .expect("index-prefix arm binds key values");
-            let handle = table
+            let handle = reader
                 .lookup_unique(index_id, values, ctx.zone())
                 .map_err(decode_error)?;
             match handle {
-                Some(handle) => match table
+                Some(handle) => match reader
                     .get_prepared_point_row(&handle, &plan.row_decoder, ctx)
                     .map_err(decode_error)?
                 {
@@ -1603,7 +1604,7 @@ pub fn run_prepared_point_get(
             }
         }
     };
-    let after = table.point_rpc_counts();
+    let after = reader.point_rpc_counts();
     let logical_table_id = table.table_id;
     let stats_id = table.stats_physical_id();
     let index_id = match plan.target {

@@ -1056,9 +1056,6 @@ fn prepared_point_cache_admits_the_stock_sysbench_integer_handle() {
     .unwrap()
     .expect("validation and mutable read must resolve the same Go-folded name");
     assert_eq!(datum_text_for_test(&rows[0][0]), "unicode");
-    assert!(catalog
-        .get_mut_in_for_read(DEFAULT_DATABASE, "İΣ")
-        .is_some());
     assert!(catalog.get_mut_in(DEFAULT_DATABASE, "İΣ").is_some());
     let planner = catalog.planner_catalog(DEFAULT_DATABASE, None);
     use tidb_planner::plan_builder::catalog::TableSource as _;

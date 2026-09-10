@@ -39,7 +39,7 @@ use tidb_tablecodec::{
 use tidb_txnkv::Key;
 
 use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-use crate::storage::StorageError;
+use crate::storage::{StorageError, TableStorage};
 
 use super::{datum_text, KvIndex, KvTable, KvTableError, TableHandle};
 
@@ -47,6 +47,40 @@ pub(crate) struct IndexEntryForCheck {
     pub(crate) key: Vec<u8>,
     pub(crate) value: Vec<u8>,
     pub(crate) handle: TableHandle,
+}
+
+pub(super) struct UniquePointRead {
+    physical_ids: Vec<i64>,
+    index_id: i64,
+    encoded: Vec<u8>,
+}
+
+impl UniquePointRead {
+    pub(super) fn get(
+        self,
+        store: &mut dyn TableStorage,
+    ) -> Result<Option<TableHandle>, KvTableError> {
+        for physical_id in self.physical_ids {
+            let key = Key::from_bytes(encode_index_seek_key(
+                physical_id,
+                self.index_id,
+                &self.encoded,
+            ));
+            match store.get(&key) {
+                Ok(entry) => {
+                    let handle = decode_handle_in_index_value(&entry)
+                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                    let handle = handle.ok_or_else(|| {
+                        KvTableError::Decode("index value contains no handle".to_owned())
+                    })?;
+                    return Ok(Some(convert_handle(&handle)));
+                }
+                Err(StorageError::NotFound) => {}
+                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl KvTable {
@@ -650,11 +684,22 @@ impl KvTable {
         values: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Option<TableHandle>, KvTableError> {
+        match self.unique_point_read(index_id, values, zone)? {
+            Some(read) => read.get(self.store.as_mut()),
+            None => Ok(None),
+        }
+    }
+
+    pub(super) fn unique_point_read(
+        &self,
+        index_id: i64,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<UniquePointRead>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
             .find(|index| index.id == index_id)
-            .cloned()
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
@@ -679,22 +724,11 @@ impl KvTable {
         } else {
             self.record_physical_ids()
         };
-        for physical_id in physical_ids {
-            let key = Key::from_bytes(encode_index_seek_key(physical_id, index.id, &encoded));
-            match self.store.get(&key) {
-                Ok(entry) => {
-                    let handle = decode_handle_in_index_value(&entry)
-                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                    let handle = handle.ok_or_else(|| {
-                        KvTableError::Decode("index value contains no handle".to_owned())
-                    })?;
-                    return Ok(Some(convert_handle(&handle)));
-                }
-                Err(StorageError::NotFound) => {}
-                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
-            }
-        }
-        Ok(None)
+        Ok(Some(UniquePointRead {
+            physical_ids,
+            index_id: index.id,
+            encoded,
+        }))
     }
 
     /// Resolves several distinct unique-index keys through one storage
