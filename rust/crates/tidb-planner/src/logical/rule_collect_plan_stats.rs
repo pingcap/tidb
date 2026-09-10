@@ -61,6 +61,11 @@ pub trait StatisticsLoadRequester {
     /// Waits at Go `SyncWaitStatsLoadPoint`, after the intervening logical
     /// rules have had a chance to run while the workers load in parallel.
     fn wait(&self) -> Result<(), PlanError>;
+
+    /// Attach the loaded snapshot before join reorder derives path costs.
+    fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
+        plan
+    }
 }
 
 /// Go `SyncWaitStatsLoadPoint`.
@@ -76,6 +81,7 @@ impl LogicalOptRule for SyncWaitStatsLoadPoint {
             if let Err(error) = requester.wait() {
                 return Err((plan, error));
             }
+            return Ok((requester.initialize(plan), false));
         }
         Ok((plan, false))
     }
@@ -118,6 +124,11 @@ struct InterestingColumnsDown {
 struct InterestingColumnPruner {
     threshold: i32,
     kept_index_ids: HashMap<i64, HashSet<i64>>,
+}
+
+/// Recompute Go's asked-group NDVs after attaching a loaded table histogram.
+pub fn refresh_source_group_ndvs(source: &mut DataSource) {
+    InterestingColumnPruner::refresh_group_ndvs(source);
 }
 
 impl InterestingColumnPruner {
@@ -1028,6 +1039,7 @@ mod tests {
         struct Requester {
             requests: Cell<usize>,
             waits: Cell<usize>,
+            initializations: Cell<usize>,
         }
 
         impl StatisticsLoadRequester for Requester {
@@ -1040,12 +1052,19 @@ mod tests {
                 self.waits.set(self.waits.get() + 1);
                 Ok(())
             }
+
+            fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
+                assert_eq!(self.waits.get(), 1);
+                self.initializations.set(self.initializations.get() + 1);
+                plan
+            }
         }
 
         let allocator = PlanIdAllocator::new();
         let requester = Requester {
             requests: Cell::new(0),
             waits: Cell::new(0),
+            initializations: Cell::new(0),
         };
         let mut context = test_context(&allocator);
         context.statistics_load = Some(&requester);
@@ -1056,10 +1075,12 @@ mod tests {
             .expect("start statistics load");
         assert_eq!(requester.requests.get(), 1);
         assert_eq!(requester.waits.get(), 0);
+        assert_eq!(requester.initializations.get(), 0);
         SyncWaitStatsLoadPoint
             .optimize(&context, plan)
             .expect("wait for statistics load");
         assert_eq!(requester.waits.get(), 1);
+        assert_eq!(requester.initializations.get(), 1);
     }
 
     #[test]

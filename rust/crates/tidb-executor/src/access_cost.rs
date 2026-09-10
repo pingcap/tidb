@@ -501,12 +501,9 @@ fn index_row_count(
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
         return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
-    // Go `IndexStatsIsInvalid` (`pkg/statistics/index.go:132`): an index whose
-    // statistics are not fully loaded is INVALID for estimation -- the pseudo
-    // formula below answers this call -- and the index is queued into
-    // `AsyncLoadHistogramNeededItems` so the domain's async loader can fetch
-    // the real histogram for later statements. Without the enqueue, an evicted
-    // index stays pseudo forever.
+    // Go `IndexStatsIsInvalid` queues incomplete statistics for loading, but
+    // rejects estimation only when the object is missing or TotalRowCount is
+    // zero. A load-status flag alone does not make a retained payload invalid.
     //
     // `trigger_load` is false only for the executor's eager precompute, which
     // runs before `CollectPredicateColumnsPoint` has pruned the paths; that
@@ -522,8 +519,12 @@ fn index_row_count(
             true,
         );
     }
-    let Some(index_stats) = stats.indexes.get(&index.id) else {
-        // A table WITH statistics whose index was never analyzed: Go's
+    let Some(index_stats) = stats
+        .indexes
+        .get(&index.id)
+        .filter(|index| index.total_row_count() != 0.0)
+    else {
+        // A table WITH statistics whose index has no usable payload: Go's
         // `GetRowCountByIndexRanges` (`row_count_index.go:57`) first tries
         // the index columns' OWN histograms
         // (`getPseudoRowCountWithPartialStats`) and only a path with no
@@ -4284,6 +4285,34 @@ mod index_async_load_queue_tests {
                 .any(|loaded| loaded.table_item_id == item),
             "the unloaded index is queued for the async loader"
         );
+        // Go IndexStatsIsInvalid also rejects a retained metadata-only
+        // object: TotalRowCount() == 0, not merely a missing map entry.
+        stats.indexes.insert(
+            7,
+            IndexStats {
+                histogram: tidb_stats::Histogram {
+                    id: 7,
+                    ndv: 10,
+                    ..Default::default()
+                },
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                num_columns: 1,
+                unique: false,
+            },
+        );
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::all_evicted());
+        let ranges = [IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(1)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let estimate = index_row_count(&index, &table, &ranges, Some(&stats), 10.0, true);
+        assert_eq!(estimate.est, pseudo_index_row_count(&index, &ranges, 10.0));
         needed.delete(item);
     }
 

@@ -1105,36 +1105,53 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
     true
 }
 
-/// The basic index-prefix arm of Go `matchProperty` (`find_best_task.go:1095`):
-/// the required order matches an index when every sort item is the same
-/// direction (`AllSameOrder`) and the items follow the index's columns,
-/// mapped to unique ids through the source's schema (an index column's
-/// `Offset` addresses the TABLE column list, which is the scan's schema
-/// order). Index columns fixed to one constant by access conditions may be
-/// skipped, matching Go's `path.ConstCols` case.
-/// Go `DataSource.IsSingleScan` (`logical_datasource.go:677`) over the
-/// catalog's offset/name model, in the `ColsRequiringFullLen == nil`
-/// fallback branch this pipeline is always in (column pruning does not fill
-/// that list here): every schema column must be covered by the index or the
-/// handle (`IsIndexCoveringColumns`).
+/// Go `DataSource.IsIndexCoveringColumns`: every output column must be
+/// covered by the index or the row handle.
 ///
-/// `indexCoveringColumn`, ported arm by arm: the int-handle primary key
-/// covers its column (`stateCoveredByIntHandle`); a plain index column
-/// covers only at FULL length (`isIndexColsCoveringCol` refuses a prefix
-/// unless ignoreLen, and this caller never ignores). The common-handle and
-/// new-collation clustered-index arms sit behind the unported
-/// common-handle world and refuse conservatively with it.
+/// Go `indexCoveringColumn`: full-length index parts and row-handle columns
+/// cover the output. V0 common handles cannot restore nonbinary strings under
+/// new collations unless a plain index part also covers the column.
 fn index_path_is_single_scan(
     ds: &crate::logical::DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
 ) -> bool {
-    ds.columns.iter().all(|column| {
-        if ds.pk_is_handle && column.is_primary_key {
+    ds.columns.iter().enumerate().all(|(position, column)| {
+        if (ds.pk_is_handle && column.is_primary_key)
+            || column.id == tidb_model::column::EXTRA_HANDLE_ID
+            || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
+        {
             return true;
         }
-        source_index.columns.iter().any(|index_column| {
-            index_column.length < 0 && index_column.name.eq_ignore_ascii_case(&column.name)
-        })
+        let schema_column = ds
+            .base
+            .base
+            .schema()
+            .and_then(|schema| schema.columns.get(position));
+        let field_type = schema_column.and_then(|column| column.ret_type.as_ref());
+        let full_length = |length: i64| {
+            length == tidb_datatype::UNSPECIFIED_LENGTH
+                || field_type.is_some_and(|field_type| length == field_type.flen())
+        };
+        if source_index.columns.iter().any(|index_column| {
+            full_length(index_column.length) && index_column.name.eq_ignore_ascii_case(&column.name)
+        }) {
+            return true;
+        }
+        let covered_by_handle = schema_column.is_some_and(|column| {
+            ds.common_handle_cols
+                .iter()
+                .zip(&ds.common_handle_lens)
+                .any(|(handle, length)| {
+                    handle.unique_id == column.unique_id && full_length(*length)
+                })
+        });
+        covered_by_handle
+            && !(ds.common_handle_version == 0
+                && tidb_datatype::new_collation_enabled()
+                && field_type.is_some_and(|field_type| {
+                    field_type.eval_type() == tidb_datatype::EvalType::String
+                        && !field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+                }))
     })
 }
 
@@ -4119,6 +4136,18 @@ mod tests {
         ]);
         let task = find_best_task(&prefix, &order_by_b, &mut ctx).expect("answers");
         assert!(task.invalid(), "a prefix column serves no order");
+
+        // Go DataSource.handleCoveringColumn: the secondary index carries
+        // the common primary key even when it is not a declared index part.
+        let LogicalPlan::DataSource(mut common) = narrow else {
+            unreachable!()
+        };
+        common.is_common_handle = true;
+        common.common_handle_cols = vec![common.base.base.schema().unwrap().columns[0].clone()];
+        common.common_handle_lens = vec![-1];
+        assert!(index_path_is_single_scan(&common, &common.indexes[0]));
+        common.common_handle_lens = vec![1];
+        assert!(!index_path_is_single_scan(&common, &common.indexes[0]));
     }
 
     #[test]

@@ -1003,6 +1003,9 @@ impl OwnedRewrite for InitStats<'_> {
         let LogicalPlan::DataSource(source) = node else {
             return Descend::Children(vec![(); node.children().len()]);
         };
+        source.base.base.set_stats(None);
+        source.table_path_count_after_access = None;
+        source.index_path_count_after_access.clear();
         // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
         // static-pruning child owns one physical partition's statistics,
         // while an ordinary/dynamic source keeps the logical table ID here.
@@ -1106,13 +1109,6 @@ impl OwnedRewrite for InitStats<'_> {
             .collect::<Vec<_>>();
         // Go `HistColl.Indices`' NDVs feed `getGroupNDVs`, which matches an
         // index's whole column list against a source's asked column groups.
-        let planned_columns = source
-            .base
-            .base
-            .schema()
-            .into_iter()
-            .flat_map(|schema| &schema.columns)
-            .collect::<Vec<_>>();
         let index_ndvs = source
             .indexes
             .iter()
@@ -1125,8 +1121,8 @@ impl OwnedRewrite for InitStats<'_> {
                     .columns
                     .iter()
                     .filter_map(|column| {
-                        planned_columns
-                            .get(column.offset)
+                        source
+                            .schema_column_for_index_column(column)
                             .map(|planned| planned.unique_id)
                     })
                     .collect::<Vec<_>>();
@@ -1277,10 +1273,18 @@ impl OwnedRewrite for InitStats<'_> {
             has_partition_scan: false,
             has_index_force: false,
         };
+        tidb_planner::logical::rule_collect_plan_stats::refresh_source_group_ndvs(source);
         Descend::Stop(())
     }
 
-    fn ascend(&mut self, node: LogicalPlan, _children: Vec<Self::Up>) -> (LogicalPlan, Self::Up) {
+    fn ascend(
+        &mut self,
+        mut node: LogicalPlan,
+        _children: Vec<Self::Up>,
+    ) -> (LogicalPlan, Self::Up) {
+        if !matches!(node, LogicalPlan::DataSource(_)) {
+            node.set_stats(None);
+        }
         (node, ())
     }
 }
@@ -1990,6 +1994,8 @@ fn optimize_built_logical(
     struct PlannerStatisticsLoad<'a> {
         catalog: &'a Catalog,
         context: &'a crate::StmtContext,
+        select: Option<&'a tidb_ast::SelectStmt>,
+        zone: &'a tidb_expr::SessionTimeZone,
     }
 
     impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
@@ -2011,6 +2017,30 @@ fn optimize_built_logical(
 
         fn wait(&self) -> Result<(), tidb_planner::plan_base::PlanError> {
             self.catalog.wait_statistics_load(self.context)
+        }
+
+        fn initialize(&self, plan: LogicalPlan) -> LogicalPlan {
+            fold_owned(
+                &mut InitStats {
+                    range_context: crate::index_range::RangeContext {
+                        max_size: self.context.range_max_size(),
+                        fallback_handler: Some(self.context.range_fallback_handler()),
+                    },
+                    catalog: self.catalog,
+                    select: self.select,
+                    default_string_match_selectivity: self
+                        .context
+                        .default_string_match_selectivity(),
+                    selectivity_factor: self.context.selectivity_factor(),
+                    enable_pseudo_for_outdated_stats: self
+                        .context
+                        .enable_pseudo_for_outdated_stats(),
+                    zone: self.zone,
+                },
+                plan,
+                (),
+            )
+            .0
         }
     }
 
@@ -2058,6 +2088,8 @@ fn optimize_built_logical(
     let statistics_load = PlannerStatisticsLoad {
         catalog,
         context: ctx,
+        select: select_hint,
+        zone: session_zone,
     };
     let partition_pruning = PlannerPartitionPruning {
         catalog,
@@ -2101,21 +2133,9 @@ fn optimize_built_logical(
     // join reorder derives candidate statistics while logical optimization
     // is still running. Attach real-or-pseudo base statistics before entering
     // that rule list, rather than delaying them until physical optimization.
-    let (plan, ()) = fold_owned(
-        &mut InitStats {
-            range_context: crate::index_range::RangeContext {
-                max_size: ctx.range_max_size(),
-                fallback_handler: Some(ctx.range_fallback_handler()),
-            },
-            catalog,
-            select: select_hint,
-            default_string_match_selectivity: ctx.default_string_match_selectivity(),
-            selectivity_factor: ctx.selectivity_factor(),
-            enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
-            zone: session_zone,
-        },
+    let plan = tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
+        &statistics_load,
         plan,
-        (),
     );
     // Go's `LogicalCTE.DeriveStats` optimizes its CTE class the first time a
     // logical rule asks the producer for statistics, which happens DURING
@@ -2136,30 +2156,9 @@ fn optimize_built_logical(
     let mut optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
         .plan;
-    // Go initializes each DataSource's statistics after static partition
-    // processing has replaced the logical table ID with one physical
-    // partition ID. Rust initializes once before logical rules so join
-    // reorder can cost its inputs; static pruning therefore needs this
-    // source-equivalent second pass for the newly created children.
-    if ctx.static_partition_prune() {
-        optimized = fold_owned(
-            &mut InitStats {
-                range_context: crate::index_range::RangeContext {
-                    max_size: ctx.range_max_size(),
-                    fallback_handler: Some(ctx.range_fallback_handler()),
-                },
-                catalog,
-                select: select_hint,
-                default_string_match_selectivity: ctx.default_string_match_selectivity(),
-                selectivity_factor: ctx.selectivity_factor(),
-                enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
-                zone: session_zone,
-            },
-            optimized,
-            (),
-        )
-        .0;
-    }
+    // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
+    // sources from the loaded snapshot before join reorder. No partition-only
+    // reinitialization or pre-load access-path estimates survive here.
     optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
     if !ctx.static_partition_prune() {
         attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;

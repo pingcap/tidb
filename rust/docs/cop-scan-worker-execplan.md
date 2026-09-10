@@ -2,9 +2,9 @@
 
 This living ExecPlan follows root PLANS.md. Preserve the full sysbench/TPC-C
 throughput and latency objective. Earlier increments improve measured sysbench
-throughput and CPU use. The current increment restores missing pessimistic row
-locking so TPC-C validation is meaningful; it makes no performance or
-whole-Go-package completion claim.
+throughput and CPU use and restore pessimistic row locking. The current increment
+aligns index coverage and statistics initialization with Go; it makes no
+performance or whole-Go-package completion claim.
 
 
 ## Purpose / Big Picture
@@ -18,6 +18,28 @@ then validating TPC-C and mixed writes. CPU savings alone are insufficient.
 
 ## Progress
 
+- [x] Profile the corrected 2f292578af binary and Go on both sysbench and TPC-C,
+  with fixed-work timing separated from CPU/native captures. Artifact root:
+  /private/tmp/tidb-post-lock-profile.VGAM1f. Treat shared-host timings as
+  diagnostic while mediaanalysisd is active; select edits from measured call chains.
+- [x] Compare cold and warm plans with Go: the customer secondary index should
+  cover the common handle; Rust instead requires a table lookup. Cold metadata-only
+  primary histograms also reach estimation despite Go's TotalRowCount()==0 gate.
+  Both source-backed regression checks fail before the two edits and pass after.
+- [x] Validate the generic histogram-validity and common-handle coverage fixes
+  with cold/warm real-TiKV plans, exact Go result comparisons, fixed-work sysbench
+  and TPC-C consistency checks. Do not accept shared-host timing as a speedup.
+- [x] Cold real-TiKV plans expose stale pre-load access estimates after the
+  first two fixes. Initialize from the loaded snapshot at SyncWaitStatsLoadPoint,
+  before join reorder, clear obsolete estimates, and remove the partition-only
+  refresh. Resolve index NDV columns against the pruned schema by identity.
+- [x] Candidate and unmodified 01a0087a34 both pass 178 executor and 36 planner
+  cases, with the same five executor failures. Release build, Ready lint and
+  formatting pass. Two cold/warm candidate runs return Go-equivalent query rows,
+  complete 24,000 TPC-C transactions with all 11 postchecks, and keep sysbench
+  error-free. Record diagnostic before/after timings and limits in
+  benchmarks/index-path-statistics-validation.json. Stop all owned services and
+  verify PIDs absent and ports closed before publication.
 - [x] Attribute the remaining merged-code profile to source: every statement
   rebuilds all catalog names for sequence resolution (1.877s sampled CPU in an
   eight-second trace), absent from the faster control's hot paths.
@@ -156,6 +178,13 @@ commit history stores CatalogSnapshot data without back-references to its ring.
 
 ## Decision Log
 
+Decision (2026-09-10, cold access paths): follow Go IndexStatsIsInvalid's
+missing-or-zero-payload rule, not a stricter load-status gate. Common-handle
+columns can cover a secondary index subject to Go's length/collation rules.
+Refresh source estimates at the existing statistics-wait rule, before join
+reorder; reuse that initializer for static partitions and invalidate old costs.
+Do not force indexes or change workload SQL to obtain the desired plans.
+
 Decision (2026-09-10, physical locking): restore the missing Go planner and
 executor connection, not a TPC-C query special case or a storage scan heuristic.
 Go buildSelectLock runs before projection/aggregation; optimizer TopN pushdown
@@ -216,6 +245,15 @@ bounded range. Region boundaries explain those tasks; they are not redundant.
 
 
 ## Surprises & Discoveries
+
+The post-lock profile exposes substantial Sort/TableScan CPU in Rust TPC-C.
+Go uses a covering idx_customer range for customer-name lookup and an ordered
+idx_order lookup for order status. On a fresh Rust server the customer table
+prefix estimates one row despite containing 3,000. A later query after histogram
+loading estimates 3,000 correctly. Fixing coverage and empty payloads alone
+leaves order status on the wrong cold plan: InitStats had copied its access costs
+before the load completed. Evidence: plans-repeat.log and root-live.log under
+/private/tmp/tidb-post-lock-profile.VGAM1f.
 
 The current statement-context probe is in
 /private/tmp/tidb-execution-attribution.blT99K. It reuses the immutable final/control
@@ -430,6 +468,17 @@ checkout; selected SQL equality does not establish full source parity.
 
 
 ## Outcomes & Retrospective
+
+The index-path increment restores Go's customer covering read and ordered
+order-status lookup on the first query, not just after statistics have warmed.
+Both fresh servers estimate the customer index at Go's 8.85 rows. Existing
+prefix/key/join/aggregation tests show no new failures against unmodified upstream;
+five existing failures remain listed in the receipt. Diagnostic TPC-C eight-client
+trials take 6.18/6.69 seconds versus the prior binary's 11.12 seconds for 6,000
+transactions. This is not an accepted baseline change: the host is shared, the
+fixture grows, and the candidate also contains collaborator changes. Full workload
+performance and package parity remain open. Exact commands and hashes are in
+benchmarks/index-path-statistics-validation.json.
 
 Post-merge root-fix evidence is under /private/tmp/tidb-counter-window.jbkXVN.
 PD close tests fail twice before the production change (SharedOwners) and pass
