@@ -1250,6 +1250,8 @@ impl KvTable {
         context: &crate::StmtContext,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
         if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
@@ -1319,8 +1321,8 @@ impl KvTable {
             limit: None,
             paging_min_size: None,
             aggregate: Some(remote_aggregate),
-            desc: false,
-            keep_order: false,
+            desc,
+            keep_order,
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
             snapshot_ts: 0,
@@ -1353,6 +1355,8 @@ impl KvTable {
         context: &crate::StmtContext,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
+        desc: bool,
+        keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
         // Go's `PhysicalIndexReader.ToPB` names the clustered primary's
         // column ids on the index scan and appends those key columns to the
@@ -1521,7 +1525,7 @@ impl KvTable {
                 index_id,
                 declared_unique,
                 index_column_count: index.column_offsets.len(),
-                desc: false,
+                desc,
             }),
             columns,
             handle_index: None,
@@ -1537,8 +1541,8 @@ impl KvTable {
             limit: None,
             paging_min_size: None,
             aggregate: Some(remote_aggregate),
-            desc: false,
-            keep_order: false,
+            desc,
+            keep_order,
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
             snapshot_ts: 0,
@@ -4376,6 +4380,8 @@ impl Executor for TableScanExec {
                     context,
                     self.decode_context.zone(),
                     &self.statement,
+                    self.descending,
+                    self.keep_order,
                 )
                 .map_err(ExecError::from)?;
             if self.partial_remote.is_some() {
@@ -5353,6 +5359,8 @@ mod remote_cursor_tests {
             &crate::StmtContext::default(),
             &tidb_datatype::SessionTimeZone::utc(),
             &statement,
+            true,
+            true,
         );
         // The capture store declines to serve, so the builder reports no
         // cursor -- but only AFTER the request was built and recorded.
@@ -5365,6 +5373,12 @@ mod remote_cursor_tests {
             .expect("the aggregate request was built");
         let index = request.index.as_ref().expect("an index scan request");
         assert_eq!(index.index_id, 5);
+        assert!(index.desc, "Go IndexScan.ToPB retains the scan direction");
+        assert!(request.desc, "Go SetDesc orders the region tasks");
+        assert!(
+            request.keep_order,
+            "Go SetKeepOrder preserves region results"
+        );
         assert_eq!(
             request.primary_column_ids,
             vec![1, 2],
@@ -5376,6 +5390,28 @@ mod remote_cursor_tests {
             vec![3, 1, 2],
             "handle columns ride after the indexed columns, Go InitSchema order"
         );
+
+        // TableReader uses the same request-level flags as IndexReader.
+        for (desc, keep_order) in [(true, true), (false, true), (false, false)] {
+            assert!(table
+                .pushdown_partial_aggregate_cursor(
+                    &[0, 1, 2],
+                    &[],
+                    None,
+                    &aggregate,
+                    &crate::StmtContext::default(),
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    &statement,
+                    desc,
+                    keep_order,
+                )
+                .unwrap()
+                .is_none());
+            let request = captured.lock().unwrap().clone().expect("table request");
+            assert!(request.index.is_none());
+            assert_eq!(request.desc, desc);
+            assert_eq!(request.keep_order, keep_order);
+        }
     }
 
     #[test]

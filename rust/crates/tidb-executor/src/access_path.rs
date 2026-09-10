@@ -1369,6 +1369,9 @@ pub struct IndexRangeSourceExec {
     /// which sorts the batch back into index order after reading it. See the
     /// type doc.
     can_reorder_handles: bool,
+    /// Go's PhysicalIndexScan.KeepOrder, independent of whether this source
+    /// reads covering index entries or reorders table lookup handles.
+    keep_order: bool,
     /// Go's `PhysicalIndexScan.Desc`: the matching index range is walked from
     /// its exclusive high key toward its low key.
     descending: bool,
@@ -1672,6 +1675,7 @@ impl IndexRangeSourceExec {
             skipped_handles: 0,
             limit_scanned_keys: 0,
             can_reorder_handles: true,
+            keep_order: false,
             descending: false,
             covering: false,
             extra_handle_slot: None,
@@ -3146,6 +3150,8 @@ impl Executor for IndexRangeSourceExec {
                     context,
                     self.decode_context.zone(),
                     &self.statement,
+                    self.descending,
+                    self.keep_order,
                 )
                 .map_err(|error| {
                     ExecError::unsupported(format!("index aggregate request failed: {error:?}"))
@@ -3819,6 +3825,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// handle order; see the type doc.
     fn accept_keep_order(&mut self, descending: bool) -> bool {
         self.can_reorder_handles = false;
+        self.keep_order = true;
         self.descending = descending;
         true
     }

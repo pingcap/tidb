@@ -67,6 +67,66 @@ fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
             );
         }
     }
+
+    // Go's aggregation hint/property search must retain a forced HashAgg
+    // even when an index can supply a cheaper ordered StreamAgg.
+    crate::run_create_table_on(
+        "CREATE TABLE hinted_order (g BIGINT, v BIGINT, INDEX g_idx(g))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hinted_order VALUES (2,20),(1,10),(2,21),(3,30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (hint, aggregate, direction, expected) in [
+        ("HASH_AGG", "HashAgg", "ASC", vec![1, 2, 3]),
+        ("HASH_AGG", "HashAgg", "DESC", vec![3, 2, 1]),
+        ("STREAM_AGG", "StreamAgg", "ASC", vec![1, 2, 3]),
+        ("STREAM_AGG", "StreamAgg", "DESC", vec![3, 2, 1]),
+    ] {
+        let sql = format!(
+            "SELECT /*+ {hint}() */ g, COUNT(*) FROM hinted_order GROUP BY g ORDER BY g {direction}"
+        );
+        assert_eq!(
+            run_select_on(&sql, &catalog, &ctx).unwrap(),
+            expected
+                .into_iter()
+                .map(|g| vec![Datum::Int(g), Datum::Int(if g == 2 { 2 } else { 1 })])
+                .collect::<Vec<_>>()
+        );
+        let Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
+            panic!("a query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("a SELECT");
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        let names = rows
+            .iter()
+            .filter_map(|row| match &row[0] {
+                Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let agg = names
+            .iter()
+            .position(|name| name.contains(aggregate))
+            .unwrap_or_else(|| panic!("{sql}: {names:?}"));
+        if hint == "HASH_AGG" {
+            assert!(
+                names[..agg].iter().any(|name| name.contains("Sort")),
+                "{names:?}"
+            );
+            assert!(
+                !names.iter().any(|name| name.contains("StreamAgg")),
+                "{names:?}"
+            );
+        }
+    }
 }
 
 #[test]

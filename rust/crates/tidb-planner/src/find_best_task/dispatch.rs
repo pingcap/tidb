@@ -32,9 +32,6 @@
 //!
 //! # Narrowings, each naming its Go symbol
 //!
-//! * `applyLogicalHintVarEigen`: join hints are applied after child tasks
-//!   attach, matching Go's `applyLogicalJoinHint`; TopN/Limit and
-//!   aggregation hints remain outside this dispatcher.
 //! * `checkOpSelfSatisfyPropTaskTypeRequirement` and the MPP property
 //!   fields the enforcer branch resets: no TiFlash tier.
 //! * `optimizeByShuffle`: the TiDB-side parallel shuffle rewrite is an
@@ -350,13 +347,16 @@ fn exhaust_physical_plans(
     plan: &LogicalPlan,
     prop: &PhysicalProperty,
     ctx: &DispatchContext<'_>,
-) -> Result<Vec<Vec<PhysicalPlan>>, PlanError> {
-    let one = |plans: Vec<PhysicalPlan>| -> Vec<Vec<PhysicalPlan>> {
-        if plans.is_empty() {
+) -> Result<(Vec<Vec<PhysicalPlan>>, bool), PlanError> {
+    // Go also returns hintWorksWithProp: candidates may exist while none
+    // satisfies the hint. The caller then retries with an enforced order.
+    let one = |plans: Vec<PhysicalPlan>| {
+        let slices = if plans.is_empty() {
             Vec::new()
         } else {
             vec![plans]
-        }
+        };
+        (slices, true)
     };
     match plan {
         LogicalPlan::Selection(op) => {
@@ -424,7 +424,7 @@ fn exhaust_physical_plans(
             // refuses as an EMPTY slice here, named; the LIMIT half rides
             // the keep-order paths (`getPhysLimits`).
             if !physical::match_items(prop, &op.by_items) {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), true));
             }
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
@@ -437,7 +437,7 @@ fn exhaust_physical_plans(
             if !limits.is_empty() {
                 slices.push(limits);
             }
-            Ok(slices)
+            Ok((slices, true))
         }
         LogicalPlan::Window(op) => Ok(one(physical::exhaust_physical_plans_4_logical_window(
             op,
@@ -456,21 +456,16 @@ fn exhaust_physical_plans(
             if !hash_aggs.is_empty()
                 && op.prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0
             {
-                return Ok(vec![hash_aggs]);
+                return Ok((vec![hash_aggs], true));
             }
             let stream_aggs = physical::get_stream_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
             if !stream_aggs.is_empty()
                 && op.prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0
             {
-                return Ok(vec![stream_aggs]);
+                return Ok((vec![stream_aggs], true));
             }
             hash_aggs.extend(stream_aggs);
-            let aggs = hash_aggs;
-            Ok(if aggs.is_empty() {
-                Vec::new()
-            } else {
-                vec![aggs]
-            })
+            Ok((one(hash_aggs).0, op.prefer_agg_type == 0))
         }
         LogicalPlan::Join(op) => {
             use crate::find_best_task::JoinStrategy;
@@ -664,7 +659,27 @@ fn exhaust_physical_plans(
                 };
                 joins.push(physical);
             }
-            Ok(one(joins))
+            // Go returns a forced HashJoin/MergeJoin family immediately.
+            // IndexJoin hints remain undecided until the inner task builds.
+            for hash in [true, false] {
+                if joins.iter().any(|candidate| {
+                    (if hash {
+                        matches!(candidate, PhysicalPlan::HashJoin(_))
+                    } else {
+                        matches!(candidate, PhysicalPlan::MergeJoin(_))
+                    }) && logical_join_hint_applies(plan, candidate)
+                }) {
+                    joins.retain(|candidate| {
+                        if hash {
+                            matches!(candidate, PhysicalPlan::HashJoin(_))
+                        } else {
+                            matches!(candidate, PhysicalPlan::MergeJoin(_))
+                        }
+                    });
+                    return Ok(one(joins));
+                }
+            }
+            Ok((one(joins).0, op.prefer_join_type == 0))
         }
         LogicalPlan::Apply(op) => {
             // Go `exhaustPhysicalPlans4LogicalApply`: Apply can preserve only
@@ -682,7 +697,7 @@ fn exhaust_physical_plans(
                         .any(|column| column.unique_id == item.col.unique_id)
                 })
             {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), true));
             }
 
             let outer_rows = plan
@@ -922,10 +937,6 @@ fn find_best_task_uncached(
     }
 
     let mut can_add_enforcer = prop.can_add_enforcer;
-    // An unhinted enumeration always answers hintWorksWithProp = true, so
-    // Go's !hintWorksWithProp trigger cannot fire; the narrowed condition
-    // is exactly the caller's CanAddEnforcer.
-    let _ = &mut can_add_enforcer;
 
     let mut new_prop = prop.clone_essential_fields();
     // Go restores `IndexJoinProp` immediately after
@@ -933,21 +944,48 @@ fn find_best_task_uncached(
     // operator-specific `admitIndexJoinProp(s)` functions then decide which
     // child may inherit it.
     new_prop.index_join_prop = prop.index_join_prop.clone();
-    let plans_fits_prop = exhaust_physical_plans(plan, &new_prop, ctx)?;
+    let (mut plans_fits_prop, hint_works_with_prop) = exhaust_physical_plans(plan, &new_prop, ctx)?;
+    if !hint_works_with_prop && !new_prop.is_sort_item_empty() && new_prop.index_join_prop.is_none()
+    {
+        can_add_enforcer = true;
+    }
 
     let plans_need_enforce = if can_add_enforcer {
-        let mut empty = new_prop.clone_essential_fields();
+        let mut empty = new_prop;
         empty.sort_items = Vec::new();
         empty.sort_items_for_partition = Vec::new();
         empty.expected_cnt = f64::MAX;
-        exhaust_physical_plans(plan, &empty, ctx)?
+        empty.mpp_partition_cols.clear();
+        empty.mpp_partition_tp = Default::default();
+        let (mut enforced, hint_can_work) = exhaust_physical_plans(plan, &empty, ctx)?;
+        // IndexJoin hint applicability is known only after child tasks build.
+        let contains_index_join = |slices: &[Vec<PhysicalPlan>]| {
+            slices
+                .iter()
+                .flatten()
+                .any(|p| matches!(p, PhysicalPlan::IndexJoin(_)))
+        };
+        if !contains_index_join(&plans_fits_prop) && !contains_index_join(&enforced) {
+            if hint_can_work && !hint_works_with_prop {
+                plans_fits_prop.clear();
+            }
+            if !hint_can_work && !hint_works_with_prop && !prop.can_add_enforcer {
+                enforced.clear();
+            }
+        }
+        enforced
     } else {
         Vec::new()
     };
 
-    let best_task = enumerate_physical_plans_4_task(plan, &plans_fits_prop, prop, false, ctx)?;
-    let cur_task = enumerate_physical_plans_4_task(plan, &plans_need_enforce, prop, true, ctx)?;
-    if compare_task_cost(ctx.coster, &cur_task, &best_task)? {
+    let (best_task, preferred) =
+        enumerate_physical_plans_4_task(plan, &plans_fits_prop, prop, false, ctx)?;
+    if preferred && !best_task.invalid() {
+        return Ok(best_task);
+    }
+    let (cur_task, preferred) =
+        enumerate_physical_plans_4_task(plan, &plans_need_enforce, prop, true, ctx)?;
+    if (preferred && !cur_task.invalid()) || compare_task_cost(ctx.coster, &cur_task, &best_task)? {
         return Ok(cur_task);
     }
     Ok(best_task)
@@ -3217,9 +3255,9 @@ fn enumerate_physical_plans_4_task(
     prop: &PhysicalProperty,
     add_enforcer: bool,
     ctx: &mut DispatchContext<'_>,
-) -> Result<Task, PlanError> {
+) -> Result<(Task, bool), PlanError> {
     if physical_plans_slice.is_empty() {
-        return Ok(Task::invalid_task());
+        return Ok((Task::invalid_task(), false));
     }
     let mut outer_normal_task = Task::invalid_task();
     let mut outer_hint_task = Task::invalid_task();
@@ -3318,9 +3356,9 @@ fn enumerate_physical_plans_4_task(
         }
     }
     if outer_hint_task.invalid() {
-        Ok(outer_normal_task)
+        Ok((outer_normal_task, false))
     } else {
-        Ok(outer_hint_task)
+        Ok((outer_hint_task, true))
     }
 }
 
@@ -3752,7 +3790,7 @@ mod tests {
                 )],
                 ..LogicalJoin::default()
             });
-            let candidates =
+            let (candidates, _) =
                 exhaust_physical_plans(&join, &PhysicalProperty::default(), &ctx).unwrap();
             let mut checked = 0;
             for candidate in candidates.iter().flatten() {
@@ -4958,6 +4996,26 @@ mod tests {
         };
         let task = find_best_task(&agg, &prop, &mut ctx).expect("plans");
         let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::Sort(_)), "got {plan:?}");
+        assert!(matches!(
+            plan.children().first(),
+            Some(PhysicalPlan::HashAgg(_))
+        ));
+
+        // Go findBestTask retries without the order when the hint cannot
+        // satisfy it, even if the parent did not permit an enforcer.
+        let prop = PhysicalProperty {
+            can_add_enforcer: false,
+            ..prop
+        };
+        assert!(find_best_task(&agg, &prop, &mut ctx).unwrap().invalid());
+        let LogicalPlan::Aggregation(mut hinted) = agg.clone() else {
+            unreachable!();
+        };
+        hinted.prefer_agg_type = crate::expression_rewriter::PREFER_HASH_AGG;
+        let hinted = LogicalPlan::Aggregation(hinted);
+        let task = find_best_task(&hinted, &prop, &mut ctx).expect("hinted plans");
+        let plan = task.plan().expect("HASH_AGG requires a sorted hash plan");
         assert!(matches!(plan, PhysicalPlan::Sort(_)), "got {plan:?}");
         assert!(matches!(
             plan.children().first(),
