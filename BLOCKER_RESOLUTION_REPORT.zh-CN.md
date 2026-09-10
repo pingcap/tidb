@@ -1,5 +1,43 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 unistore LIKE escape 按协议整数求值
+
+`auto_analyze_fills_missing_partition_statistics_like_go` 的两条自动任务已经
+正确写入并 finished，但带 LIKE 过滤的 COUNT 为 0。探针显示 SELECT 投影
+中的 LIKE 对两行均返回 1；WHERE 下推到 cop Selection 后却不匹配。
+证据 `/tmp/missing-partitions-{jobs-red,filter-probe}.log`。
+
+根因是 Rust unistore `SimpleSig::Like` 用 eval_bytes 读取 escape，而 protobuf
+实际携带整数 92，导致表达式返回 NULL。Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+`pkg/expression/builtin_like.go:77,85,94` 使用 EvalInt 后取 byte(escape)。
+Rust protobuf 生产端 `tidb-expr/src/pb_predicate.rs::string_like_to_pb`
+已经正确编码整数，无需修改。
+
+修复 unistore 第三个参数走整数求值，保留 NULL 并传播错误，以低八位作为
+escape。旧单测错误地传入字符串反斜杠，现改为协议真实的 Int(92)，修复前
+None != Some(1)，`/tmp/cop-like-escape-red.log`。额外检查 Int(348) 的 byte
+截断和 NULL；保留大小写 collation、转义百分号正反匹配。原始 server SQL
+断言不变，完整通过；临时探针已全部删除。
+
+Ready 验证：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-unistore --lib
+# 160 passed / 13 既有 ignored，2.01 秒，/tmp/cop-like-unistore-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib auto_analyze_fills_missing_partition_statistics_like_go
+# 1 passed，3.94 秒，/tmp/missing-partitions-jobs-green.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/cop-like-{fmt,lint}.log
+```
+
+完整 server 回归 **425 passed / 9 failed**，44.76 秒，
+`/tmp/server-cop-like-baseline.log`；原始自动分析分区用例通过。
+本修改只修复 escape 类型契约，未声称补齐现有 LIKE 的所有 Unicode/collation
+语义或完成整个 Go expression package；其他失败和外部集成门禁继续推进。
+
 ## 2026-09-11 历史统计 GC 使用与写入相同的本地 DATETIME
 
 `clear_outdated_history_stats_uses_the_go_retention_duration` 独立复现：

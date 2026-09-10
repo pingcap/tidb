@@ -4773,8 +4773,9 @@ pub fn eval_expr(
                         eval_bytes(children.first(), row, div_precision_increment, time_zone);
                     let pattern =
                         eval_bytes(children.get(1), row, div_precision_increment, time_zone);
-                    let escape =
-                        eval_bytes(children.get(2), row, div_precision_increment, time_zone);
+                    // LikeSig's third argument is ETInt on the wire. Go
+                    // evaluates it with EvalInt and compiles byte(escape).
+                    let escape = child(2)?;
                     let (Some(target), Some(pattern), Some(escape)) = (target, pattern, escape)
                     else {
                         return Ok(None);
@@ -4788,7 +4789,7 @@ pub fn eval_expr(
                             text.to_owned()
                         }
                     };
-                    let escape_char = fold(&escape).chars().next().unwrap_or('\\');
+                    let escape_char = char::from(escape as u8);
                     Some(i128::from(tidb_datatype::like_matches(
                         &fold(&target),
                         &fold(&pattern),
@@ -6246,7 +6247,7 @@ mod tests {
                 vec![
                     SimpleExpr::Column(0),
                     SimpleExpr::Bytes(b"a%".to_vec()),
-                    SimpleExpr::Bytes(b"\\".to_vec()),
+                    SimpleExpr::Int(92),
                 ],
             )
         };
@@ -6267,7 +6268,7 @@ mod tests {
             vec![
                 SimpleExpr::Column(0),
                 SimpleExpr::Bytes(b"100\\%".to_vec()),
-                SimpleExpr::Bytes(b"\\".to_vec()),
+                SimpleExpr::Int(92),
             ],
         );
         assert_eq!(
@@ -6279,6 +6280,17 @@ mod tests {
             eval_expr(&escaped, &row_plain, 4, &zone()).expect("evals"),
             Some(0)
         );
+        for (escape, expected) in [(SimpleExpr::Int(348), Some(1)), (SimpleExpr::Null, None)] {
+            let escaped = SimpleExpr::Func(
+                SimpleSig::Like(46),
+                vec![
+                    SimpleExpr::Column(0),
+                    SimpleExpr::Bytes(b"100\\%".to_vec()),
+                    escape,
+                ],
+            );
+            assert_eq!(eval_expr(&escaped, &row_percent, 4, &zone()), Ok(expected));
+        }
     }
 
     #[test]
