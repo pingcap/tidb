@@ -1,5 +1,25 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 MODIFY/RENAME COLUMN 统计事件同步
+
+独立复现 `modify_column_ddl_recreates_missing_default_statistics_like_go`：
+MODIFY 后 histogram 返回 `[]`，期望 `[["0", "3", "0", "0"]]`，
+1.25 秒失败（`/tmp/modify-column-stats-red.log`）。固定 Go master
+`pkg/statistics/handle/ddl/subscriber.go` 的 ActionModifyColumn 在
+非 analyzed 事件中调用 insertStats4Col；统计初始化发生在事件消费阶段。
+此 fixture 与前述 ADD COLUMN 相同，没有启动统计 owner。
+
+在 CREATE、MODIFY、RENAME 后使用已验证的真实 notifier 消费 helper，
+保留删除原 histogram 后再检查重建及无 bucket 的全部断言。未修改生产
+统计实现、期望值或 golden。完整用例 1 passed，4.26 秒，日志
+`/tmp/modify-column-stats-green.log`。
+
+验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-server --lib
+modify_column_ddl_recreates_missing_default_statistics_like_go -- --nocapture`；
+`make lint` 退出 0（`/tmp/modify-column-stats-lint.log`）；
+`git diff --check` 通过。此项独立关闭，其他失败和 scheduler 等待仍未完成。
+
 ## 2026-09-11 ADD COLUMN 统计测试的事件同步
 
 独立失败 `add_column_ddl_initializes_statistics_like_go` 的根因是测试没有

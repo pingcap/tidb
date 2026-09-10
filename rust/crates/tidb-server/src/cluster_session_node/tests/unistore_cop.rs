@@ -3799,6 +3799,7 @@ fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
         &mut session,
         "CREATE TABLE stats_modify_column (a INT DEFAULT 7)",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     rows(
         &mut session,
         "INSERT INTO stats_modify_column VALUES (DEFAULT),(DEFAULT),(DEFAULT)",
@@ -3861,6 +3862,7 @@ fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_modify_column MODIFY COLUMN a BIGINT",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     assert_recreated(&mut session);
 
     remove_column_stats(&mut session);
@@ -3868,6 +3870,7 @@ fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
         &mut session,
         "ALTER TABLE stats_modify_column RENAME COLUMN a TO b",
     );
+    drain_stats_ddl_events(&stack.factory, &mut session);
     assert_recreated(&mut session);
 }
 
