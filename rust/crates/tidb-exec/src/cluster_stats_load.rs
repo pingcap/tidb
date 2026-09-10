@@ -937,7 +937,7 @@ impl ClusterStatsLoader {
                         )
                     }
                     Some(item)
-                        if !item
+                        if item
                             .read()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .is_full_load() =>
@@ -982,7 +982,7 @@ impl ClusterStatsLoader {
                         Some(item)
                     }
                     Some(item)
-                        if !item
+                        if item
                             .read()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .is_full_load() =>
