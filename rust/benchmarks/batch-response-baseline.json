@@ -118,5 +118,31 @@
     "fixture_retained": "/private/tmp/tidb-live-workload.nIrZBe"
   },
   "not_verified": "No full-workspace test or whole-Go-package parity claim. The earlier planner condition-nine inner-selection failure also reproduces on unchanged a075207030; it is not fixed by this change. The shared-scheduler CPU regression remains open.",
-  "rejected_experiments": "Connection-future grouping and separate I/O driver passed retained tests and live consistency but did not improve overall throughput. Both are fully removed; immutable patches/binaries and results remain in the artifact root."
+  "rejected_experiments": "Connection-future grouping and separate I/O driver passed retained tests and live consistency but did not improve overall throughput. Both are fully removed; immutable patches/binaries and results remain in the artifact root.",
+  "merged_verification": {
+    "build_revision": "eb8966fb8fb5846d5708d164e6dcbf9e9554093d",
+    "upstream_parent": "2cfcc35b46b0867f07231e6017d71f92da8fb299",
+    "preserved_commits": [
+      "12ea885d12 planner: preserve projected group NDVs through statistics refresh",
+      "2cfcc35b46 planner: resolve deep physical plan chains without stack overflow"
+    ],
+    "overlap": "Conflict-free merge; the complete tidb-txnkv subtree is unchanged from e90375f5d6.",
+    "binary": {
+      "path": "/private/tmp/tidb-shared-scheduler.fEsNL7/merged/candidate-server",
+      "sha256": "86fa64c98dde2e2f2c444193b09396a660e5f6c42f4beb4eb6f3a7216d20d32c"
+    },
+    "checks": "Merged release build and Ready lint pass. Four planner tests pass. The executor selection has two passes and the previously documented condition-nine failure at aggregates.rs:2479, grouped IndexJoin inner selection. No assertion changed.",
+    "commands": [
+      "CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-planner -p tidb-executor --lib --no-fail-fast -- projection_preserves_and_refreshes_renamed_group_ndvs deep_chain_walks_and_tears_down_without_recursion resolve_indices_restores_tree_and_stops_after_first_child_error index_join_probe_rows_use_only_the_access_paths_join_keys tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup derived_aggregate_null_filter_refreshes_source_statistics --test-threads=12",
+      "CARGO_BUILD_JOBS=12 cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "ruby /private/tmp/tidb-shared-scheduler.fEsNL7/merged/verify.rb",
+      "ruby /private/tmp/tidb-shared-scheduler.fEsNL7/merged/verify-cleanup.rb"
+    ],
+    "live_verification": "6000 sysbench and 6000 TPC-C measured events with exact work, zero errors, fresh Go-result digest and eleven consistency conditions passing. Smoke validation only, not a new performance comparison.",
+    "auto_analyze_restored": "1",
+    "cleanup": "4 owned PIDs absent; 10 ports closed; fixture retained.",
+    "artifacts": "/private/tmp/tidb-shared-scheduler.fEsNL7/merged",
+    "logs": "/private/tmp/tidb-shared-scheduler.fEsNL7/response/merged-{tests,build,lint}.log"
+  }
 }

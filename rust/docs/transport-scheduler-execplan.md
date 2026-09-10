@@ -35,6 +35,12 @@ of a whole Go package or of the throughput/latency goal.
   ports closed, and retain the fixture.
 - [x] Prepare the validated increment for normal publication to
   origin/hparser-integration; verify the published SHA in the task handoff.
+- [x] Preserve collaborator updates through 2cfcc35b46 after a rejected normal
+  push. The merge does not change txnkv source. Four planner tests pass; executor
+  checks give two passes and the same known condition-nine inner-selection failure.
+  Merged build and Ready lint pass. Another 6,000 sysbench and 6,000 TPC-C events
+  pass fresh Go equality and eleven consistency checks. Restore settings and
+  verify four owned PIDs absent and ten ports closed before retrying publication.
 
 ## Surprises & Discoveries
 
