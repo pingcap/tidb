@@ -1,5 +1,29 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 clustered PRIMARY 点查返回空修复
+
+`primary_batch_reads_use_written_common_handle_encoding` 在修复前稳定失败：DECIMAL(8,2) 主键插入 `(5.00,10),(6.00,20)` 后，IN 查询返回空，期望为 10、20。日志 `/tmp/common-handle-red.log`，退出 101。
+
+根因不是 readiness，也不是仅缺少 short-handle padding。物理计划允许 PointGet/BatchPointGet 保留 PRIMARY 的 index ID；`UniqueIndexPointSourceExec::open` 无条件走普通唯一索引的 `_i` 键查询，而 `KvIndex.clustered_primary` 写入路径不维护独立索引键。Go master `fdfadb96b2c` 的 `pkg/executor/builder.go::isCommonHandleRead` 明确返回 `tbl.IsCommonHandle && idx.Primary`；`point_get.go::Next` 和 `batch_point_get.go::initialize` 都对该情形跳过普通索引读取并构造记录 handle。
+
+Rust 现在使用已有 `clustered_primary` 元数据识别该路径，调用与写入相同的 `KvTable::common_handle_from_values`，保留表级 collation 和 CommonHandle padding；普通 unique index 继续走原有 lookup。扩展 SQL 回归，在已有 DECIMAL、VARCHAR、BIGINT UNSIGNED 的重复 IN/不存在值用例后分别检查单点查询。原有回归由红转绿，新增单点断言也通过。临时 `[DEBUG-common-key]` 探针已删除。
+
+验证命令（仓库根目录）：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib \
+primary_batch_reads_use_written_common_handle_encoding
+# 1 passed；/tmp/common-handle-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib -- --test-threads=1
+# 1281 passed / 9 failed；/tmp/executor-common-primary-serial.log
+make lint
+# 退出 0；/tmp/common-primary-lint.log
+```
+
+并行全量为 1280 passed / 10 failed（`/tmp/executor-common-primary.log`）：PRIMARY case 已通过，另外出现 `access_cost::index_async_load_queue_tests::a_fully_loaded_column_is_not_queued`。串行不出现该额外失败；该模块多个测试共用全局异步队列的 table=11/column=1，测试隔离问题仍待独立修复，不能把串行通过等同于并行门禁通过。稳定的 9 项为下节 10 项去掉 PRIMARY case；其他完整门禁仍待验收。
+
 ## 2026-09-10 prepared filter 参数上下文修复
 
 最终合并状态完整 access-path 再次退出 0：`/tmp/access-merged-readiness.log`；节点日志 `/tmp/access-merged-readiness-evidence/rust-node.log` 第 8 行包含 `cluster_session_node_ready`。沿用下节固定 Go master 和 nightly 命令，仅替换 `ACCESS_PATH_KEEP_LOGS` 目录。索引候选修复独立提交为 `891ed3c537`；prepared filter 修复单独提交。

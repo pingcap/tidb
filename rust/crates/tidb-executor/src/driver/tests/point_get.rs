@@ -1486,6 +1486,17 @@ fn primary_batch_reads_use_written_common_handle_encoding() {
             vec![vec![Datum::Int(10)], vec![Datum::Int(20)]],
             "{name}"
         );
+        let key = match name {
+            "decimal_batch" => "5.00",
+            "string_batch" => "'a'",
+            _ => "0",
+        };
+        assert_eq!(
+            run_select_on(&format!("SELECT v FROM {name} WHERE k={key}"), &catalog, &ctx)
+                .unwrap(),
+            vec![vec![Datum::Int(10)]],
+            "single point: {name}"
+        );
     }
 }
 
