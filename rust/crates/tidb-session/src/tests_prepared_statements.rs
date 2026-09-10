@@ -789,8 +789,11 @@ fn a_group_by_field_keeps_its_written_alias_in_the_header() {
     session
         .run("PREPARE p FROM 'select b as x from ht group by b'")
         .unwrap();
+    let (header, mut rows) = header_and_rows(&mut session, "EXECUTE p");
+    // Go aggregate tests compare unordered GROUP BY output after sorting.
+    rows.sort();
     assert_eq!(
-        header_and_rows(&mut session, "EXECUTE p"),
+        (header, rows),
         (
             vec!["x".to_owned()],
             vec![vec!["10".to_owned()], vec!["20".to_owned()]]

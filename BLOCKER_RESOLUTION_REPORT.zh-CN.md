@@ -1,5 +1,20 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 prepared GROUP BY 表头测试比较无序行
+
+prepared 扩展验证发现 `a_group_by_field_keeps_its_written_alias_in_the_header`
+实际表头 x、行 20/10，预期同一表头及 10/20。SQL 无 ORDER BY。
+Go master 固定版本的 `pkg/executor/test/aggregate/aggregate_test.go:487`
+对 GROUP BY 结果先 Sort() 再比较。此处同样只规范化 EXECUTE 返回行的
+比较顺序，保留原 SQL、表头、每个值及重复数断言。
+
+修复前证据 `/tmp/prepare-sysvar-prepared-regression.log`：101 passed /
+1 failed / 2 ignored。修复后 `RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib prepared`
+为 **102 passed / 0 failed / 2 ignored**（`/tmp/prepared-header-green.log`）。
+原有 ignored 未新增或修改。Ready gate `make lint` 通过
+（`/tmp/prepared-header-lint.log`），`git diff --check` 通过。
+
 ## 2026-09-11 PREPARE 元数据路径校验系统变量
 
 原 server `prepared_system_variable_scope_errors_survive_cluster_metadata_probe`
