@@ -66,9 +66,8 @@ const (
 // that this supported occurrence was calculated from the evidence currently
 // visible at finalization; it does not claim producer-side evidence coverage.
 type statementRUOperatorResult struct {
-	state              statementRUOperatorState
-	outputRows         int64
-	outputRowsObserved bool
+	state      statementRUOperatorState
+	outputRows int64
 }
 
 type statementRUPointResponseStatsProvider interface {
@@ -339,8 +338,8 @@ func calculateStatementRUInternal(
 	}
 
 	// The forest consumes only currently visible typed evidence. Response-level
-	// total-key-size, repeated Sort/TopN lifecycle, and recursive/Apply execution-
-	// opportunity evidence are not all available yet, so the finalized calibration
+	// total-key-size, complete cop summaries, and per-execution Sort/TopN work
+	// are not all available yet, so the finalized calibration
 	// remains Incomplete and the result is neither exact nor a mathematical upper
 	// or lower bound. Invalid values and malformed tree structure still fail closed.
 	if statementRUIsWritePlan(flat.Main[0].Origin) {
@@ -544,13 +543,9 @@ func calculateStatementRUPlanChildFirst(
 	}
 
 	outputRows := int64(0)
-	outputRowsObserved := false
-	// Typed snapshots preserve observed zero through outputRowsObserved. Missing
-	// evidence remains an unobserved zero for best-effort linear/wrapper formulas,
-	// while operators that require proof of execution explicitly test Observed.
-	// Negative or otherwise invalid snapshots fail closed. Because the former two
-	// cases are not interchangeable, every successful forest remains calibration-
-	// Incomplete until direct opportunity coverage is available.
+	// After successful statement teardown, absent local counters contribute zero.
+	// Missing cop summaries likewise contribute no rows to the best-effort value;
+	// independently observed descendant work and request scans remain chargeable.
 	if runtimeStatsColl != nil {
 		if operator.IsRoot {
 			snapshot := runtimeStatsColl.GetRootRowsSnapshot(operator.Origin.ID())
@@ -558,16 +553,12 @@ func calculateStatementRUPlanChildFirst(
 				return statementRUOperatorResult{state: statementRUOperatorInvalid}
 			}
 			outputRows = snapshot.Rows
-			outputRowsObserved = snapshot.Observed()
 		} else {
 			snapshot := runtimeStatsColl.GetCopRowsSnapshot(operator.Origin.ID())
 			if snapshot.Invalid {
 				return statementRUOperatorResult{state: statementRUOperatorInvalid}
 			}
 			outputRows = snapshot.Rows
-			// Missing summary slots remain marked by Complete, but do not discard
-			// rows from other valid responses for the same cop occurrence.
-			outputRowsObserved = snapshot.Observed()
 		}
 	}
 	if outputRows < 0 {
@@ -885,14 +876,14 @@ func calculateStatementRUPlanChildFirst(
 		*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
 		*physicalop.PhysicalIndexMergeJoin:
 		state := collectStatementRUJoinUnits(
-			operator, children, outputRows, outputRowsObserved, runtimeStatsColl, calculator,
+			operator, children, outputRows, runtimeStatsColl, calculator,
 		)
 		if state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
 		}
 	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		state := collectStatementRUAggregationUnits(
-			operator, children, outputRows, outputRowsObserved, runtimeStatsColl, calculator,
+			operator, children, outputRows, runtimeStatsColl, calculator,
 		)
 		if state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
@@ -928,9 +919,8 @@ func calculateStatementRUPlanChildFirst(
 	}
 
 	return statementRUOperatorResult{
-		state:              statementRUOperatorComplete,
-		outputRows:         outputRows,
-		outputRowsObserved: outputRowsObserved,
+		state:      statementRUOperatorComplete,
+		outputRows: outputRows,
 	}
 }
 
@@ -939,20 +929,19 @@ func calculateStatementRUPlanChildFirst(
 //
 //	CPUWork = (left child rows + right child rows) * expression count
 //	JoinOutputRows = output rows
-//	HashStateRows = completed HashJoin lookup-state rows
+//	HashStateRows = constructed HashJoin lookup-state rows
 //
 // statementRUJoinContractForPlan defines the expression count for each Join
-// subtype. Cop/TiFlash, FullOuter, and incomplete runtime evidence fail closed.
+// subtype. Cop/TiFlash and FullOuter joins remain unsupported.
 func collectStatementRUJoinUnits(
 	operator *plannercore.FlatOperator,
 	children []statementRUOperatorResult,
 	outputRows int64,
-	outputRowsObserved bool,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 ) statementRUOperatorState {
 	delta := statementRUCalculator{}
-	if !operator.IsRoot || !children[0].outputRowsObserved || !children[1].outputRowsObserved || !outputRowsObserved {
+	if !operator.IsRoot {
 		return statementRUOperatorUnsupported
 	}
 	contract, ok := statementRUJoinContractForPlan(operator.Origin)
@@ -965,21 +954,8 @@ func collectStatementRUJoinUnits(
 		return statementRUOperatorInvalid
 	}
 	if contract.hashState {
-		if runtimeStatsColl == nil {
-			return statementRUOperatorUnsupported
-		}
-		snapshot, found := runtimeStatsColl.GetRootHashStateRowsSnapshot(operator.Origin.ID())
-		if !found {
-			return statementRUOperatorUnsupported
-		}
-		if !snapshot.Complete() {
-			if snapshot.Invalid() {
-				return statementRUOperatorInvalid
-			}
-			return statementRUOperatorUnsupported
-		}
-		if !addStatementRUHashStateRows(&delta, float64(snapshot.Rows)) {
-			return statementRUOperatorInvalid
+		if state := collectStatementRUHashStateRows(operator.Origin.ID(), runtimeStatsColl, &delta); state != statementRUOperatorComplete {
+			return state
 		}
 	}
 	if !mergeStatementRUUnitDelta(calculator, delta.units) {
@@ -1043,21 +1019,20 @@ func statementRUJoinContractForPlan(plan base.Plan) (statementRUJoinContract, bo
 // Aggregation occurrence using these formulas:
 //
 //	CPUWork = child rows * (GroupByItems + AggFuncs)
-//	HashStateRows = completed root HashAgg group-map rows, or observed TiKV HashAgg output rows
+//	HashStateRows = constructed root HashAgg group-map rows, or observed TiKV HashAgg output rows
 //
 // A response with a missing summary contributes no rows while other valid
-// responses remain chargeable. StreamAgg has no hash state. TiFlash, malformed
-// evidence, and an occurrence with no valid summary remain unsupported.
+// responses remain chargeable. StreamAgg has no hash state. Missing summaries
+// do not prevent calculation; TiFlash remains unsupported.
 func collectStatementRUAggregationUnits(
 	operator *plannercore.FlatOperator,
 	children []statementRUOperatorResult,
 	outputRows int64,
-	outputRowsObserved bool,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 ) statementRUOperatorState {
 	delta := statementRUCalculator{}
-	if !statementRUOperatorRunsAtSupportedSite(operator) || !children[0].outputRowsObserved || !outputRowsObserved {
+	if !statementRUOperatorRunsAtSupportedSite(operator) {
 		return statementRUOperatorUnsupported
 	}
 	var baseAgg *physicalop.BasePhysicalAgg
@@ -1084,22 +1059,9 @@ func collectStatementRUAggregationUnits(
 		}
 		return statementRUOperatorComplete
 	}
-	if runtimeStatsColl == nil {
-		return statementRUOperatorUnsupported
-	}
 	if operator.IsRoot {
-		snapshot, found := runtimeStatsColl.GetRootHashStateRowsSnapshot(operator.Origin.ID())
-		if !found {
-			return statementRUOperatorUnsupported
-		}
-		if !snapshot.Complete() {
-			if snapshot.Invalid() {
-				return statementRUOperatorInvalid
-			}
-			return statementRUOperatorUnsupported
-		}
-		if !addStatementRUHashStateRows(&delta, float64(snapshot.Rows)) {
-			return statementRUOperatorInvalid
+		if state := collectStatementRUHashStateRows(operator.Origin.ID(), runtimeStatsColl, &delta); state != statementRUOperatorComplete {
+			return state
 		}
 		if !mergeStatementRUUnitDelta(calculator, delta.units) {
 			return statementRUOperatorInvalid
@@ -1113,6 +1075,23 @@ func collectStatementRUAggregationUnits(
 		return statementRUOperatorInvalid
 	}
 	if !mergeStatementRUUnitDelta(calculator, delta.units) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+// collectStatementRUHashStateRows retains all published construction work,
+// including partial state from children stopped by a successful parent.
+func collectStatementRUHashStateRows(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
+	snapshot, _ := runtimeStatsColl.GetRootHashStateRowsSnapshot(planID)
+	if snapshot.Invalid() || !addStatementRUHashStateRows(calculator, float64(snapshot.Rows)) {
 		return statementRUOperatorInvalid
 	}
 	return statementRUOperatorComplete
@@ -1226,32 +1205,27 @@ func collectStatementRUPointLookupEvidence(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 ) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
 	rootStats, exists := runtimeStatsColl.GetRootStatsIfExists(planID)
 	if !exists || rootStats == nil {
-		return statementRUOperatorUnsupported
+		return statementRUOperatorComplete
 	}
 
 	_, groups := rootStats.MergeStats()
 	var aggregate clientutil.PointResponseStats
-	found := false
 	for _, group := range groups {
 		stats, ok := statementRUPointResponseStatsSnapshot(group)
 		if !ok {
 			continue
 		}
-		found = true
 		if !mergeStatementRUPointResponseStats(&aggregate, stats) {
 			return statementRUOperatorInvalid
 		}
 	}
-	if !found {
-		return statementRUOperatorUnsupported
-	}
-
-	// A valid zero-value snapshot attached to the executed point operator means
-	// no recognized remote response was observed. This is a real local-completion
-	// state (for example a transaction-buffer or lock-cache hit), not missing
-	// runtime stats, and contributes zero remote work.
+	// No provider (an unexecuted point lookup) or a valid zero-value snapshot
+	// (for example a transaction-buffer hit) contributes zero remote work.
 	if !aggregate.PayloadComplete() {
 		if aggregate.PayloadBytes != 0 ||
 			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||

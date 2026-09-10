@@ -668,15 +668,9 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if e.IsChildReturnEmpty && e.DefaultVal != nil {
 				chk.Append(e.DefaultVal, 0, 1)
 			}
-			if e.hashStateStats != nil {
-				e.hashStateStats.Complete()
-			}
 			return nil
 		}
 		if result.err != nil {
-			if e.hashStateStats != nil {
-				e.hashStateStats.Invalidate()
-			}
 			return result.err
 		}
 		chk.SwapColumns(result.chk)
@@ -728,10 +722,10 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
 			e.memTracker.Consume(e.groupSet.Insert(""))
+			if e.hashStateStats != nil {
+				e.hashStateStats.AddRows(1)
+			}
 			e.groupKeys = append(e.groupKeys, "")
-		}
-		if e.hashStateStats != nil {
-			e.hashStateStats.AddRows(uint64(len(e.groupSet.M)))
 		}
 		e.prepared.Store(true)
 	}
@@ -744,9 +738,6 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = aggfuncs.NewAggPartialResultMapper()
 	e.prepared.Store(false)
 	e.executed.Store(e.numOfSpilledChks == e.dataInDisk.NumChunks()) // No data is spilling again, all data have been processed.
-	if e.executed.Load() && e.hashStateStats != nil {
-		e.hashStateStats.Complete()
-	}
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)
@@ -754,6 +745,11 @@ func (e *HashAggExec) resetSpillMode() {
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
+	if e.hashStateStats != nil {
+		before := len(e.groupSet.M)
+		// Account construction even when a parent stops consuming our output.
+		defer func() { e.hashStateStats.AddRows(uint64(len(e.groupSet.M) - before)) }()
+	}
 	defer func() {
 		if e.tmpChkForSpill.NumRows() > 0 && err == nil {
 			err = e.dataInDisk.Add(e.tmpChkForSpill)

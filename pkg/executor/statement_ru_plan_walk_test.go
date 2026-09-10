@@ -303,17 +303,9 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture statementRUSimpleSelectFixture,
 		plan base.Plan,
 		rows int64,
-		complete bool,
-		invalid bool,
 	) {
 		stats := execdetails.NewHashStateRuntimeStats()
 		stats.AddRows(uint64(rows))
-		if complete {
-			stats.Complete()
-		}
-		if invalid {
-			stats.Invalidate()
-		}
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
 			plan.ID(),
 			stats,
@@ -457,9 +449,12 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
-	t.Run("missing point response provider fails closed", func(t *testing.T) {
+	t.Run("missing point response provider contributes zero", func(t *testing.T) {
 		fixture, _ := pointLookupFixture(t, false)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("point response with missing scan detail fails closed", func(t *testing.T) {
@@ -476,7 +471,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		requireNoPublication(t, fixture)
 	})
 
-	t.Run("point evidence registered under a different plan fails closed", func(t *testing.T) {
+	t.Run("point evidence registered under a different plan is not charged", func(t *testing.T) {
 		fixture, plan := pointLookupFixture(t, false)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
 			plan.ID()+1,
@@ -484,7 +479,10 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 				&kvrpcpb.ScanDetailV2{}, 0,
 			)},
 		)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("uncovered nonzero point response values fail closed", func(t *testing.T) {
@@ -787,7 +785,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			}
 			recordJoinRows(fixture, join, left, right)
 			if tc.kind == "hash" {
-				recordHashState(fixture, join, 2, true, false)
+				recordHashState(fixture, join, 2)
 			}
 			setPlan(fixture, join)
 			want := statementRURawUnits{
@@ -807,7 +805,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
 		flat := plannercore.FlattenPhysicalPlan(join, true)
 		require.Len(t, flat.Main[0].ChildrenIdx, 2)
@@ -825,31 +823,42 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
-	t.Run("HashJoin fails closed on incomplete state", func(t *testing.T) {
+	t.Run("HashJoin retains state constructed before early stop", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, false, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              5,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			HashStateRows:        2,
+			JoinOutputRows:       4,
+		})
 	})
 
 	t.Run("HashJoin fails closed on invalid state", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, right := newJoin(fixture, "hash")
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, true)
+		recordHashState(fixture, join, -1)
 		setPlan(fixture, join)
 		requireNoPublication(t, fixture)
 	})
 
-	t.Run("Join fails closed on missing child rows", func(t *testing.T) {
+	t.Run("Join counts missing child rows as zero", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		join, left, _ := newJoin(fixture, "merge")
 		recordRootRows(fixture, left, 3)
 		recordRootRows(fixture, join, 4)
 		setPlan(fixture, join)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              3,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+			JoinOutputRows:       4,
+		})
 	})
 
 	t.Run("Join fails closed on FULL OUTER source drift", func(t *testing.T) {
@@ -857,7 +866,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		join, left, right := newJoin(fixture, "hash")
 		join.(*physicalop.PhysicalHashJoin).JoinType = base.FullOuterJoin
 		recordJoinRows(fixture, join, left, right)
-		recordHashState(fixture, join, 2, true, false)
+		recordHashState(fixture, join, 2)
 		setPlan(fixture, join)
 		requireNoPublication(t, fixture)
 	})
@@ -895,6 +904,38 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		return agg
 	}
 
+	t.Run("empty hash build retains probe scans without summaries", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		join, probe, build := newJoin(fixture, "hash")
+		agg := newAggregation(fixture, true, probe.TablePlan)
+		probe.TablePlan = agg
+		probe.TablePlans = physicalop.FlattenListPushDownPlan(agg)
+		// The first probe chunk was read before the empty-build shortcut. Its
+		// request scan is available even though the cop summaries are missing.
+		recordRootRows(fixture, probe, 32)
+		recordRootRows(fixture, build, 0)
+		recordRootRows(fixture, join, 0)
+		recordScan(fixture, agg, 7, 7, 70)
+		setPlan(fixture, join)
+		requirePublication(t, fixture, statementRURawUnits{
+			CPUWork:              32,
+			ScanBytes:            70,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("unopened aggregation contributes zero without a provider", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader, _ := newTableReader(fixture)
+		agg := newAggregation(fixture, true, reader)
+		setPlan(fixture, agg)
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
 	for _, hash := range []bool{true, false} {
 		name := "StreamAgg"
 		if hash {
@@ -907,7 +948,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			recordRootRows(fixture, reader, 3)
 			recordRootRows(fixture, agg, 2)
 			if hash {
-				recordHashState(fixture, agg, 2, true, false)
+				recordHashState(fixture, agg, 2)
 			}
 			setPlan(fixture, agg)
 			want := statementRURawUnits{
@@ -922,13 +963,13 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	}
 
-	t.Run("root HashAgg distinguishes observed zero from missing rows", func(t *testing.T) {
+	t.Run("root HashAgg counts missing rows as zero", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		reader, _ := newTableReader(fixture)
 		agg := newAggregation(fixture, true, reader)
 		recordRootRows(fixture, reader, 0)
 		recordRootRows(fixture, agg, 0)
-		recordHashState(fixture, agg, 0, true, false)
+		recordHashState(fixture, agg, 0)
 		setPlan(fixture, agg)
 		requirePublication(t, fixture, statementRURawUnits{
 			NetBytes:             20,
@@ -939,9 +980,12 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		missingReader, _ := newTableReader(missing)
 		missingAgg := newAggregation(missing, true, missingReader)
 		recordRootRows(missing, missingAgg, 0)
-		recordHashState(missing, missingAgg, 0, true, false)
+		recordHashState(missing, missingAgg, 0)
 		setPlan(missing, missingAgg)
-		requireNoPublication(t, missing)
+		requirePublication(t, missing, statementRURawUnits{
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	t.Run("TiKV cop HashAgg charges valid responses when another summary is missing", func(t *testing.T) {
@@ -965,7 +1009,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		})
 	})
 
-	t.Run("TiKV cop HashAgg still requires one valid summary", func(t *testing.T) {
+	t.Run("TiKV cop HashAgg retains scans without any summary", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		reader, scan := newTableReader(fixture)
 		agg := newAggregation(fixture, true, scan)
@@ -975,7 +1019,11 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			RecordExpectedCopResponseSummaries([]int{scan.ID(), agg.ID()})
 		recordScan(fixture, agg, 1, 1, 10)
 		setPlan(fixture, reader)
-		requireNoPublication(t, fixture)
+		requirePublication(t, fixture, statementRURawUnits{
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
 	})
 
 	for _, hash := range []bool{true, false} {
