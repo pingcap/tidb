@@ -49,3 +49,9 @@ lock-recovery lock recovery passed: campaign13_lock_recovery status=committed ..
 - ANALYZE 后 Rust 对 `rare=7`、`rare>0`、`u(a=1,b=2)` 等选择退化为全表或错误索引，说明问题不止成本常数，而是 Go `GetRowCountByIndexRanges` 的复合索引等值前缀、直方图 total-row-count 和列统计回退语义未完整接入。
 
 权威运行：`RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-access-path.sh`。该结果未宣称通过；下一修复类别继续对照 `pkg/planner/cardinality/row_count_index.go` 与 Rust `row_count_estimator.rs`。
+
+## 2026-09-10 access-path reload 修复验证
+
+提交 `c058347ad5` 修复了 Go 语义中的统计装载条件：当缓存项 histogram 版本相同但处于 evicted（仅元数据）状态时，必须重新读取完整 histogram，而不能因版本比较直接复用。该修复已独立推送到 `origin/hparser-integration`。
+
+重跑 `run-realtikv-access-path.sh` 后仍观察到相同的 2 个 hard failure 与 7 个路径 divergence，说明当前剩余问题位于统计 payload 本身或 planner 的索引估算调用链，而非该缓存复用条件。证据已保留在 `/tmp/access-path-rerun.log`，下一步继续检查 index histogram payload 与 range 编码的一致性。
