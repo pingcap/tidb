@@ -362,6 +362,7 @@ func TestDMLMaxExecutionTime(t *testing.T) {
 
 		// SET_VAR applies to the complete autocommit DML, then is restored for the next statement.
 		tk.MustExec("insert /*+ set_var(tidb_dml_max_execution_time=90000) */ into dml_timeout values (2, 2)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		require.Equal(t, uint64(90000), tk.Session().ShowProcess().MaxExecutionTime)
 		tk.MustExec("update dml_timeout set v = v + 1 where id = 1")
 		require.Equal(t, uint64(60000), tk.Session().ShowProcess().MaxExecutionTime)

@@ -74,7 +74,8 @@ type ProcessInfo struct {
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
-	// MaxExecutionTime is the effective statement timeout in milliseconds; zero disables it.
+	// MaxExecutionTime is the statement timeout in milliseconds; zero disables it.
+	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
 	State            uint16
 	Command          byte
