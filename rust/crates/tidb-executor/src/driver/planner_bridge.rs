@@ -943,8 +943,7 @@ fn same_statistics_predicate(
     if left.equal(right) {
         return true;
     }
-    let (Expression::ScalarFunction(lhs), Expression::ScalarFunction(rhs)) = (left, right)
-    else {
+    let (Expression::ScalarFunction(lhs), Expression::ScalarFunction(rhs)) = (left, right) else {
         return false;
     };
     if lhs.func_name.lowercase() != rhs.func_name.lowercase() {
@@ -1063,7 +1062,9 @@ impl OwnedRewrite for InitStats<'_> {
         let statistics = statistics.as_deref();
         source.analyzed_index_ids = statistics
             .map(|stats| {
-                stats.index_stats_existence.iter()
+                stats
+                    .index_stats_existence
+                    .iter()
                     .filter_map(|(id, analyzed)| analyzed.then_some(*id))
                     .collect()
             })
@@ -1302,7 +1303,10 @@ impl OwnedRewrite for InitStats<'_> {
                         .map(|column| {
                             tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
                                 table: tidb_datatype::IdentifierMetadata::new(
-                                    source.table_as_name.as_deref().unwrap_or(&source.table_name),
+                                    source
+                                        .table_as_name
+                                        .as_deref()
+                                        .unwrap_or(&source.table_name),
                                 ),
                                 column: tidb_datatype::IdentifierMetadata::new(&column.name),
                                 ..Default::default()
@@ -1336,6 +1340,71 @@ impl OwnedRewrite for InitStats<'_> {
                     selectivity,
                     tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
                 )));
+            }
+        }
+        // Propagated predicates may not occur in this source's AST WHERE.
+        // Rebuild path estimates from the optimizer's current expressions.
+        if !source.pushed_down_conds.is_empty() {
+            if let Some(TableEntry::Kv(table)) = source_table {
+                for index in &source.indexes {
+                    let prefix = index
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            source
+                                .schema_column_for_index_column(column)
+                                .cloned()
+                                .map(|planned| (planned, column.length))
+                        })
+                        .take_while(Option::is_some)
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    if prefix.is_empty() {
+                        continue;
+                    }
+                    let (columns, lengths): (Vec<_>, Vec<_>) = prefix.into_iter().unzip();
+                    let evaluate = |expression: &tidb_expr::expression::Expression| {
+                        tidb_expr::eval_expression_once(expression, self.context)
+                    };
+                    let Ok(built) =
+                        tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
+                            &source.pushed_down_conds,
+                            &columns,
+                            &lengths,
+                            self.context.range_max_size(),
+                            self.context.range_fallback_handler(),
+                            &evaluate,
+                        )
+                    else {
+                        continue;
+                    };
+                    let Some(metadata) = table
+                        .plan_indexes()
+                        .find(|candidate| candidate.id == index.id)
+                    else {
+                        continue;
+                    };
+                    let ranges = built
+                        .ranges
+                        .iter()
+                        .map(|range| crate::kv_table::IndexRange {
+                            low: range.low_val.clone(),
+                            high: range.high_val.clone(),
+                            low_exclusive: range.low_exclude,
+                            high_exclusive: range.high_exclude,
+                        })
+                        .collect::<Vec<_>>();
+                    let estimate = crate::access_cost::index_row_count(
+                        metadata, table, &ranges, statistics, row_count, false,
+                    );
+                    source
+                        .index_path_count_after_access
+                        .insert(index.id, estimate.est);
+                    source.index_path_row_estimates.insert(index.id, estimate);
+                    if index.primary && source.is_common_handle {
+                        source.table_path_count_after_access = Some(estimate.est);
+                    }
+                }
             }
         }
         source.table_scan_penalty = tidb_planner::plan_cost_ver2::TableScanPenaltyInput {

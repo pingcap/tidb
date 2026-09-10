@@ -1,5 +1,27 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-10 propagated predicate 访问路径估算修复
+
+condition eleven 的 new_order 扫描新断言要求 Go 实测 9000 行，旧实现为
+11250，红色证据 `/tmp/eleven-static-range-red.log`。临时记录揭示原始访问
+估算只有 90 行、DataSource 9000 行、table_path_count_after_access=None，
+随后触发 9000/0.8 调整。AST WHERE 只含 customer 条件，优化器传播给
+new_order/orders 的条件没有经过真实 histogram 访问估算。
+
+统计加载 bridge 现在使用 source.pushed_down_conds 和现有 native ranger
+重算索引访问范围，调用现有 access_cost::index_row_count，保留 RowEstimate
+边界，并把 common-handle primary 估算同步到 table path。范围使用语句求值器、
+范围配额与 fallback handler。列裁剪后保留连续可解析的索引前缀，缺少尾列不
+意味着缺少仓库等值范围。第一次要求完整索引列的实验未修复（native-path-estimates.log），
+采用前缀后 9000 行断言通过（native-path-prefix.log）。临时诊断代码已删除。
+
+Ready 验证：`RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test
+--manifest-path rust/Cargo.toml -p tidb-executor --lib`：1294 passed / 1 failed，
+日志 `/tmp/native-path-executor-final.log`；condition eleven 越过新的 9000 行
+及先前 10 行断言，仍失败于旧 MergeJoin 断言。`make lint` 退出 0，日志
+`/tmp/native-path-lint.log`；`git diff --check` 通过。此提交修复访问估算缺口，
+不代表 condition eleven 的所有物理计划差异已经解决，整体目标继续 active。
+
 ## 2026-09-10 table probe 范围选择率与扫描反算
 
 本轮将 `lt/le/gt/ge` 单列条件经现有 ranger 构建 ColumnRange，调用

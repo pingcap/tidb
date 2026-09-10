@@ -2868,6 +2868,13 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .map(|operator| operator.trim_start_matches(&[' ', '│', '├', '└', '─'][..]))
         .collect::<Vec<_>>();
     for (row, access) in analyzed_access.iter().enumerate() {
+        if access == "table:new_order" {
+            assert_eq!(
+                analyzed_cell(&analyzed[row], 1),
+                "9000.00",
+                "Go analyzed warehouse range"
+            );
+        }
         if access == "table:orders" {
             assert_eq!(
                 analyzed_cell(&analyzed[row], 1),
