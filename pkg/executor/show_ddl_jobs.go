@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 // ShowDDLJobsExec represent a show DDL jobs executor.
@@ -59,6 +61,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.DDLJobRetriever.is = e.is
+	e.DDLJobRetriever.showRU = ddlJobRUEnabled(e.Ctx())
 	if e.jobNumber == 0 {
 		e.jobNumber = ddl.DefNumHistoryJobs
 	}
@@ -133,6 +136,15 @@ type DDLJobRetriever struct {
 	cacheJobs      []*model.Job
 	TZLoc          *time.Location
 	extractor      base.MemTablePredicateExtractor
+	showRU         bool
+}
+
+func ddlJobRUEnabled(ctx sessionctx.Context) bool {
+	if !kerneltype.IsNextGen() {
+		return false
+	}
+	do := domain.GetDomain(ctx)
+	return do != nil && do.GetRUVersion() == rmclient.RUVersionV2
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
@@ -293,16 +305,21 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		}
 	}
 	if inShowStmt {
-		req.AppendString(12, showCommentsFromJob(job))
+		req.AppendString(12, showCommentsFromJob(job, e.showRU))
 	} else {
 		req.AppendString(12, job.Query)
 	}
 }
 
-func showCommentsFromJob(job *model.Job) string {
+func showCommentsFromJob(job *model.Job, showRU bool) string {
 	m := job.ReorgMeta
+	ruComment := ""
+	// Failed DDL jobs are not accounted for yet, so only show RU for synced jobs.
+	if showRU && job.IsSynced() && job.RU > 0 {
+		ruComment = fmt.Sprintf("RU=%.2f", job.RU)
+	}
 	if m == nil {
-		return ""
+		return ruComment
 	}
 	var labels []string
 	switch m.AnalyzeState {
@@ -318,6 +335,9 @@ func showCommentsFromJob(job *model.Job) string {
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
+		if ruComment != "" {
+			labels = append(labels, ruComment)
+		}
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -355,6 +375,9 @@ func showCommentsFromJob(job *model.Job) string {
 		if m.MaxNodeCount != 0 {
 			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
+	}
+	if ruComment != "" {
+		labels = append(labels, ruComment)
 	}
 	return strings.Join(labels, ", ")
 }
