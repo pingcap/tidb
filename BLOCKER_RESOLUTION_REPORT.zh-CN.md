@@ -1,5 +1,34 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 优先队列 DROP 回归等待事件事务
+
+auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path
+独立复现 DROP 后队列长度仍为 2，预期 1（3.38 秒，
+`/tmp/queue-drop-red.log`）。固定 Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/statistics/handle/autoanalyze/priorityqueue/queue_ddl_handler_test.go:309-317`
+在 DROP 后先处理统计事件，再调用 pq.HandleDDLEvent，随后才断言队列。
+Rust fixture 已启动异步 notifier，但原测试没有等待它处理 DROP。
+
+现在在读取队列快照前等待 PRIORITY_QUEUE_HANDLER_ID 对应的事务完成位，
+有五秒上限。保留队列成员/长度断言及后续完整自动分析验证，未改生产
+队列逻辑。等待条件是事件处理完成，而非“直到队列长度等于期望值”。
+
+Ready 验证：
+
+```bash
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path
+# 1 passed，6.59 秒，/tmp/queue-drop-green.log
+RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+# 418 passed / 16 failed，43.36 秒，/tmp/server-queue-drop-baseline.log
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+make lint
+git diff --check
+# 均退出 0，/tmp/queue-drop-{fmt,lint}.log
+```
+
+此项不代表剩余所有 Rust failed cases 或外部集成门禁完成。
+
 ## 2026-09-11 统计 mock owner 按存储隔离
 
 两个无 etcd 启动入口创建统计 MockManager 时传入 None，所有独立

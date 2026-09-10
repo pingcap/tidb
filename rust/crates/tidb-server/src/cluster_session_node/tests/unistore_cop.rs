@@ -1384,6 +1384,20 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     queue.initialize().expect("priority queue initializes");
     assert_eq!(queue.len().unwrap(), 2);
     rows(&mut session, "DROP TABLE queue_drop");
+    // Go priorityqueue.TestDropTable handles the DROP event before observing
+    // the heap. Here the active notifier owns that transaction asynchronously.
+    let queue_bit = 1_u64 << tidb_ddl_notifier::PRIORITY_QUEUE_HANDLER_ID.0;
+    let pending_queue_sql = format!(
+        "SELECT count(*) FROM mysql.tidb_ddl_notifier WHERE processed_by_flag & {queue_bit} = 0"
+    );
+    let queue_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while displayed(rows(&mut session, &pending_queue_sql)) != [["0"]] {
+        assert!(
+            std::time::Instant::now() < queue_deadline,
+            "priority queue subscriber did not commit the DROP event"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let snapshot = queue.snapshot().unwrap();
     assert_eq!(snapshot.current_jobs.len(), 1);
     assert_eq!(snapshot.current_jobs[0].table_id, analyze_id);
