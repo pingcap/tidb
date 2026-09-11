@@ -2888,10 +2888,25 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                 }
                 let stats = table_stats.as_ref().map(|stats| {
-                    stats.scale_by_expect_cnt(
-                        count_after_access.unwrap_or_else(|| stats.row_count()),
-                        ctx.skew_ratio,
-                    )
+                    let access_rows = count_after_access.unwrap_or_else(|| stats.row_count());
+                    // Go keeps the access-path count used by skyline
+                    // separate from the scan's derived StatsInfo.  For a
+                    // pseudo table, deriveStatsByFilter has already applied
+                    // the default selection factor to the source stats; use
+                    // that narrower source view when available instead of
+                    // exposing the adjusted CountAfterAccess (which is used
+                    // only for path costing).
+                    let scan_rows = if ds.table_scan_penalty.pseudo_stats {
+                        ds.base
+                            .base
+                            .stats_info()
+                            .map(|source| source.row_count())
+                            .filter(|source_rows| *source_rows > 1.0 && *source_rows < access_rows)
+                            .unwrap_or(access_rows)
+                    } else {
+                        access_rows
+                    };
+                    stats.scale_by_expect_cnt(scan_rows, ctx.skew_ratio)
                 });
                 // Go `constructDS2IndexScanTask` keeps TWO counts apart: the
                 // IndexScan carries `tmpPath.CountAfterAccess` (the static
