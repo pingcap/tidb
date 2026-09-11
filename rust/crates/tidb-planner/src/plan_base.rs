@@ -343,6 +343,18 @@ pub enum PlanErrorKind {
         /// One-based position of the first ORDER BY aggregate.
         position: usize,
     },
+    /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065).
+    FieldInOrderNotSelect {
+        /// One-based ORDER BY item position.
+        position: usize,
+        /// Qualified name of the unreported column.
+        column: String,
+    },
+    /// Go `plannererrors.ErrAggregateInOrderNotSelect` (3066).
+    AggregateInOrderNotSelect {
+        /// One-based ORDER BY item position.
+        position: usize,
+    },
 }
 
 impl PlanError {
@@ -528,6 +540,31 @@ impl PlanError {
                  result of a non-aggregated query"
             ),
             kind: PlanErrorKind::AggregateOrderNonAggQuery { position },
+        }
+    }
+
+    /// Go `plannererrors.ErrFieldInOrderNotSelect` for DISTINCT.
+    #[must_use]
+    pub fn field_in_order_not_select(position: usize, column: impl Into<String>) -> Self {
+        let column = column.into();
+        Self {
+            message: format!(
+                "Expression #{position} of ORDER BY clause is not in SELECT list, references column \
+                 '{column}' which is not in SELECT list; this is incompatible with DISTINCT"
+            ),
+            kind: PlanErrorKind::FieldInOrderNotSelect { position, column },
+        }
+    }
+
+    /// Go `plannererrors.ErrAggregateInOrderNotSelect` for DISTINCT.
+    #[must_use]
+    pub fn aggregate_in_order_not_select(position: usize) -> Self {
+        Self {
+            message: format!(
+                "Expression #{position} of ORDER BY clause is not in SELECT list, contains aggregate \
+                 function; this is incompatible with DISTINCT"
+            ),
+            kind: PlanErrorKind::AggregateInOrderNotSelect { position },
         }
     }
 

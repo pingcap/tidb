@@ -3041,6 +3041,29 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 DISTINCT ORDER BY 错误身份
+
+修复 DISTINCT 校验返回 1105 而非 3065/3066 的错误协议差异。`only_full_group_by.rs` 原来把 `ErrFieldInOrderNotSelect` 和 `ErrAggregateInOrderNotSelect` 都构造成 internal 文本，driver 因而降级为 Unsupported。新增对应 PlanErrorKind 和构造函数，携带 ORDER BY 的一基位置及 qualified column，经 driver 映射至已有结构化错误。没有修改 DISTINCT 合法性判定，也没有从文本猜测错误码。
+
+依据固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`：`pkg/planner/core/logical_plan_builder.go:2517` 返回 ErrAggregateInOrderNotSelect、`:2520` 返回 ErrFieldInOrderNotSelect；`pkg/errno/errcode.go:834`、`:835` 定义 3065/3066，`errname.go:850`、`:851` 定义对应消息。新回归 `distinct_order_by_errors_preserve_position_and_identity` 覆盖第 2 项引用未输出列和未输出聚合，检查数字错误码、位置和完整消息。
+
+原用例红日志 `/tmp/distinct-order-red.log`。新增回归先红 `/tmp/distinct-order-expanded-red.log`，明确显示 position=2 的列错误实际 code=1105、期望3065；修复后独立运行退出 0，日志 `/tmp/distinct-order-targeted-green.log`。
+
+Ready 验证，以下 Rust 命令均使用 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib distinct_order_by_errors_preserve_position_and_identity
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib distinct
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests
+make lint
+git diff --check
+```
+
+新回归 1 passed；session 集成 310 passed / 0 failed；planner 聚合 34 passed / 0 failed；lint 和 diff 检查退出 0。对应日志 `/tmp/distinct-order-integration.log`、`/tmp/distinct-order-planner.log`、`/tmp/distinct-order-lint.log`。
+
+`--lib distinct` 为 12 passed / 5 failed，退出 101，日志 `/tmp/distinct-order-green.log`。原 `select_distinct_may_only_order_by_a_field_it_reports` 已通过全部错误码及合法查询检查，随后在关闭 ONLY_FULL_GROUP_BY 的查询 `SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)` 仍失败：Rust 为 1/2，测试要求 2/1。fixture 两个分组的 sum(v) 都为30，属于并列排序，须继续单独核对 Go 契约，不能宣称原 case 或完整单元套件通过。本轮未修改该期望，也未重新运行 Go wire 或 RealTiKV。
+
 ## 2026-09-11 ORDER BY 表达式别名与位置解析
 
 修复原失败 `tests_core::aggregates::order_by_resolves_against_the_select_list`。原 resolver 只匹配完整 ORDER BY 项：`twice+0` 被整体补入隐藏投影，并在源表解析 `twice`，因而报 UnknownColumn。现在遍历表达式，在源表找不到列时回退 SELECT 别名，用投影列 marker 引用结果；源列、聚合和窗口结果按需加入辅助投影。表达式内部源列优先，裸别名仍优先 SELECT 列表，不复制别名表达式进行重复计算。

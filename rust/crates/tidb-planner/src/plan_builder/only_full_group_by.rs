@@ -136,18 +136,12 @@ fn err_aggregate_order_non_agg_query(position: usize) -> PlanError {
 
 /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065).
 fn err_field_in_order_not_select(position: usize, column: &str) -> PlanError {
-    PlanError::internal(format!(
-        "Expression #{position} of ORDER BY clause is not in SELECT list, references column \
-         '{column}' which is not in SELECT list; this is incompatible with DISTINCT"
-    ))
+    PlanError::field_in_order_not_select(position, column)
 }
 
 /// Go `plannererrors.ErrAggregateInOrderNotSelect` (3066).
 fn err_aggregate_in_order_not_select(position: usize) -> PlanError {
-    PlanError::internal(format!(
-        "Expression #{position} of ORDER BY clause is not in SELECT list, contains aggregate \
-         function; this is incompatible with DISTINCT"
-    ))
+    PlanError::aggregate_in_order_not_select(position)
 }
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {

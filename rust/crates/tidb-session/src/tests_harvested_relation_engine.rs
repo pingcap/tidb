@@ -1263,6 +1263,35 @@ fn select_distinct_may_only_order_by_a_field_it_reports() {
     );
 }
 
+#[test]
+fn distinct_order_by_errors_preserve_position_and_identity() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    for (sql, code, detail) in [
+        (
+            "SELECT DISTINCT k FROM gg ORDER BY k, v",
+            3065,
+            "references column 'test.gg.v' which is not in SELECT list",
+        ),
+        (
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY count(v), sum(v)",
+            3066,
+            "contains aggregate function",
+        ),
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, code, "{sql}: {error:?}");
+        assert_eq!(
+            error.message,
+            format!(
+                "Expression #2 of ORDER BY clause is not in SELECT list, {detail}; \
+                 this is incompatible with DISTINCT"
+            ),
+            "{sql}"
+        );
+    }
+}
+
 /// `HAVING` resolves against the AGGREGATION's output, so an ungrouped source
 /// column is not visible there at all — and that is a name-resolution rule,
 /// not an `ONLY_FULL_GROUP_BY` one.

@@ -538,6 +538,17 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 position: *position,
             }
         }
+        tidb_planner::plan_base::PlanErrorKind::FieldInOrderNotSelect { position, column } => {
+            DriverError::FieldInOrderNotSelect {
+                position: *position,
+                column: column.clone(),
+            }
+        }
+        tidb_planner::plan_base::PlanErrorKind::AggregateInOrderNotSelect { position } => {
+            DriverError::AggregateInOrderNotSelect {
+                position: *position,
+            }
+        }
     }
 }
 
