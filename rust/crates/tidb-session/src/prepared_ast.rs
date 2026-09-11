@@ -288,9 +288,11 @@ impl Session {
         if hints.ignore_plan_cache {
             return false;
         }
+        // Compared, not kept: `get_system` would copy the value into a
+        // `String` for every statement that consults the plan cache.
         let hint_only = self
             .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
             .is_ok_and(|strategy| {
                 strategy.eq_ignore_ascii_case(
                     tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,

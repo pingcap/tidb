@@ -319,6 +319,38 @@ pub(crate) fn sys_var_index_lookup(name: &str) -> Option<usize> {
     sys_var_index().get(lowered.as_ref()).copied()
 }
 
+/// The registry index of one `&'static` variable name, resolved on first use.
+///
+/// Go reads the settings a command consults -- `wait_timeout`, the connection
+/// charsets -- with one `systems[name]` map probe per read. This port keeps
+/// the values in a registry-indexed session image, so a read by name costs a
+/// case-normalising scan plus a hash probe to find the index, then the slot
+/// read. The index never changes for a given name, so a call site with a
+/// literal name resolves it once and pays only the slot read afterwards;
+/// the value and every scope rule are exactly what the by-name read gives.
+pub(crate) struct StaticSysVarIndex {
+    name: &'static str,
+    index: std::sync::OnceLock<usize>,
+}
+
+impl StaticSysVarIndex {
+    pub(crate) const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            index: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The registry index of this variable. Panics only for a name that is
+    /// not a registered system variable, which is a programming error in the
+    /// call site's literal.
+    pub(crate) fn get(&self) -> usize {
+        *self.index.get_or_init(|| {
+            sys_var_index_lookup(self.name).expect("a registered system variable name")
+        })
+    }
+}
+
 /// The registry's names are unique (the sortedness test rejects duplicates),
 /// so a hash table keyed by the entry's own name answers exactly what the old
 /// binary search answered -- just without the per-probe comparisons.

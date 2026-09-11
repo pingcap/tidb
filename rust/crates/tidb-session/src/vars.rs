@@ -2554,6 +2554,14 @@ impl SessionVars {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
+        self.system_value_at(index)
+    }
+
+    /// [`Self::system_value`] for a caller that already holds the variable's
+    /// registry index (see [`crate::sysvar::StaticSysVarIndex`]), which skips
+    /// only the name-to-index hash probe. Every other step, and the error a
+    /// node-tier read can raise, is what [`Self::system_value`] does.
+    pub(crate) fn system_value_at(&self, index: usize) -> Result<Cow<'_, str>, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
@@ -2574,8 +2582,9 @@ impl SessionVars {
                 return Ok(crate::sysvar::effective_default_value(def));
             }
         }
-        let lowered = crate::sysvar::lowered_if_needed(name);
-        self.systems.get(lowered.as_ref()).map_or_else(
+        // The registry name is the lowercase key `systems` is written under,
+        // so the caller's spelling needs no second lowercasing here.
+        self.systems.get(def.name).map_or_else(
             || Ok(crate::sysvar::effective_default_value(def)),
             |value| Ok(Cow::Borrowed(value.as_str())),
         )

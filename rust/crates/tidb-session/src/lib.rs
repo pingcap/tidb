@@ -1550,9 +1550,14 @@ impl Session {
     /// enter the session, so parsing here cannot depend on client input shape.
     #[must_use]
     pub fn wait_timeout(&self) -> Duration {
+        // Read once per command (Go `getSessionVarsWaitTimeout`, one
+        // `systems[name]` probe). The name-to-index step is resolved once
+        // for the process so the per-command read is a plain slot read.
+        static INDEX: crate::sysvar::StaticSysVarIndex =
+            crate::sysvar::StaticSysVarIndex::new("wait_timeout");
         let seconds = self
             .vars
-            .system_value("wait_timeout")
+            .system_value_at(INDEX.get())
             .expect("wait_timeout is a registered session variable")
             .parse::<u64>()
             .expect("wait_timeout validation stores unsigned decimal seconds");

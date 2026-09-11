@@ -1266,11 +1266,13 @@ impl crate::Session {
     /// is unreadable -- a probe must never turn a variable-table problem into
     /// a statement error.
     pub(crate) fn session_bool(&self, name: &str, default: bool) -> bool {
-        match self.vars.get_system(name) {
-            Ok(value) => matches!(
-                value.to_ascii_uppercase().as_str(),
-                "ON" | "1" | "TRUE" | "YES"
-            ),
+        // Read per statement. `get_system` copies the value into a `String`
+        // and `to_ascii_uppercase` allocates a second one; neither is needed
+        // to compare a value against four fixed spellings.
+        match self.vars.system_value(name) {
+            Ok(value) => ["ON", "1", "TRUE", "YES"]
+                .iter()
+                .any(|on| value.eq_ignore_ascii_case(on)),
             Err(_) => default,
         }
     }
