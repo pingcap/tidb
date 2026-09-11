@@ -947,3 +947,18 @@ fn duplicate_group_concat_set_var_warns_only_about_the_conflict() {
         ]]
     );
 }
+
+#[test]
+fn check_mb4_value_in_utf8_is_typed_once_per_global_publication() {
+    let mut vars = crate::vars::SessionVars::new();
+    assert!(
+        vars.check_mb4_value_in_utf8(),
+        "Go DefTiDBCheckMb4ValueInUTF8 is true"
+    );
+    vars.set_global("tidb_check_mb4_value_in_utf8", "OFF".to_owned())
+        .unwrap();
+    assert!(!vars.check_mb4_value_in_utf8());
+    vars.set_global("tidb_check_mb4_value_in_utf8", "1".to_owned())
+        .unwrap();
+    assert!(vars.check_mb4_value_in_utf8());
+}

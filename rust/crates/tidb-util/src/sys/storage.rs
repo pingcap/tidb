@@ -35,7 +35,11 @@ pub fn get_target_directory_capacity(path: impl AsRef<Path>) -> io::Result<u64> 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn get_target_directory_capacity_impl(path: &Path) -> io::Result<u64> {
     let stat = rustix::fs::statfs(path).map_err(io::Error::from)?;
-    Ok(stat.f_bavail.wrapping_mul(u64::from(stat.f_bsize)))
+    // Go: `stat.Bavail * uint64(stat.Bsize)`. `f_bsize` is `i64` on Linux
+    // glibc and `u32` on macOS, so the conversion is Go's plain cast.
+    #[allow(clippy::cast_sign_loss)]
+    let block_size = stat.f_bsize as u64;
+    Ok(stat.f_bavail.wrapping_mul(block_size))
 }
 
 #[cfg(windows)]

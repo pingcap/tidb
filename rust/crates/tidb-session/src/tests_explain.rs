@@ -2410,3 +2410,40 @@ fn scan_of(session: &mut Session, sql: &str, object: &str) -> (String, String) {
     );
     first
 }
+
+#[test]
+fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(
+        42,
+        "root".to_owned(),
+        "127.0.0.1:4000".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(42, guard);
+    session
+        .run("CREATE TABLE src (a BIGINT, INDEX ia(a))")
+        .unwrap();
+    session.run("INSERT INTO src VALUES (1)").unwrap();
+
+    // Go `executeStmtImpl`: a binary-protocol EXECUTE (`execStmt.Name == ""`)
+    // clears `currentPlan`, so `SHOW PROCESSLIST` carries no plan detail for
+    // it, while `StmtCtx.TableIDs`/`IndexNames` are still collected.
+    session.set_binary_prepared_execution(true);
+    session
+        .run("SELECT a FROM src USE INDEX (ia) WHERE a > 0")
+        .unwrap();
+    let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
+        .expect("registered process");
+    assert_eq!(info.brief_binary_plan, "");
+    assert_eq!(info.index_names, ["src:ia"]);
+
+    // The span ends with the EXECUTE; an ordinary statement publishes again.
+    session.set_binary_prepared_execution(false);
+    session.run("SELECT * FROM src USE INDEX ()").unwrap();
+    let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
+        .expect("registered process");
+    assert!(!info.brief_binary_plan.is_empty());
+}

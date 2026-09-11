@@ -696,6 +696,12 @@ pub struct StmtContextData {
     /// The session-owned publication cell for the plan-derived fields Go
     /// stores on `ProcessInfo` while building the ordinary executor.
     process_plan_info: Option<Arc<Mutex<ProcessPlanInfo>>>,
+    /// Whether the published process info renders `BriefBinaryPlan`. Go
+    /// drops the plan detail for a binary-protocol EXECUTE (`executeStmtImpl`,
+    /// `pkg/session/session.go`: "for exec-stmt on bin-protocol, ignore the
+    /// plan detail in `show process` to gain performance benefits") while
+    /// keeping `TableIDs`/`IndexNames`/stats.
+    publish_brief_binary_plan: bool,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -977,6 +983,7 @@ impl StmtContext {
             index_merge: true,
             planned_apply: session.planned_apply,
             process_plan_info: None,
+            publish_brief_binary_plan: true,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -2258,6 +2265,31 @@ impl StmtContext {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = plan;
         }
+    }
+
+    /// Derives and publishes the process-info fields for `physical`, rendering
+    /// the brief binary plan only when this statement publishes one.
+    pub fn publish_physical_process_info(
+        &self,
+        physical: &tidb_planner::physical::PhysicalPlan,
+        catalog: &crate::driver::Catalog,
+    ) {
+        if self.process_plan_info.is_none() {
+            return;
+        }
+        self.publish_process_plan_info(crate::explain::process_plan_info_with_brief(
+            physical,
+            catalog,
+            self.publish_brief_binary_plan,
+        ));
+    }
+
+    /// Go's binary-protocol EXECUTE keeps the plan detail out of the process
+    /// list; `false` skips rendering `BriefBinaryPlan` for this statement.
+    #[must_use]
+    pub fn with_brief_binary_plan(mut self, publish: bool) -> Self {
+        self.publish_brief_binary_plan = publish;
+        self
     }
 
     /// Installs the two published blacklists. See

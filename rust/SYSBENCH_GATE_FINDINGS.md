@@ -430,3 +430,83 @@ The measured profile matches exactly the open gaps recorded above:
   `/ycsb/workloads`); gate driver `/tmp/bench/gate.sh`, aggregator
   `/tmp/bench/agg.sh`, raw reporter outputs archived under
   `/tmp/bench/results/gate__/` (a.txt..f.txt = rust-side runs in order).
+
+## UPDATE 2026-09-11: per-statement overhead campaign (Go-aligned)
+
+Environment: one 4-core/16GB container, TiUP playground nightly (PD, TiKV,
+Go TiDB :4000) and the Rust node :4001 over the SAME TiKV; sysbench 1.0.20,
+4 tables x 10k rows; go-tpc via `tiup bench tpcc`. Both nodes serve TLS to
+the client (sysbench negotiates it), so the wire cost is identical.
+The A/B below alternates the pre-change and post-change Rust binaries on the
+same port (old = branch head plus only the Linux `statfs` build fix), which
+removes machine drift from the comparison.
+
+Profile-driven findings (perf, dwarf call graphs, conn threads):
+
+1. Transport runtime: `execution_runtime()` built a Tokio multi-thread pool
+   sized to the core count. Every TiKV response woke a second idle worker
+   that stole nothing and parked again (`notify_parked_local`), and the
+   connection thread's submit woke a third. strace: 20k context switches/s
+   for 3k statements/s (Go: 11k/s). The runtime hosts only h2/tonic framing
+   and the batch loops, which client-go also serializes per store connection
+   (`batchSendLoop`/`batchRecvLoop`), so it now runs one worker
+   (`crates/tidb-txnkv/src/rpc/execution.rs`). Measured alone: -11% node
+   CPU per transaction on point_select/read_only/write_only.
+2. EXECUTE normalized the SQL text again for the process list digest
+   (`Normalizer::normalize` 3.4% of conn-thread samples). Go installs the
+   PREPARE-time digest (`InitSQLDigest`, `pkg/executor/select.go:1058`);
+   `PreparedGeneral` now carries it and `retain_process_statement_with_digest`
+   publishes it.
+3. EXECUTE deep-cloned the retained AST on the no-binding path
+   (`prepared_statement_with_binding`); Go executes `PlanCacheStmt.PreparedAst`
+   in place. The probe now returns `Cow::Borrowed`.
+4. `set_read_timeout` (a `setsockopt`) ran before every command; Go's
+   `SetReadDeadline` is netpoll bookkeeping. It is now applied only when
+   `@@wait_timeout` changes.
+5. Binary-protocol EXECUTE rendered `BriefBinaryPlan` for the process list on
+   every cached DML/SELECT (`process_plan_info` 4.4% in TPC-C). Go clears
+   `currentPlan` for `execStmt.Name == ""` (`session.go` executeStmtImpl);
+   the session now spans a binary EXECUTE and the statement context skips
+   the render while still collecting TableIDs/IndexNames/stats.
+6. Per-statement string-keyed sysvar reads moved to the typed places Go
+   keeps them: process-list metadata (redact log, analyze version, rate
+   limit action, mem quota, session alias) from the parsed
+   `StatementVarSnapshot`; `tidb_check_mb4_value_in_utf8` and
+   `tidb_enable_check_constraint` as typed fields of the resolved GLOBAL
+   image (Go: `vardef` atomics); `innodb_lock_wait_timeout` from the snapshot
+   (Go: `SessionVars.LockWaitTimeout`).
+7. `opener_for_resource_group` cloned the whole transaction opener for every
+   snapshot and commit; the stamped opener is now cached per group. An
+   autocommit statement that staged nothing returns before the opener and
+   commit-protocol lookups (Go `finishStmt` publishes nothing).
+8. `SqlKiller::get_kill_event_chan` allocated a channel per statement and
+   grew a waiter list; Go hands every caller the one `killEvent.ch`. The
+   Rust killer now shares one channel until it is triggered or reset.
+
+Rust node CPU per transaction (server process, `/proc` utime+stime, 4
+threads, 15s): point_select 0.248 -> 0.181 ms (-27%), read_only 6.33 -> 4.78
+ms (-24%), write_only 2.66 -> 2.06 ms (-22%).
+
+Old-vs-new A/B, 16 threads, 20s, 2 alternating rounds each (final binary;
+throughput and average latency; the 4-core box is CPU-saturated at this
+concurrency). TPC-C is `tiup bench tpcc` on 10 warehouses.
+| workload             | old            | new              | delta   | old avg ms | new avg ms |
+|----------------------|----------------|------------------|---------|------------|------------|
+| tpcc (tpmC)          | 4698 / 5032    | 5867 / 5822      | +20.1%  | 98.8/84.5  | 79.6/77.4  |
+| oltp_point_select    | 9043 / 9886    | 11132 / 11049    | +17.2%  | 1.77/1.62  | 1.44/1.45  |
+| oltp_read_only       | 377 / 384      | 419 / 421        | +10.2%  | 42.4/41.6  | 38.2/38.0  |
+| oltp_write_only      | 664 / 636      | 733 / 776        | +16.1%  | 24.1/25.2  | 21.8/20.6  |
+| oltp_read_write      | 188 / 186      | 215 / 215        | +14.8%  | 84.7/85.9  | 74.2/74.4  |
+At 4 threads the loop is latency-bound on the TiKV round trip and the same
+binaries measure within noise of each other on sysbench (+1..5%). TPC-C on
+10 warehouses at 4 threads: old 4327 / 4023 tpmC, new 4439 / 4677 tpmC
+(+9.2%), average NEW_ORDER latency 28.1/30.0 -> 26.4/25.9 ms.
+
+Remaining per-statement costs identified but NOT changed here (each is Go
+parity today): the range detacher clones expressions on every cached-plan
+range rebuild (`rebuild_ranges_for_cached_plan`, ~8% of TPC-C conn-thread
+samples; Go rebuilds through the same detacher but shares pointers); the
+parallel HashAgg pipeline hands 100-row DISTINCT inputs to the OS worker
+pool (Go runs the same parallel plan on goroutines); jemalloc heap-profile
+sampling at 512KB (Go's default `MemProfileRate`); index-usage reporting
+wakes the collector thread once per statement (Go sends on a channel).

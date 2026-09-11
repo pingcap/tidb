@@ -28,7 +28,10 @@ fn current_directory_has_positive_capacity() {
 #[test]
 fn uses_statfs_available_bytes() {
     let stat = rustix::fs::statfs(".").expect("current directory statfs");
-    let expected = stat.f_bavail.wrapping_mul(u64::from(stat.f_bsize));
+    // Go: `stat.Bavail * uint64(stat.Bsize)`; `f_bsize` is `i64` on Linux.
+    #[allow(clippy::cast_sign_loss)]
+    let block_size = stat.f_bsize as u64;
+    let expected = stat.f_bavail.wrapping_mul(block_size);
     let capacity = get_target_directory_capacity(".").expect("current directory capacity");
     assert_eq!(capacity, expected);
 }

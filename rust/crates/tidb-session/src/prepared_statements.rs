@@ -277,8 +277,9 @@ impl Session {
                 _ => return Err(DriverError::WrongArguments("LIMIT")),
             }
         }
-        let (mut effective_statement, binding_sql) =
+        let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(&prepared.statement);
+        let mut effective_statement = effective_statement.into_owned();
         // The binding match belongs to the outer EXECUTE statement, but the
         // retained-plan and ordinary fallback paths each enter a nested
         // statement lifecycle to execute the bound AST. That inner boundary

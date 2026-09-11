@@ -87,7 +87,7 @@ pub(crate) struct StatementVarSnapshot {
     static_partition_prune: bool,
     new_only_full_group_by_check: bool,
     remove_orderby_in_subquery: bool,
-    mem_quota: i64,
+    pub(crate) mem_quota: i64,
     replica_read: tidb_executor::ReplicaReadType,
     isolation_read_engines: String,
     init_chunk_size: usize,
@@ -100,9 +100,19 @@ pub(crate) struct StatementVarSnapshot {
     block_encryption_mode: tidb_executor::BlockEncryptionMode,
     ddl_cdc_write_source: u64,
     ddl_reorg_priority: i64,
-    ddl_session_alias: String,
+    pub(crate) ddl_session_alias: String,
     arbitrator_wait_averse: Option<bool>,
     arbitrator_reserved: i64,
+    /// The process-list metadata Go reads off typed `SessionVars` fields
+    /// at every statement start (`EnableRedactLog`, `AnalyzeVersion`,
+    /// `EnabledRateLimitAction`); parsed once per variable-table generation
+    /// like every other field here.
+    pub(crate) redact_sql: tidb_parser::RedactMode,
+    pub(crate) analyze_version: i64,
+    pub(crate) rate_limit_action: bool,
+    /// Go `SessionVars.LockWaitTimeout` (`innodb_lock_wait_timeout`, in
+    /// seconds), which every pessimistic lock request reads.
+    pub(crate) lock_wait_timeout_secs: u64,
 }
 
 impl Session {
@@ -294,6 +304,14 @@ impl Session {
     /// global-variable row; in that case the host zone is the safe fallback.
     pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
         self.statement_var_snapshot().time_zone.clone()
+    }
+
+    /// Go `SessionVars.LockWaitTimeout` as a duration: the wait a pessimistic
+    /// lock request carries, read from the parsed variable snapshot rather
+    /// than the variable text on every statement.
+    #[must_use]
+    pub fn lock_wait_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.statement_var_snapshot().lock_wait_timeout_secs)
     }
 
     /// The instant every `NOW()` in one statement shares, which Go fixes on
@@ -552,7 +570,7 @@ impl Session {
     /// The cached [`StatementVarSnapshot`], re-derived only when a `SET`
     /// moved the variable table; see the struct's own doc for why the
     /// GLOBAL-scope reads are NOT in it.
-    fn statement_var_snapshot(&self) -> Arc<StatementVarSnapshot> {
+    pub(crate) fn statement_var_snapshot(&self) -> Arc<StatementVarSnapshot> {
         let generation = self.vars.generation();
         if let Some(cached) = self.statement_var_cache.borrow().as_ref() {
             if cached.generation == generation {
@@ -773,6 +791,31 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
+            redact_sql: match self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+                .as_deref()
+            {
+                Ok("ON") => tidb_parser::RedactMode::Enabled,
+                Ok("MARKER") => tidb_parser::RedactMode::Marker,
+                _ => tidb_parser::RedactMode::Disabled,
+            },
+            analyze_version: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or_default(),
+            rate_limit_action: on(tidb_vardef::tidb_vars::TIDB_ENABLE_RATE_LIMIT_ACTION),
+            lock_wait_timeout_secs: self
+                .vars
+                .get_system("innodb_lock_wait_timeout")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_else(|| {
+                    u64::try_from(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT)
+                        .unwrap_or_default()
+                }),
             replica_read: self.vars.replica_read(),
             isolation_read_engines: self
                 .vars
@@ -871,10 +914,7 @@ impl Session {
         // This setting is instance-scoped, unlike the two cached SESSION
         // checks. A peer's SET GLOBAL must affect the next statement without
         // mutating a context that is already executing.
-        let check_mb4 = self
-            .vars
-            .get_global(tidb_vardef::tidb_vars::TIDB_CHECK_MB4_VALUE_IN_UTF8)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let check_mb4 = self.vars.check_mb4_value_in_utf8();
         let string_type_flags = snapshot
             .string_type_flags
             .with_skip_utf8mb4_check(!check_mb4);
@@ -1033,6 +1073,7 @@ impl Session {
                     .with_index_merge(index_merge)
                     .with_pushdown_blacklists(self.pushdown_blacklists.snapshot())
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
+                    .with_brief_binary_plan(!self.binary_prepared_execution)
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)
                     .with_only_full_group_by(sql_mode.has_only_full_group_by())
@@ -1117,6 +1158,7 @@ impl Session {
         .with_date_modes(date_modes)
         .with_string_type_flags(string_type_flags)
         .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
+        .with_brief_binary_plan(!self.binary_prepared_execution)
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
@@ -1251,12 +1293,7 @@ impl Session {
     /// defaults it to OFF, and unlike `foreign_key_checks` the safe fallback
     /// for an unreadable value is OFF -- that is what a stock TiDB does.
     pub(crate) fn enable_check_constraint(&self) -> bool {
-        matches!(
-            self.vars
-                .get_global("tidb_enable_check_constraint")
-                .as_deref(),
-            Ok("ON") | Ok("on") | Ok("1")
-        )
+        self.vars.enable_check_constraint()
     }
 
     /// Go `SessionVars.EnableClusteredIndex`, fed to `BuildTableInfo` through

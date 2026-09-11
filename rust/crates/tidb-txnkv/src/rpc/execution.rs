@@ -21,14 +21,29 @@ use std::task::{Context, Poll, Wake, Waker};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::{AbortHandle, JoinSet};
 
+/// Workers driving the transport runtime; see [`execution_runtime`].
+const TRANSPORT_WORKER_THREADS: usize = 1;
+
 /// Shared scheduler for SQL work, transport owners and connection I/O tasks.
 /// Like Go goroutines, independent send/receive loops can run concurrently;
 /// connection scopes and transport joins own their lifetime, not this runtime.
+///
+/// The runtime hosts transport I/O only: tonic/h2 framing, the batch stream
+/// loops, PD and TTL keep-alive. client-go serializes that work per store
+/// connection as well (`batchSendLoop` and `batchRecvLoop` are one goroutine
+/// each), and it costs a few microseconds per request, so one worker keeps
+/// up. Sizing the pool to the core count instead made every TiKV response
+/// wake a second, idle worker that stole nothing and parked again (Tokio's
+/// `notify_parked_local`): measured under sysbench on a 4-core node, that
+/// was ~2.5 extra context switches per statement and 11% of the node's CPU.
+/// `block_in_place` callers still hand their core to a fresh thread, so a
+/// blocking section never stalls the transport.
 pub fn execution_runtime() -> Result<&'static Runtime, String> {
     static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(TRANSPORT_WORKER_THREADS)
                 .thread_name("tikv-execution")
                 .enable_all()
                 .build()

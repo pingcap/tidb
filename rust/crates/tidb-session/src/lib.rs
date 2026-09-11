@@ -772,6 +772,11 @@ pub struct Session {
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
     process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
+    /// Set while a binary-protocol EXECUTE runs. Go keeps the plan detail out
+    /// of the process list for that path (`executeStmtImpl`,
+    /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
+    /// so its statement contexts skip rendering `BriefBinaryPlan`.
+    binary_prepared_execution: bool,
     /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
     /// took its hints from a binding.
     found_in_binding: bool,
@@ -877,6 +882,7 @@ impl Session {
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
             process_plan_info: Arc::default(),
+            binary_prepared_execution: false,
             found_in_binding: false,
             prev_found_in_binding: false,
         }
@@ -1633,8 +1639,9 @@ impl Session {
         params: &[Datum],
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         let statement = prepared.bind(params)?;
-        let (mut effective_statement, binding_sql) =
+        let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(prepared.statement());
+        let mut effective_statement = effective_statement.into_owned();
         self.rewrite_fts_for_planning(&mut effective_statement);
         if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
             if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
@@ -1881,43 +1888,20 @@ impl Session {
         if let Some(guard) = &self.process {
             let registry = guard.registry();
             registry.statement_started(guard.id(), sql, &self.status_text());
-            let redact_sql = match self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
-                .as_deref()
-            {
-                Ok("ON") => tidb_parser::RedactMode::Enabled,
-                Ok("MARKER") => tidb_parser::RedactMode::Marker,
-                _ => tidb_parser::RedactMode::Disabled,
-            };
-            let session_analyze_version = self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or_default();
-            let session_enabled_rate_limit_action = self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_RATE_LIMIT_ACTION)
-                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
-            let session_mem_quota_query = self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+            // Go reads these off typed `SessionVars` fields; the snapshot is
+            // their parsed form, refreshed only when the variable table
+            // changes, so a statement start does not re-parse five values.
+            let snapshot = self.statement_var_snapshot();
             registry.statement_metadata(
                 guard.id(),
                 u64::try_from(self.current_tso().value()).unwrap_or_default(),
                 self.active_resource_group.clone(),
-                self.vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-                    .unwrap_or_default(),
-                redact_sql,
+                snapshot.ddl_session_alias.clone(),
+                snapshot.redact_sql,
                 tidb_util::memoryusagealarm::OOMAlarmVariablesInfo {
-                    session_analyze_version,
-                    session_enabled_rate_limit_action,
-                    session_mem_quota_query,
+                    session_analyze_version: snapshot.analyze_version,
+                    session_enabled_rate_limit_action: snapshot.rate_limit_action,
+                    session_mem_quota_query: snapshot.mem_quota,
                 },
             );
         }

@@ -78,7 +78,10 @@ impl KillSignal {
 struct KillEventState {
     triggered: bool,
     desc: String,
-    waiters: Vec<Sender<()>>,
+    /// The one kill-event channel every statement of this connection shares
+    /// until it is triggered or reset, like Go's `killer.killEvent.ch`: a
+    /// caller receives a clone of it, never a channel of its own.
+    channel: Option<(Sender<()>, Receiver<()>)>,
 }
 
 #[derive(Default)]
@@ -147,13 +150,20 @@ impl SqlKiller {
     /// Returns a receiver released when the current statement is killed or
     /// reset (Go `GetKillEventChan`).
     pub fn get_kill_event_chan(&self) -> Receiver<()> {
-        let (tx, rx) = bounded(1);
         let mut state = lock_unpoison(&self.kill_event.state);
         if state.triggered {
+            // Go returns the already-closed channel: a receive completes at
+            // once. The token is delivered and the sender dropped, so every
+            // receive on this receiver is ready.
+            let (tx, rx) = bounded(1);
             let _ = tx.send(());
-        } else {
-            state.waiters.push(tx);
+            return rx;
         }
+        if let Some((_, rx)) = &state.channel {
+            return rx.clone();
+        }
+        let (tx, rx) = bounded(1);
+        state.channel = Some((tx, rx.clone()));
         rx
     }
 
@@ -162,8 +172,10 @@ impl SqlKiller {
             return;
         }
         state.triggered = true;
-        for waiter in state.waiters.drain(..) {
-            let _ = waiter.send(());
+        // Go `close(ch)`: every receiver clone becomes ready. The one token
+        // serves the first receive and dropping the sender serves the rest.
+        if let Some((tx, _)) = state.channel.take() {
+            let _ = tx.try_send(());
         }
     }
 
@@ -173,7 +185,7 @@ impl SqlKiller {
         // Dropping the sender closes an untriggered Go channel. Receivers
         // created before Reset therefore remain permanently ready, just as a
         // closed Go channel does, instead of receiving a one-shot token.
-        state.waiters.clear();
+        state.channel = None;
     }
 
     /// Sets the kill-event reason and sends the signal (Go
@@ -398,6 +410,45 @@ impl SqlKiller {
             tracing::warn!(conn = self.conn_id.load(SeqCst), "kill finished");
         }
         *lock_unpoison(&self.last_check_time) = None;
+    }
+}
+
+#[cfg(test)]
+mod kill_event_channel_tests {
+    use super::*;
+
+    #[test]
+    fn statements_share_one_kill_event_channel_until_it_is_triggered() {
+        let killer = SqlKiller::default();
+        // Go's `GetKillEventChan` hands every caller the same channel; the
+        // second statement of a connection allocates nothing new.
+        let first = killer.get_kill_event_chan();
+        let second = killer.get_kill_event_chan();
+        assert!(first.same_channel(&second));
+        assert!(matches!(
+            first.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
+
+        // `close(ch)`: every receiver becomes ready, whichever drains first.
+        killer.send_kill_signal_with_reason(KillSignal::QueryInterrupted, "killed");
+        assert!(first
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .is_ok());
+        assert!(matches!(
+            second.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        ));
+        // A receiver taken after the trigger is ready at once, and reset
+        // starts a fresh, untriggered channel for the next statement.
+        assert!(matches!(killer.get_kill_event_chan().try_recv(), Ok(())));
+        killer.reset();
+        let fresh = killer.get_kill_event_chan();
+        assert!(!fresh.same_channel(&first));
+        assert!(matches!(
+            fresh.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
     }
 }
 

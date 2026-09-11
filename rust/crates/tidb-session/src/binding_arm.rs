@@ -549,11 +549,18 @@ impl Session {
 
     /// Applies the binding selected for this EXECUTE and returns its exact
     /// `BindSQL`, which Go includes in the prepared-plan cache key. A miss
-    /// returns an unchanged clone and no key component.
+    /// borrows the retained tree and reports no key component: Go executes
+    /// the `PlanCacheStmt`'s own `PreparedAst` in place, so the common
+    /// no-binding EXECUTE must not deep-copy the statement.
     #[must_use]
-    pub fn prepared_statement_with_binding(&mut self, stmt: &Stmt) -> (Stmt, Option<String>) {
-        self.bind_statement_hints_with_sql(stmt)
-            .map_or_else(|| (stmt.clone(), None), |(stmt, sql)| (stmt, Some(sql)))
+    pub fn prepared_statement_with_binding<'a>(
+        &mut self,
+        stmt: &'a Stmt,
+    ) -> (std::borrow::Cow<'a, Stmt>, Option<String>) {
+        self.bind_statement_hints_with_sql(stmt).map_or_else(
+            || (std::borrow::Cow::Borrowed(stmt), None),
+            |(stmt, sql)| (std::borrow::Cow::Owned(stmt), Some(sql)),
+        )
     }
 
     /// Whether `@@last_plan_from_binding` should report a hit, which is the

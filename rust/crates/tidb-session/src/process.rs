@@ -166,13 +166,26 @@ type SharedProcessEntry = Arc<Mutex<ProcessEntry>>;
 
 impl ProcessEntry {
     fn publish_statement(&mut self, sql: &str, state: &str) {
+        self.publish_statement_with_digest(sql, None, state);
+    }
+
+    /// `digest` is the statement's known digest -- a prepared statement's,
+    /// fixed at PREPARE like Go's `PlanCacheStmt.SQLDigest` -- or `None` to
+    /// derive it from `sql` here.
+    fn publish_statement_with_digest(&mut self, sql: &str, digest: Option<&str>, state: &str) {
         // Go SetProcessInfo reuses StatementContext.SQLDigest when planning
         // republishes the active command. LazyTxn.onStmtStart records that
         // execution once, independently of process-list publication.
         let same_held_statement = self.statement_holds > 0 && self.info.as_deref() == Some(sql);
         if !same_held_statement {
             self.info = Some(sql.to_owned());
-            self.digest = tidb_parser::normalize_digest(sql).1.to_string();
+            match digest {
+                Some(digest) => {
+                    self.digest.clear();
+                    self.digest.push_str(digest);
+                }
+                None => self.digest = tidb_parser::normalize_digest(sql).1.to_string(),
+            }
             self.since = Instant::now();
             self.started_at = Utc::now();
         }
@@ -614,6 +627,19 @@ impl ProcessGuard {
         db: impl Into<String>,
         state: impl Into<String>,
     ) -> ProcessStatementGuard {
+        self.statement_started_with_digest(sql, None, db, state)
+    }
+
+    /// [`Self::statement_started`] for a statement whose digest is already
+    /// known, so the process list does not normalize the text again.
+    #[must_use]
+    pub fn statement_started_with_digest(
+        &self,
+        sql: &str,
+        digest: Option<&str>,
+        db: impl Into<String>,
+        state: impl Into<String>,
+    ) -> ProcessStatementGuard {
         let state = state.into();
         let db = db.into();
         {
@@ -621,7 +647,7 @@ impl ProcessGuard {
                 .entry
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            entry.publish_statement(sql, &state);
+            entry.publish_statement_with_digest(sql, digest, &state);
             entry.statement_holds = entry.statement_holds.saturating_add(1);
         }
         ProcessStatementGuard {
@@ -711,6 +737,43 @@ mod tests {
             assert_eq!(registry.snapshot()[0].info.as_deref(), Some("select 2"));
         }
         assert_eq!(registry.snapshot()[0].info, None);
+    }
+
+    #[test]
+    fn prepared_statement_publishes_its_prepare_time_digest() {
+        let registry = ProcessRegistry::default();
+        let guard = registry.register(7, String::new(), String::new(), "test".to_owned(), None);
+        registry.transaction_started(7, 42);
+        // Go's EXECUTE installs the digest fixed at PREPARE
+        // (`InitSQLDigest`); the text is not normalized again, so the
+        // published digest is exactly the caller's.
+        let prepared_digest = tidb_parser::normalize_digest("select c from t where id = ?")
+            .1
+            .to_string();
+        {
+            let _statement = guard.statement_started_with_digest(
+                "select c from t where id = ?",
+                Some(&prepared_digest),
+                "test",
+                "autocommit",
+            );
+            let transactions = registry.transaction_snapshot();
+            assert_eq!(
+                transactions[0].current_sql_digest.as_deref(),
+                Some(prepared_digest.as_str())
+            );
+        }
+        // A statement without a known digest still derives it from the text.
+        {
+            let _statement = guard.statement_started("select 1", "test", "autocommit");
+            let derived = tidb_parser::normalize_digest("select 1").1.to_string();
+            assert_eq!(
+                registry.transaction_snapshot()[0]
+                    .current_sql_digest
+                    .as_deref(),
+                Some(derived.as_str())
+            );
+        }
     }
 
     #[test]

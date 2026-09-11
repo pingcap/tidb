@@ -448,7 +448,9 @@ impl QuerySession for PipelineServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        let process_statement = self.session.retain_process_statement(statement.sql());
+        let process_statement = self
+            .session
+            .retain_process_statement_with_digest(statement.sql(), statement.digest());
         let params = prepared_parameters(values);
         let (output, result_authority) = if let Some(prepared) = statement.prepared_ast() {
             self.session

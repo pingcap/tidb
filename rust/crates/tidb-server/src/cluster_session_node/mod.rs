@@ -4464,14 +4464,9 @@ impl ClusterServerSession {
                 .filter(|transaction| transaction.is_pessimistic())
                 .map(|_| {
                     tidb_executor::select_lock::SelectedLockKeys::new(
-                        tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(
-                            self.session
-                                .vars()
-                                .get_system("innodb_lock_wait_timeout")
-                                .expect("registered lock wait variable")
-                                .parse()
-                                .expect("validated lock wait variable"),
-                        )),
+                        tidb_txnkv::transaction::LockWaitTime::Timeout(
+                            self.session.lock_wait_timeout(),
+                        ),
                         self.session.vars().shared_lock_promotion_enabled(),
                     )
                 }),
@@ -4834,15 +4829,8 @@ impl ClusterServerSession {
         let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
         let mut requests = self.session.take_selected_lock_requests();
         if !keys.is_empty() {
-            let seconds = self
-                .session
-                .vars()
-                .get_system("innodb_lock_wait_timeout")
-                .expect("registered lock wait variable")
-                .parse()
-                .expect("validated lock wait variable");
             requests.push((
-                tidb_txnkv::transaction::LockWaitTime::Timeout(Duration::from_secs(seconds)),
+                tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout()),
                 keys,
             ));
         }
@@ -6675,7 +6663,9 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        let process_statement = self.session.retain_process_statement(statement.sql());
+        let process_statement = self
+            .session
+            .retain_process_statement_with_digest(statement.sql(), statement.digest());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
         // and leave `self.explicit` unopened -- the two pieces of transaction
@@ -6755,7 +6745,7 @@ impl QuerySession for ClusterServerSession {
             let (effective, binding_sql) = self.session.prepared_statement_with_binding(template);
             (Some(effective), binding_sql)
         });
-        let effective = effective_template.as_ref();
+        let effective = effective_template.as_deref();
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
         // would let a stale row-handle plan choose MaxTS and then fall back to
@@ -6876,11 +6866,9 @@ impl QuerySession for ClusterServerSession {
         };
         let write_read_keys = is_write.then(|| self.storage.read_keys());
         let attempt_read_keys = write_read_keys.clone();
-        let output = match self.with_prelocked_statement(
-            shape,
-            bind_prelock_keys,
-            &resource_group,
-            |session| {
+        self.session.set_binary_prepared_execution(true);
+        let attempt =
+            self.with_prelocked_statement(shape, bind_prelock_keys, &resource_group, |session| {
                 if let Some(read_keys) = attempt_read_keys.as_ref() {
                     read_keys.begin();
                 }
@@ -6910,7 +6898,7 @@ impl QuerySession for ClusterServerSession {
                     // run a second, executor-local point planner.
                     let bound = tidb_executor::bind_statement(
                         effective_template
-                            .as_ref()
+                            .as_deref()
                             .expect("fast prepared point read has a retained template")
                             .clone(),
                         &params,
@@ -6936,8 +6924,9 @@ impl QuerySession for ClusterServerSession {
                 } else {
                     session.run_with_params(&sql, &params).map_err(map_error)
                 }
-            },
-        ) {
+            });
+        self.session.set_binary_prepared_execution(false);
+        let output = match attempt {
             Ok(output) => output,
             Err(error) => {
                 if let Some(read_keys) = write_read_keys {

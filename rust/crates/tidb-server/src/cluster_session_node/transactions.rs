@@ -744,7 +744,16 @@ where
 {
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
+    /// The opener stamped with each resource group already seen. Go keeps
+    /// the group name on the request context; the Rust opener carries it,
+    /// so every statement used to clone the whole opener for its group. A
+    /// session's group rarely changes, so the stamped clone is kept and
+    /// shared. Bounded by the number of distinct groups this node serves.
+    group_openers: Arc<Mutex<Vec<GroupOpener<C, L, P>>>>,
 }
+
+/// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
+type GroupOpener<C, L, P> = (Arc<str>, Arc<RealOptimisticTransactionOpener<C, L, P>>);
 
 struct RealPendingSnapshot<C, L, P>(PreparedStatementSnapshot<C, L, P>)
 where
@@ -778,6 +787,7 @@ where
         Self {
             opener: Arc::new(opener),
             timeout,
+            group_openers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -785,12 +795,25 @@ where
         &self,
         resource_group: &str,
     ) -> Arc<RealOptimisticTransactionOpener<C, L, P>> {
-        Arc::new(
+        let mut cached = self
+            .group_openers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, opener)) = cached
+            .iter()
+            .find(|(name, _)| name.as_ref() == resource_group)
+        {
+            return Arc::clone(opener);
+        }
+        let name = Arc::<str>::from(resource_group);
+        let opener = Arc::new(
             self.opener
                 .as_ref()
                 .clone()
-                .with_resource_group_name(Arc::<str>::from(resource_group)),
-        )
+                .with_resource_group_name(Arc::clone(&name)),
+        );
+        cached.push((name, Arc::clone(&opener)));
+        opener
     }
 
     fn acquire_advisory_lock_lease(
@@ -1014,6 +1037,11 @@ where
         read_ts: Option<u64>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
+        // Go's autocommit `finishStmt` on a statement that staged nothing
+        // publishes nothing; skip the opener and protocol lookups too.
+        if buffer.is_empty() {
+            return Ok(());
+        }
         let opener = self.opener_for_resource_group(resource_group);
         commit_staged_buffer(
             &opener,

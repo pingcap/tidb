@@ -196,6 +196,9 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
 /// ([`crate::table_privilege`]) needs the written spelling for the error
 /// message and the alias to place a multi-table `UPDATE`/`DELETE` target, so
 /// it reads the same nodes through this.
+/// One `TableRef` as written: its name path and its alias, if any.
+pub(crate) type TableRefName = (Vec<String>, Option<String>);
+
 pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String>)> {
     struct Collector {
         refs: Vec<(Vec<String>, Option<String>)>,
@@ -219,30 +222,22 @@ pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String
     collector.refs
 }
 
-/// The written name path of every `TableRef`, which is the row-source list
-/// Go's `buildDataSource` walks.
-pub(crate) fn collect_table_paths(stmt: &Stmt) -> Vec<Vec<String>> {
-    collect_table_refs(stmt)
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect()
-}
-
-/// Every name a `WITH` clause anywhere in `stmt` defines.
-///
-/// A CTE is REFERENCED through the ordinary table grammar, so it parses as a
-/// `TableRef` -- but it resolves to the query that defined it, not to a
-/// stored table, and Go's `buildDataSource` is never reached for one. The
-/// privilege collector subtracts these so `WITH c AS (...) SELECT * FROM c`
-/// does not demand `SELECT` on a table named `c`.
-pub(crate) fn collect_cte_names(stmt: &Stmt) -> Vec<String> {
+/// [`collect_table_refs`] and [`collect_cte_names`] in ONE traversal. The
+/// visitor API walks a mutable tree, so a read-only collector has to copy
+/// the statement first; the privilege check needs both lists for every
+/// statement and must not pay that copy twice.
+pub(crate) fn collect_table_refs_and_cte_names(stmt: &Stmt) -> (Vec<TableRefName>, Vec<String>) {
     struct Collector {
-        names: Vec<String>,
+        refs: Vec<TableRefName>,
+        ctes: Vec<String>,
     }
     impl Visitor for Collector {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
-            if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
-                self.names.push(cte.name.clone());
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                self.refs
+                    .push((table_ref.name.clone(), table_ref.alias.clone()));
+            } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
+                self.ctes.push(cte.name.clone());
             }
             false
         }
@@ -252,9 +247,12 @@ pub(crate) fn collect_cte_names(stmt: &Stmt) -> Vec<String> {
         }
     }
     let mut stmt = stmt.clone();
-    let mut collector = Collector { names: Vec::new() };
+    let mut collector = Collector {
+        refs: Vec::new(),
+        ctes: Vec::new(),
+    };
     stmt.accept(&mut collector);
-    collector.names
+    (collector.refs, collector.ctes)
 }
 
 /// Go's `bindinfo.Binding`, minus the fields only a stored global binding

@@ -1328,6 +1328,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     };
     let mut queries = 0_u64;
     let mut prepared = PreparedStatementRegistry::default();
+    // Go's `SetReadDeadline` before every packet is a netpoll bookkeeping
+    // update, never a syscall. `set_read_timeout` is `setsockopt`, so the
+    // socket is only rebound when `@@wait_timeout` actually changed; the
+    // deadline itself still follows the session variable statement by
+    // statement.
+    let mut applied_read_timeout: Option<Option<std::time::Duration>> = None;
     loop {
         // A `KILL` that arrived while the previous command ran ends the
         // connection here, before it serves another one.
@@ -1344,11 +1350,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // starts a new exchange, not a continuation of the previous response.
         reader.set_compressed_sequence(0);
         let wait_timeout = engine.wait_timeout();
-        reader
-            .get_ref()
-            .get_ref()
-            .set_read_timeout((!wait_timeout.is_zero()).then_some(wait_timeout))
-            .map_err(MysqlConnectionError::Io)?;
+        let read_timeout = (!wait_timeout.is_zero()).then_some(wait_timeout);
+        if applied_read_timeout != Some(read_timeout) {
+            reader
+                .get_ref()
+                .get_ref()
+                .set_read_timeout(read_timeout)
+                .map_err(MysqlConnectionError::Io)?;
+            applied_read_timeout = Some(read_timeout);
+        }
         reader.set_sequence(0);
         // Go `clientConn.readPacket`: the reader is rebound from the SESSION
         // variable before every packet, so the ceiling a client reads out of

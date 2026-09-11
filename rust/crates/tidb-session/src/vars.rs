@@ -237,6 +237,10 @@ struct ResolvedGlobals {
     oom_action: tidb_executor::OomAction,
     /// Go's process-wide typed `vardef.EnableTmpStorageOnOOM` atomic.
     tmp_storage_on_oom: bool,
+    /// Go's process-wide typed `vardef.CheckMb4ValueInUTF8` atomic.
+    check_mb4_value_in_utf8: bool,
+    /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic.
+    enable_check_constraint: bool,
 }
 
 impl Default for ResolvedGlobals {
@@ -245,6 +249,8 @@ impl Default for ResolvedGlobals {
             values: std::boxed::Box::default(),
             oom_action: tidb_executor::OomAction::Cancel,
             tmp_storage_on_oom: true,
+            check_mb4_value_in_utf8: true,
+            enable_check_constraint: false,
         }
     }
 }
@@ -609,6 +615,11 @@ impl GlobalSysvars {
         let stats_cache_mem_quota = effective(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
             .parse::<i64>()
             .expect("validated statistics cache quota is an integer");
+        let check_mb4 = effective(tidb_vardef::tidb_vars::TIDB_CHECK_MB4_VALUE_IN_UTF8);
+        let check_mb4_value_in_utf8 = check_mb4.eq_ignore_ascii_case("on") || check_mb4 == "1";
+        let check_constraint = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT);
+        let enable_check_constraint =
+            check_constraint.eq_ignore_ascii_case("on") || check_constraint == "1";
         let mut publish = self
             .resolved
             .write()
@@ -617,6 +628,8 @@ impl GlobalSysvars {
             values: slots.into(),
             oom_action,
             tmp_storage_on_oom,
+            check_mb4_value_in_utf8,
+            enable_check_constraint,
         });
         if self.publishes_runtime_settings {
             tidb_vardef::set_oom_action(&oom_action_text);
@@ -651,6 +664,25 @@ impl GlobalSysvars {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         (snapshot.oom_action, snapshot.tmp_storage_on_oom)
+    }
+
+    /// Go's process-wide typed `vardef.CheckMb4ValueInUTF8` atomic, parsed
+    /// when a GLOBAL mutation publishes the resolved image rather than by
+    /// every statement context.
+    pub(crate) fn check_mb4_value_in_utf8(&self) -> bool {
+        self.resolved
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .check_mb4_value_in_utf8
+    }
+
+    /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic, parsed
+    /// once per GLOBAL publication.
+    pub(crate) fn enable_check_constraint(&self) -> bool {
+        self.resolved
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .enable_check_constraint
     }
 
     /// Reads the current GLOBAL resource-control enable value for statement
@@ -2742,6 +2774,18 @@ impl SessionVars {
     /// converting their GLOBAL sysvar text on every statement.
     pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
         self.globals.statement_memory_policy()
+    }
+
+    /// Go's process-wide `vardef.CheckMb4ValueInUTF8` switch, typed once per
+    /// GLOBAL publication.
+    pub(crate) fn check_mb4_value_in_utf8(&self) -> bool {
+        self.globals.check_mb4_value_in_utf8()
+    }
+
+    /// Go's process-wide `vardef.EnableCheckConstraint` switch, typed once per
+    /// GLOBAL publication.
+    pub(crate) fn enable_check_constraint(&self) -> bool {
+        self.globals.enable_check_constraint()
     }
 
     /// Go's process-wide resource-control enable switch, published by the

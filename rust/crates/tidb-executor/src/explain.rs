@@ -1688,8 +1688,24 @@ fn collect_stats_info(
 /// constructed.
 #[must_use]
 pub fn process_plan_info(physical: &PhysicalPlan, catalog: &Catalog) -> crate::ProcessPlanInfo {
+    process_plan_info_with_brief(physical, catalog, true)
+}
+
+/// [`process_plan_info`] with the brief binary plan rendered only when
+/// `with_brief` is set; the table, index, and statistics fields are always
+/// collected, as Go's `StmtCtx.TableIDs`/`IndexNames` are.
+#[must_use]
+pub fn process_plan_info_with_brief(
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    with_brief: bool,
+) -> crate::ProcessPlanInfo {
     let mut info = crate::ProcessPlanInfo {
-        brief_binary_plan: brief_binary_plan(physical, catalog),
+        brief_binary_plan: if with_brief {
+            brief_binary_plan(physical, catalog)
+        } else {
+            String::new()
+        },
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(

@@ -617,6 +617,11 @@ impl PreparedWrite {
 #[derive(Clone, Debug)]
 pub struct PreparedGeneral {
     sql: String,
+    /// The statement's SQL digest, computed once at PREPARE. Go keeps
+    /// `NormalizedSQL`/`SQLDigest` on the `PlanCacheStmt` and every EXECUTE
+    /// installs them with `InitSQLDigest` (`pkg/executor/select.go:1058`)
+    /// instead of normalizing the text again.
+    digest: String,
     parameter_count: usize,
     result_columns: Vec<ColumnInfo>,
     /// The session owns the parse, cache candidate and execution readiness.
@@ -627,8 +632,10 @@ impl PreparedGeneral {
     /// Creates one from its statement text and the metadata a PREPARE reports.
     #[must_use]
     pub fn new(sql: String, parameter_count: usize, result_columns: Vec<ColumnInfo>) -> Self {
+        let digest = tidb_parser::normalize_digest(&sql).1.to_string();
         Self {
             sql,
+            digest,
             parameter_count,
             result_columns,
             prepared_ast: None,
@@ -643,6 +650,9 @@ impl PreparedGeneral {
     ) -> Self {
         Self {
             sql: prepared_ast.sql().to_owned(),
+            digest: tidb_parser::normalize_digest(prepared_ast.sql())
+                .1
+                .to_string(),
             parameter_count: prepared_ast.parameter_count(),
             result_columns,
             prepared_ast: Some(prepared_ast),
@@ -653,6 +663,12 @@ impl PreparedGeneral {
     #[must_use]
     pub fn sql(&self) -> &str {
         &self.sql
+    }
+
+    /// The digest of [`Self::sql`], fixed at PREPARE.
+    #[must_use]
+    pub fn digest(&self) -> &str {
+        &self.digest
     }
 
     /// Positional markers the execute packet must supply.

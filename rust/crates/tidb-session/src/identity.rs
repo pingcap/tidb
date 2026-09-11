@@ -411,6 +411,32 @@ impl Session {
             .map(|guard| guard.statement_started(sql, self.current_db.clone(), self.status_text()))
     }
 
+    /// Marks the statements that follow as a binary-protocol EXECUTE (or
+    /// ends that span). Go's `executeStmtImpl` clears `currentPlan` for
+    /// `execStmt.Name == ""`, so the process list carries no plan detail
+    /// for the binary path; the text `EXECUTE name` keeps it.
+    pub fn set_binary_prepared_execution(&mut self, active: bool) {
+        self.binary_prepared_execution = active;
+    }
+
+    /// [`Self::retain_process_statement`] for a prepared statement: Go's
+    /// EXECUTE installs the digest computed at PREPARE (`InitSQLDigest`,
+    /// `pkg/executor/select.go:1058`) rather than normalizing the text again.
+    pub fn retain_process_statement_with_digest(
+        &self,
+        sql: &str,
+        digest: &str,
+    ) -> Option<process::ProcessStatementGuard> {
+        self.process.as_ref().map(|guard| {
+            guard.statement_started_with_digest(
+                sql,
+                Some(digest),
+                self.current_db.clone(),
+                self.status_text(),
+            )
+        })
+    }
+
     /// Joins this session to the server's account/global-privilege registry.
     ///
     /// Go's session reads `privilege.Manager` off the `Domain` every

@@ -136,7 +136,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref() {
-        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+        ctx.publish_physical_process_info(plan, catalog);
     }
     let physical_source = match physical_plan {
         Some(plan) => dml_select_plan_mut(plan, "Insert")?,
@@ -2144,7 +2144,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref() {
-        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+        ctx.publish_physical_process_info(plan, catalog);
     }
     let (physical_source, update_expressions) = match physical_plan {
         Some(plan) => {
@@ -3590,7 +3590,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         .transpose()?;
     let physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref() {
-        ctx.publish_process_plan_info(crate::process_plan_info(plan, catalog));
+        ctx.publish_physical_process_info(plan, catalog);
     }
     let physical_source = match physical_plan {
         Some(plan) => dml_select_plan_mut(plan, "Delete")?,
