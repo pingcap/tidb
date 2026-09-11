@@ -67,9 +67,43 @@ pub fn sample() -> Option<(i64, i64, i64)> {
     ))
 }
 
-/// Writes jemalloc's sampled live-allocation profile to `path`.
+/// Turns jemalloc's allocation sampling on (`prof.active`), idempotently.
+///
+/// Sampling is compiled in but starts inactive: jemalloc records a sampled
+/// allocation by unwinding the stack through libgcc's DWARF unwinder, which
+/// measured at 9% of connection-thread CPU on an allocation-heavy index
+/// lookup (`_Unwind_Find_FDE` under `_rjem_je_prof_backtrace`). Go samples
+/// continuously at the same 512 KiB rate because its runtime walks frame
+/// pointers for a fraction of a microsecond; the jemalloc build script
+/// exposes no way to select that backtrace method. TiKV, on the same
+/// allocator, ships `prof_active:false` and activates on demand
+/// (`heap_activate`); this node folds the activation into the first profile
+/// request, so a dump covers the allocations since that request.
+#[cfg(feature = "jemalloc")]
+pub fn activate_profiling() -> io::Result<()> {
+    let mut active = true;
+    // SAFETY: `prof.active` reads one `bool`; the value lives through the call.
+    let result = unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"prof.active".as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            (&mut active as *mut bool).cast::<c_void>(),
+            std::mem::size_of::<bool>(),
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(result))
+    }
+}
+
+/// Writes jemalloc's sampled live-allocation profile to `path`, activating
+/// sampling first (see [`activate_profiling`]).
 #[cfg(feature = "jemalloc")]
 pub fn dump(path: &Path) -> io::Result<()> {
+    activate_profiling()?;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
 
@@ -111,7 +145,9 @@ mod profile_config {
     #[export_name = "_rjem_malloc_conf"]
     pub static malloc_conf: Option<&'static c_char> = Some(unsafe {
         Pointer {
-            bytes: &b"prof:true,lg_prof_sample:19\0"[0],
+            // `prof_active:false`: sampling waits for the first profile
+            // request (`activate_profiling`); the rate is Go's `MemProfileRate`.
+            bytes: &b"prof:true,prof_active:false,lg_prof_sample:19\0"[0],
         }
         .chars
     });

@@ -607,6 +607,34 @@ where
     /// one sorted run per worker (or per spill round) to the result merger.
     fn fetch_and_sort_parallel(&mut self) -> Result<(), ExecError> {
         let fields = self.meta.ret_field_types().to_vec();
+        // Go's parallel workers are goroutines, so handing them one chunk costs
+        // nothing; here a lane is a persistent pool thread reached through a
+        // channel, joined through another, with a panic guard around the sort.
+        // The first chunk is therefore held back until a second one proves the
+        // input spans more than one chunk; a single-chunk input (sysbench's
+        // 100-row ORDER BY ranges, most OLTP sorts) is sorted on this thread,
+        // exactly as the unparallel path sorts it, with the same accounting.
+        let mut first = self.child.new_chunk();
+        self.child.next(&mut first)?;
+        if first.num_rows() == 0 {
+            return Ok(());
+        }
+        let mut second = self.child.new_chunk();
+        self.child.next(&mut second)?;
+        if second.num_rows() == 0 {
+            let mut current = self.new_partition(&fields);
+            current.add(first);
+            self.memory.check()?;
+            current.sort_with_memory(
+                &self.by_items,
+                &self.compare_funcs,
+                &self.ctx,
+                &self.memory,
+            )?;
+            self.partitions.push(current);
+            return Ok(());
+        }
+        let mut held: Vec<Chunk> = vec![first, second];
         let spill_storage = self.memory.spill_storage();
         let worker_count = self.parallelism;
         let mut workers = (0..worker_count)
@@ -683,11 +711,18 @@ where
         let result = (|| -> Result<(), ExecError> {
             let mut next_worker = 0usize;
             loop {
-                let mut chunk = self.child.new_chunk();
-                self.child.next(&mut chunk)?;
-                if chunk.num_rows() == 0 {
-                    break;
-                }
+                // The two chunks fetched to prove the input is multi-chunk go
+                // first, in order; then the child is drained as before.
+                let chunk = if held.is_empty() {
+                    let mut chunk = self.child.new_chunk();
+                    self.child.next(&mut chunk)?;
+                    if chunk.num_rows() == 0 {
+                        break;
+                    }
+                    chunk
+                } else {
+                    held.remove(0)
+                };
 
                 let lane = next_worker;
                 next_worker = (next_worker + 1) % worker_count;
@@ -1319,6 +1354,96 @@ mod tests {
             }],
         );
         assert_eq!(collect(&mut e), rows1(&[Some(1), Some(2), Some(3)]));
+    }
+
+    /// A source that answers a fixed list of chunks, one per `next`.
+    struct ChunksSource {
+        meta: ExecutorMeta,
+        chunks: std::collections::VecDeque<Chunk>,
+    }
+
+    impl Executor for ChunksSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            if let Some(chunk) = self.chunks.pop_front() {
+                *req = chunk;
+            }
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    fn int_chunk(values: &[i64]) -> Chunk {
+        let mut chunk = Chunk::new_with_capacity(&[long()], values.len().max(1));
+        for value in values {
+            chunk.append_int64(0, *value);
+        }
+        chunk
+    }
+
+    fn parallel_sort_over(chunks: Vec<Chunk>, parallelism: usize) -> SortExec<NoColumns> {
+        let source = ChunksSource {
+            meta: ExecutorMeta::new(schema_of(1), 0, 4, 1024),
+            chunks: chunks.into(),
+        };
+        SortExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 4, 1024),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+            Box::new(source),
+            NoColumns,
+            StatementMemory::default(),
+        )
+        .with_parallelism(parallelism)
+    }
+
+    /// Go's parallel sort hands chunks to goroutines; this port's lanes are
+    /// pool threads reached through channels. A single-chunk input is sorted
+    /// on the calling thread without a pool task, and a multi-chunk input
+    /// still goes through the lanes.
+    #[test]
+    fn a_single_chunk_input_sorts_without_a_pool_lane_under_parallelism() {
+        let before = crate::worker_pool::spawned_so_far();
+        let mut single = parallel_sort_over(vec![int_chunk(&[3, 1, 2])], 4);
+        assert_eq!(collect(&mut single), rows1(&[Some(1), Some(2), Some(3)]));
+        assert_eq!(
+            crate::worker_pool::spawned_so_far(),
+            before,
+            "one chunk must not consume a persistent worker-pool task"
+        );
+
+        let before = crate::worker_pool::spawned_so_far();
+        let mut multi = parallel_sort_over(vec![int_chunk(&[5, 4]), int_chunk(&[3, 1, 2])], 4);
+        assert_eq!(
+            collect(&mut multi),
+            rows1(&[Some(1), Some(2), Some(3), Some(4), Some(5)])
+        );
+        assert!(
+            crate::worker_pool::spawned_so_far() > before,
+            "a multi-chunk input still uses the parallel lanes"
+        );
     }
 
     #[test]

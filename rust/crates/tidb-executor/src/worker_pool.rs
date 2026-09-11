@@ -114,6 +114,8 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
+    #[cfg(test)]
+    SPAWNED.with(|count| count.set(count.get() + 1));
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel::<R>(1);
     enqueue(Box::new(move || {
         // A disconnected receiver means the caller dropped it before joining;
@@ -121,6 +123,20 @@ where
         let _ = result_tx.send(task());
     }));
     result_rx
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tasks this thread handed to [`spawn`]; lets an executor test prove that
+    /// a small input never reached a pool lane. Per thread, so tests running
+    /// in parallel cannot disturb each other's count.
+    static SPAWNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// [`spawn`] calls made by the calling thread so far (test builds only).
+#[cfg(test)]
+pub(crate) fn spawned_so_far() -> usize {
+    SPAWNED.with(std::cell::Cell::get)
 }
 
 /// Whether the persistent pool exists in this process (it always does once
