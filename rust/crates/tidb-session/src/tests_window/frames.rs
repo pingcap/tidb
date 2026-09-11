@@ -136,6 +136,12 @@ fn window_range_value_bounds() {
         .unwrap();
     assert_eq!(
         row_text(session.run(
+            "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 0.5e0 PRECEDING AND CURRENT ROW) FROM rd"
+        )),
+        [["1"], ["3"], ["3"], ["4"]]
+    );
+    assert_eq!(
+        row_text(session.run(
             "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM rd"
         )),
         [["1"], ["3"], ["5"], ["4"]]

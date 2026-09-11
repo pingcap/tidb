@@ -1238,11 +1238,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // truncation here. Keep the original string for composite intervals
         // such as '1 2' DAY_HOUR; only the validation reads its numeric prefix.
         let checked_offset = match &constant {
-            Expression::Constant(value) if matches!(value.value, tidb_datatype::Datum::String(_)) => {
-                value.value.to_i64().ok().and_then(|converted| {
-                    (converted.value >= 0).then_some((converted.value as u64, false))
-                })
+            // Go Constant.EvalInt reads Datum.i for non-string constants.
+            // Decimal stores its value outside i (which remains zero), and
+            // floating-point datums store their IEEE bits in i. This is only
+            // the legality check; arithmetic below uses the original datum.
+            Expression::Constant(value) if matches!(value.value, tidb_datatype::Datum::Decimal(_)) => {
+                Some((0, false))
             }
+            Expression::Constant(value) => match &value.value {
+                tidb_datatype::Datum::Real(value) | tidb_datatype::Datum::Float32(value) => {
+                    ((value.to_bits() as i64) >= 0).then_some((value.to_bits(), false))
+                }
+                tidb_datatype::Datum::String(_) => {
+                    value.value.to_i64().ok().and_then(|converted| {
+                        (converted.value >= 0).then_some((converted.value as u64, false))
+                    })
+                }
+                _ => get_uint64_from_constant(&constant, self.ctx),
+            },
             _ => get_uint64_from_constant(&constant, self.ctx),
         };
         match checked_offset {

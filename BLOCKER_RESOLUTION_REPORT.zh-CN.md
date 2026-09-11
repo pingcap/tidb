@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 小数 RANGE offset 校验
+
+在 `6e268c9dce` 独立回归 `window_range_value_bounds`，`/tmp/range-decimal-red.log` 退出 101。Rust 用 get_uint64_from_constant 错拒绝 DECIMAL 与浮点 offset。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 Constant.EvalInt (`pkg/expression/constant.go:358`) 对非字符串常量读取 Datum.i，DECIMAL 的值在独立字段，浮点值在 i 中保存 IEEE 位；该结果仅用于校验，边界计算保留原 Datum。
+
+Rust 校验按相同存储契约接受 DECIMAL，并检查浮点位模式的符号，未将原值取整。Go 实测 `/tmp/range-decimal-go.out`：DECIMAL 0.5 双侧范围返回 3、3、3、4；0.5e0 PRECEDING 返回 1、3、3、4。裸负数在 Go parser 返回 1064，不作为本次 planner 校验的推断依据。现有小数回归保留，追加指数形式结果断言。
+
+Ready 命令（Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_range_
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/range-decimal-final.log` 4 passed，`/tmp/range-decimal-planner.log` 66 passed；session 集成 `/tmp/range-decimal-integration.log` 310 passed，lint `/tmp/range-decimal-lint.log` 退出 0。完整窗口 suite `/tmp/range-decimal-suite.log` 34 passed / 9 failed（上一轮 33/10）。Go 临时实例已正常退出，diff check 通过；其余原始失败及质量门禁仍待完成。
+
 ## 2026-09-11 RANGE 字符串 interval 校验
 
 在 `a6504359f3` 重跑 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_range_`，`/tmp/range-offset-red.log` 退出 101，包含 `window_range_interval_bounds` 的 WindowFrameIllegal。Rust 使用 get_uint64_from_constant，只接受整数 Datum，错误拒绝 `INTERVAL '1 2' DAY_HOUR`。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 在 `pkg/planner/core/logical_plan_builder.go:6972` 用 Constant.EvalInt 校验；`pkg/expression/constant.go:358` 对字符串调用 Datum.ToInt64，此处忽略截断事件，但保留原始字符串用于日期边界计算。
