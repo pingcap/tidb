@@ -1576,11 +1576,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // `extract` call: `parseExtractFunc` builds `FuncCallExpr{FnName:
         // ast.Extract, Args: [TimeUnitExpr, value]}` and the rewriter turns
         // the unit into a VARCHAR constant (`expression_rewriter.go:1838`).
-        // Go's `extractFunctionClass.getFunction` then types the VALUE per
-        // unit; this port's shared unit functions coerce the value the same
-        // way, so the call is built here with the unit as the first argument
-        // and the value second, exactly as the AST evaluator's own
-        // `Expr::Extract` arm evaluates it (`crate::eval_in`).
+        // EXTRACT's evaluator selects the value's datetime/duration signature
+        // from this unit and the second argument's static type.
         Expr::Extract { unit, value } => {
             let unit = constant(Datum::new_string(unit.clone()), FieldTypeCode::VarString);
             let value = rewrite_expr_resolved(value, resolver)?;

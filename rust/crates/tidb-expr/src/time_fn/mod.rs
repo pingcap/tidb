@@ -27,6 +27,7 @@ pub(crate) mod add_sub;
 pub(crate) mod calendar;
 mod convert_tz;
 pub(crate) mod duration_parse;
+pub(crate) mod extract;
 mod session_tz;
 
 use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_of_year};

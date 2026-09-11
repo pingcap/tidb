@@ -1,5 +1,53 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 EXTRACT 独立签名调度修复
+
+新增实际 session 回归 `extract_uses_datetime_and_signed_duration_units`，旧代码
+失败 FunctionNotExists("extract(YEAR)")（`/tmp/extract-red.log`，退出 101）。
+chunk evaluator 将 EXTRACT 单位当作普通时间函数交给 time_fn::dispatch，
+而 YEAR/HOUR/MINUTE/SECOND 由另一普通函数入口拥有，因此失败。AST 入口又
+直接调用普通 YEAR/HOUR，不能保持 Go EXTRACT 的负时间符号和独立 WEEK 模式。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/expression/builtin_time.go:2761` 按单位与静态类型选择 datetime、duration
+或 DAY_* string 签名；`pkg/types/time.go:2248/2292` 执行提取。
+新增 `time_fn/extract.rs` 供 AST/chunk 共同调用，复用已有参数 cast、duration/
+datetime parser 和 `extract_datetime_num`/`extract_duration_num`。混合 DAY_*
+字符串先解析 duration，只有 datetime 解析成功、年份为正且钟点一致时改用
+日期结果。保留 NULL、负 duration 符号和非法混合字符串的 1292，未做错误文本
+模糊匹配。旧的“EXTRACT 等同普通函数调用”注释已更正。
+
+固定 master binary 的独立实测证据 `/tmp/extract-go-oracle/valid.out`：
+YEAR/MONTH/DAY/QUARTER 为 `2024,3,15,1`；负时间 HOUR/MINUTE/SECOND/
+HOUR_SECOND 为 `-25,-3,-4,-250304`；数字日期、带天数 duration 和 typed
+datetime DAY_SECOND 分别为 `2024,26,15020304`。`invalid.err` 确认
+`EXTRACT(DAY_HOUR FROM 'bad')` 返回 1292 / 22007，文本为
+`Truncated incorrect time value: 'bad'`。独立 Go oracle 已停止。
+
+Ready 验证均使用 `RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all unix_round_trip_source
+# 新、旧两个 case 通过；/tmp/extract-green.log
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib tests::datetime
+# 21 passed，包括 AST/chunk 双路径；/tmp/extract-datetime-tests.log
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib -- tests_core::builtins::date_interval_extract_and_timestampdiff tests_partition::partition_column_modify_uses_the_source_method_allowlist --exact
+# 两个原失败单元 case 通过；/tmp/extract-session-unit-regressions.log
+cargo check --manifest-path rust/Cargo.toml --workspace
+# exit 0；/tmp/extract-workspace-check.log
+make lint
+# exit 0；/tmp/extract-lint.log
+git diff --check
+# exit 0
+```
+
+完整 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`
+从 305 passed / 2 failed 变为 **307 passed / 1 failed**（新增一项测试），
+日志 `/tmp/extract-session-all.log`。唯一剩余失败为
+`three_valued_in_using_source::null_in_list_and_using_join`，右侧 NULL 的 NOT IN
+仍错误返回 1 和 3。该 gate 仍不是全绿；整个 session 单元集、source-size
+及原始总清单也不能据本修复视为完成，未作整包 transcreation 完成声明。
+
 ## 2026-09-11 SHOW 模块拆分及 session 全套失败取证
 
 `show.rs` 原为 3415 行，现保留 dispatch/列元数据，分别将 CREATE TABLE/VIEW

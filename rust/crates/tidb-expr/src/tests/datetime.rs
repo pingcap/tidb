@@ -818,11 +818,29 @@ fn hour_minute_second() {
 }
 
 #[test]
+fn extract_matches_go_in_ast_and_chunk_paths() {
+    for (sql, expected) in [
+        ("extract(year from 20240315)", "INT:2024"),
+        ("extract(hour from '-25:03:04')", "INT:-25"),
+        ("extract(minute from '-25:03:04')", "INT:-3"),
+        ("extract(second from '-25:03:04')", "INT:-4"),
+        ("extract(day_hour from '1 02:03:04')", "INT:26"),
+        ("extract(year from NULL)", "NULL"),
+        ("extract(day_second from NULL)", "NULL"),
+        ("extract(day_second from '2024-03-15 02:03:04')", "INT:15020304"),
+    ] {
+        assert_eq!(e(sql), expected, "AST: {sql}");
+        assert_eq!(chunk_e(sql), expected, "chunk: {sql}");
+    }
+    for eval in [e, chunk_e] {
+        assert!(eval("extract(day_hour from 'bad')")
+            .contains("Truncated incorrect time value: 'bad'"));
+    }
+}
+
+#[test]
 fn extract() {
-    // `EXTRACT(unit FROM expr)` is sugar for calling the SAME
-    // single-argument function `unit` already names -- every simple
-    // unit this project's evaluator already supports as a standalone
-    // function works identically through `EXTRACT`.
+    // Go selects an EXTRACT datetime/duration signature from the unit.
     assert_eq!(e("extract(year from '2024-03-15')"), "INT:2024");
     assert_eq!(e("extract(month from '2024-03-15')"), "INT:3");
     assert_eq!(e("extract(day from '2024-03-15')"), "INT:15");
@@ -835,9 +853,7 @@ fn extract() {
     // The unit keyword is case-insensitive (lexed as an ordinary
     // keyword token, then canonically uppercased by the parser).
     assert_eq!(e("extract(YeAr from '2024-03-15')"), "INT:2024");
-    // `WEEK` is now a differentially verified standalone function, so its
-    // EXTRACT spelling takes the exact same path. (The no-mode spelling uses
-    // the evaluator's documented default-week-format capability boundary.)
+    // ExtractDatetimeNum uses week mode zero independently of session mode.
     assert_eq!(e("extract(week from '2024-03-15')"), "INT:10");
     // Composite units (`HOUR_MINUTE`, `DAY_SECOND`, `YEAR_MONTH`, ...) --
     // ported from `ExtractDatetimeNum`/`ExtractDurationNum`

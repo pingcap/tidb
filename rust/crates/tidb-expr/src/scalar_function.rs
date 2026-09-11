@@ -2314,21 +2314,20 @@ impl ScalarFunction {
         let upper = name.to_ascii_uppercase();
         // Go `builtinExtractDatetimeSig`/`builtinExtractDurationSig`: the
         // first argument is the unit keyword the parser stored as a VARCHAR
-        // constant and the signature dispatches on it. The port's shared
-        // unit functions (`time_fn::dispatch`, including
-        // `calendar::extract_composite` for `DAY_SECOND`/`YEAR_MONTH`/...)
-        // are that dispatch, so the value is handed to the unit named by the
-        // first argument exactly as the AST tier does.
+        // constant. Keep the value's static type when selecting the datetime,
+        // duration or mixed DAY_* string signature.
         if upper == "EXTRACT" && vals.len() == 2 {
             let unit = crate::coerce::coerce_str_bytes(&vals[0])?
                 .map(|bytes| String::from_utf8_lossy(&bytes).to_ascii_uppercase());
             let Some(unit) = unit else {
                 return Ok(Datum::Null);
             };
-            return match crate::time_fn::dispatch(&unit, &vals[1..], ctx) {
-                Some(result) => result,
-                None => Err(EvalError::FunctionNotExists(format!("extract({unit})"))),
-            };
+            return crate::time_fn::extract::extract(
+                &unit,
+                &vals[1],
+                self.args[1].static_type(),
+                ctx,
+            );
         }
         // `JSON_ARRAY`/`JSON_OBJECT`/`JSON_{SET,INSERT,REPLACE}`/
         // `JSON_ARRAY_{APPEND,INSERT}`: Go builds each value argument through

@@ -178,19 +178,10 @@
 //! interval handling above — that unit is always explicit, so there is no
 //! ambiguous string to disambiguate the way bare `HOUR(...)` needs.
 //!
-//! `EXTRACT(unit FROM expr)` ([`tidb_ast::Expr::Extract`]) is a
-//! genuinely separate general-purpose extraction syntax from `INTERVAL`
-//! above — its OWN grammar (`unit FROM value`, not `value unit`), and
-//! evaluated with NO new date/time logic at all: `eval_in`'s own arm is
-//! sugar for calling `func::eval_func(unit, &[value], cols)` directly,
-//! the SAME dispatch an ordinary `YEAR(x)`/`HOUR(x)`/... call already
-//! goes through — every simple unit this evaluator already supports as
-//! a standalone function works identically through `EXTRACT`. A COMPOSITE
-//! unit like `DAY_HOUR` (real MySQL/TiDB grammar) resolves the SAME way,
-//! into `time_fn::dispatch`'s own entry for it
-//! ([`time_fn::calendar::extract_composite`]); any other unrecognized unit
-//! still falls straight into `eval_func`'s own existing "unsupported
-//! function" catch-all, with no separate rejection code needed.
+//! `EXTRACT(unit FROM expr)` ([`tidb_ast::Expr::Extract`]) uses Go's separate
+//! datetime, duration and mixed DAY_* string signatures through
+//! `time_fn::extract`. Both AST and chunk evaluation reuse the datatype
+//! extraction functions, preserving negative duration components.
 //!
 //! A genuinely unrelated gap surfaced while probing `EXTRACT`'s own
 //! edge cases (deliberately deferred at the time to a dedicated later
@@ -932,15 +923,9 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         Expr::Func { name, args, .. } => {
             eval_func(name, args, cols, Some(expr as *const Expr as usize))
         }
-        // `EXTRACT(unit FROM value)` is sugar for calling the SAME
-        // single-argument function `unit` already names — a simple unit
-        // (`YEAR`/`HOUR`/...) or a composite one (`DAY_HOUR`/...,
-        // `time_fn::calendar::extract_composite`'s own entries in
-        // `time_fn::dispatch`) alike — no separate extraction logic needed;
-        // `eval_func`'s own catch-all rejects only a genuinely unrecognized
-        // function name.
+        // EXTRACT owns its datetime/duration signature and signed unit value.
         Expr::Extract { unit, value } => {
-            eval_func(unit, std::slice::from_ref(value.as_ref()), cols, None)
+            time_fn::extract::extract(unit, &eval_in(value, cols)?, None, cols)
         }
         // `TIMESTAMPADD(unit, n, datetime)`'s unit is a dedicated AST field
         // rather than an argument expression (see
