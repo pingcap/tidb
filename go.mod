@@ -118,7 +118,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260803075849-c3b50791b9fb
+	github.com/tikv/client-go/v2 v2.0.8-0.20260908025646-0f91f124d321
 	github.com/tikv/pd/client v0.0.0-20260804033407-85a975a5ca78
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -364,10 +364,10 @@ replace (
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/kvproto => github.com/AilinKid/kvproto v0.0.0-20260907094418-47bcf5dc38ad
-	github.com/pingcap/tipb => github.com/AilinKid/tipb v0.0.0-20260908080026-84229a99a9e2
 	github.com/pingcap/tidb/pkg/indexer => ./pkg/tici
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/client-go/v2 => github.com/AilinKid/client-go/v2 v2.0.0-20260907072612-e544f6d4ec57
+	github.com/pingcap/tipb => github.com/AilinKid/tipb v0.0.0-20260908080026-84229a99a9e2
+	github.com/tikv/client-go/v2 => github.com/AilinKid/client-go/v2 v2.0.0-20260911065803-911d773659f6
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
