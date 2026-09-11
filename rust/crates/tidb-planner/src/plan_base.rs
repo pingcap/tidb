@@ -294,6 +294,8 @@ pub enum PlanErrorKind {
     WrongArguments(String),
     /// Go ErrWindowInvalidWindowFuncUse (3593).
     WindowInvalidWindowFuncUse(String),
+    /// Go named-window lookup and inheritance errors (3579-3583).
+    WindowDefinition { code: u16, name: String, base: String },
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -382,6 +384,22 @@ pub enum PlanErrorKind {
 }
 
 impl PlanError {
+    /// Preserve Go's named-window diagnostics and their original names.
+    #[must_use]
+    pub fn window_definition(code: u16, name: &str, base: &str) -> Self {
+        let message = match code {
+            3579 => format!("Window name '{name}' is not defined."),
+            3580 => "There is a circularity in the window dependency graph.".to_owned(),
+            3581 => "A window which depends on another cannot define partitioning.".to_owned(),
+            3582 => format!("Window '{name}' has a frame definition, so cannot be referenced by another window."),
+            3583 => format!("Window '{name}' cannot inherit '{base}' since both contain an ORDER BY clause."),
+            _ => unreachable!("unsupported window definition error"),
+        };
+        Self {
+            message,
+            kind: PlanErrorKind::WindowDefinition { code, name: name.to_owned(), base: base.to_owned() },
+        }
+    }
     /// A window call without a resolved window output in this query block.
     #[must_use]
     pub fn invalid_window_use(name: &str) -> Self {

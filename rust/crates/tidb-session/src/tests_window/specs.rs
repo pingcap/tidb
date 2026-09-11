@@ -379,6 +379,22 @@ fn window_use_errors_preserve_query_block_scope() {
 }
 
 #[test]
+fn named_window_errors_preserve_codes_and_names() {
+    let mut session = window_session();
+    for (sql, code, message) in [
+        ("SELECT 1 WINDOW child AS (Missing)", 3579, "Window name 'Missing' is not defined."),
+        ("SELECT ROW_NUMBER() OVER w FROM t WINDOW w AS (w2), w2 AS (w)", 3580, "There is a circularity in the window dependency graph."),
+        ("SELECT ROW_NUMBER() OVER (w PARTITION BY g) FROM t WINDOW w AS (ORDER BY v)", 3581, "A window which depends on another cannot define partitioning."),
+        ("SELECT ROW_NUMBER() OVER (w) FROM t WINDOW w AS (ORDER BY v ROWS CURRENT ROW)", 3582, "Window 'w' has a frame definition, so cannot be referenced by another window."),
+        ("SELECT ROW_NUMBER() OVER child FROM t WINDOW w AS (ORDER BY v), child AS (w ORDER BY g)", 3583, "Window 'child' cannot inherit 'w' since both contain an ORDER BY clause."),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, code, "{sql}");
+        assert_eq!(error.message, message, "{sql}");
+    }
+}
+
+#[test]
 fn window_errors_and_refusals() {
     let mut session = window_session();
 

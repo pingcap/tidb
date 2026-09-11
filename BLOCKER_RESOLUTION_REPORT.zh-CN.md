@@ -1,5 +1,24 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 命名窗口错误传播
+
+在 `10a16dc4be` 独立运行 `window_errors_and_refusals`，`/tmp/named-window-red.log` 退出 101，首个失败为 OVER w 未返回 3579。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::resolveWindowSpec/mergeWindowSpec` 已明确缺失引用、循环、frame 继承、partition 和 ORDER BY 的验证顺序；消息来自 `pkg/errno/errname.go:870` 起。Rust 检查存在，但 Internal 抹掉错误码且使用不完整消息。
+
+新增 WindowDefinition 分类携带 code/name/base，映射现有 DriverError，覆盖 3579–3583。保留原始引用名称大小写、命名/匿名继承名称，以及 Go 的验证顺序。专门回归 `named_window_errors_preserve_codes_and_names` 检查五种精确错误码与完整消息，其中包含没有窗口函数调用的 WINDOW 定义验证。
+
+Ready 命令，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib named_window_errors_preserve_codes_and_names
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/named-window-final.log` 专门回归通过。原综合测试 `/tmp/named-window-green.log` 已通过所有命名窗口断言，推进到 GROUP_CONCAT 窗口函数的 NotSupportedYet 断言，仍退出 101，未降低断言。`/tmp/named-window-planner.log` 66 passed，`/tmp/named-window-integration.log` 310 passed，`/tmp/named-window-suite.log` 36 passed / 9 failed，`/tmp/named-window-lint.log` 退出 0；diff check 通过。全量失败修复目标继续保留。
+
 ## 2026-09-11 窗口函数非法使用位置保留 3593
 
 在 `f108adacba` 独立重跑 `window_errors_and_refusals`，`/tmp/window-context-red.log` 退出 101，首个失败为 WHERE 中 ROW_NUMBER 没有返回 WindowInvalidWindowFuncUse。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/expression_rewriter.go:649` 对不在 windowMap 的窗口调用返回 3593；`logical_plan_builder.go:2835` 的 HAVING resolver 返回同一错误。Rust HAVING 原先生成 Internal，WHERE 原先落入通用表达式拒绝。

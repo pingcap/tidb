@@ -277,23 +277,14 @@ pub fn merge_window_spec(
     reference: &NamedWindowSpec,
 ) -> Result<(), PlanError> {
     if reference.def.spec.frame.is_some() {
-        return Err(PlanError::internal(format!(
-            "Window '{}' has a frame definition, so cannot be referenced by another window",
-            reference.name
-        )));
+        return Err(PlanError::window_definition(3582, &reference.name, ""));
     }
     if !spec.spec.partition_by.is_empty() {
-        return Err(PlanError::internal(
-            "You cannot use the window's own partitioning clause when the window is referenced",
-        ));
+        return Err(PlanError::window_definition(3581, "", ""));
     }
     if !reference.def.spec.order_by.is_empty() {
         if !spec.spec.order_by.is_empty() {
-            return Err(PlanError::internal(format!(
-                "Window '{}' cannot inherit '{}' since both contain an ORDER BY clause",
-                window_name(spec_name),
-                reference.name
-            )));
+            return Err(PlanError::window_definition(3583, window_name(spec_name), &reference.name));
         }
         spec.spec.order_by = reference.def.spec.order_by.clone();
     }
@@ -322,9 +313,7 @@ fn resolve_window_spec(
     in_stack: &mut BTreeSet<String>,
 ) -> Result<(), PlanError> {
     if in_stack.contains(name_lower) {
-        return Err(PlanError::internal(
-            "There is a circularity in the window dependency graph",
-        ));
+        return Err(PlanError::window_definition(3580, "", ""));
     }
     let Some(entry) = specs.get(name_lower) else {
         return Ok(());
@@ -334,9 +323,7 @@ fn resolve_window_spec(
     };
     let reference_lower = reference.to_ascii_lowercase();
     if !specs.contains_key(&reference_lower) {
-        return Err(PlanError::internal(format!(
-            "Window name '{reference}' is not defined"
-        )));
+        return Err(PlanError::window_definition(3579, &reference, ""));
     }
     in_stack.insert(name_lower.to_owned());
     let resolved = resolve_window_spec(&reference_lower, specs, in_stack);
@@ -746,10 +733,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if let Some(reference) = def.base.clone() {
                     let lower = reference.to_ascii_lowercase();
                     let Some(reference_spec) = self.window_specs.get(&lower) else {
-                        return Err(PlanError::internal(format!(
-                            "Window name '{}' is not defined",
-                            window_name(&reference)
-                        )));
+                        return Err(PlanError::window_definition(3579, window_name(&reference), ""));
                     };
                     merge_window_spec(&mut def, "", reference_spec)?;
                 }
@@ -767,9 +751,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             };
             let lower = name.to_ascii_lowercase();
             let Some(&spec_id) = named.get(&lower) else {
-                return Err(PlanError::internal(format!(
-                    "Window name '{name}' is not defined"
-                )));
+                return Err(PlanError::window_definition(3579, name, ""));
             };
             let (new_spec, updated) =
                 self.handle_default_frame(&arena.get(spec_id).def, &window_func.name);

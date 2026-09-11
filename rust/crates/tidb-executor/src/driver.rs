@@ -515,6 +515,14 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::WrongNumberOfColumnsInSelect
         }
         tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
+        tidb_planner::plan_base::PlanErrorKind::WindowDefinition { code, name, base } => match code {
+            3579 => DriverError::WindowNoSuchWindow(name.clone()),
+            3580 => DriverError::WindowCircularity,
+            3581 => DriverError::WindowNoChildPartitioning,
+            3582 => DriverError::WindowNoInheritFrame(name.clone()),
+            3583 => DriverError::WindowNoRedefineOrderBy { window: name.clone(), base: base.clone() },
+            _ => unreachable!("unsupported window definition error"),
+        },
         tidb_planner::plan_base::PlanErrorKind::WindowInvalidWindowFuncUse(name) => {
             DriverError::WindowInvalidWindowFuncUse(name.clone())
         }
