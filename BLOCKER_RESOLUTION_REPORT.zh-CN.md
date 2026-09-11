@@ -3041,6 +3041,30 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 readiness 当前分支复验
+
+本轮在 `bd046e203d8f973d469831fb3d827187cb5ddabc` 重新验证用户报告的启动阻塞。远端 `hparser-integration` 同步在该提交，已包含独立修复 `1f89c30b65` 和四个入口共用等待逻辑的 `9839a744e0`。本轮没有重复修改生产实现。
+
+根因证据仍成立：旧脚本在 TCP 开放后立即检查一次 ready 日志，失败便由 EXIT trap 终止节点；这不能证明节点始终不 ready。Rust `ConcurrentSqlNode::bind` 在内存监控初始化之前绑定端口，`cluster_session_node/boot.rs:454` 在 bind 返回和信号处理安装后输出 ready。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/server/server.go:518` 初始化监听、`:542` 设置 health，也要求区分监听与应用就绪。
+
+当前修复保留 ready 断言，最多等待 180 秒，节点退出立即失败，超时仍失败。以下四个入口的回归全部退出 0，分别覆盖延迟 ready、进程退出、持续无 ready：
+
+```bash
+for runner in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${runner}.sh || exit
+done
+make lint > /tmp/readiness-sept11-lint.log 2>&1
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+  ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/readiness-sept11-confirm-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh > /tmp/readiness-sept11-confirm.log 2>&1
+```
+
+真实节点日志 `/tmp/readiness-sept11-confirm-evidence/rust-node.log` 第 8 行包含 `cluster_session_node_ready`，地址 `127.0.0.1:47600`、schema_version=68、stats_loaded=4。Go binary 自报 Git Commit Hash 与固定 oracle 一致。脚本执行到了最终汇总：**1 failure / 0 divergent choices**，退出 1；不能宣称 access-path 全通过。唯一断言失败是 pseudo 统计下 `SELECT * FROM t WHERE bucket = 1 AND rare = 7`，双方均选 `idx_cover(bucket, rare)`，但 Go estRows=1.25、Rust=2.50。该失败属于 cardinality 估算，不能再记为 readiness blocker，也不能通过放宽断言解决。
+
+验证范围为 Ready：四入口回归通过、`make lint` 退出 0，并完成原始 RealTiKV access-path 流程。其余三个入口本轮仅运行 readiness 回归，未重跑完整集成套件；全量质量目标、chunk panic 的完整根因证据均不因本次启动复验而完成。
+
 ## 2026-09-10 chunk panic 修复
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
