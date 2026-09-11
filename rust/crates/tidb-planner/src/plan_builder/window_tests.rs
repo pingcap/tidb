@@ -636,7 +636,7 @@ fn test_unbounded_following_as_a_start_is_refused() {
     let message = build_err(
         "SELECT SUM(a) OVER (ORDER BY b ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING) FROM t",
     );
-    assert!(message.contains("illegal frame start"), "{message}");
+    assert_eq!(message, "Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING.");
 }
 
 #[test]
@@ -644,7 +644,7 @@ fn test_unbounded_preceding_as_an_end_is_refused() {
     let message = build_err(
         "SELECT SUM(a) OVER (ORDER BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED PRECEDING) FROM t",
     );
-    assert!(message.contains("illegal frame end"), "{message}");
+    assert_eq!(message, "Window '<unnamed window>': frame end cannot be UNBOUNDED PRECEDING.");
 }
 
 #[test]
@@ -654,7 +654,7 @@ fn test_a_start_after_its_end_is_refused() {
     let message = build_err(
         "SELECT SUM(a) OVER (ORDER BY b ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) FROM t",
     );
-    assert!(message.contains("illegal frame definition"), "{message}");
+    assert_eq!(message, "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type");
 }
 
 #[test]
@@ -662,7 +662,7 @@ fn test_a_following_start_with_a_current_row_end_is_refused() {
     let message = build_err(
         "SELECT SUM(a) OVER (ORDER BY b ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW) FROM t",
     );
-    assert!(message.contains("illegal frame definition"), "{message}");
+    assert_eq!(message, "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type");
 }
 
 #[test]

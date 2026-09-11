@@ -292,6 +292,8 @@ pub enum PlanErrorKind {
     Internal,
     /// Go `plannererrors.ErrWrongArguments` (1210).
     WrongArguments(String),
+    /// Go window frame errors, retaining the original window name.
+    WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
@@ -378,6 +380,21 @@ pub enum PlanErrorKind {
 }
 
 impl PlanError {
+    /// Construct one of Go's frame shape or offset errors (3584-3586).
+    #[must_use]
+    pub fn window_frame(code: u16, window: impl Into<String>) -> Self {
+        let window = window.into();
+        let reason = match code {
+            3584 => "frame start cannot be UNBOUNDED FOLLOWING.",
+            3585 => "frame end cannot be UNBOUNDED PRECEDING.",
+            3586 => "frame start or end is negative, NULL or of non-integral type",
+            _ => unreachable!("unsupported frame error code"),
+        };
+        Self {
+            message: format!("Window '{window}': {reason}"),
+            kind: PlanErrorKind::WindowFrame { code, window },
+        }
+    }
     /// An expression error that must retain its typed client-facing identity.
     #[must_use]
     pub fn eval(error: EvalError) -> Self {

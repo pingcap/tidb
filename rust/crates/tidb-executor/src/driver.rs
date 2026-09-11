@@ -515,6 +515,18 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::WrongNumberOfColumnsInSelect
         }
         tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
+        tidb_planner::plan_base::PlanErrorKind::WindowFrame { code, window } => {
+            if window == "<unnamed window>" {
+                match code {
+                    3584 => DriverError::WindowFrameStartIllegal,
+                    3585 => DriverError::WindowFrameEndIllegal,
+                    3586 => DriverError::WindowFrameIllegal,
+                    _ => unreachable!("unsupported frame error code"),
+                }
+            } else {
+                DriverError::Mysql(crate::MysqlError::new(*code, error.to_string()))
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::WrongArguments(function) => {
             DriverError::WrongArguments(function.clone())
         }

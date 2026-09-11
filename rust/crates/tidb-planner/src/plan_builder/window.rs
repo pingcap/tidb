@@ -986,10 +986,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             match self.frame_offset_uint(offset) {
                 Some((_, false)) => return Ok(()),
                 _ => {
-                    return Err(PlanError::internal(format!(
-                        "Window '{}' has an illegal frame definition",
-                        window_name(&spec.name)
-                    )))
+                    return Err(PlanError::window_frame(3586, window_name(&spec.name)))
                 }
             }
         }
@@ -1047,17 +1044,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let start = &frame.start;
         let end = &frame.end;
-        let illegal = |what: &str| {
-            PlanError::internal(format!(
-                "Window '{}' has an illegal frame {what}",
-                window_name(&spec.name)
-            ))
-        };
         if matches!(start, AstFrameBound::UnboundedFollowing) {
-            return Err(illegal("start"));
+            return Err(PlanError::window_frame(3584, window_name(&spec.name)));
         }
         if matches!(end, AstFrameBound::UnboundedPreceding) {
-            return Err(illegal("end"));
+            return Err(PlanError::window_frame(3585, window_name(&spec.name)));
         }
         let start_following = matches!(
             start,
@@ -1068,10 +1059,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AstFrameBound::Preceding(_) | AstFrameBound::UnboundedPreceding
         );
         if start_following && (end_preceding || matches!(end, AstFrameBound::CurrentRow)) {
-            return Err(illegal("definition"));
+            return Err(PlanError::window_frame(3586, window_name(&spec.name)));
         }
         if (start_following || matches!(start, AstFrameBound::CurrentRow)) && end_preceding {
-            return Err(illegal("definition"));
+            return Err(PlanError::window_frame(3586, window_name(&spec.name)));
         }
         self.check_origin_window_frame_bound(start, spec, order_by)?;
         self.check_origin_window_frame_bound(end, spec, order_by)
@@ -1246,10 +1237,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         match get_uint64_from_constant(&constant, self.ctx) {
             Some((_, false)) => {}
             _ => {
-                return Err(PlanError::internal(format!(
-                    "Window '{}' has an illegal frame definition",
-                    window_name(&spec.name)
-                )))
+                return Err(PlanError::window_frame(3586, window_name(&spec.name)))
             }
         }
 

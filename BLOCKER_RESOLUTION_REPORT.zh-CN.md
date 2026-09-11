@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 窗口 frame 形状错误保留名称与错误码
+
+在 `c980d14b87` 独立运行 `window_frame_shape_is_refused_with_gos_own_code`，`/tmp/window-frame-red.log` 退出 101。Rust 已检查非法起止形状，但生成 Internal 和自定义文本，跨执行层后失去 Go 3584/3585/3586。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::checkOriginWindowSpec` 按起点、终点、范围关系、offset 顺序验证；`pkg/errno/errname.go:875` 起定义三个完整消息。
+
+新增 PlanErrorKind::WindowFrame 携带 code 和 window，构造消息与 Go 一致。匿名窗口映射已有 DriverError 变体，命名窗口通过结构化 MysqlError 保留名称；未从字符串推断错误码。原 frame 回归增加命名窗口 3584/3585/3586 的精确错误码和消息断言。四个 planner 测试原先断言自定义文本，现改为 Go 完整文本，SQL 与拒绝条件不变。
+
+Ready 验证命令，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_frame_shape_is_refused_with_gos_own_code
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/window-frame-final.log` 1 passed，`/tmp/window-frame-planner.log` 66 passed，`/tmp/window-frame-integration.log` 310 passed，`/tmp/window-frame-lint.log` 退出 0，diff check 通过。完整窗口 suite `/tmp/window-frame-suite.log` 32 passed / 11 failed（前一轮 30/13）。剩余范围类型、函数使用位置、类型和结果差异未跳过；全量质量目标继续保留。
+
 ## 2026-09-11 窗口参数错误跨 planner 边界保留 1210
 
 在 `e5dbb275aa` 重跑 session 全库，`/tmp/session-all-after-expression-index.log` 为 1571 passed / 125 failed / 209 ignored（既有忽略项，未增加）。命令为下述 Cargo 前缀加 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib`。这取代历史失败数量作为本轮起点，不代表当前最终全库计数。
