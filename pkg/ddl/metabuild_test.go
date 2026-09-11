@@ -47,7 +47,6 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 				require.Equal(t, sqlMode, ctx.GetSQLMode())
 				require.Equal(t, sctx.GetSessionVars().DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
 				require.Equal(t, "utf8mb4_bin", ctx.GetDefaultCollationForUTF8MB4())
-				require.Equal(t, sctx.GetSessionVars().TiDBDefaultAutoIDCache, ctx.GetTiDBDefaultAutoIDCache())
 				warn := errors.New("warn1")
 				note := errors.New("note1")
 				ctx.AppendWarning(warn)
@@ -129,6 +128,15 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 					NewMetaBuildContextWithSctx(sctx, metabuild.WithSuppressTooLongIndexErr(false)).
 						SuppressTooLongIndexErr(),
 				)
+			},
+		},
+		{
+			field: "tidbDefaultAutoIDCache",
+			extra: func() {
+				sessVars.TiDBDefaultAutoIDCache = 100
+				require.Zero(t, NewMetaBuildContextWithSctx(sctx).GetTiDBDefaultAutoIDCache())
+				ctx := NewMetaBuildContextWithSctx(sctx, metabuild.WithTiDBDefaultAutoIDCache(sessVars.TiDBDefaultAutoIDCache))
+				require.Equal(t, 100, ctx.GetTiDBDefaultAutoIDCache())
 			},
 		},
 		{

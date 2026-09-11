@@ -4257,12 +4257,12 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:     vardef.TiDBDefaultAutoIDCache,
-		Value:    strconv.Itoa(vardef.DefTiDBAutoIDCache),
+		Value:    strconv.Itoa(vardef.DefTiDBDefaultAutoIDCache),
 		Type:     vardef.TypeInt,
 		MinValue: 0,
 		MaxValue: math.MaxInt32,
 		SetSession: func(vars *SessionVars, s string) error {
-			vars.TiDBDefaultAutoIDCache = tidbOptPositiveInt32(s, vardef.DefTiDBAutoIDCache)
+			vars.TiDBDefaultAutoIDCache = tidbOptPositiveInt32(s, vardef.DefTiDBDefaultAutoIDCache)
 			return nil
 		},
 	},
