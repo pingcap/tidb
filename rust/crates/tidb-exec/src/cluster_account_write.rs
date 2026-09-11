@@ -48,7 +48,6 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Datum, SessionTimeZone, Time};
-use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::OptimisticMutation;
 
@@ -167,11 +166,15 @@ const COLUMN_SCOPE_ELEMENTS: &[&str] = &["Select", "Insert", "Update", "Referenc
 /// the mutations must be committed on that snapshot's transaction: that is
 /// what makes a concurrent writer a write conflict at prewrite rather than a
 /// silent overwrite of somebody else's `GRANT`.
+/// `reserve_ids` independently commits a range for (database, table, minimum
+/// used handle, count) and returns its first handle. Reservations survive an
+/// aborted account statement, matching Go's autoid `RunInNewTxn` boundary.
 pub fn plan_account_write<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     desired: &ClusterPrivileges,
     now: Time,
+    reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
     let mut changed = std::collections::BTreeSet::new();
@@ -193,6 +196,7 @@ pub fn plan_account_write<S: MetaSnapshot>(
             now,
             &mut plan,
             &mut changed,
+            reserve_ids,
         )?;
     }
 
@@ -577,6 +581,7 @@ fn reconcile<S: MetaSnapshot>(
     now: Time,
     plan: &mut AccountWritePlan,
     changed: &mut std::collections::BTreeSet<String>,
+    reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
 ) -> Result<(), AccountWriteError> {
     let table = match locate(catalog, account_table.name) {
         Ok(table) => table,
@@ -633,7 +638,22 @@ fn reconcile<S: MetaSnapshot>(
         by_key.insert(identity, row);
     }
 
-    let mut next_row_id: Option<i64> = None;
+    let missing = desired
+        .keys()
+        .filter(|identity| !by_key.contains_key(*identity))
+        .count();
+    let mut next_row_id = if missing == 0 {
+        0
+    } else {
+        let highest = by_key
+            .values()
+            .map(|row| row_id_of(&row.key))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .max()
+            .unwrap_or(0);
+        reserve_ids(system_db_id(catalog)?, table, highest, missing)?
+    };
     for (identity, values) in desired {
         match by_key.remove(identity) {
             Some(mut row) => {
@@ -655,11 +675,10 @@ fn reconcile<S: MetaSnapshot>(
                 }
             }
             None => {
-                let row_id = match next_row_id {
-                    Some(next) => next,
-                    None => first_free_row_id(snapshot, catalog, table)?,
-                };
-                next_row_id = Some(row_id + 1);
+                let row_id = next_row_id;
+                next_row_id = next_row_id.checked_add(1).ok_or_else(|| {
+                    AccountWriteError::Unsupported("account row-ID range exhausted".to_owned())
+                })?;
                 let mut fresh = defaults_row(table, now)?;
                 for (position, id) in key_ids.iter().enumerate() {
                     fresh.insert(*id, Datum::Bytes(identity[position].clone().into_bytes()));
@@ -679,9 +698,6 @@ fn reconcile<S: MetaSnapshot>(
             .extend(delete_row(table, &row.key, &row.values)?);
         note_changed(changed, account_table, &identity);
     }
-    if let Some(next) = next_row_id {
-        publish_row_id_watermark(catalog, table, next - 1, &mut plan.mutations)?;
-    }
     Ok(())
 }
 
@@ -700,65 +716,6 @@ fn note_changed(
         (&identity[0], &identity[1])
     };
     changed.insert(format!("'{user}'@'{host}'"));
-}
-
-/// Reserves the next `_tidb_rowid` for one table by advancing its allocator
-/// key, and answers the first ID reserved.
-///
-/// The key holds the max USED id, so the increment IS the allocation, exactly
-/// as [`crate::cluster_ddl`]'s global-ID allocator works. Reserving from the
-/// value this snapshot read is what makes a competing allocation a write
-/// conflict rather than a duplicate handle.
-///
-/// One row per statement is the realistic case, but a statement that inserts
-/// several (a `CREATE USER` naming three accounts) counts on from this one
-/// call and publishes the final watermark once.
-fn first_free_row_id<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    table: &TableInfo,
-) -> Result<i64, AccountWriteError> {
-    let stored = snapshot.get(&key::auto_table_id_kv_key(system_db_id(catalog)?, table.id))?;
-    let current = match stored {
-        Some(bytes) => value::parse_int_value(&bytes).map_err(|error| {
-            AccountWriteError::Encode(RowEncodeError(format!(
-                "{}'s row-ID allocator: {error}",
-                table.name.original()
-            )))
-        })?,
-        // Go's `Inc` treats a missing key as zero, and a table whose rows were
-        // all seeded by a bootstrap that wrote no watermark starts here.
-        None => 0,
-    };
-    // A cluster whose rows outran its allocator key (a bootstrap that seeded
-    // rows without one) would otherwise hand out a handle that already exists,
-    // which TiKV rejects as an `Insert` assertion failure -- a confusing
-    // report of a real problem. Starting past the highest stored handle is the
-    // honest repair.
-    let highest = read_rows(snapshot, table)?
-        .iter()
-        .map(|row| row_id_of(&row.key))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-    Ok(current.max(highest) + 1)
-}
-
-fn publish_row_id_watermark(
-    catalog: &ClusterCatalog,
-    table: &TableInfo,
-    last_used: i64,
-    mutations: &mut Vec<OptimisticMutation>,
-) -> Result<(), AccountWriteError> {
-    mutations.push(
-        OptimisticMutation::meta_put(
-            key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
-            value::encode_int_value(last_used),
-        )
-        .map_err(|error| AccountWriteError::Encode(RowEncodeError(error.to_string())))?,
-    );
-    Ok(())
 }
 
 fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, AccountWriteError> {

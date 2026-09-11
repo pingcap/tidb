@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
-use tidb_exec::cluster_account_write::plan_account_write;
+use tidb_exec::cluster_account_write::{AccountWriteError, AccountWritePlan};
 use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
@@ -51,9 +51,29 @@ fn environment() -> BootstrapEnvironment {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct MetaStore {
     pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+fn plan_account_write(
+    store: &mut MetaStore,
+    catalog: &ClusterCatalog,
+    desired: &ClusterPrivileges,
+    now: Time,
+) -> Result<AccountWritePlan, AccountWriteError> {
+    let mut snapshot = store.clone();
+    tidb_exec::cluster_account_write::plan_account_write(
+        &mut snapshot, catalog, desired, now,
+        &mut |db, table, minimum, count| {
+            let key = tidb_meta::key::auto_table_id_kv_key(db, table.id);
+            let current = store.pairs.get(&key)
+                .map(|bytes| tidb_meta::value::parse_int_value(bytes).unwrap()).unwrap_or(0);
+            let base = current.max(minimum);
+            store.pairs.insert(key, tidb_meta::value::encode_int_value(base + count as i64));
+            Ok(base + 1)
+        },
+    )
 }
 
 impl MetaSnapshot for MetaStore {
@@ -300,6 +320,44 @@ fn roles_and_default_roles_survive_the_round_trip() {
             .expect("the role is stored")
             .account_locked
     );
+}
+
+#[test]
+fn account_rows_do_not_commit_allocator_metadata() {
+    let mut store = bootstrapped();
+    let mut desired = store.accounts();
+    desired.users.push(user("allocator_probe", "%", &[]));
+    let catalog = store.catalog();
+    let plan = plan_account_write(&mut store, &catalog, &desired, timestamp()).unwrap();
+    assert!(!plan.mutations.iter().any(|mutation|
+        matches!(mutation.kind(), OptimisticMutationKind::MetaPut)),
+        "Go reserves row IDs in an independent retryable transaction");
+}
+
+#[test]
+fn aborted_account_plan_burns_ids_and_cannot_overwrite_peer_reservations() {
+    let mut store = bootstrapped();
+    let mut desired = store.accounts();
+    desired.users.push(user("allocator_probe", "%", &[]));
+    let catalog = store.catalog();
+    let first = plan_account_write(&mut store, &catalog, &desired, timestamp()).unwrap();
+    let reserved = store.pairs.clone();
+    drop(first); // Aborting the account transaction must not undo its reservation.
+    let second = plan_account_write(&mut store, &catalog, &desired, timestamp()).unwrap();
+    let counter_keys: Vec<_> = store.pairs.iter()
+        .filter(|(key, value)| reserved.get(*key) != Some(*value))
+        .map(|(key, _)| key.clone()).collect();
+    assert_eq!(counter_keys.len(), 1);
+    let key = &counter_keys[0];
+    let before = tidb_meta::value::parse_int_value(&reserved[key]).unwrap();
+    let after = tidb_meta::value::parse_int_value(&store.pairs[key]).unwrap();
+    assert_eq!(after, before + 1);
+    // A peer reserves again after the account snapshot. Committing the rows
+    // must neither conflict on nor reset the peer's allocator watermark.
+    store.pairs.insert(key.clone(), tidb_meta::value::encode_int_value(after + 5000));
+    store.apply(&second.mutations);
+    assert_eq!(tidb_meta::value::parse_int_value(&store.pairs[key]).unwrap(), after + 5000);
+    assert!(store.accounts().users.iter().any(|u| u.user == "allocator_probe"));
 }
 
 #[test]

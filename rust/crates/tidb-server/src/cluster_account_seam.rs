@@ -62,11 +62,13 @@ use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
 
-use tidb_exec::cluster_account_write::plan_account_write;
+use tidb_exec::cluster_account_write::{plan_account_write, AccountWriteError};
+use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_exec::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -77,6 +79,36 @@ use tidb_txnkv::transaction::{
 
 use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
 use crate::sql_node::{cluster_commit_error, SqlQueryError};
+
+fn reserve_account_ids<C, L, P>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    db: i64,
+    table: &tidb_model::TableInfo,
+    minimum: i64,
+    count: usize,
+) -> Result<i64, AccountWriteError>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    let store = ClusterAutoIdStore::new(opener.clone(), db, table, timeout);
+    let failure = |error: tidb_executor::kv_table::AutoIdStoreError| {
+        AccountWriteError::Unsupported(format!("account row-ID reservation: {error}"))
+    };
+    // Preserve bootstrap rows that predate a persisted allocator watermark.
+    store
+        .rebase(minimum.max(0) as u64, false)
+        .map_err(failure)?;
+    let (base, end) = store.reserve(count as u64, false).map_err(failure)?;
+    if end - base != count as u64 || end > i64::MAX as u64 {
+        return Err(AccountWriteError::Unsupported(
+            "account row-ID range exhausted".to_owned(),
+        ));
+    }
+    Ok((base + 1) as i64)
+}
 
 /// This node's one route to the cluster's stored accounts.
 ///
@@ -189,6 +221,7 @@ where
             (catalog, registry_from_cluster(&loaded).registry)
         };
         Ok(Box::new(RealPendingAccountChange {
+            opener: Arc::clone(&self.opener),
             transaction: Some(transaction),
             catalog,
             scratch,
@@ -205,6 +238,7 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     /// `None` only after [`PendingAccountChange::commit`] has taken it.
     transaction: Option<
         RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
@@ -234,8 +268,16 @@ where
         let desired = cluster_image_from_registry(&self.scratch);
         let plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            plan_account_write(&mut snapshot, &self.catalog, &desired, utc_now_timestamp())
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+            plan_account_write(
+                &mut snapshot,
+                &self.catalog,
+                &desired,
+                utc_now_timestamp(),
+                &mut |db, table, minimum, count| {
+                    reserve_account_ids(&self.opener, self.timeout, db, table, minimum, count)
+                },
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
         };
         if plan.is_empty() {
             // A statement the cluster already satisfies -- `CREATE USER IF NOT
@@ -329,8 +371,16 @@ where
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
         Some(
-            plan_account_write(&mut snapshot, &catalog, &desired, utc_now_timestamp())
-                .map_err(|e| SqlQueryError::unknown(e.to_string()))?,
+            plan_account_write(
+                &mut snapshot,
+                &catalog,
+                &desired,
+                utc_now_timestamp(),
+                &mut |db, table, minimum, count| {
+                    reserve_account_ids(opener, timeout, db, table, minimum, count)
+                },
+            )
+            .map_err(|e| SqlQueryError::unknown(e.to_string()))?,
         )
     };
     let Some(plan) = plan.filter(|plan| !plan.is_empty()) else {

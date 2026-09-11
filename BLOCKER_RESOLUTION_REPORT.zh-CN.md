@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 账户 row-ID 分配使用独立事务
+
+真实 red `/tmp/convergence-account-master.log` 的 CREATE USER 在 TID:4
+allocator 元数据键上与 Go 事务发生 9007。Go master
+`pkg/meta/autoid/autoid.go:925` 在 `kv.RunInNewTxn(..., true, ...)` 中预留 ID，
+与账户行事务独立。Rust 原 account writer 将 allocator watermark 放进账户
+mutation 集合，扩大了账户事务的冲突范围，并使取消账户事务回收已发出的 ID。
+
+账户 planner 现在要求独立 reservation 回调；两个生产入口（真实账户写入、
+启动账户 seed）复用现有 ClusterAutoIdStore 的独立 rebase/reserve 和重试。
+按本次缺失行数分配连续句柄，保留旧 bootstrap 无 watermark 时的最低句柄
+修复。账户行和索引仍在原事务中原子提交；ID 预留即使账户提交失败也保留。
+本改动不声明 Go autoid 整包转译完成，也未增加测试侧写冲突重试。
+
+回归 `account_rows_do_not_commit_allocator_metadata` 修复前失败，0.13 秒，
+`/tmp/account-allocator-red.log`。修复后账户写入 13/13，包含放弃计划后 ID
+不复用、peer 更新 allocator 后提交账户行不会覆盖 watermark 的测试。
+服务端全量 434/434，51.68 秒；日志 `/tmp/account-allocator-server-full.log`。
+Ready 验证命令：
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-exec --test all cluster_account_write_source -- --nocapture
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all
+make lint
+git diff --check
+```
+
+真实固定 master/nightly convergence `/tmp/convergence-allocator-master.log`
+通过 CREATE USER、Rust/Go 两端密码登录、表级和列级授权写入。随后旧断言
+等待带反引号的 SELECT(`customer`)，Go 实际输出 SELECT(customer)，60 秒
+后失败并清理。Go `privileges/cache.go:1973-2012` 直接写 ColumnName，证明
+这是下一类字符串断言问题，完整 convergence 尚未通过。lint 退出 0，日志
+`/tmp/account-allocator-lint.log`。
+
 ## 2026-09-11 convergence 账户操作身份与新暴露的冲突
 
 固定 master 对照 `/tmp/convergence-master-oracle/create-user.out`、
