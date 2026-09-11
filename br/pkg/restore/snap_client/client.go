@@ -100,6 +100,7 @@ type SnapClient struct {
 	coarseScatter         bool
 	keepaliveConf         keepalive.ClientParameters
 	rateLimit             uint64
+	restoreRegion         bool
 	tlsConf               *tls.Config
 
 	switchCh chan struct{}
@@ -363,6 +364,11 @@ func (rc *SnapClient) SetRewriteMode(ctx context.Context) {
 	} else {
 		rc.rewriteMode = RewriteModeKeyspace
 	}
+}
+
+// SetRestoreRegion enables the experimental Worker-backed Region restore path.
+func (rc *SnapClient) SetRestoreRegion(enabled bool) {
+	rc.restoreRegion = enabled
 }
 
 func (rc *SnapClient) GetRewriteMode() RewriteMode {
@@ -816,16 +822,18 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			return importer.SetRawRange(RawStartKey, RawEndKey)
 		})
 	}
-	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-		return importer.CheckMultiIngestSupport(ctx, stores)
-	})
-	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-		return importer.CheckPeerDownloadRetrySupport(ctx, stores)
-	})
-	if rc.rateLimit != 0 {
-		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
-		createCallBacks = append(createCallBacks, createCallBack)
-		closeCallBacks = append(closeCallBacks, closeCallBack)
+	if !rc.restoreRegion {
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return importer.CheckMultiIngestSupport(ctx, stores)
+		})
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+		})
+		if rc.rateLimit != 0 {
+			createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
+			createCallBacks = append(createCallBacks, createCallBack)
+			closeCallBacks = append(closeCallBacks, closeCallBack)
+		}
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
@@ -835,6 +843,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		rc.cipher, metaClient, importCli, backend,
 		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, false, createCallBacks, closeCallBacks,
 	)
+	opt.restoreRegion = rc.restoreRegion
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
 		if isTxnKvMode {

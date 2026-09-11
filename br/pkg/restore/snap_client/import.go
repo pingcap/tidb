@@ -168,15 +168,17 @@ type SnapFileImporter struct {
 	retainLatestMVCCVersion bool
 	// peerDownloadRetry means TiKV can safely deduplicate same-uuid download retries inside one peer.
 	peerDownloadRetry bool
+	restoreRegion     bool
 }
 
 type SnapFileImporterOptions struct {
-	cipher       *backuppb.CipherInfo
-	metaClient   split.SplitClient
-	importClient importclient.ImporterClient
-	backend      *backuppb.StorageBackend
-	rewriteMode  RewriteMode
-	tikvStores   []*metapb.Store
+	cipher        *backuppb.CipherInfo
+	metaClient    split.SplitClient
+	importClient  importclient.ImporterClient
+	backend       *backuppb.StorageBackend
+	rewriteMode   RewriteMode
+	tikvStores    []*metapb.Store
+	restoreRegion bool
 
 	// scanConcurrency is the max in-flight PD scan-region requests during import.
 	scanConcurrency         uint
@@ -223,6 +225,9 @@ func NewSnapFileImporter(
 	if options.concurrencyPerStore == 0 {
 		return nil, errors.New("concurrencyPerStore must be greater than 0")
 	}
+	if options.restoreRegion && (kvMode != TiDBFull || options.rewriteMode != RewriteModeKeyspace) {
+		return nil, errors.New("RestoreRegion requires full snapshot restore with keyspace rewrite")
+	}
 	var pdReqTokens chan struct{}
 	if options.scanConcurrency > 0 {
 		pdReqTokens = utils.BuildWorkerTokenChannel(options.scanConcurrency)
@@ -246,6 +251,14 @@ func NewSnapFileImporter(
 		cond:                    sync.NewCond(new(sync.Mutex)),
 		closeCallbacks:          options.closeCallbacks,
 		retainLatestMVCCVersion: options.retainLatestMVCCVersion,
+		restoreRegion:           options.restoreRegion,
+	}
+	if options.restoreRegion {
+		// The experimental path runs one complete restore at a time per Store.
+		// Download tokens no longer represent work on the Store.
+		fileImporter.concurrencyPerStore = 1
+		fileImporter.downloadTokensMap = newStoreTokenChannelMap(nil, 0)
+		fileImporter.ingestTokensMap = newStoreTokenChannelMap(options.tikvStores, 1)
 	}
 
 	for _, f := range options.createCallBacks {
@@ -494,7 +507,36 @@ func (importer *SnapFileImporter) Import(
 		return errors.Trace(err)
 	}
 
-	err = utils.WithRetry(ctx, func() error {
+	if importer.restoreRegion {
+		err = importer.restoreRegions(ctx, startKey, endKey, backupFileSets)
+	} else {
+		err = importer.downloadAndIngest(ctx, startKey, endKey, backupFileSets)
+	}
+	if err != nil {
+		logutil.CL(ctx).Error("import sst file failed, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
+		return errors.Trace(err)
+	}
+	metrics.RestoreImportFileSeconds.Observe(time.Since(importBegin).Seconds())
+
+	for i, cb := range delayCbs {
+		if err := cb(); err != nil {
+			return errors.Annotatef(err, "failed to execute the delaied callback #%d", i)
+		}
+	}
+
+	for _, files := range backupFileSets {
+		for _, f := range files.SSTFiles {
+			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		}
+	}
+	return nil
+}
+
+func (importer *SnapFileImporter) downloadAndIngest(
+	ctx context.Context, startKey, endKey []byte, backupFileSets []restore.BackupFileSet,
+) error {
+	return utils.WithRetry(ctx, func() error {
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := importer.paginateScanRegion(ctx, startKey, endKey)
 		if errScanRegion != nil {
@@ -541,25 +583,6 @@ func (importer *SnapFileImporter) Import(
 		}
 		return eg.Wait()
 	}, utils.VerboseRetry(utils.NewImportSSTBackoffStrategy(), logutil.CL(ctx)))
-	if err != nil {
-		logutil.CL(ctx).Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
-		return errors.Trace(err)
-	}
-	metrics.RestoreImportFileSeconds.Observe(time.Since(importBegin).Seconds())
-
-	for i, cb := range delayCbs {
-		if err := cb(); err != nil {
-			return errors.Annotatef(err, "failed to execute the delaied callback #%d", i)
-		}
-	}
-
-	for _, files := range backupFileSets {
-		for _, f := range files.SSTFiles {
-			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
-		}
-	}
-	return nil
 }
 
 // getSSTMetaFromFile compares the keys in file, region and rewrite rules, then returns a sst conn.
