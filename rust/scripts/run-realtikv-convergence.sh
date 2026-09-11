@@ -382,7 +382,7 @@ wait_for_rust_grant() {
   echo "the Rust node never saw the Go-made grant; last saw [${seen}]" >&2
   return 1
 }
-wait_for_rust_grant "UPDATE"
+wait_for_rust_grant "GRANT SELECT,INSERT,UPDATE ON *.* TO 'rustmade'@'%'"
 # The reverse leg for a scoped grant: the GO TiDB writes the tables_priv row and
 # the RUST node's SHOW GRANTS renders it, which is the decode half of the same
 # SET column.

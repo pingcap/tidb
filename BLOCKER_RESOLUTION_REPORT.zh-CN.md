@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 convergence 全局授权观察收紧后通过
+
+旧 `wait_for_rust_grant "UPDATE"` 会匹配既有 conv.orders 表级 UPDATE，不能
+证明刚由 Go 授予的全局 UPDATE 已同步。现在匹配完整
+`GRANT SELECT,INSERT,UPDATE ON *.* TO 'rustmade'@'%'`。回归从生产脚本提取
+函数与调用，先仅返回旧表级 UPDATE，再返回新全局授权。旧实现第一轮就
+误报成功（`/tmp/convergence-global-grant-red.log`）；修复后必须读取第二轮
+才成功（`/tmp/convergence-global-grant-green.log`）。未弱化任何授权断言。
+
+```bash
+bash rust/scripts/test-convergence-global-grant.sh
+bash -n rust/scripts/test-convergence-global-grant.sh rust/scripts/run-realtikv-convergence.sh
+make lint
+CONVERGENCE_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+CONVERGENCE_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+bash rust/scripts/run-realtikv-convergence.sh
+```
+
+上述均退出 0，lint `/tmp/convergence-global-grant-lint.log`，真实门禁
+`/tmp/convergence-strict-master.log`：固定 master fdfadb96b2cf 对照下，wide SQL、
+事务跨节点读回、CREATE/ALTER/DROP TABLE、账户密码两端登录、双向全局与
+scoped grant、watch 事件和 DROP USER 均通过，脚本完成清理。
+这是 convergence 门禁的完成证据；transport-retry 等剩余原始门禁仍未完成。
+
 ## 2026-09-11 DROP USER 避免重复账户持久化
 
 真实 red `/tmp/convergence-column-grant-master.log` 的 DROP USER 返回
