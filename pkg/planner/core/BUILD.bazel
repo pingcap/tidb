@@ -267,8 +267,8 @@ go_test(
         "rule_join_reorder_greedy_test.go",
         "runtime_filter_generator_test.go",
         "stats_test.go",
-        "tici_estimate_stats_test.go",
         "stringer_test.go",
+        "tici_estimate_stats_test.go",
         "util_test.go",
     ],
     data = glob([
@@ -312,6 +312,7 @@ go_test(
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/statistics",

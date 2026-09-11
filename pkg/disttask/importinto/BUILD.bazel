@@ -99,7 +99,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 31,
+    shard_count = 38,
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
@@ -130,6 +130,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/session",
+        "//pkg/sessionctx",
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
         "//pkg/table",
