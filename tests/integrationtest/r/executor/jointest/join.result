@@ -162,6 +162,14 @@ select * from t1 where a not in (select * from t2 where false);
 a
 1
 2
+drop table if exists t0;
+create table t0 (c1 blob);
+insert into t0 values ('gO'), ('W');
+select hex(t0.c1) from t0 where 0 in (select t0.c1 from t0) order by hex(t0.c1);
+hex(t0.c1)
+57
+674F
+drop table if exists t0;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
 create table t2 (a int, key b (a));
