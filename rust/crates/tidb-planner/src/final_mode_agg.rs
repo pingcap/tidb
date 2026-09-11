@@ -540,9 +540,9 @@ fn contain_correlated_column(exprs: &[Expression]) -> bool {
 /// `CheckAggPushDown` (with the default empty push-down blacklist Go reads
 /// from the session), argument pushability, order-by-item pushability, and
 /// the same two group-by checks. Go's final `AggFuncToPBExpr != nil` probe
-/// narrows: the PB conversion layer is unported, and for TiKV every function
-/// admitted by `CheckAggPushDown` has a PB mapping, so the probe cannot
-/// refuse anything the earlier checks admitted. Go's refusal WARNING
+/// includes the client request capability check from `pkg/kv/checker.go`:
+/// having a PB mapping alone does not make JSON or variance aggregates
+/// pushable. Go's refusal WARNING
 /// (`Aggregation can not be pushed to ...`) narrows with the same unported
 /// statement-context channel the other attach refusals name.
 #[must_use]
@@ -579,6 +579,27 @@ pub fn check_agg_can_push_cop_tikv(
             if !crate::pushdown::can_exprs_push_down_tikv(&exprs) {
                 return false;
             }
+        }
+        // AggFuncToPBExpr asks RequestTypeSupportedChecker before encoding.
+        // Keep its aggregate set here; CheckAggPushDown applies store limits.
+        if !matches!(
+            agg_func.name(),
+            names::COUNT
+                | names::FIRST_ROW
+                | names::MAX
+                | names::MIN
+                | names::SUM
+                | names::AVG
+                | names::SUM_INT
+                | names::MAX_COUNT
+                | names::MIN_COUNT
+                | names::BIT_XOR
+                | names::BIT_AND
+                | names::BIT_OR
+                | names::APPROX_COUNT_DISTINCT
+                | names::GROUP_CONCAT
+        ) {
+            return false;
         }
     }
     if contain_virtual_column(group_by_items) {
@@ -711,6 +732,33 @@ mod tests {
             distinct,
         )
         .expect("descriptor")
+    }
+
+    #[test]
+    fn cop_aggregation_requires_client_request_support() {
+        let a = bigint_col(1);
+        for name in [
+            names::JSON_ARRAYAGG,
+            names::JSON_OBJECTAGG,
+            names::VAR_POP,
+            names::VAR_SAMP,
+            names::STDDEV_POP,
+            names::STDDEV_SAMP,
+        ] {
+            let args = if name == names::JSON_OBJECTAGG {
+                vec![Expression::Column(a.clone()), Expression::Column(a.clone())]
+            } else {
+                vec![Expression::Column(a.clone())]
+            };
+            let descriptor = AggFuncDesc::new(&ctx(), name, args, false).unwrap();
+            assert!(!check_agg_can_push_cop_tikv(&[descriptor], &[]), "{name}");
+        }
+        for name in [names::COUNT, names::SUM, names::AVG, names::MIN, names::MAX] {
+            assert!(
+                check_agg_can_push_cop_tikv(&[agg(name, &a, false)], &[]),
+                "{name}"
+            );
+        }
     }
 
     /// `select count(b) from t group by a`, cop split: the partial half

@@ -3727,6 +3727,48 @@ ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
 
 session 集成 `/tmp/placeholder-session-integration.log` 最终为 310 passed / 0 failed，退出 0。这是原 access-path gate 的完整回放通过，不代表其他 RealTiKV 脚本、全量 Rust/Go/Bazel gate 或整个 Go statistics package 完成；整体目标继续保持未完成。
 
+## 2026-09-11 readiness 闭环与 JSON HashAgg 越界
+
+当前核验基线为 `a0eb57f8d4`，远端 hparser-integration 与之相同。readiness 原因是脚本先等待 TCP 监听、随后只 grep 一次 ready 事件；监听先于完整初始化，脚本可能误判并清理仍在启动的节点。Go 的监听与 health-ready 同样存在先后关系。修复 `1f89c30b65`、`9839a744e0` 已推送，四个入口统一使用限时轮询，并检查节点提前退出。本轮再次执行下列四入口回归，均退出 0：
+
+```bash
+for runner in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh "run-realtikv-${runner}.sh" || exit
+done
+```
+
+现有完整真实回放 `/tmp/warning-access-replay.log` 以 `the access-path differential passed` 结束；`/tmp/warning-access-evidence/rust-node.log:8` 包含 ready 事件、schema_version=68、stats_loaded=4。readiness 和此前 access-path 估算差异均已有修复和通过证据，不能继续作为外部 blocker。以下早期章节的失败状态是历史快照。
+
+继续验证发现 JSON 聚合的独立 panic：`hash_agg/parallel.rs:1447` 访问空的输出类型数组。原始回归 `/tmp/json-agg-panic-red.log` 退出 101。根因是 Rust `check_agg_can_push_cop_tikv` 遗漏 Go `AggFuncToPBExpr -> RequestTypeSupportedChecker.supportExpr` 的客户端能力检查；JSON 有 PB 枚举，却不在客户端支持的聚合集合中。错误下推后 partial 拆分保留 JSON 描述符而没有输出列，最终 HashAgg 越界。
+
+Source of truth 是 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/operator/physicalop/base_physical_agg.go:570`、`pkg/expression/aggregation/agg_to_pb.go:107`、`pkg/kv/checker.go:55`。Go 实机 `/tmp/json-client-go.out` 确认 JSON_ARRAYAGG 和 VAR_POP 留在 root，二进制 JSON_OBJECTAGG 输出 base64:type15。
+
+修复在原下推检查处恢复该聚合能力集合，不修改 `NeedValue` 或越界处，不吞掉输出。新增 `cop_aggregation_requires_client_request_support` 回归在修复前退出 101（`/tmp/json-client-red.log`），修复后 final_mode_agg 全部通过。原 JSON 组运行到更后的 APPROX_PERCENTILE 参数错误类型断言才失败：12 passed / 1 failed，JSON panic 已消失，但该综合测试尚未整体通过，日志 `/tmp/json-client-green.log`。
+
+验证采用 Ready 范围，工作目录 `/tmp/tidb-hparser-current`，所有 cargo 命令带环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib final_mode_agg
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_json
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+planner 回归 6 passed；session 集成 310 passed / 0 failed（`/tmp/json-client-integration.log`）；`make lint` 退出 0，日志 `/tmp/json-client-lint.log`。Go 对照实例已停止。全部 Rust、Go、RealTiKV、Bazel 门禁仍未闭环，也不声明完整 Go package 转写完成。
+
+本次修复后重新完整运行真实 access-path：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+  ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/json-client-access-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh > /tmp/json-client-access-replay.log 2>&1
+```
+
+日志以 `the access-path differential passed` 结束，节点日志第 8 行 ready，schema_version=68、stats_loaded=4。此次验证直接覆盖修改后的代码，readiness 未复现；JSON 综合测试后续的百分位错误类型断言仍须独立处理。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。
