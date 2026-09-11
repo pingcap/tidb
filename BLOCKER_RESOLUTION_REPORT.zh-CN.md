@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 RANGE 字符串 interval 校验
+
+在 `a6504359f3` 重跑 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_range_`，`/tmp/range-offset-red.log` 退出 101，包含 `window_range_interval_bounds` 的 WindowFrameIllegal。Rust 使用 get_uint64_from_constant，只接受整数 Datum，错误拒绝 `INTERVAL '1 2' DAY_HOUR`。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 在 `pkg/planner/core/logical_plan_builder.go:6972` 用 Constant.EvalInt 校验；`pkg/expression/constant.go:358` 对字符串调用 Datum.ToInt64，此处忽略截断事件，但保留原始字符串用于日期边界计算。
+
+修复复用 Rust Datum.to_i64 校验字符串的非负数字前缀，不改变传给 interval 算术的原值。Go 实测 `/tmp/range-interval-go.out`：26 小时复合 interval 在三个时间点返回 10、30、60；负数字符串 `'-1 2'` 返回 3586。现有复合 interval 正向回归转绿，并补充负数的完整错误码与文本断言。小数 RANGE 的 Datum 校验差异未混入本次修复，仍保留失败。
+
+Ready 验证（Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_range_interval
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/range-interval-final.log` 2 passed，`/tmp/range-interval-planner.log` 66 passed，`/tmp/range-interval-integration.log` 310 passed，`/tmp/range-interval-lint.log` 退出 0，diff check 通过。完整窗口 suite `/tmp/range-interval-suite.log` 33 passed / 10 failed（上一轮 32/11）。Go 临时实例正常退出。全量质量目标尚未完成。
+
 ## 2026-09-11 窗口 frame 形状错误保留名称与错误码
 
 在 `c980d14b87` 独立运行 `window_frame_shape_is_refused_with_gos_own_code`，`/tmp/window-frame-red.log` 退出 101。Rust 已检查非法起止形状，但生成 Internal 和自定义文本，跨执行层后失去 Go 3584/3585/3586。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::checkOriginWindowSpec` 按起点、终点、范围关系、offset 顺序验证；`pkg/errno/errname.go:875` 起定义三个完整消息。

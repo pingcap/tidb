@@ -1234,7 +1234,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go evaluates the constant as an INT and rejects a negative, a NULL
         // or an evaluation error with `ErrWindowFrameIllegal`. A negative
         // signed datum is exactly what `get_uint64_from_constant` refuses.
-        match get_uint64_from_constant(&constant, self.ctx) {
+        // Constant.EvalInt converts string datums with ToInt64, ignoring
+        // truncation here. Keep the original string for composite intervals
+        // such as '1 2' DAY_HOUR; only the validation reads its numeric prefix.
+        let checked_offset = match &constant {
+            Expression::Constant(value) if matches!(value.value, tidb_datatype::Datum::String(_)) => {
+                value.value.to_i64().ok().and_then(|converted| {
+                    (converted.value >= 0).then_some((converted.value as u64, false))
+                })
+            }
+            _ => get_uint64_from_constant(&constant, self.ctx),
+        };
+        match checked_offset {
             Some((_, false)) => {}
             _ => {
                 return Err(PlanError::window_frame(3586, window_name(&spec.name)))
