@@ -2136,6 +2136,10 @@ func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient fun
 	if err != nil {
 		return err
 	}
-	local.ticiWriteGroup = ticiWriteGroup
+	// Keep the interface nil when the table has no TiCI indexes.
+	local.ticiWriteGroup = nil
+	if ticiWriteGroup != nil {
+		local.ticiWriteGroup = ticiWriteGroup
+	}
 	return nil
 }

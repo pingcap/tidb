@@ -3049,3 +3049,10 @@ func (m *mockEngineWithData) GetRegionSplitKeys() ([][]byte, error) {
 func (m *mockEngineWithData) Close() error {
 	return nil
 }
+
+func TestInitTiCIWriterGroupWithoutIndexes(t *testing.T) {
+	backend := &Backend{}
+	require.NoError(t, backend.InitTiCIWriterGroup(context.Background(), nil, nil, "test", "1", nil))
+	// An interface containing a nil *DataWriterGroup must not enable TiCI paths.
+	require.True(t, backend.ticiWriteGroup == nil)
+}

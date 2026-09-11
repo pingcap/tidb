@@ -106,7 +106,6 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	} {
 		require.True(t, strings.Contains(resultMsg, expected), resultMsg)
 	}
-
 }
 
 func TestShow(t *testing.T) {

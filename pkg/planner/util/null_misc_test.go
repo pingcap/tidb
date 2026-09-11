@@ -37,8 +37,11 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	names := expression.RegisteredBuiltinFunctionNames()
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
+	// The four FTS builtins are not NULL-preserving for every argument:
+	// native MATCH can return zero for NULL, and local MATCH skips NULL columns.
+	// Leave them out of the null-reject allowlists for a conservative proof.
 	require.NotEmpty(t, names)
-	require.Equal(t, "12dd16fda61c67b3dd74d38e0408df30855afaa5781dbdc14348987c59d7167c", hex.EncodeToString(sum[:]))
+	require.Equal(t, "24b0274c01b53b5b106bc9d6462658f37c5980423f6ed772fe49ffb6a1943b0d", hex.EncodeToString(sum[:]))
 
 	internalScalarNames := map[string]struct{}{
 		ast.Cast: {},
