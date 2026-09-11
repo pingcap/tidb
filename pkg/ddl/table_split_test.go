@@ -63,6 +63,17 @@ func TestTableSplit(t *testing.T) {
 		partition p0 values less than (10),
 		partition p1 values less than (20)
 	)`)
+	// issue 70291: PRE_SPLIT_REGIONS must use common-handle record keys.
+	tk.MustExec(`create table t_common_signed (
+		ts datetime(6) not null,
+		id bigint not null auto_random(2),
+		primary key (id, ts) clustered
+	) pre_split_regions = 2`)
+	tk.MustExec(`create table t_common_unsigned (
+		ts datetime(6) not null,
+		id bigint unsigned not null auto_random(2),
+		primary key (id, ts) clustered
+	) pre_split_regions = 2`)
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
@@ -85,6 +96,22 @@ func TestTableSplit(t *testing.T) {
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
 	}
+	// 0x03 and 0x04 are the memcomparable codec flags for signed and unsigned integers, respectively.
+	checkCommonHandleSplitKeys := func(tableName, encodedPrefix string) {
+		rows := tk.MustQuery("show table " + tableName + " regions").Rows()
+		require.Len(t, rows, 5)
+		splitKeyCount := 0
+		for _, row := range rows {
+			startKey := row[1].(string)
+			if strings.Contains(startKey, "_r_") {
+				require.Contains(t, startKey, encodedPrefix)
+				splitKeyCount++
+			}
+		}
+		require.Equal(t, 3, splitKeyCount)
+	}
+	checkCommonHandleSplitKeys("t_common_signed", "_r_03")
+	checkCommonHandleSplitKeys("t_common_unsigned", "_r_04")
 }
 
 // TestScatterRegion test the behavior of the tidb_scatter_region system variable, for verifying:
