@@ -34,8 +34,8 @@ func requireStatementRUReportConservation(t *testing.T, finalized statementRUFin
 	require.NotNil(t, finalized.report)
 	var total statementRURawUnits
 	var engineRU [statementRUEngineCount]float64
-	for engine, classes := range finalized.report.units {
-		for _, units := range classes {
+	for engine, operators := range finalized.report.units {
+		for _, units := range operators {
 			total = addStatementRURawUnits(total, units)
 			engineRU[engine] += calculateStatementRUResultOnly(units).TotalRU
 		}
@@ -172,8 +172,8 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 	require.Equal(t, first, second)
 	requireStatementRUReportConservation(t, first)
 	checks := []struct {
-		engine, class, unit string
-		want, before        float64
+		engine, operator, unit string
+		want, before           float64
 	}{
 		{"tidb", "hash_agg", metrics.LblRUV3UnitCPUWork, 2, 0},
 		{"tikv", "hash_agg", metrics.LblRUV3UnitScanBytes, 23, 0},
@@ -188,11 +188,11 @@ func TestStatementRUFullReportFreeze(t *testing.T) {
 	}
 	for i := range checks {
 		c := &checks[i]
-		c.before = testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.class, c.unit))
+		c.before = testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.operator, c.unit))
 	}
 	publishStatementRUMetricsSafely(first)
 	for _, c := range checks {
-		require.InDelta(t, c.want, testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.class, c.unit))-c.before, 1e-9, c.unit)
+		require.InDelta(t, c.want, testutil.ToFloat64(metrics.RUV3Unit.WithLabelValues(c.engine, c.operator, c.unit))-c.before, 1e-9, c.unit)
 	}
 	// The same input has exactly the same result without the full report.
 	calculator.report = nil

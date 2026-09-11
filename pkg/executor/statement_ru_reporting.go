@@ -44,10 +44,12 @@ type statementRUEngineResult struct {
 	TiKV float64
 }
 
-type statementRUOpClass uint8
+// statementRUOperator groups physical operators for RU reporting and includes
+// statement-level accounting entries such as sql_frontend and kv_write.
+type statementRUOperator uint8
 
 const (
-	statementRUWrapper statementRUOpClass = iota
+	statementRUWrapper statementRUOperator = iota
 	statementRUProjection
 	statementRUSelection
 	statementRULimit
@@ -70,10 +72,10 @@ const (
 	statementRUFrontend
 	statementRUCopTransport
 	statementRUKVWrite
-	statementRUOpClassCount
+	statementRUOperatorCount
 )
 
-var statementRUOpClassNames = [...]string{
+var statementRUOperatorNames = [...]string{
 	"wrapper", "projection", "selection", "limit", "sort", "topn", "window",
 	"hash_agg", "stream_agg", "hash_join", "merge_join", "lookup_join",
 	"reader", "lookup_reader", "union_scan", "shuffle", "range_scan", "point_lookup",
@@ -84,18 +86,18 @@ var statementRUOpClassNames = [...]string{
 // numeric values, never plans or runtime statistics. Finalization freezes a copy
 // for the publisher; result mode never allocates either report.
 type statementRUFullReport struct {
-	units [statementRUEngineCount][statementRUOpClassCount]statementRURawUnits
-	seen  [statementRUEngineCount][statementRUOpClassCount]bool
+	units [statementRUEngineCount][statementRUOperatorCount]statementRURawUnits
+	seen  [statementRUEngineCount][statementRUOperatorCount]bool
 }
 
-func (report *statementRUFullReport) add(engine statementRUEngine, class statementRUOpClass, units statementRURawUnits) {
-	report.units[engine][class] = addStatementRURawUnits(report.units[engine][class], units)
-	report.seen[engine][class] = true
+func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units statementRURawUnits) {
+	report.units[engine][operator] = addStatementRURawUnits(report.units[engine][operator], units)
+	report.seen[engine][operator] = true
 }
 
-// statementRUClassForPlan runs exclusively in full mode. Classes are bounded
+// statementRUOperatorForPlan runs exclusively in full mode. Operator labels are bounded
 // independently of SQL text, plan IDs, table names, and index names.
-func statementRUClassForPlan(plan base.Plan) statementRUOpClass {
+func statementRUOperatorForPlan(plan base.Plan) statementRUOperator {
 	switch plan.(type) {
 	case *physicalop.PhysicalProjection:
 		return statementRUProjection
@@ -140,14 +142,14 @@ func statementRUClassForPlan(plan base.Plan) statementRUOpClass {
 	}
 }
 
-func (report *statementRUFullReport) addOperator(engine statementRUEngine, class statementRUOpClass, units statementRURawUnits) {
+func (report *statementRUFullReport) addOperator(engine statementRUEngine, operator statementRUOperator, units statementRURawUnits) {
 	// A root Reader/PointGet owns the evidence, but the scan and payload are
 	// TiKV work. Keep that ownership distinct from the local executor work.
 	remote := statementRURawUnits{ScanBytes: units.ScanBytes, NetBytes: units.NetBytes}
 	units.ScanBytes, units.NetBytes = 0, 0
-	report.add(engine, class, units)
+	report.add(engine, operator, units)
 	if remote.ScanBytes != 0 || remote.NetBytes != 0 {
-		report.add(statementRUTiKV, class, remote)
+		report.add(statementRUTiKV, operator, remote)
 	}
 }
 
@@ -200,9 +202,9 @@ func statementRUSQLTypeForPlan(plan base.Plan) string {
 }
 
 func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
-	for engine, classes := range finalized.report.units {
-		for class, units := range classes {
-			if !finalized.report.seen[engine][class] {
+	for engine, operators := range finalized.report.units {
+		for operator, units := range operators {
+			if !finalized.report.seen[engine][operator] {
 				continue
 			}
 			for _, unit := range [...]struct {
@@ -223,7 +225,7 @@ func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 				if unit.value == 0 {
 					continue
 				}
-				metrics.RUV3Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOpClassNames[class], unit.name).Add(unit.value)
+				metrics.RUV3Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
 			}
 		}
 	}

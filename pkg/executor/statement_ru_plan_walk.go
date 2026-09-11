@@ -965,7 +965,7 @@ func calculateStatementRUPlanChildFirst(
 		selfUnits = subtractStatementRURawUnits(calculator.units, beforeOperator)
 	}
 	if calculator.report != nil {
-		calculator.report.addOperator(engine, statementRUClassForPlan(operator.Origin), selfUnits)
+		calculator.report.addOperator(engine, statementRUOperatorForPlan(operator.Origin), selfUnits)
 	}
 	if operatorRUs != nil {
 		if len(operatorRUs) != len(tree) {
