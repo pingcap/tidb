@@ -153,8 +153,31 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		}
 	}
 
+	// A partial index legitimately holds no entry for the rows that do not
+	// satisfy its condition, so such rows are skipped instead of being reported
+	// as missing. The condition may reference columns outside the index, so the
+	// whole row is decoded and evaluated before projecting to the index columns.
+	hasCondition := idx.Meta().HasCondition()
+	iterCols := cols
+	if hasCondition {
+		iterCols = t.Cols()
+	}
+
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, _ []*table.Column) (bool, error) {
+		if hasCondition {
+			meet, err := idx.MeetPartialCondition(vals1)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if !meet {
+				return true, nil
+			}
+			vals1, err = idx.FetchValues(vals1, nil)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+		}
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
@@ -185,7 +208,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, idx.Meta().Global, filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, iterCols, idx.Meta().Global, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
