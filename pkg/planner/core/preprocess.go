@@ -960,8 +960,18 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		if constraint.Option != nil {
+			if constraint.Option.TiCIParameter != "" && constraint.Tp != ast.ConstraintFulltext && constraint.Tp != ast.ConstraintHybrid {
+				p.err = dbterror.ErrUnsupportedIndexType.FastGen("PARAMETER is only supported for FULLTEXT/HYBRID INDEX")
+				return
+			}
+			if constraint.Tp == ast.ConstraintHybrid && constraint.Option.Tp != pmodel.IndexTypeInvalid {
+				p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for HYBRID INDEX", constraint.Option.Tp)
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
-		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex, ast.ConstraintForeignKey, ast.ConstraintFulltext:
+		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex, ast.ConstraintForeignKey, ast.ConstraintFulltext, ast.ConstraintHybrid:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				p.err = err

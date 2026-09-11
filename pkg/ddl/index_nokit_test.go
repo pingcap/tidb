@@ -305,3 +305,55 @@ func TestFullTextParserConfigFromJob(t *testing.T) {
 		NgramTokenSize: 2, InnodbFtEnableStopword: true,
 	}, defaults)
 }
+
+func TestTiCIAddPartitionParserSnapshot(t *testing.T) {
+	job := &model.Job{Type: model.ActionAddTablePartition, SessionVars: map[string]string{
+		"innodb_ft_min_token_size": "2", "innodb_ft_max_token_size": "84",
+		"ngram_token_size": "2", "innodb_ft_enable_stopword": "ON",
+	}}
+	tbl := &model.TableInfo{}
+	for i, minSize := range []int{5, 7} {
+		tbl.Indices = append(tbl.Indices, &model.IndexInfo{ID: int64(i + 1), FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+			ParserConfig: &model.FullTextParserConfig{
+				InnodbFtMinTokenSize: minSize, InnodbFtMaxTokenSize: 70,
+				NgramTokenSize: 3, InnodbFtEnableStopword: false,
+			},
+		}})
+	}
+	tbl.Indices = append(tbl.Indices, &model.IndexInfo{ID: 3, FullTextInfo: &model.FullTextIndexInfo{
+		ParserType: model.FullTextParserTypeNgramV1,
+		ParserConfig: &model.FullTextParserConfig{
+			InnodbFtMinTokenSize: 5, InnodbFtMaxTokenSize: 70,
+			NgramTokenSize: 3, InnodbFtEnableStopword: false,
+		},
+	}})
+	groups, err := (&worker{}).buildTiCIAddPartitionGroups(nil, job, tbl)
+	require.NoError(t, err)
+	require.Len(t, groups, 3)
+	for _, group := range groups {
+		require.Len(t, group.indexIDs, 1)
+		params := group.parserInfo.ParserParams
+		require.Equal(t, "OFF", params["innodb_ft_enable_stopword"])
+		switch group.indexIDs[0] {
+		case 1:
+			require.Equal(t, "5", params["innodb_ft_min_token_size"])
+			require.Equal(t, "70", params["innodb_ft_max_token_size"])
+		case 2:
+			require.Equal(t, "7", params["innodb_ft_min_token_size"])
+		case 3:
+			require.Equal(t, "3", params["ngram_token_size"])
+		}
+	}
+	require.Equal(t, "2", job.SessionVars["innodb_ft_min_token_size"])
+	require.Equal(t, "ON", job.SessionVars["innodb_ft_enable_stopword"])
+	groups, err = (&worker{}).buildTiCIAddPartitionGroups(nil, &model.Job{}, tbl)
+	require.NoError(t, err)
+	require.Len(t, groups, 3)
+	// Legacy metadata without a snapshot retains the existing job-based behavior.
+	tbl.Indices = tbl.Indices[:1]
+	tbl.Indices[0].FullTextInfo.ParserConfig = nil
+	groups, err = (&worker{}).buildTiCIAddPartitionGroups(nil, job, tbl)
+	require.NoError(t, err)
+	require.Equal(t, "2", groups[0].parserInfo.ParserParams["innodb_ft_min_token_size"])
+}

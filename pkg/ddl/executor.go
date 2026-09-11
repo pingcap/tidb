@@ -4891,6 +4891,8 @@ func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, index
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddHybridIndex
+	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
+	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {

@@ -68,6 +68,14 @@ func TestLocalMatchIndexConfig(t *testing.T) {
 	tk.MustExec("set global ngram_token_size = 3")
 	tk.MustExec("set innodb_ft_enable_stopword = on")
 	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("create table local_empty(id int primary key, body text, fulltext index ft(body))")
+	for _, sql := range []string{
+		"explain select id from local_empty where match(body) against('+' in boolean mode)",
+		"select id from local_empty where match(body) against('+' in boolean mode)",
+		"select id from local_empty where false and match(body) against('+' in boolean mode)",
+	} {
+		require.Error(t, tk.ExecToErr(sql), sql)
+	}
 	tk.MustQuery("select id from local_fts where match(body) against('+an' in boolean mode)").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from local_fts where match(body) against('+elephant' in boolean mode)").Check(testkit.Rows("2"))
 	tk.MustQuery("select id from local_fts where match(body) against('+encyclopedia' in boolean mode)").Check(testkit.Rows())

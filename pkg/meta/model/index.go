@@ -657,6 +657,9 @@ func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, co
 // IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
 // and whether the partial index predicate, if any, is safe for foreign key checks.
 func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
+	if index.IsNonKVIndex() {
+		return false
+	}
 	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
 		return false
 	}

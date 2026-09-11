@@ -254,7 +254,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 		request:         req,
 	})
 	for _, indexInfo := range c.tableInfo.Indices {
-		if indexInfo.State != model.StatePublic {
+		if indexInfo.State != model.StatePublic || indexInfo.IsTiCIIndex() {
 			continue
 		}
 		req, err = c.buildIndexRequest(ctx, physicalTableID, indexInfo)

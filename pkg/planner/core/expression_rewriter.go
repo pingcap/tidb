@@ -1767,7 +1767,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if localIndex != nil {
 			info := localIndex.FullTextInfo
 			config := info.ParserConfig
-			err = expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &expression.FTSLocalEvalInfo{
+			localInfo := &expression.FTSLocalEvalInfo{
 				AnalyzerConfig: fulltext.AnalyzerConfig{
 					ParserType:             info.ParserType,
 					InnodbFtMinTokenSize:   config.InnodbFtMinTokenSize,
@@ -1775,7 +1775,16 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 					NgramTokenSize:         config.NgramTokenSize,
 					InnodbFtEnableStopword: config.InnodbFtEnableStopword,
 				},
-			})
+			}
+			if constExpr, isConst := against.(*expression.Constant); isConst &&
+				!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
+				// Validate stable literals even when no rows will be evaluated.
+				if _, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(er.sctx.GetEvalCtx(), sf, localInfo.AnalyzerConfig); err != nil {
+					er.err = err
+					return retNode, false
+				}
+			}
+			err = expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localInfo)
 			if err != nil {
 				er.err = err
 				return retNode, false

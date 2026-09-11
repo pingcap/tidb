@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -2229,7 +2230,19 @@ func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job,
 
 		var parserInfo *tici.ParserInfo
 		if idxInfo.FullTextInfo != nil {
-			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, idxInfo)
+			parserJob := job
+			if config := idxInfo.FullTextInfo.ParserConfig; config != nil {
+				// New partitions must use the existing index's analyzer settings.
+				// Keep the DDL job and other indexes' parser settings unchanged.
+				capturedJob := &model.Job{SessionVars: make(map[string]string, len(job.SessionVars)+4)}
+				maps.Copy(capturedJob.SessionVars, job.SessionVars)
+				capturedJob.AddSessionVars(variable.InnodbFtMinTokenSize, strconv.Itoa(config.InnodbFtMinTokenSize))
+				capturedJob.AddSessionVars(variable.InnodbFtMaxTokenSize, strconv.Itoa(config.InnodbFtMaxTokenSize))
+				capturedJob.AddSessionVars(variable.NgramTokenSize, strconv.Itoa(config.NgramTokenSize))
+				capturedJob.AddSessionVars(variable.InnodbFtEnableStopword, variable.BoolToOnOff(config.InnodbFtEnableStopword))
+				parserJob = capturedJob
+			}
+			info, err := w.buildTiCIFulltextParserInfo(jobCtx, parserJob, idxInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
