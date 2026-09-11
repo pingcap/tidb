@@ -972,9 +972,8 @@ pub fn table_statistics_from_table_schema(
                 .as_ref()
                 .is_some_and(|map| map.has_analyzed(id, false)),
         );
-        if !column.stats_available() {
-            continue;
-        }
+        // Go keeps EmptyColumn objects: presence selects the ordinary
+        // Selectivity path even when the histogram is not initialized.
         let unsigned = schema_columns
             .iter()
             .find(|schema| schema.0 == id)
@@ -1002,9 +1001,7 @@ pub fn table_statistics_from_table_schema(
                 .as_ref()
                 .is_some_and(|map| map.has_analyzed(id, true)),
         );
-        if !index.is_analyzed() && index.histogram.ndv == 0 && index.histogram.null_count == 0 {
-            continue;
-        }
+        // Preserve unloaded index placeholders and their original load state.
         let Some(schema) = schema_indexes.iter().find(|schema| schema.0 == id) else {
             continue;
         };
@@ -1287,6 +1284,39 @@ mod tests {
         drop(hidden);
         let planner = table_statistics_from_table(&stats, &schema);
         assert!(planner.columns.contains_key(&2));
+    }
+
+    #[test]
+    fn zero_index_placeholder_keeps_presence_and_load_state() {
+        let schema = KvTable::new(42, vec![column(1, "a")]);
+        let stats = statistics_table_from_json(
+            &schema,
+            42,
+            &JsonTable { count: 2000, ..Default::default() },
+        )
+        .unwrap();
+        stats.hist_coll.set_index(
+            7,
+            tidb_stats::Index {
+                info: Some(tidb_stats::IndexInfo {
+                    id: 7,
+                    name: "idx_a".to_owned(),
+                    columns: vec!["a".to_owned()],
+                    ..Default::default()
+                }),
+                histogram: Histogram { id: 7, ..Default::default() },
+                ..Default::default()
+            },
+        );
+        let planner = table_statistics_from_table_schema(&stats, &[(1, false)], &[(7, 1, false)]);
+        assert!(planner.pseudo);
+        assert!(!planner.cache_pseudo);
+        assert_eq!(planner.indexes[&7].total_row_count(), 0.0);
+        assert_eq!(
+            planner.index_load_status[&7],
+            tidb_stats::StatsLoadedStatus::default()
+        );
+        assert!(!planner.index_stats_existence[&7]);
     }
 
     /// Go `GetStatsTable` consults `Table.IsInitialized`, rather than the

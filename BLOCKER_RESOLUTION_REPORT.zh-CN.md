@@ -3244,6 +3244,33 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
 
+## 2026-09-11 保留零直方图占位对象：access-path 全流程转绿
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，原 access-path 最后一项 pseudo estRows 差异已定位在 `load_stats.rs::table_statistics_from_table_schema`：转换会删除未分析、NDV/null_count 均为零的 column/index 对象。Go `pkg/statistics/handle/storage/read.go` 加载后仍 SetCol，异步加载也会安装 EmptyColumn；`GetStatsTable` 对未初始化缓存仅设置 Pseudo=true，不清空对象。对象集合为空会进入 pseudoSelectivity 的最小单条件选择率，而存在占位对象会进入普通 Selectivity stats-node 计算。
+
+2000 行、两个等值条件，错误转换产生 2 行，正确对象集合产生 1 行。Go `adjustCountAfterAccess` 的 0.8 下限调整把两者分别变成 2.50 和 1.25。这不是 EXPLAIN 格式问题，也无需改变 tolerance、SQL 或预期。生产修复只保留原对象及加载状态，仍保留 canonical cache_pseudo 与 planner pseudo 的区别。
+
+回归 `zero_histogram_placeholders_survive_planner_conversion` 覆盖 canonical stats 到选择率计算的真实转换链路。修复前 `/tmp/zero-placeholder-red.log` 退出 101、打印 rows=2；修复后 `/tmp/zero-placeholder-green.log` 通过。新增 index 占位测试验证对象存在、加载状态不被提升、analyzed 标记仍为 false。真正空集合的原回归仍通过。
+
+Ready 验证，目录 `/tmp/tidb-hparser-current`；Rust 命令前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib zero_histogram_placeholders_survive_planner_conversion
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib load_stats
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost::tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/access-placeholder-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh
+```
+
+真实流程 `/tmp/access-placeholder-replay.log` 退出 0，结尾 `the access-path differential passed`。原 idx_cover 断言在第 1792/1793 行双方均为 1.25，risky 复合索引同类差异也消失。`/tmp/access-placeholder-evidence/rust-node.log:8` 正常 ready，schema_version=68、stats_loaded=4。PD/TiKV/节点已由脚本清理。LOAD STATS 7 项与 access_cost 27 项通过，日志 `/tmp/placeholder-load-stats.log`、`/tmp/placeholder-access-cost.log`；lint 退出 0，日志 `/tmp/placeholder-lint.log`。session 集成结果单独记录在 `/tmp/placeholder-session-integration.log`。
+
+session 集成 `/tmp/placeholder-session-integration.log` 最终为 310 passed / 0 failed，退出 0。这是原 access-path gate 的完整回放通过，不代表其他 RealTiKV 脚本、全量 Rust/Go/Bazel gate 或整个 Go statistics package 完成；整体目标继续保持未完成。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。

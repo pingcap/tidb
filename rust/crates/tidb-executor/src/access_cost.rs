@@ -2877,6 +2877,58 @@ mod tests {
     }
 
     #[test]
+    fn zero_histogram_placeholders_survive_planner_conversion() {
+        let table = KvTable::new(9412, vec![long_column("a", 1), long_column("b", 2)]);
+        let canonical = crate::load_stats::statistics_table_from_json(
+            &table,
+            table.table_id,
+            &tidb_stats::JsonTable {
+                count: 2000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for (id, name) in [(1, "a"), (2, "b")] {
+            canonical.hist_coll.set_column(
+                id,
+                tidb_stats::Column {
+                    info: Some(tidb_stats::ColumnInfo {
+                        id,
+                        name: name.to_owned(),
+                        primary_key: false,
+                    }),
+                    histogram: tidb_stats::Histogram { id, ..Default::default() },
+                    physical_id: table.table_id,
+                    ..Default::default()
+                },
+            );
+        }
+        let stats = crate::load_stats::table_statistics_from_table(&canonical, &table);
+        assert!(stats.pseudo);
+        assert!(!stats.cache_pseudo);
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a=1 AND b=2").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let actual = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        // Go Selectivity uses ordinary stats nodes and its one-row floor,
+        // not pseudoSelectivity's minimum per-predicate rate (two rows).
+        assert!(
+            (actual * 2000.0 - 1.0).abs() < 1e-12,
+            "rows={}", actual * 2000.0
+        );
+        assert_eq!(stats.columns.len(), 2);
+    }
+
+    #[test]
     fn empty_real_histogram_collection_uses_pseudo_minimum() {
         let mut table = KvTable::with_storage(
             93,
