@@ -3041,6 +3041,14 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 GROUP BY 错误身份
+
+修复 ONLY_FULL_GROUP_BY 的1055/8123被PlanError::internal降级为1105。新增结构化错误携带位置、子句和列名，并映射至已有DriverError。依据固定Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`：`logical_plan_builder.go:3897`、`:3949`、`:3966`；`pkg/util/dbterror/plannererrors/planner_terror.go:79` 明确将 ErrMixOfGroupFuncAndFields 绑定8123，而不是通用1140。
+
+新增 `only_full_group_by_errors_preserve_mysql_identity` 验证第二SELECT字段的1055和8123；修复前1105，日志 `/tmp/group-by-errors-red.log`。修复后 `--lib only_full_group_by` 为2 passed / 3 failed：新回归通过，原case的全部错误断言通过，但随后合法的 `SELECT v, count(*) FROM gg WHERE v=10` 仍被拒绝（无GROUP BY分支缺少单值/候选键检查），另有JOIN和相关子查询依赖失败。日志 `/tmp/group-by-errors-green.log`，不宣称原case完成。
+
+Ready命令均在 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432` 下运行：`cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib only_full_group_by`；`cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`（310 passed）；`cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests`（34 passed）；`make lint`及`git diff --check`退出0。日志 `/tmp/group-by-errors-integration.log`、`/tmp/group-by-errors-planner.log`、`/tmp/group-by-errors-lint.log`。本类别只修错误协议，无查询算法开销；未重跑Go wire及RealTiKV，全目标未完成。
+
 ## 2026-09-11 GROUP_CONCAT 保留内部排序列
 
 修复原 `tests_core::aggregates::group_concat` 的 `Can't find column with UniqueID 3 in schema`。`LogicalAggregation::prune_columns_local` 只收集聚合参数和 GROUP BY 列，遗漏聚合内部 ORDER BY 的列，所以 `GROUP_CONCAT(v ORDER BY n)` 的 n 被子节点裁掉，物理列绑定失败。

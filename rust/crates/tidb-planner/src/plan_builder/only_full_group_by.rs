@@ -113,20 +113,12 @@ struct Offender {
 
 /// Go `plannererrors.ErrFieldNotInGroupBy` (1055).
 fn err_field_not_in_group_by(position: usize, clause: Clause, column: &str) -> PlanError {
-    PlanError::internal(format!(
-        "Expression #{position} of {} is not in GROUP BY clause and contains nonaggregated \
-         column '{column}' which is not functionally dependent on columns in GROUP BY clause; \
-         this is incompatible with sql_mode=only_full_group_by",
-        clause.label()
-    ))
+    PlanError::field_not_in_group_by(position, clause.label(), column)
 }
 
 /// Go `plannererrors.ErrMixOfGroupFuncAndFields` (8123).
 fn err_field_not_in_aggregated_query(position: usize, column: &str) -> PlanError {
-    PlanError::internal(format!(
-        "In aggregated query without GROUP BY, expression #{position} of SELECT list contains \
-         nonaggregated column '{column}'; this is incompatible with sql_mode=only_full_group_by"
-    ))
+    PlanError::field_not_in_aggregated_query(position, column)
 }
 
 /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).

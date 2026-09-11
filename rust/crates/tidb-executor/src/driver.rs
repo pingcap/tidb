@@ -549,6 +549,21 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 position: *position,
             }
         }
+        tidb_planner::plan_base::PlanErrorKind::FieldNotInGroupBy {
+            position,
+            clause,
+            column,
+        } => DriverError::FieldNotInGroupBy {
+            position: *position,
+            clause,
+            column: column.clone(),
+        },
+        tidb_planner::plan_base::PlanErrorKind::FieldNotInAggregatedQuery { position, column } => {
+            DriverError::FieldNotInAggregatedQuery {
+                position: *position,
+                column: column.clone(),
+            }
+        }
     }
 }
 

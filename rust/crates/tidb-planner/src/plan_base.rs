@@ -355,6 +355,22 @@ pub enum PlanErrorKind {
         /// One-based ORDER BY item position.
         position: usize,
     },
+    /// Go `plannererrors.ErrFieldNotInGroupBy` (1055).
+    FieldNotInGroupBy {
+        /// One-based expression position.
+        position: usize,
+        /// SELECT list or ORDER BY, as named by the resolver.
+        clause: &'static str,
+        /// Qualified column name.
+        column: String,
+    },
+    /// Go `plannererrors.ErrMixOfGroupFuncAndFields` (8123).
+    FieldNotInAggregatedQuery {
+        /// One-based SELECT field position.
+        position: usize,
+        /// Written column name.
+        column: String,
+    },
 }
 
 impl PlanError {
@@ -565,6 +581,41 @@ impl PlanError {
                  function; this is incompatible with DISTINCT"
             ),
             kind: PlanErrorKind::AggregateInOrderNotSelect { position },
+        }
+    }
+
+    /// Go `plannererrors.ErrFieldNotInGroupBy`.
+    #[must_use]
+    pub fn field_not_in_group_by(
+        position: usize,
+        clause: &'static str,
+        column: impl Into<String>,
+    ) -> Self {
+        let column = column.into();
+        Self {
+            message: format!(
+                "Expression #{position} of {clause} is not in GROUP BY clause and contains nonaggregated \
+                 column '{column}' which is not functionally dependent on columns in GROUP BY clause; \
+                 this is incompatible with sql_mode=only_full_group_by"
+            ),
+            kind: PlanErrorKind::FieldNotInGroupBy {
+                position,
+                clause,
+                column,
+            },
+        }
+    }
+
+    /// Go `plannererrors.ErrMixOfGroupFuncAndFields`.
+    #[must_use]
+    pub fn field_not_in_aggregated_query(position: usize, column: impl Into<String>) -> Self {
+        let column = column.into();
+        Self {
+            message: format!(
+                "In aggregated query without GROUP BY, expression #{position} of SELECT list contains \
+                 nonaggregated column '{column}'; this is incompatible with sql_mode=only_full_group_by"
+            ),
+            kind: PlanErrorKind::FieldNotInAggregatedQuery { position, column },
         }
     }
 

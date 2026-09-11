@@ -926,6 +926,29 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
 }
 
 #[test]
+fn only_full_group_by_errors_preserve_mysql_identity() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    for (sql, code, prefix) in [
+        (
+            "SELECT k, v FROM gg GROUP BY k",
+            1055,
+            "Expression #2 of SELECT list is not in GROUP BY clause",
+        ),
+        (
+            "SELECT count(*), v FROM gg",
+            8123,
+            "In aggregated query without GROUP BY, expression #2 of SELECT list",
+        ),
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, code, "{sql}: {error:?}");
+        assert!(error.message.starts_with(prefix), "{sql}: {error:?}");
+        assert!(error.message.ends_with("sql_mode=only_full_group_by"));
+    }
+}
+
+#[test]
 fn only_full_group_by_checks_correlated_scalar_subquery_dependencies() {
     let mut session = Session::new();
     // The correlated-projection rule is the FD-based checker's; the DEFAULT
