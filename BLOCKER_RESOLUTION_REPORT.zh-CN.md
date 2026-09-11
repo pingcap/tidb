@@ -1,5 +1,15 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 pseudo scan StatsInfo 缩放复核
+
+提交 `c04daa7c6a` 将 pseudo index scan 的物理 `StatsInfo` 与 Go 的
+`deriveStatsByFilter` 分离，保留 skyline 使用的 `CountAfterAccess`。最小回归
+`pseudo_composite_index_applies_master_selectivity_floor` 通过；真实重跑证明方向
+仍不完整：复合索引路径已保持一致，但 Go/Rust estRows 为 1.25/2.00，且 risky
+case 出现 1 个新的索引选择差异（Go `idx_vw`，Rust `idx_c`）。因此没有宣称该
+修复完成，后续需继续追踪 Go 的 residual/index-filter `CountAfterIndex` 赋值，
+不能通过放宽 estRows 容差解决。
+
 ## 2026-09-11 pseudo skyline candidate 修复
 
 Go master `pkg/planner/core/find_best_task.go:1776-1940` 对“已有 RealtimeCount、
