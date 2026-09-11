@@ -313,13 +313,43 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !has_aggregate {
             return Ok(());
         }
-        match offenders.first() {
-            Some(offender) => Err(err_field_not_in_aggregated_query(
+        // Go checks ORDER BY aggregates before applying the single-value
+        // relaxation, so keep the 3029 check above independent of these pins.
+        let pinned: HashSet<usize> = select
+            .where_clause
+            .as_ref()
+            .into_iter()
+            .flat_map(extract_single_value_col_names_from_where)
+            .filter_map(|column| column_offset(column, names))
+            .collect();
+        let where_depend = select
+            .where_clause
+            .as_ref()
+            .map(|expr| build_where_func_depend(expr, names))
+            .unwrap_or_default();
+        let join_depend = select
+            .from
+            .as_ref()
+            .map(|from| build_join_func_depend(from, names))
+            .unwrap_or_default();
+        for offender in offenders {
+            if pinned.contains(&offender.offset)
+                || self.check_col_func_depend(
+                    offender.offset,
+                    names,
+                    &pinned,
+                    &where_depend,
+                    &join_depend,
+                )
+            {
+                continue;
+            }
+            return Err(err_field_not_in_aggregated_query(
                 offender.position,
                 &offender.name,
-            )),
-            None => Ok(()),
+            ));
         }
+        Ok(())
     }
 
     /// Go `checkColFuncDepend(p, name, tblInfo, gbyOrSingleValueColNames,

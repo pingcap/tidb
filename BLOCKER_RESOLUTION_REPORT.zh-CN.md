@@ -3041,6 +3041,25 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 无 GROUP BY 聚合的单值依赖
+
+修复原 `only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key` 的合法查询拒绝。无GROUP BY校验过去在发现任何非聚合列后直接报8123，遗漏Go的WHERE单值和候选键检查。按固定master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `logical_plan_builder.go:3934` 起逻辑，收集单值列、WHERE/JOIN等值依赖，并复用现有 `check_col_func_depend`。3029检查仍在单值豁免之前，保留Go错误优先级。
+
+新增 `aggregate_without_group_by_accepts_single_value_dependencies`：`v=10`、`10=v`、主键`id=1`均返回10/1；`v>10`及`v=10 OR v=20`仍报8123。修复前新回归明确失败于第一条合法SQL，日志 `/tmp/group-by-single-red.log`；修复后新回归与原case均通过（`/tmp/group-by-single-green.log`）。
+
+Ready验证，Rust命令均设置 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib group_by
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib a_select_field_containing_an_aggregate_is_an_aggregate_query
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests
+make lint
+git diff --check
+```
+
+宽范围group_by为13 passed / 9 failed，剩余JOIN/相关子查询依赖、窗口及计划文本失败未解决。3029优先级回归1 passed；session集成310 passed；planner聚合34 passed；lint及diff检查退出0。日志 `/tmp/group-by-single-order-guard.log`、`/tmp/group-by-single-integration.log`、`/tmp/group-by-single-planner.log`、`/tmp/group-by-single-lint.log`。本轮未重跑Go wire、RealTiKV及全量单元，不能宣称整个GROUP BY功能或质量目标完成。此变更为规划期检查，复用现有依赖算法，其更广泛JOIN及相关子查询能力仍需后续修复。
+
 ## 2026-09-11 GROUP BY 错误身份
 
 修复 ONLY_FULL_GROUP_BY 的1055/8123被PlanError::internal降级为1105。新增结构化错误携带位置、子句和列名，并映射至已有DriverError。依据固定Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`：`logical_plan_builder.go:3897`、`:3949`、`:3966`；`pkg/util/dbterror/plannererrors/planner_terror.go:79` 明确将 ErrMixOfGroupFuncAndFields 绑定8123，而不是通用1140。

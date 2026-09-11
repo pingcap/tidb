@@ -28,6 +28,34 @@ fn group_concat_preserves_order_only_columns_during_pruning() {
     }
 }
 
+/// Go permits nonaggregated fields determined by WHERE in an aggregate query.
+#[test]
+fn aggregate_without_group_by_accepts_single_value_dependencies() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,10),(2,20)")
+        .unwrap();
+    for sql in [
+        "SELECT v, count(*) FROM t WHERE v = 10",
+        "SELECT v, count(*) FROM t WHERE 10 = v",
+        "SELECT v, count(*) FROM t WHERE id = 1",
+    ] {
+        let result = session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(row_text(Ok(result)), [["10", "1"]], "{sql}");
+    }
+    for sql in [
+        "SELECT v, count(*) FROM t WHERE v > 10",
+        "SELECT v, count(*) FROM t WHERE v = 10 OR v = 20",
+    ] {
+        assert_eq!(session.run(sql).expect_err(sql).to_mysql_error().code, 8123);
+    }
+}
+
 /// `GROUP_CONCAT`, checked against captured TiDB output.
 #[test]
 fn group_concat() {
