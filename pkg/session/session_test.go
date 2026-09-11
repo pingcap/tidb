@@ -95,28 +95,20 @@ func TestNormalizeStmtCancellationError(t *testing.T) {
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(executor.NormalizeStmtCancellationError(vars, context.Canceled)))
 }
 
-func TestSetProcessInfoDistinguishesSameSQLStatements(t *testing.T) {
+func TestSetProcessInfoDuringRetry(t *testing.T) {
 	se := &session{sessionVars: variable.NewSessionVars(nil)}
-	const sql = "insert into t values (1)"
+	start := time.Unix(1, 0)
+	se.SetProcessInfo("commit", start, mysql.ComQuery, 0)
 
-	firstStmtCtx := stmtctx.NewStmtCtx()
-	se.sessionVars.StmtCtx = firstStmtCtx
-	firstStart := time.Unix(1, 0)
-	se.SetProcessInfo(sql, firstStart, mysql.ComQuery, 0)
-	se.SetProcessInfo(sql, time.Unix(2, 0), mysql.ComQuery, 200)
+	// Transaction replay can publish different SQL while retaining the outer statement's start time.
+	se.sessionVars.RetryInfo.Retrying = true
+	se.SetProcessInfo("update t set a = 2", time.Unix(2, 0), mysql.ComQuery, 0)
+	require.Equal(t, start, se.ShowProcess().Time)
 
-	pi := se.ShowProcess()
-	require.Equal(t, firstStart, pi.Time)
-	require.Equal(t, uint64(200), pi.MaxExecutionTime)
-
-	secondStmtCtx := stmtctx.NewStmtCtx()
-	se.sessionVars.StmtCtx = secondStmtCtx
-	secondStart := time.Unix(3, 0)
-	se.SetProcessInfo(sql, secondStart, mysql.ComQuery, 0)
-
-	pi = se.ShowProcess()
-	require.Equal(t, secondStart, pi.Time)
-	require.Equal(t, uint64(0), pi.MaxExecutionTime)
+	se.sessionVars.RetryInfo.Retrying = false
+	nextStart := time.Unix(3, 0)
+	se.SetProcessInfo("select 1", nextStart, mysql.ComQuery, 0)
+	require.Equal(t, nextStart, se.ShowProcess().Time)
 }
 
 func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {

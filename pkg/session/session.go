@@ -1822,7 +1822,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		}
 	}
 	// Preserve the statement start time across process-info updates and retries.
-	if oldPi != nil && (oldPi.StmtCtx == pi.StmtCtx && oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
+	if oldPi != nil && (oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
 		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
 	}
