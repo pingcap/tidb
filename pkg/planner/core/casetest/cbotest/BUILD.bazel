@@ -6,10 +6,11 @@ go_test(
     srcs = [
         "cbo_test.go",
         "main_test.go",
+        "topn_double_read_cost_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 19,
+    shard_count = 20,
     deps = [
         "//pkg/domain",
         "//pkg/executor",
