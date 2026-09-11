@@ -198,7 +198,12 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 		return nil
 	}
-	return nil
+	// Some items were not delivered within the wait window, e.g. the singleflight request timed
+	// out before any worker picked it up, or the request channel was full. It must be reported as
+	// an error just like the timer branch above, so the caller marks this statement as sync-load
+	// failed no matter which of the two timeouts fires first.
+	metrics.SyncLoadTimeoutCounter.Inc()
+	return errors.New("sync load stats failed: some requested items are not loaded in time")
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
