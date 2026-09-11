@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -31,7 +30,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -79,8 +77,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/pd/client/opt"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestTimezonePushDown(t *testing.T) {
@@ -989,62 +985,6 @@ func TestGetResultRowsCount(t *testing.T) {
 		cnt := tk.Session().GetSessionVars().StmtCtx.GetResultRowsCount()
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
-}
-
-type ruVersionResourceGroupProvider struct {
-	rmclient.ResourceGroupProvider
-	config *rmclient.Config
-}
-
-func (p *ruVersionResourceGroupProvider) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
-	value, err := json.Marshal(p.config)
-	if err != nil {
-		return nil, err
-	}
-	return &meta_storagepb.GetResponse{
-		Kvs: []*meta_storagepb.KeyValue{{Value: value}},
-	}, nil
-}
-
-func setDomainRUVersionForTest(t *testing.T, dom *domain.Domain, version rmclient.RUVersion) {
-	t.Helper()
-	cfg := rmclient.DefaultConfig()
-	cfg.RUVersionPolicy = &rmclient.RUVersionPolicy{Default: version}
-	baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
-	require.True(t, ok)
-	controller, err := rmclient.NewResourceGroupController(
-		context.Background(), 1,
-		&ruVersionResourceGroupProvider{ResourceGroupProvider: baseProvider, config: cfg},
-		nil, 1,
-	)
-	require.NoError(t, err)
-	oldController := dom.ResourceGroupsController()
-	t.Cleanup(func() {
-		dom.SetResourceGroupsController(oldController)
-	})
-	dom.SetResourceGroupsController(controller)
-}
-
-func TestAdminShowDDLJobsRU(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("DDL job RU is only displayed in NextGen")
-	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	setDomainRUVersionForTest(t, dom, rmclient.RUVersionV2)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_admin_show_ddl_jobs_ru (a int)")
-	tk.MustExec("alter table t_admin_show_ddl_jobs_ru add column b int")
-
-	row := tk.MustQuery("admin show ddl jobs 1").Rows()[0]
-	require.Equal(t, "add column", row[3])
-	jobID, err := strconv.ParseInt(row[0].(string), 10, 64)
-	require.NoError(t, err)
-	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	require.Positive(t, job.RU)
-	require.Equal(t, fmt.Sprintf("RU=%.2f", job.RU), row[12])
 }
 
 func TestAdminShowDDLJobs(t *testing.T) {

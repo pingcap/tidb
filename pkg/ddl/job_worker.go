@@ -591,10 +591,22 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		metrics.RUV3Total.Add(job.RU)
 		metrics.RUV3BySQLTypeDDL.Add(job.RU)
 		metrics.RUV3ByEngineTiKV.Add(job.RU)
+		w.reportJobRUV3Consumption(job.RU)
 	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()
 	return nil
+}
+
+func (w *worker) reportJobRUV3Consumption(totalRU float64) {
+	if totalRU <= 0 {
+		return
+	}
+	dctx := w.sess.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, 0, totalRU, 0)
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
