@@ -18,9 +18,12 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -30,6 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestIntegrationCopCache(t *testing.T) {
@@ -37,7 +41,10 @@ func TestIntegrationCopCache(t *testing.T) {
 	config.StoreGlobalConfig(config.NewConfig())
 	defer config.StoreGlobalConfig(originConfig)
 
-	cli := &testkit.RegionProperityClient{}
+	cli := &copCacheTestClient{
+		RegionProperityClient: &testkit.RegionProperityClient{},
+		cacheVersion:          123,
+	}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
@@ -66,11 +73,7 @@ func TestIntegrationCopCache(t *testing.T) {
 	}
 	cluster.SplitKeys(tableStart, tableStartPrefixNext, 6)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
-	}()
-
+	cli.enableCopCacheMock.Store(true)
 	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	require.Equal(t, "9", rows[0][2])
 	require.Contains(t, rows[0][5], "cop_task: {num: 5")
@@ -86,10 +89,58 @@ func TestIntegrationCopCache(t *testing.T) {
 	require.Greater(t, hitRatio, float64(0))
 
 	// Test for cop cache disabled.
+	cli.enableCopCacheMock.Store(false)
 	cfg := config.NewConfig()
 	cfg.TiKVClient.CoprCache.CapacityMB = 0
 	config.StoreGlobalConfig(cfg)
 	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	require.Equal(t, "9", rows[0][2])
 	require.Contains(t, rows[0][5], "copr_cache: disabled")
+}
+
+type copCacheTestClient struct {
+	*testkit.RegionProperityClient
+	cacheVersion       uint64
+	enableCopCacheMock atomic.Bool
+}
+
+func (c *copCacheTestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type != tikvrpc.CmdCop {
+		return c.RegionProperityClient.SendRequest(ctx, addr, req, timeout)
+	}
+
+	copReq := req.Cop()
+	if !c.enableCopCacheMock.Load() || copReq == nil || !copReq.IsCacheEnabled {
+		return c.RegionProperityClient.SendRequest(ctx, addr, req, timeout)
+	}
+	if copReq.CacheIfMatchVersion == c.cacheVersion {
+		return &tikvrpc.Response{Resp: &coprocessor.Response{
+			IsCacheHit:       true,
+			CacheLastVersion: c.cacheVersion,
+		}}, nil
+	}
+
+	resp, err := c.RegionProperityClient.SendRequest(ctx, addr, req, timeout)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	copResp, ok := resp.Resp.(*coprocessor.Response)
+	if !ok {
+		return resp, err
+	}
+	// Keep the cop-cache behavior local to this test instead of depending on
+	// source-rewritten failpoints in the mock store.
+	copResp.CanBeCached = true
+	copResp.CacheLastVersion = c.cacheVersion
+	if copResp.ExecDetailsV2 != nil {
+		if copResp.ExecDetailsV2.TimeDetailV2 == nil {
+			copResp.ExecDetailsV2.TimeDetailV2 = &kvrpcpb.TimeDetailV2{}
+		}
+		copResp.ExecDetailsV2.TimeDetailV2.ProcessWallTimeNs = uint64((500 * time.Millisecond).Nanoseconds())
+	}
+	if copResp.ExecDetails == nil {
+		copResp.ExecDetails = &kvrpcpb.ExecDetails{}
+	}
+	copResp.ExecDetails.TimeDetail = &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}
+	return resp, err
 }
