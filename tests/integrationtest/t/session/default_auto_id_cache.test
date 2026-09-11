@@ -1,0 +1,27 @@
+use test;
+select @@global.tidb_default_auto_id_cache, @@session.tidb_default_auto_id_cache;
+set session tidb_default_auto_id_cache = 1;
+create table default_cache (id bigint primary key auto_increment);
+show create table default_cache;
+insert into default_cache values (NULL), (NULL);
+select * from default_cache order by id;
+
+# Explicit zero overrides a nonzero session default.
+create table zero_cache (id bigint primary key auto_increment) auto_id_cache = 0;
+show create table zero_cache;
+create table custom_cache (id bigint primary key auto_increment) auto_id_cache = 100;
+show create table custom_cache;
+
+# Changing the session default does not alter existing or copied tables.
+set session tidb_default_auto_id_cache = 7;
+show create table default_cache;
+create table copied_zero like zero_cache;
+show create table copied_zero;
+create table copied_custom like custom_cache;
+show create table copied_custom;
+create table new_cache (id bigint primary key auto_increment);
+show create table new_cache;
+
+set session tidb_default_auto_id_cache = default;
+select @@session.tidb_default_auto_id_cache;
+drop table default_cache, zero_cache, custom_cache, copied_zero, copied_custom, new_cache;

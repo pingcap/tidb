@@ -1952,7 +1952,8 @@ const (
 	MinTiDBAnalyzeDefaultNumTopN int64 = 0
 	// MaxTiDBAnalyzeDefaultNumTopN is the upper bound for the default ANALYZE TopN count.
 	MaxTiDBAnalyzeDefaultNumTopN uint64 = 100000
-	DefTiDBAutoIDCache                                = 0
+	// DefTiDBDefaultAutoIDCache preserves the existing table cache default.
+	DefTiDBDefaultAutoIDCache = 0
 )
 
 // Process global variables.

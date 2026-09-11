@@ -43,6 +43,7 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set div_precision_increment = 9")
+	tk.MustExec("set tidb_default_auto_id_cache = 100")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 
@@ -67,6 +68,9 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.Equal(t, int64(100), baseTable.Meta().AutoIDCache)
+	require.Zero(t, mlogTable.Meta().AutoIDCache)
+	require.Zero(t, mviewTable.Meta().AutoIDCache)
 	require.Equal(t, mlogTable.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Contains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, mviewTable.Meta().ID)
 	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)

@@ -56,8 +56,6 @@ func TestMetaBuildContext(t *testing.T) {
 				require.Equal(t, ctx.GetExprCtx().GetEvalCtx().SQLMode(), ctx.GetSQLMode())
 				require.Equal(t, defVars.DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
 				require.Equal(t, ctx.GetExprCtx().GetDefaultCollationForUTF8MB4(), ctx.GetDefaultCollationForUTF8MB4())
-				require.Equal(t, defVars.TiDBDefaultAutoIDCache, ctx.GetTiDBDefaultAutoIDCache())
-				require.Equal(t, ctx.GetExprCtx().GetTiDBDefaultAutoIDCache(), ctx.GetTiDBDefaultAutoIDCache())
 			},
 			option: func(val any) metabuild.Option {
 				return metabuild.WithExprCtx(val.(exprctx.ExprContext))
@@ -118,6 +116,17 @@ func TestMetaBuildContext(t *testing.T) {
 				return metabuild.WithPreSplitRegions(val.(uint64))
 			},
 			testVals: []any{uint64(123), uint64(456)},
+		},
+		{
+			name: "tidbDefaultAutoIDCache",
+			getter: func(ctx *metabuild.Context) any {
+				return ctx.GetTiDBDefaultAutoIDCache()
+			},
+			checkDefault: vardef.DefTiDBDefaultAutoIDCache,
+			option: func(val any) metabuild.Option {
+				return metabuild.WithTiDBDefaultAutoIDCache(val.(int))
+			},
+			testVals: []any{0, 1, 100},
 		},
 		{
 			name: "suppressTooLongIndexErr",
