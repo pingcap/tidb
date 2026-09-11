@@ -83,14 +83,9 @@
 //! * `resolveWindowFunction` (`:3048`). Its body drives
 //!   `havingWindowAndOrderbyExprResolver` (`:2723`) in `inWindowSpec` /
 //!   `inWindowFunc` mode and then calls `appendAuxiliaryFieldsForSubqueries`
-//!   (`:3101`). What it PRODUCES for this stage is `windowAggMap` — the
-//!   aggregates written INSIDE a window function's arguments, `PARTITION BY`
-//!   or `ORDER BY`. Neither the auxiliary-subquery-field machinery nor the
-//!   two-operator ordering it implies (aggregation BELOW the window) is
-//!   ported, so [`PlanBuilder::build_window_stage`] REFUSES a window whose
-//!   arguments or by-items contain an aggregate, naming the symbol. A window
-//!   over plain columns and scalar expressions is unaffected. Rule 7: binding
-//!   such an aggregate to the wrong operator is a silent wrong answer.
+//!   (`:3101`). Aggregates in window expressions are carried by auxiliary
+//!   select fields and Column markers, matching `windowAggMap` positions.
+//!   The auxiliary-subquery-field machinery remains a boundary.
 //! * `evalAstExprWithPlanCtx` (`:6900`), the constant folder an EXPLICIT
 //!   `RANGE n PRECEDING` / `n FOLLOWING` bound needs. Reproduced only for a
 //!   bound the expression rewriter already yields as an
@@ -839,31 +834,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         fields: &mut Vec<ProjectionField>,
         names: &[FieldName],
     ) -> Result<(), PlanError> {
-        // `// boundary:` the `windowAggMap` half of this same Go function; see
-        // section 3. The refusal is made HERE, before
-        // `extractAggFuncsInSelectFields` (`:4487`) turns those aggregates
-        // into markers and the shape stops being recognisable.
-        for field in fields.iter() {
-            if has_window_flag(&field.expr) && expr_contains_aggregate(&field.expr) {
-                return Err(PlanError::internal(
-                    "an aggregate in a select field that also carries a window function is not ported: resolveWindowFunction (logical_plan_builder.go:3048)",
-                ));
-            }
-        }
-        for (_, def) in windows.iter() {
-            let aggregated = def.spec.partition_by.iter().any(expr_contains_aggregate)
-                || def
-                    .spec
-                    .order_by
-                    .iter()
-                    .any(|item| expr_contains_aggregate(&item.expr));
-            if aggregated {
-                return Err(PlanError::internal(
-                    "an aggregate inside a named WINDOW specification is not ported: resolveWindowFunction (logical_plan_builder.go:3048)",
-                ));
-            }
-        }
-
         let mut position = 0;
         while position < fields.len() {
             if !has_window_flag(&fields[position].expr) {
@@ -902,6 +872,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             // A marker some earlier pass substituted is already bound.
             if PlanMarker::from_expr(node).is_some() {
+                return true;
+            }
+            if is_aggregate_call(node) {
+                // Go's windowAggMap points to an auxiliary select field.
+                // Its arguments must stay in the pre-aggregation scope.
+                let index = fields.len();
+                fields.push(ProjectionField {
+                    expr: node.clone(),
+                    column_reference: false,
+                    alias: Some(format!("sel_agg_{index}")),
+                    text: None,
+                    hidden: true,
+                });
+                marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
                 return true;
             }
             let Expr::Column(path) = node else {
@@ -1646,8 +1630,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// # Errors
     ///
-    /// Every error this module raises, plus the `resolveWindowFunction`
-    /// refusal named in section 3.
+    /// Every error raised by argument, specification, or frame validation.
     pub fn build_window_stage(
         &mut self,
         plan: LogicalPlan,
@@ -1726,20 +1709,6 @@ pub fn expr_carries_window_marker(expr: &Expr) -> bool {
     let mut found = false;
     walk_exprs(expr, &mut |node| {
         if PlanMarker::index_of_kind(node, MarkerKind::Window).is_some() {
-            found = true;
-            return true;
-        }
-        false
-    });
-    found
-}
-
-/// Whether `expr` contains an aggregate call anywhere, which is what
-/// `resolveWindowFunction`'s `windowAggMap` would key on.
-fn expr_contains_aggregate(expr: &Expr) -> bool {
-    let mut found = false;
-    walk_exprs(expr, &mut |node| {
-        if is_aggregate_call(node) {
             found = true;
             return true;
         }

@@ -706,10 +706,12 @@ fn test_a_distinct_window_function_is_refused() {
 }
 
 #[test]
-fn test_an_aggregate_inside_a_window_argument_names_its_blocking_symbol() {
-    // Section 3's `resolveWindowFunction` boundary.
-    let message = build_err("SELECT ROW_NUMBER() OVER (ORDER BY SUM(a)) FROM t GROUP BY b");
-    assert!(message.contains("resolveWindowFunction"), "{message}");
+fn test_an_aggregate_inside_a_window_spec_is_built_below_the_window() {
+    let plan = build("SELECT ROW_NUMBER() OVER (ORDER BY SUM(a)) FROM t GROUP BY b");
+    let names = operator_names(&plan);
+    let window = names.iter().position(|name| name == "Window").unwrap();
+    let aggregate = names.iter().position(|name| name == "Aggregation").unwrap();
+    assert!(window < aggregate, "{names:?}");
 }
 
 #[test]

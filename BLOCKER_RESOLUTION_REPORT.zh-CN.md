@@ -1,5 +1,26 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 窗口表达式中的普通聚合辅助字段
+
+在 `1f73bbc36d` 上原 `window_nested_in_larger_expression` 红测退出 101（`/tmp/window-aggregate-red.log`），错误为 resolveWindowFunction 未实现。相同拒绝同时阻止 window_over_group_by 和 an_aggregate_shared_by_the_select_list_and_a_window_spec_is_carried_once。
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `havingWindowAndOrderbyExprResolver.Leave` 对 AggregateFuncExpr 追加 Auxiliary 字段并记录 aggMapper 的投影位置；resolveWindowFunction 同时遍历窗口所在字段与命名窗口定义。Rust 现在将普通聚合保留为辅助 SELECT 字段，以 Column marker 在窗口阶段引用。聚合参数不再被误当成窗口投影列重写，仍在聚合前的输入作用域解析；现有 build_aggregation 负责聚合去重，不依赖文本、别名或 COUNT(*) 的恢复形式进行手工合并。
+
+原 SQL 断言均保留。planner 原先要求“未实现”拒绝的测试改为验证 Window 下方存在 Aggregation。三项原失败全部通过，含 HAVING、隐式单分组、嵌套 SUM、LAG、PERCENT_RANK、共享聚合多种拼写及命名窗口。Go 实例捕获 `/tmp/window-aggregate-go.out` 确认 SUM 排序为 30/2、35/3、15/1，分组运行总和为 30、65、80，命名窗口同样返回正确排名；临时 Go 进程已正常关闭。
+
+Ready 验证，工作目录 `/tmp/tidb-hparser-current`，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_nested_in_larger_expression -- --nocapture
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window -- --nocapture
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib plan_builder::window_tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+窗口 suite `/tmp/window-aggregate-first.log` 为 47 passed / 1 failed，唯一剩余 window_over_rollup 仍因 ROLLUP physical planning 未实现而失败。planner `/tmp/window-aggregate-planner.log` 51 passed；session 集成 `/tmp/window-aggregate-integration.log` 310 passed；lint `/tmp/window-aggregate-lint.log` 退出 0。全库、其他 RealTiKV、Go/Bazel 门禁本轮未重跑；整体目标未完成。本次不宣称整个 Go planner package 转写完成，辅助子查询字段仍是明确边界。
+
 ## 2026-09-11 窗口别名排序与物理投影消除顺序
 
 原 `window_specs_and_named_windows` 在第一条 SQL `SELECT g, v, ROW_NUMBER() OVER () AS rn FROM t ORDER BY rn` 失败，尚未进入命名窗口部分。`/tmp/window-spec-red.log` 退出 101；临时诊断 `/tmp/window-spec-bind.log` 显示 Sort 引用 UniqueID=7 的 rn，但投影消除后的输入只有列 1、2、6。诊断代码已移除。
