@@ -3041,6 +3041,25 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 DISTINCT 并列排序测试闭环
+
+在 `7ad0528bf5` 上继续验证原 case `select_distinct_may_only_order_by_a_field_it_reports`。错误码已修复后，它仍在 permissive SQL mode 的 `SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)` 断言失败：Rust 返回1/2，固定期望为2/1。原数据为 `(1,10),(1,20),(2,30)`，两个组的 SUM 都为30。
+
+固定 Go master binary `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 使用独立 unistore 数据 `/tmp/distinct-ties-oracle-data`，SQL端口14831，重复同一查询20次：**14次返回1/2，6次返回2/1**。证据 `/tmp/distinct-ties-go-repeated.out`，分组计数及SUM证据 `/tmp/distinct-ties-go-fixture.out`。Go `pkg/executor/sortexec/sort_partition.go:153` 使用 `sort.Slice`，没有为相等键增加 SQL 层的确定性次序。本次失败来自测试把 Go 某次并列输出当作固定契约，不能据此修改 Rust 排序。
+
+修复测试数据：仅在关闭 ONLY_FULL_GROUP_BY 后的该排序检查前执行 `UPDATE gg SET v = 31 WHERE k = 2`，使两个SUM成为30和31。保留原ASC精确期望2/1，新增DESC精确期望1/2；错误码测试和前面的合法查询数据保持原样。这增加了对排序方向的覆盖，没有放宽行顺序断言或替换原期望。Go对新数据实测结果 `/tmp/distinct-ties-go-ordered.out` 与这两个断言一致。Go实例已停止，服务日志 `/tmp/distinct-ties-oracle.log`。
+
+Ready 验证，Rust命令均设置 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib select_distinct_may_only_order_by_a_field_it_reports
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib
+make lint
+git diff --check
+```
+
+原命令先红 `/tmp/distinct-ties-red.log`，修复后1 passed，日志 `/tmp/distinct-ties-green.log`。当前完整session单元为 **1548 passed / 138 failed / 209 ignored**，退出101，日志 `/tmp/distinct-ties-session-lib.log`；该数字包含此前远端prepared路径更新，不能全部归因于本次测试修复。lint退出0，日志 `/tmp/distinct-ties-lint.log`。本轮无生产实现修改，未重跑RealTiKV；其余138项失败和完整原始门禁仍未完成。
+
 ## 2026-09-11 DISTINCT ORDER BY 错误身份
 
 修复 DISTINCT 校验返回 1105 而非 3065/3066 的错误协议差异。`only_full_group_by.rs` 原来把 `ErrFieldInOrderNotSelect` 和 `ErrAggregateInOrderNotSelect` 都构造成 internal 文本，driver 因而降级为 Unsupported。新增对应 PlanErrorKind 和构造函数，携带 ORDER BY 的一基位置及 qualified column，经 driver 映射至已有结构化错误。没有修改 DISTINCT 合法性判定，也没有从文本猜测错误码。

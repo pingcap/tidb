@@ -1250,12 +1250,22 @@ fn select_distinct_may_only_order_by_a_field_it_reports() {
         rows(&mut session, "SELECT DISTINCT k FROM gg ORDER BY v"),
         [["1"], ["2"]]
     );
+    // Go may return either order when both sums are 30. Distinct sums
+    // make the ORDER BY contract observable in both directions.
+    session.run("UPDATE gg SET v = 31 WHERE k = 2").unwrap();
     assert_eq!(
         rows(
             &mut session,
             "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)"
         ),
         [["2"], ["1"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v) DESC"
+        ),
+        [["1"], ["2"]]
     );
     assert_eq!(
         rows(&mut session, "SELECT DISTINCT id, w FROM pk ORDER BY z"),
