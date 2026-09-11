@@ -271,9 +271,10 @@ start_rust_node() {
   local port=$1
   local table=$2
   local log=$3
+  shift 3
   "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
     --host 127.0.0.1 --port "${port}" \
-    --load-table "${table}" \
+    --load-table "${table}" "$@" \
     --lease-ms 2000 \
     --auth-file "${AUTH_FILE}" --max-connections 8 \
     >"${log}" 2>&1 &
@@ -418,11 +419,22 @@ fi
 # ---------------------------------------------------------------------------
 rust_node -Nse \
   "CREATE TABLE ${DATABASE}.unservable (id BIGINT PRIMARY KEY, j JSON NOT NULL)"
-REFUSAL=$(rust_node -Nse "SELECT id FROM ${DATABASE}.unservable" 2>&1 || true)
+# This bounded reader serves only tables explicitly requested at startup.
+# Keep one servable anchor so it can start and report the JSON table's refusal.
+start_rust_node "${RUST_READER_PORT}" "${DATABASE}.${ANCHOR_TABLE}" "${READER_LOG}" \
+  --load-table "${DATABASE}.unservable"
+READER_PID=$!
+await_rust_ready "${READER_PID}" "${READER_LOG}" >/dev/null
+REFUSAL=$(rust_reader -Nse "SELECT id FROM ${DATABASE}.unservable" 2>&1 || true)
 if ! printf '%s' "${REFUSAL}" | grep -qF "which this node cannot decode yet"; then
   echo "an unservable table was not refused at query time with a precise message: ${REFUSAL}" >&2
   exit 1
 fi
+if ! stop_rust_node "${READER_PID}" "${RUST_READER_PORT}"; then
+  echo "the Rust refusal reader did not stop" >&2
+  exit 1
+fi
+READER_PID=
 rust_node -Nse "DROP TABLE ${DATABASE}.unservable"
 REFUSAL=$(rust_node -Nse \
   "CREATE TABLE ${DATABASE}.never (id BIGINT NOT NULL, v BIGINT NOT NULL)" 2>&1 || true)

@@ -1,5 +1,35 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DDL refusal fixture 显式加载目标表
+
+原 DDL gate 在仅以 `--load-table campaign31.anchor` 启动的节点上查询
+随后创建的 `campaign31.unservable`，得到 unknown table。该轻量入口的
+`served_tables` 只配置明确指定的表，`table_refusals` 也只来自这些表；
+后台 schema follower 不会扩大固定查询入口的服务范围。
+
+修正 fixture：CREATE 仍由原 Rust 节点执行，之后启动第二个 bounded reader，
+显式加载 anchor 和 unservable，执行原 SELECT 和原精确解码拒绝断言，然后
+停止 reader 并 DROP 表。未切换 cluster-session，未修改生产服务或放宽断言。
+该拒绝是 `cluster_catalog.rs::configure_loaded_table` 的轻量读取能力限制，
+不是 Go master 对 JSON CREATE 的限制；不能据此声称 Go 也拒绝 JSON。
+
+新增 `test-ddl-unservable-fixture.sh` 提取生产脚本中的原 fixture：旧脚本
+退出 1 并输出同一 unknown table（`/tmp/ddl-fixture-red.log`），修复后通过。
+`bash -n rust/scripts/run-realtikv-ddl.sh rust/scripts/test-ddl-unservable-fixture.sh`、
+`git diff --check` 和 `make lint` 均通过（Ready profile）。
+
+真实集群命令：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+DDL_RUST_SERVER=/tmp/tidb-hparser-current/rust/target/debug/tidb-server \
+bash rust/scripts/run-realtikv-ddl.sh > /tmp/ddl-fixture-live.log 2>&1
+```
+
+运行已越过原精确拒绝断言并完成清理；下一条旧断言失败：不带主键的 CREATE
+现已成功，而脚本期待 clustered BIGINT 限制。该失败尚未修复，DDL 全套未通过。
+本次集群默认 v8.5.6，不能视为固定 Go master 的完整 DDL 对照。
+
 ## 2026-09-11 readiness 当前 HEAD 复核
 
 在 `284553b818` 重跑后，原 cluster-session readiness blocker 未再出现，完整
