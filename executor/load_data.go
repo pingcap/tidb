@@ -18,18 +18,21 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -346,6 +349,12 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 			e.Ctx.StmtRollback()
 		}
 	}()
+	// The transaction of this batch is either the one created when the loading process starts or
+	// the one created by RefreshTxnCtx after the previous batch. Make sure the target table is
+	// locked by MDL in the current transaction before inserting data into it.
+	if err = e.LockMDL(ctx); err != nil {
+		return err
+	}
 	err = e.CheckAndInsertOneBatch(ctx, task.rows, task.cnt)
 	if err != nil {
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
@@ -419,6 +428,113 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+// LockMDL registers the target table of the loading process into the related tables for metadata
+// lock of the current transaction.
+//
+// The data of LOAD DATA is written batch by batch and each batch is committed in a new
+// transaction, while the table info used by the loading process is resolved when the statement is
+// planned. So the metadata lock must be registered again for the transactions used by the loading
+// process, otherwise a DDL on the table could be executed while the loading process is still
+// writing data with the outdated table info.
+//
+// It is a no-op if the table is registered in the current transaction with the current schema
+// version, the registration is inherited when the loading process refreshes the transaction, see
+// session.RefreshTxnCtx.
+func (e *LoadDataInfo) LockMDL(ctx context.Context) error {
+	if e.Table == nil || !variable.EnableMDL.Load() {
+		return nil
+	}
+	sctx := e.Ctx
+	sessVars := sctx.GetSessionVars()
+	if sessVars.TxnCtx == nil || !sessVars.TxnCtx.EnableMDL {
+		return nil
+	}
+	tblInfo := e.Table.Meta()
+	// The DDL of local/global temporary tables doesn't affect the transactions which are writing
+	// them, and the planner doesn't register the metadata lock for them either.
+	if tblInfo.TempTableType != model.TempTableNone {
+		return nil
+	}
+	is := domain.GetDomain(sctx).InfoSchema()
+	schemaVersion := is.SchemaMetaVersion()
+	relatedTables := sessVars.GetRelatedTableForMDL()
+	if ver, ok := relatedTables.Load(tblInfo.ID); ok {
+		// The table is locked by the current transaction already. The lock is still valid if the
+		// schema hasn't been changed since it is registered, otherwise check the table below.
+		if v, ok := ver.(int64); ok && v == schemaVersion {
+			return nil
+		}
+	}
+	tbl, ok := is.TableByID(tblInfo.ID)
+	if !ok {
+		return domain.ErrInfoSchemaChanged.GenWithStack("table %s has been dropped during LOAD DATA", tblInfo.Name.O)
+	}
+	// The data written by LOAD DATA is encoded with the table info resolved when the statement is
+	// planned, so the loading process must be terminated if the table has been changed since then.
+	if !sameTableInfoForLoadData(tblInfo, tbl.Meta()) {
+		return domain.ErrInfoSchemaChanged.GenWithStack("table %s has been changed during LOAD DATA", tblInfo.Name.O)
+	}
+	relatedTables.Store(tblInfo.ID, schemaVersion)
+	logutil.Logger(ctx).Debug("load data registers the table for metadata lock",
+		zap.Int64("table ID", tblInfo.ID), zap.Int64("schema version", schemaVersion))
+	return nil
+}
+
+// UnlockMDL removes the metadata lock registration added by LockMDL. It must be called after the
+// loading process, otherwise the table is locked until the session ends its current transaction.
+func (e *LoadDataInfo) UnlockMDL() {
+	if e.Table == nil || !variable.EnableMDL.Load() {
+		return
+	}
+	sessVars := e.Ctx.GetSessionVars()
+	if sessVars.TxnCtx == nil {
+		return
+	}
+	sessVars.GetRelatedTableForMDL().Delete(e.Table.Meta().ID)
+}
+
+// sameTableInfoForLoadData checks whether the current table info is still compatible with the
+// table info used by the loading process. Only the parts which affect the data written by
+// LOAD DATA are compared: the columns, the indices and the handle/partition info.
+func sameTableInfoForLoadData(old, cur *model.TableInfo) bool {
+	if old.ID != cur.ID || old.Name.L != cur.Name.L ||
+		old.PKIsHandle != cur.PKIsHandle || old.IsCommonHandle != cur.IsCommonHandle {
+		return false
+	}
+	if len(old.Columns) != len(cur.Columns) || len(old.Indices) != len(cur.Indices) {
+		return false
+	}
+	for i, col := range old.Columns {
+		curCol := cur.Columns[i]
+		if col.ID != curCol.ID || col.Name.L != curCol.Name.L || col.Offset != curCol.Offset ||
+			col.State != curCol.State || col.Hidden != curCol.Hidden ||
+			col.GeneratedExprString != curCol.GeneratedExprString ||
+			col.GeneratedStored != curCol.GeneratedStored {
+			return false
+		}
+		if !reflect.DeepEqual(col.FieldType, curCol.FieldType) ||
+			!reflect.DeepEqual(col.Dependences, curCol.Dependences) {
+			return false
+		}
+	}
+	for i, idx := range old.Indices {
+		curIdx := cur.Indices[i]
+		if idx.ID != curIdx.ID || idx.Name.L != curIdx.Name.L || idx.State != curIdx.State ||
+			idx.Unique != curIdx.Unique || idx.Primary != curIdx.Primary ||
+			idx.Global != curIdx.Global || idx.Invisible != curIdx.Invisible ||
+			len(idx.Columns) != len(curIdx.Columns) {
+			return false
+		}
+		for j, idxCol := range idx.Columns {
+			curIdxCol := curIdx.Columns[j]
+			if idxCol.Name.L != curIdxCol.Name.L || idxCol.Length != curIdxCol.Length {
+				return false
+			}
+		}
+	}
+	return reflect.DeepEqual(old.Partition, cur.Partition)
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.

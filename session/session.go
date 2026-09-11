@@ -3758,7 +3758,20 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 
 	s.updateStatsDeltaToCollector()
 
-	return sessiontxn.NewTxn(ctx, s)
+	// The statement which refreshes the transaction (e.g. LOAD DATA commits its data batch by
+	// batch) still uses the table info resolved before the transaction is refreshed, so the
+	// related tables for metadata lock of the old transaction must be inherited by the new one.
+	// Otherwise a DDL could change the table while the statement is still writing data with the
+	// outdated table info. Note that it must not be done for every new transaction: e.g. the DDL
+	// statement enters a new transaction before it submits the DDL job, and the metadata lock
+	// registered by the DDL statement itself must be dropped there, otherwise the DDL job would
+	// be blocked by its own session.
+	prevTxnCtx := s.GetSessionVars().TxnCtx
+	if err = sessiontxn.NewTxn(ctx, s); err != nil {
+		return err
+	}
+	s.GetSessionVars().TxnCtx.InheritRelatedTableForMDL(prevTxnCtx)
+	return nil
 }
 
 // GetStore gets the store of session.

@@ -1763,6 +1763,14 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if err != nil {
 		return err
 	}
+	// The metadata lock which is registered when the statement is planned is released together
+	// with the transaction of the statement, but the data is written here, in the transactions
+	// created by the loading process. Register the metadata lock of the target table again to
+	// make sure a DDL on it is blocked until the loading process finishes.
+	if err = loadDataInfo.LockMDL(ctx); err != nil {
+		return err
+	}
+	defer loadDataInfo.UnlockMDL()
 	// processStream process input data, enqueue commit task
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
