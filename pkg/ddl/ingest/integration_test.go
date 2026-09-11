@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +120,7 @@ func TestIngestError(t *testing.T) {
 }
 
 func TestAddIndexIngestPanic(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -142,8 +141,39 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic"))
 }
 
+func TestAddIndexSetInternalSessions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk.MustExec("set global tidb_enable_dist_task = 1;")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	expectInternalTS := []uint64{}
+	actualInternalTS := []uint64{}
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(startTS uint64) {
+		expectInternalTS = append(expectInternalTS, startTS)
+	})
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/scanRecordExec", "return")
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/scanRecordExec")
+	ddl.OperatorCallBackForTest = func() {
+		mgr := tk.Session().GetSessionManager()
+		actualInternalTS = mgr.GetInternalSessionStartTSList()
+	}
+	tk.MustExec("alter table t add index idx(a);")
+	require.Len(t, expectInternalTS, 1)
+	for _, ts := range expectInternalTS {
+		require.Contains(t, actualInternalTS, ts)
+	}
+}
+
 func TestAddIndexIngestCancel(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -371,4 +401,42 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 		require.NoError(t, tk2Err)
 		tk.MustExec("admin check table t;")
 	}
+}
+
+func TestAddIndexGetChunkCancel(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustExec("split table t between (0) and (1000000) regions 10;")
+	jobID := int64(0)
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	cancelled := false
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeGetChunk", func() {
+		if !cancelled {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			cancelled = true
+		}
+	})
+	require.NoError(t, err)
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	tk.MustExec("admin check table t;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeGetChunk"))
 }

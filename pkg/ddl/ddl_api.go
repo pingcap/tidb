@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -1029,6 +1030,21 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
+		}
+	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 		}
 	}
 	return hasDefaultValue, value, nil
@@ -4414,6 +4430,11 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return err
 	}
+	for _, idx := range newMeta.Indices {
+		if idx.Global {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL INDEX with ALTER TABLE PARTITION BY")
+		}
+	}
 	newPartInfo := newMeta.Partition
 
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
@@ -4940,6 +4961,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.PKIsHandle != target.PKIsHandle ||
+		source.IsCommonHandle != target.IsCommonHandle ||
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
@@ -5278,13 +5301,14 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
-	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-		return hasDefaultValue, errors.Trace(err)
-	}
-	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-	if err != nil {
-		return hasDefaultValue, errors.Trace(err)
+	if !col.DefaultIsExpr {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -5587,6 +5611,10 @@ func GetModifiableColumnJob(
 		}
 		if t.Meta().Partition != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
+		}
+		// new col's origin default value be the same as the new default value.
+		if err = newCol.ColumnInfo.SetOriginDefaultValue(newCol.ColumnInfo.GetDefaultValue()); err != nil {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column set origin default value failed")
 		}
 	}
 
@@ -6536,6 +6564,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		return doNothing, nil
 	}
 
+	if err = checkIndexLengthWithNewCharset(tblInfo, toCharset, toCollate); err != nil {
+		return doNothing, err
+	}
+
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
 			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
@@ -6557,6 +6589,30 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 	return doNothing, nil
+}
+
+func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toCollate string) error {
+	// Copy all columns and replace the charset and collate.
+	columns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		newCol := col.Clone()
+		if field_types.HasCharset(&newCol.FieldType) {
+			newCol.SetCharset(toCharset)
+			newCol.SetCollate(toCollate)
+		} else {
+			newCol.SetCharset(charset.CharsetBin)
+			newCol.SetCollate(charset.CharsetBin)
+		}
+		columns = append(columns, newCol)
+	}
+
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameIndex renames an index.

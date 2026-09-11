@@ -956,7 +956,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
 	} else if len(value) >= 8 {
-		return decodeHandleInIndexValue(value)
+		return DecodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
@@ -973,7 +973,8 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
+// DecodeHandleInIndexValue decodes the handle from index value.
+func DecodeHandleInIndexValue(value []byte) (kv.Handle, error) {
 	if getIndexVersion(value) == 1 {
 		seg := SplitIndexValueForClusteredIndexVersion1(value)
 		return kv.NewCommonHandle(seg.CommonHandle)

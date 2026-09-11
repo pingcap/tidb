@@ -1165,18 +1165,14 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn, uk.commonHandle)
 	if err != nil {
 		return false, err
 	}
 	if handle == nil {
 		return false, nil
 	}
-	_, err = e.removeRow(ctx, txn, handle, r, true)
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return e.removeRow(ctx, txn, handle, r, true)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.

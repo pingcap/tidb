@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -730,4 +731,80 @@ func TestIssue53867(t *testing.T) {
 
 	// Need no panic
 	tk.MustQuery("select  /*+ STREAM_AGG() */ (ref_4.c_k3kss19 / ref_4.c_k3kss19) as c2 from t_bhze93f as ref_4 where (EXISTS (select ref_5.c_wp7o_0sstj as c0 from t_bhze93f as ref_5 where (207007502 < (select distinct ref_6.c_weg as c0 from t_xf1at0 as ref_6 union all (select ref_7.c_xb as c0 from t_b0t as ref_7 where (-16090 != ref_4.c_x393ej_)) limit 1)) limit 1));")
+}
+
+func TestIssue55881(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists aaa;")
+	tk.MustExec("drop table if exists bbb;")
+	tk.MustExec("create table aaa(id int, value int);")
+	tk.MustExec("create table bbb(id int, value int);")
+	tk.MustExec("insert into aaa values(1,2),(2,3)")
+	tk.MustExec("insert into bbb values(1,2),(2,3),(3,4)")
+	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
+	tk.MustExec("set tidb_executor_concurrency=1;")
+	// this is a random issue, so run it 100 times to increase the probability of the issue.
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
+			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
+	}
+}
+
+func TestIssue60926(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (col0 int, col1 int);")
+	tk.MustExec("create table t2 (col0 int, col1 int);")
+	tk.MustExec("insert into t1 values (0, 10), (1, 10), (2, 10), (3, 10), (4, 10), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);")
+	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue60926"))
+	}()
+	executor.IsChildCloseCalledForTest.Store(false)
+	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
+	require.True(t, executor.IsChildCloseCalledForTest.Load())
+}
+
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+		CREATE TABLE tmv (
+  			J1 json,
+			J2 json GENERATED ALWAYS AS (j1) VIRTUAL,
+  			UNIQUE KEY i1 ((cast(j1 as signed array))),
+  			KEY i2 ((cast(j2 as signed array))))`)
+	tk.MustExec("insert into tmv set j1 = '[1]'")
+	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table tmv;")
+	}
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			t4 datetime GENERATED ALWAYS AS (date_sub(t2, interval 10 MINUTE)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			UNIQUE KEY i2 (t2),
+			UNIQUE KEY i3 (id, t3),
+			KEY i4 (t4))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table ttime;")
+	}
 }

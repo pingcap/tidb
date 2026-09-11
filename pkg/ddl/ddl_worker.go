@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -41,11 +42,13 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -397,7 +400,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
 				continue
@@ -730,7 +733,8 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
-func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
+func (w *worker) HandleDDLJobTable(d *ddlCtx, jobW *model.JobW) (int64, error) {
+	failpoint.InjectCall("beforeHandleDDLJobTable", jobW.ID, jobW.TableName)
 	var (
 		err       error
 		schemaVer int64
@@ -740,6 +744,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		w.unlockSeqNum(err)
 	}()
 
+	job := jobW.Job
 	err = w.sess.Begin()
 	if err != nil {
 		return 0, err
@@ -765,6 +770,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
+
+	// we are using optimistic txn in nearly all DDL related transactions, if
+	// time range of another concurrent job updates, such as 'cancel/pause' job
+	// or on owner change, overlap with us, we will report 'write conflict', but
+	// if they don't overlap, we query and check inside our txn to detect the conflict.
+	currBytes, err := getJobBytesByIDWithSe(d.ctx, w.sess, job.ID)
+	if err != nil {
+		// TODO maybe we can unify where to rollback, they are scatting around.
+		w.sess.Rollback()
+		return 0, err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		w.sess.Rollback()
+		return 0, errors.New("job meta changed by others")
+	}
 
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
@@ -860,6 +880,18 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func getJobBytesByIDWithSe(ctx context.Context, se *sess.Session, jobID int64) ([]byte, error) {
+	sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
+	rows, err := se.Execute(ctx, sql, "get-job-by-id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("not found")
+	}
+	return rows[0].GetBytes(0), nil
 }
 
 func (w *worker) checkBeforeCommit() error {
@@ -1298,13 +1330,31 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		return nil
 	}
 
-	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := d.store.CurrentVersion(kv.GlobalTxnScope)
+	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
+			ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
+		}
+	})
+
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.Logger(d.ctx).Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
+
 	snapshot := d.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Error(err))
 		return err
+	}
+
+	// Adding guard for schema version in test
+	if intest.InTest {
+		intest.Assert(latestSchemaVersion > 0, "latestSchemaVersion should be greater than 0")
 	}
 
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
@@ -1444,7 +1494,9 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.AffectedOpts = []*model.AffectedOption{{
 			TableID: ptTableID,
 		}}
-		if job.SchemaState != model.StatePublic {
+		// when job state transit from rolling-back to rollback-done, the schema state
+		// is also public, diff.TableID should be the old non-partitioned table ID too.
+		if job.State == model.JobStateRollbackDone || job.SchemaState != model.StatePublic {
 			// No change, just to refresh the non-partitioned table
 			// with its new ExchangePartitionInfo.
 			diff.TableID = job.TableID

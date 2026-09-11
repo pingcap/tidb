@@ -1303,6 +1303,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		buf.WriteString("*/")
 	}
 
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
+	}
+
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
@@ -1364,7 +1368,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
 			if len(tableInfo.TTLInfo.JobInterval) == 0 {
-				restoreCtx.WriteString(model.DefaultJobInterval.String())
+				restoreCtx.WriteString(model.DefaultJobIntervalStr)
 			} else {
 				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
 			}

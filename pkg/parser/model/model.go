@@ -1828,6 +1828,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 // DefaultJobInterval sets the default interval between TTL jobs
 const DefaultJobInterval = time.Hour
 
+// DefaultJobIntervalStr is the string representation of DefaultJobInterval
+const DefaultJobIntervalStr = "1h"
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      CIStr  `json:"column"`
@@ -2227,4 +2230,19 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
 }

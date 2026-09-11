@@ -324,7 +324,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	if qs.Endpoint != "" {
+	// ⚠️ Do NOT set a global endpoint in the AWS config.
+	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
+	// as it overrides the STS endpoint and causes authentication to fail.
+	// See: https://github.com/aws/aws-sdk-go/issues/3972
+	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
 	if opts.HTTPClient != nil {
@@ -374,6 +378,9 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		s3CliConfigs = append(s3CliConfigs,
 			aws.NewConfig().WithCredentials(creds),
 		)
+	}
+	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
+		s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithEndpoint(qs.Endpoint))
 	}
 	c := s3.New(ses, s3CliConfigs...)
 
@@ -846,8 +853,13 @@ func (rs *S3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil

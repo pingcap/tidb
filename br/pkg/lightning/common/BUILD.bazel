@@ -115,6 +115,7 @@ go_test(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
+        "//pkg/autoid_service",
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",

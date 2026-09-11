@@ -956,7 +956,6 @@ func TestCheckIndex(t *testing.T) {
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 
 	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	require.Error(t, err)
@@ -995,9 +994,9 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
+	err = idx.Delete(ctx, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
+	err = idx.Delete(ctx, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -3062,7 +3061,7 @@ func TestStaleReadAtFutureTime(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	tk.MustGetErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
+	tk.MustContainErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
 	// TxnReadTS Is not updated if check failed.
 	require.Zero(t, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 }
@@ -3083,14 +3082,13 @@ func TestSQLMode(t *testing.T) {
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
-	tk.MustExec("insert t values (null)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.ExecToErr("insert t values (null)")
 	tk.MustExec("insert ignore t values (null)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t select null")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))

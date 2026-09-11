@@ -234,7 +234,7 @@ type TableScanTask struct {
 }
 
 // String implement fmt.Stringer interface.
-func (t *TableScanTask) String() string {
+func (t TableScanTask) String() string {
 	return fmt.Sprintf("TableScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
@@ -295,11 +295,13 @@ func (src *TableScanTaskSource) generateTasks() error {
 	startKey := src.startKey
 	endKey := src.endKey
 	for {
-		kvRanges, err := splitTableRanges(
+		kvRanges, err := splitAndValidateTableRanges(
+			src.ctx,
 			src.tbl,
 			src.store,
 			startKey,
 			endKey,
+			nil,
 			backfillTaskChanSize,
 		)
 		if err != nil {
@@ -433,7 +435,7 @@ var OperatorCallBackForTest func()
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
-		zap.Int("id", task.ID), zap.String("task", task.String()))
+		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
@@ -450,6 +452,10 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		var done bool
 		for !done {
 			srcChk := w.getChunk()
+			if srcChk == nil {
+				terror.Call(rs.Close)
+				return err
+			}
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil || util2.IsContextDone(w.ctx) {
 				w.recycleChunk(srcChk)
@@ -467,17 +473,25 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
-	chk := <-w.srcChkPool
-	newCap := copReadBatchSize()
-	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
+	select {
+	case <-w.ctx.Done():
+		return nil
+	case chk := <-w.srcChkPool:
+		newCap := copReadBatchSize()
+		if chk.Capacity() != newCap {
+			chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
+		}
+		chk.Reset()
+		return chk
 	}
-	chk.Reset()
-	return chk
 }
 
 func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
-	w.srcChkPool <- chk
+	select {
+	case <-w.ctx.Done():
+		return
+	case w.srcChkPool <- chk:
+	}
 }
 
 // WriteExternalStoreOperator writes index records to external storage.

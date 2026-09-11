@@ -20,7 +20,11 @@ go_test(
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",
+        "//br/pkg/mock",
+        "//pkg/kv",
+        "//pkg/meta",
         "//pkg/parser/model",
+        "//pkg/testkit",
         "@com_github_stretchr_testify//require",
     ],
 )

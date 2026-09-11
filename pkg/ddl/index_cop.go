@@ -107,11 +107,17 @@ func (c *copReqSender) run() {
 	}
 	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
+	var (
+		task *reorgBackfillTask
+		ok   bool
+	)
+
 	for {
-		if util.HasCancelled(c.ctx) {
+		select {
+		case <-c.ctx.Done():
 			return
+		case task, ok = <-p.tasksCh:
 		}
-		task, ok := <-p.tasksCh
 		if !ok {
 			return
 		}
@@ -131,7 +137,7 @@ func (c *copReqSender) run() {
 
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
-		zap.Int("id", task.id), zap.String("task", task.String()))
+		zap.Int("id", task.id), zap.Stringer("task", task))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
 		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
@@ -149,7 +155,12 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		var done bool
 		startTime := time.Now()
 		for !done {
+			failpoint.InjectCall("beforeGetChunk")
 			srcChk := p.getChunk()
+			if srcChk == nil {
+				terror.Call(rs.Close)
+				return err
+			}
 			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				p.recycleChunk(srcChk)
@@ -179,11 +190,13 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 		return errors.Trace(err)
 	}
 	defer se.Rollback()
-	var startTS uint64
-	sessVars := se.GetSessionVars()
-	sessVars.TxnCtxMu.Lock()
-	startTS = sessVars.TxnCtx.StartTS
-	sessVars.TxnCtxMu.Unlock()
+
+	txn, err := se.Txn()
+	if err != nil {
+		return err
+	}
+	startTS := txn.StartTS()
+	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
 	return f(startTS)
 }
 
@@ -245,13 +258,17 @@ func (c *copReqSenderPool) close(force bool) {
 }
 
 func (c *copReqSenderPool) getChunk() *chunk.Chunk {
-	chk := <-c.srcChkPool
-	newCap := copReadBatchSize()
-	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(c.copCtx.GetBase().FieldTypes, newCap)
+	select {
+	case <-c.ctx.Done():
+		return nil
+	case chk := <-c.srcChkPool:
+		newCap := copReadBatchSize()
+		if chk.Capacity() != newCap {
+			chk = chunk.NewChunkWithCapacity(c.copCtx.GetBase().FieldTypes, newCap)
+		}
+		chk.Reset()
+		return chk
 	}
-	chk.Reset()
-	return chk
 }
 
 // recycleChunk puts the index record slice and the chunk back to the pool for reuse.
@@ -259,7 +276,11 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	if chk == nil {
 		return
 	}
-	c.srcChkPool <- chk
+	select {
+	case <-c.ctx.Done():
+		return
+	case c.srcChkPool <- chk:
+	}
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {

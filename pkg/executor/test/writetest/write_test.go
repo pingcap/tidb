@@ -757,8 +757,7 @@ commit;`
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 
 	tk.MustExec(`SET sql_mode='';`)
-	tk.MustExec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
+	tk.ExecToErr(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
@@ -1301,7 +1300,7 @@ func TestIssue18681(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1));`
+		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1),e bit(32),f bit(1));`
 	tk.MustExec(createSQL)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
@@ -1311,9 +1310,10 @@ func TestIssue18681(t *testing.T) {
 	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_test"
-	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
+	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	ctx.GetSessionVars().StmtCtx.NoDefaultAsWarning = true
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()
@@ -1322,7 +1322,7 @@ func TestIssue18681(t *testing.T) {
 	}()
 	sc.IgnoreTruncate.Store(false)
 	tests := []testCase{
-		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("true\tfalse\t0\t1\tb'1'\tb'1'\n"), []string{"1|1|1|1|1100010001001110011000100100111|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 5"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 	require.Equal(t, uint16(0), sc.WarningCount())

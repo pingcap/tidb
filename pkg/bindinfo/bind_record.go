@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -172,7 +173,13 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 
 // prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context) (rerr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			rerr = errors.Errorf("panic when preparing hints for binding, panic: %v", r)
+		}
+	}()
+
 	p := parser.New()
 	for i, bind := range br.Bindings {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {

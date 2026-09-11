@@ -176,11 +176,11 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Error("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -192,7 +192,8 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
-	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
+	handle := domain.GetDomain(plan.SCtx()).StatsHandle()
+	err := handle.SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {

@@ -1235,6 +1235,19 @@ func TestShowForNewCollations(t *testing.T) {
 	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
 }
 
+func TestShowPreSplitRegionsForAutoRandomTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;")
+	tk.MustQuery("SHOW CREATE TABLE `t`;").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */"))
+}
+
 func TestForbidUnsupportedCollations(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

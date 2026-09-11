@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -507,6 +508,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
+// Process field may not initialize if this is a session used internally.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -519,17 +521,18 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return nil
+		return &txnInfo
 	}
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
+		ConnectionID:    processInfo.ID,
+		Username:        processInfo.User,
+		CurrentDB:       processInfo.DB,
+		RelatedTableIDs: make(map[int64]struct{}),
+	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
-
 	return &txnInfo
 }
 
@@ -1051,6 +1054,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	// record the TTLInsertRows in the metric
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
+	metrics.DDLCommitTempIndexWrite(s.sessionVars.ConnectionID)
 
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1077,6 +1081,8 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 	sessiontxn.GetTxnManager(s).OnTxnEnd()
+
+	metrics.DDLRollbackTempIndexWrite(s.sessionVars.ConnectionID)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -3506,6 +3512,13 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if err != nil {
 		return nil, err
 	}
+	if err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		logger := logutil.BgLogger()
+		return local.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 	return dom, err
 }
 
@@ -3853,9 +3866,10 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		processInfoID = txnInfo.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
+		}
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))

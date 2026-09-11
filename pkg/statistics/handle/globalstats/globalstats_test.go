@@ -787,9 +787,9 @@ func TestGlobalStats(t *testing.T) {
 	// Even if we have global-stats, we will not use it when the switch is set to `static`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
-		"PartitionUnion 4.00 root  ",
-		"├─IndexReader 0.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"PartitionUnion 5.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
 		"├─IndexReader 2.00 root  index:IndexRangeScan",
 		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
 		"└─IndexReader 2.00 root  index:IndexRangeScan",
@@ -971,4 +971,24 @@ func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_merge_partition_stats_concurrency=2")
 	testGlobalStatsAndSQLBinding(tk)
+}
+
+func TestMergeGlobalStatsForCMSketch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+		create table t (a int) partition by range (a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		)`)
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain select * from t where a = 1").Check(
+		testkit.Rows("TableReader_7 1.00 root partition:p0 data:Selection_6",
+			"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan_5 18.00 cop[tikv] table:t keep order:false"))
 }

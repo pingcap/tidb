@@ -119,6 +119,11 @@ func newVarLenColumn(capacity int) *Column {
 	}
 }
 
+// Rows returns the row number in current column
+func (c *Column) Rows() int {
+	return c.length
+}
+
 func (c *Column) typeSize() int {
 	if len(c.elemBuf) > 0 {
 		return len(c.elemBuf)

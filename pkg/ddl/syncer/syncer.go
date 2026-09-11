@@ -241,7 +241,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 		err = util.PutKVToEtcdMono(ctx, s.etcdCli, keyOpDefaultRetryCnt, path, ver)
 	} else {
 		path = s.selfSchemaVerPath
-		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, path, ver,
+		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, path, ver,
 			clientv3.WithLease(s.loadSession().Lease()))
 	}
 

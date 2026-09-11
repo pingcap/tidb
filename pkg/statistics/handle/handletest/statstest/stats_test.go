@@ -270,6 +270,9 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -312,6 +315,12 @@ func TestInitStats2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
+	// stats of pk will be loaded.
+	require.Equal(t, true, table0.Columns[1].IsAllEvicted())
+	require.Equal(t, true, table1.Columns[1].IsFullLoad())
+	delete(table0.Columns, 1)
+	delete(table1.Columns, 1)
+	// result part is not changed.
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
@@ -431,4 +440,33 @@ func TestInitStatsIssue41938(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(dom.InfoSchema()))
 	h.SetLease(0)
+}
+
+func TestStatsCacheProcess(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	require.Zero(t, statsTbl.Version)
+	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.NotZero(t, statsTbl.Version)
+	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().MaxTableStatsVersion()
+	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
+
+	// Insert more rows
+	testKit.MustExec("insert into t values(2, 3)")
+	require.NoError(t, do.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, do.StatsHandle().Update(do.InfoSchema()))
+	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
 }

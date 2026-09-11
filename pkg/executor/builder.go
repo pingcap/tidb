@@ -798,12 +798,15 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 		end:          v.Offset + v.Count,
 	}
 
-	childUsedSchemaLen := v.Children()[0].Schema().Len()
+	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
-	if len(e.columnIdxsUsedByChild) == childUsedSchemaLen {
+	if len(e.columnIdxsUsedByChild) == childSchemaLen {
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	} else {
+		// construct a project evaluator to do the inline projection
+		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
 }
@@ -2891,13 +2894,23 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		autoAnalyze = "auto "
 	}
 	for _, task := range v.ColTasks {
+		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
+		// so we need to make sure all the columns pass into it.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			b.ctx,
 			model.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
-			task.ColsInfo,
+			append(task.ColsInfo, task.SkipColsInfo...),
 			task.TblInfo,
 		)
+		columns = slices.DeleteFunc(columns, func(expr *expression.Column) bool {
+			for _, col := range task.SkipColsInfo {
+				if col.ID == expr.ID {
+					return true
+				}
+			}
+			return false
+		})
 		if err != nil {
 			b.err = err
 			return nil
@@ -3336,6 +3349,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
+
 	return e, nil
 }
 
@@ -3449,10 +3466,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ret.ranges = ts.Ranges
@@ -3665,6 +3678,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
+
 	return e, nil
 }
 
@@ -3679,10 +3696,6 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	if err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ret.ranges = is.Ranges
@@ -3859,6 +3872,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		e.handleCols = v.CommonHandleCols
 		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
 	}
+
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		e.dummy = true
+	}
 	return e, nil
 }
 
@@ -3876,10 +3893,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if err != nil {
 		b.err = err
 		return nil
-	}
-
-	if ret.table.Meta().TempTableType != model.TempTableNone {
-		ret.dummy = true
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
@@ -4765,10 +4778,15 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 			BaseExecutor:   base,
 			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
 		}
-
-		exec.windowFuncs = windowFuncs
-		exec.partialResults = partialResults
+		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
+		for i, windowFunc := range exec.windowFuncs {
+			if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
+				exec.slidingWindowFuncs[i] = slidingWindowAggFunc
+			}
+		}
 		if v.Frame == nil {
 			exec.start = &plannercore.FrameBound{
 				Type:      ast.Preceding,

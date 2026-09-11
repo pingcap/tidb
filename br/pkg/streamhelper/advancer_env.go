@@ -4,8 +4,10 @@ package streamhelper
 
 import (
 	"context"
+	"math"
 	"time"
 
+	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -46,7 +48,21 @@ type PDRegionScanner struct {
 // Returns the minimal service GC safe point across all services.
 // If the arguments is `0`, this would remove the service safe point.
 func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
+	minimalSafePoint, err := c.UpdateServiceGCSafePoint(
+		ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
+	if err != nil {
+		return 0, errors.Annotate(err, "failed to block gc until")
+	}
+	if minimalSafePoint > at {
+		return 0, errors.Errorf("minimal safe point %d is greater than the target %d", minimalSafePoint, at)
+	}
+	return at, nil
+}
+
+func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
+	// set ttl to 0, means remove the safe point.
+	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, math.MaxUint64)
+	return err
 }
 
 // TODO: It should be able to synchoronize the current TS with the PD.

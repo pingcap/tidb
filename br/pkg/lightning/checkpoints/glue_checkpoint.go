@@ -341,7 +341,6 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 
 		row := req.GetRow(0)
 		cp.Status = CheckpointStatus(row.GetUint64(0))
-		cp.AllocBase = row.GetInt64(1)
 		cp.TableID = row.GetInt64(2)
 		rawTableInfo := row.GetBytes(3)
 		if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
@@ -472,7 +471,8 @@ func (g GlueCheckpointsDB) Update(ctx context.Context, checkpointDiffs map[strin
 			}
 			if cpd.hasRebase {
 				_, err := s.ExecutePreparedStmt(c, rebaseStmt, []types.Datum{
-					types.NewIntDatum(cpd.allocBase),
+					// GlueCheckpointsDB is not used anywhere, set a dummy 0 here.
+					types.NewIntDatum(0),
 					types.NewStringDatum(tableName),
 				})
 				if err != nil {

@@ -95,7 +95,7 @@ func TestColumnIDs(t *testing.T) {
 	// At that time, we should get c2's stats instead of c1's.
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, tableInfo.Columns[0].ID, []*ranger.Range{ran})
 	require.NoError(t, err)
-	require.Equal(t, 0.0, count)
+	require.Equal(t, 1.0, count)
 }
 
 func TestDurationToTS(t *testing.T) {
@@ -1606,7 +1606,12 @@ func TestInitStatsLite(t *testing.T) {
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
-
+	for _, col := range statsTbl1.Columns {
+		require.Equal(t, int64(statistics.Version2), col.StatsVer)
+	}
+	for _, idx := range statsTbl1.Indices {
+		require.Equal(t, int64(statistics.Version2), idx.StatsVer)
+	}
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
@@ -1665,5 +1670,79 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	}
 	for _, idx := range globalStats.Indices {
 		require.True(t, idx.IsStatsInitialized())
+	}
+}
+
+func TestStatsCacheUpdateTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t partition p0, p1")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats.RealtimeCount))
+	require.Equal(t, 2, int(globalStats.ModifyCount))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
+	}()
+	require.Error(t, h.Update(dom.InfoSchema()))
+	globalStats2 := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats2.RealtimeCount))
+	require.Equal(t, 2, int(globalStats2.ModifyCount))
+}
+
+func TestLoadStatsForBitColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+
+	testCases := []struct {
+		len                   int
+		lowerBound            string
+		expectedLowerBoundHex string
+		upperBound            string
+		expectedUpperBoundHex string
+	}{
+		// 0 -> 0 -> "0" -> 30
+		{1, "0", "30", "1", "31"},
+		{2, "2", "32", "3", "33"},
+		// "0" -> 48 -> "48" -> 3438
+		{6, `"0"`, "3438", `"1"`, "3439"},
+		// "a" -> 97 -> "97" -> 3937
+		{7, `"a"`, "3937", `"b"`, "3938"},
+	}
+	for i, testCase := range testCases {
+		tableName := fmt.Sprintf("t%d", i)
+
+		tk.MustExec(fmt.Sprintf("create table %s(a bit(%d));", tableName, testCase.len))
+		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+		require.NoError(t, err)
+
+		tk.MustExec(fmt.Sprintf("insert into %s values (%s), (%s);", tableName, testCase.lowerBound, testCase.upperBound))
+		tk.MustExec(fmt.Sprintf("analyze table %s all columns with 0 topn;", tableName))
+
+		h := dom.StatsHandle()
+		_, err = h.TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
+		require.NoError(t, err)
+
+		// In release-7.5, `analyze table %s all columns with 0 topn;` will still use 1 topn.
+		// Ref https://github.com/pingcap/tidb/pull/49068
+		tk.MustQuery(
+			fmt.Sprintf("SELECT hex(lower_bound), hex(upper_bound) FROM mysql.stats_buckets WHERE table_id = %d ORDER BY lower_bound", tbl.Meta().ID),
+		).Check(testkit.Rows(
+			fmt.Sprintf("%s %s", testCase.expectedUpperBoundHex, testCase.expectedUpperBoundHex),
+		))
+
+		tk.MustExec("drop table " + tableName)
 	}
 }

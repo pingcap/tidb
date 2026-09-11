@@ -907,6 +907,11 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 			e.retCh <- errors.Trace(err)
 			break
 		}
+
+		failpoint.Inject("mockAdminCheckPanic", func() {
+			panic("mock admin check panic")
+		})
+
 		if chk.NumRows() == 0 {
 			break
 		}
@@ -1321,6 +1326,7 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+	columnSwapHelper      *chunk.ColumnSwapHelper
 
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
@@ -1382,10 +1388,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.cursor += batchSize
 
 	if e.columnIdxsUsedByChild != nil {
-		for i, childIdx := range e.columnIdxsUsedByChild {
-			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
-				return err
-			}
+		err = e.columnSwapHelper.SwapColumns(e.childResult, req)
+		if err != nil {
+			return err
 		}
 	} else {
 		req.SwapColumns(e.childResult)
@@ -1842,10 +1847,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = errors.Errorf("%v", r)
-			e.resultPool <- result
+			logutil.Logger(ctx).Warn("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
+			result.err = util.GetRecoverError(r)
 			e.stopFetchData.Store(true)
+			_ = e.sendResult(result)
 		}
 		e.wg.Done()
 	}()
@@ -1858,7 +1863,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		if err := e.Children(childID).Open(ctx); err != nil {
 			result.err = err
 			e.stopFetchData.Store(true)
-			e.resultPool <- result
+			if !e.sendResult(result) {
+				return
+			}
 		}
 		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, 1)
@@ -1882,7 +1889,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 					panic("the count of child in flight is larger than e.concurrency unexpectedly")
 				}
 			})
-			e.resultPool <- result
+			if !e.sendResult(result) {
+				return
+			}
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
@@ -1891,6 +1900,15 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, -1)
 		})
+	}
+}
+
+func (e *UnionExec) sendResult(result *unionWorkerResult) bool {
+	select {
+	case <-e.finished:
+		return false
+	case e.resultPool <- result:
+		return true
 	}
 }
 
@@ -1921,7 +1939,9 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	if e.finished != nil {
+		e.stopFetchData.Store(true)
 		close(e.finished)
+		e.wg.Wait()
 	}
 	e.results = nil
 	if e.resultPool != nil {
@@ -2104,7 +2124,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		// For single-row INSERT statements, ignore non-strict mode
+		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
+		isSingleInsert := len(stmt.Lists) == 1
+		sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = (!vars.StrictSQLMode && !isSingleInsert) || stmt.IgnoreErr
 		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
 		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
@@ -2226,6 +2250,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.InUpdateStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -2239,6 +2264,7 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.InDeleteStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -2292,6 +2318,7 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
 }
 
 type checkIndexWorker struct {
@@ -2346,6 +2373,11 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
+	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", task.indexOffset)
+		task.err.CompareAndSwap(nil, &err)
+	}, false)
+
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
@@ -2482,6 +2514,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
+		})
+
+		// mock query panic for fast admin check.
+		failpoint.Inject("mockFastAdminCheckPanic", func() {
+			panic("mock fast admin check panic")
 		})
 
 		currentOffset := 0
@@ -2711,7 +2748,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i})
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
 	}
 
 	e.wg.Wait()

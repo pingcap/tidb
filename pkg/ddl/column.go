@@ -491,38 +491,6 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 	return dbInfo, tblInfo, oldCol, modifyInfo, errors.Trace(err)
 }
 
-// GetOriginDefaultValueForModifyColumn gets the original default value for modifying column.
-// Since column type change is implemented as adding a new column then substituting the old one.
-// Case exists when update-where statement fetch a NULL for not-null column without any default data,
-// it will errors.
-// So we set original default value here to prevent this error. If the oldCol has the original default value, we use it.
-// Otherwise we set the zero value as original default value.
-// Besides, in insert & update records, we have already implement using the casted value of relative column to insert
-// rather than the original default value.
-func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (interface{}, error) {
-	var err error
-	originDefVal := oldCol.GetOriginDefaultValue()
-	if originDefVal != nil {
-		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
-		if err != nil {
-			logutil.BgLogger().Info("cast origin default value failed", zap.String("category", "ddl"), zap.Error(err))
-		}
-		if !odv.IsNull() {
-			if originDefVal, err = odv.ToString(); err != nil {
-				originDefVal = nil
-				logutil.BgLogger().Info("convert default value to string failed", zap.String("category", "ddl"), zap.Error(err))
-			}
-		}
-	}
-	if originDefVal == nil {
-		originDefVal, err = generateOriginDefaultValue(changingCol, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return originDefVal, nil
-}
-
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -587,14 +555,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		changingCol = modifyInfo.newCol.Clone()
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-
-		originDefVal, err := GetOriginDefaultValueForModifyColumn(newContext(d.store), changingCol, oldCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = changingCol.SetOriginDefaultValue(originDefVal); err != nil {
-			return ver, errors.Trace(err)
-		}
 
 		InitAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
@@ -1458,7 +1418,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 }
 
 // BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
-func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1801,7 +1761,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
 
-	if hasDefaultValue, _, err := checkColumnDefaultValue(newContext(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
+	if hasDefaultValue, _, err := checkColumnDefaultValue(newReorgSessCtx(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	} else if !hasDefaultValue {
@@ -1817,7 +1777,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		oldCol.DelFlag(mysql.NoDefaultValueFlag)
-		sctx := newContext(d.store)
+		sctx := newReorgSessCtx(d.store)
 		err = checkDefaultValue(sctx, table.ToColumn(oldCol), true)
 		if err != nil {
 			job.State = model.JobStateCancelled

@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "staticrecordset_test",
+    timeout = "short",
+    srcs = ["integration_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/ddl",
+        "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

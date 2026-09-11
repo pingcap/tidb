@@ -11,7 +11,10 @@ go_test(
     race = "on",
     deps = [
         "//pkg/parser/model",
+        "//pkg/sessionctx",
         "//pkg/statistics",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",

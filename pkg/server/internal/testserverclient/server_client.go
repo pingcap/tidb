@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	mysqlcursor "github.com/YangKeao/go-mysql-driver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -115,6 +116,18 @@ func (cli *TestServerClient) GetDSN(overriders ...configOverrider) string {
 			overrider(config)
 		}
 	}
+	return config.FormatDSN()
+}
+
+// GetDSN generates a DSN string for MySQL connection.
+func (cli *TestServerClient) GetDSNWithCursor(fetchSize uint32) string {
+	config := mysqlcursor.NewConfig()
+	config.User = "root"
+	config.Net = "tcp"
+	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.Port)
+	config.DBName = "test"
+	config.Params = make(map[string]string)
+	config.FetchSize = fetchSize
 	return config.FormatDSN()
 }
 

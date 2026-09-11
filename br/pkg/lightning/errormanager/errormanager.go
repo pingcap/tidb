@@ -88,8 +88,8 @@ const (
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
@@ -938,10 +938,10 @@ func (em *ErrorManager) Output() string {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
 	t.SetColumnConfigs([]table.ColumnConfig{
-		{Name: "#", WidthMax: 6},
-		{Name: "Error Type", WidthMax: 20},
-		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 42},
+		{Name: "#"},
+		{Name: "Error Type"},
+		{Name: "Error Count"},
+		{Name: "Error Data Table"},
 	})
 	t.SetRowPainter(func(row table.Row) text.Colors {
 		return text.Colors{text.FgRed}

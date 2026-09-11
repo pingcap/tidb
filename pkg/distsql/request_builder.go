@@ -19,7 +19,9 @@ import (
 	"math"
 	"sort"
 	"sync/atomic"
+	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -40,10 +43,12 @@ import (
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
+// Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-	is  infoschema.InfoSchema
-	err error
+	is   infoschema.InfoSchema
+	err  error
+	used bool
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
@@ -51,6 +56,10 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.used && intest.InTest {
+		return nil, errors.Errorf("request builder is already used")
+	}
+	builder.used = true
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
@@ -78,14 +87,17 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
-			oldConcurrency := builder.Request.Concurrency
 			// select * from t order by id
-			if builder.Request.KeepOrder {
+			if builder.Request.KeepOrder && builder.Request.Concurrency == variable.DefDistSQLScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
+				//
+				// If a user set @@tidb_distsql_scan_concurrency, he must be doing it by intention.
+				// so only rewrite concurrency when @@tidb_distsql_scan_concurrency is default value.
 				switch dag.Executors[0].Tp {
 				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					oldConcurrency := builder.Request.Concurrency
 					builder.Request.Concurrency = 2
 					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 						if val.(bool) {
@@ -740,7 +752,10 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
 	}
 
-	const checkSignalStep = 8
+	if memTracker != nil {
+		memTracker.Consume(int64(unsafe.Sizeof(kv.KeyRange{})) * int64(len(ranges)))
+	}
+	const checkSignalStep = 64
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
@@ -767,6 +782,11 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 			}
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
 				return kv.NewPartitionedKeyRanges(nil), nil
+			}
+			if memTracker != nil {
+				// We use the Tracker.Consume function to check the memory usage of the current SQL.
+				// If the memory exceeds the quota, kill the SQL.
+				memTracker.Consume(1)
 			}
 		}
 	}

@@ -77,7 +77,7 @@ const (
 	jobTypeReorg
 )
 
-func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
+func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.JobW, error) {
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -116,7 +116,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 
 		// The job has already been picked up, just return to continue it.
 		if isJobProcessing {
-			return &job, nil
+			return model.NewJobW(&job, jobBinary), nil
 		}
 
 		b, err := filter(&job)
@@ -131,7 +131,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 					zap.String("job", job.String()))
 				return nil, errors.Trace(err)
 			}
-			return &job, nil
+			return model.NewJobW(&job, jobBinary), nil
 		}
 	}
 	return nil, nil
@@ -199,7 +199,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 	return true, nil
 }
 
-func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
+func (d *ddl) getGeneralJob(sess *sess.Session) (*model.JobW, error) {
 	return d.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
@@ -219,7 +219,7 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
-func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
+func (d *ddl) getReorgJob(sess *sess.Session) (*model.JobW, error) {
 	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
@@ -330,7 +330,7 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
+func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.JobW, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -350,7 +350,7 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 		return
 	}
 	d.mu.RLock()
-	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
+	d.mu.hook.OnGetJobAfter(pool.tp().String(), job.Job)
 	d.mu.RUnlock()
 
 	d.delivery2worker(wk, pool, job)
@@ -360,7 +360,8 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 var AfterDeliverToWorkerForTest func(*model.Job)
 
 // delivery2worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
+func (d *ddl) delivery2worker(wk *worker, pool *workerPool, jobW *model.JobW) {
+	job := jobW.Job
 	injectFailPointForGetJob(job)
 	d.runningJobs.add(job)
 	d.wg.Run(func() {
@@ -407,7 +408,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			}
 		}
 
-		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
+		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, jobW)
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))

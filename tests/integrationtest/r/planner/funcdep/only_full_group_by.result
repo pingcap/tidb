@@ -211,3 +211,12 @@ drop table if exists t1;
 create table t1(a int not null, b int not null, index(a));
 select b from t1 group by a;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__funcdep__only_full_group_by.t1.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+select a,max(b) as max_b from (select * from t union all select * from t) x ;
+Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'x.a'; this is incompatible with sql_mode=only_full_group_by
+select a,max(b) as max_b from (select * from t union all select 1,2,3 ) x ;
+Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'x.a'; this is incompatible with sql_mode=only_full_group_by
+select a,max(b) as max_b from (select * from t where a=1 union all select 1,2,3 ) x ;
+Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'x.a'; this is incompatible with sql_mode=only_full_group_by

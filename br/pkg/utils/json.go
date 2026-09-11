@@ -28,6 +28,22 @@ func UnmarshalBackupMeta(data []byte) (*backuppb.BackupMeta, error) {
 	return fromJSONBackupMeta(jMeta)
 }
 
+func MarshalMetaFile(meta *backuppb.MetaFile) ([]byte, error) {
+	result, err := makeJSONMetaFile(meta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return json.Marshal(result)
+}
+
+func UnmarshalMetaFile(data []byte) (*backuppb.MetaFile, error) {
+	jMeta := &jsonMetaFile{}
+	if err := json.Unmarshal(data, jMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return fromJSONMetaFile(jMeta)
+}
+
 type jsonValue interface{}
 
 type jsonFile struct {
@@ -192,6 +208,79 @@ func fromJSONBackupMeta(jMeta *jsonBackupMeta) (*backuppb.BackupMeta, error) {
 	meta.Ddls, err = json.Marshal(jMeta.DDLs)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	return meta, nil
+}
+
+type jsonMetaFile struct {
+	DataFiles []*jsonFile     `json:"data_files,omitempty"`
+	Schemas   []*jsonSchema   `json:"schemas,omitempty"`
+	RawRanges []*jsonRawRange `json:"raw_ranges,omitempty"`
+	DDLs      []jsonValue     `json:"ddls,omitempty"`
+
+	*backuppb.MetaFile
+}
+
+func makeJSONMetaFile(meta *backuppb.MetaFile) (*jsonMetaFile, error) {
+	result := &jsonMetaFile{
+		MetaFile: meta,
+	}
+	for _, file := range meta.DataFiles {
+		result.DataFiles = append(result.DataFiles, makeJSONFile(file))
+	}
+	for _, rawRange := range meta.RawRanges {
+		result.RawRanges = append(result.RawRanges, makeJSONRawRange(rawRange))
+	}
+	for _, schema := range meta.Schemas {
+		s, err := makeJSONSchema(schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		result.Schemas = append(result.Schemas, s)
+	}
+	for _, ddl := range meta.Ddls {
+		var d jsonValue
+		if err := json.Unmarshal(ddl, &d); err != nil {
+			return nil, errors.Trace(err)
+		}
+		result.DDLs = append(result.DDLs, d)
+	}
+	return result, nil
+}
+
+func fromJSONMetaFile(jMeta *jsonMetaFile) (*backuppb.MetaFile, error) {
+	meta := jMeta.MetaFile
+	if meta == nil {
+		meta = &backuppb.MetaFile{}
+	}
+
+	for _, schema := range jMeta.Schemas {
+		s, err := fromJSONSchema(schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta.Schemas = append(meta.Schemas, s)
+	}
+	for _, file := range jMeta.DataFiles {
+		f, err := fromJSONFile(file)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta.DataFiles = append(meta.DataFiles, f)
+	}
+	for _, rawRange := range jMeta.RawRanges {
+		rng, err := fromJSONRawRange(rawRange)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta.RawRanges = append(meta.RawRanges, rng)
+	}
+	for _, ddl := range jMeta.DDLs {
+		d, err := json.Marshal(ddl)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta.Ddls = append(meta.Ddls, d)
 	}
 	return meta, nil
 }

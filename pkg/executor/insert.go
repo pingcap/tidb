@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -186,7 +187,15 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment) error {
+func (e *InsertExec) updateDupRow(
+	ctx context.Context,
+	idxInBatch int,
+	txn kv.Transaction,
+	row toBeCheckedRow,
+	handle kv.Handle,
+	_ []*expression.Assignment,
+	autoColIdx int,
+) error {
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -197,7 +206,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		extraCols = e.Ctx().GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, autoColIdx)
 	if e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning && (kv.ErrKeyExists.Equal(err) ||
 		table.ErrCheckConstraintViolated.Equal(err)) {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -236,6 +245,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	_, autoColIdx, found := findAutoIncrementColumn(e.Table)
+	if !found {
+		autoColIdx = -1
+	}
+
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -243,7 +257,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, autoColIdx)
 			if err == nil {
 				continue
 			}
@@ -253,14 +267,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+			handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn, uk.commonHandle)
 			if err != nil {
 				return err
 			}
 			if handle == nil {
 				continue
 			}
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, autoColIdx)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -380,8 +394,14 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 }
 
 // doDupRowUpdate updates the duplicate row.
-func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int) error {
+func (e *InsertExec) doDupRowUpdate(
+	ctx context.Context,
+	handle kv.Handle,
+	oldRow, newRow, extraCols []types.Datum,
+	assigns []*expression.Assignment,
+	idxInBatch int,
+	autoColIdx int,
+) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -395,40 +415,83 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
-	// Update old row when the key is duplicated.
-	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sc := e.Ctx().GetSessionVars().StmtCtx
-	warnCnt := int(sc.WarningCount())
-	for _, col := range cols {
-		if col.LazyErr != nil {
-			return col.LazyErr
+	// Only evaluate non-generated columns here,
+	// other fields will be evaluated in updateRecord.
+	var generated, nonGenerated []*expression.Assignment
+	cols := e.Table.Cols()
+	for _, assign := range assigns {
+		if cols[assign.Col.Index].IsGenerated() {
+			generated = append(generated, assign)
+		} else {
+			nonGenerated = append(nonGenerated, assign)
 		}
-		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
-		if err1 != nil {
-			return err1
-		}
-		c := col.Col.ToInfo()
-		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.Ctx(), val, c, false, false)
-		if err1 != nil {
-			return err1
-		}
+	}
+
+	warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
+		c := assign.Col.ToInfo()
+		c.Name = assign.ColName
+		sc := sctx.GetSessionVars().StmtCtx
+
 		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
 			for k := range newWarnings {
 				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
-				newWarnings[k].Err = completeInsertErr(c, &val, idxInBatch, newWarnings[k].Err)
+				newWarnings[k].Err = completeInsertErr(c, val, idxInBatch, newWarnings[k].Err)
 			}
 			sc.AppendWarnings(newWarnings)
 			warnCnt += len(newWarnings)
 		}
-		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
-		assignFlag[col.Col.Index] = true
+		return err
+	}
+
+	// Update old row when the key is duplicated.
+	e.evalBuffer4Dup.SetDatums(e.row4Update...)
+	sctx := e.Ctx()
+	for _, assign := range nonGenerated {
+		var val types.Datum
+		if assign.LazyErr != nil {
+			return assign.LazyErr
+		}
+		val, err := assign.Expr.Eval(e.evalBuffer4Dup.ToRow())
+		if err != nil {
+			return err
+		}
+
+		c := assign.Col.ToInfo()
+		idx := assign.Col.Index
+		c.Name = assign.ColName
+		val, err = table.CastValue(sctx, val, c, false, false)
+		if err != nil {
+			return err
+		}
+
+		_ = errorHandler(sctx, assign, &val, nil)
+		e.evalBuffer4Dup.SetDatum(idx, val)
+		e.row4Update[assign.Col.Index] = val
+		assignFlag[assign.Col.Index] = true
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
+	_, err := updateRecord(
+		ctx, e.Ctx(),
+		handle, oldRow, newData,
+		0, generated, e.evalBuffer4Dup, errorHandler,
+		assignFlag, e.Table,
+		true, e.memTracker, e.fkChecks, e.fkCascades)
+
 	if err != nil {
-		return err
+		return errors.Trace(err)
+	}
+
+	if autoColIdx >= 0 {
+		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
+			// auto increment value should be set correctly for mysql_insert_id()
+			// See https://github.com/pingcap/tidb/issues/55965
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = 0
+		}
 	}
 	return nil
 }

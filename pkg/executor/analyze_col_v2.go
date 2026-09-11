@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -89,21 +90,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
-	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
-	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-	// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
-	// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
-	// case with `-race` flag now.
-	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, statsConcurrncy)
-	})
-	defer wg.Wait()
-
+	e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
 	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
@@ -159,15 +147,23 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
 		for i := range sample.Columns {
-			if schema.Columns[i].VirtualExpr != nil {
-				continue
-			}
+			// Virtual columns will be decoded as null first.
 			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
 			}
 		}
 	}
+	intest.AssertFunc(func() bool {
+		// Ensure all columns in the chunk have the same number of rows.
+		// Checking for virtual columns.
+		for i := 1; i < chk.NumCols(); i++ {
+			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+				return false
+			}
+		}
+		return true
+	}, "all columns in chunk should have the same number of rows")
 	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
 	if err != nil {
 		return err
@@ -432,7 +428,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 }
 
 // handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
-func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, statsConcurrncy int) {
+func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult, samplingStatsConcurrency int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -448,12 +444,12 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	if len(tasks) < statsConcurrncy {
-		statsConcurrncy = len(tasks)
+	if len(tasks) < samplingStatsConcurrency {
+		samplingStatsConcurrency = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
-	subIndexWorkerWg.Add(statsConcurrncy)
-	for i := 0; i < statsConcurrncy; i++ {
+	subIndexWorkerWg.Add(samplingStatsConcurrency)
+	for i := 0; i < samplingStatsConcurrency; i++ {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
@@ -465,7 +461,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
 	var err error
-	for panicCnt < statsConcurrncy {
+	for panicCnt < samplingStatsConcurrency {
 		results, ok := <-resultsCh
 		if !ok {
 			break

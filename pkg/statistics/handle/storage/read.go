@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -53,6 +54,34 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	count = int64(rows[0].GetUint64(0))
 	modifyCount = rows[0].GetInt64(1)
 	return count, modifyCount, false, nil
+}
+
+// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
+	isIndex := 0
+	var tp *types.FieldType
+	if item.IsIndex {
+		isIndex = 1
+		tp = types.NewFieldType(mysql.TypeBlob)
+	} else {
+		tp = &possibleColInfo.FieldType
+	}
+	rows, _, err := util.ExecRows(sctx,
+		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		item.TableID,
+		item.ID,
+		isIndex,
+	)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0, 0, nil
+	}
+	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
+	hist.Correlation = rows[0].GetFloat64(5)
+	lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
+	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
 }
 
 // HistogramFromStorage reads histogram from storage.
@@ -89,12 +118,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc, tp)
+			lowerBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc, tp)
+			upperBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -447,8 +476,11 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
+	if err != nil {
+		return nil, err
+	}
 	// Check deleted table.
-	if err != nil || len(rows) == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
@@ -504,7 +536,14 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, l
 			err = loadNeededIndexHistograms(sctx, statsCache, item, loadFMSketch)
 		}
 		if err != nil {
-			return err
+			statslogutil.StatsLogger().Error("load needed histogram failed",
+				zap.Error(err),
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("histID", item.ID),
+				zap.Bool("isIndex", item.IsIndex),
+			)
+			intest.Assert(false, "load needed histogram failed")
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -565,7 +604,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
 }
@@ -580,12 +621,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	// If we don't do this it might cause a memory leak.
 	// See: https://github.com/pingcap/tidb/issues/54022
 	if !ok || !index.IsLoadNeeded() {
-		if !index.IsLoadNeeded() {
-			logutil.BgLogger().Warn(
-				"Although the index stats is not required to load, an attempt is still made to load it, skip it",
-				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
-			)
-		}
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
@@ -624,7 +659,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
 }
@@ -647,4 +684,38 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 	modifyCount = rows[0].GetInt64(1)
 	count = rows[0].GetInt64(2)
 	return
+}
+
+// convertBoundFromBlob reads the bound from blob. The `blob` is read from the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundFromBlob(sc *stmtctx.StatementContext, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
+	// For `BIT` type, when converting to `BLOB`, it's formated as an integer (when it's possible). Therefore, we should try to
+	// parse it as an integer first.
+	if tp.GetType() == mysql.TypeBit {
+		var ret types.Datum
+
+		// The implementation of converting BIT to BLOB will try to format it as an integer first. Theoretically, it should
+		// always be able to format the integer because the `BIT` length is limited to 64. Therefore, this err should never
+		// happen.
+		uintValue, err := strconv.ParseUint(string(blob.GetBytes()), 10, 64)
+		intest.Assert(err == nil)
+		if err != nil {
+			// Fail to parse, return the original blob as BIT directly.
+			ret.SetBinaryLiteral(types.BinaryLiteral(blob.GetBytes()))
+			return ret, nil
+		}
+
+		// part of the code is copied from `(*Datum).convertToMysqlBit`.
+		if tp.GetFlen() < 64 && uintValue >= 1<<(uint64(tp.GetFlen())) {
+			logutil.BgLogger().Warn("bound in stats exceeds the bit length", zap.Uint64("bound", uintValue), zap.Int("flen", tp.GetFlen()))
+			err = types.ErrDataTooLong.GenWithStack("Data Too Long, field len %d", tp.GetFlen())
+			intest.Assert(false, "bound in stats exceeds the bit length")
+			uintValue = (1 << (uint64(tp.GetFlen()))) - 1
+		}
+		byteSize := (tp.GetFlen() + 7) >> 3
+		ret.SetMysqlBit(types.NewBinaryLiteralFromUint(uintValue, byteSize))
+		return ret, errors.Trace(err)
+	}
+	return blob.ConvertTo(sc, tp)
 }

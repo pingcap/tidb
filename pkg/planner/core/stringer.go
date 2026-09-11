@@ -70,6 +70,8 @@ func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 		strs = append(strs, "{"+x.fdSet.String()+"}")
 	case *LogicalJoin:
 		strs = append(strs, "{"+x.fdSet.String()+"}")
+	case *LogicalUnionAll:
+		strs = append(strs, "{"+x.fdSet.String()+"}")
 	default:
 	}
 	return strs, idxs

@@ -1940,7 +1940,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
@@ -2023,7 +2023,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.Concurrency = Concurrency{
@@ -3553,8 +3557,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}

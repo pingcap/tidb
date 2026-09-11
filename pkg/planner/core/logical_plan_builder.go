@@ -347,7 +347,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	}
 	// flag it if cte contain aggregation
 	if b.buildingCTE {
-		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var rollupExpand *LogicalExpand
 	if expand, ok := p.(*LogicalExpand); ok {
@@ -1962,6 +1962,10 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
+	// flag it if cte contain distinct
+	if b.buildingCTE {
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
@@ -2554,6 +2558,10 @@ func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count ui
 
 func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
+	// flag it if cte contain limit
+	if b.buildingCTE {
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
 	var (
 		offset, count uint64
 		err           error
@@ -3421,11 +3429,22 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableInfo {
+func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableInfo {
 	tableList := ExtractTableList(from, true)
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
-			return field.TableInfo
+			if field.TableInfo != nil {
+				return field.TableInfo
+			}
+			if b.isCreateView {
+				return nil
+			}
+			tbl, err := b.is.TableByName(name.DBName, name.TblName)
+			if err != nil {
+				return nil
+			}
+			tblInfo := tbl.Meta()
+			return tblInfo
 		}
 	}
 	return nil
@@ -3481,7 +3500,7 @@ func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) (map[*types.FieldNa
 	return colDependMap, nil
 }
 
-func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.FieldName]*types.FieldName, error) {
+func (b *PlanBuilder) buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.FieldName]*types.FieldName, error) {
 	switch x := from.(type) {
 	case *ast.Join:
 		if x.On == nil {
@@ -3497,7 +3516,7 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.Fiel
 			if lCol == nil || rCol == nil {
 				continue
 			}
-			lTbl := tblInfoFromCol(x.Left, lCol)
+			lTbl := b.tblInfoFromCol(x.Left, lCol)
 			if lTbl == nil {
 				lCol, rCol = rCol, lCol
 			}
@@ -3710,7 +3729,7 @@ func extractSingeValueColNamesFromWhere(p LogicalPlan, where ast.ExprNode, gbyOr
 	}
 }
 
-func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
+func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
 	gbyOrSingleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	for _, byItem := range sel.GroupBy.Items {
@@ -3757,13 +3776,13 @@ func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.
 	if err != nil {
 		return err
 	}
-	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	joinDepends, err := b.buildJoinFuncDepend(p, sel.From.TableRefs)
 	if err != nil {
 		return err
 	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyOrSingleValueColNames))
 	for name, errExprLoc := range notInGbyOrSingleValueColNames {
-		tblInfo := tblInfoFromCol(sel.From.TableRefs, name)
+		tblInfo := b.tblInfoFromCol(sel.From.TableRefs, name)
 		if tblInfo == nil {
 			continue
 		}
@@ -3788,7 +3807,7 @@ func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.
 	return nil
 }
 
-func (*PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
+func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
 	resolver := colResolverForOnlyFullGroupBy{
 		firstOrderByAggColIdx: -1,
 	}
@@ -3823,7 +3842,7 @@ func (*PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *a
 		return err
 	}
 
-	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	joinDepends, err := b.buildJoinFuncDepend(p, sel.From.TableRefs)
 	if err != nil {
 		return err
 	}
@@ -3837,7 +3856,7 @@ func (*PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *a
 		if _, ok := singleValueColNames[fieldName]; ok {
 			continue
 		}
-		tblInfo := tblInfoFromCol(sel.From.TableRefs, fieldName)
+		tblInfo := b.tblInfoFromCol(sel.From.TableRefs, fieldName)
 		if tblInfo == nil {
 			continue
 		}
@@ -4649,6 +4668,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
+		// flag it if cte contain order by
+		if b.buildingCTE {
+			b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+		}
 		// We need to keep the ORDER BY clause for the following cases:
 		// 1. The select is top level query, order should be honored
 		// 2. The query has LIMIT clause
@@ -4962,9 +4985,9 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
-			// If current CTE query contain another CTE which 'containAggOrWindow' is true, current CTE 'containAggOrWindow' will be true
+			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
 			if b.buildingCTE {
-				b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = cte.containAggOrWindow || b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow
+				b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = cte.containRecursiveForbiddenOperator || b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator
 			}
 			// Compute cte inline
 			b.computeCTEInlineFlag(cte)
@@ -5022,13 +5045,22 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 				ErrInternal.GenWithStack("Recursive CTE %s can not be inlined by merge() or tidb_opt_force_inline_cte.", cte.def.Name))
 		}
-	} else if cte.containAggOrWindow && b.buildingRecursivePartForCTE {
+		cte.isInline = false
+	} else if cte.containRecursiveForbiddenOperator && b.buildingRecursivePartForCTE {
 		if cte.forceInlineByHintOrVar {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrCTERecursiveForbidsAggregation.FastGenByArgs(cte.def.Name))
 		}
-	} else if cte.consumerCount > 1 {
+		cte.isInline = false
+	} else if cte.consumerCount != 1 {
+		// If hint or session variable is set, it can be inlined by user.
 		if cte.forceInlineByHintOrVar {
 			cte.isInline = true
+		} else {
+			// Consumer count > 1 or = 0, CTE can not be inlined by default.
+			// Case the consumer count = 0 (issue #56582)
+			// It means that CTE maybe inside of view and the UpdateCTEConsumerCount(preprocess phase) is skipped
+			// So all of CTE.consumerCount is not updated, and we can not use it to determine whether CTE can be inlined.
+			cte.isInline = false
 		}
 	} else {
 		cte.isInline = true
@@ -5796,6 +5828,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
+		failpoint.Inject("BuildDataSourceFailed", func() {})
 		return nil, err
 	}
 	pm := privilege.GetPrivilegeManager(b.ctx)
@@ -5880,7 +5913,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType, markNoDecorrelate bool) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
+	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate | flagConstantPropagation
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
@@ -6419,20 +6452,23 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if err != nil {
 				return nil, nil, false, err
 			}
-			// check if the column is modified
+			// check if the column may be modified.
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
-			var isModified bool
+			var mayModified bool
 			for _, col := range dependentColumns {
-				if dependentColumnsModified[col.UniqueID] {
-					isModified = true
+				colTp := col.GetType().GetFlag()
+				// If any of the dependent column has on-update-now flag,
+				// this virtual generated column may be modified too.
+				if mysql.HasOnUpdateNowFlag(colTp) || dependentColumnsModified[col.UniqueID] {
+					mayModified = true
 					break
 				}
 			}
-			if isModified {
+			if mayModified {
 				dependentColumnsModified[col.UniqueID] = true
 			}
 			// skip unmodified generated columns
-			if !isModified {
+			if !mayModified {
 				continue
 			}
 		}
@@ -7072,7 +7108,7 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 
 func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	if b.buildingCTE {
-		b.outerCTEs[len(b.outerCTEs)-1].containAggOrWindow = true
+		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
@@ -7957,7 +7993,9 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTabl
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
-		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		if name.DBName.String() == "" {
+			name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		}
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {

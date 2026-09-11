@@ -70,6 +70,47 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (ft *FieldType) Equals(other any) bool {
+	ft2, ok := other.(*FieldType)
+	if !ok {
+		return false
+	}
+	if ft == nil {
+		return ft2 == nil
+	}
+	if other == nil {
+		return false
+	}
+	ok = ft.tp == ft2.tp &&
+		ft.flag == ft2.flag &&
+		ft.flen == ft2.flen &&
+		ft.decimal == ft2.decimal &&
+		ft.charset == ft2.charset &&
+		ft.collate == ft2.collate &&
+		ft.array == ft2.array
+	if !ok {
+		return false
+	}
+	if len(ft.elems) != len(ft2.elems) {
+		return false
+	}
+	for i, one := range ft.elems {
+		if one != ft2.elems[i] {
+			return false
+		}
+	}
+	if len(ft.elemsIsBinaryLit) != len(ft2.elemsIsBinaryLit) {
+		return false
+	}
+	for i, one := range ft.elemsIsBinaryLit {
+		if one != ft2.elemsIsBinaryLit[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // IsDecimalValid checks whether the decimal is valid.
 func (ft *FieldType) IsDecimalValid() bool {
 	if ft.GetType() == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {

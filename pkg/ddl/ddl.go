@@ -852,6 +852,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	failpoint.InjectCall("afterDDLCloseCancel")
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
@@ -1028,7 +1029,7 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) (err error) {
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
@@ -1056,10 +1057,14 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
-	err := <-task.err
-	if err != nil {
-		// The transaction of enqueuing job is failed.
-		return errors.Trace(err)
+	select {
+	case err := <-task.err:
+		if err != nil {
+			// The transaction of enqueuing job is failed.
+			return errors.Trace(err)
+		}
+	case <-d.ctx.Done():
+		return d.ctx.Err()
 	}
 
 	sessVars := ctx.GetSessionVars()
@@ -1458,7 +1463,7 @@ func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
 }
 
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
-func cancelRunningJob(_ *sess.Session, job *model.Job,
+func cancelRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	// These states can't be cancelled.
 	if job.IsDone() || job.IsSynced() {
@@ -1479,7 +1484,7 @@ func cancelRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // pauseRunningJob check and pause the running Job
-func pauseRunningJob(_ *sess.Session, job *model.Job,
+func pauseRunningJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if job.IsPausing() || job.IsPaused() {
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
@@ -1498,7 +1503,7 @@ func pauseRunningJob(_ *sess.Session, job *model.Job,
 }
 
 // resumePausedJob check and resume the Paused Job
-func resumePausedJob(_ *sess.Session, job *model.Job,
+func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
 	if !job.IsResumable() {
 		errMsg := fmt.Sprintf("job has not been paused, job state:%s, schema state:%s",
@@ -1518,7 +1523,7 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 }
 
 // processJobs command on the Job according to the process
-func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processJobs(process func(*model.Job, model.AdminCommandOperator) (err error),
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
@@ -1564,7 +1569,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			}
 			delete(jobMap, job.ID)
 
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1629,7 +1634,7 @@ func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 }
 
 // pprocessAllJobs processes all the jobs in the job table, 100 jobs at a time in case of high memory usage.
-func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processAllJobs(process func(*model.Job, model.AdminCommandOperator) (err error),
 	se sessionctx.Context, byWho model.AdminCommandOperator) (map[int64]error, error) {
 	var err error
 	var jobErrs = make(map[int64]error)
@@ -1655,7 +1660,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		}
 
 		for _, job := range jobs {
-			err = process(ns, job, byWho)
+			err = process(job, byWho)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue

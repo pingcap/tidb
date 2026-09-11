@@ -494,8 +494,8 @@ type cteInfo struct {
 	isInline bool
 	// forceInlineByHintOrVar will be true when CTE is hint by merge() or session variable "tidb_opt_force_inline_cte=true"
 	forceInlineByHintOrVar bool
-	// If CTE contain aggregation or window function in query (Indirect references to other cte containing agg or window in the query are also counted.)
-	containAggOrWindow bool
+	// If CTE contain aggregation, window function, order by, distinct and limit in query (Indirect references to other cte containing those operator in the query are also counted.)
+	containRecursiveForbiddenOperator bool
 	// Compute in preprocess phase. Record how many consumers the current CTE has
 	consumerCount int
 }
@@ -2489,7 +2489,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
-func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast.TableName, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast.TableName, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -2515,6 +2515,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
 		if skip && !keep {
+			skipCol = append(skipCol, colInfo)
 			continue
 		}
 		result = append(result, colInfo)
@@ -2586,16 +2587,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if colsInfo, ok := colsInfoMap[physicalID]; ok {
 			execColsInfo = colsInfo
 		}
-		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+		var skipColsInfo []*model.ColumnInfo
+		execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
-			HandleCols:  handleCols,
-			ColsInfo:    execColsInfo,
-			AnalyzeInfo: info,
-			TblInfo:     tbl.TableInfo,
-			Indexes:     indexes,
+			HandleCols:   handleCols,
+			ColsInfo:     execColsInfo,
+			AnalyzeInfo:  info,
+			TblInfo:      tbl.TableInfo,
+			Indexes:      indexes,
+			SkipColsInfo: skipColsInfo,
 		}
 		if newTask.HandleCols == nil {
 			extraCol := model.NewExtraHandleColInfo()
@@ -3015,7 +3018,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
-// TODO(hi-rustin): give some explanation about the default value.
+// TODO(0xPoe): give some explanation about the default value.
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    256,
 	ast.AnalyzeOptNumTopN:       20,
@@ -3693,7 +3696,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3707,7 +3710,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3877,11 +3880,15 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column, isInsert bool) (*expres
 	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
-// resolveGeneratedColumns resolves generated columns with their generation
-// expressions respectively. onDups indicates which columns are in on-duplicate list.
+// resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
+// If not-nil onDups is passed in, it will be **modified in place** and record columns in on-duplicate list.
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
+			// columns having on-update-now flag should also be considered.
+			if onDups != nil && mysql.HasOnUpdateNowFlag(column.GetFlag()) {
+				onDups[column.Name.L] = struct{}{}
+			}
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
@@ -3906,10 +3913,14 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		if onDups == nil {
 			continue
 		}
+		// There may be chain dependencies between columns,
+		// so we need to add new columns into onDups.
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
 				assign := &expression.Assignment{Col: colExpr, ColName: column.Name, Expr: expr}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
+				// onDups use lower column name, see Insert.resolveOnDuplicate
+				onDups[column.Name.L] = struct{}{}
 				break
 			}
 		}
@@ -4824,6 +4835,32 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	return data, nil
 }
 
+type userVariableChecker struct {
+	hasUserVariables bool
+}
+
+func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.VariableExpr); ok {
+		e.hasUserVariables = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// Check for UserVariables
+func checkForUserVariables(in ast.Node) error {
+	v := &userVariableChecker{hasUserVariables: false}
+	_, ok := in.Accept(v)
+	if !ok || v.hasUserVariables {
+		return dbterror.ErrViewSelectVariable
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -4971,6 +5008,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
@@ -5272,6 +5313,15 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
+	}
+	if explain.Stmt != nil {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+			origin := b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+			b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			defer func() {
+				b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+			}()
+		}
 	}
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
 	if err != nil {

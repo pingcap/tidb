@@ -465,6 +465,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceedWarnMsg) {
+			// Not sure why panic again after recover, we need to skip this for test.
+			failpoint.Inject("skipExecPanic", func() {
+				err = errors.Errorf("%v", r)
+				failpoint.Return()
+			})
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
@@ -612,7 +617,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
-		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}

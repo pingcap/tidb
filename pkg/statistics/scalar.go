@@ -74,6 +74,8 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			minTime = types.MinTimestamp
 		}
 		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
+		sc.AllowInvalidDate = true
+		sc.IgnoreZeroInDate = true
 		return float64(valueTime.Sub(sc, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()

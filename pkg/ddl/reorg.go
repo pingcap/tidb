@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -81,8 +82,7 @@ type reorgFnResult struct {
 	err     error
 }
 
-// newContext gets a context. It is only used for adding column in reorganization state.
-func newContext(store kv.Storage) sessionctx.Context {
+func newReorgSessCtx(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
@@ -540,7 +540,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(dc.store)
+	sctx := newReorgSessCtx(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -619,7 +619,7 @@ func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.P
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newContext(dc.store)
+	sessCtx := newReorgSessCtx(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
@@ -794,6 +794,19 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {

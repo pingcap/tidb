@@ -53,10 +53,14 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	uuids := []string{"ddl_id_1", "ddl_id_2"}
 	serverInfoMap := map[string]*infosync.ServerInfo{
 		uuids[0]: {
-			ID: uuids[0],
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: uuids[0],
+			},
 		},
 		uuids[1]: {
-			ID: uuids[1],
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: uuids[1],
+			},
 		},
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
@@ -77,7 +81,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
 	eligibleInstances, _, err = dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
-	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
+	s.Equal([]*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{IP: "1.1.1.1", Port: 4000}}}, eligibleInstances)
 }
 
 func (s *importIntoSuite) TestUpdateCurrentTask() {

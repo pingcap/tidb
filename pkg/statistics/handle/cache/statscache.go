@@ -15,6 +15,8 @@
 package cache
 
 import (
+	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -60,7 +62,7 @@ func NewStatsCacheImplForTest() (util.StatsCache, error) {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+func (s *StatsCacheImpl) Update(is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
 	start := time.Now()
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -75,10 +77,32 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		lastVersion = 0
 	}
 
-	var rows []chunk.Row
-	var err error
+	var (
+		skipMoveForwardStatsCache bool
+		rows                      []chunk.Row
+		err                       error
+	)
 	err = util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		rows, _, err = util.ExecRows(sctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
+		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
+		args := []any{lastVersion}
+
+		if len(tableAndPartitionIDs) > 0 {
+			// When updating specific tables, we skip incrementing the max stats version to avoid missing
+			// delta updates for other tables. The max version only advances when doing a full update.
+			skipMoveForwardStatsCache = true
+			// Sort and deduplicate the table IDs to remove duplicates
+			slices.Sort(tableAndPartitionIDs)
+			tableAndPartitionIDs = slices.Compact(tableAndPartitionIDs)
+			// Convert table IDs to strings since the SQL executor only accepts string arrays for IN clauses
+			tableStringIDs := make([]string, 0, len(tableAndPartitionIDs))
+			for _, tableID := range tableAndPartitionIDs {
+				tableStringIDs = append(tableStringIDs, strconv.FormatInt(tableID, 10))
+			}
+			query += "and table_id in (%?) "
+			args = append(args, tableStringIDs)
+		}
+		query += "order by version"
+		rows, _, err = util.ExecRows(sctx, query, args...)
 		return err
 	})
 	if err != nil {
@@ -117,7 +141,14 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	s.UpdateStatsCache(tables, deletedTableIDs)
+
+	s.UpdateStatsCache(util.CacheUpdate{
+		Updated: tables,
+		Deleted: deletedTableIDs,
+		Options: util.UpdateOptions{
+			SkipMoveForward: skipMoveForwardStatsCache,
+		},
+	})
 	dur := time.Since(start)
 	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
@@ -139,11 +170,13 @@ func (s *StatsCacheImpl) replace(newCache *StatsCache) {
 }
 
 // UpdateStatsCache updates the cache with the new cache.
-func (s *StatsCacheImpl) UpdateStatsCache(tables []*statistics.Table, deletedIDs []int64) {
+// UpdateStatsCache updates the cache with the new cache.
+func (s *StatsCacheImpl) UpdateStatsCache(cacheUpdate util.CacheUpdate) {
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(tables, deletedIDs)
+		s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
 	} else {
-		newCache := s.Load().CopyAndUpdate(tables, deletedIDs)
+		// TODO: remove this branch because we will always enable quota.
+		newCache := s.Load().CopyAndUpdate(cacheUpdate.Updated, cacheUpdate.Deleted)
 		s.replace(newCache)
 	}
 }
@@ -204,10 +237,10 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
-	distribution := make([]int64, 5)
+	distribution := make([]int64, 9)
 	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
-		distribution[4]++ // total table count
+		distribution[7]++ // total table count
 		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
 		if !isEligibleForAnalysis {
 			uneligibleAnalyze++
@@ -219,16 +252,22 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 		}
 		if healthy < 50 {
 			distribution[0]++
-		} else if healthy < 80 {
+		} else if healthy < 55 {
 			distribution[1]++
-		} else if healthy < 100 {
+		} else if healthy < 60 {
 			distribution[2]++
-		} else {
+		} else if healthy < 70 {
 			distribution[3]++
+		} else if healthy < 80 {
+			distribution[4]++
+		} else if healthy < 100 {
+			distribution[5]++
+		} else {
+			distribution[6]++
 		}
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
-	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
+	handle_metrics.StatsHealthyGauges[8].Set(float64(uneligibleAnalyze))
 }

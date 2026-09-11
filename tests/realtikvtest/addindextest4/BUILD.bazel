@@ -5,6 +5,7 @@ go_test(
     timeout = "long",
     srcs = [
         "ingest_test.go",
+        "integration_test.go",
         "main_test.go",
     ],
     flaky = True,

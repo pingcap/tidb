@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -739,6 +740,23 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgMaxWriteSpeed, Value: strconv.Itoa(DefTiDBDDLReorgMaxWriteSpeed), Type: TypeStr,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			i64, err := units.RAMInBytes(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if i64 < 0 || i64 > units.PiB {
+				// Here we limit the max value to 1 PiB instead of math.MaxInt64, since:
+				// 1. it is large enough
+				// 2. units.RAMInBytes would first cast the size to a float, and may lose precision when the size is too large
+				return fmt.Errorf("invalid value for '%d', it should be within [%d, %d]", i64, 0, units.PiB)
+			}
+			DDLReorgMaxWriteSpeed.Store(i64)
+			return nil
+		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(DDLReorgMaxWriteSpeed.Load(), 10), nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLErrorCountLimit(TidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 		return nil
@@ -830,7 +848,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: strconv.Itoa(DefTiDBGOGCMaxValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			maxValue := TidbOptInt64(val, DefTiDBGOGCMaxValue)
 			gctuner.SetMaxGCPercent(uint32(maxValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
@@ -847,7 +865,7 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMinValue, Value: strconv.Itoa(DefTiDBGOGCMinValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			minValue := TidbOptInt64(val, DefTiDBGOGCMinValue)
 			gctuner.SetMinGCPercent(uint32(minValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
@@ -864,7 +882,7 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)

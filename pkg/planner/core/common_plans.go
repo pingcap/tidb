@@ -530,6 +530,7 @@ type AnalyzeColumnsTask struct {
 	HandleCols       HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
+	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
 	AnalyzeInfo
@@ -898,16 +899,6 @@ func (e *Explain) RenderResult() error {
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
-		}
-	}
-
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagTrace)); err != nil {
-				return err
-			}
 		}
 	}
 
