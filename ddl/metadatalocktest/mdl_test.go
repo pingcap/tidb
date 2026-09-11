@@ -17,6 +17,7 @@
 package metadatalocktest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,7 +26,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -182,6 +185,69 @@ func TestMDLBasicDelete(t *testing.T) {
 
 	wg.Wait()
 	require.Less(t, ts1, ts2)
+}
+
+func TestMDLLoadData(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int, index idx(a));")
+	tk.MustExec("insert into t values(1);")
+
+	// The `LOAD DATA LOCAL INFILE` statement only prepares the loading process, the data is
+	// inserted later by the transactions created by the loading process. It's the same as what
+	// the server does in `handleLoadData`, so drive the loading process manually here.
+	tk.MustExec("load data local infile 'test.csv' into table t")
+	ld, ok := tk.Session().Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer tk.Session().SetValue(executor.LoadDataVarKey, nil)
+
+	ctx := context.Background()
+	sess := tk.Session()
+	ld.InitQueues()
+	ld.SetMaxRowsInBatch(1)
+	ld.StartStopWatcher()
+	defer ld.ForceQuit()
+	require.NoError(t, sessiontxn.NewTxn(ctx, sess))
+	require.NoError(t, ld.LockMDL(ctx))
+	defer ld.UnlockMDL()
+
+	// Insert one batch. The data of the batch is committed and the transaction of the loading
+	// process is refreshed here, the metadata lock of the table must be kept after the refresh.
+	_, reachLimit, err := ld.InsertData(ctx, nil, []byte("2\n"))
+	require.NoError(t, err)
+	require.True(t, reachLimit)
+	require.NoError(t, ld.CommitOneTask(ctx, ld.MakeCommitTask()))
+
+	ddlDone := make(chan struct{})
+	go func() {
+		tkDDL.MustExec("alter table test.t add column b int;")
+		close(ddlDone)
+	}()
+	select {
+	case <-ddlDone:
+		require.FailNow(t, "ALTER TABLE should be blocked by the running LOAD DATA")
+	case <-time.After(2 * time.Second):
+	}
+
+	// Releasing the metadata lock of the loading process unblocks the DDL.
+	ld.UnlockMDL()
+	select {
+	case <-ddlDone:
+	case <-time.After(30 * time.Second):
+		require.FailNow(t, "ALTER TABLE should be executed after the LOAD DATA releases the metadata lock")
+	}
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
 }
 
 func TestMDLBasicPointGet(t *testing.T) {

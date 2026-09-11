@@ -3190,6 +3190,35 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 	return s.TxnCtx.relatedTableForMDL
 }
 
+// InheritRelatedTableForMDL makes the txn context inherit the related tables for metadata lock
+// from the previous txn context.
+//
+// A statement may be executed in multiple transactions. For example, LOAD DATA writes data batch
+// by batch and commits each batch in a new transaction, but the table info used by the statement
+// is resolved before these transactions. In this case, the metadata lock of the table must be
+// kept until the whole statement finishes, otherwise a DDL could change the table while the
+// statement is still writing data with the outdated table info.
+func (tc *TransactionContext) InheritRelatedTableForMDL(prev *TransactionContext) {
+	if prev == nil || prev == tc {
+		return
+	}
+	prev.tdmLock.Lock()
+	prevTables := prev.relatedTableForMDL
+	prev.tdmLock.Unlock()
+	if prevTables == nil {
+		return
+	}
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+	if tc.relatedTableForMDL == nil {
+		tc.relatedTableForMDL = new(sync.Map)
+	}
+	prevTables.Range(func(key, value interface{}) bool {
+		tc.relatedTableForMDL.Store(key, value)
+		return true
+	})
+}
+
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
