@@ -16,7 +16,7 @@ When `tidb_enable_new_only_full_group_by_check=ON`, SQL must use the Go master's
 - [x] (2026-09-11) Connect projection FD validation, auxiliary ORDER BY exemption, scope completion, and delayed view validation.
 - [x] (2026-09-11) Verify original JOIN cases, correlated scalar subqueries, strict/lax keys, outer joins, constant grouping, nested queries and windows: eight session regressions pass.
 - [x] (2026-09-11) Ready checks: 16 planner FD tests, aggregation_tests, 310 session integration tests and make lint pass.
-- [ ] Independently commit and push this verified failure category.
+- [x] (2026-09-11) Independently committed and pushed as d23f87264c to origin/hparser-integration, rebased without conflict over concurrent statistics collector commit 673e47ccf6 (no overlapping files).
 
 ## Surprises & Discoveries
 
