@@ -1037,11 +1037,10 @@ func TestPreSplitIndexRegionsManualValueListTimeZone(t *testing.T) {
 // of the context the DDL carries, never of the DDL worker session that happens to run the job.
 // The TopN and the histogram branch reach the encoder by different routes, so both are covered.
 //
-// The two branches legitimately differ in how they react to the eval context itself. A TopN entry
-// is stored as comparable bytes, so decoding it in a zone and encoding it back in the same zone
-// cancels out and the boundary is the instant ANALYZE saw. A histogram bound arrives as a bare wall
-// clock with no zone attached (see #52429), so whichever zone the eval context carries is the one it
-// gets read in. This test fixes who interprets those values, not what they mean.
+// Neither branch reacts to the eval context's own zone either, because statistics hold a TIMESTAMP
+// in UTC and are read back in UTC (#52429). A TopN entry is stored as comparable bytes, so it always
+// decoded to the instant ANALYZE saw; a histogram bound is a wall clock, and reading it in UTC is
+// what makes it mean that same instant rather than whatever zone happened to be at hand.
 func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
 	tblInfo, idxInfo := buildAutoPreSplitTestTableInfoFromSQL(
 		t, "create table t(a bigint, b timestamp, index idx(b))")
@@ -1111,12 +1110,11 @@ func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
 	submitterZone := time.FixedZone("+08:00", 8*60*60)
 
 	for _, branch := range []struct {
-		name             string
-		useTopN          bool
-		evalZoneMovesKey bool
+		name    string
+		useTopN bool
 	}{
-		{name: "histogram", useTopN: false, evalZoneMovesKey: true},
-		{name: "TopN", useTopN: true, evalZoneMovesKey: false},
+		{name: "histogram", useTopN: false},
+		{name: "TopN", useTopN: true},
 	} {
 		t.Run(branch.name, func(t *testing.T) {
 			want := planWith(t, submitterZone, workerZones[0], branch.useTopN)
@@ -1125,26 +1123,19 @@ func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
 					"the DDL worker session's time zone must not reach the split keys")
 			}
 
-			// And the eval context is what does decide them, for the branch that carries a bare
-			// wall clock. Verified failing if the auto path is switched back to the worker session.
-			inUTC := planWith(t, time.UTC, workerZones[0], branch.useTopN)
-			if branch.evalZoneMovesKey {
-				require.NotEqual(t, want, inUTC,
-					"a histogram bound is read in the eval context's zone, so the zone must move it")
-			} else {
-				require.Equal(t, want, inUTC,
-					"a TopN entry round-trips through the same zone, so the zone must cancel out")
-			}
+			// Nor does the eval context's own zone, now that statistics are read in UTC. Verified
+			// failing if the auto path reads them in the zone the DDL was submitted in instead.
+			require.Equal(t, want, planWith(t, time.UTC, workerZones[0], branch.useTopN),
+				"statistics are held in UTC, so no session's time zone may move a boundary")
 		})
 	}
 
-	// The TopN cancellation above holds because decoding and encoding apply the same zone, but that
-	// is not a general guarantee: in a DST zone the autumn fall-back makes one local wall clock
-	// cover two UTC instants, and re-encoding resolves the ambiguity to the later one. Two distinct
-	// statistics values then collapse onto a single boundary, so a boundary can sit an hour off for
-	// the length of that one repeated hour. This is pre-existing and not introduced by threading the
-	// eval context through; keeping statistics in UTC end to end removes it, see #52429.
-	t.Run("DST fall-back collapses the repeated hour", func(t *testing.T) {
+	// Reading statistics in UTC also removes a defect that no zone-dependent reading can avoid: in a
+	// DST zone the autumn fall-back makes one local wall clock cover two UTC instants, and encoding
+	// resolves the ambiguity to the later one, so two distinct statistics values used to collapse
+	// onto a single boundary for the length of that one repeated hour. In UTC there is no ambiguity
+	// to resolve, so they stay distinct whatever zone is passed in.
+	t.Run("DST fall-back no longer collapses the repeated hour", func(t *testing.T) {
 		amsterdam := mustLoadLocation(t, "Europe/Amsterdam")
 		// On 2024-10-27 Amsterdam goes back from 03:00 CEST to 02:00 CET, so local 02:30 is both
 		// 00:30 UTC (still CEST) and 01:30 UTC (already CET).
@@ -1163,9 +1154,9 @@ func TestPlanAutoPreSplitIndexRegionsTimestampTimeZone(t *testing.T) {
 		require.NotEqual(t,
 			encodedIn(t, firstPass, time.UTC), encodedIn(t, secondPass, time.UTC),
 			"an hour apart, the two instants must stay distinct in a zone without transitions")
-		require.Equal(t,
+		require.NotEqual(t,
 			encodedIn(t, firstPass, amsterdam), encodedIn(t, secondPass, amsterdam),
-			"in the repeated hour both instants resolve to the later one, so they collapse")
+			"and in the repeated hour too, since the values are read in UTC either way")
 	})
 }
 
