@@ -351,7 +351,9 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash'")
 		sql := "select _tidb_commit_ts from t1"
 		tk.MustHavePlan(sql, "TableFullScan")
-		require.False(t, tk.HasTiFlashPlan(sql))
+		tikvSQL := "select /*+ read_from_storage(tikv[t1]) */ _tidb_commit_ts from t1"
+		tk.MustHavePlan(tikvSQL, "TableFullScan")
+		require.False(t, tk.HasTiFlashPlan(tikvSQL))
 
 		tk.MustExec("drop table if exists t_commit_ts")
 		tk.MustExec("create table t_commit_ts(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
@@ -366,7 +368,17 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 		tk.MustNotHavePlan(indexLookUpSQL, "IndexReader")
 
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-		require.Error(t, tk.ExecToErr(sql))
+		tk.MustHavePlan(sql, "TableFullScan")
+		require.True(t, tk.HasTiFlashPlan(sql))
+		tiflashFilterSQL := "select _tidb_commit_ts from t1 where _tidb_commit_ts > 0"
+		selectionPushedDown := false
+		for _, row := range tk.MustQuery("explain " + tiflashFilterSQL).Rows() {
+			if strings.Contains(row[0].(string), "Selection") && strings.Contains(row[2].(string), "tiflash") {
+				selectionPushedDown = true
+				break
+			}
+		}
+		require.True(t, selectionPushedDown)
 	})
 }
 

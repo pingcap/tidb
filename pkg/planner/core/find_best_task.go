@@ -2272,12 +2272,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if path.IsTablePath() {
 			// prefer tiflash, while current table path is tikv, skip it.
-			// TiFlash cannot provide _tidb_commit_ts, so retain the TiKV path when this column is accessed.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV && !accessesCommitTS {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
-			if (ds.PreferStoreType&h.PreferTiKV != 0 || accessesCommitTS) && path.StoreType == kv.TiFlash {
+			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
 			if !ds.HasTiFlash() && path.StoreType == kv.TiFlash {
