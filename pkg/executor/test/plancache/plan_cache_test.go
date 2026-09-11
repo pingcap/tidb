@@ -867,7 +867,7 @@ func testPreparePlanCache4Blacklist(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("execute stmt;")
 	attachSessionManagerForExplain(tk)
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID))
-	require.Equal(t, 3, len(res.Rows()))
+	requireExplainContainsOperator(t, res.Rows(), "TableDual")
 	tk.MustExec("INSERT INTO mysql.expr_pushdown_blacklist VALUES('<','tikv','');")
 	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 	tk.MustExec("execute stmt;")
