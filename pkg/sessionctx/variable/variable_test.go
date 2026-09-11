@@ -698,6 +698,11 @@ func TestInstanceScope(t *testing.T) {
 }
 
 func TestSetSysVar(t *testing.T) {
+	originalEnableConnectionEventLog := EnableConnectionEventLog.Load()
+	t.Cleanup(func() {
+		EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
+
 	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	originalVal := GetSysVar(SystemTimeZone).Value
@@ -709,6 +714,12 @@ func TestSetSysVar(t *testing.T) {
 	require.Equal(t, "America/New_York", val)
 	SetSysVar(SystemTimeZone, originalVal) // restore
 	require.Equal(t, originalVal, GetSysVar(SystemTimeZone).Value)
+
+	require.NoError(t, GetSysVar(TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), vars, On, false))
+	require.True(t, EnableConnectionEventLog.Load())
+
+	require.NoError(t, GetSysVar(TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), vars, Off, false))
+	require.False(t, EnableConnectionEventLog.Load())
 }
 
 func TestSkipSysvarCache(t *testing.T) {

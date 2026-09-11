@@ -1398,6 +1398,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 	switch cmd {
 	case mysql.ComQuit:
+		cc.logConnectionEvent(ctx, "logout")
 		return io.EOF
 	case mysql.ComInitDB:
 		node, err := cc.useDB(ctx, dataStr)
