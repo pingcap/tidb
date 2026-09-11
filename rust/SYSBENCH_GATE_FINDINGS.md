@@ -568,6 +568,80 @@ Profile-driven findings (perf, dwarf call graphs, conn threads):
     within this box's run-to-run spread; the verified effect is the idle
     cost.
 
+14. Every client response left as two TLS records and two `writev` calls:
+    the packet writer hands each frame down as one vectored write of header
+    plus payload, but `ClientErrorRecordingOutput` (the authenticated command
+    writer) forwarded only `write` and `flush`, so the standard library's
+    default `write_vectored` wrote the 4-byte header alone and the payload as
+    a second write; rustls turns each into its own record, and the client
+    reads twice per response. Go's `PacketIO` flushes a response as one
+    write. The wrapper now forwards `write_vectored` (unit test pins one
+    transport write per frame).
+15. **Fair locking was never armed on the cluster-session path.** Both nodes
+    run with `@@tidb_pessimistic_txn_fair_locking = ON` (the bootstrap
+    value), and the txnkv layer implements Go's `KVTxn.LockKeys` rule (a
+    single-key statement under fair locking is sent in
+    `WakeUpModeForceLock`, a newer committed version comes back as
+    `LockedWithConflict` and the statement re-runs at the advanced
+    `for_update_ts` with its lock retained) -- but only the real_tikv path
+    called `set_fair_locking`; `SessionTransaction` (the `--cluster-session`
+    node) promoted its lazy pessimistic state without it. Every contended
+    key therefore took the Normal-mode route: WriteConflict, a
+    PessimisticRollback RPC, a fresh PD timestamp and a second lock RPC.
+    TiKV's scheduler counters per TPC-C transaction (2 warehouses, 4
+    threads) showed it directly: Rust 0.22 `pessimistic_rollback`/txn (Payment
+    0.76, Delivery 1.87, NewOrder 0.17) against Go 0 and Go's 0.18
+    `acquire_pessimistic_lock_resumed`/txn (the in-TiKV resumption fair
+    locking buys). `SessionTransaction` now carries the switch from BEGIN
+    (Go `OnPessimisticStmtStart` -> `StartFairLocking`) and applies it at
+    promotion; after the fix the Rust node issues 0 rollbacks/txn and 0.17
+    resumed locks/txn, Payment 0.76 -> 0 rollbacks with 4.33 -> 3.90 lock
+    RPCs. Two RealTiKV tests pin the seam (switch on -> promoted transaction
+    in fair-locking mode; off -> Normal). Go re-reads the row on the retry
+    too (`doLockKeys` returns the LockedWithConflict conflict before the
+    value reaches the lock cache), so `kv_get` rising 1.01 -> 1.17/txn matches
+    Go's 1.08.
+
+Round-4 accounting that ruled other suspects OUT (all 4 threads, one box):
+TiKV commands per write_only transaction are identical to Go (lock 2.9,
+prewrite 3.1, commit 3.1, get 0.05); the Rust node fetches ONE PD timestamp
+per write transaction (Go: 2); per-statement client-observed latency is at
+parity with Go on every statement (BEGIN 0.5 ms, point UPDATE ~1.0 ms,
+COMMIT ~1.9 ms, single connection); multi-region prewrites go out together
+and async-commit secondaries are detached, as in client-go; TiKV handles a
+pessimistic lock in 0.19 ms and a prewrite in 0.95 ms of the ~0.95/1.9 ms
+the statements cost, and the non-TiKV remainder is hop and syscall cost
+that strace inflates (a point select's whole PD+TiKV round trip is 0.51 ms).
+The connection-thread profile is flat: 29% of its samples are kernel
+(task switch, wake-ups, reschedule IPIs, TCP), the rest spread below 1%
+per symbol; the transport worker's profile is flatter still.
+
+Round-4 A/B (4 threads, 20s, 2 rounds, three binaries alternated on :4001:
+`new` = round-3 head, `r4a` = item 14 only, `r4b` = items 14+15; TPC-C on
+2 warehouses):
+| workload            | new (r1/r2)    | r4a (r1/r2)    | r4b (r1/r2)    | r4b vs new |
+|---------------------|----------------|----------------|----------------|------------|
+| oltp_write_only tps | 541 / 544      | 546 / 571      | 563 / 555      | +3.0%      |
+| tpcc tpmC           | 6097 / 5543    | 5657 / 5715    | 6021 / 6072    | +3.9%      |
+| oltp_point_select   | 8002 / 8138    | 7878 / 7564    | 8042 / 8128    | 0%         |
+| oltp_read_only tps  | 258 / 289      | 278 / 288      | 292 / 291      | +6.7%      |
+Go on the same day and box, 4 threads: write_only 430/438 tps (9.3/9.1 ms),
+TPC-C 5636/5549 tpmC (21.6/22.2 ms NEW_ORDER).
+
+Standing against the pre-campaign baseline (4 threads; the baseline day's
+Go numbers were write_only 424 tps and TPC-C 4824/4750 tpmC, so the box is
+2% faster on write_only and 17% faster on TPC-C today):
+| workload         | rust baseline | rust now      | raw    | normalized to Go |
+|------------------|---------------|---------------|--------|------------------|
+| oltp_point_select| 5464 / 0.73ms | 8042 / 0.50ms | +47%   | +27%             |
+| oltp_read_only   | 216 / 18.5ms  | 292 / 13.7ms  | +35%   | +19%             |
+| oltp_write_only  | 454 / 8.81ms  | 559 / 7.15ms  | +23%   | +20%             |
+| tpcc (2 wh)      | 4625 / 27ms   | 6047 / 20ms   | +31%   | +12%             |
+Remaining gap: TPC-C normalized. Its RPC profile now matches Go's and its
+connection-thread profile is flat; the next lever is per-statement CPU on
+its cached-plan point statements (range rebuild, prepared bind, result
+drain), i.e. the same class of item as round 1.
+
 Round-2 A/B (items 11-12 on top of the pushed round-1 binary; 16 threads,
 alternating binaries, reloaded 10-warehouse TPC-C):
 | workload             | old tps r1/r2  | new tps r1/r2    | delta   | old avg ms | new avg ms |

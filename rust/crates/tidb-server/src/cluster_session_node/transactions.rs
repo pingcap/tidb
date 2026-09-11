@@ -1027,7 +1027,10 @@ where
             self.timeout,
             tidb_exec::session_commit_protocol::session_commit_protocol(),
         )
-        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+        .map(|mut transaction| {
+            transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
+            Box::new(transaction) as Box<dyn OpenClusterTransaction>
+        })
         .map_err(|error| error.to_string())
     }
 
@@ -1095,6 +1098,12 @@ where
                 self.timeout,
                 tidb_exec::session_commit_protocol::session_commit_protocol(),
             )
+            .map(|mut transaction| {
+                // `@@tidb_pessimistic_txn_fair_locking`: Go
+                // `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`.
+                transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
+                transaction
+            })
         } else {
             SessionTransaction::begin(
                 opener,

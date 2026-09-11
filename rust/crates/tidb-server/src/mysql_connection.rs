@@ -624,6 +624,15 @@ impl<O: Write> Write for ClientErrorRecordingOutput<O> {
         self.inner.write(buffer)
     }
 
+    // The packet writer hands every frame down as one vectored write of
+    // header plus payload. Without this forwarding the default
+    // `write_vectored` writes only the first slice, so each response left as
+    // two TLS records and two syscalls; Go's `PacketIO` flushes a response as
+    // one write.
+    fn write_vectored(&mut self, buffers: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        self.inner.write_vectored(buffers)
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }
@@ -2505,6 +2514,67 @@ fn serve_connection_inner<F: QuerySessionFactory>(
 /// never been exercised end to end). No cluster is involved: `plan_insert`/
 /// `plan_update` are the same pure, storage-free planning step production
 /// runs before ever opening a real transaction.
+#[cfg(test)]
+mod client_error_recording_output_tests {
+    use std::io::{IoSlice, Write};
+
+    use super::ClientErrorRecordingOutput;
+
+    /// Records each transport write as the packet writer's frame layer sees it.
+    #[derive(Default)]
+    struct RecordingSink {
+        writes: Vec<Vec<u8>>,
+    }
+
+    impl Write for RecordingSink {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.writes.push(buffer.to_vec());
+            Ok(buffer.len())
+        }
+
+        fn write_vectored(&mut self, buffers: &[IoSlice<'_>]) -> std::io::Result<usize> {
+            self.writes.push(
+                buffers
+                    .iter()
+                    .flat_map(|buffer| buffer.iter().copied())
+                    .collect(),
+            );
+            Ok(buffers.iter().map(|buffer| buffer.len()).sum())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The packet writer hands a frame down as one vectored write of header
+    /// plus payload; the wrapper must keep it one transport write, as Go's
+    /// `PacketIO` flushes a response as one write. The default
+    /// `write_vectored` would forward only the first slice, splitting every
+    /// response into two TLS records and two syscalls.
+    #[test]
+    fn a_vectored_frame_write_reaches_the_transport_as_one_write() {
+        let mut output = ClientErrorRecordingOutput::new(
+            RecordingSink::default(),
+            "root".to_owned(),
+            "localhost".to_owned(),
+        );
+        let header = [7u8, 0, 0, 1];
+        let payload = b"\x00\x00\x00\x02\x00\x00\x00";
+
+        let written = output
+            .write_vectored(&[IoSlice::new(&header), IoSlice::new(payload)])
+            .expect("the sink accepts the frame");
+
+        assert_eq!(written, header.len() + payload.len());
+        assert_eq!(
+            output.inner.writes,
+            vec![[header.as_slice(), payload.as_slice()].concat()],
+            "header and payload must leave as one transport write"
+        );
+    }
+}
+
 #[cfg(test)]
 mod prepared_execute_wire_tests {
     use tidb_exec::real_tikv_dml::{plan_insert, plan_update, ConfiguredWritePlan};

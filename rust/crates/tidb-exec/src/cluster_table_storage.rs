@@ -754,6 +754,10 @@ where
     /// session's `tidb_txn_mode` at `BEGIN`, Go's `DefTiDBTxnMode`
     /// (pessimistic) being the default.
     pessimistic: bool,
+    /// `@@tidb_pessimistic_txn_fair_locking` as it stood at `BEGIN`; reaches
+    /// the locking transaction when the lazy pessimistic state is promoted
+    /// (Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`).
+    fair_locking: bool,
 }
 
 enum SessionTransactionState<C, L, P: StorePdCapability> {
@@ -783,6 +787,7 @@ enum SessionTransactionState<C, L, P: StorePdCapability> {
 /// the first statement that actually needs row locks.
 fn promote_pessimistic_state<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     state: &mut SessionTransactionState<C, L, P>,
+    fair_locking: bool,
 ) -> Result<(), StorageError> {
     if !matches!(state, SessionTransactionState::PessimisticPending { .. }) {
         return Ok(());
@@ -796,8 +801,13 @@ fn promote_pessimistic_state<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     else {
         unreachable!("the lazy pessimistic state was checked before promotion")
     };
-    let transaction = RealPessimisticTransaction::from_transaction(transaction, opened_at)
+    let mut transaction = RealPessimisticTransaction::from_transaction(transaction, opened_at)
         .map_err(|error| StorageError::Backend(error.to_string()))?;
+    // Go arms fair locking per pessimistic statement
+    // (`basePessimisticTxnContextProvider.OnPessimisticStmtStart`); here the
+    // session-level switch reaches the transaction once, at promotion, and
+    // `acquire_locks` applies Go's single-key `ForceLock` rule per statement.
+    transaction.set_fair_locking(fair_locking);
     *state = SessionTransactionState::Pessimistic {
         transaction,
         opener,
@@ -833,7 +843,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            promote_pessimistic_state(&mut state)?;
+            promote_pessimistic_state(&mut state, self.fair_locking)?;
             match &mut *state {
                 SessionTransactionState::Pessimistic { transaction, .. } => transaction
                     .advance_for_update_ts()
@@ -893,6 +903,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             start_ts,
             timeout,
             pessimistic: false,
+            fair_locking: false,
         })
     }
 
@@ -936,6 +947,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             start_ts,
             timeout,
             pessimistic: true,
+            fair_locking: false,
         })
     }
 
@@ -944,6 +956,31 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     #[must_use]
     pub const fn is_pessimistic(&self) -> bool {
         self.pessimistic
+    }
+
+    /// `@@tidb_pessimistic_txn_fair_locking` reaching this transaction. Only a
+    /// pessimistic transaction locks, so only it can lock fairly; the flag is
+    /// applied when the lazy pessimistic state is promoted, before the first
+    /// lock request.
+    pub const fn set_fair_locking(&mut self, enabled: bool) {
+        self.fair_locking = enabled;
+    }
+
+    /// Whether the promoted locking transaction locks fairly -- Go
+    /// `KVTxn.IsInFairLockingMode`. `false` before the first locking statement
+    /// promotes the lazy pessimistic state, whatever the switch says.
+    #[must_use]
+    pub fn is_in_fair_locking_mode(&self) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &*state {
+            SessionTransactionState::Pessimistic { transaction, .. } => {
+                transaction.is_in_fair_locking_mode()
+            }
+            _ => false,
+        }
     }
 
     /// Acquires pessimistic locks on one statement's written keys at the
@@ -992,7 +1029,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        promote_pessimistic_state(&mut state)?;
+        promote_pessimistic_state(&mut state, self.fair_locking)?;
         let call = UnaryCallContext::with_timeout(self.timeout);
         let outcome = match &mut *state {
             SessionTransactionState::Pessimistic {
