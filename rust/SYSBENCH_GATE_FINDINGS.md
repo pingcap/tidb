@@ -482,6 +482,14 @@ Profile-driven findings (perf, dwarf call graphs, conn threads):
 8. `SqlKiller::get_kill_event_chan` allocated a channel per statement and
    grew a waiter list; Go hands every caller the one `killEvent.ch`. The
    Rust killer now shares one channel until it is triggered or reset.
+9. The parallel HashAgg pipeline (Go runs `DISTINCT`/GROUP BY through
+   `parallelExec` whenever the concurrencies are above 1) handed a
+   single-chunk input to a persistent pool lane: one wakeup, one channel
+   hop and one join for a 100-row fold, plus the pool thread's own
+   scheduling (`tidb-exec-pool` was ~4% of node samples in read_only).
+   The first chunk is now held until a second one arrives; a single-chunk
+   input is folded on the fetching thread into the same partial maps the
+   final stage adopts. Lane assignment for multi-chunk input is unchanged.
 
 Rust node CPU per transaction (server process, `/proc` utime+stime, 4
 threads, 15s): point_select 0.248 -> 0.181 ms (-27%), read_only 6.33 -> 4.78
@@ -497,6 +505,10 @@ concurrency). TPC-C is `tiup bench tpcc` on 10 warehouses.
 | oltp_read_only       | 377 / 384      | 419 / 421        | +10.2%  | 42.4/41.6  | 38.2/38.0  |
 | oltp_write_only      | 664 / 636      | 733 / 776        | +16.1%  | 24.1/25.2  | 21.8/20.6  |
 | oltp_read_write      | 188 / 186      | 215 / 215        | +14.8%  | 84.7/85.9  | 74.2/74.4  |
+With item 9 (single-chunk HashAgg fold) added, the same A/B re-run for the
+two read-heavy mixes:
+| oltp_read_only       | 366 / 375      | 409 / 442        | +15.0%  | 43.7/42.6  | 39.1/36.1  |
+| oltp_read_write      | 216 / 228      | 273 / 244        | +16.5%  | 74.0/70.0  | 58.5/65.4  |
 At 4 threads the loop is latency-bound on the TiKV round trip and the same
 binaries measure within noise of each other on sysbench (+1..5%). TPC-C on
 10 warehouses at 4 threads: old 4327 / 4023 tpmC, new 4439 / 4677 tpmC

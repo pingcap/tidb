@@ -1206,6 +1206,14 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     let mut next_lane = 0usize;
     let mut fetch_error: Option<ExecError> = None;
     let mut child_drained = false;
+    // The first chunk is held back until a second one proves the input spans
+    // more than one chunk. A single-chunk input is then folded on this
+    // thread: Go's one active partial goroutine costs nothing to run, while
+    // a pool lane costs a wakeup, a channel hop and a join for the same
+    // fold. Lane assignment is unchanged (the held chunk still goes to lane
+    // 0, the second to lane 1) and every fold still lands in the partial
+    // maps the final stage adopts.
+    let mut held: Option<(Chunk, i64)> = None;
     loop {
         if abort.raised() || spill_requested.load(std::sync::atomic::Ordering::SeqCst) {
             break;
@@ -1226,37 +1234,80 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         tracker.consume(chunk_charge);
         let replacement = child.new_chunk();
         let chunk = std::mem::replace(child_chunk, replacement);
-        if lane_txs[next_lane].is_none() {
-            let (lane_tx, lane_rx) = sync_channel::<(Chunk, i64)>(1);
-            partial_handles[next_lane] = Some(spawn_partial_lane(
-                lane_rx,
-                abort.clone(),
-                Arc::clone(plan),
-                final_concurrency,
-                Arc::clone(tracker),
-                #[cfg(test)]
-                Arc::clone(stats),
-            ));
-            lane_txs[next_lane] = Some(lane_tx);
-        }
-        if lane_txs[next_lane]
-            .as_ref()
-            .expect("a dispatched lane has a sender")
-            .send((chunk, chunk_charge))
-            .is_err()
-        {
-            break;
-        }
         #[cfg(test)]
         stats
             .dispatched_chunks
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        next_lane = (next_lane + 1) % partial_concurrency;
+        if held.is_none() && lane_txs.iter().all(Option::is_none) {
+            held = Some((chunk, chunk_charge));
+            continue;
+        }
+        let mut dispatched = true;
+        for item in held
+            .take()
+            .into_iter()
+            .chain(std::iter::once((chunk, chunk_charge)))
+        {
+            if lane_txs[next_lane].is_none() {
+                let (lane_tx, lane_rx) = sync_channel::<(Chunk, i64)>(1);
+                partial_handles[next_lane] = Some(spawn_partial_lane(
+                    lane_rx,
+                    abort.clone(),
+                    Arc::clone(plan),
+                    final_concurrency,
+                    Arc::clone(tracker),
+                    #[cfg(test)]
+                    Arc::clone(stats),
+                ));
+                lane_txs[next_lane] = Some(lane_tx);
+            }
+            if lane_txs[next_lane]
+                .as_ref()
+                .expect("a dispatched lane has a sender")
+                .send(item)
+                .is_err()
+            {
+                dispatched = false;
+                break;
+            }
+            next_lane = (next_lane + 1) % partial_concurrency;
+        }
+        if !dispatched {
+            break;
+        }
     }
 
     drop(lane_txs);
     let mut partial_maps = Vec::with_capacity(partial_concurrency);
     let mut first_error = fetch_error;
+    if let Some((chunk, chunk_charge)) = held.take() {
+        // The one partial worker's whole job, on the fetching thread.
+        if first_error.is_none() {
+            #[cfg(test)]
+            stats.record_partial_worker();
+            let mut maps: Vec<PipelineMap> = (0..final_concurrency)
+                .map(|_| PipelineMap::default())
+                .collect();
+            match fold_chunk(
+                FoldInputs {
+                    ctx: &plan.ctx,
+                    group_by: &plan.group_by,
+                    integer_columns: plan.integer_columns.as_deref(),
+                    agg_funcs: &plan.agg_funcs,
+                },
+                &mut maps,
+                final_concurrency,
+                tracker,
+                &chunk,
+            ) {
+                Ok(()) => partial_maps.push(maps),
+                Err(error) => {
+                    first_error = Some(error);
+                }
+            }
+        }
+        tracker.consume(-chunk_charge);
+    }
     for handle in partial_handles.into_iter().flatten() {
         match handle.recv() {
             Ok(Ok(maps)) => partial_maps.push(maps),
