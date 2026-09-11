@@ -705,17 +705,12 @@ fn misc_keyword_functions() {
         r("select weight_string(a) from t"),
         "SELECT WEIGHT_STRING(`a`) FROM `t`"
     );
-    // `APPROX_COUNT_DISTINCT` restores with a `DISTINCT` modifier like
-    // every other aggregate here (confirmed via `godump restore`),
-    // unlike `COLLATION`/`WEIGHT_STRING`'s own plain scalar-call shape.
+    // Go's approximate aggregate grammar excludes the DISTINCT modifier.
     assert_eq!(
         r("select approx_count_distinct(a) from t"),
         "SELECT APPROX_COUNT_DISTINCT(`a`) FROM `t`"
     );
-    assert_eq!(
-        r("select approx_count_distinct(distinct a) from t"),
-        "SELECT APPROX_COUNT_DISTINCT(DISTINCT `a`) FROM `t`"
-    );
+    assert!(parse("select approx_count_distinct(distinct a) from t").is_err());
     // `WEIGHT_STRING(str AS {CHAR|BINARY}(N))` — the extended form — now
     // has its own dedicated grammar; see `weight_string`'s own test below
     // for the full coverage (this assertion used to expect a
@@ -726,6 +721,22 @@ fn misc_keyword_functions() {
         r("select weight_string(a as char(5)) from t"),
         "SELECT WEIGHT_STRING(`a` AS CHAR(5)) FROM `t`"
     );
+}
+
+#[test]
+fn approximate_aggregates_follow_expression_list_grammar() {
+    for name in ["APPROX_COUNT_DISTINCT", "APPROX_PERCENTILE"] {
+        for args in ["DISTINCT a", "DISTINCTROW a", "ALL a", "*", "a, ALL b"] {
+            let sql = format!("SELECT {name}({args}) FROM t");
+            assert!(parse(&sql).is_err(), "{sql}");
+        }
+        for suffix in ["OVER ()", "OVER w"] {
+            let sql = format!("SELECT {name}(a, 50) {suffix} FROM t");
+            assert!(parse(&sql).is_err(), "{sql}");
+        }
+        assert!(parse(&format!("SELECT {name}(a, b) FROM t")).is_ok());
+    }
+    assert!(parse("SELECT JSON_ARRAYAGG(a) OVER () FROM t").is_ok());
 }
 
 /// `DEFAULT(col)` — a column's own `DEFAULT` value, modelled as a plain

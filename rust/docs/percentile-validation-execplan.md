@@ -12,7 +12,7 @@ of a Go package or of the broader Rust quality goal.
 - [x] Identify rejection of string percentages and loss of aggregate error identity.
 - [x] Run new expression regression red, restore evaluation and error propagation.
 - [x] Run expression (4), diagnostic (1), integration (310), and lint gates; update report.
-- [ ] Push the independently reviewed failure-category commit.
+- [x] Push independently as c2318a48a7 to origin/hparser-integration.
 
 ## Context and Milestones
 

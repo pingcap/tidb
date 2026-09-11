@@ -3790,6 +3790,28 @@ git diff --check
 
 表达式 4 项（`/tmp/percentile-expr-final.log`）、MySQL 诊断回归（`/tmp/percentile-wire-green.log`）、session 集成 310 项（`/tmp/percentile-integration.log`）均通过，lint 退出 0（`/tmp/percentile-lint.log`）。综合测试完成所有百分位和窗口结果断言后，在最后的窗口 DISTINCT 错误检查失败（`/tmp/percentile-green.log`）。初步看到测试要求 Cow::Borrowed，而规划器使用 Cow::Owned；但 Go 实机 `/tmp/window-distinct-go.out` 进一步证明原 SQL 在 Go 直接报语法错误 1064，而 Rust 接受解析后报 1235。需要独立修复解析器及错误测试契约，不能只改 Cow 断言。综合测试和全量门禁均未完成。
 
+## 2026-09-11 approximate aggregate grammar 对齐
+
+百分位修复已独立推送为 `c2318a48a7`。随后依据同一固定 Go master 的 `pkg/parser/parser.y:9510`，确认两个 APPROX 函数的 SumExpr 产生式只有 ExpressionList，没有 DISTINCT/ALL、COUNT(*) 特例或 OptWindowingClause。Go 实机 `/tmp/approx-count-go.out` 和 `/tmp/json-window-go.out` 证实非法修饰符及 OVER 返回 1064/42000；JSON_ARRAYAGG/JSON_OBJECTAGG 的窗口合法，COUNT(i) OVER () 也合法，排除了全局窗口开关关闭的可能（`/tmp/window-mode-go.out`）。
+
+Rust 复用了通用 aggregate 参数/窗口解析路径，接受了 Go 不允许的 SQL。新增 parser 回归修复前失败于 `SELECT APPROX_COUNT_DISTINCT(DISTINCT a) FROM t`（`/tmp/approx-grammar-red.log`）。修复给这两个名字使用普通表达式列表路径，拒绝 OVER。原 parser restore 和 session 测试中错误的 DISTINCT/窗口结果预期改为同一 SQL 的 ParseError、1064、42000 三重检查；没有跳过 SQL，合法 JSON 窗口仍检查完整结果。该预期调整有固定 Go 源码和实机证据，并非为了制造假绿。
+
+验证命令（相同工作目录及 Rust 环境）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-parser --lib --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_json
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+parser 734 单元测试、100 集成测试通过，原有 1 ignored 保留（`/tmp/approx-grammar-parser-green.log`）；JSON 14 项全部通过（`/tmp/approx-grammar-json-green.log`），session 集成 310 项通过（`/tmp/approx-grammar-integration.log`）。lint 退出 0。Go 对照实例已停止。
+
+另运行完整 session lib：`/tmp/approx-grammar-session-all.log` 为 1597 passed / 107 failed / 209 ignored。原 JSON panic 和百分位失败已消失；列表暴露另一处窗口测试错误接受 APPROX_COUNT_DISTINCT OVER，按同一 Go 证据改为 ParseError/1064/42000。其余失败涵盖统计、计划文本、CTE、partition、union scan 和全局状态并发等，全部保留，未使用 focused 通过替代全量验收。全量目标继续保持未完成。
+
+该窗口回归修正后独立通过（`cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals`，`/tmp/approx-grammar-window-green.log`），最终 lint 再次退出 0（`/tmp/approx-grammar-final-lint.log`）。未据此改写上面的全量运行计数。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。

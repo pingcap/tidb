@@ -256,10 +256,10 @@ fn json_and_approximate_aggregates() {
         row_text(session.run("SELECT APPROX_COUNT_DISTINCT(i) FROM t WHERE id < 0")),
         [["0"]]
     );
-    // DISTINCT is legal and cannot change the answer.
-    assert_eq!(
-        row_text(session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) FROM t")),
-        [["4"]]
+    // Go's approximate aggregate grammar rejects DISTINCT before planning.
+    assert_approximate_aggregate_parse_error(
+        &mut session,
+        "SELECT APPROX_COUNT_DISTINCT(DISTINCT i) FROM t",
     );
 
     // APPROX_PERCENTILE ranks the group's values at ordinal rank
@@ -310,9 +310,9 @@ fn json_and_approximate_aggregates() {
         row_text(session.run("SELECT APPROX_PERCENTILE(i, 50) FROM p WHERE g = 99")),
         [["NULL"]]
     );
-    assert_eq!(
-        row_text(session.run("SELECT APPROX_PERCENTILE(DISTINCT i, 50) FROM p WHERE g = 1")),
-        [["2"]]
+    assert_approximate_aggregate_parse_error(
+        &mut session,
+        "SELECT APPROX_PERCENTILE(DISTINCT i, 50) FROM p WHERE g = 1",
     );
     // The percentage is validated at PLAN time, against [1, 100].
     assert!(matches!(
@@ -360,7 +360,7 @@ fn json_and_approximate_aggregates() {
             if message.contains("constant expression")
     ));
 
-    // All four answer OVER a window, and the FRAME applies.
+    // JSON aggregates support windows, including their frames.
     assert_eq!(
         row_text(session.run("SELECT id, JSON_ARRAYAGG(i) OVER (ORDER BY id) FROM t ORDER BY id")),
         [
@@ -408,55 +408,23 @@ fn json_and_approximate_aggregates() {
             ["6", "{\"a\": 30, \"c\": 40}"],
         ]
     );
-    assert_eq!(
-        row_text(
-            session
-                .run("SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id) FROM t ORDER BY id")
-        ),
-        [
-            ["1", "1"],
-            ["2", "2"],
-            ["3", "2"],
-            ["4", "3"],
-            ["5", "3"],
-            ["6", "4"],
-        ]
-    );
-    assert_eq!(
-        row_text(session.run(
-            "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING \
-                 AND CURRENT ROW) FROM t ORDER BY id"
-        )),
-        [
-            ["1", "1"],
-            ["2", "2"],
-            ["3", "1"],
-            ["4", "1"],
-            ["5", "1"],
-            ["6", "2"],
-        ]
-    );
-    assert_eq!(
-        row_text(session.run(
-            "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i) FROM p \
-                 WHERE g = 1 ORDER BY i"
-        )),
-        [["1", "1"], ["2", "1"], ["3", "2"], ["4", "2"]]
-    );
-    assert_eq!(
-        row_text(session.run(
-            "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i \
-                 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i"
-        )),
-        [["1", "1"], ["2", "1"], ["3", "2"], ["4", "3"]]
-    );
-    // A window call still refuses DISTINCT, whatever the function.
-    assert!(matches!(
-        session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t"),
-        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
-            "<window function>(DISTINCT ..)"
-        )))
-    ));
+    for sql in [
+        "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id) FROM t ORDER BY id",
+        "SELECT id, APPROX_COUNT_DISTINCT(i) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t ORDER BY id",
+        "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i) FROM p WHERE g = 1 ORDER BY i",
+        "SELECT i, APPROX_PERCENTILE(i, 50) OVER (PARTITION BY g ORDER BY i ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM p WHERE g = 1 ORDER BY i",
+        "SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t",
+    ] {
+        assert_approximate_aggregate_parse_error(&mut session, sql);
+    }
+}
+
+fn assert_approximate_aggregate_parse_error(session: &mut Session, sql: &str) {
+    let error = session.run(sql).unwrap_err();
+    assert!(matches!(&error, DriverError::Parse(_)), "{sql}: {error:?}");
+    let diagnostic = error.to_mysql_error();
+    assert_eq!(diagnostic.code, 1064, "{sql}");
+    assert_eq!(diagnostic.state, *b"42000", "{sql}");
 }
 
 /// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` over a BINARY-charset value: Go wraps it

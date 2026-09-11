@@ -37,6 +37,24 @@ impl Parser {
             .expect("aggregate name")
             .to_string();
         self.expect_op("(")?;
+        // Go SumExpr uses ExpressionList for approximate aggregates, without
+        // DISTINCT/ALL, COUNT's star form, or OptWindowingClause.
+        if matches!(name.as_str(), "APPROX_COUNT_DISTINCT" | "APPROX_PERCENTILE") {
+            let mut args = vec![self.parse_expr(prec::NONE)?];
+            while self.is_op(",") {
+                self.bump();
+                args.push(self.parse_expr(prec::NONE)?);
+            }
+            self.expect_op(")")?;
+            if self.is_kw("OVER") {
+                return Err(self.err_here("this aggregate does not accept OVER"));
+            }
+            return Ok(Expr::Aggregate {
+                name,
+                distinct: false,
+                args,
+            });
+        }
         if self.is_op("*") {
             self.bump();
             self.expect_op(")")?;
@@ -96,7 +114,6 @@ impl Parser {
         if args.len() > 1 {
             let multi_arg_allowed = match name.as_str() {
                 "COUNT" => distinct,
-                "APPROX_COUNT_DISTINCT" | "APPROX_PERCENTILE" => true,
                 // Go's grammar spells JSON_OBJECTAGG with exactly two
                 // arguments, so two is the ONLY legal count -- one is a
                 // syntax error the same way three is.
@@ -448,19 +465,10 @@ pub(super) fn agg_canonical(name: &str) -> Option<&'static str> {
         "BIT_AND" => Some("BIT_AND"),
         "BIT_OR" => Some("BIT_OR"),
         "BIT_XOR" => Some("BIT_XOR"),
-        // Restores with a `DISTINCT` modifier just like every other
-        // aggregate here (`APPROX_COUNT_DISTINCT(DISTINCT x)`, confirmed
-        // via `godump restore`), matching `Expr::Aggregate`'s own shape
-        // exactly — unlike `COLLATION`/`WEIGHT_STRING` above, which are
-        // plain scalar-shaped calls. Evaluation is `Unsupported` beyond
-        // this parse-time recognition (`tidb_exec`'s own aggregate
-        // dispatch has no entry for it), same "parse and restore only"
-        // boundary.
+        // Go's approximate aggregates have their own ExpressionList grammar.
         "APPROX_COUNT_DISTINCT" => Some("APPROX_COUNT_DISTINCT"),
-        // Go's `parseAggregateFuncCall` routes these three by name exactly
-        // like the aggregates above: `JSON_ARRAYAGG`/`JSON_OBJECTAGG` reject
-        // DISTINCT and fix their arity (1 and 2), `APPROX_PERCENTILE` accepts
-        // a multi-argument list unconditionally.
+        // JSON aggregates reject DISTINCT and fix their arity (1 and 2).
+        // APPROX_PERCENTILE uses SumExpr's plain ExpressionList above.
         "JSON_ARRAYAGG" => Some("JSON_ARRAYAGG"),
         "JSON_OBJECTAGG" => Some("JSON_OBJECTAGG"),
         "APPROX_PERCENTILE" => Some("APPROX_PERCENTILE"),

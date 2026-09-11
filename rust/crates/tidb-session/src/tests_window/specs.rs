@@ -542,13 +542,14 @@ fn window_errors_and_refusals() {
         Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
     ));
 
-    // The four aggregates Go allows OVER that this build used to refuse
-    // now compute here too; `json_and_approximate_aggregates` covers
-    // their frame semantics. Only the SHAPE check remains: a window call
-    // still needs at least one argument.
-    assert!(session
+    // Approximate aggregates lack OptWindowingClause in Go's SumExpr.
+    let error = session
         .run("SELECT g, APPROX_COUNT_DISTINCT(v) OVER (ORDER BY v) FROM t")
-        .is_ok());
+        .unwrap_err();
+    assert!(matches!(&error, DriverError::Parse(_)));
+    let diagnostic = error.to_mysql_error();
+    assert_eq!(diagnostic.code, 1064);
+    assert_eq!(diagnostic.state, *b"42000");
 
     // Frame validation is the PLANNER's, so it fires for every function
     // -- including the ranking ones, whose frame is then ignored.
