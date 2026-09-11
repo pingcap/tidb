@@ -490,6 +490,21 @@ Profile-driven findings (perf, dwarf call graphs, conn threads):
    The first chunk is now held until a second one arrives; a single-chunk
    input is folded on the fetching thread into the same partial maps the
    final stage adopts. Lane assignment for multi-chunk input is unchanged.
+10. Index-usage reporting (Go `SessionIndexUsageCollector.Report` ->
+    `sessionCollector.SendDelta`, once per statement) sent every delta
+    through the crossbeam channel, which futex-woke the parked global
+    collector thread on each statement: 4.3% of connection CPU in
+    write_only (`SyncWaker::notify` -> futex). Go's channel send merely
+    readies the merge goroutine. The Rust global collector now takes an
+    optional inline merge: the session merges under `RwLock::try_write`
+    when the global map is free, and falls back to the channel (unchanged
+    path) when a reader or another merge holds it. Same merged state, the
+    non-blocking contract of `SendDelta` kept. point_select is unaffected
+    (no index usage is recorded for a clustered PK point get). Measured at
+    16 threads on the reloaded 10-warehouse TPC-C and sbtest: throughput
+    neutral (write_only, read_write and tpmC all within run-to-run noise;
+    the write path is TiKV fsync-bound at saturation), Rust node CPU per
+    write_only transaction 1.741/1.673 ms -> 1.664/1.660 ms.
 
 Rust node CPU per transaction (server process, `/proc` utime+stime, 4
 threads, 15s): point_select 0.248 -> 0.181 ms (-27%), read_only 6.33 -> 4.78

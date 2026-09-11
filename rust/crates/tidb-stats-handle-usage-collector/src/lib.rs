@@ -22,11 +22,16 @@ use std::time::{Duration, Instant};
 const DEFAULT_CHANNEL_SIZE: usize = 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// A merge that runs on the sending thread when it can take the merge
+/// target without blocking, handing the delta back otherwise.
+pub type InlineMerge<T> = dyn Fn(T) -> Result<(), T> + Send + Sync;
+
 struct Shared<T> {
     normal: (Sender<T>, Receiver<T>),
     high_priority: (Sender<T>, Receiver<T>),
     closed: Receiver<()>,
     close_once: Mutex<Option<Sender<()>>>,
+    inline_merge: Option<Arc<InlineMerge<T>>>,
 }
 
 /// Go `GlobalCollector` and `globalCollector`.
@@ -42,6 +47,29 @@ impl<T: Send + 'static> GlobalCollector<T> {
     where
         F: Fn(T) + Send + Sync + 'static,
     {
+        Self::build(Arc::new(merge), None)
+    }
+
+    /// Like [`Self::new`], with `inline_merge` tried on the sending thread
+    /// before a delta goes through the channel. Go's `SendDelta` hands the
+    /// delta to the merge goroutine through a buffered channel at no cost
+    /// beyond readying it; the Rust channel send instead wakes the parked
+    /// worker thread through a futex on every delta. `inline_merge` MUST
+    /// merge into the same state the worker merges into, MUST NOT block, and
+    /// returns the delta unchanged when it cannot take that state without
+    /// blocking; the delta then takes the channel path exactly as before.
+    pub fn with_inline_merge<F, G>(merge: F, inline_merge: G) -> Self
+    where
+        F: Fn(T) + Send + Sync + 'static,
+        G: Fn(T) -> Result<(), T> + Send + Sync + 'static,
+    {
+        Self::build(Arc::new(merge), Some(Arc::new(inline_merge)))
+    }
+
+    fn build(
+        merge: Arc<dyn Fn(T) + Send + Sync>,
+        inline_merge: Option<Arc<InlineMerge<T>>>,
+    ) -> Self {
         let (close, closed) = bounded(0);
         Self {
             shared: Arc::new(Shared {
@@ -49,8 +77,9 @@ impl<T: Send + 'static> GlobalCollector<T> {
                 high_priority: bounded(DEFAULT_CHANNEL_SIZE),
                 closed,
                 close_once: Mutex::new(Some(close)),
+                inline_merge,
             }),
-            merge: Arc::new(merge),
+            merge,
             workers: Mutex::new(Vec::new()),
         }
     }
@@ -139,6 +168,21 @@ impl<T: Send + 'static> SessionCollector<T> {
         if expired {
             return self.send_delta_sync(data);
         }
+        // The delta reaches the same merged state either way; merging here
+        // only skips waking the worker thread (see `with_inline_merge`).
+        let data = match self.shared.inline_merge.as_deref() {
+            Some(inline_merge) => match inline_merge(data) {
+                Ok(()) => {
+                    *self
+                        .last_update
+                        .lock()
+                        .expect("session timestamp lock poisoned") = Instant::now();
+                    return true;
+                }
+                Err(data) => data,
+            },
+            None => data,
+        };
         if self.shared.normal.0.try_send(data).is_err() {
             return false;
         }
