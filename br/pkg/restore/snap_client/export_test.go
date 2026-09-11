@@ -40,14 +40,15 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile            = getSSTMetaFromFile
-	GetKeyRangeByMode             = getKeyRangeByMode
-	GetFileRangeKey               = getFileRangeKey
-	GetSortedPhysicalTables       = getSortedPhysicalTables
-	GetMinUserTableID             = getMinUserTableID
-	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
-	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
-	UpdateStatsMetaSchema         = updateStatsMetaSchema
+	GetSSTMetaFromFile             = getSSTMetaFromFile
+	GetKeyRangeByMode              = getKeyRangeByMode
+	GetFileRangeKey                = getFileRangeKey
+	GetSortedPhysicalTables        = getSortedPhysicalTables
+	GetMinUserTableID              = getMinUserTableID
+	NotifyUpdateAllUsersPrivilege  = notifyUpdateAllUsersPrivilege
+	GetSchemaVersionFromStatsMeta  = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema          = updateStatsMetaSchema
+	BuildSystemTableReplaceColumns = buildSystemTableReplaceColumns
 )
 
 // MockClient create a fake Client used to test.
@@ -57,6 +58,10 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 
 func (rc *SnapClient) SetDomain(dom *domain.Domain) {
 	rc.dom = dom
+}
+
+func (rc *SnapClient) SetDatabases(dbs map[string]*metautil.Database) {
+	rc.databases = dbs
 }
 
 // Mock the call of setSpeedLimit function
