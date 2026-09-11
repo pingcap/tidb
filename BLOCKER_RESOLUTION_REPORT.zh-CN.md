@@ -1,5 +1,31 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 readiness 独立复核：启动竞争已有确定红绿证据
+
+本次从 `9f9a9198bc` 创建独立检出 `/tmp/tidb-readiness-confirm`，避免将 `/tmp/tidb-hparser-current` 尚未提交的 ROLLUP 工作混入证据。Go source of truth 固定为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，实际对照二进制的版本输出也确认该 SHA。
+
+根因是旧 runner 在 TCP 端口开放后只执行一次 ready 日志 grep，失败即触发 EXIT 清理并杀掉节点。Rust `sql_node.rs:1774` 先 bind listener，随后初始化 memory runners；`cluster_session_node/boot.rs:440` 等待 bind 返回、安装信号处理器，到第 454 行才输出 ready。Go master `pkg/server/server.go:518` 同样先创建 listener，到第 542 行才设置 `s.health.Store(true)`。因此“端口已开放、日志止于统计加载或 mysql_tls”不能证明服务端持续死锁。
+
+既有修复 `1f89c30b65` 和 `9839a744e0` 已在目标分支：四个 runner 共用 `cluster-session-readiness.sh`，持续等待原 ready 事件，180 秒超时，进程退出立即失败。未提前输出 ready，未放宽 SQL 对照。真实外部依赖失败仍会报错。
+
+本次将 `1f89c30b65^` 的旧启动检查放入临时文件，用当前同一个回归测试驱动：退出 1，输出 `the Rust node never reported ready` 和 `mysql_tls`，日志 `/tmp/readiness-9f9a-red.log`。临时文件随后删除。修复后的 access-path、analyze、convergence、repeatable-read 四入口均通过延迟 ready、节点退出、持续无 ready 三类检查，日志 `/tmp/readiness-9f9a-green.log`，退出 0。shell 语法检查与 `make lint` 也退出 0，lint 日志 `/tmp/readiness-9f9a-lint.log`。
+
+复验命令：
+
+```bash
+for runner in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh "run-realtikv-${runner}.sh" || exit
+done
+make lint
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+  ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/readiness-9f9a-confirm-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh
+```
+
+真实回放 `/tmp/readiness-9f9a-confirm.log` 最终退出 0，结尾为 `the access-path differential passed`。`/tmp/readiness-9f9a-confirm-evidence/rust-node.log:8` 记录 `cluster_session_node_ready`，地址 `127.0.0.1:47600`、schema_version=68、stats_loaded=4。原流程包含 ANALYZE 前后对照并完整结束，脚本已清理本次节点和 TiUP 数据。这解除的是 readiness 阻塞并验证原 access-path gate；其他 Rust failed cases、原 chunk panic 完整根因、全量 Go/Bazel 门禁仍未全部完成，整体目标保持未完成。
+
 ## 2026-09-11 窗口表达式中的普通聚合辅助字段
 
 在 `1f73bbc36d` 上原 `window_nested_in_larger_expression` 红测退出 101（`/tmp/window-aggregate-red.log`），错误为 resolveWindowFunction 未实现。相同拒绝同时阻止 window_over_group_by 和 an_aggregate_shared_by_the_select_list_and_a_window_spec_is_carried_once。
