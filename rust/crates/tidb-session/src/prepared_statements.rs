@@ -274,7 +274,7 @@ impl Session {
             match values.get(order) {
                 Some(Datum::Int(value)) if *value >= 0 => {}
                 Some(Datum::UInt(_)) => {}
-                _ => return Err(DriverError::WrongArguments("LIMIT")),
+                _ => return Err(DriverError::WrongArguments("LIMIT".into())),
             }
         }
         let (effective_statement, binding_sql) =

@@ -1385,10 +1385,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let desc = WindowFuncDesc::new(self.ctx, &func.name, args, false)
                 .map_err(|error| PlanError::internal(error.to_string()))?;
             if desc.is_none() {
-                return Err(PlanError::internal(format!(
-                    "Incorrect arguments to {}",
-                    func.name.to_ascii_lowercase()
-                )));
+                return Err(PlanError::wrong_arguments(func.name.to_ascii_lowercase()));
             }
         }
         Ok(())
@@ -1618,10 +1615,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let desc = WindowFuncDesc::new(self.ctx, &func.name, func_args, false)
                     .map_err(|error| PlanError::internal(error.to_string()))?;
                 let Some(mut desc) = desc else {
-                    return Err(PlanError::internal(format!(
-                        "Incorrect arguments to {}",
-                        func.name.to_ascii_lowercase()
-                    )));
+                    return Err(PlanError::wrong_arguments(func.name.to_ascii_lowercase()));
                 };
                 desc.base
                     .wrap_cast_for_agg_args(self.ctx)

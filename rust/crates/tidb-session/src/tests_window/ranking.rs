@@ -410,7 +410,7 @@ fn window_ntile_argument_domain() {
         "SELECT NTILE(k) OVER (ORDER BY id) FROM ranking_live",
     ] {
         assert!(
-            matches!(session.run(sql), Err(DriverError::WrongArguments("ntile"))),
+            matches!(session.run(sql), Err(DriverError::WrongArguments(ref name)) if name == "ntile"),
             "expected ErrWrongArguments for {sql}"
         );
     }
@@ -436,6 +436,18 @@ fn window_ntile_argument_domain() {
     assert_eq!(false_error, zero_error);
     assert_eq!(false_error.code, 1210);
     assert_eq!(false_error.message, "Incorrect arguments to ntile");
+    for (call, function) in [
+        ("NTH_VALUE(id, 0)", "nth_value"),
+        ("LEAD(id, NULL)", "lead"),
+        ("LAG(id, NULL)", "lag"),
+    ] {
+        let error = session
+            .run(&format!("SELECT {call} OVER (ORDER BY id) FROM ranking_live"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1210, "{call}");
+        assert_eq!(error.message, format!("Incorrect arguments to {function}"));
+    }
 }
 
 /// `TRUE` is an `Int64`-valued `Constant` in Go's expression layer, so

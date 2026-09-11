@@ -384,7 +384,7 @@ fn window_errors_and_refusals() {
         "SELECT NTILE(v) OVER (ORDER BY v) FROM t",
     ] {
         assert!(
-            matches!(session.run(sql), Err(DriverError::WrongArguments("ntile"))),
+            matches!(session.run(sql), Err(DriverError::WrongArguments(ref name)) if name == "ntile"),
             "expected ErrWrongArguments for {sql}"
         );
     }
@@ -542,7 +542,7 @@ fn window_errors_and_refusals() {
     // position must be a POSITIVE integer constant, like NTILE's count.
     assert!(matches!(
         session.run("SELECT NTH_VALUE(v, 0) OVER (PARTITION BY g ORDER BY v) FROM t"),
-        Err(DriverError::WrongArguments("nth_value"))
+        Err(DriverError::WrongArguments(ref name)) if name == "nth_value"
     ));
 }
 

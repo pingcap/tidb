@@ -290,6 +290,8 @@ pub enum PlanErrorKind {
     Eval(EvalError),
     /// Go `plannererrors.ErrInternal` and message-only planner failures.
     Internal,
+    /// Go `plannererrors.ErrWrongArguments` (1210).
+    WrongArguments(String),
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
@@ -391,6 +393,16 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::Internal,
             message: message.into(),
+        }
+    }
+
+    /// Go `plannererrors.ErrWrongArguments.GenWithStackByArgs`.
+    #[must_use]
+    pub fn wrong_arguments(function: impl Into<String>) -> Self {
+        let function = function.into();
+        Self {
+            message: format!("Incorrect arguments to {function}"),
+            kind: PlanErrorKind::WrongArguments(function),
         }
     }
 

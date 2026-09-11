@@ -425,7 +425,7 @@ pub enum DriverError {
     UnsupportedPreparedStatement,
     /// Go `plannererrors.ErrWrongArguments` (1210), carrying the function
     /// name the arguments were wrong for (`ntile`).
-    WrongArguments(&'static str),
+    WrongArguments(String),
     /// Go `plannererrors.ErrWindowInvalidWindowFuncUse` (3593): a window
     /// function written outside the select list / `ORDER BY`, carrying its
     /// lowercased name.

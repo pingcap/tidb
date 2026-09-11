@@ -1,5 +1,25 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 窗口参数错误跨 planner 边界保留 1210
+
+在 `e5dbb275aa` 重跑 session 全库，`/tmp/session-all-after-expression-index.log` 为 1571 passed / 125 failed / 209 ignored（既有忽略项，未增加）。命令为下述 Cargo 前缀加 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib`。这取代历史失败数量作为本轮起点，不代表当前最终全库计数。
+
+其中 `window_ntile_argument_domain` 独立红色回归 `/tmp/window-arguments-red.log` 退出 101。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/window_func.go:32` 拒绝非法常量参数后，`pkg/planner/core/logical_plan_builder.go:7057,7176` 明确产生 ErrWrongArguments（1210）。Rust descriptor 的检查已正确，但 planner 使用 Internal，executor 将其转为 Unsupported / 1105。
+
+修复新增有类型的 PlanErrorKind::WrongArguments，经 planner->executor 映射保留函数名，复用现有 MySQL 1210 映射。DriverError 的函数名改为 String，以承接 planner 数据；没有文本匹配或更改窗口算法。原 NTILE 回归保持原断言，并补充 NTH_VALUE(…,0)、LEAD(…,NULL)、LAG(…,NULL) 的精确 1210 与文本断言。
+
+Ready 验证，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_ntile_argument_domain
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+对应 `/tmp/window-arguments-final.log` 1 passed，`/tmp/window-arguments-planner.log` 66 passed，`/tmp/window-arguments-integration.log` 310 passed，`/tmp/window-arguments-lint.log` 退出 0；diff check 通过。完整窗口 suite `/tmp/window-arguments-suite.log` 30 passed / 13 failed：frame、非法使用位置、类型及格式等独立差异仍未修复，没有跳过或降低断言。该变更仅修复参数错误类型传播，不构成完整 Go package 移植或全量质量通过声明。
+
 ## 2026-09-11 grouped ADD 原表索引校验
 
 固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 实测 `/tmp/grouped-add-go.out`：`ALTER TABLE g ADD(b INT DEFAULT 7, KEY kb(b))` 与逗号分隔的 `ADD COLUMN b ..., ADD KEY kb(b)` 都返回 1072 / `column does not exist: b`，原表仍只有 a，数据仍为 1、2；`ADD(b INT DEFAULT 7, KEY ka(a))` 成功，默认值回填为 7。
