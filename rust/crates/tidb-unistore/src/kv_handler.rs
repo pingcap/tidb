@@ -307,23 +307,46 @@ impl KvHandler {
         };
         match self.store.pessimistic_lock(&reduced) {
             Ok(result) => {
-                // Go's ForceLock arm fills one LockResultNormal per granted
-                // key; the client reads the TYPE (and a conflict timestamp
-                // this simplified store never grants past).
+                // Go's ForceLock arm (`mvcc.go` `PessimisticLock`) answers one
+                // `LockResultNormal` per granted key and, when the request
+                // asked for values or existence, carries the row in that
+                // result's `value`/`existence` rather than in the Normal-mode
+                // `values`/`not_founds` arrays -- the client reads
+                // `results[0]` in this mode. A conflict timestamp this
+                // simplified store never grants past.
                 let results = if force_lock {
                     req.mutations
                         .iter()
-                        .map(|_| kvrpcpb::PessimisticLockKeyResult {
-                            r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultNormal as i32,
-                            ..kvrpcpb::PessimisticLockKeyResult::default()
+                        .enumerate()
+                        .map(|(index, _)| {
+                            let value = result.values.get(index).cloned().unwrap_or_default();
+                            let existence = result
+                                .not_founds
+                                .get(index)
+                                .map_or(!value.is_empty(), |not_found| !not_found);
+                            kvrpcpb::PessimisticLockKeyResult {
+                                r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultNormal
+                                    as i32,
+                                value,
+                                existence,
+                                ..kvrpcpb::PessimisticLockKeyResult::default()
+                            }
                         })
                         .collect()
                 } else {
                     Vec::new()
                 };
                 kvrpcpb::PessimisticLockResponse {
-                    values: result.values,
-                    not_founds: result.not_founds,
+                    values: if force_lock {
+                        Vec::new()
+                    } else {
+                        result.values
+                    },
+                    not_founds: if force_lock {
+                        Vec::new()
+                    } else {
+                        result.not_founds
+                    },
                     results,
                     ..kvrpcpb::PessimisticLockResponse::default()
                 }

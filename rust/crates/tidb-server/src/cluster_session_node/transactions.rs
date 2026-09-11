@@ -52,7 +52,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
@@ -137,13 +137,18 @@ pub trait ClusterTransactions: Send + Sync {
     /// Opens the writable transaction owned by one autocommit UPDATE/DELETE.
     ///
     /// The statement reads and publishes through this same transaction.  The
-    /// open is started before DML planning so its timestamp setup can
-    /// overlap the CPU work, while the transaction itself remains statement
-    /// owned and is handed back to the session at the statement boundary.
-    fn begin_autocommit_write(
+    /// open is started before DML planning so its timestamp request can
+    /// overlap the CPU work (Go's `txnFuture`), while the transaction itself
+    /// remains statement owned and is handed back to the session at the
+    /// statement boundary. `pessimistic` is Go `decideTxnMode`'s answer for
+    /// this attempt: an autocommit DML runs optimistically unless it is the
+    /// retry of a write conflict (or the non-default `pessimistic-auto-commit`
+    /// config is on).
+    fn prepare_autocommit_write(
         &self,
         resource_group: &str,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String>;
+        pessimistic: bool,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
@@ -231,6 +236,18 @@ pub trait PendingClusterSnapshot: Send {
     /// Waits for preparation and returns the snapshot every statement read
     /// will share.
     fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String>;
+}
+
+/// An autocommit write's transaction whose timestamp request is in flight.
+///
+/// Go keeps the `oracle.Future` from `AdviseWarmup` and only waits for it
+/// when the statement first needs its transaction; this is that future for a
+/// statement that will publish. Waiting opens the transaction on the calling
+/// thread (`begin_at` is local state over the shared transport), so no thread
+/// is spawned per statement to do it.
+pub trait PendingClusterTransaction: Send {
+    /// Waits for the timestamp and opens the statement's own transaction.
+    fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String>;
 }
 
 /// The transaction an explicit `BEGIN` holds open across its statements.
@@ -457,7 +474,7 @@ struct DeferredState {
     /// A writable transaction being opened for an UPDATE/DELETE.  Its read
     /// handle is installed in `opened`; the owner stays here until Drop can
     /// hand it to the session for commit.
-    prefetched_write: Option<mpsc::Receiver<Result<Box<dyn OpenClusterTransaction>, String>>>,
+    prefetched_write: Option<Result<Box<dyn PendingClusterTransaction>, String>>,
     write_transaction: Option<Box<dyn OpenClusterTransaction>>,
     /// Whether the statement declared its whole read is one point get on the
     /// clustered handle, which is what decides WHICH transaction the first
@@ -507,17 +524,14 @@ impl DeferredSnapshot {
         write_handoff: WriteTransactionSlot,
         prelock_keys: Vec<Vec<u8>>,
         resource_group: Arc<str>,
+        pessimistic: bool,
     ) -> Self {
-        let (reply, answer) = mpsc::sync_channel(1);
-        let opener = Arc::clone(&transactions);
-        let prefetch_resource_group = Arc::clone(&resource_group);
-        let prefetched_write = std::thread::Builder::new()
-            .name("cluster-write-prefetch".to_owned())
-            .spawn(move || {
-                let _ = reply.send(opener.begin_autocommit_write(&prefetch_resource_group));
-            })
-            .ok()
-            .map(|_| answer);
+        // The timestamp request goes out now and is waited for by the first
+        // read; the transaction opens on that thread. Spawning a thread per
+        // statement to open it eagerly cost a thread creation and join per
+        // autocommit write.
+        let prefetched_write =
+            Some(transactions.prepare_autocommit_write(&resource_group, pessimistic));
         Self {
             transactions,
             resource_group,
@@ -567,13 +581,7 @@ impl DeferredSnapshot {
                 self.transactions.open_max_ts_snapshot(&self.resource_group)
             } else if let Some(prefetched_write) = guard.prefetched_write.take() {
                 let transaction = prefetched_write
-                    .recv()
-                    .unwrap_or_else(|_| {
-                        Err(
-                            "the write transaction prefetch stopped before opening a transaction"
-                                .to_owned(),
-                        )
-                    })
+                    .and_then(PendingClusterTransaction::wait)
                     .map_err(StorageError::Backend)?;
                 // Go enables point-write locking only for pessimistic
                 // transactions; a bound point key alone does not imply it.
@@ -640,7 +648,8 @@ impl Drop for DeferredSnapshot {
             state
                 .prefetched_write
                 .take()
-                .and_then(|answer| answer.recv().ok().and_then(Result::ok))
+                .and_then(Result::ok)
+                .and_then(|pending| pending.wait().ok())
         });
         drop(state);
         if let Some(transaction) = transaction {
@@ -724,6 +733,7 @@ pub(crate) fn prefetched_write_snapshot(
     write_handoff: WriteTransactionSlot,
     prelock_keys: Vec<Vec<u8>>,
     resource_group: Arc<str>,
+    pessimistic: bool,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new_prefetched_write(
         transactions,
@@ -731,6 +741,7 @@ pub(crate) fn prefetched_write_snapshot(
         write_handoff,
         prelock_keys,
         resource_group,
+        pessimistic,
     ))
 }
 
@@ -940,6 +951,54 @@ fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockErr
     }
 }
 
+/// [`PendingClusterTransaction`] over one real opener: the timestamp future
+/// dispatched at statement start, opened as an optimistic or pessimistic
+/// session transaction when first needed.
+struct PendingSessionTransaction<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    start_ts: P::TsFuture,
+    timeout: Duration,
+    pessimistic: bool,
+}
+
+impl<C, L, P> PendingClusterTransaction for PendingSessionTransaction<C, L, P>
+where
+    C: StoreWriteClient + Send + Sync + 'static,
+    L: StoreWriteLoader + Send + Sync + 'static,
+    P: StorePdCapability + Send + Sync + 'static,
+    P::TsFuture: Send,
+{
+    fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        use tidb_txnkv::pd_capability::TimestampFutureWait;
+        let start_ts = self.start_ts.wait()?;
+        let commit_protocol = tidb_exec::session_commit_protocol::session_commit_protocol();
+        if self.pessimistic {
+            // Go `decideTxnMode`: the retry of a conflicted autocommit DML is
+            // pessimistic, so it waits on the row instead of failing again.
+            SessionTransaction::begin_pessimistic_at(
+                self.opener,
+                start_ts,
+                self.timeout,
+                commit_protocol,
+            )
+            .map(|mut transaction| {
+                transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
+                Box::new(transaction) as Box<dyn OpenClusterTransaction>
+            })
+            .map_err(|error| error.to_string())
+        } else {
+            SessionTransaction::begin_at(self.opener, start_ts, self.timeout, commit_protocol)
+                .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
 impl<C, L, P> ClusterTransactions for RealClusterTransactions<C, L, P>
 where
     C: StoreWriteClient,
@@ -1014,24 +1073,21 @@ where
         )))
     }
 
-    fn begin_autocommit_write(
+    fn prepare_autocommit_write(
         &self,
         resource_group: &str,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        // Go's default `tidb_txn_mode=pessimistic` also applies to a single
-        // autocommit UPDATE/DELETE. Opening the statement transaction in
-        // pessimistic mode lets the point-DML prelock fold return the source
-        // row into the lock RPC, avoiding a second point read.
-        SessionTransaction::begin_pessimistic(
-            self.opener_for_resource_group(resource_group),
-            self.timeout,
-            tidb_exec::session_commit_protocol::session_commit_protocol(),
-        )
-        .map(|mut transaction| {
-            transaction.set_fair_locking(crate::session_transaction::session_fair_locking());
-            Box::new(transaction) as Box<dyn OpenClusterTransaction>
-        })
-        .map_err(|error| error.to_string())
+        pessimistic: bool,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
+        let opener = self.opener_for_resource_group(resource_group);
+        let start_ts = opener
+            .prepare_read_only_start_ts()
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(PendingSessionTransaction {
+            opener,
+            start_ts,
+            timeout: self.timeout,
+            pessimistic,
+        }))
     }
 
     fn commit(
@@ -1300,10 +1356,11 @@ mod tests {
             panic!("unused in batch-get forwarding test")
         }
 
-        fn begin_autocommit_write(
+        fn prepare_autocommit_write(
             &self,
             _resource_group: &str,
-        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+            _pessimistic: bool,
+        ) -> Result<Box<dyn PendingClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
 

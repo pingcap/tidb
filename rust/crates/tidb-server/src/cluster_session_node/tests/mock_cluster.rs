@@ -10,7 +10,7 @@
 //! failure is only visible as a count: a leaked read handle, a second
 //! publication, a snapshot taken twice.
 
-use super::super::transactions::PendingClusterSnapshot;
+use super::super::transactions::{PendingClusterSnapshot, PendingClusterTransaction};
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -252,6 +252,26 @@ struct MockPendingSnapshot {
     failure: Option<String>,
 }
 
+/// The mock's autocommit write transaction between statement start and its
+/// first use, carrying the mode the node decided for the attempt.
+struct MockPendingTransaction {
+    start_ts: u64,
+    cluster: Arc<MockCluster>,
+    pessimistic: bool,
+}
+
+impl PendingClusterTransaction for MockPendingTransaction {
+    fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        Ok(Box::new(MockSessionTransaction {
+            start_ts: self.start_ts,
+            data: self.cluster.snapshot(),
+            cluster: self.cluster,
+            max_ts: false,
+            pessimistic: self.pessimistic,
+        }))
+    }
+}
+
 impl PendingClusterSnapshot for MockPendingSnapshot {
     fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
         if let Some(error) = self.failure {
@@ -365,17 +385,18 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn begin_autocommit_write(
+    fn prepare_autocommit_write(
         &self,
         resource_group: &str,
-    ) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        pessimistic: bool,
+    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
-        Ok(Box::new(MockSessionTransaction {
+        // The mock's timestamp is taken now, as the real opener dispatches
+        // its PD request now; the transaction opens when first needed.
+        Ok(Box::new(MockPendingTransaction {
             start_ts: self.0.timestamp(),
-            data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
-            max_ts: false,
-            pessimistic: false,
+            pessimistic,
         }))
     }
 

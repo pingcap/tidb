@@ -431,6 +431,84 @@ The measured profile matches exactly the open gaps recorded above:
   `/tmp/bench/agg.sh`, raw reporter outputs archived under
   `/tmp/bench/results/gate__/` (a.txt..f.txt = rust-side runs in order).
 
+## GOAL v2 (2026-09-11): >=25% throughput AND latency on EVERY workload vs 8123bb1
+
+The pre-campaign binary (8123bb1, the commit before the first campaign
+commit, built with only the Linux `statfs` cast) and the current head are
+now measured on the same day and box with `matrix.sh`: every sysbench
+workload (destructive ones on freshly prepared tables, bulk_insert in its
+own database) and TPC-C with every transaction type, 20s runs, 2 rounds,
+binaries alternated on :4001.
+
+4 threads (TPC-C 2 warehouses) -- the TiKV-latency-bound regime:
+| workload             |    base |     cur |   tps% | lat base | lat cur |  lat% |
+|----------------------|---------|---------|--------|----------|---------|-------|
+| oltp_point_select    |  6184.8 |  7001.0 | +13.2% |     0.65 |    0.57 | -11.6 |
+| oltp_read_only       |   257.5 |   307.9 | +19.6% |    15.54 |   12.98 | -16.4 |
+| oltp_write_only      |   463.2 |   553.4 | +19.5% |     8.63 |    7.22 | -16.3 |
+| oltp_read_write      |   145.4 |   168.7 | +16.1% |    27.49 |   23.69 | -13.8 |
+| oltp_insert          |  1670.9 |  1630.3 |  -2.4% |     2.39 |    2.47 |  +3.3 |
+| oltp_delete          |  1143.8 |  1306.7 | +14.2% |     3.50 |    3.06 | -12.6 |
+| oltp_update_index    |  1131.2 |  1291.1 | +14.1% |     3.54 |    3.10 | -12.2 |
+| oltp_update_non_index|  1126.3 |  1180.0 |  +4.8% |     3.56 |    3.39 |  -4.6 |
+| select_random_points |  1171.4 |  1263.7 |  +7.9% |     3.41 |    3.17 |  -7.2 |
+| select_random_ranges |  1495.5 |  1679.3 | +12.3% |     2.67 |    2.38 | -10.8 |
+| bulk_insert (stmt/s) |     2.7 |     2.7 |  +0.0% |        - |       - |     - |
+| tpcc NEW_ORDER (tpm) |  4401.6 |  5228.4 | +18.8% |    28.00 |   22.70 | -18.9 |
+| tpcc PAYMENT         |  4102.1 |  5010.4 | +22.1% |    15.75 |   13.35 | -15.2 |
+| tpcc ORDER_STATUS    |   411.0 |   476.0 | +15.8% |    12.05 |   10.70 | -11.2 |
+| tpcc DELIVERY        |   411.9 |   474.8 | +15.2% |    98.60 |   89.55 |  -9.2 |
+| tpcc STOCK_LEVEL     |   401.3 |   457.0 | +13.9% |    14.85 |   13.55 |  -8.8 |
+
+16 threads (TPC-C 10 warehouses) -- the CPU-bound regime:
+| workload             |    base |     cur |   tps% | lat base | lat cur |  lat% |
+|----------------------|---------|---------|--------|----------|---------|-------|
+| oltp_point_select    |  9912.9 | 12376.2 | +24.8% |     1.61 |    1.29 | -19.9 |
+| oltp_read_only       |   377.5 |   432.0 | +14.4% |    42.35 |   37.00 | -12.6 |
+| oltp_write_only      |   576.0 |   729.9 | +26.7% |    27.84 |   21.92 | -21.3 |
+| oltp_read_write      |   142.7 |   167.0 | +17.0% |   116.34 |   95.87 | -17.6 |
+| oltp_insert          |  1963.3 |  2387.1 | +21.6% |     8.39 |    6.71 | -20.1 |
+| oltp_delete          |  1453.2 |  1979.6 | +36.2% |    11.01 |    8.12 | -26.3 |
+| oltp_update_index    |  1596.8 |  2057.0 | +28.8% |    10.02 |    7.85 | -21.6 |
+| oltp_update_non_index|  1897.3 |  2251.6 | +18.7% |     8.43 |    7.10 | -15.8 |
+| select_random_points |  1983.5 |  2118.4 |  +6.8% |     8.07 |    7.54 |  -6.5 |
+| select_random_ranges |  2353.7 |  2623.3 | +11.5% |     6.79 |    6.09 | -10.3 |
+| bulk_insert (stmt/s) |     2.6 |     2.6 |  -0.8% |        - |       - |     - |
+| tpcc NEW_ORDER (tpm) |  2846.4 |  3848.2 | +35.2% |    86.50 |   60.10 | -30.5 |
+| tpcc PAYMENT         |  2376.2 |  3357.7 | +41.3% |    64.50 |   46.05 | -28.6 |
+| tpcc ORDER_STATUS    |   159.7 |   136.8 | -14.3% |    37.50 |   27.60 | -26.4 |
+| tpcc DELIVERY        |  1245.7 |  1692.4 | +35.9% |   149.50 |  115.85 | -22.5 |
+| tpcc STOCK_LEVEL     |   304.9 |   314.2 |  +3.1% |    34.50 |   26.40 | -23.5 |
+(TPC-C per-type counts follow the mix, so the per-type latency is the
+per-type measure; tpmC +35.2%.)
+
+Round-6 findings on the autocommit DML path (oltp_insert/delete/update_*,
+the workloads gaining least at 4 threads):
+- The node opened every autocommit UPDATE/DELETE as a PESSIMISTIC
+  transaction and took a lock-with-values RPC (a raft write with fsync)
+  before its one-phase prewrite. Go `decideTxnMode` (`session.go`) runs a
+  single autocommit DML OPTIMISTICALLY unless `pessimistic-auto-commit`
+  (config, default false) is on or the statement is the retry of a write
+  conflict: a read at the start timestamp plus the prewrite, one raft
+  write instead of two. The node now decides per attempt through the
+  planner's existing `txn_mode_for_statement` (Go `decideTxnMode`): first
+  attempt optimistic, the 9007 retry pessimistic (waits on the row).
+- Every autocommit write SPAWNED AN OS THREAD ("cluster-write-prefetch")
+  to open its transaction, i.e. to fetch the PD timestamp in parallel with
+  planning. Go's warm-up keeps an `oracle.Future`. The node now dispatches
+  the timestamp future at statement start and opens the transaction at
+  first use on the connection thread (`SessionTransaction::begin_at` /
+  `begin_pessimistic_at` over the opener's prepared timestamp).
+- Client-observed RPC round trip (in-process probe, TIDB_RPC_PROBE): a
+  point get waits 357us on the connection thread while TiKV reports
+  166-183us; `perf sched` puts the connection thread's wake-up delay at
+  20us and the transport worker's at 26us per RPC (two cross-thread
+  hand-offs by construction: mpsc+eventfd into the runtime, oneshot+futex
+  back), the rest being TiKV's own gRPC/read-pool hand-offs and loopback.
+  A connection-thread-driven transport would recover ~70-80us per RPC
+  (~15% of a point select, ~5% of a write transaction); deferred behind
+  the autocommit change above.
+
 ## UPDATE 2026-09-11: per-statement overhead campaign (Go-aligned)
 
 Environment: one 4-core/16GB container, TiUP playground nightly (PD, TiKV,

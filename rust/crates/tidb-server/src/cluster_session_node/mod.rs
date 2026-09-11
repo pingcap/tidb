@@ -4480,6 +4480,7 @@ impl ClusterServerSession {
                 &prelock_keys,
                 resource_group,
                 notify_executor_breakpoint,
+                retried > 0,
                 &mut run,
             ) {
                 Ok(value) => break Ok(value),
@@ -4532,6 +4533,7 @@ impl ClusterServerSession {
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
         notify_executor_breakpoint: bool,
+        retrying: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let autocommit = self.explicit.is_none();
@@ -4549,6 +4551,7 @@ impl ClusterServerSession {
             &savepoint,
             prelock_keys,
             resource_group,
+            retrying,
             run,
             &read_ts,
         );
@@ -4572,6 +4575,7 @@ impl ClusterServerSession {
         savepoint: &BufferCheckpoint,
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
+        retrying: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
@@ -4711,6 +4715,24 @@ impl ClusterServerSession {
                 // binds and builds the DML read path. The first read consumes
                 // the prefetched result; publication uses the same owner.
                 None if shape == StatementReadShape::AutocommitWrite => {
+                    // Go `decideTxnMode`: under the default `pessimistic-auto-
+                    // commit = false` an autocommit DML runs optimistically --
+                    // a read at its start timestamp and a one-phase prewrite
+                    // -- and only the retry of a write conflict locks first.
+                    let pessimistic = tidb_planner::txn_mode::txn_mode_for_statement(
+                        tidb_planner::txn_mode::StatementTxnModeInputs {
+                            txn_mode_var: &self
+                                .session
+                                .vars()
+                                .get_system("tidb_txn_mode")
+                                .unwrap_or_default(),
+                            retrying,
+                            autocommit: true,
+                            pessimistic_auto_commit: false,
+                            is_dml: true,
+                        },
+                    )
+                    .is_pessimistic();
                     transactions::prefetched_write_snapshot(
                         Arc::clone(&self.transactions),
                         read_ts.clone(),
@@ -4721,6 +4743,7 @@ impl ClusterServerSession {
                         ),
                         prelock_keys.to_vec(),
                         Arc::<str>::from(resource_group),
+                        pessimistic,
                     )
                 }
                 // Binding is still timestamp-free. After the statement's

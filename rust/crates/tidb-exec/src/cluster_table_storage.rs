@@ -907,6 +907,60 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         })
     }
 
+    /// [`Self::begin`] at a timestamp already obtained by
+    /// [`RealOptimisticTransactionOpener::prepare_read_only_start_ts`], so the
+    /// PD round trip can overlap the statement's own planning (Go's
+    /// `txnFuture`: the timestamp request is dispatched at warm-up and waited
+    /// for at first use).
+    pub fn begin_at(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        start_ts: u64,
+        timeout: Duration,
+        commit_protocol: CommitProtocol,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        let mut transaction = opener.begin_at(
+            start_ts,
+            MAX_OPTIMISTIC_MUTATIONS,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )?;
+        transaction.set_commit_protocol(commit_protocol);
+        Ok(Self {
+            state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
+            start_ts,
+            timeout,
+            pessimistic: false,
+            fair_locking: false,
+        })
+    }
+
+    /// [`Self::begin_pessimistic`] at a timestamp already obtained by
+    /// [`RealOptimisticTransactionOpener::prepare_read_only_start_ts`].
+    pub fn begin_pessimistic_at(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        start_ts: u64,
+        timeout: Duration,
+        commit_protocol: CommitProtocol,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        let opened_at = Instant::now();
+        let mut transaction = opener.begin_at(
+            start_ts,
+            MAX_OPTIMISTIC_MUTATIONS,
+            MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        )?;
+        transaction.set_commit_protocol(commit_protocol);
+        Ok(Self {
+            state: Arc::new(Mutex::new(SessionTransactionState::PessimisticPending {
+                transaction,
+                opener,
+                opened_at,
+            })),
+            start_ts,
+            timeout,
+            pessimistic: true,
+            fair_locking: false,
+        })
+    }
+
     /// Opens the pessimistic transaction `BEGIN` holds under Go's default
     /// `tidb_txn_mode = 'pessimistic'`: the same one-timestamp transaction,
     /// which additionally serves the statement-lock protocol
