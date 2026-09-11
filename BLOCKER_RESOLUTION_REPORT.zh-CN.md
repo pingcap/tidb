@@ -1,5 +1,22 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 pseudo skyline candidate 修复
+
+Go master `pkg/planner/core/find_best_task.go:1776-1940` 对“已有 RealtimeCount、
+分布仍为 pseudo”的表同样构造 `candidatePath`，并以 access-column 覆盖关系执行
+skyline pruning。Rust `find_best_task/dispatch.rs` 原先只在
+`analyzed_index_ids` 中构造 `CandidateMetrics`，导致 pseudo 阶段复合索引没有参与
+skyline；成本阶段遂错误保留单列索引。
+
+修复提交 `182b616b4f` 允许 pseudo statistics 也构造相同 metrics。最小回归
+`pseudo_composite_index_applies_master_selectivity_floor` 通过。真实集群验证
+`/tmp/access-skyline-fix.log` 已从 3 个路径选择差异变为 **0 divergent choices**；
+此前失败的 `u` 查询也保持双方 `idx_a / 2.00`。
+
+当前仍有一项非路径估算差异：复合索引 case Go estRows=1.25、Rust=2.50，属于
+`CountAfterAccess`/残余过滤的统计缩放，尚未修改断言或归类为通过，后续继续按
+Go `stats.go:212-245` 的 `adjustCountAfterAccess` 和 `CountAfterIndex` 链路修复。
+
 ## 2026-09-11 access-path 统计输入同步修复
 
 前次 Go estRows 2 / Rust 10 不能直接归因于公式。Go master
