@@ -1467,7 +1467,6 @@ impl GlobalSysvars {
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
-        let mut loaded_enable_mdl = false;
         let mut loaded_plan_replayer_retention = false;
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
@@ -1483,7 +1482,6 @@ impl GlobalSysvars {
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
-                loaded_enable_mdl |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL;
                 loaded_plan_replayer_retention |=
                     key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME;
                 loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
@@ -1512,9 +1510,16 @@ impl GlobalSysvars {
         if loaded_ttl_job_enable {
             self.publish_ttl_job_enable();
         }
-        if loaded_enable_mdl {
-            self.publish_enable_mdl();
-        }
+        // Published whether or not the load carried a row for it: the process
+        // flag must equal the EFFECTIVE global value, and an absent row means
+        // the registry default (ON), which is what `@@global.
+        // tidb_enable_metadata_lock` already answers. A node that booted
+        // against a cluster whose `mysql.global_variables` row did not exist
+        // yet would otherwise keep the flag's `false` default while answering
+        // ON, and acknowledge DDL schema versions on the classic per-node etcd
+        // key while the owner waited on the per-job one -- blocking every DDL
+        // in the cluster until that node was stopped.
+        self.publish_enable_mdl();
         if loaded_plan_replayer_retention {
             self.publish_plan_replayer_file_retention_time();
         }

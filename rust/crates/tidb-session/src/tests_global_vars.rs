@@ -94,6 +94,19 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
         .unwrap();
     assert!(tidb_vardef::is_mdl_enabled(false));
 
+    // A load that carries NO row for it still publishes the effective value
+    // -- the registry default -- rather than leaving the process flag at
+    // whatever the last cluster set. A node booting against a cluster whose
+    // row does not exist yet must not keep the flag's `false` default while
+    // answering ON.
+    tidb_vardef::set_enable_mdl(false);
+    let fresh_cluster = vars::GlobalSysvars::new();
+    fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
+    assert_eq!(
+        tidb_vardef::is_mdl_enabled(false),
+        tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL
+    );
+
     // A fresh image replacing the live one (the cluster reload path) carries
     // the switch the same way.
     let fresh = vars::GlobalSysvars::new();

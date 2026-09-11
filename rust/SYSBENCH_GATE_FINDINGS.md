@@ -509,6 +509,69 @@ the workloads gaining least at 4 threads):
   (~15% of a point select, ~5% of a write transaction); deferred behind
   the autocommit change above.
 
+## GOAL v2 ROUNDS 6-9 (2026-09-11 late)
+
+Round 6 -- autocommit DML runs as Go decides it. The node opened every
+autocommit UPDATE/DELETE as a PESSIMISTIC transaction and took a
+lock-with-values RPC (a raft write with fsync) before its one-phase
+prewrite. Go `decideTxnMode` (`session.go`) runs a single autocommit DML
+OPTIMISTICALLY unless `pessimistic-auto-commit` (config, default false) is
+on or the statement is the retry of a write conflict. The node now decides
+per attempt through the planner's `txn_mode_for_statement`; the 9007 retry
+is pessimistic, so a statement racing another session's lock still WAITS on
+the row (checked live on both nodes: the autocommit UPDATE behind a held
+lock waited for the commit and landed +2). Every autocommit write also
+SPAWNED AN OS THREAD to fetch its PD timestamp in parallel with planning;
+Go's warm-up keeps an `oracle.Future`, and the node now dispatches the
+future at statement start and opens the transaction at first use on the
+connection thread. A/B at 4 threads: update_index +66.8%,
+update_non_index +71.3%, delete +40.3%.
+
+Round 6 also fixed the embedded store: bisecting eight cluster-session
+tests that failed on the head but passed at the baseline found round 4's
+fair-locking arming. Single-key locks now go out in `WakeUpModeForceLock`,
+and the embedded unistore answered them with result entries carrying the
+type only, while Go's unistore puts the row's `value`/`existence` into each
+result in that mode.
+
+Round 7 -- two per-statement costs on the read path. `SortExec`'s parallel
+path handed every child chunk to a worker lane; Go's lanes are goroutines,
+here a lane is a pool thread reached through a channel and joined through
+another. A single-chunk input is now sorted on the fetching thread (the
+same fix round 2 made for the parallel HashAgg, in the operator above it).
+And jemalloc's allocation sampling was ACTIVE from process start: recording
+a sampled allocation unwinds the stack through libgcc's DWARF unwinder
+(Go walks frame pointers), which was 9.4% of connection-thread CPU on the
+allocation-heavy index lookup. TiKV ships the same allocator with
+`prof_active:false` and activates on demand; the node now does the same.
+A/B at 16 threads: read_only +5.9%, select_random_points +5.4%,
+select_random_ranges +5.5%, read_write +3.7%.
+
+Round 8/9 -- the front end parsed one statement about EIGHT times.
+Go parses a command once (`session.ParseSQL` -> `ExecuteStmt(stmtNode)`)
+and every later question reads that one node; this port's front end takes
+the SQL TEXT for each question (statement kind, resource-group hint,
+transaction control, `LOAD STATS`, stored-state change) and parsed it
+again, from six call sites through `Session::parse` plus two more in other
+crates. Measured on oltp_insert at 16 threads: 7.5% of connection-thread
+CPU in parser construction alone, 14% in the whole parse chain.
+`parse_with_configuration` is a pure function of `(sql, enable_mariadb,
+sql_mode)`, so the repeats now share one parse through a thread-local
+record of the last statement parsed; a statement over 16 KiB is not
+retained, and a failed parse is never retained. The range detacher also
+cloned each access condition up to three times per column and then cloned
+every survivor of `remove_conditions`; the chain now moves out of
+`accesses` and an owning caller retains survivors in place. A/B at 16
+threads: oltp_insert +6.8%, point_select +3.3%, select_random_points
++2.5%, read_only +1.8%.
+
+NOTE on the goal's two halves. At a FIXED client thread count, throughput
+and latency are not independent: Little's law makes the average latency
+fall by exactly `tps% / (1 + tps%)`. Every row of both matrices obeys it
+(point_select +25.6% / -20.7%, write_only +34.1% / -26.4%). So "25% better
+on both" is really "+33% throughput"; a workload at +25% throughput shows
+-20% latency by arithmetic, not by any property of the change.
+
 ## UPDATE 2026-09-11: per-statement overhead campaign (Go-aligned)
 
 Environment: one 4-core/16GB container, TiUP playground nightly (PD, TiKV,
