@@ -374,11 +374,17 @@ fn order_by_resolves_against_the_select_list() {
         [["1"], ["2"], ["3"]]
     );
 
+    assert_eq!(
+        row_text(session.run("SELECT a FROM t ORDER BY b, 2")),
+        [["3"], ["2"], ["1"]]
+    );
+
     // Captured: an unknown name and an out-of-range position are both
     // 1054 naming the order clause.
     for sql in [
         "SELECT a FROM t ORDER BY nosuch",
         "SELECT a FROM t ORDER BY 5",
+        "SELECT a FROM t ORDER BY 0",
     ] {
         match session.run(sql) {
             Err(error) => {
@@ -392,6 +398,38 @@ fn order_by_resolves_against_the_select_list() {
             }
             Ok(other) => panic!("expected 1054 from {sql}, got {other:?}"),
         }
+    }
+}
+
+#[test]
+fn order_by_expression_resolves_source_columns_before_aliases() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,30),(2,20),(3,10)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT a*2 AS twice FROM t ORDER BY twice+0 DESC",
+            vec![vec!["6"], vec!["4"], vec!["2"]],
+        ),
+        (
+            "SELECT b AS a FROM t ORDER BY a+0",
+            vec![vec!["30"], vec!["20"], vec!["10"]],
+        ),
+        (
+            "SELECT b AS a FROM t ORDER BY a",
+            vec![vec!["10"], vec!["20"], vec!["30"]],
+        ),
+        (
+            "SELECT a*2 AS twice FROM t ORDER BY twice+b",
+            vec![vec!["6"], vec!["4"], vec!["2"]],
+        ),
+    ] {
+        let rows = session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(row_text(Ok(rows)), expected, "{sql}");
     }
 }
 

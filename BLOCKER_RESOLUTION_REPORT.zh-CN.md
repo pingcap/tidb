@@ -3041,6 +3041,32 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 ORDER BY 表达式别名与位置解析
+
+修复原失败 `tests_core::aggregates::order_by_resolves_against_the_select_list`。原 resolver 只匹配完整 ORDER BY 项：`twice+0` 被整体补入隐藏投影，并在源表解析 `twice`，因而报 UnknownColumn。现在遍历表达式，在源表找不到列时回退 SELECT 别名，用投影列 marker 引用结果；源列、聚合和窗口结果按需加入辅助投影。表达式内部源列优先，裸别名仍优先 SELECT 列表，不复制别名表达式进行重复计算。
+
+Source of truth 是固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go`，`havingWindowAndOrderbyExprResolver.Leave` 中 `orderByClause && inExpr` 令 `resolveFieldsFirst=false`，先 `resolveFromPlan` 再 `resolveFromSelectFields`。新增 `order_by_expression_resolves_source_columns_before_aliases`，覆盖表达式别名回退、同名源列优先、裸别名优先、别名与未投影源列混用。它在修复前失败于 `twice`，日志 `/tmp/order-alias-expanded-red.log`；原用例红日志 `/tmp/order-alias-red.log`。
+
+别名修复后，原用例继续暴露 `ORDER BY 5` 的错误映射：1105 应为 1054。按 Go `expression_rewriter.go::positionToScalarFunc`，Rust 使用 checked_sub 验证正位置，越界返回既有结构化 UnknownColumnInClause，而非 internal 字符串。补充位置 0 回归，避免 usize 减法下溢。保留 Go 实测支持的 `SELECT a FROM t ORDER BY b, 2`：辅助投影列不等于 Go 表达式 Column 的 IsHidden，不能一概禁止位置引用。
+
+本轮启动固定 Go binary（unistore，SQL 14831、status 14832，数据 `/tmp/order-alias-oracle-data`）执行相同数据 `t(a,b)=(1,30),(2,20),(3,10)`。实际输出 `/tmp/order-alias-go.out`：`twice+0 DESC` 为 6/4/2；`b AS a ORDER BY a+0` 为 30/20/10；裸 `ORDER BY a` 为 10/20/30；`twice+b` 为 6/4/2，与 Rust 回归一致。Go wire 对位置 0、5 均返回 `ERROR 1054 (42S22)`，辅助位置查询返回 3/2/1。实例已停止，服务日志 `/tmp/order-alias-oracle.log`。
+
+Ready 验证（Rust 命令均设置 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib plan_builder
+make lint
+git diff --check
+```
+
+完整 session 单元 **1542 passed / 140 failed / 209 ignored**（退出 101），与上轮失败清单逐项比较，仅原 ORDER BY 失败消失，没有新增失败；新增回归也通过。session 集成 **310 passed / 0 failed**，planner 构建 **131 passed / 0 failed**，lint 与 diff 检查退出 0。日志 `/tmp/order-alias-session-lib.log`、`/tmp/order-alias-integration.log`、`/tmp/order-alias-planner.log`、`/tmp/order-alias-lint.log`。最后仅调整 matches! 换行，无语义修改。
+
+推送期间远端新增 `cce0e99ef7`（prepared execute 开销优化）。本提交已无冲突重放其上，重新执行 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_core::aggregates::order_by`，2 passed；`--test all`，310 passed；`make lint` 退出 0。日志 `/tmp/order-alias-rebased-targeted.log`、`/tmp/order-alias-rebased-integration.log`、`/tmp/order-alias-rebased-lint.log`。上面的 140 项完整失败基线属于重放前，未据此宣称远端新增代码的全量单元状态。
+
+本次不代表全部源文件大小门禁或 RealTiKV 套件通过；未额外重跑 RealTiKV，排序语义以 Go binary 和本地集成回归验证。
+
 ## 2026-09-11 ORDER BY 聚合错误保留 3029
 
 修复 `tests_core::aggregates::a_select_field_containing_an_aggregate_is_an_aggregate_query`。原有错误检查识别到了非法 ORDER BY 聚合，但 `err_aggregate_order_non_agg_query` 用 `PlanError::internal` 丢弃错误身份，executor 因而返回 `Unsupported`。现在 planner 用 `AggregateOrderNonAggQuery { position }` 保留结构化位置，driver 映射至已有同名错误及 MySQL 3029；没有解析错误字符串，也未修改聚合合法性规则。

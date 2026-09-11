@@ -3019,6 +3019,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn resolve_order_by(
         items: &[tidb_ast::OrderItem],
         fields: &mut Vec<ProjectionField>,
+        source_names: &[FieldName],
     ) -> Vec<Expr> {
         let old_len = fields.len();
         let mut resolved = Vec::with_capacity(items.len());
@@ -3035,28 +3036,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 resolved.push(expr);
                 continue;
             }
-            // Case 3: it must come from the source. An identical extra field
-            // is reused rather than appended twice, as Go's map key does.
-            let extra = match fields[old_len..]
-                .iter()
-                .position(|field| field.expr == expr)
-            {
-                Some(position) => position,
-                None => {
-                    fields.push(ProjectionField {
-                        expr: expr.clone(),
-                        column_reference: true,
-                        alias: None,
-                        text: None,
-                        hidden: true,
-                    });
-                    fields.len() - 1 - old_len
+            // Go's resolver prefers the source inside an expression, then
+            // falls back to SELECT fields. Bind those fields to projection
+            // columns so an alias's expression is not evaluated a second time.
+            aggregation::visit_exprs(&mut expr, &mut |node| {
+                if let Expr::Column(path) = node {
+                    if find_field_name(source_names, path).is_none() {
+                        if let Some(index) = Self::find_in_select_fields(node, &fields[..old_len]) {
+                            marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                            return true;
+                        }
+                    }
+                } else if !aggregation::is_aggregate_call(node)
+                    && !matches!(
+                        node,
+                        Expr::Window { .. } | Expr::Subquery(_) | Expr::Exists { .. }
+                    )
+                {
+                    return false;
                 }
-            };
-            marker::substitute(
-                &mut expr,
-                PlanMarker::new(MarkerKind::OrderBy, old_len + extra),
-            );
+                let index = match fields.iter().position(|field| field.expr == *node) {
+                    Some(index) => index,
+                    None => {
+                        fields.push(ProjectionField {
+                            expr: node.clone(),
+                            column_reference: matches!(node, Expr::Column(_)),
+                            alias: None,
+                            text: None,
+                            hidden: true,
+                        });
+                        fields.len() - 1
+                    }
+                };
+                marker::substitute(node, PlanMarker::new(MarkerKind::OrderBy, index));
+                true
+            });
             resolved.push(expr);
         }
         resolved
@@ -3340,11 +3354,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let scratch = Self::clause_scratch(&item.expr);
             let built = match Self::order_by_position(&scratch) {
                 Some(position) => {
-                    let column = schema.columns.get(position - 1).ok_or_else(|| {
-                        PlanError::internal(format!(
-                            "Unknown column '{position}' in 'order clause'"
-                        ))
-                    })?;
+                    let column = position
+                        .checked_sub(1)
+                        .and_then(|index| schema.columns.get(index))
+                        .ok_or_else(|| {
+                            PlanError::unknown_column_in_clause(position.to_string(), "order clause")
+                        })?;
                     let mut column = column.clone();
                     column.index = position as i64 - 1;
                     Expression::Column(column)
@@ -3720,7 +3735,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // select list. Go resolves them with `orderByResolver`, so record the
         // slice they occupy and build it with the OrderBy clause.
         let order_by_from = fields.len();
-        let order_by = Self::resolve_order_by(&order_items, &mut fields);
+        let order_by = Self::resolve_order_by(&order_items, &mut fields, &source_names);
         let order_by_to = fields.len();
         // `:4397` `resolveWindowFunction`'s column half, which appends one
         // auxiliary field per column a window specification names; see
