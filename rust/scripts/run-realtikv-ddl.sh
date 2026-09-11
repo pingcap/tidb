@@ -16,8 +16,10 @@
 #   * the Go TiDB INSERTs into it, proving it accepts the TableInfo for writes;
 #   * a second Rust node loads the new table BY NAME and reads Go's rows back;
 #   * the Rust node DROPs the table and the database, and Go confirms both gone;
-#   * a shape the node cannot serve is refused with a precise message and leaves
-#     the catalog byte-identical — no id spent, no schema version spent.
+#   * JSON DDL is admitted, while an explicit bounded reader refuses that table
+#     with the precise decoding limitation;
+#   * Go writes and reads a Rust-created table without a primary key, using its
+#     implicit row handle; CREATE IF NOT EXISTS adds no catalog change.
 
 set -euo pipefail
 
@@ -466,6 +468,7 @@ await_go "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${D
 # ---------------------------------------------------------------------------
 # The Rust node performs the catalog changes.
 # ---------------------------------------------------------------------------
+APPLIED_BEFORE=$(grep -cF '"event":"catalog_change","outcome":"applied"' "${RUST_LOG}" || true)
 rust_node -e "CREATE DATABASE ${MADE_DATABASE}"
 rust_node -e "CREATE TABLE ${DATABASE}.${MADE_TABLE} (
   id BIGINT PRIMARY KEY CLUSTERED,
@@ -484,6 +487,7 @@ if ! grep -qF '"event":"catalog_change","outcome":"already_satisfied"' "${RUST_L
   exit 1
 fi
 APPLIED=$(grep -cF '"event":"catalog_change","outcome":"applied"' "${RUST_LOG}" || true)
+APPLIED=$((APPLIED - APPLIED_BEFORE))
 if [[ "${APPLIED}" != "2" ]]; then
   echo "expected exactly two applied catalog changes, saw ${APPLIED}" >&2
   tail -60 "${RUST_LOG}" >&2
@@ -643,4 +647,5 @@ SchemaVersionKey and one Diff:<ver> per change in a single optimistic 2PC each; 
 Go TiDB reloaded those diffs, restored the table byte-for-byte with SHOW CREATE TABLE, and \
 INSERTed rows a second Rust node loaded by name and read back; the Rust node then DROPped \
 both objects and the Go TiDB confirmed them gone and ran its own DDL afterwards; \
-unservable shapes were refused before any mutation; pd_cluster_id=${PD_CLUSTER_ID}"
+JSON DDL was admitted and its bounded read refused precisely, while Go wrote and read \
+the Rust-created table without a primary key; pd_cluster_id=${PD_CLUSTER_ID}"

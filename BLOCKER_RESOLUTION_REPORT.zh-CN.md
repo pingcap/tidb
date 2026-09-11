@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DDL 阶段计数修复与完整 master 对照通过
+
+原脚本在两个主体 CREATE 后统计整个节点日志，要求 applied 总数为 2，
+却包含 JSON 和无主键 fixture 的 CREATE/DROP，真实运行得到 6。改为在
+主体 CREATE 前记录 applied 基线，然后仍严格要求阶段增量等于 2。
+这保留了 CREATE IF NOT EXISTS 不产生额外 schema change 的原断言。
+
+新增 `test-ddl-change-count.sh` 提取生产计数阶段，预置四次 fixture DDL：
+旧代码失败 `expected exactly two applied catalog changes, saw 6`
+（`/tmp/ddl-count-red.log`）；修复后通过（`/tmp/ddl-count-green.log`）。
+同一回归额外注入一次 IF NOT EXISTS applied，确认新代码仍拒绝它。
+修正脚本首尾过时说明，避免把 JSON CREATE 成功误称为“变更前拒绝”。
+
+完整固定 master/nightly DDL gate 退出 0：使用上一节相同环境与命令，
+日志改为 `/tmp/ddl-count-master.log`，末尾为 `ddl live proof passed`。
+验证包含原 JSON 精确拒绝、无主键表 Go 写入和隐式句柄读回、两个主体 CREATE
+及 IF NOT EXISTS、Go SHOW CREATE 全文本、物理 table ID 一致、Go INSERT
+后第二 Rust 节点读回所有列、六路并发 DDL 的成功/冲突及 ID 唯一性、Rust DROP、
+Go 后续 DDL 和无 full-reload 回退检查。测试集群完成清理。
+
+Ready 验证还包括 `bash rust/scripts/test-ddl-unservable-fixture.sh`、
+`bash rust/scripts/test-ddl-change-count.sh`、`bash -n`、`git diff --check`
+和 `make lint`（`/tmp/ddl-count-lint.log`）。本轮是原 DDL gate 的完整通过，
+不是所有 RealTiKV 脚本或所有 Rust failed cases 完成；原始清单其余门禁继续保留。
+
 ## 2026-09-11 DDL 无主键表采用 Go master admission
 
 固定 Go master 的 `pkg/ddl/create_table.go::BuildTableInfo` 从空 handle
