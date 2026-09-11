@@ -177,7 +177,7 @@ func validateForeignKeyParents(
 			if option.Tp != ast.ColumnOptionReference {
 				continue
 			}
-			// MySQL 9.7 supports inline foreign keys as column-level REFERENCES options.
+			// Column-level REFERENCES declare inline foreign keys, handled here alongside table-level FOREIGN KEY constraints.
 			if err := validateForeignKeyParent(option.Refer, childDB, schemas); err != nil {
 				return err
 			}

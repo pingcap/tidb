@@ -590,6 +590,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 		}
 	}
 
+	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			if table.Type != TableTypeBase {
