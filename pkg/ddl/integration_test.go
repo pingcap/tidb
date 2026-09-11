@@ -256,13 +256,13 @@ func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
 	})
 
 	originJobVer := model.GetJobVerInUse()
-	originGlobalIdxV1 := model.GetGlobalIndexV1Supported()
+	originGlobalIdxMax := model.GetGlobalIndexMaxVersion()
 	t.Cleanup(func() {
 		model.SetJobVerInUse(originJobVer)
-		model.SetGlobalIndexV1Supported(originGlobalIdxV1)
+		model.SetGlobalIndexMaxVersion(originGlobalIdxMax)
 	})
 	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-	require.True(t, model.GetGlobalIndexV1Supported())
+	require.Equal(t, model.GlobalIndexVersionV2, model.GetGlobalIndexMaxVersion())
 
 	serverInfos := map[string]*serverinfo.ServerInfo{
 		"node0": {
@@ -312,5 +312,5 @@ func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
 	// The only meaningful assert in this test. It makes sure that the JobVersion is 2
 	// and the global index v1 is always supported for next-gen cluster.
 	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-	require.True(t, model.GetGlobalIndexV1Supported())
+	require.Equal(t, model.GlobalIndexVersionV2, model.GetGlobalIndexMaxVersion())
 }
