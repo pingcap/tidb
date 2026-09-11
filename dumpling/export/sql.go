@@ -1058,9 +1058,29 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
+<<<<<<< HEAD
 // buildSelectField returns the selecting fields' string(joined by comma(`,`)),
 // and the number of writable fields.
 func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
+=======
+type columnProjection struct {
+	sourceTypes   []*sql.ColumnType
+	selectedTypes []*sql.ColumnType
+	selectField   string
+	schemaSQL     string
+}
+
+func (p columnProjection) hasFilteredColumns() bool {
+	return len(p.sourceTypes) != len(p.selectedTypes)
+}
+
+type tableName struct {
+	db    string
+	table string
+}
+
+func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
+>>>>>>> dfc06738174 (dumpling: support projected schemas for column filters (#70506))
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
 	if err != nil {
@@ -1072,7 +1092,12 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		fieldName, extra := oneRow[0], oneRow[1]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
+<<<<<<< HEAD
 			hasGenerateColumn = true
+=======
+			// Column filters apply to writable columns; schema projection handles generated dependencies.
+			hasGeneratedColumn = true
+>>>>>>> dfc06738174 (dumpling: support projected schemas for column filters (#70506))
 			continue
 		}
 		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
