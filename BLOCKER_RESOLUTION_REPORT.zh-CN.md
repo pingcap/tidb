@@ -3041,6 +3041,16 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 新版 ONLY_FULL_GROUP_BY 缺失接入的证据
+
+继续原JOIN函数依赖失败发现必须先纠正模式：源 `tests/integrationtest/t/planner/funcdep/only_full_group_by.test` 第二行设置 `tidb_enable_new_only_full_group_by_check=ON`，Rust移植测试漏掉了这个SET。固定Go master fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85的默认值实际为0，默认模式同样拒绝 `SELECT fd_l.pk,fd_r.b FROM fd_l JOIN fd_r USING(pk) GROUP BY fd_l.pk`，错误1055（`/tmp/join-fd-go.out`）。不能给默认旧检查增加USING特判来追平新模式测试。
+
+Go开启新模式后，对fd_l=(1,10),(2,20)、fd_r=(1,30)，INNER返回1/30，LEFT返回1/30和2/NULL（`/tmp/join-fd-go-new.out`）。临时Go实例已停止，日志 `/tmp/join-fd-oracle.log`。Rust变量已传到PlanBuilder，但只用于投影表达式ID注册，旧AST检查仍无条件执行，缺少Go buildProjection的FD闭包校验。还需处理辅助字段例外、聚合scope完成标记和视图延迟校验。
+
+新增工作树回归 `only_full_group_by_join_modes_match_master`，先断言默认1055，再开启新模式断言精确INNER/LEFT行。命令 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib only_full_group_by_join_modes_match_master` 已运行：默认断言通过，新模式仍报1055，退出101，日志 `/tmp/join-fd-mode-red.log`。原JOIN测试补上源SET后仍待实现验证。这些测试修改为未提交WIP，不是完成修复。
+
+接续计划 `rust/docs/new-only-full-group-by-execplan.md` 已记录所有Go规则、Rust入口、FD图API和验收。当前完成诊断及红回归，未修改生产实现、未运行Ready门禁、未宣称该类别通过；整体目标继续。
+
 ## 2026-09-11 GROUP BY 位置错误与 master 对照
 
 固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` binary 对位置错误实测：GROUP BY 0、FALSE、3 均为1105/HY000；聚合位置为1056/42000，未命名字段文本 `Can't group on 'count(*)'`，别名字段为 `Can't group on 'c'`。完整SQL及输出在 `/tmp/group-position-go.out`，Go服务日志 `/tmp/group-position-oracle.log`，临时unistore实例已停止。Go gbyResolver.Leave 的越界分支使用普通 errors.Errorf，聚合/窗口分支使用 ErrWrongGroupField，与实测一致。
