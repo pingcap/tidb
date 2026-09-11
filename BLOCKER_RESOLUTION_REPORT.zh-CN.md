@@ -1,5 +1,46 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 SHOW 模块拆分及 session 全套失败取证
+
+`show.rs` 原为 3415 行，现保留 dispatch/列元数据，分别将 CREATE TABLE/VIEW
+格式化与统计查询移入 `show_create.rs` 和 `show_statistics.rs`。行数为
+1820 / 662 / 976，保持原 API，只有父模块调用的私有入口改为 pub(super)。
+搬出区块除空白及该可见性标记外内容相同，没有改 SQL 行为或预期。
+size gate 降至 87 个 NEW-HUGE，仍退出 1（`/tmp/show-split-size.log`）。
+
+全量 session 验证并非绿色，不能以编译通过代替：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib
+# 1533 passed, 148 failed, 209 ignored；/tmp/show-split-session-tests.log
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+# 305 passed, 2 failed；/tmp/show-split-session-integration.log
+```
+
+为区分拆分回归与已有失败，临时通过 patch 恢复本轮修改前的原 show.rs，
+运行相同两个 target（`--lib --test all --no-fail-fast`），得到 1535 passed /
+146 failed / 209 ignored 和同样的 305 passed / 2 failed，完整日志
+`/tmp/show-baseline-session-tests.log`。随后恢复拆分实现。
+所有基线失败都在拆分版本中复现；额外两项为 SLEEP 在负载下收到 1317、
+embedding global version 实际 10 预期 8。两项在旧、新实现串行复验均通过，
+日志 `/tmp/show-baseline-two-serial.log` 和 `/tmp/show-split-two-serial.log`。
+该证据不能宣称并发波动已修复。
+
+两个确定的聚合集成失败在两版完全相同，后续优先处理：
+
+- `three_valued_in_using_source::null_in_list_and_using_join`：右侧包含 NULL，
+  `a NOT IN (SELECT k FROM s)` 错误返回 `1;3`，预期空集。
+- `unix_round_trip_source::zone_invariant_round_trip`：
+  `EXTRACT(YEAR FROM '2024-03-15')` 返回 FunctionNotExists("extract(YEAR)")。
+
+SHOW/statistics、plan、分区等单元失败也保留为未完成项，未改 golden 或忽略。
+`cargo check --manifest-path rust/Cargo.toml --workspace`（相同 Rust 环境）、
+`make lint` 和 `git diff --check` 通过，日志 `/tmp/show-split-workspace.log`、
+`/tmp/show-split-lint.log`。全任务验证状态仍为 WIP。原六文件只剩
+`tests_partition.rs` 未拆分，完整 source-size 和 session 测试均尚未通过。
+
 ## 2026-09-11 job_args 按参数职责拆分
 
 原始清单中的 `tidb-model/src/job_args.rs` 为 3590 行，仍触发原 2200 行

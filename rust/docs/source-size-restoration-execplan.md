@@ -18,10 +18,11 @@ same tests and public APIs remaining available after file moves.
 - [x] Run the restored check: 92 NEW-HUGE files, exit 1.
 - [x] (2026-09-11) Separate statement-summary, placement-bundle and table-model tests from production modules; 432 crate tests passed.
 - [x] (2026-09-11) Split model/job_args.rs into shared codec infrastructure, schema/table/partition arguments and alteration/index arguments; 327 model tests passed.
-- [ ] Split remaining named files: session/tests_partition.rs and session/show.rs.
+- [x] (2026-09-11) Split session/show.rs into dispatch/column metadata, CREATE formatting and statistics query modules; baseline comparison retained below.
+- [ ] Split remaining named file: session/tests_partition.rs.
 - [ ] Split remaining current violations reported by the unchanged gate.
 - [x] (2026-09-11) Validate first three affected crates, workspace check and lint.
-- [ ] Validate later moves and pass the full source-size gate (88 current violations remain).
+- [ ] Validate later moves and pass the full source-size gate (87 current violations remain).
 
 ## Surprises & Discoveries
 
@@ -47,6 +48,11 @@ argument foundation. Move schema/table/partition arguments to job_args_schema_ta
 and mutation/index arguments to job_args_alter.rs, re-exporting both through the
 existing job_args module. Both moved bodies are byte-identical to the originals;
 shared private helpers remain accessible to their child modules.
+
+Decision (2026-09-11): move SHOW CREATE formatting to show_create.rs and SHOW
+statistics methods to show_statistics.rs. Only entry points called from the
+parent gain pub(super), preserving their privacy outside SHOW. Compare full
+session tests to the original file because this crate already has failing tests.
 
 ## Context and Orientation
 
@@ -123,6 +129,17 @@ Job-argument split: `/tmp/job-args-split-test.log`, 327 passed, zero failed/igno
 Source-size after this split: `/tmp/job-args-source-size.log`, 88 NEW-HUGE entries.
 Lint after this split: `/tmp/job-args-lint.log`, exit 0.
 Workspace check after this split: `/tmp/job-args-workspace-check.log`, exit 0.
+SHOW split: parent/create/statistics sizes are 1820/662/976 lines. Moved code is
+identical after ignoring whitespace and pub(super). Workspace check and lint
+passed (`/tmp/show-split-workspace.log`, `/tmp/show-split-lint.log`). Full session
+tests failed: 1533 passed/148 failed/209 ignored in --lib, and 305 passed/2 failed
+in --test all. Restoring the original SHOW file and rerunning produced 1535
+passed/146 failed/209 ignored and the same two integration failures
+(`/tmp/show-baseline-session-tests.log`). The two extra failures (SLEEP and
+global embedding version) passed serially on both versions; logs are
+`/tmp/show-baseline-two-serial.log` and `/tmp/show-split-two-serial.log`.
+The final worktree restores the split implementation. These are unfinished
+session failures, not evidence of a fully passing crate.
 
 ## Interfaces and Dependencies
 
@@ -139,5 +156,6 @@ sizes are statement_summary 1841/1805, bundle 952/1341 and table 1761/849 lines.
 All retain their original logical test-module names and public API paths.
 Job arguments now occupy 859 lines in the parent, 1355 in schema/table/partition
 arguments and 1418 in alteration/index arguments. The size gate remains failing
-on 88 files. Module splits and final verification are in progress. Do not report
-this work as a completed size gate.
+on 87 files after the SHOW split. Full session tests expose existing failures
+that also need Go-master-based fixes. Module splits and final verification are
+in progress. Do not report this work as a completed size gate.
