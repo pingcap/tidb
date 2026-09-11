@@ -13,6 +13,7 @@ fn rows(session: &mut Session, sql: &str) -> String {
                 row.iter()
                     .map(|d| match d {
                         tidb_datatype::Datum::Int(i) => format!("{i}"),
+                        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
                         other => format!("{other:?}"),
                     })
                     .collect::<Vec<_>>()
@@ -22,6 +23,32 @@ fn rows(session: &mut Session, sql: &str) -> String {
             .join(";"),
         other => panic!("expected rows for {sql}, got {other:?}"),
     }
+}
+
+#[test]
+fn not_in_null_semantics_by_case() {
+    let mut failures = Vec::new();
+    for (name, right, predicate, expected) in [
+        ("empty", "", "a not in (select k from s)", "1;2;3;4"),
+        ("non_null", "(2)", "a not in (select k from s)", "1;3"),
+        ("rhs_null", "(2),(NULL)", "a not in (select k from s)", ""),
+        ("exists", "(2),(NULL)", "not exists (select 1 from s where k=a)", "1;3;4"),
+    ] {
+        let mut session = Session::new();
+        session.run("create table t (id int, a int)").unwrap();
+        session.run("insert into t values (1,1),(2,2),(3,3),(4,NULL)").unwrap();
+        session.run("create table s (k int)").unwrap();
+        if !right.is_empty() {
+            session.run(&format!("insert into s values {right}")).unwrap();
+        }
+        let sql = format!("select id from t where {predicate} order by id");
+        let plan = rows(&mut session, &format!("explain {sql}"));
+        let actual = rows(&mut session, &sql);
+        if actual != expected {
+            failures.push(format!("{name}: expected {expected:?}, got {actual:?}; plan: {plan}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

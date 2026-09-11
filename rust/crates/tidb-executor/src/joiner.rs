@@ -179,7 +179,7 @@ pub enum NAAJType {
 /// [`eval_bool`] treats a NULL from such a condition as "unknown" rather than
 /// as an immediate FALSE, which is what lets an anti-semi join distinguish
 /// "no matching row" from "cannot tell".
-fn is_eq_cond_from_in(expr: &Expression) -> bool {
+pub(crate) fn is_eq_cond_from_in(expr: &Expression) -> bool {
     let Expression::ScalarFunction(sf) = expr else {
         return false;
     };

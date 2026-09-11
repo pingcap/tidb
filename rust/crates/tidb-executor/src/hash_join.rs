@@ -343,6 +343,11 @@ pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSp
 }
 
 pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
+    // Go keeps IN equalities in OtherConditions unless the planner explicitly
+    // builds null-aware keys. Ordinary hashing would discard UNKNOWN pairs.
+    if crate::joiner::is_eq_cond_from_in(conjunct) {
+        return None;
+    }
     let Expression::ScalarFunction(f) = conjunct else {
         return None;
     };

@@ -831,11 +831,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let output = JoinOutput::all(kind, left_width, right_types.len());
+        let native_hash = kind == JoinKind::AntiSemi
+            && conditions.iter().any(crate::joiner::is_eq_cond_from_in);
         JoinExec {
             meta,
             output,
             kind,
-            native_hash: false,
+            native_hash,
             concurrency: 1,
             outer_filter: Vec::new(),
             filter_is_left: true,
@@ -1128,6 +1130,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             chunk.append_datum(i, value);
         }
         let row = chunk.get_row(0);
+        if self.kind == JoinKind::AntiSemi {
+            let (matched, has_null) = crate::joiner::eval_bool(&self.ctx, conditions, row)?;
+            // Anti-semi emits neither TRUE nor UNKNOWN pairs. The build-side
+            // matched bitmap therefore also records UNKNOWN as non-emittable.
+            return Ok(matched || has_null);
+        }
         for condition in conditions {
             let value = condition.eval(&self.ctx, row)?;
             if !truthy(&value)? {

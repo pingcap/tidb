@@ -1,5 +1,86 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 标量 NOT IN 的 UNKNOWN 语义修复
+
+修复 hash_join::equi_key 对 InOperand 条件的错误提取，复用
+joiner::is_eq_cond_from_in。标量 IN 比较留作残余条件，AntiSemi 保持 HashJoin
+执行；无普通 key 时使用空 key bucket，保留全部 build rows 参与条件求值，
+有普通 key 时仍按该 key 分桶。这与 Go 保留 OtherConditions 的执行模型一致，
+没有改为 Apply 或一次性 nested-loop 输出。空 key bucket 可能需要逐对比较，
+专用 null-aware hash key 的性能优化不在本次完成声明内。
+
+AntiSemi 的残余求值调用已有 Go expression.EvalBool 对应实现，TRUE 或 UNKNOWN
+均使该 outer row 不输出，FALSE 不阻止输出；preserved-build 的 matched bitmap
+同样记录不可输出状态。其他 join 类型不采用该 UNKNOWN 判定。
+
+修复前 `/tmp/not-in-boundaries-red.log` 退出 101；修复后原始 case 和新增四种
+边界回归通过（`/tmp/not-in-green.log`）。Ready 验证：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib join
+# 147 passed, 0 failed；/tmp/not-in-executor-join.log
+make lint
+# exit 0；/tmp/not-in-lint.log
+```
+
+完整 session 集成探索运行 `/tmp/not-in-session-all.log` 为 309 passed / 1 failed：
+全部原始 308 cases 及新增标量边界通过，额外元组 case 在 rewriter 阶段失败，
+错误 Unsupported("expression form is not yet supported by the rewriter")，尚未进入
+JoinExec。该独立失败保留在后续工作中，不能宣称所有 SQL 子查询已支持：
+
+```sql
+create table t (id int, a int, b int);
+insert into t values (1,1,1),(2,2,1),(3,NULL,2),(4,NULL,1);
+create table s (a int, b int);
+insert into s values (1,NULL),(2,2);
+select id from t where (a,b) not in (select a,b from s) order by id;
+-- SQL 三值逻辑预期 id=2；Rust 当前 rewriter 拒绝。
+```
+
+最终提交范围完整 session --test all 为 309 passed / 0 failed / 0 ignored
+（`/tmp/not-in-session-final.log`），包括原始 308 项及新增标量边界。
+元组 case 单独保留为下一修复类别的本地 red 测试，不属于本次提交范围。
+未修改原断言，未忽略已知失败；总清单、access-path 估算及元组重写仍待修复。
+
+## 2026-09-11 NOT IN 实际 key 提取取证
+
+`/tmp/not-in-key-extraction.log` 是运行新增边界回归时对 JoinExec 构造点的
+取证。三个 NOT IN 输入的条件两端均 `in_operand=true`，但 split_equi 均返回
+普通 `EquiKey { left: 1, right: 0, class: Int, null_safe: false }`；NOT EXISTS
+的两端均为 false。故标记没有在 planner 中丢失，执行器重新分类条件时丢失了
+三值语义。临时 DEBUG-not-in 日志已移除，没有遗留生产代码修改。
+
+固定 Go master 的 `pkg/planner/core/operator/logicalop/logical_join.go:1456`
+将 IsEQCondFromIn 留在 OtherConditions，1764 在普通 key 提取中跳过，1877
+仅在专用 NA 提取路径收集它。Rust `hash_join.rs::equi_key` 无此判断。
+后续修复需要尊重物理计划的普通 key/残余/NA key 分类，残余路径用已有
+joiner::eval_bool 保留 UNKNOWN；不能单纯变成普通 NullEQ，也不能全局抑制
+所有含 NULL 的元组。边界回归仍退出 101，未达到 Ready、未作修复完成声明。
+
+## 2026-09-11 NOT IN 边界回归与诊断更正
+
+新增尚未通过的 `not_in_null_semantics_by_case`，同时运行四种输入并记录
+实际 EXPLAIN。命令：
+
+```bash
+RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all not_in_null_semantics_by_case
+```
+
+退出 101，完整日志 `/tmp/not-in-boundaries-red.log`。左侧 id=4 的 a 为 NULL：
+空子查询返回 1;2;3;4，通过；NOT EXISTS 返回 1;3;4，通过；右侧仅有 2 时
+NOT IN 错误返回 1;3;4（预期 1;3）；右侧为 2,NULL 时错误返回 1;3;4（预期空）。
+失败计划显示 HashJoin anti semi join，`other cond:eq(test.t.a, test.s.k)`，
+s 是 build side，t 是 probe side。
+
+更正此前结论：`join.rs:1982` 位于 MergeJoin 的 fetch_inner_group，不能作为
+本次 HashJoin 丢弃 NULL build key 的证据。全局 has_null_key 也不能正确覆盖
+元组比较或残余条件中的 FALSE 优先于 UNKNOWN。该未完成实验已移除。
+实际 `JoinExec::matches` 将条件转成 bool；下一步需以已有 joiner::eval_bool 的
+matched/has_null 语义为依据，验证 IN 标记、实际 key 提取及反连接 miss 状态。
+这些新测试仍为 red，未宣称修复，未推送实验实现，未运行 Ready/lint。
+
 ## 2026-09-11 pseudo scan StatsInfo 缩放复核
 
 提交 `c04daa7c6a` 将 pseudo index scan 的物理 `StatsInfo` 与 Go 的
