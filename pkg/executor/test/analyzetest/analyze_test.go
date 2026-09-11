@@ -874,7 +874,11 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			tk.MustExec("delete from mysql.analyze_jobs")
 			mockAnalyzeStatus := getMockKillAutoAnalyzeFailpoint(status)
 			require.NotEmpty(t, mockAnalyzeStatus)
-			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
+			mockAnalyzeStatusTerm := "return"
+			if status == "pending" {
+				mockAnalyzeStatusTerm = `sleep("100ms")`
+			}
+			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, mockAnalyzeStatusTerm))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
 			}()
