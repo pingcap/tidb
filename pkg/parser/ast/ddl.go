@@ -83,6 +83,7 @@ const (
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
 	DatabaseOptionReadOnly
+	DatabaseOptionArchive
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -131,6 +132,10 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case DatabaseOptionReadOnly:
 		ctx.WriteKeyWord("READ ONLY")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
+	case DatabaseOptionArchive:
+		ctx.WriteKeyWord("ARCHIVE")
 		ctx.WritePlain(" = ")
 		ctx.WritePlain(n.Value)
 	default:

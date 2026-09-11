@@ -771,6 +771,459 @@ func TestAlterSchemaReadOnlyDDLRollback(t *testing.T) {
 	require.Equal(t, r[0][11], "rollback done")
 }
 
+// enableArchiveDDLFp enables the failpoint to mock archive DDLs.
+func enableArchiveDDLFp(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+}
+
+func TestAlterSchemaArchiveBasic(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("alter database test archive = 1")
+	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* ARCHIVE = 1 */"))
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	v := is.SchemaMetaVersion()
+	tk.MustExec("alter database test archive = 1")
+	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* ARCHIVE = 1 */"))
+	require.Equal(t, v, is.SchemaMetaVersion())
+	tk.MustExec("alter database test archive = 0")
+	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	// note
+	tk.MustExec("alter database test archive = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 database test is already in the unarchived state"))
+	tk.MustExec("alter database test archive = 1")
+	tk.MustExec("alter database test archive = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 database test is already in the archived state"))
+}
+
+// TestReadOnlyAndArchiveAreIndependent documents that ReadOnly and Archived are two
+// independent DBInfo flags, not a single linear state machine: ARCHIVE never touches
+// ReadOnly and vice versa, so toggling one after the other can leave a database
+// read-only-but-not-archived rather than fully read-write.
+func TestReadOnlyAndArchiveAreIndependent(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("create table test_db.t(a int)")
+
+	// READ ONLY = 1: writes blocked, plain reads still succeed.
+	tk.MustExec("alter database test_db read only = 1")
+	tk.MustExec("select * from test_db.t")
+	tk.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")
+
+	// ARCHIVE = 1 on top of READ ONLY: reads are now blocked too, since ARCHIVE
+	// leaves ReadOnly untouched - the two restrictions are additive.
+	tk.MustExec("alter database test_db archive = 1")
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.True(t, dbInfo.ReadOnly)
+	require.True(t, dbInfo.Archived)
+	tk.MustGetErrMsg("select * from test_db.t", "[schema:3990]Schema 'test_db' is in archived mode.")
+	// The archive check runs before the read-only check in the preprocessor - it's
+	// the stronger restriction - so a blocked write reports the archived error, not
+	// the read-only one, even though the schema is also read-only.
+	tk.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3990]Schema 'test_db' is in archived mode.")
+
+	// ARCHIVE = 0 only clears Archived; ReadOnly, set independently above, is left
+	// untouched. The database ends up read-only again, not fully read-write.
+	tk.MustExec("alter database test_db archive = 0")
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	dbInfo, ok = is.SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.True(t, dbInfo.ReadOnly)
+	require.False(t, dbInfo.Archived)
+	tk.MustExec("select * from test_db.t")
+	tk.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")
+}
+
+// TestSchemaArchiveBlocksReadOnlyToggle verifies that toggling READ ONLY on an archived database
+// is still blocked like any other statement - the only escape hatch out of archived mode is
+// ARCHIVE = 0 itself, so extractSchema's state-toggle exemption must not also cover a bare READ
+// ONLY toggle when checking for archive.
+func TestSchemaArchiveBlocksReadOnlyToggle(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg(
+		"alter database archived_db read only = 1",
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+
+	// The actual escape hatch must still work.
+	tk.MustExec("alter database archived_db archive = 0")
+}
+
+// TestSchemaArchiveExemptsRestrictedSQL verifies that internal restricted SQL (auto-analyze,
+// stats collection, and similar housekeeping) can still read an archived table. Unlike read-only,
+// which only ever blocks writes and so never collided with these read-only internal jobs, archive
+// blocks reads too - without this exemption, background jobs that worked fine under read-only
+// would start failing once a database is archived, even though they never expose the data to an
+// external caller.
+func TestSchemaArchiveExemptsRestrictedSQL(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table archived_db.t(a int)")
+	tk.MustExec("insert into archived_db.t values (1)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg("select * from archived_db.t", "[schema:3990]Schema 'archived_db' is in archived mode.")
+
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	defer func() { tk.Session().GetSessionVars().InRestrictedSQL = false }()
+	tk.MustExec("select * from archived_db.t")
+}
+
+// TestSchemaArchiveDoesNotExemptRestrictedSQLWrites verifies that the InRestrictedSQL exemption
+// covers only reads, not writes: an internal writer (most notably TTL's row-expiry DELETE, which
+// runs with InRestrictedSQL set) must stay blocked exactly like an external client's write would
+// be, since archive's whole point is that nothing can still mutate the database once it succeeds.
+func TestSchemaArchiveDoesNotExemptRestrictedSQLWrites(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table archived_db.t(a int)")
+	tk.MustExec("insert into archived_db.t values (1)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	defer func() { tk.Session().GetSessionVars().InRestrictedSQL = false }()
+	tk.MustExec("select * from archived_db.t")
+	tk.MustGetErrMsg("delete from archived_db.t", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("insert into archived_db.t values (2)", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("update archived_db.t set a = 2", "[schema:3990]Schema 'archived_db' is in archived mode.")
+}
+
+func TestAlterSchemaArchivePrivilege(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("create user 'u1'@'%'")
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "alter database test archive = 1")
+	require.Equal(t, "[planner:1044]Access denied for user 'u1'@'%' to database 'test'", err.Error())
+	_, err = se.Execute(ctx, "alter database test archive = 0")
+	require.Equal(t, "[planner:1044]Access denied for user 'u1'@'%' to database 'test'", err.Error())
+
+	tk.MustExec("grant alter on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter database test archive = 1")
+	require.NoError(t, err)
+	_, err = se.Execute(ctx, "alter database test archive = 0")
+	require.NoError(t, err)
+}
+
+// TestSchemaArchiveBlocksReadsForAllUsers is the key behavior that distinguishes ARCHIVE from
+// READ ONLY: a plain SELECT (not just a write) must be rejected once a database is archived,
+// with no exception for any privilege.
+func TestSchemaArchiveBlocksReadsForAllUsers(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("create table if not exists test.t(a int)")
+	tk.MustExec("insert into test.t values (1)")
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	// Each user is granted SELECT and INSERT so that, absent archive, both statements below
+	// would succeed on their own privileges - the point of adding SUPER/ALL on top for u1/u2 is
+	// to confirm those don't grant a bypass either, not to test privilege denial itself.
+	tcs := []struct {
+		user string
+		priv string
+	}{
+		{"u1", "all"},
+		{"u2", "select, insert, super"},
+		{"u3", "select, insert"},
+	}
+	tk.MustExec("alter database test archive = 1")
+	ctx := context.Background()
+	for _, tc := range tcs {
+		tk.MustExec(fmt.Sprintf("create user '%s'@'%%'", tc.user))
+		tk.MustExec(fmt.Sprintf("grant %s on *.* to '%s'@'%%'", tc.priv, tc.user))
+		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
+		_, err = se.Execute(ctx, "select * from test.t")
+		require.EqualError(t, err, "[schema:3990]Schema 'test' is in archived mode.")
+		_, err = se.Execute(ctx, "insert into test.t values (2)")
+		require.EqualError(t, err, "[schema:3990]Schema 'test' is in archived mode.")
+	}
+	tk.MustExec("alter database test archive = 0")
+	for _, tc := range tcs {
+		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
+		_, err = se.Execute(ctx, "select * from test.t")
+		require.NoError(t, err)
+	}
+}
+
+// TestSchemaArchiveReplicaWriterAdminBypass verifies the one exception to archive mode's
+// otherwise unconditional block: RESTRICTED_REPLICA_WRITER_ADMIN, which read-only also grants,
+// so a replication applier can keep a downstream replica consistent regardless of the target's
+// lockdown state.
+func TestSchemaArchiveReplicaWriterAdminBypass(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("create table if not exists test.t(a int)")
+	tk.MustExec("create user 'replica'@'%'")
+	tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'replica'@'%'")
+	tk.MustExec("grant select, insert on test.* to 'replica'@'%'")
+	tk.MustExec("alter database test archive = 1")
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "replica", Hostname: "%"}, nil, nil, nil))
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "select * from test.t")
+	require.NoError(t, err)
+	_, err = se.Execute(ctx, "insert into test.t values (1)")
+	require.NoError(t, err)
+
+	// A user without the privilege remains fully blocked, even after the bypassed writes above.
+	tk.MustGetErrMsg("select * from test.t", "[schema:3990]Schema 'test' is in archived mode.")
+}
+
+// TestSchemaArchiveBlocksJoinedReads verifies that archive mode's read block applies even to a
+// database that is only joined into a write against a different database, not written to
+// itself - a plain-write-target check would miss this, since the write lands elsewhere.
+func TestSchemaArchiveBlocksJoinedReads(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table live_db.t1(id int, name varchar(20))")
+	tk.MustExec("create table archived_db.t2(id int, name varchar(20))")
+	tk.MustExec("insert into live_db.t1 values (1, 'old')")
+	tk.MustExec("insert into archived_db.t2 values (1, 'new')")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	// UPDATE only writes to live_db.t1, but reads archived_db.t2 via the JOIN to compute the
+	// new value.
+	tk.MustGetErrMsg(
+		"update live_db.t1 join archived_db.t2 on t1.id = t2.id set t1.name = t2.name",
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+
+	// Multi-table DELETE only targets live_db.t1 for deletion, but reads archived_db.t2 via
+	// the JOIN to decide which rows to delete.
+	tk.MustGetErrMsg(
+		"delete t1 from live_db.t1 join archived_db.t2 on t1.id = t2.id",
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+}
+
+// TestSchemaArchiveBlocksInsertSelectFromArchivedDB verifies that INSERT ... SELECT reading
+// from an archived database is blocked even though extractSchema's InsertStmt case only
+// extracts the insert target, not node.Select - the embedded SELECT is itself visited as an
+// independent AST node (InsertStmt.Accept calls n.Select.Accept(v) before n.Table.Accept(v)),
+// so checkSchemaArchivedInStmt runs on it separately and catches the read.
+func TestSchemaArchiveBlocksInsertSelectFromArchivedDB(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table live_db.t1(id int, name varchar(20))")
+	tk.MustExec("create table archived_db.src(id int, name varchar(20))")
+	tk.MustExec("insert into archived_db.src values (1, 'x')")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg(
+		"insert into live_db.t1 select * from archived_db.src",
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+}
+
+// TestSchemaArchiveBlocksStaleRead verifies that a stale read (AS OF TIMESTAMP, from before the
+// database was archived) is still blocked: checkSchemaArchived must look up Archived in the
+// latest schema, not the schema of the snapshot the statement itself reads through, or a
+// snapshot from any time before the ALTER DATABASE ... ARCHIVE DDL - readable for the whole GC
+// lifetime, commonly hours - would let archive's "blocks all reads" guarantee be bypassed simply
+// by asking for slightly stale data.
+func TestSchemaArchiveBlocksStaleRead(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table archived_db.t(id int)")
+	tk.MustExec("insert into archived_db.t values (1)")
+
+	rows := tk.MustQuery("select now(6)").Rows()
+	preArchiveTS := rows[0][0].(string)
+
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg(
+		fmt.Sprintf("select * from archived_db.t as of timestamp '%s'", preArchiveTS),
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+}
+
+// TestSchemaArchiveBlocksViewOverArchivedTable verifies that a view defined over an archived
+// table cannot be used to read its rows. A view body is parsed and planned directly in
+// BuildDataSourceFromView, never through core.Preprocess, so without an explicit check there
+// nothing stops "CREATE VIEW live.v AS SELECT * FROM archived_db.t" from serving archived rows
+// to anyone with SELECT on live.v, even though a direct "SELECT * FROM archived_db.t" is blocked.
+func TestSchemaArchiveBlocksViewOverArchivedTable(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table archived_db.t(id int)")
+	tk.MustExec("insert into archived_db.t values (1)")
+	tk.MustExec("create view live_db.v as select * from archived_db.t")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg("select * from live_db.v", "[schema:3990]Schema 'archived_db' is in archived mode.")
+}
+
+// TestSchemaArchiveBlocksAnalyzeAndAdmin verifies that statements which scan or otherwise touch
+// table data outside the ordinary SELECT/DML path - ANALYZE TABLE and ADMIN CHECKSUM/CHECK
+// TABLE - are blocked against an archived database exactly like a plain SELECT would be. These
+// have no equivalent restriction under READ ONLY (which never blocks reads), so extractSchema
+// only needs to catch them for archive.
+func TestSchemaArchiveBlocksAnalyzeAndAdmin(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table archived_db.t(id int, name varchar(20))")
+	tk.MustExec("insert into archived_db.t values (1, 'x')")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg("analyze table archived_db.t", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("admin checksum table archived_db.t", "[schema:3990]Schema 'archived_db' is in archived mode.")
+	tk.MustGetErrMsg("admin check table archived_db.t", "[schema:3990]Schema 'archived_db' is in archived mode.")
+}
+
+// TestSchemaArchiveBlocksExchangePartition verifies that EXCHANGE PARTITION is blocked in both
+// directions when either side of the swap is archived: it must not be usable to either read an
+// archived table's rows out into a live one, or write a live table's rows into an archived one.
+func TestSchemaArchiveBlocksExchangePartition(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists live_db")
+	tk.MustExec("create database if not exists archived_db")
+	tk.MustExec("create table live_db.pt(id int) partition by hash(id) partitions 1")
+	tk.MustExec("create table archived_db.np(id int)")
+	tk.MustExec("alter database archived_db archive = 1")
+
+	tk.MustGetErrMsg(
+		"alter table live_db.pt exchange partition p0 with table archived_db.np",
+		"[schema:3990]Schema 'archived_db' is in archived mode.",
+	)
+}
+
+func TestAlterDBArchiveBlockByTxn(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database test_db")
+	tk1.MustExec("use test_db")
+	tk1.MustExec("create table t (a int)")
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t")
+	r := tk1.MustQuery("select @@tidb_current_ts").Rows()
+	txnID, err := strconv.ParseInt(r[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	var txnIDs map[int64]struct{}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		require.Eventually(t, func() bool {
+			return len(txnIDs) == 1 && txnIDs[txnID] == struct{}{}
+		}, 5*time.Second, 100*time.Millisecond)
+		tk1.MustExec("commit")
+	}()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+		txnIDs = ids
+	})
+	tk2.MustExec("alter database test_db archive = 1")
+	wg.Wait()
+	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* ARCHIVE = 1 */"))
+}
+
+func TestArchiveInMiddleState(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("create database test_db")
+	tk1.MustExec("create table test_db.t(a int)")
+	tk1.MustExec("begin;use test_db;")
+	tk1.MustExec("select * from t")
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("alter database test_db archive = 1")
+	}()
+	var txnIDs map[int64]struct{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+		txnIDs = ids
+	})
+	require.Eventually(t, func() bool {
+		return len(txnIDs) == 1
+	}, 5*time.Second, 100*time.Millisecond)
+	is := sessiontxn.GetTxnManager(tk3.Session()).GetTxnInfoSchema()
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
+	require.True(t, ok)
+	require.True(t, dbInfo.Archived)
+	tk3.MustGetErrMsg("select * from test_db.t", "[schema:3990]Schema 'test_db' is in archived mode.")
+	tk1.MustExec("commit")
+	wg.Wait()
+}
+
+func TestAlterSchemaArchiveDDLRollback(t *testing.T) {
+	enableArchiveDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set global tidb_ddl_error_count_limit = 1")
+	tk1.MustExec("create database test_db")
+	tk1.MustExec("create table test_db.t(a int)")
+
+	// unarchived -> archived, StateNone -> StatePendingArchive error
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaArchiveStateNone", "return")
+	tk1.MustGetErrMsg("alter schema test_db archive = 1", "[ddl:-1]mock error at StateNone")
+	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk1.MustExec("insert into test_db.t values (1);")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaArchiveStateNone")
+	r := tk1.MustQuery("admin show ddl jobs where db_name = 'test_db' and job_type = 'modify schema archive'").Rows()
+	require.Equal(t, r[0][4], "none")
+	require.Equal(t, r[0][11], "rollback done")
+
+	// archived -> unarchived, error
+	tk1.MustExec("alter schema test_db archive = 1")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaArchive2Unarchived", "return")
+	tk1.MustGetErrMsg("alter schema test_db archive = 0", "[ddl:-1]mock error at archived to unarchived")
+	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* ARCHIVE = 1 */"))
+	tk1.MustGetErrMsg("select * from test_db.t", "[schema:3990]Schema 'test_db' is in archived mode.")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaArchive2Unarchived")
+}
+
 func TestTTLDeleteError(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	var ttlError error

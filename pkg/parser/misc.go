@@ -174,6 +174,7 @@ var tokenMap = map[string]int{
 	"ANY":                      any,
 	"APPROX_COUNT_DISTINCT":    approxCountDistinct,
 	"APPROX_PERCENTILE":        approxPercentile,
+	"ARCHIVE":                  archive,
 	"ARRAY":                    array,
 	"AS":                       as,
 	"ASC":                      asc,
