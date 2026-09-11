@@ -213,12 +213,16 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	}
 }
 
-func buildIndexReader(sctx sessionctx.Context) exec.Executor {
+func buildIndexReader(t *testing.T, sctx sessionctx.Context) exec.Executor {
+	t.Helper()
+	tbl := buildMockPhysicalTableForTiCIMPPTests(t, 1)
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
 		BaseExecutorV2:             buildMockBaseExec(sctx),
 		dagPB:                      buildMockDAGRequest(sctx),
 		index:                      &model.IndexInfo{},
+		table:                      tbl,
+		physicalTableID:            tbl.GetPhysicalID(),
 		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
@@ -254,7 +258,7 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
-		executor := buildIndexReader(sctx)
+		executor := buildIndexReader(t, sctx)
 		require.NoError(t, executor.Open(ctx))
 		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
