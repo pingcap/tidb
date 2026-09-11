@@ -108,6 +108,50 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
 }
 
 #[test]
+fn cluster_account_drop_persists_through_its_own_transaction() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(901)).unwrap();
+    session
+        .execute_write("CREATE USER 'drop_probe'@'%' IDENTIFIED BY 'pw'")
+        .unwrap();
+    session
+        .execute_write("GRANT SELECT ON test.* TO 'drop_probe'@'%'")
+        .unwrap();
+    session.execute_write("DROP USER 'drop_probe'@'%'").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.user WHERE User='drop_probe'"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.db WHERE User='drop_probe'"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        session
+            .execute_write("DROP USER 'drop_probe'@'%'")
+            .unwrap_err()
+            .code,
+        1396
+    );
+    session
+        .execute_write("CREATE USER 'drop_probe'@'%' IDENTIFIED BY 'newpw'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.user WHERE User='drop_probe'"
+        )),
+        [["1"]]
+    );
+}
+
+#[test]
 fn a_held_record_lock_does_not_suppress_a_new_duplicate_assertion() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(125)).unwrap();

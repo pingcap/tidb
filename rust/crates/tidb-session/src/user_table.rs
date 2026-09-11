@@ -108,6 +108,9 @@ impl Session {
     /// table exists, so an error here is a real defect rather than a missing
     /// bootstrap.
     pub(crate) fn run_user_table_write(&mut self, sql: &str) -> Result<(), DriverError> {
+        if self.account_storage_delegated {
+            return Ok(());
+        }
         // The session's own DML context: it carries the statement clock
         // (`password_last_changed=current_timestamp()` and the column's
         // default both evaluate NOW), the session time zone, and the JSON

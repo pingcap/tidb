@@ -5592,7 +5592,10 @@ impl ClusterServerSession {
         let pending = self.accounts.begin().map_err(SqlQueryError::unknown)?;
         let scratch = pending.registry();
         let live = self.session.swap_privileges(scratch);
-        let applied = self.session.run(sql).map_err(map_error);
+        let applied = self
+            .session
+            .run_with_delegated_account_storage(sql)
+            .map_err(map_error);
         // Restoring the live table is unconditional: a statement that failed
         // must not leave the connection reading the scratch copy.
         if let Some(live) = live {

@@ -432,6 +432,7 @@ pub trait MdlRelatedTableSink: Send + Sync {
 
 pub struct Session {
     catalog: SharedCatalog,
+    account_storage_delegated: bool,
     /// Go `session.values`: heterogeneous values addressed by session-context
     /// stringer keys. Values must be thread-safe because the native session
     /// moves between connection workers.
@@ -788,6 +789,7 @@ impl Session {
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
         Session {
             catalog,
+            account_storage_delegated: false,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             external_executor_breakpoint_scope: false,
@@ -1803,6 +1805,19 @@ impl Session {
             StmtOutput::Affected(count) => StmtResult::Affected(count),
             StmtOutput::Done(created) => StmtResult::Done(created),
         })
+    }
+
+    /// Applies an account statement to the installed scratch registry while
+    /// its caller owns persistence in a separate system transaction. Internal
+    /// mysql.user mirrors must not write through the user connection as well.
+    pub fn run_with_delegated_account_storage(
+        &mut self,
+        sql: &str,
+    ) -> Result<StmtResult, DriverError> {
+        let previous = std::mem::replace(&mut self.account_storage_delegated, true);
+        let result = self.run(sql);
+        self.account_storage_delegated = previous;
+        result
     }
 
     /// Go `GetTxnWriteThroughputSLI`: returns the session's transaction-wide

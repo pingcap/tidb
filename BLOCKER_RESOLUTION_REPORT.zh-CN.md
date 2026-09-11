@@ -1,5 +1,40 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DROP USER 避免重复账户持久化
+
+真实 red `/tmp/convergence-column-grant-master.log` 的 DROP USER 返回
+`no statement snapshot is bound`。cluster account writer 已在自己的事务中
+读写账户，但 Session 修改 scratch registry 时又执行普通连接 mysql.user
+mirror DELETE，形成第二条持久化路径。Go master
+`pkg/executor/simple.go:2535-2660` 使用 system session 的内部事务删除账户和
+授权，不通过用户查询连接重复提交。现在 cluster 入口显式委托账户存储，
+仅在该次执行中禁止内部 mysql.user mirror；权限检查、scratch 变更、原有
+account writer 原子提交与 live registry 发布顺序保留。委托状态无论返回
+成功或错误都会恢复，普通 Session 的 mirror 默认行为保留。
+
+嵌入式真实存储回归修复前失败：残留 mirror INSERT 在后续 SELECT 触发
+NotExist 唯一键断言，`/tmp/account-drop-red.log`，1.24 秒；这是相同重复
+持久化在嵌入式栈上的表现，不冒充完全相同的缺 snapshot 消息。修复后
+`/tmp/account-drop-green.log` 通过，1.26 秒，检查账户及 mysql.db 授权行
+删除、重复 DROP 返回 1396、随后重新 CREATE 成功。Session tests_grants
+102/102，包含委托后 mirror 恢复；server 全量 435/435，48.89 秒。
+
+Ready 命令：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-server --lib
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_grants -- --nocapture
+RUSTUP_TOOLCHAIN=1.97 cargo fmt --manifest-path rust/Cargo.toml --all
+make lint
+git diff --check
+```
+
+日志 `/tmp/account-drop-server-full.log`、`/tmp/account-delegation-session.log`、
+`/tmp/account-drop-lint.log`。固定 master/nightly convergence
+`/tmp/convergence-drop-master.log` 全程退出 0，Go 读回已删除账户 COUNT=0，
+脚本完成清理。反向全局授权旧断言的覆盖缺口另行收紧，不据此宣称全部原始
+门禁完成，也不宣称完整 Go 账户执行器 package 已转译。
+
 ## 2026-09-11 列级授权输出断言与后续失败
 
 固定 master `pkg/privilege/privileges/cache.go:1973-2012` 将 ColumnName
