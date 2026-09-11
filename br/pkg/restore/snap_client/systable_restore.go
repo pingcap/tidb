@@ -421,15 +421,18 @@ func buildSystemTableReplaceColumns(
 	for _, col := range downstreamTable.Columns {
 		_, ok := upstreamColMap[col.Name.L]
 		if !ok {
-			if canLoadSystemTableWithMissingBackupColumn(dbName, tableName, col.Name.L, upstreamColMap) {
-				columnConfig, _ := getCompatibleMissingBackupSystemTableColumn(tableName, col.Name.L)
-				columnNames = append(columnNames, utils.EncloseName(col.Name.L))
-				columnExpressions = append(columnExpressions, columnConfig.selectExpression)
-				continue
+			columnConfig, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, col.Name.L)
+			if recognized {
+				if canLoadSystemTableWithMissingBackupColumn(dbName, tableName, col.Name.L, upstreamColMap) {
+					columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+					columnExpressions = append(columnExpressions, columnConfig.selectExpression)
+					continue
+				}
+				return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					upstreamTable.Name.O, col.Name, col.FieldType.String())
 			}
-			return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-				"missing column in backup data, table: %s, col: %s %s",
-				upstreamTable.Name.O, col.Name, col.FieldType.String())
+			continue
 		}
 		columnNames = append(columnNames, utils.EncloseName(col.Name.L))
 		columnExpressions = append(columnExpressions, utils.EncloseName(col.Name.L))
@@ -456,6 +459,14 @@ func canLoadSystemTableWithMissingBackupColumn(dbName, tableName, columnName str
 	}
 	columnConfig, ok := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
 	return ok && columnConfig.selectExpression != "" && hasAllColumns(backupColumns, columnConfig.requiredColumns)
+}
+
+func canSkipUnrecognizedMissingBackupSystemTableColumn(dbName, tableName, columnName string) bool {
+	if dbName != mysql.SystemDB || tableName != sysUserTableName {
+		return false
+	}
+	_, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
+	return !recognized
 }
 
 func getCompatibleMissingBackupSystemTableColumn(
@@ -739,9 +750,10 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			if backupCol == nil {
 				// Some system tables can gain columns in newer TiDB versions. In that case
 				// logical restore can fill the missing columns with configured
-				// compatibility expressions, but physical loading must fall back because the
-				// upstream snapshot does not contain those columns.
-				if canLoadSystemTableWithMissingBackupColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupColMap) {
+				// compatibility expressions or target defaults, but physical loading must
+				// fall back because the upstream snapshot does not contain those columns.
+				if canLoadSystemTableWithMissingBackupColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupColMap) ||
+					canSkipUnrecognizedMissingBackupSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L) {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
