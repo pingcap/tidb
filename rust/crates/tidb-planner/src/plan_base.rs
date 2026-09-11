@@ -323,6 +323,8 @@ pub enum PlanErrorKind {
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
     ViewWrongList,
+    /// Go `plannererrors.ErrWrongGroupField` (1056).
+    WrongGroupField(String),
     /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573).
     CteRecursiveRequiresUnion(String),
     /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (3574).
@@ -616,6 +618,16 @@ impl PlanError {
                  nonaggregated column '{column}'; this is incompatible with sql_mode=only_full_group_by"
             ),
             kind: PlanErrorKind::FieldNotInAggregatedQuery { position, column },
+        }
+    }
+
+    /// Go `plannererrors.ErrWrongGroupField`, preserving the field label.
+    #[must_use]
+    pub fn wrong_group_field(field: impl Into<String>) -> Self {
+        let field = field.into();
+        Self {
+            message: format!("Can't group on '{field}'"),
+            kind: PlanErrorKind::WrongGroupField(field),
         }
     }
 

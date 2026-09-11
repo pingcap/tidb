@@ -537,7 +537,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .clone()
                         .or_else(|| field.text.clone())
                         .unwrap_or_default();
-                    return Err(PlanError::internal(format!("Can't group on '{label}'")));
+                    return Err(PlanError::wrong_group_field(label));
                 }
                 resolved.push(field.expr.clone());
                 continue;

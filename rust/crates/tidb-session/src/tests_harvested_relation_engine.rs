@@ -715,12 +715,8 @@ fn group_by_true_is_the_position_one_reference() {
 /// `SELECT count(*) ... GROUP BY TRUE` does; and `GROUP BY 1, 2` groups by both
 /// selected columns, answering one row per distinct `(k, v)` pair.
 ///
-/// KNOWN DIVERGENCE (separate from the position rule, deliberately not fixed
-/// here): Go quotes the offending field by the text it was WRITTEN as, so its
-/// message reads `Can't group on 'count(*)'`, while this engine quotes the
-/// RESTORED form, `COUNT(1)`. That is the AST's missing original-text
-/// tracking, not the positional resolution these cases exist to pin, so the
-/// assertions below check the code and the message up to the quoted name.
+/// The pinned Go master reports out-of-range GROUP BY positions as 1105.
+/// Aggregate positions retain 1056 and the original field text or alias.
 #[test]
 fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
     let mut session = Session::new();
@@ -740,17 +736,17 @@ fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
     for (sql, code, message) in [
         (
             "SELECT k, count(*) FROM gg GROUP BY 0",
-            1054,
+            1105,
             "Unknown column '0' in 'group statement'",
         ),
         (
             "SELECT k, count(*) FROM gg GROUP BY FALSE",
-            1054,
+            1105,
             "Unknown column '0' in 'group statement'",
         ),
         (
             "SELECT k, count(*) FROM gg GROUP BY 3",
-            1054,
+            1105,
             "Unknown column '3' in 'group statement'",
         ),
         (
@@ -767,6 +763,21 @@ fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
         let err = session.run(sql).expect_err(sql).to_mysql_error();
         assert_eq!(err.code, code, "{sql}: {err:?}");
         assert!(err.message.contains(message), "{sql}: {}", err.message);
+    }
+}
+
+#[test]
+fn group_by_aggregate_position_preserves_error_identity() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT)").unwrap();
+    for (sql, field) in [
+        ("SELECT count(*) AS c FROM gg GROUP BY TRUE", "c"),
+        ("SELECT count(*) AS c FROM gg GROUP BY 1", "c"),
+        ("SELECT count(*) FROM gg GROUP BY 1", "count(*)"),
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, 1056, "{sql}: {error:?}");
+        assert_eq!(error.message, format!("Can't group on '{field}'"), "{sql}");
     }
 }
 

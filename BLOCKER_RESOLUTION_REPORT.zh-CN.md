@@ -3041,6 +3041,18 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 GROUP BY 位置错误与 master 对照
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` binary 对位置错误实测：GROUP BY 0、FALSE、3 均为1105/HY000；聚合位置为1056/42000，未命名字段文本 `Can't group on 'count(*)'`，别名字段为 `Can't group on 'c'`。完整SQL及输出在 `/tmp/group-position-go.out`，Go服务日志 `/tmp/group-position-oracle.log`，临时unistore实例已停止。Go gbyResolver.Leave 的越界分支使用普通 errors.Errorf，聚合/窗口分支使用 ErrWrongGroupField，与实测一致。
+
+原位置测试中三处1054期望与当前master不符，现按实测更正为1105，完整错误文本检查保留。Rust聚合位置检查已正确生成字段标签，却用PlanError::internal丢掉1056；新增 WrongGroupField 结构化类型和driver映射，保留别名及原始SELECT字段文本。没有按错误字符串猜码。
+
+新增 `group_by_aggregate_position_preserves_error_identity`，先红 `/tmp/group-position-red.log`（期望1056、实际1105，文本已正确为c），修复后别名TRUE/1和未命名count(*)均通过，完整文本日志 `/tmp/group-position-text-green.log`。原 `a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot` 与TRUE回归也通过。删除该测试注释中已过时的COUNT(1)原始文本差异声明。
+
+Ready验证（Rust命令环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：`cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib group_by_` 为14 passed / 6 failed（日志 `/tmp/group-position-green.log`），目标位置用例均通过，剩余无ORDER BY聚合顺序、JOIN依赖、相关子查询及计划文本差异未解决；单独新增回归1 passed；`cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests` 为34 passed；`cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all` 为310 passed；`make lint`和`git diff --check`退出0。日志 `/tmp/group-position-planner.log`、`/tmp/group-position-integration.log`、`/tmp/group-position-lint.log`。lint后只扩展测试断言和更正注释，新增完整文本断言已运行通过。
+
+本次只改变错误身份，不改变位置解析算法。没有重跑完整单元/RealTiKV，整体目标仍未完成。
+
 ## 2026-09-11 GROUP BY 布尔位置
 
 修复 `group_by_true_is_the_position_one_reference`：Rust GROUP BY resolver 只识别Expr::Int，将TRUE当常量而不是第一SELECT字段，导致ONLY_FULL_GROUP_BY拒绝合法查询。现在在GROUP BY项入口将Expr::Bool归一为位置1/0，沿用整数位置解析。
