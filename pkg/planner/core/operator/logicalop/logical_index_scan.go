@@ -180,11 +180,18 @@ func (is *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (mat
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
+	idxCols, idxColLens := is.IdxCols, is.IdxColLens
+	if hasUnsignedIntHandleSuffix(is.Source.TableInfo, is.Index, idxCols) {
+		// The appended unsigned handle is stored in the index key as a reinterpreted
+		// int64, so it is not scanned in SQL order and cannot satisfy an ordering.
+		idxCols = idxCols[:len(is.Index.Columns)]
+		idxColLens = idxColLens[:len(is.Index.Columns)]
+	}
 	sctx := is.SCtx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	for i, col := range is.IdxCols {
+	for i, col := range idxCols {
 		if col.Equal(evalCtx, prop.SortItems[0].Col) {
-			return matchIndicesProp(sctx, is.IdxCols[i:], is.IdxColLens[i:], prop.SortItems)
+			return matchIndicesProp(sctx, idxCols[i:], idxColLens[i:], prop.SortItems)
 		} else if i >= is.EqCondCount {
 			break
 		}

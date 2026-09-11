@@ -306,7 +306,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTabl
 
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-	return builder.SetIndexRanges(ctx.GetDistSQLCtx(), physicalTableID, indexInfo.ID, ranges).
+	return builder.SetIndexRanges(ctx.GetDistSQLCtx(), physicalTableID, indexInfo.ID, ranges, distsql.NoIntHandleSuffix).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.startTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).

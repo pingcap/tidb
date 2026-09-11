@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 
@@ -35,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -220,6 +223,26 @@ func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
+}
+
+// TestIndexReaderRangeMemoryOutlivesOpen covers an index reader that sends a real request:
+// the memory charged for building its KV ranges must survive Open, which readies the
+// tracker before the ranges are built rather than after.
+func TestIndexReaderRangeMemoryOutlivesOpen(t *testing.T) {
+	sctx := defaultCtx()
+	e := buildIndexReader(sctx).(*IndexReaderExecutor)
+	e.ranges = []*ranger.Range{{
+		LowVal:    []types.Datum{types.NewIntDatum(0)},
+		HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}}
+	require.Nil(t, e.rangeMemTracker, "the fallback under test only applies without a dedicated range tracker")
+
+	ctx := mockDistsqlSelectCtxSet(1, []int{1})
+	require.NoError(t, e.Open(ctx))
+	defer func() { require.NoError(t, e.Close()) }()
+	require.Greater(t, e.memTracker.BytesConsumed(), int64(0),
+		"range memory must not be reset away after it is charged")
 }
 
 func TestIndexReaderRequiredRows(t *testing.T) {

@@ -1849,19 +1849,23 @@ func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
 
 	// An unsigned int handle is stored in the index key suffix in signed-encoded order,
 	// which wraps at the int64 boundary: values in [MaxInt64+1, MaxUint64] sort before
-	// [0, MaxInt64]. fillIndexPath therefore never appends an unsigned handle to the
-	// index columns, so unsigned handle predicates must stay out of the index ranges and
-	// receive no appended-handle credit: the estimate remains the prefix row count.
+	// [0, MaxInt64]. The ranges stay in SQL order here — only the key ranges built from
+	// them are split and reordered — so estimation is the same as for a signed handle.
 	tk.MustExec("create table tu(id bigint unsigned primary key clustered, a int, key ia(a))")
 	tk.MustExec("insert into tu values " + strings.Join(vals, ","))
 	tk.MustExec("analyze table tu all columns")
 	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id in (11, 22)")
-	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
-	require.NotContains(t, opInfo, "5 11", "unsigned handle must not extend the execution range")
-	require.Equal(t, "10.00", estRows)
+	require.Contains(t, opInfo, "range:[5 11,5 11], [5 22,5 22]", "execution range must keep the handle dimension")
+	require.Equal(t, "2.00", estRows)
 	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id > 10")
-	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
+	require.Contains(t, opInfo, "range:(5 10,5 +inf]", "execution range must keep the handle dimension")
 	require.Equal(t, "10.00", estRows)
+
+	// A predicate above the int64 boundary is a normal unsigned range in the plan; the
+	// wrap only exists in the key encoding.
+	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id >= 9223372036854775808")
+	require.Contains(t, opInfo, "range:[5 9223372036854775808,5 +inf]", "execution range must keep the handle dimension")
+	require.Equal(t, "1.00", estRows)
 }
 
 // TestIndexRangeEstimationWithPrefixedCommonHandle covers a clustered handle whose leading
