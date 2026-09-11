@@ -1,5 +1,24 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 不支持窗口特性返回 Go 1235
+
+在 `aea226d8ff` 重跑 `window_errors_and_refusals`，`/tmp/window-unsupported-red.log` 退出 101，首个失败为 GROUP_CONCAT 窗口调用。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::checkWindowFuncArgs`、`checkOriginWindowFuncs` 明确对 GROUP_CONCAT、DISTINCT、IGNORE NULLS、FROM LAST 返回 ErrNotSupportedYet (1235)。Rust 原先生成无依据的 noop Internal 消息，落入 1105。
+
+四处改用已有 PlanError::not_supported_yet。新增专门回归逐项检查 1235 与完整 Go 消息。旧综合测试对 Cow::Borrowed 的内部表示限制改为对 NotSupportedYet feature 值的等值检查，仍验证同一 feature；没有接受任意错误或改变 SQL。
+
+Ready 验证，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib unsupported_window_features_return_go_1235
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/window-unsupported-green.log` 专门回归 1 passed，`/tmp/window-unsupported-planner.log` 66 passed，`/tmp/window-unsupported-integration.log` 310 passed，`/tmp/window-unsupported-lint.log` 退出 0，diff check 通过。完整窗口 suite `/tmp/window-unsupported-suite.log` 37 passed / 9 failed；原综合测试已通过 GROUP_CONCAT/DISTINCT 等断言，继续在 RANGE ORDER BY 3587 断言失败，未声称综合测试或全量目标通过。
+
 ## 2026-09-11 命名窗口错误传播
 
 在 `10a16dc4be` 独立运行 `window_errors_and_refusals`，`/tmp/named-window-red.log` 退出 101，首个失败为 OVER w 未返回 3579。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::resolveWindowSpec/mergeWindowSpec` 已明确缺失引用、循环、frame 继承、partition 和 ORDER BY 的验证顺序；消息来自 `pkg/errno/errname.go:870` 起。Rust 检查存在，但 Internal 抹掉错误码且使用不完整消息。

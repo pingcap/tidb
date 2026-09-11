@@ -1066,19 +1066,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<(), PlanError> {
         for func in funcs {
             if func.ignore_null {
-                return Err(PlanError::internal(
-                    "function IGNORE NULLS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions",
-                ));
+                return Err(PlanError::not_supported_yet("IGNORE NULLS"));
             }
             if func.distinct {
-                return Err(PlanError::internal(
-                    "function <window function>(DISTINCT ..) has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions",
-                ));
+                return Err(PlanError::not_supported_yet("<window function>(DISTINCT ..)"));
             }
             if func.from_last {
-                return Err(PlanError::internal(
-                    "function FROM LAST has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions",
-                ));
+                return Err(PlanError::not_supported_yet("FROM LAST"));
             }
             let spec = match &func.over {
                 WindowOver::Name(name) => {
@@ -1369,9 +1363,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<(), PlanError> {
         for func in window_funcs {
             if func.name.eq_ignore_ascii_case("group_concat") {
-                return Err(PlanError::internal(
-                    "function group_concat as window function has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions",
-                ));
+                return Err(PlanError::not_supported_yet("group_concat as window function"));
             }
             let args = self.build_args_for_window_func(&func.args, schema, names, markers)?;
             // `// boundary:` `ParamMarkerInPrepareChecker`; see section 3. The

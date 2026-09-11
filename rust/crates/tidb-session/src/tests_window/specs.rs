@@ -395,6 +395,21 @@ fn named_window_errors_preserve_codes_and_names() {
 }
 
 #[test]
+fn unsupported_window_features_return_go_1235() {
+    let mut session = window_session();
+    for (sql, feature) in [
+        ("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t", "group_concat as window function"),
+        ("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t", "<window function>(DISTINCT ..)"),
+        ("SELECT FIRST_VALUE(v) IGNORE NULLS OVER (ORDER BY v) FROM t", "IGNORE NULLS"),
+        ("SELECT NTH_VALUE(v, 1) FROM LAST OVER (ORDER BY v) FROM t", "FROM LAST"),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1235, "{sql}");
+        assert_eq!(error.message, format!("This version of TiDB doesn't yet support '{feature}'"));
+    }
+}
+
+#[test]
 fn window_errors_and_refusals() {
     let mut session = window_session();
 
@@ -488,15 +503,11 @@ fn window_errors_and_refusals() {
     // in `tidb_exec::window::build_call`, not at parse time.
     assert!(matches!(
         session.run("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t"),
-        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
-            "group_concat as window function"
-        )))
+        Err(DriverError::NotSupportedYet(ref feature)) if feature == "group_concat as window function"
     ));
     assert!(matches!(
         session.run("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t"),
-        Err(DriverError::NotSupportedYet(std::borrow::Cow::Borrowed(
-            "<window function>(DISTINCT ..)"
-        )))
+        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
     ));
 
     // The four aggregates Go allows OVER that this build used to refuse
