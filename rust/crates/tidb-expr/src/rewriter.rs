@@ -53,6 +53,11 @@ use result_type::{
 /// schema/name resolution Go's `expression_rewriter` performs against the
 /// plan's schema (`resolveColumn`).
 pub trait ColumnResolver {
+    /// Builds GROUPING using the current query block's Expand metadata.
+    fn rewrite_grouping(&self, _args: &[Expression]) -> Result<Expression, EvalError> {
+        Err(EvalError::InvalidGroupFuncUse)
+    }
+
     /// Resolves `path` (e.g. `["t", "a"]` or `["a"]`) to
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
@@ -222,6 +227,10 @@ pub trait ColumnResolver {
 // Keep a borrowed resolver's complete context, including trait objects, when
 // passing it through the rewriter's statically dispatched recursive helpers.
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
+    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
+        (**self).rewrite_grouping(args)
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         (**self).resolve(path)
     }
@@ -1664,6 +1673,13 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            if lowered == "grouping" {
+                let args = args
+                    .iter()
+                    .map(|arg| rewrite_expr_resolved(arg, resolver))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return resolver.rewrite_grouping(&args);
+            }
             // Go resolves every FuncCallExpr through its function class
             // before a physical operator can suppress row evaluation (for
             // example an empty table). Keep DATE_ADD's Rust interval node

@@ -78,6 +78,12 @@ pub enum EvalError {
     /// Go `ErrWrongArguments` (1210), with the source-formatted argument
     /// description.
     IncorrectArguments(String),
+    /// Go ErrInvalidGroupFuncUse (1111).
+    InvalidGroupFuncUse,
+    /// Go ErrInvalidNumberOfArgs (3601) for GROUPING's 64-argument limit.
+    TooManyGroupingArguments,
+    /// Go ErrFieldInGroupingNotGroupBy (3602), with zero-based argument index.
+    FieldInGroupingNotGroupBy(usize),
     /// Go `types.ErrTooBigPrecision` (1426): a clock function's
     /// fractional-seconds argument exceeds `MaxFsp`, raised at evaluation
     /// time (`pkg/expression/builtin_time.go:2730` and siblings).

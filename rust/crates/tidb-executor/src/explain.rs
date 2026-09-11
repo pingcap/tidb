@@ -1036,6 +1036,18 @@ fn physical_operator_info(
             aggregation.base.base.schema(),
         ),
         PhysicalPlan::Window(window) => window_info(window),
+        PhysicalPlan::Expand(expand) => format!(
+            "level-projection:{}; schema: [{}]",
+            expand
+                .level_exprs
+                .iter()
+                .map(|level| format!("[{}]", expressions_text(level)))
+                .collect::<Vec<_>>()
+                .join(","),
+            plan.schema()
+                .map(|schema| columns_text(&schema.columns))
+                .unwrap_or_default()
+        ),
         PhysicalPlan::MaxOneRow(_)
         | PhysicalPlan::NominalSort(_)
         | PhysicalPlan::Show(_)

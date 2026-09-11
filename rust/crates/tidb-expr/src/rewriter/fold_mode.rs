@@ -45,6 +45,10 @@ impl<'a> FoldModeResolver<'a> {
 }
 
 impl ColumnResolver for FoldModeResolver<'_> {
+    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, crate::EvalError> {
+        self.base.rewrite_grouping(args)
+    }
+
     fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {
         self.base.param_value(order)
     }

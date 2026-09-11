@@ -362,6 +362,12 @@ impl PhysicalPlan {
 
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         match self {
+            Self::Expand(op) => {
+                let input = child_schema(&op.base, 0)?;
+                for level in &mut op.level_exprs {
+                    bind_exprs(level, input)?;
+                }
+            }
             Self::Projection(op) => {
                 let input = child_schema(&op.base, 0)?;
                 bind_exprs(&mut op.exprs, input)?;

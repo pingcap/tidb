@@ -1808,11 +1808,6 @@ pub(crate) fn physical_select_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
-    if select.rollup {
-        return Err(tidb_planner::plan_base::PlanError::internal(
-            "ROLLUP physical planning is not implemented",
-        ));
-    }
     planner_physical_select(select, catalog, current_database, ctx, false)
         .map(|(_, physical)| physical)
 }
@@ -1826,11 +1821,6 @@ pub(crate) fn physical_query_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
-    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
-        return Err(tidb_planner::plan_base::PlanError::internal(
-            "ROLLUP physical planning is not implemented",
-        ));
-    }
     planner_physical_query(query, catalog, current_database, ctx, false)
         .map(|(_, physical)| physical)
 }
@@ -1844,11 +1834,6 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner::plan_base::PlanError> {
-    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
-        return Err(tidb_planner::plan_base::PlanError::internal(
-            "ROLLUP physical planning is not implemented",
-        ));
-    }
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     planner_physical_query_with_registry(
@@ -1876,11 +1861,6 @@ pub(crate) fn physical_query_plan_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
-    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
-        return Err(tidb_planner::plan_base::PlanError::internal(
-            "ROLLUP physical planning is not implemented",
-        ));
-    }
     planner_physical_query_with_allocators(
         query,
         catalog,

@@ -479,6 +479,11 @@ fn bind_plan_expressions(
                 bind_conditions(&mut descriptor.base.args, context)?;
             }
         }
+        PhysicalPlan::Expand(expand) => {
+            for level in &mut expand.level_exprs {
+                bind_conditions(level, context)?;
+            }
+        }
         PhysicalPlan::IndexJoin(join) => {
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;

@@ -2696,6 +2696,8 @@ pub fn exhaust_physical_plans_4_logical_window(
 /// Go `base.PhysicalPlan`: a tree of physical operators.
 #[derive(Clone, Debug)]
 pub enum PhysicalPlan {
+    /// Grouping-level projections for ROLLUP.
+    Expand(expand::PhysicalExpand),
     /// Go `physicalop.PhysicalSelection`.
     Selection(PhysicalSelection),
     /// Go `physicalop.PhysicalProjection`.
@@ -2772,6 +2774,7 @@ impl PhysicalPlan {
     #[must_use]
     pub const fn base(&self) -> &BasePhysicalPlan {
         match self {
+            Self::Expand(op) => &op.base,
             Self::Selection(op) => &op.base,
             Self::Projection(op) => &op.base,
             Self::HashJoin(op) => &op.base,
@@ -2812,6 +2815,7 @@ impl PhysicalPlan {
     /// The shared physical base, mutably.
     pub const fn base_mut(&mut self) -> &mut BasePhysicalPlan {
         match self {
+            Self::Expand(op) => &mut op.base,
             Self::Selection(op) => &mut op.base,
             Self::Projection(op) => &mut op.base,
             Self::HashJoin(op) => &mut op.base,
@@ -3551,6 +3555,11 @@ impl PhysicalPlan {
                 order_by: op.order_by.clone(),
                 frame: op.frame.clone(),
             }),
+            Self::Expand(op) => Self::Expand(expand::PhysicalExpand {
+                base: base_of(&op.base),
+                level_exprs: op.level_exprs.clone(),
+                extra_grouping_col_names: op.extra_grouping_col_names.clone(),
+            }),
         }
     }
 
@@ -3691,6 +3700,11 @@ fn visit_physical_correlated_columns_mut(
     match plan {
         PhysicalPlan::Selection(op) => expressions(&mut op.conditions, visitor),
         PhysicalPlan::Projection(op) => expressions(&mut op.exprs, visitor),
+        PhysicalPlan::Expand(op) => {
+            for level in &mut op.level_exprs {
+                expressions(level, visitor);
+            }
+        }
         PhysicalPlan::HashJoin(op) => hash_join(op, visitor),
         PhysicalPlan::MergeJoin(op) => {
             expressions(&mut op.left_conditions, visitor);
@@ -3861,6 +3875,7 @@ pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
     child
 }
 
+pub mod expand;
 pub mod inject_extra_projection;
 
 pub use inject_extra_projection::inject_extra_projection;

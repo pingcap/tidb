@@ -734,6 +734,98 @@ fn test_grouping_marks_resolve_against_the_expands_columns() {
 
 // ***** DISTINCT *****
 
+fn find_grouping(plan: &LogicalPlan) -> Option<&tidb_expr::scalar_function::ScalarFunction> {
+    if let LogicalPlan::Projection(projection) = plan {
+        for expr in &projection.exprs {
+            if let Expression::ScalarFunction(function) = expr {
+                if function.func_name.lowercase() == "grouping" {
+                    return Some(function);
+                }
+            }
+        }
+    }
+    plan.base().children().iter().find_map(find_grouping)
+}
+
+#[test]
+fn grouping_sql_installs_metadata_and_uses_the_expand_gid() {
+    let plan = build("SELECT GROUPING(b) FROM t GROUP BY b, c WITH ROLLUP");
+    let LogicalPlan::Expand(expand) = find(&plan, "Expand").unwrap() else {
+        unreachable!()
+    };
+    let function = find_grouping(&plan).expect("GROUPING must retain its planner metadata");
+    assert_eq!(function.func_name.lowercase(), "grouping");
+    assert_eq!(function.args.len(), 1);
+    let Expression::Column(argument) = &function.args[0] else {
+        panic!("GROUPING evaluates the generated gid")
+    };
+    assert_eq!(argument.unique_id, expand.gid.as_ref().unwrap().unique_id);
+    let metadata = function.grouping_metadata().unwrap();
+    assert_eq!(metadata.mode(), tidb_expr::GroupingMode::BitAnd);
+    assert_eq!(
+        metadata.grouping_marks()[0],
+        std::collections::BTreeSet::from([1])
+    );
+}
+
+#[test]
+fn grouping_sql_preserves_argument_order_and_wide_rollup_mode() {
+    let plan = build("SELECT GROUPING(c,b) FROM t GROUP BY b,c WITH ROLLUP");
+    let metadata = find_grouping(&plan).unwrap().grouping_metadata().unwrap();
+    assert_eq!(
+        metadata.grouping_marks(),
+        &[
+            std::collections::BTreeSet::from([2]),
+            std::collections::BTreeSet::from([1]),
+        ]
+    );
+    assert_eq!(metadata.eval(1), 2);
+    assert_eq!(metadata.eval(0), 3);
+
+    let group_items = vec!["b"; 65].join(",");
+    let plan = build(&format!(
+        "SELECT GROUPING(b) FROM t GROUP BY {group_items} WITH ROLLUP"
+    ));
+    let LogicalPlan::Expand(expand) = find(&plan, "Expand").unwrap() else {
+        unreachable!()
+    };
+    let metadata = find_grouping(&plan).unwrap().grouping_metadata().unwrap();
+    assert_eq!(metadata.mode(), tidb_expr::GroupingMode::NumericSet);
+    assert_eq!(
+        metadata.grouping_marks(),
+        expand.generate_grouping_marks(&expand.distinct_group_by_col)
+    );
+}
+
+#[test]
+fn grouping_sql_retains_source_validation_errors() {
+    let harness = Harness::new();
+    let args = vec!["b"; 65].join(",");
+    for (sql, expected) in [
+        (
+            "SELECT GROUPING(b) FROM t".to_owned(),
+            tidb_expr::EvalError::InvalidGroupFuncUse,
+        ),
+        (
+            "SELECT GROUPING(c) FROM t GROUP BY b WITH ROLLUP".to_owned(),
+            tidb_expr::EvalError::FieldInGroupingNotGroupBy(0),
+        ),
+        (
+            format!("SELECT GROUPING({args}) FROM t GROUP BY b WITH ROLLUP"),
+            tidb_expr::EvalError::TooManyGroupingArguments,
+        ),
+    ] {
+        let error = harness
+            .builder()
+            .build_select(&parse_select(&sql))
+            .unwrap_err();
+        assert!(
+            matches!(error.kind(), crate::plan_base::PlanErrorKind::Eval(actual) if *actual == expected),
+            "{sql}: {error:?}"
+        );
+    }
+}
+
 #[test]
 fn test_distinct_builds_an_aggregation_grouping_by_the_select_list() {
     let plan = build("SELECT DISTINCT b FROM t");

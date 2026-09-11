@@ -1,4 +1,4 @@
-# Gap: GROUP BY ... WITH ROLLUP is refused at physical planning
+# Historical Gap: ROLLUP Physical Execution
 
 ## Reproduction (2026-09-06)
 
@@ -10,9 +10,9 @@ select g, sum(v) from t group by g with rollup order by g;
 -- Go:   per-group rows plus super-aggregate rows with NULL group keys
 ```
 
-## State of the tree
+## Historical State
 
-The LOGICAL half exists and is complete: `select.rollup` reaches
+The logical half exists but is not yet verified end to end: `select.rollup` reaches
 `PlanBuilder::build_expand` (plan_builder.rs:3304-3310, Go
 `logical_plan_builder.go:4494`), producing `LogicalExpand`
 (`plan_builder/expand.rs`; grouping sets, gid columns, GROUPING()
@@ -25,13 +25,15 @@ resolution). What is missing:
    points at `driver/grouping.rs:221 run_rollup_aggregate`, which does not
    exist yet.
 
-## Plan (feature-sized, queued)
+## Resolution
 
-1. Add `PhysicalExpand` carrying the grouping sets and the gid column;
-2. lower `LogicalExpand` in the physical builder;
-3. implement the grouping executor (`run_rollup_aggregate`): emit one
-   result row per grouping set per input group, NULLing the set's absent
-   columns via gid;
-4. bind GROUPING() to the gid column;
-5. pin: `select g, sum(v) from t group by g with rollup` → (1,30), (2,5),
-   (NULL,35); plus GROUPING() and ORDER BY interactions.
+The physical path now uses `PhysicalExpand` and serial `ExpandExec`: each input
+chunk is projected once per grouping level, then the ordinary aggregation
+computes detail/subtotal rows. GROUPING evaluates Expand's GID using
+planner-installed metadata. The original ROLLUP and window-over-ROLLUP tests
+pass in `/tmp/rollup-final-focused.log`.
+
+The proposed `run_rollup_aggregate` AST shortcut was not Go's execution model
+and was never implemented. See [the execution plan](rollup-physical-execplan.md)
+for source references, regressions and validation status. These results do not
+claim complete Go planner/executor package or TiFlash wire parity.

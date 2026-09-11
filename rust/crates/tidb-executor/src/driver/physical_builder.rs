@@ -3617,6 +3617,21 @@ fn build_with_state(
             ctx,
             state,
         ),
+        PhysicalPlan::Expand(expand) => {
+            let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            // Go buildExpand consumes positions resolved before postOptimize.
+            let mut levels = expand.level_exprs.clone();
+            for expression in levels.iter_mut().flatten() {
+                super::planner_bridge::materialize_physical_expression(expression);
+            }
+            Ok(Box::new(crate::expand::ExpandExec::new(
+                meta(plan, plan_schema(plan)?),
+                levels,
+                child,
+                ctx.clone(),
+                ctx.statement_memory(),
+            )) as Box<dyn Executor>)
+        }
         PhysicalPlan::Window(window) => build_window(plan, window, catalog, ctx, state),
         PhysicalPlan::HashJoin(join) => {
             let mut executor = build_join(

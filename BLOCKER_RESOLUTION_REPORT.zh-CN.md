@@ -26,6 +26,43 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 真实回放 `/tmp/readiness-9f9a-confirm.log` 最终退出 0，结尾为 `the access-path differential passed`。`/tmp/readiness-9f9a-confirm-evidence/rust-node.log:8` 记录 `cluster_session_node_ready`，地址 `127.0.0.1:47600`、schema_version=68、stats_loaded=4。原流程包含 ANALYZE 前后对照并完整结束，脚本已清理本次节点和 TiUP 数据。这解除的是 readiness 阻塞并验证原 access-path gate；其他 Rust failed cases、原 chunk panic 完整根因、全量 Go/Bazel 门禁仍未全部完成，整体目标保持未完成。
 
+## 2026-09-11 ROLLUP 物理执行与 GROUPING 元数据接入
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`。原窗口 suite 在 `9f9a9198bc` 为 47 pass / 1 fail，唯一失败 `window_over_rollup` 因四个入口拒绝 ROLLUP physical planning。Rust 缺少 PhysicalExpand/ExpandExec，而逻辑层已有的分组列替换与隐式投影也未接入 SELECT 投影。移除拒绝后，GROUPING 又在普通 builtin 构建处失败：求值算法存在，但没有当前 Expand 的 GID 和分组标记。
+
+实现沿用 Go `pkg/executor/expand.go` 的串行路径：缓存一个 child chunk，以禁止交换输入列的 EvaluatorSuite 逐层投影，普通聚合计算各层结果。PhysicalExpand 枚举 Go 的 cop single/multi、MPP、root 子任务，保留排序/MPP 分区约束，接入 task attachment、ResolveIndices、plan cache、相关列遍历和 EXPLAIN。执行器使用 postOptimize 前已绑定的列位置，不再按被消除的投影 ID 二次绑定。
+
+GROUPING 在 plan-aware rewriter 中将用户参数解析为 Expand 分组列，只以 GID 作为运行期参数，并安装 BitAnd/NumericSet 元数据。多参数顺序、64 参数限制、重复 grouping sets 的 GPos、零参数调用均保留。ONLY_FULL_GROUP_BY 原先误将 GROUPING 当成聚合，抢先返回 1140；按 Go colResolverForOnlyFullGroupBy 只将 AggregateFuncExpr/ANY_VALUE 计为聚合后，非法用法正确返回 1111。非分组参数 3602、参数过多 3601 保留完整 MySQL 身份。
+
+红绿证据：executor `/tmp/expand-exec-red.log` 到 `/tmp/expand-exec-green.log`；GROUPING SQL 构建 `/tmp/grouping-planner-red.log` 到 `/tmp/grouping-planner-green3.log`；原错误顺序 `/tmp/grouping-session-errors.log` 显示错误的 FieldNotInAggregatedQuery。最终 `/tmp/rollup-final-focused.log` 四个原始 ROLLUP 测试全部通过，包括窗口、真实 NULL、AVG/COUNT/SUM、空表、重复分组项、HAVING、排序与 index-join fence。
+
+两处旧测试预期按 Go 实证修正，而非让 Rust 迁就错误预期：`/tmp/rollup-order-go.out` 连续 12 次相同无 ORDER BY 查询的行序不同，因此测试比较完整多重集，保留值、NULL、行数和重复次数；带 ORDER BY 的行序断言保留。`SELECT a+1,SUM(c) FROM t GROUP BY a+1 WITH ROLLUP HAVING GROUPING(a+1)=0` 在 Go 返回 1054（`/tmp/grouping-derived-having-go.out`），原先预期成功的断言改为精确错误，并新增 `a+1 AS k ... HAVING GROUPING(k)=0 ORDER BY k` 成功断言（Go `/tmp/grouping-alias-having-go.out`）。错误码和重复 grouping sets 的 Go 输出另存于 `/tmp/grouping-invalid-go.out`、`/tmp/grouping-many-go.out`、`/tmp/grouping-duplicates-go.out`；Go 进程已停止。
+
+Ready 验证，目录 `/tmp/tidb-hparser-current`，Cargo 统一前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib rollup
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib expand
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib expand
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib grouping
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib only_full_group_by
+make lint
+git diff --check
+```
+
+已完成结果：ROLLUP 4、planner aggregation 37、planner Expand 17、executor expand filter 4（其中直接 Expand 回归 3）、窗口 48、session integration 310 项通过；lint 退出 0。对应日志 `/tmp/rollup-final-focused.log`、`/tmp/rollup-ready-tidb-planner-aggregation_tests.log`、`/tmp/rollup-ready-tidb-planner-expand.log`、`/tmp/rollup-ready-tidb-executor-expand.log`、`/tmp/rollup-ready-tidb-session-tests_window.log`、`/tmp/rollup-ready-session-integration.log`、`/tmp/rollup-ready-lint.log`。补充 GROUPING/ONLY_FULL_GROUP_BY 回归及合并后复验结果待本次运行结束补记。
+
+补充回归完成：`/tmp/rollup-ready-tidb-expr-grouping.log` 为 4 pass，`/tmp/rollup-ready-tidb-session-only_full_group_by.log` 为 8 pass，均退出 0。合入 `d682d96522` 后，ROLLUP 4、窗口 48、session integration 310 项再次通过，lint 退出 0；日志 `/tmp/rollup-merged-rollup.log`、`/tmp/rollup-merged-tests_window.log`、`/tmp/rollup-merged-integration.log`、`/tmp/rollup-merged-lint.log`。
+
+合并后重跑原 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib`，`/tmp/rollup-merged-session-all.log` 为 1592 passed / 111 failed / 209 ignored，退出 101。相对 `/tmp/window-alias-session-all.log`，7 个旧失败消失（4 个 ROLLUP 与此前辅助聚合修复的3项窗口测试），另出现3项全局状态失败：circuit_breaker_pd_metadata_ratio_global_hook_publishes_float、embedding_api_keys_are_masked_and_versioned、openai_embedding_global_write_normalizes_and_versions。未将完整 suite 记为通过；这些失败继续保留在整体目标中。
+
+3 项新增全局状态失败单独复跑均通过：日志 `/tmp/rollup-global-circuit_breaker_pd_metadata_ratio_global_hook_publishes_float.log`、`/tmp/rollup-global-embedding_api_keys_are_masked_and_versioned.log`、`/tmp/rollup-global-openai_embedding_global_write_normalizes_and_versions.log`。这只支持并发状态干扰的判断，不消除全量 suite 的失败，也不代表这些 case 已修复。
+
+本次修复 ROLLUP 失败类别，不宣称整个 Go planner/executor package 完成；TiFlash Expand wire 执行、全量 Rust failed cases、原 chunk panic 完整根因及其余原始质量门禁仍需推进。readiness 已经解除，不作为这些剩余工作的 blocker。
+
 ## 2026-09-11 窗口表达式中的普通聚合辅助字段
 
 在 `1f73bbc36d` 上原 `window_nested_in_larger_expression` 红测退出 101（`/tmp/window-aggregate-red.log`），错误为 resolveWindowFunction 未实现。相同拒绝同时阻止 window_over_group_by 和 an_aggregate_shared_by_the_select_list_and_a_window_spec_is_carried_once。

@@ -383,6 +383,10 @@ pub struct ProjectionField {
 /// grouping-set columns the ported bodies read off a `*LogicalExpand`.
 #[derive(Clone, Debug, Default)]
 pub struct BlockExpand {
+    /// Per-column grouping marks, computed by the owning LogicalExpand.
+    pub grouping_marks: Vec<BTreeSet<u64>>,
+    /// Go's grouping-id interpretation, including NumericSet for wide ROLLUP.
+    pub grouping_mode: Option<tidb_expr::GroupingMode>,
     /// The `Expand`'s `GID`, when one has been allocated.
     pub grouping_id_col: Option<Column>,
     /// The `Expand`'s `GPos`, present only when two grouping sets duplicate.
@@ -788,6 +792,7 @@ pub fn constant_is_always_false(constant: &Constant) -> Option<bool> {
 /// SUBQUERY half stays in [`crate::expression_rewriter`], which this does not
 /// duplicate.
 pub struct PlanScopeResolver<'a> {
+    block_expand: Option<&'a BlockExpand>,
     schema: &'a Schema,
     names: &'a [FieldName],
     /// The underlying join's full schema/name slice, when the visible schema
@@ -849,6 +854,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_names: None,
             marker_columns,
             marker_constants: None,
+            block_expand: None,
             outer_schemas: &[],
             outer_names: &[],
             time_zone,
@@ -882,6 +888,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_names: None,
             marker_columns,
             marker_constants: None,
+            block_expand: None,
             outer_schemas,
             outer_names,
             time_zone,
@@ -997,6 +1004,11 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
+        let expand = self.block_expand.ok_or(EvalError::InvalidGroupFuncUse)?;
+        expand.rewrite_grouping(args)
+    }
+
     fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, EvalError> {
         self.warning_context
             .ok_or(EvalError::Unsupported("unbound prepared parameter"))?
@@ -1522,7 +1534,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         full_names: Option<&[FieldName]>,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<Expression, PlanError> {
-        let resolver = PlanScopeResolver::with_outer_scopes(
+        let mut resolver = PlanScopeResolver::with_outer_scopes(
             schema,
             names,
             markers,
@@ -1537,6 +1549,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_div_precision_increment(self.ctx.div_precision_increment())
         .with_clause_message(self.cur_clause.message())
         .with_warning_context(self.ctx);
+        resolver.block_expand = self.current_block_expand.as_ref();
         let resolver = match (full_schema, full_names) {
             (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
             _ => resolver,
@@ -3193,6 +3206,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 current_markers.insert(MarkerKind::Column, schema.columns.clone());
                 self.rewrite_scalar_with_plan(&scratch, &plan, &current_markers)?
             };
+            let built = self.replace_grouping_func(built);
             let (_, names) = snapshot_schema_and_names(&plan);
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
@@ -3226,6 +3240,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             exprs.push(built);
         }
 
+        self.implicit_project_grouping_set_cols(
+            &mut projection_columns,
+            &mut projection_names,
+            &mut exprs,
+        );
         let mut projection =
             LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs.clone());
         projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
@@ -3287,6 +3306,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 continue;
             }
             let built = self.rewrite_scalar_with_plan(&field.expr, &plan, markers)?;
+            let built = self.replace_grouping_func(built);
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
@@ -3304,6 +3324,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             exprs.push(built);
         }
 
+        self.implicit_project_grouping_set_cols(
+            &mut projection_columns,
+            &mut projection_names,
+            &mut exprs,
+        );
         let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
         projection.fd_expression_ids_registered = self.new_only_full_group_by_check;
         projection.base.set_children(vec![plan]);

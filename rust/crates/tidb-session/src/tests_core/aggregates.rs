@@ -35,9 +35,7 @@ fn aggregate_without_group_by_accepts_single_value_dependencies() {
     session
         .run("CREATE TABLE t (id INT PRIMARY KEY, v INT)")
         .unwrap();
-    session
-        .run("INSERT INTO t VALUES (1,10),(2,20)")
-        .unwrap();
+    session.run("INSERT INTO t VALUES (1,10),(2,20)").unwrap();
     for sql in [
         "SELECT v, count(*) FROM t WHERE v = 10",
         "SELECT v, count(*) FROM t WHERE 10 = v",
@@ -797,12 +795,22 @@ fn a_select_field_containing_an_aggregate_is_an_aggregate_query() {
 /// Go's hash aggregation over Expand emits rollup rows in a
 /// NONDETERMINISTIC order (verified: the captured order changed across
 /// runs of the same query), so without `ORDER BY` only the row MULTISET
-/// is contractual. This tier's deterministic order is: full groups in
-/// first-seen order, then each shorter prefix's subtotals, then the
-/// grand total. The `ORDER BY` cases below match captured TiDB output
+/// is contractual. The `ORDER BY` cases below match captured TiDB output
 /// row for row.
 #[test]
 fn with_rollup() {
+    fn assert_rows<const N: usize, const M: usize>(
+        mut actual: Vec<Vec<String>>,
+        expected: [[&str; N]; M],
+    ) {
+        let mut expected: Vec<Vec<String>> = expected
+            .into_iter()
+            .map(|row| row.into_iter().map(str::to_owned).collect())
+            .collect();
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t (a BIGINT, b BIGINT, c BIGINT)")
@@ -813,7 +821,7 @@ fn with_rollup() {
 
     // Two-column rollup: every prefix (a,b), (a), () gets aggregate rows,
     // with the rolled-up columns NULL. Multiset captured from TiDB.
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, b, SUM(c) FROM t GROUP BY a, b WITH ROLLUP")),
         [
             ["1", "1", "15"],
@@ -823,15 +831,15 @@ fn with_rollup() {
             ["1", "NULL", "35"],
             ["2", "NULL", "70"],
             ["NULL", "NULL", "105"],
-        ]
+        ],
     );
     // Single-column rollup.
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, SUM(c) FROM t GROUP BY a WITH ROLLUP")),
-        [["1", "35"], ["2", "70"], ["NULL", "105"]]
+        [["1", "35"], ["2", "70"], ["NULL", "105"]],
     );
     // COUNT(*) counts the replicated rows per grouping set.
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, b, COUNT(*) FROM t GROUP BY a, b WITH ROLLUP")),
         [
             ["1", "1", "2"],
@@ -841,10 +849,10 @@ fn with_rollup() {
             ["1", "NULL", "3"],
             ["2", "NULL", "2"],
             ["NULL", "NULL", "5"],
-        ]
+        ],
     );
     // AVG: captured scale is 4 (decimal AVG over BIGINT).
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, b, AVG(c) FROM t GROUP BY a, b WITH ROLLUP")),
         [
             ["1", "1", "7.5000"],
@@ -854,7 +862,7 @@ fn with_rollup() {
             ["1", "NULL", "11.6667"],
             ["2", "NULL", "35.0000"],
             ["NULL", "NULL", "21.0000"],
-        ]
+        ],
     );
     // Captured row for row: ORDER BY sorts NULL first, so the grand
     // total leads and each subtotal precedes its group's rows.
@@ -878,11 +886,11 @@ fn with_rollup() {
     // Expand keeps aggregate arguments separate from the grouping-key copies
     // it NULLs for a subtotal. When the same source column is both grouped and
     // aggregated, every rollup level must therefore keep the original values.
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT b, SUM(b) FROM t GROUP BY b WITH ROLLUP")),
-        [["1", "3"], ["2", "4"], ["NULL", "7"]]
+        [["1", "3"], ["2", "4"], ["NULL", "7"]],
     );
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, b, SUM(b) FROM t GROUP BY a, b WITH ROLLUP")),
         [
             ["1", "1", "2"],
@@ -892,7 +900,7 @@ fn with_rollup() {
             ["1", "NULL", "4"],
             ["2", "NULL", "3"],
             ["NULL", "NULL", "7"],
-        ]
+        ],
     );
 
     // A genuinely-NULL data value is indistinguishable from a rollup
@@ -906,7 +914,7 @@ fn with_rollup() {
     session
         .run("INSERT INTO tn VALUES (1,1,10),(1,NULL,20),(NULL,1,30),(2,2,40)")
         .unwrap();
-    assert_eq!(
+    assert_rows(
         row_text(session.run("SELECT a, b, SUM(c) FROM tn GROUP BY a, b WITH ROLLUP")),
         [
             ["1", "1", "10"],
@@ -917,7 +925,7 @@ fn with_rollup() {
             ["NULL", "NULL", "30"],
             ["2", "NULL", "40"],
             ["NULL", "NULL", "100"],
-        ]
+        ],
     );
 
     // Expand nulls the derived grouping value for the grand total; it must
@@ -1060,10 +1068,11 @@ fn grouping_with_rollup() {
         session.run("SELECT a, GROUPING(a) FROM t GROUP BY a"),
         Err(DriverError::InvalidGroupFuncUse)
     ));
-    assert!(matches!(
-        session.run("SELECT a, GROUPING(a) FROM t"),
-        Err(DriverError::InvalidGroupFuncUse)
-    ));
+    let invalid = session.run("SELECT a, GROUPING(a) FROM t");
+    assert!(
+        matches!(invalid, Err(DriverError::InvalidGroupFuncUse)),
+        "{invalid:?}"
+    );
 
     // Captured: an argument that is not grouped is
     // "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY".
@@ -1081,11 +1090,16 @@ fn grouping_with_rollup() {
         grouping_expression,
         [["2", "0", "60"], ["3", "0", "40"], ["NULL", "1", "100"]]
     );
+    // Go resolves HAVING through the select list: the unprojected source
+    // name is invalid here, while the projected expression's alias works.
+    let error = session
+        .run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP HAVING GROUPING(a+1) = 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1054);
+    assert_eq!(error.message, "Unknown column 'a' in 'having clause'");
     assert_eq!(
-        row_text(
-            session
-                .run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP HAVING GROUPING(a+1) = 0")
-        ),
+        row_text(session.run("SELECT a+1 AS k, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP HAVING GROUPING(k) = 0 ORDER BY k")),
         [["2", "60"], ["3", "40"]]
     );
 
@@ -1095,6 +1109,22 @@ fn grouping_with_rollup() {
     assert_eq!(
         row_text(session.run("SELECT GROUPING(a) + 1 FROM t GROUP BY a, b WITH ROLLUP ORDER BY 1")),
         [["1"], ["1"], ["1"], ["1"], ["1"], ["1"], ["2"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT GROUPING() FROM t GROUP BY a WITH ROLLUP ORDER BY 1")),
+        [["0"], ["0"], ["0"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT a, GROUPING(a), SUM(c) FROM t GROUP BY a,a WITH ROLLUP ORDER BY a")
+        ),
+        [
+            ["NULL", "1", "100"],
+            ["1", "0", "60"],
+            ["1", "0", "60"],
+            ["2", "0", "40"],
+            ["2", "0", "40"]
+        ]
     );
 }
 

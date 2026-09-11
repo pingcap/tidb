@@ -44,6 +44,7 @@ fn expressions<'a>(plan: &'a PhysicalPlan) -> Vec<&'a Expression> {
         PhysicalPlan::IndexScan(op) => expressions.extend(op.access_conditions.iter()),
         PhysicalPlan::Selection(op) => expressions.extend(op.conditions.iter()),
         PhysicalPlan::Projection(op) => expressions.extend(op.exprs.iter()),
+        PhysicalPlan::Expand(op) => expressions.extend(op.level_exprs.iter().flatten()),
         PhysicalPlan::HashJoin(op) => hash(op, &mut expressions),
         PhysicalPlan::MergeJoin(op) => base(&op.join, &mut expressions),
         PhysicalPlan::IndexJoin(op) => {
@@ -217,6 +218,11 @@ fn visit(plan: &mut PhysicalPlan, callback: &mut impl FnMut(&mut CorrelatedColum
                 for e in &mut fun.base.args {
                     visit_expression(e, callback);
                 }
+            }
+        }
+        PhysicalPlan::Expand(op) => {
+            for expression in op.level_exprs.iter_mut().flatten() {
+                visit_expression(expression, callback);
             }
         }
         PhysicalPlan::TableReader(op) => {

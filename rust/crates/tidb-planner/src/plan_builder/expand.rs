@@ -376,6 +376,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:245` "register current rollup Expand operator in current select
         // block."
         self.current_block_expand = Some(BlockExpand {
+            grouping_marks: expand.generate_grouping_marks(&distinct_gby_cols),
+            grouping_mode: Some(match mode {
+                GroupingMode::BitAnd => tidb_expr::GroupingMode::BitAnd,
+                GroupingMode::NumericCmp => tidb_expr::GroupingMode::NumericCmp,
+                GroupingMode::NumericSet => tidb_expr::GroupingMode::NumericSet,
+            }),
             grouping_id_col: Some(gid),
             grouping_pos_col: gpos_column,
             distinct_group_by_cols: distinct_gby_cols,
@@ -504,5 +510,56 @@ fn expression_text(expr: &Expression) -> String {
     match expr {
         Expression::Column(column) if !column.orig_name.is_empty() => column.orig_name.clone(),
         other => format!("{other:?}"),
+    }
+}
+
+impl BlockExpand {
+    /// Go expressionRewriter.groupingFunctionToExpression: user arguments
+    /// become metadata; only the generated grouping id is evaluated per row.
+    pub(super) fn rewrite_grouping(
+        &self,
+        args: &[Expression],
+    ) -> Result<Expression, tidb_expr::EvalError> {
+        use tidb_expr::{scalar_function::ScalarFunction, EvalError};
+        if args.len() > 64 {
+            return Err(EvalError::TooManyGroupingArguments);
+        }
+        let mut marks = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            let substituted = substitute_grouping_col(arg, self);
+            let col = match substituted.as_ref().unwrap_or(arg) {
+                Expression::Column(col) => Some(col),
+                _ => None,
+            };
+            let position = col.and_then(|col| {
+                self.distinct_group_by_cols
+                    .iter()
+                    .position(|candidate| candidate.unique_id == col.unique_id)
+            });
+            let Some(position) = position else {
+                return Err(EvalError::FieldInGroupingNotGroupBy(index));
+            };
+            marks.push(self.grouping_marks[position].clone());
+        }
+        let gid = self
+            .grouping_id_col
+            .clone()
+            .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping id"))?;
+        let mode = self
+            .grouping_mode
+            .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping mode"))?;
+        let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+        ret_type.set_flags(ret_type.flags() | FieldTypeFlags::UNSIGNED);
+        ret_type.set_flen(20);
+        ret_type.set_decimal(0);
+        let mut function = ScalarFunction::new(
+            tidb_ast::CiString::new("grouping"),
+            ret_type,
+            vec![Expression::Column(gid)],
+        );
+        function
+            .set_grouping_metadata(mode, marks)
+            .map_err(|_| EvalError::Unsupported("invalid planner grouping metadata"))?;
+        Ok(Expression::ScalarFunction(function))
     }
 }

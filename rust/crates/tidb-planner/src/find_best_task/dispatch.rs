@@ -439,6 +439,16 @@ fn exhaust_physical_plans(
             }
             Ok((slices, true))
         }
+        LogicalPlan::Expand(op) => Ok((
+            vec![physical::expand::exhaust(
+                op,
+                prop,
+                ctx.allocator,
+                ctx.skew_ratio,
+                ctx.mpp_allowed,
+            )],
+            prop.sort_items.is_empty(),
+        )),
         LogicalPlan::Window(op) => Ok(one(physical::exhaust_physical_plans_4_logical_window(
             op,
             prop,

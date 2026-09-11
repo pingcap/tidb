@@ -166,6 +166,17 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect parameter count in the call to native function '{function}'"),
         ),
         EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
+        EvalError::InvalidGroupFuncUse => {
+            MysqlError::coded(1111, "Invalid use of group function".to_owned())
+        }
+        EvalError::TooManyGroupingArguments => MysqlError::coded(
+            3601,
+            "Too many arguments for function GROUPING; maximum allowed is 64".to_owned(),
+        ),
+        EvalError::FieldInGroupingNotGroupBy(index) => MysqlError::coded(
+            3602,
+            format!("Argument #{index} of GROUPING function is not in GROUP BY"),
+        ),
         // Go `types.ErrTooBigPrecision` (1426): the clock signatures raise it
         // at evaluation time, not at parse time
         // (`pkg/expression/builtin_time.go:2730` and siblings).

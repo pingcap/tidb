@@ -796,7 +796,9 @@ pub fn is_exempt(expr: &Expr) -> bool {
 pub fn aggregates_anywhere(expr: &Expr) -> bool {
     let mut found = false;
     super::aggregation::walk_exprs(expr, &mut |node| {
-        if is_exempt(node) {
+        if matches!(node, Expr::Aggregate { .. } | Expr::GroupConcat { .. })
+            || matches!(node, Expr::Func { name, .. } if name.eq_ignore_ascii_case("any_value"))
+        {
             found = true;
             return true;
         }

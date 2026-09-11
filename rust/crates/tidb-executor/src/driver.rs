@@ -472,6 +472,12 @@ pub(super) fn run_physical_set_opr_stmt(
 
 pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
     match error.kind() {
+        tidb_planner::plan_base::PlanErrorKind::Eval(tidb_expr::EvalError::InvalidGroupFuncUse) => {
+            DriverError::InvalidGroupFuncUse
+        }
+        tidb_planner::plan_base::PlanErrorKind::Eval(
+            tidb_expr::EvalError::FieldInGroupingNotGroupBy(index),
+        ) => DriverError::FieldInGroupingNotGroupBy(*index),
         tidb_planner::plan_base::PlanErrorKind::Eval(eval) => {
             DriverError::Exec(ExecError::Eval(eval.clone()))
         }

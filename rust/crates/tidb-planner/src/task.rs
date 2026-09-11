@@ -1973,6 +1973,15 @@ pub fn attach2_task(
             let converted = first.copy().convert_to_root_task(allocator)?;
             Ok(attach_plan_to_task(plan, converted))
         }
+        // Go attach2Task4PhysicalExpand retains an MPP child on TiFlash;
+        // all other children finish their remote reads before root expansion.
+        PhysicalPlan::Expand(_) => {
+            let task = match first.copy() {
+                mpp @ Task::Mpp(_) => mpp,
+                other => other.convert_to_root_task(allocator)?,
+            };
+            Ok(attach_plan_to_task(plan, task))
+        }
         // `attach2Task4PhysicalProjection` (`task.go:1506`): the cop arm
         // pushes the projection onto the cop task — staying a COP task —
         // when there are no root conds, no index-merge parts, and every

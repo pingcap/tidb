@@ -159,6 +159,7 @@ pub mod fts_like_rewrite;
 mod plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
+pub mod expand;
 mod pushdown_blacklist;
 pub mod remote_scan;
 pub mod selection;
