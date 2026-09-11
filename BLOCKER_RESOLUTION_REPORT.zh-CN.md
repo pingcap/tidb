@@ -1,5 +1,51 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 readiness 当前 HEAD 复核
+
+在 `284553b818` 重跑后，原 cluster-session readiness blocker 未再出现，完整
+access-path differential 退出 0。不能继续把旧脚本提前终止节点的输出当作
+服务端持续死锁的证据。修复提交为 `1f89c30b65`，四个入口共享等待逻辑为
+`9839a744e0`，均已在 `origin/hparser-integration`。
+
+根因和 Go 依据：Rust `sql_node.rs:1758` 先绑定 TCP listener，
+`cluster_session_node/boot.rs:440` 等 bind 初始化完成后，才在第 454 行
+输出 ready。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`
+的 `pkg/server/server.go:518` 也先初始化 listener，第 542 行才设置
+`health.Store(true)`。旧脚本把端口开放当作 ready 日志必然已写出的条件，
+一次 grep 失败即触发清理，造成“统计已加载但永远没有 ready”的表象。
+当前实现等待原 ready 事件最多 180 秒，进程退出立即失败，超时仍失败；
+未提前发布 ready、未删除断言。
+
+本轮 Ready 验证命令：
+
+```bash
+bash rust/scripts/test-access-path-readiness.sh
+bash rust/scripts/test-access-path-readiness.sh run-realtikv-analyze.sh
+bash rust/scripts/test-access-path-readiness.sh run-realtikv-convergence.sh
+bash rust/scripts/test-access-path-readiness.sh run-realtikv-repeatable-read.sh
+make lint
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-final-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-readiness-final.log 2>&1
+```
+
+四个回归入口均验证：延迟 ready 成功、提前退出失败、存活但没有 ready
+超时失败。lint 日志 `/tmp/readiness-final-lint.log`。真实节点日志
+`/tmp/access-readiness-final-evidence/rust-node.log:8` 记录 ready，地址
+`127.0.0.1:47600`，schema_version 68，stats_loaded 4，stats_pseudo 67。
+完整运行日志末尾为 `the access-path differential passed`，脚本清理测试集群。
+
+本轮仅追加复核证据，没有新增生产代码变更。整体 failed-case 目标仍未完成：
+原 DDL gate 在显式 `--load-table` 模式新建 JSON 表后得到
+`unknown table: campaign31.unservable`，而期待具体解码拒绝原因。
+该模式的 served table 和 refusal 集合来自启动时指定表，不能因为它持有
+后台更新的 SharedCatalog 就推断查询路由已刷新；这是单独的目录可见性问题，
+不是 readiness 阻塞。证据 `/tmp/ddl-current.log`，尚未修复，未调整其断言
+或切换 cluster-session 来绕过。其余原始 gates、Go integration suites 和
+历史 panic 的完整证明仍按原清单追踪，不能由本次 access-path 通过代替。
+
 ## 2026-09-11 rollback 测试屏障跨 BatchCommands stream 同步
 
 txnkv 全量曾在 rollback_publishes_every_region_before_waiting_for_a_response
