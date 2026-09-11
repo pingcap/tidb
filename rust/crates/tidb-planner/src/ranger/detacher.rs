@@ -131,6 +131,20 @@ pub fn remove_conditions(
         .collect()
 }
 
+/// [`remove_conditions`] for a caller that owns its conditions: the survivors
+/// are MOVED rather than cloned. Go's conditions are interface pointers, so
+/// its filter-and-collect copies a word per condition; here each survivor is a
+/// whole expression tree, and the detacher's own call sites all own their
+/// input.
+#[must_use]
+pub fn retain_conditions_not_in(
+    mut conditions: Vec<Expression>,
+    conds_to_remove: &[Expression],
+) -> Vec<Expression> {
+    conditions.retain(|cond| !contains(conds_to_remove, cond));
+    conditions
+}
+
 /// Go `AppendConditionsIfNotExist`.
 #[must_use]
 pub fn append_conditions_if_not_exist(
@@ -585,24 +599,23 @@ pub fn extract_eq_and_in_condition_in(
     let mut filters = Vec::new();
     for i in 0..cols.len() {
         if !merged[i] {
-            if let Some(access) = accesses[i].clone() {
+            // Taken rather than cloned: the two arms that reject the access
+            // drop it, and only the surviving arm needs a second copy.
+            if let Some(access) = accesses[i].take() {
                 if all_eq_or_in(&access) {
                     column_values[i] = extract_value_info(&access);
                     // Go drops a NULL-valued access UNCONDITIONALLY (the
                     // detacher's first-column walk re-detaches it under the
                     // checker, where the prefix and single-scan rules
                     // apply); `regardNullAsPoint` never gates this drop.
-                    if column_values[i]
+                    if !column_values[i]
                         .as_ref()
                         .and_then(|info| info.value.as_ref())
                         .is_some_and(|value| matches!(value, Datum::Null))
                     {
-                        accesses[i] = None;
-                    } else {
-                        new_conditions.push(access);
+                        new_conditions.push(access.clone());
+                        accesses[i] = Some(access);
                     }
-                } else {
-                    accesses[i] = None;
                 }
             }
             continue;
@@ -629,7 +642,6 @@ pub fn extract_eq_and_in_condition_in(
                     accesses[i] = None;
                     continue;
                 };
-                accesses[i] = Some(rebuilt.clone());
                 new_conditions.push(rebuilt.clone());
                 if let Expression::ScalarFunction(f) = &rebuilt {
                     if f.func_name.lowercase() == "eq" {
@@ -639,6 +651,7 @@ pub fn extract_eq_and_in_condition_in(
                         });
                     }
                 }
+                accesses[i] = Some(rebuilt);
             }
         }
     }
@@ -647,11 +660,12 @@ pub fn extract_eq_and_in_condition_in(
             new_conditions.push(conditions[i].clone());
         }
     }
-    // The equality chain is the longest all-set PREFIX.
+    // The equality chain is the longest all-set PREFIX. `accesses` is dead
+    // after this, so its members are moved into the chain rather than cloned;
+    // only a prefix-index access, which must also filter, needs a copy.
     let mut chain: Vec<Expression> = Vec::new();
-    for (i, access) in accesses.iter().enumerate() {
+    for (i, access) in accesses.into_iter().enumerate() {
         let Some(access) = access else { break };
-        chain.push(access.clone());
         // A prefix-index access condition also filters.
         let is_full_length = lengths[i] == UNSPECIFIED_LENGTH
             || cols[i]
@@ -661,8 +675,9 @@ pub fn extract_eq_and_in_condition_in(
         if !is_full_length {
             filters.push(access.clone());
         }
+        chain.push(access);
     }
-    let new_conditions = remove_conditions(&new_conditions, &chain);
+    let new_conditions = retain_conditions_not_in(new_conditions, &chain);
     let _ = range_point_cmp;
     EqAndInExtraction {
         accesses: chain,

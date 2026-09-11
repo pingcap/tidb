@@ -1219,3 +1219,52 @@ fn test_set_pwd_stmt_secure_text() {
         assert_eq!(statement.secure_text(), expected);
     }
 }
+
+/// The front end asks the same question of the same statement text several
+/// times per command (its kind, its resource-group hint, whether it is
+/// transaction control, whether it is a `LOAD STATS`), and each question used
+/// to re-parse. `parse_with_configuration` is a pure function of `(sql,
+/// enable_mariadb, sql_mode)`, so the repeats now share one parse; what must
+/// hold is that a repeat answers the SAME tree, and that a different
+/// configuration is never answered from another one's result.
+#[test]
+fn a_repeated_parse_answers_the_same_tree_and_respects_the_sql_mode() {
+    let sql = r"INSERT INTO sbtest1 (id, k, c) VALUES (1, 2, 'a\\b')";
+
+    let first = parse(sql).expect("the statement parses");
+    let second = parse(sql).expect("the repeat parses");
+    assert_eq!(first, second, "a repeat must answer the same tree");
+
+    // `NO_BACKSLASH_ESCAPES` changes how the literal is decoded, so the same
+    // text under a different mode must not be answered from the entry above.
+    let escapes_off = tidb_lexer::SqlMode {
+        no_backslash_escapes: true,
+        ..tidb_lexer::SqlMode::default()
+    };
+    let strict = crate::parse_with_sql_mode(sql, escapes_off).expect("the statement parses");
+    assert_ne!(
+        strict, first,
+        "a different sql_mode must re-parse, not reuse the default-mode tree"
+    );
+    assert_eq!(
+        crate::parse_with_sql_mode(sql, escapes_off).expect("the repeat parses"),
+        strict
+    );
+    assert_eq!(
+        parse(sql).expect("the default mode still parses its own way"),
+        first
+    );
+
+    // A statement too large to retain still parses, and still parses equally
+    // on a repeat.
+    let wide = format!(
+        "INSERT INTO sbtest1 (id) VALUES {}",
+        (0..4000)
+            .map(|row| format!("({row})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert!(wide.len() > super::super::RETAINED_PARSE_MAX_SQL_BYTES);
+    let big = parse(&wide).expect("a large statement parses");
+    assert_eq!(big, parse(&wide).expect("and parses equally on a repeat"));
+}

@@ -103,7 +103,7 @@ use reader::Reader;
 /// SQL mode flags that change tokenization. Mirrors the subset of
 /// `mysql.SQLMode` the scanner consults. The all-`false` default matches
 /// TiDB's default SQL mode (escapes on, no ANSI quotes).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SqlMode {
     /// `REAL_AS_FLOAT`: REAL is parsed as FLOAT instead of DOUBLE.
     pub real_as_float: bool,
