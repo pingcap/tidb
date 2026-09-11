@@ -1,5 +1,36 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 DDL 无主键表采用 Go master admission
+
+固定 Go master 的 `pkg/ddl/create_table.go::BuildTableInfo` 从空 handle
+flags 开始，只有 PRIMARY KEY constraint 才设置 PKIsHandle/IsCommonHandle；
+没有主键并非 CREATE 错误。独立 master 实测 CREATE `(id BIGINT NOT NULL,
+v BIGINT NOT NULL)`、INSERT `(1,2)` 后，`SELECT _tidb_rowid,id,v` 得到
+`1\t1\t2`，SHOW CREATE 保持两列，无主键。JSON CREATE/SELECT 也成功。
+证据 `/tmp/ddl-master-oracle.HY7QpV/ddl.out`，独立 oracle 已停止。
+
+原 DDL gate 在 Rust 成功 CREATE 后仍要求 clustered BIGINT 拒绝，红色运行
+`/tmp/ddl-fixture-live.log`。现改为 Rust CREATE，等待 Go reload，由 Go 写入并
+严格检查隐式句柄和两列值，然后 Rust DROP、等待 Go 确認表消失。新增
+DDL_TIDB_SERVER / DDL_CLUSTER_VERSION，保留默认 v8.5.6，允许固定 master
+加兼容 nightly，打印真实 Go binary 版本。
+
+真实运行 `/tmp/ddl-heap-master.log` 已越过上述新增校验，随后在独立计数断言
+失败（前置 fixture 的四次 DDL 也被算入两次主体 CREATE）。该次运行退出 1，
+完成集群清理，未称 DDL gate 全绿。命令：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+DDL_RUST_SERVER=/tmp/tidb-hparser-current/rust/target/debug/tidb-server \
+DDL_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+DDL_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+bash rust/scripts/run-realtikv-ddl.sh > /tmp/ddl-heap-master.log 2>&1
+```
+
+验证范围 Ready；`bash -n rust/scripts/run-realtikv-ddl.sh`、`make lint`
+（`/tmp/ddl-heap-lint.log`）和 `git diff --check`。未改 Rust 生产 admission；
+其已有 `the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused` 覆盖相同 SQL。
+
 ## 2026-09-11 DDL refusal fixture 显式加载目标表
 
 原 DDL gate 在仅以 `--load-table campaign31.anchor` 启动的节点上查询

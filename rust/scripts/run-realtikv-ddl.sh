@@ -345,9 +345,20 @@ unset AUTH_HASH_HEX
 TIDB_CONFIG="${RUNTIME_DIR}/tidb.toml"
 printf 'lease = "2s"\n' >"${TIDB_CONFIG}"
 
-tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+DDL_CLUSTER_VERSION=${DDL_CLUSTER_VERSION:-v8.5.6}
+GO_BINARY_ARGS=()
+if [[ -n "${DDL_TIDB_SERVER:-}" ]]; then
+  if [[ ! -x "${DDL_TIDB_SERVER}" ]]; then
+    echo "DDL_TIDB_SERVER must name an executable Go TiDB binary" >&2
+    exit 1
+  fi
+  "${DDL_TIDB_SERVER}" -V
+  GO_BINARY_ARGS=(--db.binpath "${DDL_TIDB_SERVER}")
+fi
+echo "TiUP cluster version: ${DDL_CLUSTER_VERSION}"
+tiup playground "${DDL_CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
-  --db.config "${TIDB_CONFIG}" \
+  --db.config "${TIDB_CONFIG}" "${GO_BINARY_ARGS[@]}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
 
@@ -436,13 +447,21 @@ if ! stop_rust_node "${READER_PID}" "${RUST_READER_PORT}"; then
 fi
 READER_PID=
 rust_node -Nse "DROP TABLE ${DATABASE}.unservable"
-REFUSAL=$(rust_node -Nse \
-  "CREATE TABLE ${DATABASE}.never (id BIGINT NOT NULL, v BIGINT NOT NULL)" 2>&1 || true)
-if ! printf '%s' "${REFUSAL}" \
-  | grep -qF "requires a single-column clustered BIGINT PRIMARY KEY"; then
-  echo "a CREATE TABLE with no clustered handle was not refused precisely: ${REFUSAL}" >&2
+# Go buildTableInfo leaves both handle flags false when there is no primary
+# key. DDL admission must not inherit the bounded reader's handle restriction.
+rust_node -Nse \
+  "CREATE TABLE ${DATABASE}.never (id BIGINT NOT NULL, v BIGINT NOT NULL)"
+await_go "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DATABASE}' AND table_name='never'" \
+  "1" "the Rust-created table without a primary key"
+go_tidb -e "INSERT INTO ${DATABASE}.never VALUES (1,2)"
+HEAP_READ_BACK=$(go_tidb -Nse "SELECT _tidb_rowid,id,v FROM ${DATABASE}.never")
+if [[ "${HEAP_READ_BACK}" != "$(printf '1\t1\t2')" ]]; then
+  echo "Go could not use the implicit handle of the Rust-created table: ${HEAP_READ_BACK}" >&2
   exit 1
 fi
+rust_node -Nse "DROP TABLE ${DATABASE}.never"
+await_go "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DATABASE}' AND table_name='never'" \
+  "0" "the dropped table without a primary key"
 
 # ---------------------------------------------------------------------------
 # The Rust node performs the catalog changes.
