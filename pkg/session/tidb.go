@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -241,9 +242,19 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		}
 	})
 	readOnly := sql.IsReadOnly(sessVars)
-	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
-		sessVars.SQLKiller.CheckConnectionAlive()
-		meetsErr = sessVars.SQLKiller.HandleSignal()
+	if !readOnly && meetsErr == nil {
+		checkConnectionAlive := shouldCheckConnectionAliveBeforeCommit(sessVars, sql)
+		if checkConnectionAlive {
+			sessVars.SQLKiller.CheckConnectionAlive()
+		}
+		// Honor a pending timeout before commit, even if context cancellation has not arrived.
+		// Starting commit here could make its outcome undetermined.
+		//
+		// Handle other signals only for connection-liveness checks; executors such as
+		// BRIE already report interruptions from Next.
+		if checkConnectionAlive || sessVars.SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded {
+			meetsErr = handlePendingSQLKillerSignal(sessVars)
+		}
 	}
 	if !readOnly {
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
@@ -268,7 +279,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			}
 		}
 	}
-	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
+	err := executor.NormalizeStmtCancellationError(sessVars, autoCommitAfterStmt(ctx, se, meetsErr, sql))
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -284,6 +295,14 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		return err
 	}
 	return checkStmtLimit(ctx, se, true)
+}
+
+// handlePendingSQLKillerSignal avoids checking connection liveness when no signal is pending.
+func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
+	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+		return nil
+	}
+	return sessVars.SQLKiller.HandleSignal()
 }
 
 // isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.

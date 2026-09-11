@@ -29,11 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -47,6 +49,15 @@ import (
 type stmtStatsTestContext struct {
 	*mock.Context
 	stmtStats *stmtstats.StatementStats
+}
+
+type maxExecutionTimeTestContext struct {
+	*mock.Context
+	processInfo *sessmgr.ProcessInfo
+}
+
+func (c *maxExecutionTimeTestContext) ShowProcess() *sessmgr.ProcessInfo {
+	return c.processInfo
 }
 
 type sharedLockMemBufferForTest struct {
@@ -145,6 +156,20 @@ func TestRecordSetNextAfterFinish(t *testing.T) {
 
 	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
 	require.Error(t, err)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {
+	sctx := &maxExecutionTimeTestContext{
+		Context: mock.NewContext(),
+		processInfo: &sessmgr.ProcessInfo{
+			Time:             time.Now().Add(-time.Hour),
+			MaxExecutionTime: 1,
+		},
+	}
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	err := checkMaxExecutionTimeExceeded(sctx)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 }
 
