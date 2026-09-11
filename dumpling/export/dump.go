@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -492,6 +493,194 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
+	anyFilteredColumns := false
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
+			if err != nil {
+				return err
+			}
+			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
+			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
+		}
+	}
+	if conf.NoSchemas || !anyFilteredColumns {
+		return nil
+	}
+
+	for _, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type == TableTypeView {
+				return errors.New("schema output with an active column filter is not supported when the dump includes views")
+			}
+		}
+	}
+
+	schemaParser := parser.New()
+	if value, ok := conf.SessionParams["sql_mode"]; ok {
+		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
+		if err != nil {
+			return errors.Annotate(err, "failed to parse session sql_mode")
+		}
+		schemaParser.SetSQLMode(sqlMode)
+	}
+	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			if projection.hasFilteredColumns() {
+				schemas[key], err = buildProjectedTableSchema(
+					schemaParser,
+					createTableSQL,
+					columnNames(projection.selectedTypes),
+				)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
+			}
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to analyze schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection.schemaSQL = createTableSQL
+			if projection.hasFilteredColumns() {
+				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to restore schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			conf.columnProjection[key] = projection
+		}
+	}
+
+	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to validate schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func buildColumnProjection(
+	tctx *tcontext.Context,
+	conf *Config,
+	conn *BaseConn,
+	dbName string,
+	table *TableInfo,
+) (columnProjection, error) {
+	if table.Type != TableTypeBase {
+		return columnProjection{}, nil
+	}
+
+	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+	selectedColumns, selectedIndexes, err := conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+	if err != nil {
+		return columnProjection{}, err
+	}
+	if len(selectedColumns) == 0 {
+		// Preserve the existing empty projection for tables with only generated columns.
+		return columnProjection{}, nil
+	}
+
+	sourceFields := columnNamesToSelectFields(sourceColumns)
+	selectedFields := columnNamesToSelectFields(selectedColumns)
+	projection := columnProjection{
+		selectField: strings.Join(selectedFields, ","),
+	}
+	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+		projection.selectField = "*"
+	}
+
+	projection.sourceTypes, err = GetColumnTypes(tctx, conn, strings.Join(sourceFields, ","), dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+
+	projection.selectedTypes = make([]*sql.ColumnType, len(selectedColumns))
+	for i, idx := range selectedIndexes {
+		projection.selectedTypes[i] = projection.sourceTypes[idx]
+	}
+	return projection, nil
+}
+
+func columnNamesToSelectFields(columns []string) []string {
+	fields := make([]string, 0, len(columns))
+	for _, column := range columns {
+		fields = append(fields, wrapBackTicks(escapeString(column)))
+	}
+	return fields
+}
+
+func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, allTables DatabaseTables) error {
+	if len(d.conf.Partitions) == 0 {
+		return nil
+	}
+	conf := d.conf
+	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
+		return errors.New("--partitions is only available for TiDB")
+	}
+	if conf.ServerInfo.ServerVersion == nil || conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) < 0 {
+		return errors.New("--partitions requires TiDB version >= v5.0.0")
+	}
+	for dbName, tables := range allTables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			partitions, err := GetPartitionNames(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			partitionSet := make(map[string]struct{}, len(partitions))
+			for _, partition := range partitions {
+				partitionSet[strings.ToLower(partition)] = struct{}{}
+			}
+			for _, partition := range conf.Partitions {
+				if _, ok := partitionSet[strings.ToLower(partition)]; !ok {
+					return errors.Errorf("--partitions: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+>>>>>>> dfc06738174 (dumpling: support projected schemas for column filters (#70506))
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
 func adjustDatabaseCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
 	if collationCompatible != StrictCollationCompatible {
@@ -1261,9 +1450,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
-	if err != nil {
-		return nil, err
+	createTableSQL := projection.schemaSQL
+	if createTableSQL == "" {
+		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil
