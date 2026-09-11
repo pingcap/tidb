@@ -58,7 +58,7 @@ func TestBuildFullTextIndexInfo(t *testing.T) {
 	_, err = buildFullTextIndexInfo(tblInfo, pmodel.NewCIStr("bad"), []*ast.IndexPartSpecification{
 		{Column: &ast.ColumnName{Name: pmodel.NewCIStr("id")}, Length: types.UnspecifiedLength},
 	}, nil, model.StateNone)
-	require.ErrorContains(t, err, "FULLTEXT index only supports string columns")
+	require.EqualError(t, err, "[ddl:8200]Unsupported only support string type, but this is type: bigint(20)")
 }
 
 func TestModifyTaskParamLoop(t *testing.T) {
