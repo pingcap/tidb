@@ -734,6 +734,13 @@ impl BaseFuncDesc {
                 EvalType::Json => wrap_cast::wrap_with_cast_as_json(old)?,
                 EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float32(old)?,
             };
+            // Go BuildCastFunction folds non-JSON casts with the live build
+            // context. Preserve constants for buildLeadLag's default conversion.
+            if type_of(&self.args[i]).eval_type() != EvalType::Json {
+                crate::fold_constant_in_mode(
+                    &mut self.args[i], ctx, crate::ConstantFoldMode::Normal,
+                );
+            }
         }
         Ok(())
     }

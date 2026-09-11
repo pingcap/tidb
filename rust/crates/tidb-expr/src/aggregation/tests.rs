@@ -960,6 +960,12 @@ fn split_produces_a_partial_and_a_final_descriptor() {
 
 #[test]
 fn wrap_cast_for_agg_args_skips_the_no_cast_kinds_and_null_arguments() {
+    let mut constant = desc(names::SUM, vec![int_const(3)]);
+    constant.base.wrap_cast_for_agg_args(&NoColumns).unwrap();
+    assert!(matches!(
+        &constant.args()[0],
+        Expression::Constant(value) if matches!(value.value, Datum::Decimal(_))
+    ));
     // SUM over an integer column: the DECIMAL return type wraps the argument.
     let mut d = desc(names::SUM, vec![col(0, FieldTypeCode::Long)]);
     d.base.wrap_cast_for_agg_args(&NoColumns).unwrap();

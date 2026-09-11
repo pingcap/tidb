@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 LAG 常量默认值的 cast 折叠
+
+在 `97bdb64f61` 独立回归 `window_lag_still_converts_a_written_constant_default`，`/tmp/lag-default-red.log` 退出 101，整数默认值输出 3 而非 3.00。临时诊断 `/tmp/lag-default-trace.log` 证明整数默认值为 cast_decimal(Constant(3))，而 1.5 已是 Constant；物理 buildLeadLag 只对 Constant 做 RetTp 转换，前者错过目标 scale=2 的转换。
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/builtin_cast.go::BuildCastFunctionWithCheck` 对非 JSON cast 调用 FoldConstant；`pkg/executor/aggfuncs/builder.go:924` 对常量默认值 ConvertTo(RetTp)。Rust 聚合包装现在用当前语句上下文补齐非 JSON cast 折叠，保留非恒定表达式与 JSON 边界。临时诊断已移除。descriptor 回归补充整数 SUM 参数包装后为 DECIMAL Constant；原 SQL 回归同时验证整数、小数表达式、字符串及列依赖默认值，未改变断言。
+
+Ready 命令（Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_lag_still_converts_a_written_constant_default
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib aggregation::tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/lag-default-green.log` 原回归通过，`/tmp/lag-default-descriptor-final.log` 41 passed，`/tmp/lag-default-integration.log` 310 passed，`/tmp/lag-default-lint.log` 退出 0，diff check 通过。完整窗口 suite `/tmp/lag-default-suite.log` 42 passed / 5 failed（前一轮 41/6）；聚合嵌套窗口、ROLLUP 和列映射等剩余失败继续保留，全量目标尚未完成。
+
 ## 2026-09-11 LEAD/LAG 时间 cast 返回类型写回
 
 在 `78a8b55b61` 独立回归 `window_lag_lets_a_wrapped_temporal_argument_narrow_the_result`，`/tmp/lag-time-red.log` 退出 101：DATETIME(6) 与 TIME(3) 合并后 Rust 保留 26/6，Go 为 23/3。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/base_func.go::WrapCastForAggArgs` 将 RetTp 指针传给 `builtin_cast.go:2817::WrapWithCastAsTime`，实际 cast 会修改精度、宽度和 binary 标志；Rust clone 后丢失了写回。
