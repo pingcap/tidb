@@ -533,6 +533,11 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::NotSupportedYet(feature) => {
             DriverError::NotSupportedYet(feature.clone().into())
         }
+        tidb_planner::plan_base::PlanErrorKind::AggregateOrderNonAggQuery { position } => {
+            DriverError::AggregateOrderNonAggQuery {
+                position: *position,
+            }
+        }
     }
 }
 

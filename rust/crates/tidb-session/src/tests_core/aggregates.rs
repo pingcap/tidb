@@ -668,6 +668,7 @@ fn a_select_field_containing_an_aggregate_is_an_aggregate_query() {
     // the WHERE-clause pinning that exempts a column from 8123 does NOT exempt
     // it here.
     for (sql, position) in [
+        ("SELECT id FROM ha ORDER BY id, v, COUNT(*)", 3),
         ("SELECT id FROM ha ORDER BY COUNT(*) DESC", 1),
         ("SELECT id, COUNT(*) FROM ha ORDER BY COUNT(*)", 1),
         ("SELECT id FROM ha ORDER BY id, COUNT(*)", 2),

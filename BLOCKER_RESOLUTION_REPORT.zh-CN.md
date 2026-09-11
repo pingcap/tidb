@@ -3041,6 +3041,29 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 ORDER BY 聚合错误保留 3029
+
+修复 `tests_core::aggregates::a_select_field_containing_an_aggregate_is_an_aggregate_query`。原有错误检查识别到了非法 ORDER BY 聚合，但 `err_aggregate_order_non_agg_query` 用 `PlanError::internal` 丢弃错误身份，executor 因而返回 `Unsupported`。现在 planner 用 `AggregateOrderNonAggQuery { position }` 保留结构化位置，driver 映射至已有同名错误及 MySQL 3029；没有解析错误字符串，也未修改聚合合法性规则。
+
+Source of truth：固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，`pkg/planner/core/logical_plan_builder.go:3929` 返回 `ErrAggregateOrderNonAggQuery.GenWithStackByArgs(firstOrderByAggColIdx + 1)`；`pkg/errno/errcode.go:830` 定义 3029，`pkg/errno/errname.go:848` 定义客户端文本。扩展原有 session 回归，加入 `SELECT id FROM ha ORDER BY id, v, COUNT(*)`，检查位置 3、错误码和完整文本。原有位置 1、2，WHERE 等值约束，以及关闭 ONLY_FULL_GROUP_BY 后的合法查询也继续验证。
+
+修复前原测试失败日志 `/tmp/order-aggregate-red.log`；新增位置 3 的回归先失败于 `Unsupported("Expression #3 ...")`，日志 `/tmp/order-aggregate-expanded-red.log`。修复后同一测试通过，日志 `/tmp/order-aggregate-green.log`。
+
+本轮 Ready 验证命令（Rust 命令均设置 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib a_select_field_containing_an_aggregate_is_an_aggregate_query
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+结果：目标回归 1 passed；planner 聚合 34 passed；session 单元从 1539 passed / 142 failed / 209 ignored 改善为 **1540 passed / 141 failed / 209 ignored**，`--tests` 因其余单元失败退出 101，未执行后续集成目标。单独执行 `--test all` 得到 **310 passed / 0 failed / 0 ignored**。`make lint` 与 diff 检查退出 0。日志分别为 `/tmp/order-aggregate-planner.log`、`/tmp/order-aggregate-session.log`、`/tmp/order-aggregate-integration.log`、`/tmp/order-aggregate-lint.log`。
+
+范围与限制：本次只修复错误身份跨 planner/driver 边界丢失，没有新增查询执行开销；Go 依据为固定源码，本轮未额外运行 Go wire 对照。其余单元失败、RealTiKV access-path cardinality 差异和原始完整质量门禁仍未完成。
+
 ## 2026-09-11 readiness 当前分支复验
 
 本轮在 `bd046e203d8f973d469831fb3d827187cb5ddabc` 重新验证用户报告的启动阻塞。远端 `hparser-integration` 同步在该提交，已包含独立修复 `1f89c30b65` 和四个入口共用等待逻辑的 `9839a744e0`。本轮没有重复修改生产实现。

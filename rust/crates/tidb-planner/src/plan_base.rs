@@ -338,6 +338,11 @@ pub enum PlanErrorKind {
     SubqueryReturnsMoreThanOneRow,
     /// Go `plannererrors.ErrNotSupportedYet` (1235).
     NotSupportedYet(String),
+    /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).
+    AggregateOrderNonAggQuery {
+        /// One-based position of the first ORDER BY aggregate.
+        position: usize,
+    },
 }
 
 impl PlanError {
@@ -511,6 +516,18 @@ impl PlanError {
         Self {
             message: format!("This version of TiDB doesn't yet support '{feature}'"),
             kind: PlanErrorKind::NotSupportedYet(feature),
+        }
+    }
+
+    /// Go `plannererrors.ErrAggregateOrderNonAggQuery.GenWithStackByArgs`.
+    #[must_use]
+    pub fn aggregate_order_non_agg_query(position: usize) -> Self {
+        Self {
+            message: format!(
+                "Expression #{position} of ORDER BY contains aggregate function and applies to the \
+                 result of a non-aggregated query"
+            ),
+            kind: PlanErrorKind::AggregateOrderNonAggQuery { position },
         }
     }
 

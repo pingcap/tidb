@@ -131,10 +131,7 @@ fn err_field_not_in_aggregated_query(position: usize, column: &str) -> PlanError
 
 /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).
 fn err_aggregate_order_non_agg_query(position: usize) -> PlanError {
-    PlanError::internal(format!(
-        "Expression #{position} of ORDER BY contains aggregate function and applies to the \
-         result of a non-aggregated query"
-    ))
+    PlanError::aggregate_order_non_agg_query(position)
 }
 
 /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065).
