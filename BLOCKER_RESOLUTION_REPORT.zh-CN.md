@@ -1,5 +1,38 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 job_args 按参数职责拆分
+
+原始清单中的 `tidb-model/src/job_args.rs` 为 3590 行，仍触发原 2200 行
+门禁。本轮保留 shared GoField、动态参数值、V1/V2 codec 和 JobArgs contract
+在原模块；schema/table/partition 参数移到 `job_args_schema_table.rs`，
+alter/index 参数移到 `job_args_alter.rs`。通过原模块 re-export 保留公共类型
+和 getter 的调用路径。两个搬出的实现区块与原文件区块逐字一致，未改变
+Go master 的参数、JSON、指针身份或完成任务参数语义，也未删改测试。
+
+拆分后行数为 859 / 1355 / 1418，均低于阈值。完整 size gate 从 89 降为
+88 个 NEW-HUGE，仍退出 1，不能据单文件通过宣称门禁完成。
+
+Ready 验证命令及证据：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-model
+# 327 passed, 0 failed, 0 ignored；/tmp/job-args-split-test.log
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo check --manifest-path rust/Cargo.toml --workspace
+# exit 0；/tmp/job-args-workspace-check.log
+make lint
+# exit 0；/tmp/job-args-lint.log
+bash rust/scripts/check-source-size.sh
+# exit 1，88 NEW-HUGE；/tmp/job-args-source-size.log
+git diff --check
+# exit 0
+```
+
+原六文件还剩 `session/tests_partition.rs` 和 `session/show.rs` 未拆分。
+其余 size 违规与所有原始测试门禁仍按整体目标推进；本次不构成 Go package
+transcreation 完成声明。
+
 ## 2026-09-11 恢复 source-size 门禁并完成首批三文件拆分
 
 原 `check-source-size.sh`、bounds 文件和 Cargo test 在 `431d637dec` 被删除，

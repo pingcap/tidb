@@ -17,10 +17,11 @@ same tests and public APIs remaining available after file moves.
 - [x] (2026-09-11) Restore the original script, empty bounds table and Cargo test entry.
 - [x] Run the restored check: 92 NEW-HUGE files, exit 1.
 - [x] (2026-09-11) Separate statement-summary, placement-bundle and table-model tests from production modules; 432 crate tests passed.
-- [ ] Split remaining named files: session/tests_partition.rs, session/show.rs, model/job_args.rs.
+- [x] (2026-09-11) Split model/job_args.rs into shared codec infrastructure, schema/table/partition arguments and alteration/index arguments; 327 model tests passed.
+- [ ] Split remaining named files: session/tests_partition.rs and session/show.rs.
 - [ ] Split remaining current violations reported by the unchanged gate.
 - [x] (2026-09-11) Validate first three affected crates, workspace check and lint.
-- [ ] Validate later moves and pass the full source-size gate (89 current violations remain).
+- [ ] Validate later moves and pass the full source-size gate (88 current violations remain).
 
 ## Surprises & Discoveries
 
@@ -40,6 +41,12 @@ Decision (2026-09-11): move inline test modules first where they are an existing
 responsibility boundary. Keep their module names, visibility, test bodies and
 parent access unchanged using explicit path attributes. This makes both halves
 smaller without inventing a production API or changing Go-derived algorithms.
+
+Decision (2026-09-11): retain job_args.rs as the shared V1/V2 decoding and dynamic
+argument foundation. Move schema/table/partition arguments to job_args_schema_table.rs
+and mutation/index arguments to job_args_alter.rs, re-exporting both through the
+existing job_args module. Both moved bodies are byte-identical to the originals;
+shared private helpers remain accessible to their child modules.
 
 ## Context and Orientation
 
@@ -112,6 +119,10 @@ The restored Cargo target ran one test and failed on those violations, exit 101:
 Crate tests: `/tmp/source-size-three-crates.log`, 432 passed, zero failed/ignored.
 Workspace check: `/tmp/source-size-workspace-check.log`, exit 0.
 Lint: `/tmp/source-size-lint.log`, exit 0.
+Job-argument split: `/tmp/job-args-split-test.log`, 327 passed, zero failed/ignored.
+Source-size after this split: `/tmp/job-args-source-size.log`, 88 NEW-HUGE entries.
+Lint after this split: `/tmp/job-args-lint.log`, exit 0.
+Workspace check after this split: `/tmp/job-args-workspace-check.log`, exit 0.
 
 ## Interfaces and Dependencies
 
@@ -126,5 +137,7 @@ Production splits should use explicit re-exports to preserve caller paths.
 Restoration and the first three named splits are complete. Production/test file
 sizes are statement_summary 1841/1805, bundle 952/1341 and table 1761/849 lines.
 All retain their original logical test-module names and public API paths.
-The size gate remains failing on 89 files. Module splits and final verification
-are in progress. Do not report this work as a completed size gate.
+Job arguments now occupy 859 lines in the parent, 1355 in schema/table/partition
+arguments and 1418 in alteration/index arguments. The size gate remains failing
+on 88 files. Module splits and final verification are in progress. Do not report
+this work as a completed size gate.
