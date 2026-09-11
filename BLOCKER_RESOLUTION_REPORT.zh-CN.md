@@ -1,5 +1,51 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 恢复 source-size 门禁并完成首批三文件拆分
+
+原 `check-source-size.sh`、bounds 文件和 Cargo test 在 `431d637dec` 被删除，
+不能把门禁不存在记为通过。本轮从该提交父版本原样恢复三份文件，将
+`source_size_ratchet` 重新注册进 autotests=false 的 result-tests manifest，
+保留原 2200 行阈值及空 bounds 表，未添加白名单。
+
+恢复后实测 92 个 NEW-HUGE（`/tmp/source-size-restored-red.log`，退出 1）。
+原清单中的 statement_summary.rs、bundle.rs、table.rs 已将完整 inline test
+module 移到同级 *_tests.rs，通过 path 属性保留原 module 名及可见性。
+未改变 Go 来源算法、公共类型路径或测试断言。rustfmt 使用 workspace 的
+edition 2021，原测试名称清单逐一一致。
+
+| 模块 | 生产文件行数 | 同级测试文件行数 |
+| --- | ---: | ---: |
+| tidb-stmtsummary/statement_summary | 1841 | 1805 |
+| tidb-placement/bundle | 952 | 1341 |
+| tidb-model/table | 1761 | 849 |
+
+验证命令（仓库根目录）：
+
+```bash
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p tidb-placement -p tidb-stmtsummary -p tidb-model
+# 432 passed，0 failed，0 ignored；/tmp/source-size-three-crates.log
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo check --manifest-path rust/Cargo.toml --workspace
+# exit 0；/tmp/source-size-workspace-check.log
+make lint
+# exit 0；/tmp/source-size-lint.log
+bash rust/scripts/check-source-size.sh
+# exit 1，89 NEW-HUGE；/tmp/source-size-after-three.log
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+cargo test --manifest-path rust/Cargo.toml -p difftest-result-tests --test source_size_ratchet
+# 确实执行 1 项并因剩余超限失败；/tmp/source-size-cargo-red.log
+```
+
+这是首批拆分的 Ready 验证，整个 size gate 仍为 WIP。原清单另三文件
+tests_partition.rs、show.rs、job_args.rs 及其余当前违规尚待拆分。
+执行计划为 `rust/docs/source-size-restoration-execplan.md`。没有宣称任何
+完整 Go package transcreation 因文件移动而完成。
+
+本轮另按原命令重跑 `run-realtikv-catalog-load.sh`，退出 0 并通过 cleanup，
+日志 `/tmp/catalog-load-current.log`。此复验使用默认 v8.5.6；之前固定 master
+通过记录见下文，不能把本轮默认版本输出称为 master 运行。
+
 ## 2026-09-11 DDL 阶段计数修复与完整 master 对照通过
 
 原脚本在两个主体 CREATE 后统计整个节点日志，要求 applied 总数为 2，

@@ -49,3 +49,7 @@ path = "tests/join_shape.rs"
 [[test]]
 name = "many_table_join"
 path = "tests/many_table_join.rs"
+
+[[test]]
+name = "source_size_ratchet"
+path = "tests/source_size_ratchet.rs"
