@@ -518,6 +518,7 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	idxPart.Length = types.UnspecifiedLength
 
 	return &model.VectorIndexInfo{
+		Kind:           model.VectorIndexKindHNSW,
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
