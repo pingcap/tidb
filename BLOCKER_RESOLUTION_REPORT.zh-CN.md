@@ -1,5 +1,24 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 窗口函数非法使用位置保留 3593
+
+在 `f108adacba` 独立重跑 `window_errors_and_refusals`，`/tmp/window-context-red.log` 退出 101，首个失败为 WHERE 中 ROW_NUMBER 没有返回 WindowInvalidWindowFuncUse。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/expression_rewriter.go:649` 对不在 windowMap 的窗口调用返回 3593；`logical_plan_builder.go:2835` 的 HAVING resolver 返回同一错误。Rust HAVING 原先生成 Internal，WHERE 原先落入通用表达式拒绝。
+
+新增 PlanErrorKind::WindowInvalidWindowFuncUse，保留小写函数名并映射既有 DriverError。scalar 重写入口检查未被替换成输出列 marker 的窗口调用，沿用当前查询块 visitor，在子查询边界停止；HAVING 使用同一类型化错误。新增 `window_use_errors_preserve_query_block_scope` 检查 WHERE/HAVING 的完整 3593 消息和子查询内合法窗口成功。检查目前克隆 AST 以复用可变 visitor，增加规划期一次线性遍历，不改变执行期算法；未测量规划耗时。
+
+Ready 命令，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_use_errors_preserve_query_block_scope
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/window-context-final.log` 新回归 1 passed；`/tmp/window-context-planner.log` 66 passed；`/tmp/window-context-integration.log` 310 passed；`/tmp/window-context-lint.log` 退出 0，diff check 通过。原综合测试 `/tmp/window-context-green.log` 的 WHERE/HAVING 已通过，但继续在未定义命名窗口 OVER w 的 3579 断言失败，不能声称该综合测试通过。完整窗口 suite `/tmp/window-context-suite.log` 35 passed / 9 failed，新增通过项来自专门回归，其余失败仍须继续修复。
+
 ## 2026-09-11 小数 RANGE offset 校验
 
 在 `6e268c9dce` 独立回归 `window_range_value_bounds`，`/tmp/range-decimal-red.log` 退出 101。Rust 用 get_uint64_from_constant 错拒绝 DECIMAL 与浮点 offset。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 Constant.EvalInt (`pkg/expression/constant.go:358`) 对非字符串常量读取 Datum.i，DECIMAL 的值在独立字段，浮点值在 i 中保存 IEEE 位；该结果仅用于校验，边界计算保留原 Datum。

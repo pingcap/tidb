@@ -292,6 +292,8 @@ pub enum PlanErrorKind {
     Internal,
     /// Go `plannererrors.ErrWrongArguments` (1210).
     WrongArguments(String),
+    /// Go ErrWindowInvalidWindowFuncUse (3593).
+    WindowInvalidWindowFuncUse(String),
     /// Go window frame errors, retaining the original window name.
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -380,6 +382,15 @@ pub enum PlanErrorKind {
 }
 
 impl PlanError {
+    /// A window call without a resolved window output in this query block.
+    #[must_use]
+    pub fn invalid_window_use(name: &str) -> Self {
+        let name = name.to_ascii_lowercase();
+        Self {
+            message: format!("You cannot use the window function '{name}' in this context.'"),
+            kind: PlanErrorKind::WindowInvalidWindowFuncUse(name),
+        }
+    }
     /// Construct one of Go's frame shape or offset errors (3584-3586).
     #[must_use]
     pub fn window_frame(code: u16, window: impl Into<String>) -> Self {

@@ -515,6 +515,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::WrongNumberOfColumnsInSelect
         }
         tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
+        tidb_planner::plan_base::PlanErrorKind::WindowInvalidWindowFuncUse(name) => {
+            DriverError::WindowInvalidWindowFuncUse(name.clone())
+        }
         tidb_planner::plan_base::PlanErrorKind::WindowFrame { code, window } => {
             if window == "<unnamed window>" {
                 match code {

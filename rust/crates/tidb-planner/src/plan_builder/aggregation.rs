@@ -746,10 +746,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // resolution sees the auxiliary fields Go's single traversal appends
         // as it goes.
         visit_exprs(having, &mut |node| {
-            if matches!(node, Expr::Window { .. }) {
-                error = Some(PlanError::internal(
-                    "Window function is not allowed in HAVING clause",
-                ));
+            if let Expr::Window { name, .. } = node {
+                error = Some(PlanError::invalid_window_use(name));
                 return true;
             }
             if !is_aggregate_call(node) {

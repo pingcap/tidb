@@ -1541,6 +1541,23 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
             _ => resolver,
         };
+        // Valid window calls have already become output-column markers.
+        // The walker stops at subqueries, whose window maps belong to their
+        // own query block (Go expression_rewriter.go's windowMap lookup).
+        let mut unresolved = expr.clone();
+        let mut window_error = None;
+        aggregation::visit_exprs(&mut unresolved, &mut |node| {
+            if let Expr::Window { name, .. } = node {
+                if window_error.is_none() {
+                    window_error = Some(PlanError::invalid_window_use(name));
+                }
+                return true;
+            }
+            false
+        });
+        if let Some(error) = window_error {
+            return Err(error);
+        }
         let mut rewritten = rewrite_expr_resolved(expr, &resolver)?;
         // The resolver's structural pass intentionally preserves warning-
         // producing casts while it has only a zone-only no-column context.

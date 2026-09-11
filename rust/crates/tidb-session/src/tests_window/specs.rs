@@ -362,6 +362,23 @@ fn window_result_types() {
 /// Every window error this slice reproduces, checked against captured
 /// TiDB errors.
 #[test]
+fn window_use_errors_preserve_query_block_scope() {
+    let mut session = window_session();
+    for (sql, name) in [
+        ("SELECT g FROM t WHERE ROW_NUMBER() OVER (ORDER BY v) > 1", "row_number"),
+        ("SELECT g FROM t GROUP BY g HAVING RANK() OVER (ORDER BY g) > 1", "rank"),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 3593);
+        assert_eq!(error.message, format!("You cannot use the window function '{name}' in this context.'"));
+    }
+    assert_eq!(
+        row_text(session.run("SELECT 1 WHERE 1 = (SELECT ROW_NUMBER() OVER ())")),
+        [["1"]]
+    );
+}
+
+#[test]
 fn window_errors_and_refusals() {
     let mut session = window_session();
 
