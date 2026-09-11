@@ -53,6 +53,8 @@ pub struct LogicalProjection {
     /// outputs. The map is populated only while
     /// `tidb_enable_new_only_full_group_by_check` is enabled.
     pub fd_expression_ids_registered: bool,
+    /// Go buildProjection consumed HasAggBuilt for this query block.
+    pub fd_group_check_complete: bool,
 }
 
 impl LogicalProjection {
@@ -172,6 +174,7 @@ impl LogicalProjection {
             calculate_no_delay: false,
             proj4_expand: false,
             fd_expression_ids_registered: false,
+            fd_group_check_complete: false,
         }
     }
 
@@ -483,6 +486,7 @@ impl LogicalProjection {
             calculate_no_delay: self.calculate_no_delay,
             proj4_expand: self.proj4_expand,
             fd_expression_ids_registered: self.fd_expression_ids_registered,
+            fd_group_check_complete: self.fd_group_check_complete,
         }
     }
 }

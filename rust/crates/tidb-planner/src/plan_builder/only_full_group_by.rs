@@ -153,7 +153,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         group_by: &[Expr],
         names: &[FieldName],
     ) -> Result<(), PlanError> {
-        if !self.only_full_group_by || select.from.is_none() {
+        if !self.only_full_group_by || self.new_only_full_group_by_check || select.from.is_none() {
             return Ok(());
         }
         if group_by.is_empty() {

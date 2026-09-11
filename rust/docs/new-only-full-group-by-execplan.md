@@ -13,9 +13,10 @@ When `tidb_enable_new_only_full_group_by_check=ON`, SQL must use the Go master's
 - [x] (2026-09-11) Verify default OFF and new ON behavior against Go master binary fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85.
 - [x] Identify missing mode setup in the harvested JOIN test and missing new-checker call in Rust.
 - [x] (2026-09-11) Establish and run mode-specific Rust red regressions: default-mode assertion passes; ON still returns 1055, /tmp/join-fd-mode-red.log.
-- [ ] Connect projection FD validation, including auxiliary-field exceptions and scope completion.
-- [ ] Verify original JOIN cases, correlated scalar subqueries, strict/lax keys and outer joins.
-- [ ] Run Ready gates and independently push completed fixes.
+- [x] (2026-09-11) Connect projection FD validation, auxiliary ORDER BY exemption, scope completion, and delayed view validation.
+- [x] (2026-09-11) Verify original JOIN cases, correlated scalar subqueries, strict/lax keys, outer joins, constant grouping, nested queries and windows: eight session regressions pass.
+- [x] (2026-09-11) Ready checks: 16 planner FD tests, aggregation_tests, 310 session integration tests and make lint pass.
+- [ ] Independently commit and push this verified failure category.
 
 ## Surprises & Discoveries
 
@@ -24,12 +25,16 @@ The original test cites `tests/integrationtest/t/planner/funcdep/only_full_group
 
 `PlanBuilder.new_only_full_group_by_check` already receives the session setting but only controls projection expression-ID registration. `check_only_full_group_by` always executes the old AST checks. Rust already has bottom-up `LogicalPlan::extract_fd()` and `tidb_funcdep::FdSet`; reuse these, do not construct a second graph.
 
+The first implementation exposed a second FD bug: GROUP BY '' had an empty column set and was mistaken for absent grouping. Go inserts the zero sentinel only when GroupByItems itself is empty. The original nested-join regression caught this with 8123 instead of 1055; after correcting that condition all original JOIN cases pass. CREATE VIEW also required delayed new-checker validation: /tmp/group-check-view-go.out proves CREATE succeeds and SELECT returns 1055; /tmp/group-check-scope-red.log captures Rust rejecting CREATE before the fix.
+
 ## Decision Log
 
 
 Decision: preserve default-mode behavior and implement the new checker at the projection boundary. Rationale: Go explicitly selects the old checker before expression rewriting and the new checker after projection construction. Author/date: Codex, 2026-09-11.
 
 Decision: keep failing cases and full row/error assertions. Correct only the missing upstream mode setup, with a separate regression proving the default still rejects the USING query. Do not accept all queries when the new flag is enabled.
+
+Decision: use existing order_by_range for auxiliary ORDER BY fields. Rust rewrites aggregate arguments below aggregation, so it does not append Go's auxiliary aggregate-argument fields. HAVING SUM(b) and ORDER BY SUM(b) regression coverage verifies this mapping without adding unused flags. Persist consumed aggregate scope in LogicalProjection because Rust recomputes FD graphs; both projection construction stages call the checker. Resolve new-mode view definitions with a cloned context that defers grouping validation, while querying the stored definition uses the normal session context.
 
 ## Context and Orientation
 
@@ -38,7 +43,7 @@ Work in `/tmp/tidb-hparser-current`, target branch origin/hparser-integration. O
 
 Go `pkg/planner/core/logical_plan_builder.go:4407` selects the old checker only when the new flag is false. At `:1899`, buildProjection calls ExtractFD, tests aggregate state, constants, group columns and strict closure, and emits 1055 or 8123. It skips auxiliary aggregate columns and, without grouping keys, auxiliary ORDER BY columns. It handles ANY_VALUE and registered scalar expression IDs. It finally applies MaxOneRow for ungrouped aggregation and clears HasAggBuilt to avoid checking an inner aggregation again in an outer projection.
 
-Rust owners: `rust/crates/tidb-planner/src/plan_builder/only_full_group_by.rs`, `plan_builder.rs::build_projection_with_order_by`, `plan_builder/aggregation.rs`, and `logical/functional_dependencies.rs`. `tidb-funcdep/src/fd_graph.rs` supplies has_agg_built, group_by_cols, registered_unique_id, constant_cols and closure_of_strict. PlanError already carries typed 1055/8123/3029 errors. ProjectionField currently has only a hidden flag, not Go's two auxiliary-origin flags; preserve the distinction when adding metadata, updating every constructor and its tests.
+Rust owners: `rust/crates/tidb-planner/src/plan_builder/only_full_group_by.rs`, `plan_builder/projection_group_check.rs`, both projection stages in `plan_builder.rs`, and `logical/functional_dependencies.rs`. `tidb-funcdep/src/fd_graph.rs` supplies has_agg_built, group_by_cols, registered_unique_id, constant_cols and closure_of_strict. PlanError carries typed 1055/8123/3029 errors. `rust/crates/tidb-executor/src/view.rs` delays the check while resolving a new-mode view definition.
 
 ## Plan of Work
 
@@ -86,4 +91,4 @@ Keep FdSet as the canonical graph. A projection validator should take the built 
 ## Outcomes & Retrospective
 
 
-Root cause is now separated into a missing test mode and an unconnected new checker. The red regression and corrected source-test mode are in the working tree; they are not a completed fix. Production behavior has not yet been changed for this category. No completion claim is made.
+The mode-specific checker is connected and the original JOIN and correlated-subquery tests pass. /tmp/group-check-final-focused.log records eight passing SQL regressions; /tmp/group-check-planner-fd.log records 16 passing FD tests; /tmp/group-check-planner-aggregation.log records the aggregation suite; /tmp/group-check-session-integration.log records 310 passing integrations; /tmp/group-check-ready-lint.log records make lint success. This is a scoped failure-category fix, not completion of the whole Go planner package or the overall Rust quality goal. Readiness was independently rechecked at all four runner call sites and remains resolved; the previously measured access-path estimator mismatch is still outstanding.

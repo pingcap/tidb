@@ -364,6 +364,12 @@ impl LogicalPlan {
                 fds.make_not_null(expression_not_null);
                 projected.union_with(&fds.group_by_cols);
                 fds.project_cols(&projected);
+                if projection.fd_group_check_complete && fds.has_agg_built {
+                    if fds.group_by_cols.equals(&ColSet::new([0])) {
+                        fds.max_one_row(schema_columns(Some(schema)));
+                    }
+                    fds.has_agg_built = false;
+                }
                 fds
             }
             Self::Join(join) => {
@@ -629,7 +635,7 @@ impl LogicalPlan {
                         _ => {}
                     }
                 }
-                if group_by.is_empty() {
+                if aggregation.group_by_items.is_empty() {
                     group_by.insert(0);
                 }
                 if let Some(schema) = self.schema() {

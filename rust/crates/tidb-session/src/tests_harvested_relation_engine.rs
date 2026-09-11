@@ -1027,6 +1027,10 @@ fn only_full_group_by_checks_correlated_scalar_subquery_dependencies() {
 #[test]
 fn only_full_group_by_uses_join_functional_dependencies() {
     let mut session = Session::new();
+    // The upstream planner/funcdep suite enables the new checker explicitly.
+    session
+        .run("SET tidb_enable_new_only_full_group_by_check = ON")
+        .unwrap();
     session
         .run("CREATE TABLE fd_shift (unused INT, pk INT PRIMARY KEY, payload INT)")
         .unwrap();
@@ -1125,6 +1129,112 @@ fn only_full_group_by_uses_join_functional_dependencies() {
             assert_eq!(error.code, 1055, "{sql}: {error:?}");
         }
     }
+}
+
+#[test]
+fn only_full_group_by_new_checker_scope_and_auxiliary_fields() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_enable_new_only_full_group_by_check=ON")
+        .unwrap();
+    session.run("CREATE TABLE fd_scope (a INT, b INT)").unwrap();
+    session
+        .run("INSERT INTO fd_scope VALUES (1,10),(1,20),(2,30)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT a FROM fd_scope GROUP BY a HAVING SUM(b)>25 ORDER BY SUM(b),a"
+        ),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT COUNT(*) FROM fd_scope ORDER BY b"),
+        [["3"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT SUM(n) FROM (SELECT a,COUNT(*) n FROM fd_scope GROUP BY a) d"
+        ),
+        [["3"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT a,ROW_NUMBER() OVER (ORDER BY a) FROM fd_scope GROUP BY a ORDER BY a"
+        ),
+        [["1", "1"], ["2", "2"]]
+    );
+    for sql in [
+        "SELECT b FROM fd_scope GROUP BY a",
+        "SELECT b FROM fd_scope GROUP BY ''",
+        "SELECT a,n FROM (SELECT a,COUNT(*) n FROM fd_scope GROUP BY a) d GROUP BY n",
+    ] {
+        assert_eq!(
+            session.run(sql).expect_err(sql).to_mysql_error().code,
+            1055,
+            "{sql}"
+        );
+    }
+    let result = rows(
+        &mut session,
+        "SELECT a,ANY_VALUE(b) FROM fd_scope GROUP BY a ORDER BY a",
+    );
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0][0], "1");
+    assert!(["10", "20"].contains(&result[0][1].as_str()));
+    assert_eq!(result[1], ["2", "30"]);
+}
+
+#[test]
+fn only_full_group_by_new_checker_defers_view_validation() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_enable_new_only_full_group_by_check=ON")
+        .unwrap();
+    session
+        .run("CREATE TABLE fd_view_source (a INT,b INT)")
+        .unwrap();
+    session
+        .run("CREATE VIEW fd_view AS SELECT b FROM fd_view_source GROUP BY a")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("SELECT * FROM fd_view")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1055
+    );
+}
+
+#[test]
+fn only_full_group_by_join_modes_match_master() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fd_l (pk INT PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE fd_r (pk INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO fd_l VALUES (1,10),(2,20)")
+        .unwrap();
+    session.run("INSERT INTO fd_r VALUES (1,30)").unwrap();
+    let sql = "SELECT fd_l.pk,fd_r.b FROM fd_l JOIN fd_r USING(pk) GROUP BY fd_l.pk";
+    assert_eq!(session.run(sql).expect_err(sql).to_mysql_error().code, 1055);
+    session
+        .run("SET tidb_enable_new_only_full_group_by_check=ON")
+        .unwrap();
+    assert_eq!(rows(&mut session, sql), [["1", "30"]]);
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT fd_l.pk,fd_r.b FROM fd_l LEFT JOIN fd_r USING(pk) GROUP BY fd_l.pk ORDER BY fd_l.pk"
+        ),
+        [["1", "30"], ["2", "NULL"]]
+    );
 }
 
 /// `SELECT DISTINCT` may only order by something its own result carries

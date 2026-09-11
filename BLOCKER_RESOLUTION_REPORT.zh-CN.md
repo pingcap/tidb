@@ -3243,3 +3243,26 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 ## 2026-09-10 chunk panic 修复
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
+
+## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
+
+readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。
+
+继续推进原失败 `only_full_group_by_uses_join_functional_dependencies`：上游 Go 集成文件第二行明确开启新检查器，Rust harvested case 漏了 SET。Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 默认 OFF 时拒绝该 USING 分组查询，ON 时允许。Rust 的开关原先只控制表达式 ID 注册，未调用新的 FD 投影验证。修复保留默认旧检查器，在新模式下按 Go buildProjection 验证常量、分组键、严格函数依赖和 ANY_VALUE，并消费当前聚合检查状态，防止错误传播到外层查询。
+
+原始红测 `/tmp/join-fd-mode-red.log`：默认 1055 正确，开启后仍 1055。接入后又由原嵌套 JOIN case 揭示 GROUP BY 常量误用无分组零标记，现按 Go 的 GroupByItems 长度判断。新增非空 JOIN 断言要求 INNER 返回 (1,30)，LEFT 返回 (1,30),(2,NULL)。新增 HAVING、辅助 ORDER BY、嵌套聚合、窗口和非法非键分组回归；nullable unique 和相关子查询由原始回归覆盖。
+
+视图回归 `/tmp/group-check-scope-red.log` 在修复前于 CREATE 返回 1055；Go `/tmp/group-check-view-go.out` 则允许 CREATE、在 SELECT 返回 1055。新模式视图定义解析使用延后 grouping 验证的局部 context，查询继续使用正常 session context，红测转绿。未放宽查询断言或修改默认模式。
+
+Ready 验证命令（目录 `/tmp/tidb-hparser-current`，Rust 命令统一前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib only_full_group_by
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib functional_dependencies
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+结果分别为 8、16、34、310 项通过，lint 退出 0。日志为 `/tmp/group-check-final-focused.log`、`/tmp/group-check-planner-fd.log`、`/tmp/group-check-planner-aggregation.log`、`/tmp/group-check-session-integration.log`、`/tmp/group-check-ready-lint.log`。Go 对照实例已关闭。当前只完成该失败类别，未重跑全量 session lib、全部 RealTiKV 和全部 Go/Bazel gates，不构成完整 Go planner package 转写完成声明。原 chunk panic 的完整根因证据、access-path 估算差异及其余质量门禁继续保留未完成状态。

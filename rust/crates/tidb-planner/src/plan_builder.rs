@@ -173,6 +173,7 @@ pub mod from;
 pub mod handle_col_helper;
 pub mod marker;
 pub mod only_full_group_by;
+mod projection_group_check;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
@@ -3217,6 +3218,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .base
             .set_schema(Some(Schema::new(projection_columns)));
         projection.base.base.set_output_names(projection_names);
+        if self.new_only_full_group_by_check && self.only_full_group_by {
+            projection_group_check::check(&mut projection, fields, order_by_range)?;
+        }
         Ok((LogicalPlan::Projection(projection), exprs))
     }
 
@@ -3291,6 +3295,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .base
             .set_schema(Some(Schema::new(projection_columns)));
         projection.base.base.set_output_names(projection_names);
+        if self.new_only_full_group_by_check && self.only_full_group_by {
+            projection_group_check::check(&mut projection, fields, None)?;
+        }
         Ok(LogicalPlan::Projection(projection))
     }
 
