@@ -19,11 +19,15 @@ import (
 	"context"
 	"math"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 // ContextWithInitializedExecDetails returns a context with initialized stmt execution, execution and resource usage details.
@@ -179,6 +183,7 @@ func (d DurationWithAddr) GetFloat64() float64 { return float64(d.D) }
 
 // Percentile is a struct to calculate the percentile of a series of values.
 type Percentile[valueType canGetFloat64] struct {
+	mu       sync.Mutex
 	values   []valueType
 	size     int
 	isSorted bool
@@ -191,6 +196,12 @@ type Percentile[valueType canGetFloat64] struct {
 
 // Add adds a value to calculate the percentile.
 func (p *Percentile[valueType]) Add(value valueType) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.addLocked(value)
+}
+
+func (p *Percentile[valueType]) addLocked(value valueType) {
 	p.isSorted = false
 	p.sumVal += value.GetFloat64()
 	p.size++
@@ -198,10 +209,10 @@ func (p *Percentile[valueType]) Add(value valueType) {
 		p.minVal = value
 		p.maxVal = value
 	} else {
-		if value.GetFloat64() < p.minVal.GetFloat64() {
+		if cmp.Compare(value.GetFloat64(), p.minVal.GetFloat64()) < 0 {
 			p.minVal = value
 		}
-		if value.GetFloat64() > p.maxVal.GetFloat64() {
+		if cmp.Compare(value.GetFloat64(), p.maxVal.GetFloat64()) > 0 {
 			p.maxVal = value
 		}
 	}
@@ -220,7 +231,22 @@ func (p *Percentile[valueType]) Add(value valueType) {
 }
 
 // GetPercentile returns the percentile `f` of the values.
-func (p *Percentile[valueType]) GetPercentile(f float64) float64 {
+func (p *Percentile[valueType]) GetPercentile(f float64) (result float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("recovered panic in Percentile.GetPercentile",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
+			result = math.NaN()
+		}
+	}()
+	if p.size == 0 {
+		// No samples yet. Return 0 rather than math.NaN() to prevent
+		// time.Duration(math.NaN()) from evaluating to -9223372036854775808.
+		return 0
+	}
 	if p.dt == nil {
 		if !p.isSorted {
 			p.isSorted = true
@@ -235,24 +261,54 @@ func (p *Percentile[valueType]) GetPercentile(f float64) float64 {
 
 // GetMax returns the max value.
 func (p *Percentile[valueType]) GetMax() valueType {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.maxVal
 }
 
 // GetMin returns the min value.
 func (p *Percentile[valueType]) GetMin() valueType {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.minVal
 }
 
 // MergePercentile merges two Percentile.
 func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
+	if p == p2 {
+		return
+	}
+	if uintptr(unsafe.Pointer(p)) < uintptr(unsafe.Pointer(p2)) {
+		p.mu.Lock()
+		p2.mu.Lock()
+	} else {
+		p2.mu.Lock()
+		p.mu.Lock()
+	}
+	defer p.mu.Unlock()
+	defer p2.mu.Unlock()
+
 	p.isSorted = false
 	if p2.dt == nil {
 		for _, v := range p2.values {
-			p.Add(v)
+			p.addLocked(v)
 		}
 		return
 	}
 	p.sumVal += p2.sumVal
+	if p2.size > 0 {
+		if p.size == 0 {
+			p.minVal = p2.minVal
+			p.maxVal = p2.maxVal
+		} else {
+			if cmp.Compare(p2.minVal.GetFloat64(), p.minVal.GetFloat64()) < 0 {
+				p.minVal = p2.minVal
+			}
+			if cmp.Compare(p2.maxVal.GetFloat64(), p.maxVal.GetFloat64()) > 0 {
+				p.maxVal = p2.maxVal
+			}
+		}
+	}
 	p.size += p2.size
 	if p.dt == nil {
 		p.dt = tdigest.New()
@@ -266,11 +322,15 @@ func (p *Percentile[valueType]) MergePercentile(p2 *Percentile[valueType]) {
 
 // Size returns the size of the values.
 func (p *Percentile[valueType]) Size() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.size
 }
 
 // Sum returns the sum of the values.
 func (p *Percentile[valueType]) Sum() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.sumVal
 }
 
