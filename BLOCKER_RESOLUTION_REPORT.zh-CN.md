@@ -1,5 +1,24 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 convergence 账户操作身份与新暴露的冲突
+
+固定 master 对照 `/tmp/convergence-master-oracle/create-user.out`、
+`drop-user.out`、`show-grants.out` 分别证明仅持有 conv.* 权限的 appuser
+不能 CREATE/DROP USER（1227）或查看他人权限（1044）。原 runner 却要求
+这些操作成功。账户管理和权限 watch 观察改用已有 root 连接，保留普通
+appuser CREATE/DROP USER 必须返回 1227 的断言，其他跨节点登录和 scoped
+grant 断言不变。原 red `/tmp/convergence-alter-master-nightly.log` 的 CREATE
+USER 返回 1227；修正后 `/tmp/convergence-account-master.log` 已通过普通用户
+拒绝检查并进入 root 的账户持久化，随后出现新的 9007 冲突。因此该 runner
+仍未整体通过，不能声称账户写入缺陷已解决。
+
+新冲突键为 mysql 表 4 的 auto-table-ID 元数据键（字节中包含 mDB:1/TID:4），
+需继续对照 Go autoid 分配与内部事务重试。当前 Rust
+cluster_account_write::first_free_row_id/publish_row_id_watermark 将 allocator
+更新与账户行放在同一事务；本轮不通过测试重试隐藏该冲突。已完成 bash -n、
+git diff --check 和 make lint（`/tmp/convergence-account-lint.log`）。
+运行固定 master/nightly 的完整命令同上一节，账户写入回归尚未完成。
+
 ## 2026-09-11 convergence ALTER 按固定 master 验证
 
 旧断言要求 Rust 拒绝 ADD COLUMN，真实 red 见

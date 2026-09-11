@@ -299,10 +299,19 @@ expect "Go TiDB reads the Rust-added column and updated value" $'1\twritten by g
 
 echo "accounts through the Rust node: the client creates one, the Go TiDB sees it"
 
+# Database privileges do not permit account administration (Go master: 1227).
+if rust_sql -e "CREATE USER 'rustmade'@'%' IDENTIFIED BY 'rustpw';" \
+  >"${WORK_DIR}/account-denied.out" 2>&1; then
+  echo "database-only account unexpectedly created a user" >&2
+  exit 1
+fi
+grep -F 'ERROR 1227 (42000)' "${WORK_DIR}/account-denied.out" >/dev/null \
+  || { cat "${WORK_DIR}/account-denied.out" >&2; exit 1; }
+
 # The client CREATEs an account and GRANTs it, through the RUST node. Both go
 # into the cluster's own mysql.* rows through the same 2PC the catalog and the
 # rows use -- so this is a real account, not a copy in one process's memory.
-rust_sql -e "
+rust_root_sql -e "
   CREATE USER 'rustmade'@'%' IDENTIFIED WITH mysql_native_password BY 'rustpw';
   GRANT SELECT, INSERT ON *.* TO 'rustmade'@'%';
 "
@@ -362,7 +371,7 @@ go_sql -e "GRANT UPDATE ON *.* TO 'rustmade'@'%';"
 wait_for_rust_grant() {
   local want=$1 started=${SECONDS} deadline=$((SECONDS + 60)) seen
   while ((SECONDS < deadline)); do
-    seen=$(rust_sql -N -B -e "SHOW GRANTS FOR 'rustmade'@'%';" 2>/dev/null | tr '\n' ';')
+    seen=$(rust_root_sql -N -B -e "SHOW GRANTS FOR 'rustmade'@'%';" 2>/dev/null | tr '\n' ';')
     if [[ "${seen}" == *"${want}"* ]]; then
       echo "  ok  Rust node's privilege watch fired after $((SECONDS - started))s: ${seen}"
       return 0
@@ -382,7 +391,13 @@ grep -F '"event":"privilege_watch_fired"' "${RUST_LOG_FILE}" >/dev/null \
   || { echo "the Rust node's privilege watch never fired; it only ticked" >&2; exit 1; }
 
 # DROP USER through the Rust node removes the row and every grant row with it.
-rust_sql -e "DROP USER 'rustmade'@'%';"
+if rust_sql -e "DROP USER 'rustmade'@'%';" >"${WORK_DIR}/drop-denied.out" 2>&1; then
+  echo "database-only account unexpectedly dropped a user" >&2
+  exit 1
+fi
+grep -F 'ERROR 1227 (42000)' "${WORK_DIR}/drop-denied.out" >/dev/null \
+  || { cat "${WORK_DIR}/drop-denied.out" >&2; exit 1; }
+rust_root_sql -e "DROP USER 'rustmade'@'%';"
 DROPPED=$(go_sql -N -B -e \
   "SELECT COUNT(*) FROM mysql.user WHERE User = 'rustmade';" | tr '\n' ';')
 expect "the Go TiDB no longer stores the dropped account" "0;" "${DROPPED}"
