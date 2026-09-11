@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -88,6 +89,18 @@ partition by range (id) (
 
 	err = tk.ExecToErr("alter table t_partitioned exchange partition p0 with table mv_exchange")
 	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+}
+
+func TestCreateVectorIndexOnMaterializedViewLogTableRejected(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_vec (id int, v vector(3))")
+	tk.MustExec("create materialized view log on t_mlog_vec (v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("alter table `$mlog$t_mlog_vec` set tiflash replica 1")
+
+	err := tk.ExecToErr("create vector index idx_mlog_vec on `$mlog$t_mlog_vec`((vec_cosine_distance(v))) USING HNSW")
+	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
 }
 
 func TestAlterMaterializedViewRefreshDisableScheduleIgnoresAlertDeleteFailure(t *testing.T) {

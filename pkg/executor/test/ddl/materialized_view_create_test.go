@@ -72,6 +72,28 @@ func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
 	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_2305843009213693952", mlogTable.Meta().ID))
 	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_4611686018427387904", mlogTable.Meta().ID))
 	require.Contains(t, regionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mlogTable.Meta().ID))
+
+	// The MV physical table follows the same pre-split region flow as its MLog.
+	tk.MustExec("create table t_mv_presplit (a int, b int)")
+	tk.MustExec("create materialized view log on t_mv_presplit (a)")
+	tk.MustExec("create materialized view mv_presplit (a, cnt) shard_row_id_bits = 2 pre_split_regions = 2 as select a, count(1) from t_mv_presplit group by a")
+	showCreate = tk.MustQuery("show create table mv_presplit").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS=2")
+	require.Contains(t, showCreate, "PRE_SPLIT_REGIONS=2")
+
+	is = dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_presplit"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), mvTable.Meta().ShardRowIDBits)
+	require.Equal(t, uint64(2), mvTable.Meta().PreSplitRegions)
+	mvRegions := tk.MustQuery("show table mv_presplit regions").Rows()
+	mvRegionNames := make([]string, 0, len(mvRegions))
+	for _, row := range mvRegions {
+		mvRegionNames = append(mvRegionNames, fmt.Sprint(row[1]))
+	}
+	require.Contains(t, mvRegionNames, fmt.Sprintf("t_%d_r_2305843009213693952", mvTable.Meta().ID))
+	require.Contains(t, mvRegionNames, fmt.Sprintf("t_%d_r_4611686018427387904", mvTable.Meta().ID))
+	require.Contains(t, mvRegionNames, fmt.Sprintf("t_%d_r_6917529027641081856", mvTable.Meta().ID))
 }
 
 func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsDerivation(t *testing.T) {

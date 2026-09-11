@@ -80,6 +80,81 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	tk.MustQuery("select last_success_read_tso > 0 from mysql.tidb_mview_refresh_info where mview_id = ?", mviewTable.Meta().ID).Check(testkit.Rows("1"))
 }
 
+func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_validation (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_validation values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_validation (a, b)")
+
+	// COUNT(column) is supported when the required COUNT(*)/COUNT(1) is also present.
+	tk.MustExec("create materialized view mv_count_column (a, cnt_b, cnt) as select a, count(b), count(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, cnt_b, cnt from mv_count_column order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
+
+	// Aggregate function names are case-insensitive.
+	tk.MustExec("create materialized view mv_upper_aggregate (a, s, cnt) as select a, SUM(b), COUNT(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, s, cnt from mv_upper_aggregate order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	// MIN/MAX still require a supporting base-table index, regardless of function case.
+	tk.MustExec("create table t_mv_minmax_validation (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
+	tk.MustExec("create materialized view log on t_mv_minmax_validation (a, b, c)")
+	err := tk.ExecToErr("create materialized view mv_upper_min (a, b, minc, cnt) as select a, b, MIN(c), COUNT(1) from t_mv_minmax_validation group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
+
+	// Every referenced column must be present in the materialized view log.
+	tk.MustExec("create table t_mv_missing_column (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_missing_column (a)")
+	err = tk.ExecToErr("create materialized view mv_missing_count_column (a, cnt_b, cnt) as select a, count(b), count(1) from t_mv_missing_column group by a")
+	require.ErrorContains(t, err, "does not contain column b")
+}
+
+func TestCreateMaterializedViewNullableAggregateValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_mv_nullable_sum (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_mv_nullable_sum (a, b)")
+	err := tk.ExecToErr("create materialized view mv_nullable_sum_bad (a, s, cnt) as select a, sum(b), count(1) from t_mv_nullable_sum group by a")
+	require.ErrorContains(t, err, "requires matching COUNT")
+	tk.MustExec("create materialized view mv_nullable_sum (a, s, cnt_b, cnt) as select a, sum(b), count(b), count(1) from t_mv_nullable_sum group by a")
+	tk.MustExec("create materialized view mv_nullable_sum_duplicate_count (a, s, cnt_b1, cnt_b2, cnt) as select a, sum(b), count(b) as cnt_b1, count(b) as cnt_b2, count(1) from t_mv_nullable_sum group by a")
+
+	tk.MustExec("create table t_mv_nullable_minmax (a int not null, b int, index idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_mv_nullable_minmax (a, b)")
+	tk.MustExec("create materialized view mv_nullable_minmax (a, minb, maxb, cnt) as select a, min(b), max(b), count(1) from t_mv_nullable_minmax group by a")
+}
+
+func TestMaterializedViewBaseSetTiFlashReplica(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_tiflash (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_tiflash (a, b)")
+	tk.MustExec("create materialized view mv_tiflash (a, cnt) as select a, count(1) from t_mv_tiflash group by a")
+
+	// TiFlash availability is environment-dependent in mock storage. The MV dependency
+	// guard must not reject this operation; a storage-related error is acceptable here.
+	err := tk.ExecToErr("alter table t_mv_tiflash set tiflash replica 1")
+	if err != nil {
+		require.NotContains(t, err.Error(), "ALTER TABLE on base table with materialized view dependencies")
+	}
+}
+
+func TestMaterializedViewCommentOnlyBaseColumnModify(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_comment (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_mv_comment (a, b)")
+	tk.MustExec("create materialized view mv_comment (a, cnt) as select a, count(1) from t_mv_comment group by a")
+
+	tk.MustExec("alter table t_mv_comment modify column b int not null comment 'comment-only change'")
+	tk.MustQuery("select column_comment from information_schema.columns where table_schema = 'test' and table_name = 't_mv_comment' and column_name = 'b'").Check(testkit.Rows("comment-only change"))
+	tk.MustExec("alter table t_mv_comment modify column b int not null comment 'comment-only change'")
+}
+
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
