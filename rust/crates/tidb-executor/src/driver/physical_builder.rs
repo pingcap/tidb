@@ -3517,13 +3517,19 @@ fn build_with_state(
             )) as Box<dyn Executor>)
         }
         PhysicalPlan::Sort(sort) => {
+            // Go buildSort consumes the positions bound before postOptimize.
+            // An eliminated identity projection can leave different column IDs.
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
             let by_items = sort
                 .by_items
                 .iter()
                 .map(|item| {
                     Ok::<SortByItem, DriverError>(SortByItem {
-                        expr: resolve_expression(item.expr.clone(), child.schema())?,
+                        expr: {
+                            let mut expr = item.expr.clone();
+                            super::planner_bridge::materialize_physical_expression(&mut expr);
+                            expr
+                        },
                         desc: item.desc,
                     })
                 })
@@ -3546,7 +3552,9 @@ fn build_with_state(
                 .by_items
                 .iter()
                 .map(|item| {
-                    resolve_expression(item.expr.clone(), child.schema()).map(|expr| SortByItem {
+                    let mut expr = item.expr.clone();
+                    super::planner_bridge::materialize_physical_expression(&mut expr);
+                    Ok::<_, DriverError>(SortByItem {
                         expr,
                         desc: item.desc,
                     })

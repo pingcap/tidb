@@ -1569,9 +1569,11 @@ pub(crate) fn physical_plan_for_logical(
         )
         .with_column_ids(column_ids);
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
-    let physical = task.plan().cloned().ok_or_else(|| {
+    let mut physical = task.plan().cloned().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
     })?;
+    // Go physicalOptimize binds positions before postOptimize removes aliases.
+    physical.resolve_indices()?;
     let physical = tidb_planner::physical::eliminate_physical_projection(physical);
     // Go postOptimize: eliminatePhysicalProjection → InjectExtraProjection.
     // The projection re-injection restores the purposeful projections
@@ -1579,7 +1581,6 @@ pub(crate) fn physical_plan_for_logical(
     // nominal sorts) that the elimination pass removed.
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
-    physical.resolve_indices()?;
     physical
         .base_mut()
         .base

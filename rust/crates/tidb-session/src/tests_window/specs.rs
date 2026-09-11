@@ -5,6 +5,22 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn window_alias_sort_survives_physical_projection_elimination() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE q (v INT)").unwrap();
+    session.run("INSERT INTO q VALUES (10),(20),(30)").unwrap();
+    for suffix in ["", " LIMIT 2"] {
+        let sql = format!("SELECT v, ROW_NUMBER() OVER () AS rn FROM q ORDER BY rn DESC{suffix}");
+        let expected = if suffix.is_empty() {
+            vec![vec!["30", "3"], vec!["20", "2"], vec!["10", "1"]]
+        } else {
+            vec![vec!["30", "3"], vec!["20", "2"]]
+        };
+        assert_eq!(row_text(session.run(&sql)), expected, "{sql}");
+    }
+}
+
 /// The empty and partition-less specs, plus named windows, checked
 /// against captured TiDB output.
 #[test]

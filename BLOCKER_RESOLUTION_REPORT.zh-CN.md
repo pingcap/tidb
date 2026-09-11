@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 窗口别名排序与物理投影消除顺序
+
+原 `window_specs_and_named_windows` 在第一条 SQL `SELECT g, v, ROW_NUMBER() OVER () AS rn FROM t ORDER BY rn` 失败，尚未进入命名窗口部分。`/tmp/window-spec-red.log` 退出 101；临时诊断 `/tmp/window-spec-bind.log` 显示 Sort 引用 UniqueID=7 的 rn，但投影消除后的输入只有列 1、2、6。诊断代码已移除。
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/optimizer.go:1148` 在 physicalOptimize 中 ResolveIndices，随后 postOptimize 才消除物理投影并注入额外投影；`pkg/executor/builder.go:2783` 的 buildSort/buildTopN 直接使用已绑定 ByItems。Rust 顺序相反，且 executor 二次按 UniqueID 查找已消失的别名。本次调整为先解析位置，再 postOptimize；Sort/TopN 保留已绑定位置，只做运行时表达式物化。
+
+新增 `window_alias_sort_survives_physical_projection_elimination` 覆盖保留源列的别名降序与 LIMIT。只输出窗口列不足以复现，因为裁剪产生不同计划；准确回归在恢复旧阶段顺序后退出 101（`/tmp/window-alias-red.log`）。Go oracle `/tmp/window-alias-go.out` 返回 30/3、20/2、10/1，LIMIT 2 返回前两行。修复后新增回归及原窗口综合测试均通过，没有修改已有期望。
+
+Ready 验证，工作目录 `/tmp/tidb-hparser-current`，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_specs_and_named_windows -- --nocapture
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_alias_sort_survives_physical_projection_elimination
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window -- --nocapture
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib statement_index_usage_collector_is_session_owned_and_flushed_on_close
+make lint
+git diff --check
+```
+
+窗口 suite 在新增测试前为 43 passed / 4 failed（`/tmp/window-spec-suite.log`，原为 42/5）。最终全库 `/tmp/window-alias-session-all.log` 为 1586 passed / 115 failed / 209 ignored，新增和原窗口回归均通过。session 集成 `/tmp/window-alias-integration.log` 310 passed；lint `/tmp/window-alias-lint.log` 退出 0。历史全库失败名单之外仅 collector case 新出现；它不执行 SQL，单独复验通过（`/tmp/window-alias-indexusage.log`），并发失败仍保留，不宣称全库通过。Go 临时进程已正常关闭。
+
+生产文件 rustfmt 检查通过；specs.rs 仍有此前窗口错误测试的既有格式差异，本次新增代码符合格式要求。其余窗口聚合、ROLLUP、全量 Rust/Go/Bazel 门禁仍未完成。此次是具体 SQL 失败修复，不是完整 Go package 转写完成声明。
+
 ## 2026-09-11 851a578683 上的 readiness 完整复验
 
 本次核验代码为 `851a578683ef540c1ce0dbc9b48ab7838b433c59`，与远端 hparser-integration 一致。固定 Go master oracle 为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`。原 readiness 故障已经由独立提交 `1f89c30b65` 和 `9839a744e0` 修复，本次未重复修改生产代码。
