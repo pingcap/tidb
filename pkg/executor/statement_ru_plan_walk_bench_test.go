@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -371,7 +372,7 @@ func BenchmarkStatementRUPointGeneralCalculator(b *testing.B) {
 func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
 	calculator := statementRUCalculator{
-		units: statementRURawUnits{
+		units: ruv3.StmtUnits{
 			CPUWork:              5,
 			ScanBytes:            10,
 			NetBytes:             20,

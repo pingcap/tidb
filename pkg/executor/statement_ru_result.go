@@ -24,58 +24,8 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 )
-
-// These deliberately uncalibrated work weights keep the ResultOnly path
-// executable. They are internal placeholders, not billing values. Update them
-// only together with the external model documentation until a later PR adds a
-// configured model.
-const (
-	statementRUCPUWorkWeight             = 1.0
-	statementRUScanByteWeight            = 1.0
-	statementRUNetByteWeight             = 1.0
-	statementRUFrontendCompileByteWeight = 1.0
-	statementRUHashStateRowWeight        = 1.0
-	statementRUJoinOutputRowWeight       = 1.0
-	statementRUWriteStatementWeight      = 1.0
-	statementRUOperatorNumWeight         = 1.0
-	statementRUWriteKeyWeight            = 1.0
-	statementRUWriteByteWeight           = 1.0
-)
-
-type statementRURawUnits struct {
-	// WriteStatement is one for a write DML, including one affecting no rows.
-	WriteStatement float64
-	// OperatorNum counts final plan occurrences, including pushed operators.
-	OperatorNum float64
-	// WriteKeys and WriteBytes describe committed TiKV payload. Explicit
-	// transactions contribute these only on COMMIT, not on each DML.
-	WriteKeys  float64
-	WriteBytes float64
-	// CPUWork is the sum of occurrence-local operator work from the supported
-	// root and coprocessor operators in the flat plan.
-	CPUWork float64
-	// ScanBytes is the sum of physical-byte estimates from supported Reader
-	// request components. Each contribution is collected once from the pushed
-	// plan root recorded for that Reader.
-	ScanBytes float64
-	// NetBytes is statement transport evidence, not operator attribution. It is
-	// the TiKV coprocessor response-body byte count finalized in statement-local
-	// RUv2 metrics.
-	NetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
-	FrontendCompileBytes float64
-	// HashStateRows counts entries admitted to completed, operator-owned hash
-	// lookup or group-state structures.
-	HashStateRows float64
-	// JoinOutputRows counts rows produced by supported Join occurrences after
-	// their join conditions and join-type semantics are applied.
-	JoinOutputRows float64
-}
-
-type statementRUResultOnly struct {
-	TotalRU float64
-}
 
 // The current producers cannot prove that all successful or canceled remote
 // work contributed execution details. ResultOnly therefore publishes a
@@ -108,7 +58,7 @@ func (state statementRUCalibrationState) String() string {
 
 type statementRUCalibrationSnapshot struct {
 	State statementRUCalibrationState
-	Units statementRURawUnits
+	Units ruv3.StmtUnits
 }
 
 // statementRUCalculationSetup is installed once for an eligible statement
@@ -121,8 +71,8 @@ type statementRUCalculationSetup struct {
 // statementRUFinalizedSnapshot contains only values. It cannot retain an ExecStmt,
 // FlatOperator, Origin, flat plan, calculator, or ExecDetails pointer.
 type statementRUFinalizedSnapshot struct {
-	units            statementRURawUnits
-	result           statementRUResultOnly
+	units            ruv3.StmtUnits
+	result           ruv3.StmtResult
 	calibrationState statementRUCalibrationState
 	writeSQL         bool
 }
@@ -221,12 +171,12 @@ func trimStatementRUExplainPrefix(normalizedSQL string) string {
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
 // units; no plan or execution-detail pointer survives calculateStatementRU.
 type statementRUCalculator struct {
-	units statementRURawUnits
+	units ruv3.StmtUnits
 }
 
 func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
 	return statementRUCalculator{
-		units: statementRURawUnits{
+		units: ruv3.StmtUnits{
 			FrontendCompileBytes: setup.frontendCompileBytes,
 		},
 	}
@@ -274,11 +224,8 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 }
 
 func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
-	if !validStatementRURawUnits(calculator.units) {
-		return statementRUFinalizedSnapshot{}, false
-	}
-	result := calculateStatementRUResultOnly(calculator.units)
-	if result.TotalRU < 0 || math.IsNaN(result.TotalRU) || math.IsInf(result.TotalRU, 0) {
+	result, ok := ruv3.Calculate(calculator.units, ruv3.DefaultWeights())
+	if !ok {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	return statementRUFinalizedSnapshot{
@@ -287,36 +234,6 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		calibrationState: statementRUCalibrationIncomplete,
 		writeSQL:         calculator.units.WriteStatement != 0 || calculator.units.WriteKeys != 0,
 	}, true
-}
-
-func validStatementRURawUnits(units statementRURawUnits) bool {
-	for _, unit := range []float64{
-		units.WriteStatement, units.OperatorNum, units.WriteKeys, units.WriteBytes,
-		units.CPUWork,
-		units.ScanBytes,
-		units.NetBytes,
-		units.FrontendCompileBytes,
-		units.HashStateRows,
-		units.JoinOutputRows,
-	} {
-		if unit < 0 || math.IsNaN(unit) || math.IsInf(unit, 0) {
-			return false
-		}
-	}
-	return true
-}
-
-func calculateStatementRUResultOnly(units statementRURawUnits) statementRUResultOnly {
-	return statementRUResultOnly{TotalRU: statementRUCPUWorkWeight*units.CPUWork +
-		statementRUScanByteWeight*units.ScanBytes +
-		statementRUNetByteWeight*units.NetBytes +
-		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes +
-		statementRUHashStateRowWeight*units.HashStateRows +
-		statementRUJoinOutputRowWeight*units.JoinOutputRows +
-		statementRUWriteStatementWeight*units.WriteStatement +
-		statementRUOperatorNumWeight*units.OperatorNum +
-		statementRUWriteKeyWeight*units.WriteKeys +
-		statementRUWriteByteWeight*units.WriteBytes}
 }
 
 func publishStatementRUFinalizedSnapshot(
@@ -362,11 +279,12 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 		sqlType = metrics.LblSQLTypeWrite
 	}
 	metrics.RUV3BySQLType.WithLabelValues(sqlType).Add(totalRU)
+	weights := ruv3.DefaultWeights()
 	metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV).Add(
-		statementRUScanByteWeight*finalized.units.ScanBytes +
-			statementRUNetByteWeight*finalized.units.NetBytes +
-			statementRUWriteKeyWeight*finalized.units.WriteKeys +
-			statementRUWriteByteWeight*finalized.units.WriteBytes,
+		weights.ScanByte*finalized.units.ScanBytes +
+			weights.NetByte*finalized.units.NetBytes +
+			weights.WriteKey*finalized.units.WriteKeys +
+			weights.WriteByte*finalized.units.WriteBytes,
 	)
 	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitCPUWork).Add(finalized.units.CPUWork)
 	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)

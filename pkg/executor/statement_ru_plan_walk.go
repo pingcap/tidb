@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannercoreutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	clientutil "github.com/tikv/client-go/v2/util"
@@ -366,7 +367,7 @@ func calculateStatementRUInternal(
 			0,
 			runtimeStatsColl,
 			&calculator,
-			statementRURawUnits{},
+			ruv3.StmtUnits{},
 			statementRUExplainTree(operatorRUs, statementRUForestCTE, treeOrdinal),
 		)
 		if result.state != statementRUOperatorComplete {
@@ -379,7 +380,7 @@ func calculateStatementRUInternal(
 			0,
 			runtimeStatsColl,
 			&calculator,
-			statementRURawUnits{},
+			ruv3.StmtUnits{},
 			statementRUExplainTree(operatorRUs, statementRUForestScalarSubQuery, treeOrdinal),
 		)
 		if result.state != statementRUOperatorComplete {
@@ -452,7 +453,7 @@ func calculateStatementRUPlan(
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
-	rootOwnedUnits statementRURawUnits,
+	rootOwnedUnits ruv3.StmtUnits,
 	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
 	if !validateStatementRUFlatTree(tree) {
@@ -513,7 +514,7 @@ func calculateStatementRUPlanChildFirst(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 	remainingDepth int,
-	rootOwnedUnits statementRURawUnits,
+	rootOwnedUnits ruv3.StmtUnits,
 	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
 	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil || remainingDepth <= 0 {
@@ -645,8 +646,8 @@ func calculateStatementRUPlanChildFirst(
 		}
 	case *physicalop.PhysicalIndexMergeReader:
 		// Before statement-level charges, IndexMerge subtree RU is:
-		// sum(child subtree RU) + statementRUScanByteWeight *
-		// (sum(partialScanBytes) + tableScanBytes).
+		// sum(child subtree RU) plus the weighted sum of partial and table
+		// scan bytes.
 		// Each request estimates scanBytes = ProcessedKeysSize / ProcessedKeys *
 		// TotalKeys when those counters are usable; missing/unavailable evidence
 		// contributes zero. Child RU covers pushed operators such as Selection.
@@ -919,14 +920,17 @@ func calculateStatementRUPlanChildFirst(
 		if len(operatorRUs) != len(tree) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
-		selfUnits := subtractStatementRURawUnits(calculator.units, beforeOperator)
-		cumUnits := subtractStatementRURawUnits(calculator.units, beforeSubtree)
+		selfUnits := calculator.units.Sub(beforeOperator)
+		cumUnits := calculator.units.Sub(beforeSubtree)
 		if operatorIndex == 0 {
-			selfUnits = addStatementRURawUnits(selfUnits, rootOwnedUnits)
-			cumUnits = addStatementRURawUnits(cumUnits, rootOwnedUnits)
+			selfUnits = selfUnits.Add(rootOwnedUnits)
+			cumUnits = cumUnits.Add(rootOwnedUnits)
 		}
-		operatorRUs[operatorIndex].SelfRU = calculateStatementRUResultOnly(selfUnits).TotalRU
-		operatorRUs[operatorIndex].CumRU = calculateStatementRUResultOnly(cumUnits).TotalRU
+		weights := ruv3.DefaultWeights()
+		selfResult, _ := ruv3.Calculate(selfUnits, weights)
+		cumResult, _ := ruv3.Calculate(cumUnits, weights)
+		operatorRUs[operatorIndex].SelfRU = selfResult.TotalRU
+		operatorRUs[operatorIndex].CumRU = cumResult.TotalRU
 	}
 
 	return statementRUOperatorResult{
@@ -1357,7 +1361,7 @@ func addStatementRUJoinOutputRows(calculator *statementRUCalculator, rows float6
 // mergeStatementRUUnitDelta commits one fully validated operator occurrence.
 // Mutating a copy prevents a later field overflow from retaining a partial
 // occurrence in the statement-local calculator.
-func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta statementRURawUnits) bool {
+func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta ruv3.StmtUnits) bool {
 	if calculator == nil {
 		return false
 	}
@@ -1370,34 +1374,4 @@ func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta statemen
 	}
 	*calculator = merged
 	return true
-}
-
-func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
-	return statementRURawUnits{
-		CPUWork:              left.CPUWork + right.CPUWork,
-		WriteStatement:       left.WriteStatement + right.WriteStatement,
-		OperatorNum:          left.OperatorNum + right.OperatorNum,
-		WriteKeys:            left.WriteKeys + right.WriteKeys,
-		WriteBytes:           left.WriteBytes + right.WriteBytes,
-		ScanBytes:            left.ScanBytes + right.ScanBytes,
-		NetBytes:             left.NetBytes + right.NetBytes,
-		FrontendCompileBytes: left.FrontendCompileBytes + right.FrontendCompileBytes,
-		HashStateRows:        left.HashStateRows + right.HashStateRows,
-		JoinOutputRows:       left.JoinOutputRows + right.JoinOutputRows,
-	}
-}
-
-func subtractStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
-	return statementRURawUnits{
-		CPUWork:              left.CPUWork - right.CPUWork,
-		WriteStatement:       left.WriteStatement - right.WriteStatement,
-		OperatorNum:          left.OperatorNum - right.OperatorNum,
-		WriteKeys:            left.WriteKeys - right.WriteKeys,
-		WriteBytes:           left.WriteBytes - right.WriteBytes,
-		ScanBytes:            left.ScanBytes - right.ScanBytes,
-		NetBytes:             left.NetBytes - right.NetBytes,
-		FrontendCompileBytes: left.FrontendCompileBytes - right.FrontendCompileBytes,
-		HashStateRows:        left.HashStateRows - right.HashStateRows,
-		JoinOutputRows:       left.JoinOutputRows - right.JoinOutputRows,
-	}
 }
