@@ -417,6 +417,150 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     assert_eq!(batch.ranges[1].low_val, vec![Datum::Int(9)]);
 }
 
+/// Go `buildRangesForPointGet` on a fast plan converts one constant per key
+/// column (`IndexConstants`); the cached point plan takes that path when every
+/// key column is pinned by one equality, in any condition order, for a
+/// common handle and for a unique index alike.
+#[test]
+fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild,
+    };
+
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let first = Column::new(3, int_type.clone());
+    let second = Column::new(4, int_type.clone());
+    let template_range = crate::ranger::types::Range {
+        low_val: vec![Datum::Int(0), Datum::Int(0)],
+        high_val: vec![Datum::Int(0), Datum::Int(0)],
+        collators: vec![tidb_datatype::Collation::DEFAULT; 2],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; 2];
+    // Conditions deliberately in reverse key order.
+    let conditions = || {
+        vec![
+            parameter_condition("eq", second.clone(), 1),
+            parameter_condition("eq", first.clone(), 0),
+        ]
+    };
+    let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(31, "PointGet", 0),
+        table_id: 1,
+        index_id: None,
+        ranges: vec![template_range.clone()],
+        range_rebuild: Some(PointRangeRebuild::Table(TableRangeRebuild::common_handle(
+            conditions(),
+            vec![first.clone(), second.clone()],
+            lengths.clone(),
+        ))),
+    });
+    let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(32, "PointGet", 0),
+        table_id: 1,
+        index_id: Some(5),
+        ranges: vec![template_range],
+        range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
+            conditions(),
+            vec![first, second],
+            lengths,
+        ))),
+    });
+
+    for template in [common_handle, unique_index] {
+        for parameters in [
+            [Datum::Int(7), Datum::Int(-3)],
+            [Datum::Int(9), Datum::Int(11)],
+        ] {
+            let rebuilt = template
+                .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&parameters))
+                .expect("two equalities rebuild one point");
+            let PhysicalPlan::PointGet(point) = rebuilt else {
+                panic!("point get");
+            };
+            assert_eq!(point.ranges.len(), 1);
+            assert_eq!(point.ranges[0].low_val, parameters);
+            assert_eq!(point.ranges[0].high_val, parameters);
+            assert!(!point.ranges[0].low_exclude && !point.ranges[0].high_exclude);
+            assert_eq!(point.ranges[0].collators.len(), 2);
+        }
+    }
+}
+
+/// Go `buildRangesForBatchGet` on a fast batch plan (`IndexValueParams`):
+/// the DNF the planner expands `(a, b) IN ((?, ?), (?, ?))` into rebuilds one
+/// point per item, unioned in encoded key order like the detacher's DNF path.
+#[test]
+fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
+    use crate::physical_plan_cache::{
+        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
+    };
+
+    let int_type = FieldType::new(FieldTypeCode::LongLong);
+    let first = Column::new(3, int_type.clone());
+    let second = Column::new(4, int_type);
+    let conjunction = |orders: [i64; 2]| {
+        Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("and"),
+            FieldType::new(FieldTypeCode::Tiny),
+            vec![
+                parameter_condition("eq", first.clone(), orders[0]),
+                parameter_condition("eq", second.clone(), orders[1]),
+            ],
+        ))
+    };
+    let dnf = Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new("or"),
+        FieldType::new(FieldTypeCode::Tiny),
+        vec![conjunction([0, 1]), conjunction([2, 3])],
+    ));
+    let template_range = crate::ranger::types::Range {
+        low_val: vec![Datum::Int(0), Datum::Int(0)],
+        high_val: vec![Datum::Int(0), Datum::Int(0)],
+        collators: vec![tidb_datatype::Collation::DEFAULT; 2],
+        low_exclude: false,
+        high_exclude: false,
+    };
+    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+        base: BasePhysicalPlan::with_id(33, "BatchPointGet", 0),
+        table_id: 1,
+        index_id: Some(5),
+        unsigned_handle: false,
+        ranges: vec![template_range.clone(), template_range],
+        range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
+            vec![dnf],
+            vec![first, second],
+            vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
+        ))),
+        keep_order: false,
+        desc: false,
+    });
+
+    let rebuilt = batch
+        .rebuild_plan_for_cache(&CachedPlanRebuildContext::new(&[
+            Datum::Int(9),
+            Datum::Int(11),
+            Datum::Int(7),
+            Datum::Int(-3),
+        ]))
+        .expect("two tuples rebuild two points");
+    let PhysicalPlan::BatchPointGet(batch) = rebuilt else {
+        panic!("batch point get");
+    };
+    assert_eq!(batch.ranges.len(), 2);
+    assert_eq!(batch.ranges[0].low_val, vec![Datum::Int(7), Datum::Int(-3)]);
+    assert_eq!(
+        batch.ranges[0].high_val,
+        vec![Datum::Int(7), Datum::Int(-3)]
+    );
+    assert_eq!(batch.ranges[1].low_val, vec![Datum::Int(9), Datum::Int(11)]);
+    assert!(batch
+        .ranges
+        .iter()
+        .all(|range| !range.low_exclude && !range.high_exclude));
+}
+
 #[test]
 fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
     use crate::physical_plan_cache::{
