@@ -1192,6 +1192,9 @@ func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error 
 					errMsg := "with composite index covered or Primary Key covered now"
 					if indexInfo.IsNonKVIndex() {
 						errMsg = "with non-KV index covered now"
+						if indexInfo.VectorInfo != nil {
+							errMsg = "with Vector Key covered now"
+						}
 					}
 					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 				}

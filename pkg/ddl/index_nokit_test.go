@@ -357,3 +357,21 @@ func TestTiCIAddPartitionParserSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2", groups[0].parserInfo.ParserParams["innodb_ft_min_token_size"])
 }
+
+func TestDropColumnNonKVIndexErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		index   *model.IndexInfo
+		message string
+	}{
+		{"vector", &model.IndexInfo{VectorInfo: &model.VectorIndexInfo{}}, "with Vector Key covered now"},
+		{"fulltext", &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}, "with non-KV index covered now"},
+		{"hybrid", &model.IndexInfo{HybridInfo: &model.HybridIndexInfo{}}, "with non-KV index covered now"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.index.Columns = []*model.IndexColumn{{Name: pmodel.NewCIStr("b")}}
+			require.ErrorContains(t, isColumnCanDropWithIndex("b", []*model.IndexInfo{tt.index}), tt.message)
+			require.NoError(t, isColumnCanDropWithIndex("a", []*model.IndexInfo{tt.index}))
+		})
+	}
+}
