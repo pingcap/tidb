@@ -363,6 +363,7 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 			}
 		}
 		progress := math.Min(tiflashProgress, columnarProgress)
+		failpoint.Inject("beforeUpdateAvailableTableProgressCache", nil)
 		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
 		if err != nil {
 			logutil.DDLLogger().Error("update tiflash sync progress cache failed",
