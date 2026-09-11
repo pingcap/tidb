@@ -702,6 +702,11 @@ pub struct Session {
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
+    /// Privilege requests derived once per prepared text -- Go's
+    /// `PlanCacheStmt.VisitInfos`, checked on every EXECUTE without
+    /// re-walking the statement.
+    prepared_table_privileges:
+        HashMap<table_privilege::PreparedPrivilegeKey, Vec<table_privilege::TablePrivilegeRequest>>,
     /// This connection's registration in the server's process list, which the
     /// front end installs. `None` for a session with no server front; such a
     /// session still answers `SHOW PROCESSLIST` -- with the single row it can
@@ -866,6 +871,7 @@ impl Session {
             user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
+            prepared_table_privileges: HashMap::new(),
             process: None,
             has_process_priv: false,
             privileges: None,

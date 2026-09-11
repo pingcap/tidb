@@ -69,6 +69,41 @@ fn ttl_job_enable_global_hook_updates_the_process_switch() {
     assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
 }
 
+/// Go's `TiDBEnableMDL` `SetGlobal` hook reaches `vardef.SetEnableMDL` from
+/// the sysvar cache rebuild, so a loaded or set global value decides which
+/// etcd key this node acknowledges DDL schema versions on.
+#[test]
+fn enable_mdl_global_hook_updates_the_process_switch() {
+    struct RestoreEnableMdl(bool);
+    impl Drop for RestoreEnableMdl {
+        fn drop(&mut self) {
+            tidb_vardef::set_enable_mdl(self.0);
+        }
+    }
+
+    let _restore = RestoreEnableMdl(tidb_vardef::is_mdl_enabled(false));
+    let globals = vars::GlobalSysvars::new();
+
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "OFF".to_owned())
+        .unwrap();
+    assert!(!tidb_vardef::is_mdl_enabled(false));
+
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "ON".to_owned())
+        .unwrap();
+    assert!(tidb_vardef::is_mdl_enabled(false));
+
+    // A fresh image replacing the live one (the cluster reload path) carries
+    // the switch the same way.
+    let fresh = vars::GlobalSysvars::new();
+    fresh
+        .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "OFF".to_owned())
+        .unwrap();
+    globals.replace_from(&fresh);
+    assert!(!tidb_vardef::is_mdl_enabled(false));
+}
+
 // Transcreated from pinned Go `pkg/util/workloadrepo.TestSettingSQLVariables`.
 #[test]
 fn test_setting_sql_variables() {

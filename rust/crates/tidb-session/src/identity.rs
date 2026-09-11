@@ -30,6 +30,9 @@ use tidb_datatype::Datum;
 use crate::{privilege, process, vars, DriverError, Session};
 use tidb_util::stringutil::go_to_lower;
 
+/// Distinct prepared texts whose privilege requests one session keeps.
+const PREPARED_PRIVILEGE_CACHE_LIMIT: usize = 256;
+
 impl Session {
     /// Checks one already-resolved table name without rebuilding an AST path.
     pub(crate) fn require_named_table_privilege(
@@ -325,11 +328,67 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
+        if self.privilege_context().is_none() {
+            return Ok(());
+        }
+        let requests = crate::table_privilege::required_table_privileges(stmt, &self.current_db);
+        self.check_table_privilege_requests(&requests)
+    }
+
+    /// [`Self::require_statement_table_privileges`] for a prepared statement's
+    /// EXECUTE, checking the requests derived ONCE per prepared text.
+    ///
+    /// Go derives a prepared statement's `visitInfo` when it is planned and
+    /// keeps it on the `PlanCacheStmt` (`VisitInfos`); every later EXECUTE
+    /// checks that stored list (`checkPreparedPriv`, `plan_cache.go`) rather
+    /// than re-walking the statement. The required requests depend only on
+    /// the statement's table names, the current database an unqualified name
+    /// resolves against and the `sql_mode` the text was parsed under, so a
+    /// hit on all three is the same list the walk would rebuild; the grants
+    /// themselves are still consulted live on every call.
+    pub fn require_prepared_statement_table_privileges(
+        &mut self,
+        sql: &str,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
+        if self.privilege_context().is_none() {
+            return Ok(());
+        }
+        let key = crate::table_privilege::PreparedPrivilegeKey {
+            sql: sql.to_owned(),
+            current_db: self.current_db.clone(),
+            sql_mode: self.vars.sql_mode(),
+        };
+        if !self.prepared_table_privileges.contains_key(&key) {
+            // Bounded like a plan cache: a session that prepares more distinct
+            // texts than this simply re-derives, it never grows without bound.
+            if self.prepared_table_privileges.len() >= PREPARED_PRIVILEGE_CACHE_LIMIT {
+                self.prepared_table_privileges.clear();
+            }
+            let requests =
+                crate::table_privilege::required_table_privileges(stmt, &self.current_db);
+            self.prepared_table_privileges.insert(key.clone(), requests);
+        }
+        let requests = &self.prepared_table_privileges[&key];
+        self.check_table_privilege_requests(requests)
+    }
+
+    /// How many prepared texts currently have their requests kept.
+    #[cfg(test)]
+    pub(crate) fn prepared_table_privilege_entries(&self) -> usize {
+        self.prepared_table_privileges.len()
+    }
+
+    /// Checks one statement's derived requests against the live grants.
+    fn check_table_privilege_requests(
+        &self,
+        requests: &[crate::table_privilege::TablePrivilegeRequest],
+    ) -> Result<(), DriverError> {
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };
         let (user, host) = (user.to_owned(), host.to_owned());
-        for request in crate::table_privilege::required_table_privileges(stmt, &self.current_db) {
+        for request in requests {
             // Go answers a virtual schema from fixed rules before it reads a
             // single grant, so `SELECT ... FROM information_schema.*` needs
             // nothing and a write there is refused whatever is granted.
@@ -342,7 +401,7 @@ impl Session {
                 DriverError::DbAccessDenied {
                     user,
                     host,
-                    database: request.database,
+                    database: request.database.clone(),
                 }
             } else if request.table_named_in_error {
                 DriverError::TableAccessDenied {
@@ -351,7 +410,7 @@ impl Session {
                     privilege: request.privilege.print_name(),
                     user,
                     host,
-                    table: go_to_lower(request.table),
+                    table: go_to_lower(request.table.clone()),
                 }
             } else {
                 DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())

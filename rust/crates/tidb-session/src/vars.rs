@@ -823,6 +823,9 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
             self.publish_ttl_job_enable();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL) {
+            self.publish_enable_mdl();
+        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
         {
             self.publish_plan_replayer_file_retention_time();
@@ -1060,6 +1063,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
+            self.publish_enable_mdl();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
             self.publish_plan_replayer_file_retention_time();
         }
@@ -1095,6 +1101,30 @@ impl GlobalSysvars {
     /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
     /// live GLOBAL table. Scratch registries deliberately skip this hook and
     /// publish it only when their committed image replaces the live table.
+    /// Go's `TiDBEnableMDL` `SetGlobal` hook (`sysvar.go`), which the sysvar
+    /// cache rebuild runs for every global value it loads: `SwitchMDL` ->
+    /// `vardef.SetEnableMDL`. A node that leaves the process flag at its
+    /// `false` default acknowledges DDL schema versions on the classic
+    /// per-node key while a Go owner with metadata locking on waits for the
+    /// per-job key (`WaitVersionSynced`), so every Go-issued DDL on the
+    /// cluster blocks until the node is gone. Go's guard against switching
+    /// while a DDL job runs protects a user's `SET GLOBAL`; following the
+    /// value the cluster already holds is not a switch.
+    fn publish_enable_mdl(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let enabled = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
+            .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
+                value.eq_ignore_ascii_case("ON") || value == "1"
+            });
+        tidb_vardef::set_enable_mdl(enabled);
+    }
+
     fn publish_ttl_job_enable(&self) {
         if !self.publishes_runtime_settings {
             return;
@@ -1356,6 +1386,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
+            self.publish_enable_mdl();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
             self.publish_plan_replayer_file_retention_time();
         }
@@ -1434,6 +1467,7 @@ impl GlobalSysvars {
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
+        let mut loaded_enable_mdl = false;
         let mut loaded_plan_replayer_retention = false;
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
@@ -1449,6 +1483,7 @@ impl GlobalSysvars {
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
+                loaded_enable_mdl |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL;
                 loaded_plan_replayer_retention |=
                     key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME;
                 loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
@@ -1476,6 +1511,9 @@ impl GlobalSysvars {
         }
         if loaded_ttl_job_enable {
             self.publish_ttl_job_enable();
+        }
+        if loaded_enable_mdl {
+            self.publish_enable_mdl();
         }
         if loaded_plan_replayer_retention {
             self.publish_plan_replayer_file_retention_time();
@@ -1549,6 +1587,7 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
+        self.publish_enable_mdl();
         self.publish_plan_replayer_file_retention_time();
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);

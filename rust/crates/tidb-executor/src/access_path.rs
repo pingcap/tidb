@@ -247,18 +247,22 @@ impl<'a> PessimisticPrelock<'a> {
         let Some(table) = single_table_entry(self.table, catalog, current_db) else {
             return Vec::new();
         };
-        let bound;
-        let predicate = if params.is_empty() {
-            self.predicate
-        } else {
-            let Ok(value) = crate::driver::params::bind_prelock_predicate(self.predicate, params)
-            else {
-                return Vec::new();
-            };
-            bound = value;
-            &bound
-        };
         if self.locking_read {
+            // The batch lookup reads literals only, so a parameterized
+            // predicate is bound for it; the write arm below resolves `?`
+            // markers straight from `params` and needs no bound copy.
+            let bound;
+            let predicate = if params.is_empty() {
+                self.predicate
+            } else {
+                let Ok(value) =
+                    crate::driver::params::bind_prelock_predicate(self.predicate, params)
+                else {
+                    return Vec::new();
+                };
+                bound = value;
+                &bound
+            };
             if let Ok(Some(batch)) = crate::driver::access::primary_batch_point_lookup(
                 predicate, self.table, table, zone,
             ) {
@@ -273,7 +277,7 @@ impl<'a> PessimisticPrelock<'a> {
                     .collect();
             }
         }
-        crate::driver::access::point_write_prelock_keys(table, predicate, &[], zone)
+        crate::driver::access::point_write_prelock_keys(table, self.predicate, params, zone)
     }
 }
 
@@ -558,6 +562,63 @@ mod common_handle_shape_tests {
         let marker_keys = PessimisticPrelock::from_statement(&marker)
             .unwrap()
             .bind_keys(&[Datum::Bytes(b"x".to_vec())], &catalog, "test", &zone);
+        let literal_keys = PessimisticPrelock::from_statement(&literal)
+            .unwrap()
+            .bind_keys(&[], &catalog, "test", &zone);
+
+        assert!(!marker_keys.is_empty());
+        assert_eq!(marker_keys, literal_keys);
+    }
+
+    /// A point write's `WHERE` marker is resolved by its ORDER in the whole
+    /// statement, straight from the execute parameters: `SET v = ?` takes the
+    /// first parameter, so the key comes from the second. No bound copy of
+    /// the predicate is needed for it (the batch locking read above still
+    /// binds one, because its lookup reads literals).
+    #[test]
+    fn a_prepared_point_write_resolves_its_where_marker_by_order() {
+        let mut catalog = crate::driver::Catalog::default();
+        catalog.create_database("test");
+        let mut table = crate::kv_table::KvTable::new(
+            1,
+            vec![
+                crate::kv_table::KvColumn {
+                    name: "k".to_owned(),
+                    id: 1,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    comment: String::new(),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+                crate::kv_table::KvColumn {
+                    name: "v".to_owned(),
+                    id: 2,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    comment: String::new(),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+            ],
+        );
+        table.set_name("t");
+        table.set_common_handle_offsets(vec![0]);
+        catalog.register_kv_in("test", "t", table).unwrap();
+        let marker = tidb_parser::parse("UPDATE t SET v = ? WHERE k = ?").unwrap();
+        let literal = tidb_parser::parse("UPDATE t SET v = 5 WHERE k = 'x'").unwrap();
+        let zone = tidb_datatype::SessionTimeZone::utc();
+
+        let marker_keys = PessimisticPrelock::from_statement(&marker)
+            .unwrap()
+            .bind_keys(
+                &[Datum::Int(5), Datum::Bytes(b"x".to_vec())],
+                &catalog,
+                "test",
+                &zone,
+            );
         let literal_keys = PessimisticPrelock::from_statement(&literal)
             .unwrap()
             .bind_keys(&[], &catalog, "test", &zone);

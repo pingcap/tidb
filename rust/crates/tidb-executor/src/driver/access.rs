@@ -2479,11 +2479,22 @@ pub(crate) fn convert_pairs_to_column_domain(
     pairs: &mut [NameValuePair],
     columns: &[(String, FieldType)],
 ) -> bool {
-    for pair in pairs {
-        let Some((_, field_type)) = columns
+    convert_pairs_to_column_domain_by(pairs, |wanted| {
+        columns
             .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
-        else {
+            .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
+            .map(|(_, field_type)| field_type)
+    })
+}
+
+/// [`convert_pairs_to_column_domain`] over any column lookup, so a caller
+/// holding the table's own column list need not copy it first.
+pub(crate) fn convert_pairs_to_column_domain_by<'a>(
+    pairs: &mut [NameValuePair],
+    field_type_of: impl Fn(&str) -> Option<&'a FieldType>,
+) -> bool {
+    for pair in pairs {
+        let Some(field_type) = field_type_of(&pair.column) else {
             return false;
         };
         let Some(value) = point_get_value(field_type, &pair.value) else {
@@ -3018,17 +3029,20 @@ pub(crate) fn point_write_prelock_keys(
     // The column list is the table's own (all columns, in order), because the
     // domain conversion and the handle offsets below both index into it --
     // the same list [`super::access_path`] builds for a write's own read-path
-    // decision (`write_read_path`).
-    let columns: Vec<(String, tidb_datatype::FieldType)> = table
-        .columns
-        .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
-        .collect();
-    if !convert_pairs_to_column_domain(&mut pairs, &columns) {
+    // decision (`write_read_path`). It is consulted in place: this runs once
+    // per point write, and cloning every name and type per statement was a
+    // measurable share of a cached point UPDATE.
+    let columns = &table.columns;
+    if !convert_pairs_to_column_domain_by(&mut pairs, |name| {
+        columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .map(|column| &column.field_type)
+    }) {
         return Vec::new();
     }
     let handle = if let Some(handle_offset) = table.pk_handle_offset() {
-        let handle_column = &columns[handle_offset].0;
+        let handle_column = &columns[handle_offset].name;
         if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
             match pairs[0].value {
                 Datum::Int(value) => Some(TableHandle::Int(value)),
@@ -3052,12 +3066,12 @@ pub(crate) fn point_write_prelock_keys(
         }
         let mut values = Vec::with_capacity(common_offsets.len());
         for offset in common_offsets {
-            let Some((name, _)) = columns.get(*offset) else {
+            let Some(column) = columns.get(*offset) else {
                 return Vec::new();
             };
             let Some(pair) = pairs
                 .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(name))
+                .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
             else {
                 return Vec::new();
             };
