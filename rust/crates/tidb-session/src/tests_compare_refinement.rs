@@ -120,6 +120,32 @@ fn invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column() {
         [["8"]]
     );
     assert_eq!(warning_texts(&session).len(), 2);
+    assert_eq!(session.wire_warning_count(), 2);
+    assert_eq!(
+        row_text(session.run(
+            "select cast('bad-int' as signed), count(*) from duration_cmp \
+             where (tm <=> 'not-a-time') = 0 and ('not-a-time' <=> tm) = 0",
+        )),
+        [["0", "8"]]
+    );
+    assert_eq!(
+        warning_texts(&session),
+        [
+            "1292 Truncated incorrect time value: 'not-a-time'",
+            "1292 Truncated incorrect time value: 'not-a-time'",
+            "1292 Truncated incorrect INTEGER value: 'bad-int'",
+        ]
+    );
+    session.run("delete from duration_cmp").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select count(*) from duration_cmp \
+             where (tm <=> 'not-a-time') = 0 and ('not-a-time' <=> tm) = 0",
+        )),
+        [["0"]]
+    );
+    assert_eq!(warning_texts(&session).len(), 2);
+    assert_eq!(session.wire_warning_count(), 2);
 }
 
 /// The reported unit: the warning count is the SAME for all three tables,

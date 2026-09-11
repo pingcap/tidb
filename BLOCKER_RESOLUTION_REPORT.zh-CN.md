@@ -1,5 +1,31 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 统计重建不重复发布比较常量警告
+
+在 `8dc459050f` 上原 `invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column` 单独运行稳定失败：预期2条1292，实际6条，红测 `/tmp/duration-warning-red.log`。原 `time_compared_with_strings_and_numbers` 同类失败为预期1条、实际2条。Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的实际 SQL 输出确认 TIME 两条，且空表仍两条；同时投影 CAST('bad-int' AS SIGNED) 时增加独立第三条 INTEGER 警告。证据 `/tmp/duration-warning-go.out`、`/tmp/duration-warning-boundary-go.out`，对照进程已停止。
+
+临时调用栈 `/tmp/duration-warning-sink-trace.log` 确认：正式 WHERE 构建产生正确的两条警告，额外四条来自 InitStats -> access_cost::condition_kind -> StatisticsResolver -> ScopeResolver::fold_constant。统计初始化为选择率估算重建原始 WHERE，把同样的常量转换再次发布到正式语句。Go `pkg/planner/cardinality/selectivity.go:51` 接收已构建的 `[]expression.Expression`；`pkg/expression/builtin_compare.go:1682` 的 duration NullEq 转换属于原函数构建，不应因估算重复发布。
+
+修复仅为 InitStats 的原始 AST 重建建立独立警告缓冲，保留会话时区、参数、转换规则和其他上下文。正常语句和 range fallback 的诊断不做全局清理或文本去重。调用栈探针已删除。扩展原回归同时断言 wire warning count、正常 INTEGER 警告仍保留、空表仍保留两条 TIME 构建警告。
+
+验证目录 `/tmp/tidb-hparser-current`，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib time_compared_with_strings_and_numbers
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_compare_refinement
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib access_cost::tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+  ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+  ACCESS_PATH_KEEP_LOGS=/tmp/warning-access-evidence \
+  bash rust/scripts/run-realtikv-access-path.sh
+```
+
+两个原失败及完整 compare_refinement 8项已通过，日志 `/tmp/warning-fixed-invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column.log`、`/tmp/warning-fixed-time_compared_with_strings_and_numbers.log`、`/tmp/warning-ready-tidb-session.log`。access_cost 27项、session integration 310项通过，日志 `/tmp/warning-ready-tidb-executor.log`、`/tmp/warning-ready-integration.log`；`make lint` 退出0，日志 `/tmp/warning-ready-lint.log`。真实 access-path `/tmp/warning-access-replay.log` 退出0，结尾 `the access-path differential passed`，覆盖 ANALYZE 前后，节点日志保存在 `/tmp/warning-access-evidence`，脚本已清理集群。整体 all-failed-cases 目标仍未完成，本轮未重跑全量 session lib 或全部原始门禁，不构成完整 Go package 转写声明。
+
 ## 2026-09-11 readiness 独立复核：启动竞争已有确定红绿证据
 
 本次从 `9f9a9198bc` 创建独立检出 `/tmp/tidb-readiness-confirm`，避免将 `/tmp/tidb-hparser-current` 尚未提交的 ROLLUP 工作混入证据。Go source of truth 固定为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，实际对照二进制的版本输出也确认该 SHA。

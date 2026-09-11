@@ -1214,7 +1214,10 @@ impl OwnedRewrite for InitStats<'_> {
             // Go uses the data source's current ranger/evaluation context.
             // A name-only scope cannot evaluate EXECUTE parameters or apply
             // the statement's conversion policy while deriving path costs.
-            let mut scope = FromScope::for_statement(self.context);
+            // Go Selectivity consumes built expressions. This AST replay
+            // must retain session inputs without replaying build warnings.
+            let rewrite_context = self.context.for_statistics_rewrite();
+            let mut scope = FromScope::for_statement(&rewrite_context);
             scope.tables.push(FromTable {
                 name: visible.to_owned(),
                 database: Some(source.db_name.clone()),

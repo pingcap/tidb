@@ -1057,6 +1057,15 @@ impl StmtContext {
         self.statement_class
     }
 
+    /// Rebuilding an already-compiled predicate for statistics must not
+    /// publish its construction warnings a second time. Keep evaluation
+    /// inputs intact and isolate only this replay's warning buffer.
+    pub(crate) fn for_statistics_rewrite(&self) -> Self {
+        let mut context = self.clone();
+        context.warnings = Arc::default();
+        context
+    }
+
     /// Applies Go's one-row INSERT bad-NULL rule after the parser has exposed
     /// the row count and the session switch.
     #[must_use]
