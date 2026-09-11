@@ -1,14 +1,8 @@
+show global variables like 'tidb_stmt_summary_enable_persistent';
+Variable_name	Value
+tidb_stmt_summary_enable_persistent	OFF
 select @@global.tidb_stmt_summary_redact_timing;
-@@global.tidb_stmt_summary_redact_timing
-CAPTURE
-set global tidb_stmt_summary_redact_timing = 'READ';
-Error 1231 (42000): Variable 'tidb_stmt_summary_redact_timing' can't be set to the value of 'READ'
-set session tidb_stmt_summary_redact_timing = PERSIST;
-Error 1229 (HY000): Variable 'tidb_stmt_summary_redact_timing' is a GLOBAL variable and should be set with SET GLOBAL
-set global tidb_stmt_summary_redact_timing = persist;
-select @@global.tidb_stmt_summary_redact_timing;
-@@global.tidb_stmt_summary_redact_timing
-PERSIST
+Error 1193 (HY000): Unknown system variable 'tidb_stmt_summary_redact_timing'
 set global tidb_stmt_summary_refresh_interval = 3600;
 set tidb_enable_non_prepared_plan_cache = 0;
 create table sample_redaction (id int);
@@ -21,10 +15,10 @@ select * from sample_redaction where id = 99;
 id
 select query_sample_text, exec_count from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 query_sample_text	exec_count
-select * from sample_redaction where id = 42	2
+select * from `sample_redaction` where `id` = ?	2
 select query_sample_text from information_schema.statements_summary_history where digest_text = 'select * from `sample_redaction` where `id` = ?';
 query_sample_text
-select * from sample_redaction where id = 42
+select * from `sample_redaction` where `id` = ?
 set global tidb_redact_log = MARKER;
 set global tidb_enable_stmt_summary = 0;
 set global tidb_enable_stmt_summary = 1;
@@ -34,48 +28,30 @@ execute s using @id;
 id
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 query_sample_text
-select * from sample_redaction where id = ? [arguments: 42]
+‹select * from sample_redaction where id = ? [arguments: 42]›
 deallocate prepare s;
 set global tidb_redact_log = ON;
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 query_sample_text
-select * from sample_redaction where id = ? [arguments: 42]
+‹select * from sample_redaction where id = ? [arguments: 42]›
 set global tidb_redact_log = OFF;
+select query_sample_text from information_schema.statements_summary_history where digest_text = 'select * from `sample_redaction` where `id` = ?';
+query_sample_text
+‹select * from sample_redaction where id = ? [arguments: 42]›
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select * from sample_redaction where id = 42;
+id
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 query_sample_text
-select * from sample_redaction where id = ? [arguments: 42]
-set global tidb_redact_log = ON;
+select * from sample_redaction where id = 42
 create user sample_redaction_user identified by 'sample_password';
 select query_sample_text from information_schema.statements_summary where stmt_type = 'CreateUser';
 query_sample_text
 create user {sample_redaction_user@% password = ***}
 drop user sample_redaction_user;
-set global tidb_stmt_summary_redact_timing = CAPTURE;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-query_sample_text
-select * from sample_redaction where id = ? [arguments: 42]
-set global tidb_enable_stmt_summary = 0;
-set global tidb_enable_stmt_summary = 1;
-select * from sample_redaction where id = 42;
-id
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-query_sample_text
-select * from `sample_redaction` where `id` = ?
-set global tidb_redact_log = MARKER;
-set global tidb_enable_stmt_summary = 0;
-set global tidb_enable_stmt_summary = 1;
-select * from sample_redaction where id = 42;
-id
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-query_sample_text
-‹select * from sample_redaction where id = 42›
-set global tidb_stmt_summary_redact_timing = PERSIST;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-query_sample_text
-‹select * from sample_redaction where id = 42›
 drop table sample_redaction;
 set global tidb_redact_log = default;
 set global tidb_stmt_summary_refresh_interval = default;
 set global tidb_enable_stmt_summary = default;
 set tidb_enable_non_prepared_plan_cache = default;
-set global tidb_stmt_summary_redact_timing = default;

@@ -2420,28 +2420,3 @@ func TestSkipInitIsUsed(t *testing.T) {
 		}
 	}
 }
-
-func TestStmtSummaryRedactTiming(t *testing.T) {
-	sv := GetSysVar(vardef.TiDBStmtSummaryRedactTiming)
-	require.NotNil(t, sv)
-	require.Equal(t, "CAPTURE", sv.Value)
-	require.Equal(t, vardef.ScopeGlobal, sv.Scope)
-	vars := NewSessionVars(nil)
-	previous := vardef.StmtSummaryRedactTiming.Load()
-	t.Cleanup(func() { vardef.StmtSummaryRedactTiming.Store(previous) })
-	for _, tc := range []struct{ input, expected string }{
-		{"capture", "CAPTURE"}, {"persist", "PERSIST"}, {"CAPTURE", "CAPTURE"},
-	} {
-		value, err := sv.Validate(vars, tc.input, vardef.ScopeGlobal)
-		require.NoError(t, err)
-		require.Equal(t, tc.expected, value)
-		require.NoError(t, sv.SetGlobal(context.Background(), vars, value))
-		require.Equal(t, tc.expected, vardef.StmtSummaryRedactTiming.Load())
-	}
-	for _, input := range []string{"", "ON", "OFF", "READ"} {
-		_, err := sv.Validate(vars, input, vardef.ScopeGlobal)
-		require.Error(t, err, input)
-	}
-	_, err := sv.Validate(vars, "PERSIST", vardef.ScopeSession)
-	require.Error(t, err)
-}

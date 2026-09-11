@@ -1,12 +1,6 @@
-# CAPTURE is the compatible default. Invalid timing and session scope are rejected.
-select @@global.tidb_stmt_summary_redact_timing;
---error ER_WRONG_VALUE_FOR_VAR
-set global tidb_stmt_summary_redact_timing = 'READ';
---error ER_GLOBAL_VARIABLE
-set session tidb_stmt_summary_redact_timing = PERSIST;
-
-# PERSIST keeps QUERY_SAMPLE_TEXT raw in memory, regardless of log redaction mode.
-set global tidb_stmt_summary_redact_timing = persist;
+# Persistence is off by default; the existing capture-time behavior is retained.
+show global variables like 'tidb_stmt_summary_enable_persistent';
+--error ER_UNKNOWN_SYSTEM_VARIABLE
 select @@global.tidb_stmt_summary_redact_timing;
 set global tidb_stmt_summary_refresh_interval = 3600;
 set tidb_enable_non_prepared_plan_cache = 0;
@@ -29,36 +23,22 @@ execute s using @id;
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 deallocate prepare s;
 
-# Changes to the log setting do not rewrite already collected memory samples.
+# Changes to the global mode do not rewrite previously captured samples.
 set global tidb_redact_log = ON;
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 set global tidb_redact_log = OFF;
+select query_sample_text from information_schema.statements_summary_history where digest_text = 'select * from `sample_redaction` where `id` = ?';
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+select * from sample_redaction where id = 42;
 select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 
 # Sensitive AST statements still apply their own credential protection.
-set global tidb_redact_log = ON;
 create user sample_redaction_user identified by 'sample_password';
 select query_sample_text from information_schema.statements_summary where stmt_type = 'CreateUser';
 drop user sample_redaction_user;
-
-# Switching timing does not rewrite the current sample; only new samples use CAPTURE.
-set global tidb_stmt_summary_redact_timing = CAPTURE;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-set global tidb_enable_stmt_summary = 0;
-set global tidb_enable_stmt_summary = 1;
-select * from sample_redaction where id = 42;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-set global tidb_redact_log = MARKER;
-set global tidb_enable_stmt_summary = 0;
-set global tidb_enable_stmt_summary = 1;
-select * from sample_redaction where id = 42;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
-set global tidb_stmt_summary_redact_timing = PERSIST;
-select query_sample_text from information_schema.statements_summary where digest_text = 'select * from `sample_redaction` where `id` = ?';
 drop table sample_redaction;
 set global tidb_redact_log = default;
 set global tidb_stmt_summary_refresh_interval = default;
 set global tidb_enable_stmt_summary = default;
 set tidb_enable_non_prepared_plan_cache = default;
-
-set global tidb_stmt_summary_redact_timing = default;

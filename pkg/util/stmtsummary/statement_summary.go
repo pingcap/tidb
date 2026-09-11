@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -742,7 +741,7 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	return &stmtSummaryStats{
-		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL(vardef.StmtSummaryRedactTiming.Load() == vardef.StmtSummaryRedactTimingCapture)),
+		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL(true)),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.

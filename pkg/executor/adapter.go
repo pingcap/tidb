@@ -2313,8 +2313,8 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 
-// GetOriginalSQL implements StmtExecLazyInfo. CAPTURE uses the session's log
-// formatting; PERSIST retains the original sample until the statement log writes it.
+// GetOriginalSQL implements StmtExecLazyInfo. Non-persistent summaries use the
+// session's log formatting; persistent summaries retain original samples until writing.
 func (a *ExecStmt) GetOriginalSQL(redactAtCapture bool) string {
 	if redactAtCapture {
 		return a.GetTextToLog(false)

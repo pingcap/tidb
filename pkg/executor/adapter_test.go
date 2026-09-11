@@ -1075,7 +1075,7 @@ func TestStatementSummaryOriginalSQL(t *testing.T) {
 		case "MARKER":
 			expectedLog = "‹select '中文‹‹secret››'›"
 		}
-		require.Equal(t, expectedLog, stmt.GetOriginalSQL(true), "CAPTURE preserves session redaction")
+		require.Equal(t, expectedLog, stmt.GetOriginalSQL(true), "non-persistent summaries preserve session redaction")
 		require.Equal(t, expectedLog, stmt.GetTextToLog(false), "shared log formatting must still redact")
 		// Prepared values are retained in the summary sample, including a cached execution.
 		vars.StmtCtx.OriginalSQL = "select ?"
