@@ -681,6 +681,7 @@ fn max_min_and_first_row_rewrite_enum_only_for_the_window_kinds() {
                 "{name} {code:?}"
             );
             assert_eq!(d.ret_type().flen(), 255);
+            assert_eq!(d.ret_type().decimal(), 0);
         }
     }
 }

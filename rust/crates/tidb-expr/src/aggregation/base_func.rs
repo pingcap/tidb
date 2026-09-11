@@ -529,9 +529,10 @@ impl BaseFuncDesc {
             self.name.as_str(),
             names::FIRST_ROW | names::MAX | names::MIN
         ) {
-            let mut ret = FieldType::new(FieldTypeCode::String);
-            ret.set_flen(MAX_FIELD_CHAR_LENGTH);
-            self.ret_type = ret;
+            self.ret_type = tidb_datatype::FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::String)
+                .flen_set(MAX_FIELD_CHAR_LENGTH)
+                .build();
         }
         Ok(())
     }

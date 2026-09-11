@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 ENUM/SET 窗口返回类型零值构造
+
+在 `006cc6c873` 独立运行 `window_value_functions_rewrite_a_lone_enum_or_set_to_a_char`，`/tmp/window-enum-red.log` 退出 101，scale 为 -1 而非 Go 的 0。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/base_func.go:384` 使用 NewFieldTypeBuilder().SetType(TypeString).SetFlen(255)，`pkg/types/field_type_builder.go:23` 从零值结构开始。Rust 错用普通 FieldType::new，默认未指定 scale。
+
+改为复用已有 FieldTypeBuilder，不引入新的类型推导规则；MAX/MIN/FIRST_ROW 的例外分支保持 Go 语义。descriptor 原回归补充 scale=0，SQL 原回归继续检查七种窗口调用的类型、长度、scale 与行值。
+
+Ready 命令，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_value_functions_rewrite_a_lone_enum_or_set_to_a_char
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib aggregation::tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/window-enum-green.log` 原回归 1 passed，`/tmp/window-enum-descriptor.log` 41 passed，`/tmp/window-enum-integration.log` 310 passed，`/tmp/window-enum-lint.log` 退出 0，diff check 通过。完整窗口 suite `/tmp/window-enum-suite.log` 40 passed / 7 failed，上一轮 39/8。剩余窗口计算、类型及其他原始质量门禁继续处理，未宣称全量完成。
+
 ## 2026-09-11 RANGE 类型错误与综合窗口回归闭环
 
 在 `5ff5b4a6e3` 独立运行 `window_errors_and_refusals`，`/tmp/range-types-red.log` 退出 101，首个失败为 RANGE 缺少 ORDER BY 的 3587。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go:7271-7282` 先检查 ORDER BY 数量与类型，再检查 INTERVAL 与 temporal/numeric 的匹配；消息见 `pkg/errno/errname.go:878-880`。
