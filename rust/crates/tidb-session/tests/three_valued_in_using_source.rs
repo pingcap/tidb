@@ -52,6 +52,17 @@ fn not_in_null_semantics_by_case() {
 }
 
 #[test]
+fn tuple_not_in_false_dominates_unknown() {
+    let mut session = Session::new();
+    session.run("create table t (id int, a int, b int)").unwrap();
+    session.run("insert into t values (1,1,1),(2,2,1),(3,NULL,2),(4,NULL,1)").unwrap();
+    session.run("create table s (a int, b int)").unwrap();
+    session.run("insert into s values (1,NULL),(2,2)").unwrap();
+    assert_eq!(rows(&mut session,
+        "select id from t where (a,b) not in (select a,b from s) order by id"), "2");
+}
+
+#[test]
 fn null_in_list_and_using_join() {
     let mut session = Session::new();
     session.run("create table t (a int)").unwrap();

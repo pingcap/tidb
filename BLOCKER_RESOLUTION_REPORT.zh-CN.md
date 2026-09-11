@@ -1,5 +1,33 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 元组 IN 左操作数重写修复
+
+原红色回归 tuple_not_in_false_dominates_unknown 在通用 rewriter 拒绝 Expr::Row，
+尚未进入 planner 已有的多列 IN 展开。固定 Go master
+`pkg/planner/core/expression_rewriter.go:2730` 的 rowToScalarFunc 先构造 row
+函数并继承首个元素类型。Rust rewriter 现实现相同构造，复用现有逐列比较、
+InOperand 标记及 anti-semi UNKNOWN 处理，没有改动 golden 或容差。
+
+红色证据为 `/tmp/not-in-session-all.log`，Unsupported expression；绿色证据
+`/tmp/tuple-green.log` 三项通过。元组用例专门验证 FALSE 优先于 UNKNOWN，
+不能用“build side 出现任意 NULL 就抑制所有输出”通过该用例。
+
+Ready 命令与结果（Rust 命令均使用 RUSTUP_TOOLCHAIN=1.97、RUSTFLAGS=''、
+RUST_MIN_STACK=33554432）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+# 310 passed / 0 failed / 0 ignored；/tmp/tuple-session-all.log
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib rewriter
+# 72 passed / 0 failed；/tmp/tuple-rewriter.log
+make lint
+# exit 0；/tmp/tuple-lint.log
+git diff --check
+```
+
+本次新增一个回归，完整 session integration 从上一提交 309 项增至 310 项。
+未重跑全部 session --lib、RealTiKV 或原始总门禁，不能据此声明总目标完成。
+
 ## 2026-09-11 标量 NOT IN 的 UNKNOWN 语义修复
 
 修复 hash_join::equi_key 对 InOperand 条件的错误提取，复用

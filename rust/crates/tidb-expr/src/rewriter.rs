@@ -2045,6 +2045,24 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args,
             )))
         }
+        Expr::Row(items) => {
+            let args = items
+                .iter()
+                .map(|item| rewrite_expr_resolved(item, resolver))
+                .collect::<Result<Vec<_>, _>>()?;
+            // Go rowToScalarFunc uses the first element's type. The planner
+            // expands this row constructor when comparing subquery operands.
+            let ret_type = args
+                .first()
+                .and_then(Expression::static_type)
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::Null));
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("row"),
+                ret_type,
+                args,
+            )))
+        }
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),
