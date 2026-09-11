@@ -64,7 +64,7 @@ use super::forwarding::{UnaryRouteDispatch, UnaryTrafficLocation};
 /// Deterministic policy owned by the direct unary runtime.
 #[derive(Clone)]
 pub struct DirectUnaryRuntimeConfig {
-    /// Default used when the task has no request-local read timeout.
+    /// Per-RPC timeout used when the task has no request-local read timeout.
     pub default_timeout: Duration,
     /// Storage generation used for paging read-byte accounting.
     pub read_engine_generation: ReadEngineGeneration,
@@ -666,8 +666,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let bound_at = request
             .bound_at()
             .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
-        let call =
-            UnaryCallContext::with_deadline(bound_at + timeout, cancellation.unary_cancellation());
+        let query_deadline = (metadata.max_execution_time_ms > 0)
+            .then(|| bound_at + Duration::from_millis(metadata.max_execution_time_ms));
+        let call = UnaryCallContext::with_optional_deadline(
+            query_deadline,
+            cancellation.unary_cancellation(),
+        );
 
         let source = DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
@@ -676,6 +680,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             async_begin: self.async_begin,
             cancellation,
             call,
+            rpc_timeout: timeout,
             selection_seed,
             read_policy,
             metadata: Arc::new(metadata.clone()),
@@ -815,6 +820,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     async_begin: Option<AsyncBegin<C>>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
+    rpc_timeout: Duration,
     selection_seed: u32,
     read_policy: ReadPolicy,
     metadata: Arc<crate::KvRequestMetadata>,
@@ -893,6 +899,7 @@ struct PendingBatchAttempt {
     dispatch: PreparedRegionDispatch,
     pending: Box<dyn PendingRequest + Send>,
     started_at: Instant,
+    call: UnaryCallContext,
 }
 
 impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
@@ -1193,14 +1200,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         // Go's RequestAttemptLimiter first takes the fast path, then waits
         // against both the request context and the iterator's finish signal.
         // The direct-unary response has one canonical cancellation carrier and
-        // one absolute deadline, so the blocking adapter checks those same
+        // optional execution deadline, so the blocking adapter checks those same
         // two exits while retaining the token through response settlement.
         if limiter.try_acquire() {
             return Ok(RequestAttemptPermit(Some(limiter)));
         }
         let wait_start = Instant::now();
         let cancelled = limiter.acquire_blocking_with_context(|| {
-            self.cancellation.is_cancelled() || Instant::now() >= self.call.deadline()
+            self.cancellation.is_cancelled() || self.call.timeout().is_zero()
         });
         if cancelled {
             return self
@@ -1362,7 +1369,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         };
         self.check_retry_active()?;
         let dispatch_started = Instant::now();
-        let call = self.call.clone();
+        let call = self.rpc_call();
         if let Some(begin) = self.async_begin.filter(|_| {
             !self
                 .sync_only_chains
@@ -1402,6 +1409,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                             dispatch: prepared_dispatch,
                             pending,
                             started_at: dispatch_started,
+                            call,
                         },
                     );
                     return Ok(());
@@ -1449,7 +1457,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             let attempt = self.pending_batches.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("missing pending BatchCommands attempt"),
             )?;
-            let completion = attempt.pending.complete(&self.call);
+            let completion = attempt.pending.complete(&attempt.call);
             completion
         };
         if let Err(error) = self.check_retry_active() {
@@ -1653,7 +1661,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         request_context: client_request.context.clone(),
                         lock,
                         caller_start_ts: self.metadata.start_ts,
-                        call: self.call.clone(),
+                        call: self.rpc_call(),
                     },
                 )
             })
@@ -2062,6 +2070,16 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         Ok(())
     }
 
+    fn rpc_call(&self) -> UnaryCallContext {
+        let deadline = Instant::now() + self.rpc_timeout;
+        UnaryCallContext::with_deadline(
+            self.call
+                .deadline()
+                .map_or(deadline, |query| query.min(deadline)),
+            self.cancellation.unary_cancellation(),
+        )
+    }
+
     fn sleep_retry(&self, delay: Duration) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
         if delay.is_zero() {
@@ -2206,6 +2224,7 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     async_begin: self.async_begin,
                     cancellation: Arc::clone(&self.cancellation),
                     call: self.call.clone(),
+                    rpc_timeout: self.rpc_timeout,
                     selection_seed: self.selection_seed,
                     read_policy: self.read_policy,
                     metadata: Arc::clone(&self.metadata),

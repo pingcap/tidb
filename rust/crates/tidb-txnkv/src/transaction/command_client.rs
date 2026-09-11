@@ -109,7 +109,10 @@ async fn run_detached_flush(
     // tasks continue while these requests are in flight.
     for (mut request, observer) in pending {
         let result = tokio::time::timeout_at(
-            tokio::time::Instant::from_std(call.deadline()),
+            tokio::time::Instant::from_std(
+                call.deadline()
+                    .expect("detached commits have a finite budget"),
+            ),
             std::future::poll_fn(|cx| request.poll_complete(cx)),
         )
         .await;

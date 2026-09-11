@@ -575,9 +575,7 @@ impl CompletionRunLoop {
                 inner.state = CompletionRunLoopState::Idle;
                 break CompletionRunOutcome::failed(0, CompletionError::Cancelled);
             }
-            let remaining = call
-                .deadline()
-                .saturating_duration_since(std::time::Instant::now());
+            let remaining = call.timeout();
             if remaining.is_zero() {
                 inner.state = CompletionRunLoopState::Idle;
                 break CompletionRunOutcome::failed(0, CompletionError::DeadlineExceeded);
@@ -593,7 +591,7 @@ impl CompletionRunLoop {
                         CompletionError::Cancelled,
                     );
                 }
-                if call.deadline() <= std::time::Instant::now() {
+                if call.timeout().is_zero() {
                     break CompletionRunOutcome::failed(
                         outcome.executed(),
                         CompletionError::DeadlineExceeded,
@@ -603,12 +601,18 @@ impl CompletionRunLoop {
             }
 
             inner.state = CompletionRunLoopState::Waiting;
-            let (next, _) = self
-                .signal
-                .changed
-                .wait_timeout(inner, remaining)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner = next;
+            inner = if call.deadline().is_some() {
+                self.signal
+                    .changed
+                    .wait_timeout(inner, remaining)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .0
+            } else {
+                self.signal
+                    .changed
+                    .wait(inner)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+            };
         };
         call.cancellation()
             .unregister_completion_waiter(&self.signal);
@@ -1015,7 +1019,7 @@ impl<T, E> CompletionPull<T, E> {
                 self.cancel();
                 return Err(CompletionError::Cancelled);
             }
-            if call.deadline() <= std::time::Instant::now() {
+            if call.timeout().is_zero() {
                 self.cancel();
                 return Err(CompletionError::DeadlineExceeded);
             }

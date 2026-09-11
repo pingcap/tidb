@@ -22,6 +22,23 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn rpc_read_timeout_does_not_expire_a_lazy_query_before_dispatch() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.tikv_client_read_timeout_ms = 10;
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls), [Ok(response(b"still-valid"))],
+        [location(1, "a", "z", "tikv-1:20160")], 9001,
+        Rc::new(RefCell::new(Vec::new())), DirectUnaryRuntimeConfig::default(),
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(result.next_raw().unwrap(), Some(b"still-valid".to_vec()));
+    assert_eq!(calls.borrow().len(), 1);
+}
+
+#[test]
 fn region_evicted_after_task_build_rebuilds_ranges_before_any_rpc() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
@@ -193,7 +210,7 @@ fn retry_wait_never_crosses_the_bind_anchored_deadline() {
         },
     );
     let mut request_metadata = metadata("a", "z");
-    request_metadata.tikv_client_read_timeout_ms = 50;
+    request_metadata.max_execution_time_ms = 50;
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
@@ -219,7 +236,7 @@ fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
         let retry_control = Arc::new(RecordingRetryControl::default());
         let execution = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
         let mut request_metadata = metadata("a", "z");
-        request_metadata.tikv_client_read_timeout_ms = 1;
+        request_metadata.max_execution_time_ms = 1;
         let request = TransportRequest::new(request_metadata, std::sync::Arc::clone(&execution));
         let transport = transport_with_loader_calls_and_config(
             Rc::clone(&calls),

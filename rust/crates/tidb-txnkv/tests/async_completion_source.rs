@@ -33,6 +33,30 @@ fn wait_for_state(run_loop: &CompletionRunLoop, expected: CompletionRunLoopState
     assert_eq!(run_loop.state(), expected);
 }
 
+#[test]
+fn execution_scope_without_deadline_wakes_on_completion_and_cancellation() {
+    for cancel in [false, true] {
+        let run_loop = CompletionRunLoop::new();
+        let call = UnaryCallContext::with_optional_deadline(None, Default::default());
+        let worker_loop = run_loop.clone();
+        let worker_call = call.clone();
+        let (done, result) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            done.send(worker_loop.execute_with_call(&worker_call)).unwrap();
+        });
+        wait_for_state(&run_loop, CompletionRunLoopState::Waiting);
+        if cancel {
+            call.cancellation().cancel();
+        } else {
+            run_loop.append(|| {});
+        }
+        let outcome = result.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+        assert_eq!(outcome.error(), cancel.then_some(CompletionError::Cancelled));
+        assert_eq!(outcome.executed(), usize::from(!cancel));
+    }
+}
+
 // client-go/util/async/core_test.go:39 TestInjectOrder.
 #[test]
 fn injected_transforms_run_in_reverse_order() {

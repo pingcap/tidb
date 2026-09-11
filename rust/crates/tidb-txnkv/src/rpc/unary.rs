@@ -201,7 +201,7 @@ impl UnaryCancellation {
 /// Transport-neutral per-call deadline and cancellation authority.
 #[derive(Clone, Debug)]
 pub struct UnaryCallContext {
-    deadline: Instant,
+    deadline: Option<Instant>,
     cancellation: UnaryCancellation,
 }
 
@@ -216,6 +216,19 @@ impl UnaryCallContext {
     #[must_use]
     pub const fn with_deadline(deadline: Instant, cancellation: UnaryCancellation) -> Self {
         Self {
+            deadline: Some(deadline),
+            cancellation,
+        }
+    }
+
+    /// A cancellation scope with an optional execution deadline. Individual
+    /// RPCs derive a bounded child context when they are dispatched.
+    #[must_use]
+    pub const fn with_optional_deadline(
+        deadline: Option<Instant>,
+        cancellation: UnaryCancellation,
+    ) -> Self {
+        Self {
             deadline,
             cancellation,
         }
@@ -227,15 +240,18 @@ impl UnaryCallContext {
         Self::new(timeout, UnaryCancellation::new())
     }
 
-    /// Exact local and remote gRPC timeout.
+    /// Remaining budget, or `Duration::MAX` for a cancellation-only scope.
+    /// Network callers must derive a finite RPC child from an unbounded scope.
     #[must_use]
     pub fn timeout(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
+        self.deadline.map_or(Duration::MAX, |deadline| {
+            deadline.saturating_duration_since(Instant::now())
+        })
     }
 
-    /// Returns the one absolute deadline shared by every command in this read.
+    /// Returns the absolute deadline, absent for a cancellation-only scope.
     #[must_use]
-    pub const fn deadline(&self) -> Instant {
+    pub const fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
 

@@ -130,14 +130,13 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
     assert!(calls.borrow().is_empty(), "send must stay response-lazy");
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
     assert_eq!(calls.borrow().len(), 1);
+    // Go handleTaskOnce creates a fresh RPC timeout for the next region;
+    // time spent consuming the previous result is not charged to that RPC.
+    std::thread::sleep(Duration::from_millis(100));
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
     let mut normalized_calls = calls.borrow().clone();
-    assert!(
-        normalized_calls[1].timeout <= normalized_calls[0].timeout,
-        "all RPCs in one query must consume one absolute deadline"
-    );
     assert!(normalized_calls.iter().all(|call| {
         call.timeout <= Duration::from_millis(777) && call.timeout > Duration::from_millis(700)
     }));

@@ -1,5 +1,48 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 transport-retry：RPC 读超时不是查询总时限
+
+原真实失败 `/tmp/transport-retry-current.log` 在绑定 lazy response 后停 leader，
+再 Next 时返回 query deadline exceeded。Rust 将 tikv_client_read_timeout
+从绑定时开始计时并共享给所有 RPC、重试和结果等待。固定 Go master
+`pkg/store/copr/coprocessor.go:1826` 在 handleTaskOnce 给每次 SendReq 设置
+CoprReqTimeout 或 TiKVClientReadTimeout；查询 max_execution_time 由
+`pkg/util/expensivequery/expensivequery.go:97` 独立约束。
+
+现在查询持有可选执行时限和取消上下文；没有 execution limit 时不人为
+引入读超时总预算。每次 RPC 派发创建有限 deadline，异步请求保留该次
+deadline，且不超过查询 execution limit。锁恢复同样取得有限调用上下文。
+重试 backoff 上限及取消检查保持。UnaryCallContext 的 deadline 变为 Option，
+completion 等待无 deadline 时用取消可唤醒的 park/condvar，不传无限 gRPC
+timeout。workspace check 已验证 API 调用点。
+
+最小回归：10ms RPC 超时，绑定后等 30ms 再首次读取，旧实现 0.04 秒报
+query deadline exceeded（`/tmp/rpc-timeout-red.log`），修复后成功。跨 region
+消费间隔 100ms 后，第二个 RPC 仍得到自己的 777ms 预算。原两个查询超时
+测试改用 max_execution_time，保留 deadline/cancellation 优先级断言。
+
+Ready 验证：
+
+```bash
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-distsql --test all
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo test --manifest-path rust/Cargo.toml -p tidb-txnkv --test all async_completion_source
+RUSTFLAGS='' RUSTUP_TOOLCHAIN=1.97 cargo check --manifest-path rust/Cargo.toml --workspace
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 bash rust/scripts/run-realtikv-transport-retry.sh
+make lint
+git diff --check
+```
+
+DistSQL 248 passed/2 原 ignored；completion 18 passed；workspace check、lint
+退出 0。真实 transport-retry 原 5 秒配置不变，退出 0，旧 leader
+127.0.0.1:46160#1 -> survivor 46162，两 region 成功，旧 generation 不再派发，
+liveness=Unreachable，清理完成。日志 `/tmp/transport-retry-rpc-timeout.log`。
+
+额外 txnkv 全量为 414 passed/1 failed/10 ignored：rollback 双 region 测试
+超时，单独重跑通过。其 fixture 在每个 stream 内等待两条 rollback，而
+默认连接池可能拆分 stream，需下一步独立修复，不能称全量通过。日志
+`/tmp/rpc-timeout-txnkv-full.log`、`/tmp/rollback-publish-recheck.log`。
+本次仅完成 transport-retry 门禁，整体目标及其他原始门禁仍未完成。
+
 ## 2026-09-11 convergence 全局授权观察收紧后通过
 
 旧 `wait_for_rust_grant "UPDATE"` 会匹配既有 conv.orders 表级 UPDATE，不能

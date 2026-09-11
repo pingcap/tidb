@@ -145,7 +145,11 @@ pub(in crate::rpc) fn wait_with_call<F: Future>(
                 }
                 // unpark retains a permit if publication/cancellation raced
                 // the poll. Spurious wakeups recheck both state and deadline.
-                std::thread::park_timeout(call.timeout());
+                if call.deadline().is_some() {
+                    std::thread::park_timeout(call.timeout());
+                } else {
+                    std::thread::park();
+                }
             }
         })
     })
