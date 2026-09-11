@@ -179,20 +179,29 @@ func TestTiFlashManager(t *testing.T) {
 			}
 		}()
 
+		var result progressResult
+		resultReceived := false
 		select {
 		case <-requestStarted:
-		case result := <-resultCh:
-			require.Failf(t, "expected progress collection request to start before circuit breaker returned",
-				"progress=%v circuitBreakerTriggered=%v err=%v", result.progress, result.circuitBreakerTriggered, result.err)
+		case result = <-resultCh:
+			resultReceived = true
+			select {
+			case <-requestStarted:
+				// The request started before the result was sent; both cases were ready in the outer select.
+			default:
+				require.Failf(t, "expected progress collection request to start before circuit breaker returned",
+					"progress=%v circuitBreakerTriggered=%v err=%v", result.progress, result.circuitBreakerTriggered, result.err)
+			}
 		case <-time.After(time.Second):
 			t.Fatal("expected progress collection request to start")
 		}
 
-		var result progressResult
-		select {
-		case result = <-resultCh:
-		case <-time.After(2 * time.Second):
-			t.Fatal("expected progress collection circuit breaker to return")
+		if !resultReceived {
+			select {
+			case result = <-resultCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("expected progress collection circuit breaker to return")
+			}
 		}
 		require.NoError(t, result.err)
 		require.True(t, result.circuitBreakerTriggered)
