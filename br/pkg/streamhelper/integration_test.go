@@ -301,8 +301,21 @@ func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient
 	require.Equal(t, globalTS, uint64(1003))
 }
 
+// receiveTaskEvent waits up to 10 seconds for the next stream task event.
+func receiveTaskEvent(t *testing.T, ch <-chan streamhelper.TaskEvent) (streamhelper.TaskEvent, bool) {
+	t.Helper()
+	select {
+	case event, ok := <-ch:
+		return event, ok
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stream task event")
+	}
+	return streamhelper.TaskEvent{}, false
+}
+
 func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
 
@@ -314,28 +327,32 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskName2 := "simple2"
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
-	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
 
-	first := <-ch
+	first, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
 	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	second := <-ch
+	second, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, second.Type, streamhelper.EventDel)
 	require.Equal(t, second.Name, taskName)
-	third := <-ch
+	third, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
-	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	forth := <-ch
+	require.ElementsMatch(t, third.Ranges, simpleRanges(4))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+	forth, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
-	fifth, ok := <-ch
+	fifth, ok := receiveTaskEvent(t, ch)
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
 	require.ErrorIs(t, fifth.Err, context.Canceled)
-	item, ok := <-ch
+	item, ok := receiveTaskEvent(t, ch)
 	require.False(t, ok, "%v", item)
 }
 
