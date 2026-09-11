@@ -33,6 +33,7 @@ type DBInfo struct {
 	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
 	TableName2ID       map[string]int64 `json:"-"`
 	ReadOnly           bool             `json:"read_only"`
+	Archived           bool             `json:"archived"`
 }
 
 // Clone clones DBInfo.

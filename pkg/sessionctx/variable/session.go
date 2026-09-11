@@ -857,6 +857,14 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// DisconnectAfterResponse is set when the current statement was denied for touching an archived
+	// database. Revoking a user's grants doesn't stop them retrying the same connection forever;
+	// closing the connection right after this response forces the client to reconnect, so the next
+	// attempt goes through auth/routing again instead of just hammering the same dead-end socket.
+	// The server package checks this immediately after writing the error response and, if set,
+	// closes the connection instead of reading the next command.
+	DisconnectAfterResponse bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 

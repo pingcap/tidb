@@ -321,6 +321,7 @@ import (
 	always                "ALWAYS"
 	any                   "ANY"
 	apply                 "APPLY"
+	archive               "ARCHIVE"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -4381,6 +4382,38 @@ AlterDatabaseOptionList:
 			Value: $4.(string),
 		}}
 	}
+|	"ARCHIVE" eq DatabaseReadOnlyOpt
+	{
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionArchive,
+			Value: $3.(string),
+		}}
+	}
+|	"ARCHIVE" NUM
+	{
+		// Deliberately narrower than "READ" "ONLY" above: unlike READ/ONLY, ARCHIVE is an
+		// unreserved keyword (so existing SQL using "archive" as a table/column/database name
+		// keeps working), which makes "archive" also a valid DBName. That leaves one real
+		// ambiguity - "ALTER DATABASE ARCHIVE DEFAULT ..." could mean the nameless ARCHIVE
+		// option's value is DEFAULT, or "archive" the DBName followed by an options list that
+		// itself starts with DEFAULT - so unlike the NUM case (never ambiguous: no
+		// AlterDatabaseOptionList starts with a bare number), DEFAULT is only accepted through
+		// the "eq DatabaseReadOnlyOpt" alternative above, which requires a literal "=" first.
+		var val string
+		switch getUint64FromNUM($2) {
+		case 0:
+			val = "0"
+		case 1:
+			val = "1"
+		default:
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionArchive,
+			Value: val,
+		}}
+	}
 
 DatabaseReadOnlyOpt:
 	"DEFAULT"
@@ -6767,6 +6800,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"APPLY"
+|	"ARCHIVE"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"

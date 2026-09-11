@@ -145,6 +145,18 @@ func TestModifySchemaArgs(t *testing.T) {
 		require.True(t, args.ReadOnly)
 		require.Equal(t, uint64(123), args.DDLStartTS)
 	}
+	inArgs = &ModifySchemaArgs{
+		Archive:    true,
+		DDLStartTS: 456,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaArchive)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.Archive)
+		require.Equal(t, uint64(456), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {

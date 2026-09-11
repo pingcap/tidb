@@ -92,6 +92,8 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 	// "1" means the database is read-only, "0" or "default" means read-write.
 	databaseReadOnly = "1"
+	// "1" means the database is archived, "0" or "default" means not archived.
+	databaseArchived = "1"
 )
 
 var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
@@ -452,6 +454,43 @@ func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.A
 	return errors.Trace(err)
 }
 
+func (e *executor) ModifySchemaArchiveState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, archived bool) (err error) {
+	dbName := stmt.Name
+	if util.IsSysDB(dbName.L) || util.IsSystemView(dbName.L) {
+		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
+	}
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	if dbInfo.Archived == archived {
+		ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("database %s is already in the %s state", dbInfo.Name.O,
+			map[bool]string{true: "archived", false: "unarchived"}[archived]))
+		return nil
+	}
+	// Do the DDL job.
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaArchive,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaArgs{
+		Archive:    archived,
+		DDLStartTS: ctx.GetSessionVars().TxnCtx.StartTS,
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := e.infoCache.GetLatest()
@@ -724,6 +763,7 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 		placementPolicyRef             *model.PolicyRefInfo
 		tiflashReplica                 *ast.TiFlashReplicaSpec
 		modifyReadOnlyOption, readOnly bool
+		modifyArchiveOption, archived  bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -761,6 +801,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			if val.Value == databaseReadOnly {
 				readOnly = true
 			}
+		case ast.DatabaseOptionArchive:
+			modifyArchiveOption = true
+			if val.Value == databaseArchived {
+				archived = true
+			}
 		}
 	}
 
@@ -781,6 +826,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 	}
 	if modifyReadOnlyOption {
 		if err = e.ModifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
+			return err
+		}
+	}
+	if modifyArchiveOption {
+		if err = e.ModifySchemaArchiveState(sctx, stmt, archived); err != nil {
 			return err
 		}
 	}

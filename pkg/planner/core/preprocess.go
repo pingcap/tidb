@@ -284,7 +284,12 @@ func getAllDBNames(node *ast.TableRefsClause) []pmodel.CIStr {
 }
 
 // extractTableName extracts the db name from the ast.Node for checking database read only.
-func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
+// extractSchema collects the database names referenced by in that must be checked against a
+// schema-state restriction (read-only or archived). forArchive selects archive-mode semantics:
+// plain SELECTs are included (archive blocks all reads, not just locking ones), and an
+// AlterDatabaseStmt's own ARCHIVE option is excluded rather than its READ ONLY option, so a
+// database can still be un-archived once archived.
+func (p *preprocessor) extractSchema(in ast.Node, forArchive bool) []pmodel.CIStr {
 	dbNames := make([]pmodel.CIStr, 0, 1)
 	currentDBName := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 
@@ -303,10 +308,28 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			dbNames = append(dbNames, tbl.NewTable.Schema)
 		}
 	case *ast.AlterDatabaseStmt:
-		for _, opt := range node.Options {
-			if opt.Tp != ast.DatabaseOptionReadOnly {
-				dbNames = append(dbNames, node.Name)
+		// READ ONLY and ARCHIVE are mutually exclusive with every other DatabaseOption
+		// (see the grammar), so an AlterDatabaseStmt's Options is either exactly one of
+		// these two toggles or a list containing neither. The read-only check exempts both
+		// toggles - read-only must never block archiving (or unarchiving) - but the archive
+		// check exempts only the ARCHIVE toggle itself: the only escape hatch out of archived
+		// is ARCHIVE=0, so a bare READ ONLY toggle has no reason to bypass archive's block and
+		// must still be caught like any other statement.
+		isStateToggle := len(node.Options) == 1 &&
+			(node.Options[0].Tp == ast.DatabaseOptionReadOnly || node.Options[0].Tp == ast.DatabaseOptionArchive)
+		if forArchive {
+			isStateToggle = len(node.Options) == 1 && node.Options[0].Tp == ast.DatabaseOptionArchive
+		}
+		if !isStateToggle && len(node.Options) > 0 {
+			// The nameless "ALTER DATABASE <options>" form (AlterDefaultDatabase) leaves
+			// node.Name empty and means the current database, exactly like the Delete/Update
+			// cases above - without this, SchemaByName("") always misses and both checks are
+			// skipped for that form entirely.
+			dbName := node.Name
+			if node.AlterDefaultDatabase {
+				dbName = currentDBName
 			}
+			dbNames = append(dbNames, dbName)
 		}
 	case *ast.DropDatabaseStmt:
 		dbNames = append(dbNames, node.Name)
@@ -314,6 +337,18 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AlterTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)
+		// EXCHANGE PARTITION ... WITH TABLE db.t (and RENAME TABLE ... TO db.t, expressed here
+		// as an AlterTableSpec rather than a RenameTableStmt) name a second table via NewTable
+		// that read-only never needed to check - it isn't itself written by the DDL - but
+		// archive must, since EXCHANGE PARTITION physically swaps an archived table's rows into
+		// a readable one (and vice versa).
+		if forArchive {
+			for _, spec := range node.Specs {
+				if spec.NewTable != nil {
+					dbNames = append(dbNames, spec.NewTable.Schema)
+				}
+			}
+		}
 	case *ast.ImportIntoStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.TruncateTableStmt:
@@ -334,6 +369,12 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 				}
 				dbNames = append(dbNames, dbName)
 			}
+			// node.Tables only lists the deletion targets; a table joined in purely to
+			// filter which rows to delete is read, not written, and read-only correctly
+			// ignores it. Archive mode must still catch it, since it blocks all reads.
+			if forArchive {
+				dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+			}
 		} else {
 			// single table delete statement
 			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
@@ -346,8 +387,53 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 			}
 			dbNames = append(dbNames, dbName)
 		}
+		// node.List only names the columns being written; a table joined in purely to
+		// compute the new values (e.g. UPDATE t1 JOIN t2 ... SET t1.x = t2.y) is read, not
+		// written, and read-only correctly ignores it. Archive mode must still catch it.
+		if forArchive {
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+		}
+	case *ast.BRIEStmt:
+		// BACKUP reads every row of the named databases/tables straight out of storage, and
+		// RESTORE writes into them - both bypass ordinary statement execution entirely, so
+		// unlike read-only (which never needed to check these; a backup is just a read, and
+		// nothing here was writable under read-only anyway) archive must check them explicitly
+		// or a backup silently dumps an archived database in full.
+		if forArchive {
+			for _, s := range node.Schemas {
+				dbNames = append(dbNames, pmodel.NewCIStr(s))
+			}
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.AnalyzeTableStmt:
+		// ANALYZE scans full table contents to build statistics; archive blocks that read like
+		// any other. Not an issue for read-only, which never blocked reads.
+		if forArchive {
+			for _, tbl := range node.TableNames {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.AdminStmt:
+		// ADMIN CHECKSUM/CHECK TABLE/RECOVER INDEX and similar subcommands read (CHECKSUM,
+		// CHECK TABLE) or write (RECOVER INDEX) table data directly; archive must catch both,
+		// the same as it would a plain SELECT or UPDATE against the same table.
+		if forArchive {
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.SplitRegionStmt:
+		if forArchive && node.Table != nil {
+			dbNames = append(dbNames, node.Table.Schema)
+		}
 	case *ast.SelectStmt:
-		if node.LockInfo != nil {
+		if forArchive {
+			if node.From != nil {
+				dbNames = append(dbNames, getAllDBNames(node.From)...)
+			}
+		} else if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
 				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
 				dbNames = append(dbNames, getAllDBNames(node.From)...)
@@ -358,10 +444,52 @@ func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 }
 
 func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
-	dbNames := p.extractSchema(in)
+	dbNames := p.extractSchema(in, false)
 	for _, dbName := range dbNames {
 		p.checkSchemaReadOnly(dbName)
 	}
+}
+
+func (p *preprocessor) checkSchemaArchivedInStmt(in ast.Node) {
+	dbNames := p.extractSchema(in, true)
+	// The InRestrictedSQL exemption below is only safe for statements that cannot write:
+	// it exists so internal read-only housekeeping (auto-analyze, stats collection, ...) keeps
+	// working against an archived database, not so that internal writers - most notably TTL's
+	// row-expiry DELETEs - can still mutate one. SelectStmt is the only extractSchema case that
+	// never writes.
+	_, isSelect := in.(*ast.SelectStmt)
+	exemptRestrictedSQL := isSelect && p.sctx.GetSessionVars().InRestrictedSQL
+	for _, dbName := range dbNames {
+		p.checkSchemaArchived(dbName, exemptRestrictedSQL)
+	}
+}
+
+// replicaWriterBypassContext is the minimal interface hasReplicaWriterBypass needs - satisfied by
+// both sessionctx.Context (used by the preprocessor) and base.PlanContext (used by the
+// foreign-key-cascade checks in foreign_key.go), so the same bypass logic can be shared by both
+// instead of re-implemented.
+type replicaWriterBypassContext interface {
+	GetSessionVars() *variable.SessionVars
+	Value(key fmt.Stringer) any
+}
+
+// hasReplicaWriterBypass reports whether the current session holds
+// RESTRICTED_REPLICA_WRITER_ADMIN, the dynamic privilege that lets a replication applier keep
+// reading and writing a database regardless of its administrative lockdown state (read-only or
+// archived), so a downstream replica can stay consistent with its source - this bypasses archive
+// mode's "blocks all reads" guarantee for that role by design, not just its write block. Gated on
+// User != nil so that internal/unauthenticated sessions (including mock-store test sessions where
+// SkipWithGrant is true) never get the bypass.
+func hasReplicaWriterBypass(sctx replicaWriterBypassContext) bool {
+	vars := sctx.GetSessionVars()
+	if vars.User == nil {
+		return false
+	}
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return false
+	}
+	return pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false)
 }
 
 func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
@@ -370,20 +498,49 @@ func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 	}
 
 	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
-	if exists && dbInfo.ReadOnly {
-		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
-		// Gate on User != nil so that internal/unauthenticated sessions (including
-		// mock-store test sessions where SkipWithGrant is true) are still blocked.
-		vars := p.sctx.GetSessionVars()
-		if vars.User != nil {
-			pm := privilege.GetPrivilegeManager(p.sctx)
-			if pm != nil {
-				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false) {
-					return
-				}
-			}
-		}
+	if exists && dbInfo.ReadOnly && !hasReplicaWriterBypass(p.sctx) {
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
+	}
+}
+
+// checkSchemaArchived rejects any statement against an archived database, with the same
+// RESTRICTED_REPLICA_WRITER_ADMIN bypass read-only grants - that role exists specifically so a
+// replication applier can keep a downstream replica consistent no matter the target's lockdown
+// state, and that need applies to archive mode exactly as it does to read-only.
+//
+// exemptRestrictedSQL additionally exempts an InRestrictedSQL session (auto-analyze, stats
+// collection, and similar internal housekeeping) from the block, but only when the caller has
+// established that the statement cannot write: unlike read-only, which only ever blocks writes
+// and so never collided with these read-only internal jobs, archive blocks reads too, and
+// there's no reason TiDB's own maintenance reads - which never expose the data to an external
+// caller - should start failing against a database that's otherwise off-limits to real clients.
+// An internal statement that does write (e.g. a TTL row-expiry DELETE) must stay blocked exactly
+// like an external client's would be, since archive's whole point is that nothing can still
+// mutate the database once it succeeds.
+//
+// It also marks the session to be disconnected right after this statement's error response -
+// unlike a plain grant revoke, which only blocks new statements and leaves the connection alive to
+// retry forever, closing the connection forces the client to reconnect (and re-resolve routing)
+// on its next attempt.
+func (p *preprocessor) checkSchemaArchived(dbName pmodel.CIStr, exemptRestrictedSQL bool) {
+	if p.err != nil {
+		return
+	}
+	if exemptRestrictedSQL {
+		return
+	}
+
+	// Unlike checkSchemaReadOnly, this must not use p.ensureInfoSchema(): for a stale read,
+	// that returns the as-of-timestamp snapshot schema, whose Archived flag reflects the state
+	// at that past point in time rather than now. Read-only never had this problem because
+	// stale reads don't write, but archive also blocks reads, so a snapshot from before the
+	// database was archived would let the block be bypassed for as long as the snapshot remains
+	// readable (the GC lifetime). Archived state must always be checked against the current
+	// schema, regardless of which schema the statement itself will execute against.
+	dbInfo, exists := p.sctx.GetDomainInfoSchema().SchemaByName(dbName)
+	if exists && dbInfo.Archived && !hasReplicaWriterBypass(p.sctx) {
+		p.err = errors.Trace(infoschema.ErrSchemaInArchivedMode.GenWithStackByArgs(dbName.O))
+		p.sctx.GetSessionVars().DisconnectAfterResponse = true
 	}
 }
 
@@ -837,6 +994,11 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
+	// Archive is checked first: it is the stronger restriction (it also blocks plain
+	// reads, which read-only does not), so when a schema is both archived and
+	// read-only, the archived error - the one that actually explains why reads are
+	// blocked too - should be what the caller sees.
+	p.checkSchemaArchivedInStmt(in)
 	p.checkSchemaReadOnlyInStmt(in)
 
 	return in, p.err == nil
@@ -2075,6 +2237,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		dbInfoLatest, _ := domainSchema.SchemaByName(dbName)
 		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
 			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
+		}
+		if dbInfo.Archived != dbInfoLatest.Archived {
+			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s archived state has changed", dbInfo.Name.L)
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)

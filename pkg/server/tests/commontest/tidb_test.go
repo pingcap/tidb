@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -3394,5 +3395,90 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		rows, err := stmt.Query("A", "B", "C", "D")
 		require.NoError(t, err)
 		ts.CheckRows(t, rows, "a b\nc d")
+	})
+}
+
+// TestConnClosedAfterArchivedDenied verifies that a statement denied for touching an archived
+// database doesn't just error - it also forces the underlying connection closed, so a client
+// can't keep retrying the same dead-end socket. Runs against a real TCP connection (not
+// testkit.TestKit, which executes SQL directly against a session and never goes through
+// pkg/server/conn.go's dispatch loop) because that's the only way to observe the actual close.
+func TestConnClosedAfterArchivedDenied(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create database if not exists archived_db")
+		dbt.MustExec("create table archived_db.t(a int)")
+		dbt.MustExec("alter database archived_db archive = 1")
+
+		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, "select * from archived_db.t")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is in archived mode")
+
+		// The same pinned connection must now be dead - a plain grant revoke would leave it alive
+		// to retry forever, so this is what proves the disconnect actually happened rather than
+		// just the statement being denied.
+		_, err = conn.ExecContext(ctx, "select 1")
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "is in archived mode")
+	})
+}
+
+// TestConnNotClosedForUnrelatedErrorInMultiStatement guards against a specific way the previous
+// test's mechanism can misfire: prefetchPointPlanKeys (pkg/server/conn.go) speculatively runs
+// Preprocess on every statement of a multi-statement batch, using the real session, to decide
+// which are point-plan eligible - and it discards any error that call produces. If a later
+// statement in the batch references an archived database, that discarded speculative check would
+// still leave the session's disconnect-after-response flag set to true, even though the real
+// per-statement execution loop never gets that far because an earlier, unrelated statement fails
+// first for real. The connection must not pay for that - only a statement that is actually denied
+// for archive reasons should trigger a disconnect.
+func TestConnNotClosedForUnrelatedErrorInMultiStatement(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaArchiveDDL", "return")
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(config *mysql.Config) {
+		config.Params["multiStatements"] = "true"
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create database if not exists archived_db")
+		dbt.MustExec("create table archived_db.t2(id int primary key, v int)")
+		dbt.MustExec("insert into archived_db.t2 values (1, 1)")
+		dbt.MustExec("alter database archived_db archive = 1")
+		dbt.MustExec("create table test.t1(id int primary key, v int)")
+		dbt.MustExec("insert into test.t1 values (1, 1)")
+
+		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, "begin")
+		require.NoError(t, err)
+
+		// Statement 1 fails for a real, unrelated reason (duplicate key) at execution time - the
+		// real per-statement loop stops here and never reaches statement 2. Statement 2 still gets
+		// speculatively Preprocess'd by prefetchPointPlanKeys before the real loop runs at all,
+		// which is what used to leak the disconnect flag.
+		_, err = conn.ExecContext(ctx,
+			"insert into test.t1 values (1, 100); update archived_db.t2 set v = 2 where id = 1;")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Duplicate entry")
+		require.NotContains(t, err.Error(), "is in archived mode")
+
+		_, err = conn.ExecContext(ctx, "rollback")
+		require.NoError(t, err)
+
+		// The connection must still be usable - this statement has nothing to do with archive
+		// mode, so it must not have been disconnected.
+		_, err = conn.ExecContext(ctx, "select 1")
+		require.NoError(t, err)
 	})
 }
