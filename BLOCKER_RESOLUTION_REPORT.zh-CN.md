@@ -3244,6 +3244,16 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
 
+## 2026-09-11 catalog 原始回放与生成列 ALTER 红测
+
+在 `159d355b5e` 重跑原始 `catalog_reads_match_recorded_tidb_output`，命令前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 RUST_BACKTRACE=1 CATALOG_SHOW_DIVERGENCES=1`，执行 `cargo test --manifest-path rust/Cargo.toml -p difftest-result-tests --test catalog_diff catalog_reads_match_recorded_tidb_output -- --nocapture`。日志 `/tmp/catalog-current-sept11.log`：11 topics，355/406 catalog reads compared，330 matched，25 diverged，3480 statements run for effect；退出 101，因为历史断言仍期望 27 项差异。未修改计数、fingerprint 或 skip 规则。
+
+临时在 `Column::get_bytes` 加入空 offsets 断言并逐 SQL 记录，再跑同一 corpus，`/tmp/catalog-offsets-trace.log` 得到相同 totals，未触发空 offsets。诊断代码已全部移除。这证明当前原始回放不再发生该历史 panic，不能证明最初根因；原 guard 注释声称 Go 零值列返回空单元格并不符合固定 master `pkg/util/chunk/column.go:736` 的直接 offsets 索引，不能继续把该注释当作 source-of-truth 证据。
+
+25 项当前差异中的生成列表达式替换已建立具体红测：`modifying_virtual_generated_expression_recomputes_existing_rows`，运行 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib modifying_virtual_generated_expression_recomputes_existing_rows`，日志 `/tmp/generated-modify-red.log` 退出 101，ALTER 返回 Unsupported。固定 Go master 同样 SQL 成功，已有行 Lovelace Ada、新行 Hopper Grace，SHOW CREATE 保存新表达式；证据 `/tmp/gen-modify-go.out`。Go 实例已关闭。
+
+根因是 `ddl/alter_table.rs` 对所有 generated MODIFY 的显式拒绝。Go `checkModifyGeneratedColumn` 和 `checkIndexOrStored` 要求虚拟/存储状态、依赖顺序、表达式函数、auto-increment 引用与索引限制；不能仅删除拒绝。执行计划 `rust/docs/generated-column-modify-execplan.md` 已记录完整后续工作。当前为 WIP 验证，新增红测留在本地，生产修复尚未实施；不宣称 catalog gate 或整个目标通过。
+
 ## 2026-09-11 保留零直方图占位对象：access-path 全流程转绿
 
 固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，原 access-path 最后一项 pseudo estRows 差异已定位在 `load_stats.rs::table_statistics_from_table_schema`：转换会删除未分析、NDV/null_count 均为零的 column/index 对象。Go `pkg/statistics/handle/storage/read.go` 加载后仍 SetCol，异步加载也会安装 EmptyColumn；`GetStatsTable` 对未初始化缓存仅设置 Pseudo=true，不清空对象。对象集合为空会进入 pseudoSelectivity 的最小单条件选择率，而存在占位对象会进入普通 Selectivity stats-node 计算。
