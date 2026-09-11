@@ -528,6 +528,13 @@ fn a_column_an_expression_index_reads_cannot_be_renamed() {
     );
     // Renaming a column to its own name is a no-op before any check.
     session.run("ALTER TABLE fr RENAME COLUMN a TO a").unwrap();
+    session
+        .run("ALTER TABLE fr RENAME COLUMN a TO A, ADD COLUMN c INT")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE fr RENAME COLUMN missing TO missing"),
+        Some(1054)
+    );
     // The duplicate-name and `_tidb_rowid` checks are captured as running
     // FIRST, so they keep their codes even on a depended-on column.
     assert_eq!(

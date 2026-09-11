@@ -234,8 +234,13 @@ fn reject_multi_schema_same_column_or_index(
                 }
             }
             tidb_ast::AlterTableAction::RenameColumn(rename) => {
-                add_columns.push(rename.to.clone());
-                drop_columns.push(rename.from.clone());
+                // Go RenameColumn returns before creating a sub-job for a
+                // same-name rename. The action still validates the column
+                // below, but contributes no multi-schema name conflicts.
+                if rename.from.go_to_lower() != rename.to.go_to_lower() {
+                    add_columns.push(rename.to.clone());
+                    drop_columns.push(rename.from.clone());
+                }
             }
             tidb_ast::AlterTableAction::RenameIndex(rename) => {
                 // Go's fillMultiSchemaInfo treats RENAME INDEX as an ADD of

@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 同名 RENAME 的多操作预检查修复
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/ddl/executor.go:3834` 在确认原列存在后，对大小写等价名称直接返回，不建立 DDL sub-job。Rust 预检查却把同名 RENAME 同时记入 ADD/DROP，提前返回 8200。修复只排除这种无 sub-job 的名称冲突记录，后续列存在性验证仍执行。
+
+Go 实测 `/tmp/expression-ddl-go.out`、`/tmp/rename-same-go.out`：同名 RENAME 成功，`RENAME COLUMN a TO A, ADD COLUMN c INT` 成功，不存在的 `missing TO missing` 返回 1054。原回归修复前 `/tmp/rename-same-red.log` 退出 101（8200），修复后 `/tmp/rename-same-green.log` 通过；现有 session 回归补充大小写、多操作和不存在列三个边界。
+
+Ready 验证命令（Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib a_column_an_expression_index_reads_cannot_be_renamed
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib tests_ddl_multi_schema_change_sql
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_expression_indexes
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+```
+
+多操作 DDL 17 passed，session 集成 310 passed，lint 退出 0；日志分别为 `/tmp/rename-same-multi.log`、`/tmp/rename-same-integration.log`、`/tmp/rename-same-lint.log`。表达式索引套件 `/tmp/rename-same-index-suite.log` 为 35 passed / 1 failed。唯一 grouped ADD 失败保留：Go 对 `ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY kb(b))` 返回 1072，Rust 返回 8200，原测试声称成功的注释不符合固定 oracle。该差异需独立修复，未通过修改期望隐藏失败。Go 临时实例已正常退出。本次修改不涉及存储布局和回填，全量质量目标仍未完成。
+
 ## 2026-09-11 最新 readiness 与 panic 验证结论
 
 readiness 阻塞已解除：`1f89c30b65` 修复 TCP 开放后仅检查一次 ready 的竞态，`9839a744e0` 将有界等待复用于四个入口。旧脚本检查失败会通过清理逻辑终止节点，因此“端口已监听、统计已加载、无 ready”不足以证明服务端死锁。Go master oracle 固定为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，监听和应用 health 的先后关系见 `pkg/server/server.go`。
