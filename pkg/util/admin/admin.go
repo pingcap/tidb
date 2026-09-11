@@ -123,6 +123,9 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
+	if idx.Meta().HasCondition() {
+		cols = t.Cols()
+	}
 
 	ir := func() *consistency.Reporter {
 		return &consistency.Reporter{
@@ -169,17 +172,31 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
+		idxVals := vals1
+		if idx.Meta().HasCondition() {
+			meet, err := idx.MeetPartialCondition(vals1)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if !meet {
+				return true, nil
+			}
+			idxVals, err = idx.FetchValues(vals1, nil)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, idxVals, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
-			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
+			record1 := &consistency.RecordData{Handle: h1, Values: idxVals}
+			record2 := &consistency.RecordData{Handle: h2, Values: idxVals}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &consistency.RecordData{Handle: h1, Values: vals1}
+			record := &consistency.RecordData{Handle: h1, Values: idxVals}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
