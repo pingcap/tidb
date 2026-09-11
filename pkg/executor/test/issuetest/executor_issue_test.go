@@ -793,3 +793,16 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
 }
+
+func TestIssue57284(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 int)")
+
+	tk.MustQuery("select * from t0 right join (select bit_or(1970) from t0) as sub0 on true").Check(testkit.Rows("<nil> 0"))
+	tk.MustQuery("select case 1 when null then true end").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t0 right join (select bit_or(1970) from t0) as sub0 on true where case 1 when null then true end").Check(testkit.Rows())
+}
