@@ -3244,6 +3244,20 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
 
+## 2026-09-11 表达式索引 UPDATE 的 chunk bitmap panic
+
+在 `20189a94fb` 对 `an_inline_expression_index_is_maintained_too` 独立重跑，命令 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 RUST_BACKTRACE=1 cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib an_inline_expression_index_is_maintained_too -- --nocapture`，`/tmp/expression-index-panic-red.log` 退出 101。调用栈为 UPDATE physical child -> execute_dml_source -> drain_executor_rows -> Row.get_datum_row -> Column.is_null，空 null_bitmap 在 column.rs:262 越界。
+
+临时诊断 `/tmp/expression-index-chunk-trace.log` 显示物理子计划 schema 为 a、隐藏表达式列、_tidb_rowid 三列，但实际 chunk 列行数为 [(0,1),(1,0),(2,0)]。根因是 TableScanExec 构造器只以 visible_column_count 初始化 keep，而 physical_builder 已传入包含隐藏列的完整 schema；完整布局又不会触发剪裁，导致隐藏列和 handle 没有填充。Go master `pkg/executor/table_reader.go` 按执行 schema 的 virtualColumnIndex 填充虚拟列，不把隐藏列排除在内部 DML 行之外。
+
+修复让初始 keep 采用传入 ExecutorMeta schema 的宽度，然后由现有 accept_column_prune 做坐标组合。物理 DML 因此保留隐藏列；用户扫描仍保留自己传入的可见 schema。未给 chunk 添加忽略越界/返回 NULL 的 guard。临时诊断已移除。原 inline index 与 admin_check_table 两个 panic 用例均转绿，并增加更新后 SELECT a 返回 2、8 和 FORCE INDEX(idx) WHERE a+1=9 返回 8 的实际值验证。
+
+表达式索引完整套件 `/tmp/expression-index-scan-final.log` 为 34 pass/2 fail，相对已验证基线 32 pass/4 fail 仅两个 panic 消失。剩余失败仍为同列 RENAME 与 grouped ADD 的 operate same column 8200，未跳过或修改断言。底层扫描测试、session 集成、lint 日志分别为 `/tmp/expression-index-table-scan-tests.log`、`/tmp/expression-index-scan-integration.log`、`/tmp/expression-index-scan-lint.log`；对应命令为 `cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib table_scan`、`cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`、`make lint`，Cargo 使用同一 Rust 前缀。
+
+最终 Ready 验证：底层 table_scan 27 passed / 0 failed，session 集成 310 passed / 0 failed，`make lint` 退出 0，`git diff --check` 通过。
+
+本次解释并修复的是 UPDATE 中可复现的 bitmap panic。历史 catalog offsets panic 和 StreamAgg chunk.rs:212 的根因证据不能与它混同，整体 all-failures 目标继续保留。
+
 ## 2026-09-11 生成列 MODIFY/CHANGE 实现与原 catalog 差异减少
 
 按 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `checkModifyGeneratedColumn`、`checkIndexOrStored`、`noReorgDataStrict` 实现生成列修改。原来的统一 Unsupported 拒绝已替换为候选 schema 验证：虚拟/存储状态、依赖顺序、重命名/移动、表达式合法性、索引限制、存储表达式限制及类型重组要求。`tidb_enable_auto_increment_in_generated` 经 session snapshot 传入 statement context；默认引用 auto-increment 返回 3109，开启后允许。

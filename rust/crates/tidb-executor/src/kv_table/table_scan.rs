@@ -3694,13 +3694,10 @@ impl TableScanExec {
         decode_context: RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
-        // A scan emits the VISIBLE columns: the schema its rows are appended
-        // into is the visible one, and a hidden expression-index column's
-        // value is only ever needed to write an index entry, never to answer
-        // a read. It is still DECODED and filled -- `keep` is applied after
-        // the virtual columns are materialized -- so an index built from the
-        // scanned row still sees it.
-        let keep = (0..table.visible_column_count()).collect();
+        // The physical DML schema includes hidden expression-index columns;
+        // user-facing scans may provide only the visible prefix. Preserve
+        // the supplied schema before later accept_column_prune composition.
+        let keep = (0..meta.schema().columns.len()).collect();
         TableScanExec {
             meta,
             table,

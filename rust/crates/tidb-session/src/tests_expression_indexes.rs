@@ -336,6 +336,11 @@ fn an_inline_expression_index_is_maintained_too() {
     session.run("INSERT INTO t2 VALUES (1),(2)").unwrap();
     session.run("UPDATE t2 SET a = 8 WHERE a = 1").unwrap();
     admin_check(&mut session, "t2", "UPDATE");
+    assert_eq!(rows(&mut session, "SELECT a FROM t2 ORDER BY a"), [["2"], ["8"]]);
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM t2 FORCE INDEX(idx) WHERE a+1=9"),
+        [["8"]]
+    );
     assert_eq!(
         show_create(&mut session, "t2"),
         "CREATE TABLE `t2` (\n  `a` int DEFAULT NULL,\n  KEY `idx` ((`a` + 1))\n) \
