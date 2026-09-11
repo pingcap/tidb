@@ -2922,7 +2922,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         skyline_access_count,
                     ) {
                         let analyzed = ds.analyzed_index_ids.contains(&source_index.id);
-                        if analyzed {
+                        // Go constructs candidatePath metrics for pseudo
+                        // tables as well.  RealtimeCount may already be
+                        // known while distributions are pseudo; skipping
+                        // this path here lets cost choose a narrower index
+                        // before skyline can recognize a strict superset.
+                        if analyzed || ds.table_scan_penalty.pseudo_stats {
                             let mut pairs = std::collections::BTreeMap::new();
                             for condition in &detached.access_conds {
                                 for column in tidb_expr::simple_expr::extract_columns(condition) {
