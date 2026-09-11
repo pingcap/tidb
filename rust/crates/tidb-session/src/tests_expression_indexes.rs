@@ -1264,17 +1264,25 @@ fn a_string_builtins_argument_width_reaches_the_index_type_gate() {
     }
 }
 
-/// Go expands a parenthesized `ADD COLUMN` list into its column actions
-/// before its constraints. The grouped key may therefore name the newly added
-/// column, and it backfills rows already present in the table.
+/// Go builds index sub-jobs against the original table, before applying any
+/// ADD COLUMN job. Only keys over existing columns can be grouped with ADD.
 #[test]
-fn grouped_add_columns_applies_its_index_after_the_new_column() {
+fn grouped_add_columns_validates_its_index_against_the_original_table() {
     let mut session = Session::new();
     session.run("CREATE TABLE grouped (a INT)").unwrap();
     session.run("INSERT INTO grouped VALUES (1), (2)").unwrap();
-    session
-        .run("ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY kb(b))")
-        .unwrap();
+    let original = show_create(&mut session, "grouped");
+    for sql in [
+        "ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY kb(b))",
+        "ALTER TABLE grouped ADD COLUMN b INT DEFAULT 7, ADD KEY kb(b)",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1072, "{sql}");
+        assert_eq!(error.message, "column does not exist: b", "{sql}");
+        assert_eq!(show_create(&mut session, "grouped"), original);
+        assert_eq!(rows(&mut session, "SELECT * FROM grouped ORDER BY a"), [["1"], ["2"]]);
+    }
+    session.run("ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY ka(a))").unwrap();
 
     assert_eq!(
         rows(&mut session, "SELECT a, b FROM grouped ORDER BY a"),
@@ -1282,7 +1290,7 @@ fn grouped_add_columns_applies_its_index_after_the_new_column() {
     );
     admin_check(&mut session, "grouped", "the grouped index backfill");
     assert!(
-        show_create(&mut session, "grouped").contains("KEY `kb` (`b`)"),
+        show_create(&mut session, "grouped").contains("KEY `ka` (`a`)"),
         "the grouped constraint must be stored in table metadata"
     );
 }

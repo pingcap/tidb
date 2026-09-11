@@ -108,6 +108,7 @@ pub fn run_alter_table_in(
 /// are stable.
 fn reject_multi_schema_same_column_or_index(
     actions: &[tidb_ast::AlterTableAction],
+    table: Option<&crate::KvTable>,
 ) -> Result<(), DriverError> {
     let mut add_columns = Vec::new();
     let mut drop_columns = Vec::new();
@@ -164,6 +165,54 @@ fn reject_multi_schema_same_column_or_index(
                 tidb_ast::IndexPart::Column { name, .. } => relative_columns.push(name.clone()),
                 tidb_ast::IndexPart::Expr { expr, .. } => {
                     collect_expression_columns(expr, relative_columns)
+                }
+            }
+        }
+    }
+
+    // Go builds each index sub-job against the original table before
+    // checkOperateSameColAndIdx. An ADD COLUMN in this statement does not
+    // make its name available to buildIndexColumns (ddl/index.go).
+    let subjob_count: usize = actions.iter().map(|action| match action {
+        tidb_ast::AlterTableAction::AddColumns { columns, constraints, .. } => {
+            columns.len() + constraints.len()
+        }
+        _ => 1,
+    }).sum();
+    if let Some(table) = table.filter(|_| subjob_count > 1) {
+        for action in actions {
+            let indexes: Vec<_> = match action {
+                tidb_ast::AlterTableAction::AddIndexConstraint(index) => vec![index],
+                tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+                    .iter()
+                    .filter_map(|constraint| match constraint {
+                        tidb_ast::TableConstraint::Index(index) => Some(index),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for index in indexes {
+                // Existing-index diagnostics and IF NOT EXISTS are handled
+                // before column validation by the normal index builder.
+                if index.name.as_ref().is_some_and(|name| {
+                    table.indexes().iter().any(|existing| {
+                        existing.name.go_to_lower() == name.go_to_lower()
+                    })
+                }) {
+                    continue;
+                }
+                for part in &index.parts {
+                    if let tidb_ast::IndexPart::Column { name, .. } = part {
+                        if !table.columns().iter().any(|column| {
+                            column.name.go_to_lower() == name.go_to_lower()
+                        }) {
+                            return Err(DriverError::DdlCoded {
+                                errno: 1072,
+                                message: format!("column does not exist: {name}"),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -359,7 +408,11 @@ fn run_alter_table_in_inner(
             format!("{database}.{name}"),
         )));
     }
-    reject_multi_schema_same_column_or_index(&alter.actions)?;
+    let original_table = match catalog.table_in(&database, &name) {
+        Some(crate::TableEntry::Kv(table)) => Some(table),
+        _ => None,
+    };
+    reject_multi_schema_same_column_or_index(&alter.actions, original_table)?;
     super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     // Go's ALTER path checks the two guards in THIS order, and the corpus
     // asserts the difference: `ddl/db_integration`'s
@@ -455,9 +508,9 @@ fn run_alter_table_in_inner(
                 constraints,
             } => {
                 // Go `resolveAlterTableAddColumns` expands the parenthesized
-                // form into all columns first, then all constraints. Keeping
-                // that order lets a grouped key name a column introduced by
-                // the same statement.
+                // form into all columns first, then all constraints. Index
+                // column names were validated against the original table
+                // before any action was applied.
                 for column in columns {
                     add_column_action(
                         catalog,

@@ -1,5 +1,24 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 grouped ADD 原表索引校验
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 实测 `/tmp/grouped-add-go.out`：`ALTER TABLE g ADD(b INT DEFAULT 7, KEY kb(b))` 与逗号分隔的 `ADD COLUMN b ..., ADD KEY kb(b)` 都返回 1072 / `column does not exist: b`，原表仍只有 a，数据仍为 1、2；`ADD(b INT DEFAULT 7, KEY ka(a))` 成功，默认值回填为 7。
+
+Go `pkg/ddl/executor.go:5637` 的 createIndex 在入队前针对原始 `tblInfo.Columns` 调用 buildIndexColumns；`pkg/ddl/index.go:127` 产生上述 1072。展开 ADD 列表的顺序不意味着先执行 ADD COLUMN 再建立索引子任务。旧 Rust 测试对成功的假设错误，且 Rust 多操作冲突预检查提前返回 8200。回归现同时断言精确错误码、文本、结构与数据不变，以及引用已有列的成功路径；修复前 `/tmp/grouped-add-red.log` 退出 101，明确显示 8200 != 1072。
+
+实现对多子任务 ALTER 的普通索引列在原表上校验，再执行类别冲突检查；已有同名索引留给原索引构造器处理，单操作 ALTER 保留原有路径。没有将错误直接放宽为任意失败，也没有跳过 grouped ADD。
+
+验证使用 Ready，Cargo 前缀为 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_expression_indexes
+cargo test --manifest-path rust/Cargo.toml -p tidb-executor --lib tests_ddl_multi_schema_change_sql
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+```
+
+首轮及限定多子任务后的最终验证均为 36、17、310 项通过和 lint 退出 0；`git diff --check` 通过。最终日志为 `/tmp/grouped-add-final-suite.log`、`/tmp/grouped-add-final-multi.log`、`/tmp/grouped-add-final-integration.log`、`/tmp/grouped-add-final-lint.log`。Go 临时实例已正常退出。此项不代表整个 DDL 包移植完成；其余 SQL 差异、原始质量门禁及历史 panic 仍需继续验证。
+
 ## 2026-09-11 同名 RENAME 的多操作预检查修复
 
 固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/ddl/executor.go:3834` 在确认原列存在后，对大小写等价名称直接返回，不建立 DDL sub-job。Rust 预检查却把同名 RENAME 同时记入 ADD/DROP，提前返回 8200。修复只排除这种无 sub-job 的名称冲突记录，后续列存在性验证仍执行。
