@@ -1,5 +1,21 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 最新 readiness 与 panic 验证结论
+
+readiness 阻塞已解除：`1f89c30b65` 修复 TCP 开放后仅检查一次 ready 的竞态，`9839a744e0` 将有界等待复用于四个入口。旧脚本检查失败会通过清理逻辑终止节点，因此“端口已监听、统计已加载、无 ready”不足以证明服务端死锁。Go master oracle 固定为 `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85`，监听和应用 health 的先后关系见 `pkg/server/server.go`。
+
+在 `9acb7af48d` 上再次执行以下回归，四个入口均退出 0，覆盖延迟 ready、进程退出和活进程永久无 ready：
+
+```bash
+for runner in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${runner}.sh || exit
+done
+```
+
+真实 access-path 最近完整回放已通过，证据为 `/tmp/access-placeholder-replay.log` 末尾 `the access-path differential passed` 和 `/tmp/access-placeholder-evidence/rust-node.log:8` 的真实 ready 事件。该回放属于统计修复验证，不冒充本次提交上的再次完整回放；本次四入口验证也不代表另外三个完整集成套件通过。
+
+表达式索引 UPDATE 的空列 bitmap panic 已独立提交并推送 `9acb7af48d` 到 `origin/hparser-integration`。修复恢复物理扫描 schema 中的隐藏列，Ready 验证为 27 个扫描测试、310 个 session 集成测试及 lint 通过。表达式索引套件为 34 passed / 2 failed，剩余 DDL 差异未放宽断言。历史 StreamAgg `chunk.rs:212` 和 catalog offsets panic 的根因证据仍需独立闭环；全量质量目标尚未完成。详细命令、Go 对照与红绿日志见下方表达式索引 UPDATE 小节。
+
 ## 2026-09-11 元组 IN 左操作数重写修复
 
 原红色回归 tuple_not_in_false_dominates_unknown 在通用 rewriter 拒绝 Expr::Row，
