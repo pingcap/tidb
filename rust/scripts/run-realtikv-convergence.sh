@@ -113,7 +113,19 @@ rust_root_sql() {
 }
 
 echo "starting playground (tag ${TAG})"
-tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+CLUSTER_VERSION=${CONVERGENCE_CLUSTER_VERSION:-v8.5.6}
+echo "TiUP cluster version: ${CLUSTER_VERSION}"
+GO_BINARY_ARGS=()
+if [[ -n "${CONVERGENCE_TIDB_SERVER:-}" ]]; then
+  [[ -x "${CONVERGENCE_TIDB_SERVER}" ]] \
+    || { echo "CONVERGENCE_TIDB_SERVER must name an executable TiDB binary" >&2; exit 1; }
+  "${CONVERGENCE_TIDB_SERVER}" -V
+  GO_BINARY_ARGS=(--db.binpath "${CONVERGENCE_TIDB_SERVER}")
+else
+  echo "Go baseline: TiUP ${CLUSTER_VERSION} (set CONVERGENCE_TIDB_SERVER for Go master)"
+fi
+tiup playground "${CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
+  "${GO_BINARY_ARGS[@]}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
@@ -263,16 +275,27 @@ rust_sql -e "DROP TABLE conv.rust_made_two;"
 wait_for_go_table rust_made_two ""
 echo "  ok  Go TiDB no longer sees the table the Rust node dropped"
 
-# What this mode still refuses, on purpose: a stored-schema change the cluster
-# DDL path cannot express, and a table-scoped GRANT.
-if rust_sql -e "USE conv; ALTER TABLE rust_made ADD COLUMN extra BIGINT;" \
-  >"${WORK_DIR}/ddl.out" 2>&1; then
-  echo "ALTER was accepted, but this mode must refuse it" >&2
-  exit 1
-fi
-grep -Fq "CREATE TABLE, DROP TABLE" "${WORK_DIR}/ddl.out" \
-  || { echo "ALTER failed for the wrong reason:"; cat "${WORK_DIR}/ddl.out"; exit 1; }
-echo "  ok  ALTER refused by name: $(tail -1 "${WORK_DIR}/ddl.out")"
+# Go master accepts ADD COLUMN with this account's database privileges. Check
+# the old row's new column and then the new schema/data on the Go peer.
+ALTERED=$(rust_sql -N -B -e "
+  USE conv;
+  ALTER TABLE rust_made ADD COLUMN extra BIGINT;
+  SELECT id, note, extra FROM rust_made ORDER BY id;
+" | tr '\n' ';')
+expect "ALTER exposes NULL in the new column of an existing row" $'1\twritten by go\tNULL;' "${ALTERED}"
+rust_sql -e "UPDATE conv.rust_made SET extra=42 WHERE id=1;"
+column_deadline=$((SECONDS + 180))
+while ! go_sql -N -B -e "SELECT extra FROM conv.rust_made LIMIT 0;" \
+  >"${WORK_DIR}/alter-go.out" 2>&1; do
+  if ((SECONDS >= column_deadline)); then
+    echo "Go TiDB never loaded the Rust-added column" >&2
+    cat "${WORK_DIR}/alter-go.out" >&2
+    exit 1
+  fi
+  sleep 1
+done
+ALTER_READBACK=$(go_sql -N -B -e "SELECT id, note, extra FROM conv.rust_made ORDER BY id;" | tr '\n' ';')
+expect "Go TiDB reads the Rust-added column and updated value" $'1\twritten by go\t42;' "${ALTER_READBACK}"
 
 echo "accounts through the Rust node: the client creates one, the Go TiDB sees it"
 

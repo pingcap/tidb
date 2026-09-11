@@ -1,5 +1,30 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 convergence ALTER 按固定 master 验证
+
+旧断言要求 Rust 拒绝 ADD COLUMN，真实 red 见
+`/tmp/convergence-shared-readiness.log`。固定 master fdfadb96b2cf 的
+unistore 对照 `/tmp/convergence-master-oracle/{setup,alter}.sql` 及 `alter.out`
+确认 conv.* 权限允许 ADD COLUMN，旧行新列 NULL，更新后为 42。
+runner 改为严格验证这些值并由 Go peer 读回，未通过拒绝合法 SQL 迁就旧断言。
+增加 CONVERGENCE_TIDB_SERVER / CONVERGENCE_CLUSTER_VERSION，与 access-path
+现有入口一致，打印真实基准版本。master 与 PD 8.5.6 不兼容 QueryRegion，
+故使用已安装 nightly PD/TiKV；不能将旧 PD 超时算作 Rust readiness 失败。
+
+Ready 验证：bash -n、git diff --check、make lint 均通过，lint 日志
+`/tmp/convergence-alter-lint.log`。真实命令：
+
+```bash
+CONVERGENCE_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+CONVERGENCE_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+bash rust/scripts/run-realtikv-convergence.sh
+```
+
+`/tmp/convergence-alter-master-nightly.log` 证明 ALTER 两个断言通过，随后账户
+阶段返回 1227，因为 appuser 没有 CREATE USER。这与固定 master 的
+`create-user.out` 一致；属于下一项 fixture 身份问题，未宣称整套通过。
+
 ## 2026-09-11 Python 3.9 认证错误导致的 packet EOF
 
 repeatable-read 在 ready 后失败的根因是共享 raw MySQL 客户端调用
