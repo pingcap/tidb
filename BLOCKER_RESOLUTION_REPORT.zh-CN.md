@@ -1,5 +1,49 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 access-path 统计输入同步修复
+
+前次 Go estRows 2 / Rust 10 不能直接归因于公式。Go master
+`pkg/domain/domain.go:2326` 的 deltaUpdateTickerWorker 每
+`20 * statsLease + rand(0..60s)` 才 dump 插入增量，两侧缓存另有独立刷新。
+`pkg/planner/core/stats/stats.go:104` 对零计数生成 10000 行 pseudo table，
+对非零计数的未初始化统计保留真实计数，只把分布标记为 pseudo。
+`pkg/executor/show_stats.go:36/108` 的 SHOW STATS_META 读取本节点缓存的
+RealtimeCount，适合作为比较的输入前置条件。
+
+观测运行 `/tmp/access-stats-observation.log` 记录两侧 count 从 0 到 2000 的
+独立刷新，ANALYZE 后 Go 已更新而 Rust 仍保留旧统计，下一轮自动收敛。
+原 runner 注释要求 ANALYZE 前使用真实行数，但只等待节点 ready，未保证此条件。
+新增 `access-path-stats-counts.sh` 在比较前等待两侧四张 fixture 表的计数分别为
+t/u/risky=2000、big=50000；不使用 EXPLAIN 输出作为重试条件，不改变估算容差。
+SQL 错误立即失败，180 秒未收敛输出两侧统计并失败。
+
+生产调用点回归 `test-access-path-stats-counts.sh` 修复前退出 1：
+`FAIL: comparisons started before both statistics counts caught up`
+（`/tmp/access-stats-counts-red.log`）。修复后分别通过两侧独立延迟、永久陈旧和
+SQL 错误检查。四个 readiness 回归、shell 语法和 make lint 均通过。
+
+```bash
+bash rust/scripts/test-access-path-stats-counts.sh
+for name in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${name}.sh || exit
+done
+bash -n rust/scripts/access-path-stats-counts.sh rust/scripts/test-access-path-stats-counts.sh rust/scripts/run-realtikv-access-path.sh
+make lint > /tmp/access-stats-counts-lint.log 2>&1
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-stats-counts-green-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-stats-counts-green.log 2>&1
+```
+
+最后这项真实集群验证仍退出 1，文件名 green 不代表全套通过。原 u 查询现在
+双方均为 idx_a / 2.00，ANALYZE 后均为 idx_b / 4.00。更稳定的真实行数输入
+暴露 **0 estRows failures / 3 divergent choices**：t 的 bucket=1 AND rare=7、
+bucket=1 AND rare>1990，以及 risky 的 v=40 AND w=740 AND c BETWEEN 400 AND 402，
+Rust 错选单列索引，Go 选择复合索引。另有 1 个原有 estimator note。
+这些失败没有豁免，继续作为 planner 修复目标；readiness 正常，集群已清理。
+本次为 harness 类别的独立修复，不构成整个 access-path 或总目标完成声明。
+
 ## 2026-09-11 当前 bcb4acdc5f readiness 再验证
 
 原始启动 blocker 已解除，但本次完整 access-path **退出 1**，不能沿用旧运行的

@@ -349,6 +349,12 @@ wait_for_port "${RUST_SQL_PORT}" "${RUST_LOG_FILE}"
 source "${RUST_ROOT}/scripts/cluster-session-readiness.sh"
 wait_for_cluster_session_ready "${RUST_PID}" "${RUST_LOG_FILE}"
 
+# Go flushes insertion deltas independently of both nodes' stats reload ticks.
+# Compare the intended real counts plus pseudo distribution only after both
+# caches contain the fixture counts; EXPLAIN output is never a retry condition.
+source "${RUST_ROOT}/scripts/access-path-stats-counts.sh"
+wait_for_access_path_stats_counts
+
 # The chosen access path, as one word, and the scan's estRows. Go wraps its
 # scan in a TableReader/IndexReader/IndexLookUp; this tier prints neither (see
 # `tidb_executor::explain`'s divergence 1), so both sides are reduced to the
