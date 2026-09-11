@@ -17,11 +17,14 @@ package metabuild_test
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -128,6 +131,53 @@ func TestMetaBuildContext(t *testing.T) {
 			testVals: []any{true, false},
 		},
 		{
+			name: "fullTextAnalyzer",
+			getter: func(ctx *metabuild.Context) any {
+				config, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+				return config
+			},
+			checkDefault: func(ctx *metabuild.Context) {
+				// A context built without a session carries the settings a
+				// default-configured server would use, never a zero-valued
+				// configuration - whose 0..0 token-size bounds would build an
+				// index holding nothing.
+				config, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+				require.Equal(t, fulltext.DefaultAnalyzerConfig(), config)
+			},
+			option: func(val any) metabuild.Option {
+				return metabuild.WithFullTextAnalyzer(val.(fulltext.AnalyzerConfig))
+			},
+			testVals: []any{
+				fulltext.AnalyzerConfig{
+					ParserType:             model.FullTextParserTypeStandardV1,
+					InnodbFtMinTokenSize:   3,
+					InnodbFtMaxTokenSize:   84,
+					InnodbFtEnableStopword: true,
+				},
+				fulltext.AnalyzerConfig{
+					ParserType:     model.FullTextParserTypeNgramV1,
+					NgramTokenSize: 2,
+				},
+			},
+		},
+		{
+			name: "fullTextAnalyzerErr",
+			getter: func(ctx *metabuild.Context) any {
+				_, err := ctx.GetFullTextAnalyzer()
+				return err
+			},
+			checkDefault: func(ctx *metabuild.Context) {
+				_, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+			},
+			option: func(val any) metabuild.Option {
+				return metabuild.WithFullTextAnalyzerError(val.(error))
+			},
+			testVals: []any{errors.New("read innodb_ft_max_token_size")},
+		},
+		{
 			name: "is",
 			getter: func(ctx *metabuild.Context) any {
 				is, ok := ctx.GetInfoSchema()
@@ -169,4 +219,31 @@ func TestMetaBuildContext(t *testing.T) {
 
 	// test allFields are tested
 	deeptest.AssertRecursivelyNotEqual(t, metabuild.Context{}, metabuild.Context{}, deeptest.WithIgnorePath(allFields))
+}
+
+func TestFullTextAnalyzerResolutionFailureIsReported(t *testing.T) {
+	cause := errors.New("read innodb_ft_min_token_size")
+	ctx := metabuild.NewContext(metabuild.WithFullTextAnalyzerError(cause))
+	_, err := ctx.GetFullTextAnalyzer()
+	require.ErrorIs(t, err, cause)
+
+	// A context with no session carries the defaults instead, so building table
+	// metadata offline works.
+	offlineConfig, err := metabuild.NewNonStrictContext().GetFullTextAnalyzer()
+	require.NoError(t, err)
+	require.Equal(t, fulltext.DefaultAnalyzerConfig(), offlineConfig)
+
+	// A later successful resolution clears the failure, so a context is not
+	// permanently poisoned by the order its options are applied in.
+	ctx = metabuild.NewContext(
+		metabuild.WithFullTextAnalyzerError(cause),
+		metabuild.WithFullTextAnalyzer(fulltext.AnalyzerConfig{
+			ParserType:           model.FullTextParserTypeStandardV1,
+			InnodbFtMinTokenSize: 3,
+			InnodbFtMaxTokenSize: 84,
+		}),
+	)
+	config, err := ctx.GetFullTextAnalyzer()
+	require.NoError(t, err)
+	require.Equal(t, 3, config.InnodbFtMinTokenSize)
 }

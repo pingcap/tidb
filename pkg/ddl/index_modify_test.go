@@ -1430,7 +1430,10 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		"Unsupported set vector index invisible")
 }
 
-func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
+// TestCreateTableWithFullTextIndexBuildsMVIndex covers the single-column
+// FULLTEXT index, which is materialised as a multi-valued index over a hidden
+// tokenized column and so carries real index data.
+func TestCreateTableWithFullTextIndexBuildsMVIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1440,53 +1443,145 @@ func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Len(t, tbl.Meta().Indices, 1)
-	require.Equal(t, "idx", tbl.Meta().Indices[0].Name.L)
-	require.Len(t, tbl.Meta().Indices[0].Columns, 1)
-	require.Equal(t, "a", tbl.Meta().Indices[0].Columns[0].Name.L)
-	require.Equal(t, model.StatePublic, tbl.Meta().Indices[0].State)
-	require.Equal(t, pmodel.IndexTypeFulltext, tbl.Meta().Indices[0].Tp)
-	require.NotNil(t, tbl.Meta().Indices[0].FullTextInfo)
-	require.Equal(t, model.FullTextParserTypeStandardV1, tbl.Meta().Indices[0].FullTextInfo.ParserType)
+	idxInfo := tbl.Meta().Indices[0]
+	require.Equal(t, "idx", idxInfo.Name.L)
+	require.Equal(t, model.StatePublic, idxInfo.State)
+	// Tp is the marker that this was declared FULLTEXT; FullTextInfo must stay
+	// nil, since IsNonKVIndex reports true when it is set and that would
+	// suppress the KV index the rewrite exists to build.
+	require.Equal(t, pmodel.IndexTypeFulltext, idxInfo.Tp)
+	require.Nil(t, idxInfo.FullTextInfo)
+	require.True(t, idxInfo.MVIndex)
+	require.Len(t, idxInfo.Columns, 1)
+	hiddenCol := tbl.Meta().Columns[idxInfo.Columns[0].Offset]
+	require.True(t, hiddenCol.Hidden)
+	require.Contains(t, hiddenCol.GeneratedExprString, "fts_tokenize(`a`")
+
+	// The declared form is what is reported back, not the expression.
 	tk.MustQuery("show create table t").CheckContain("FULLTEXT INDEX `idx`(`a`) WITH PARSER STANDARD")
 	tk.MustQuery("show index from t").CheckContain("FULLTEXT")
-	tk.MustExec("insert into t values ('hello world')")
-	tk.MustExec("update t set a = 'updated text'")
-	tk.MustQuery("select a from t").Check(testkit.Rows("updated text"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 'updated text'").CheckNotContain("idx")
+
+	tk.MustExec("insert into t values ('hello world of distributed sql')")
+	tk.MustQuery("select a from t").Check(testkit.Rows("hello world of distributed sql"))
+	// An equality predicate on the source column cannot use a tokenized index.
+	tk.MustQuery("explain format = 'brief' select * from t where a = 'hello world of distributed sql'").CheckNotContain("idx")
+
+	// Unlike a metadata-only FULLTEXT index, this one holds data: one entry per
+	// distinct token. "of" is below innodb_ft_min_token_size and is dropped.
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	indexPrefix := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Meta().Indices[0].ID)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, idxInfo.ID)
 	iter, err := txn.Iter(indexPrefix, indexPrefix.PrefixNext())
 	require.NoError(t, err)
-	require.False(t, iter.Valid(), "metadata-only FULLTEXT index must not write TiKV index keys")
+	entries := 0
+	for iter.Valid() {
+		entries++
+		require.NoError(t, iter.Next())
+	}
 	iter.Close()
+	require.Equal(t, 4, entries, "one index entry per distinct token above the minimum size")
 	require.NoError(t, txn.Rollback())
 	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("alter table t drop index idx")
+
+	// The generated column the index depends on is protected like any other.
+	tk.MustContainErrMsg("alter table t modify column a varchar(255)", "dependent column 'a' for generated column")
+	tk.MustContainErrMsg("alter table t drop column a", "has an expression index dependency")
+
+	tk.MustExec("create table t_like like t")
+	tk.MustQuery("show create table t_like").CheckContain("FULLTEXT INDEX `idx`(`a`) WITH PARSER STANDARD")
+	tk.MustExec("drop table t_like")
+
+	tk.MustExec("alter table t rename index idx to idx_renamed")
+	tk.MustExec("alter table t drop index idx_renamed")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Empty(t, tbl.Meta().Indices)
+	// Dropping the index drops the hidden column it was built over.
+	require.Len(t, tbl.Meta().Columns, 1)
 
-	tk.MustContainErrMsg("create table bad_type(a int, fulltext index idx(a))", "FULLTEXT index only supports string columns")
+	// The parser reaches the tokenize expression, and a different one produces
+	// a different index.
+	tk.MustExec("create table t_ngram(a text, fulltext index idx(a) with parser ngram comment 'notes')")
+	tk.MustQuery("show create table t_ngram").CheckContain("FULLTEXT INDEX `idx`(`a`) WITH PARSER NGRAM COMMENT 'notes'")
+	ngramTbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_ngram"))
+	require.NoError(t, err)
+	ngramIdx := ngramTbl.Meta().FindIndexByName("idx")
+	require.NotNil(t, ngramIdx)
+	require.Contains(t,
+		ngramTbl.Meta().Columns[ngramIdx.Columns[0].Offset].GeneratedExprString, "'NGRAM'")
+
+	// An expression index a user writes over FTS_TOKENIZE keeps its own
+	// identity: only the FULLTEXT rewrite records the marker.
+	tk.MustExec("create table t_hand(a text, key idx_hand ((cast(fts_tokenize(a, 'STANDARD', 3, 84, 1) as char(84) array))))")
+	tk.MustQuery("show create table t_hand").CheckContain("KEY `idx_hand` ((cast(fts_tokenize(`a`")
+	tk.MustQuery("show create table t_hand").CheckNotContain("FULLTEXT")
+
+	tk.MustContainErrMsg("create table bad_type(a int, fulltext index idx(a))", "FULLTEXT index requires a string column")
+	tk.MustContainErrMsg("create table bad_binary(a blob, fulltext index idx(a))", "FULLTEXT index requires a non-binary string column")
 	tk.MustContainErrMsg("create table bad_parser(a text, fulltext index idx(a) with parser unknown)", "FULLTEXT parser 'unknown' is not supported")
-	tk.MustContainErrMsg("create table duplicate_col(a text, fulltext index idx(a, a))", "FULLTEXT index contains a duplicate column")
+	tk.MustContainErrMsg("create table bad_prefix(a text, fulltext index idx(a(10)))", "FULLTEXT index does not support prefix length")
+
+	// Adding the index to a table that already holds rows goes through the
+	// ordinary backfill, which has to evaluate the generated column for every
+	// existing row.
+	tk.MustExec("create table backfilled(id int primary key, a text)")
+	tk.MustExec("insert into backfilled values (1, 'distributed sql database'), (2, 'relational storage engine')")
+	tk.MustExec("alter table backfilled add fulltext index idx_a(a)")
+	tk.MustExec("admin check table backfilled")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustQuery("select id from backfilled where match(a) against('+distributed' in boolean mode)").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select id from backfilled where match(a) against('+storage' in boolean mode)").
+		Check(testkit.Rows("2"))
+
+	tk.MustExec("create table pt(id int, a text) partition by hash(id) partitions 2")
+	tk.MustExec("create fulltext index idx_a on pt(a)")
+	tk.MustExec("insert into pt values (1, 'distributed sql'), (2, 'relational storage')")
+	tk.MustExec("admin check table pt")
+	tk.MustExec("truncate table pt")
+	tk.MustExec("alter table pt drop index idx_a")
+}
+
+// TestCreateTableWithFullTextIndexMetadata covers the multi-column FULLTEXT
+// index. A multi-valued index covers exactly one expression, so this one stays
+// metadata-only: MATCH over it is still evaluated locally, without an index to
+// narrow the rows first.
+func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
 	tk.MustExec("create table t2(a text, b text)")
 	tk.MustExec("create fulltext index idx_ab on t2(a, b) with parser ngram")
 	tk.MustQuery("admin show ddl jobs 1").CheckContain("add fulltext index")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_ab")
 	require.NotNil(t, idx)
 	require.Equal(t, model.StatePublic, idx.State)
 	require.Equal(t, model.FullTextParserTypeNgramV1, idx.FullTextInfo.ParserType)
 	require.Len(t, idx.Columns, 2)
+	require.False(t, idx.MVIndex)
 	tk.MustExec("insert into t2 values ('hello', 'world')")
 	tk.MustQuery("explain format = 'brief' select * from t2 where a = 'hello'").CheckNotContain("idx_ab")
+
+	// No index keys are written for it.
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, idx.ID)
+	iter, err := txn.Iter(indexPrefix, indexPrefix.PrefixNext())
+	require.NoError(t, err)
+	require.False(t, iter.Valid(), "metadata-only FULLTEXT index must not write TiKV index keys")
+	iter.Close()
+	require.NoError(t, txn.Rollback())
+	tk.MustExec("admin check table t2")
+
 	tk.MustExec("set tidb_enable_local_match_against = on")
 	tk.MustQuery("select a, b from t2 where match(a, b) against('+hello' in boolean mode)").Check(testkit.Rows("hello world"))
+	tk.MustQuery("show create table t2").CheckContain("FULLTEXT INDEX `idx_ab`(`a`,`b`) WITH PARSER NGRAM")
+
 	tk.MustExec("create table t2_like like t2")
 	likeTbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2_like"))
 	require.NoError(t, err)
@@ -1494,23 +1589,13 @@ func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
 	require.NotNil(t, likeIdx)
 	require.NotNil(t, likeIdx.FullTextInfo)
 	tk.MustExec("drop table t2_like")
+
 	tk.MustExec("alter table t2 rename index idx_ab to idx_renamed")
 	tk.MustExec("alter table t2 drop index idx_renamed")
 	tk.MustContainErrMsg("select * from t2 where match(a, b) against('+hello' in boolean mode)", "Can't find FULLTEXT index matching the column list")
-	tk.MustExec("alter table t2 add fulltext index idx_a(a) with parser standard")
-	tk.MustContainErrMsg("alter table t2 modify column a varchar(255)", "column is covered by a FULLTEXT index")
-	tk.MustContainErrMsg("alter table t2 drop column a", "with FULLTEXT index covered")
-	tk.MustExec("alter table t2 drop index idx_a")
 
-	tk.MustExec("create table pt(id int, a text) partition by hash(id) partitions 2")
-	tk.MustExec("create fulltext index idx_a on pt(a)")
-	tk.MustExec("truncate table pt")
-	partitionedTbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
-	require.NoError(t, err)
-	partitionedIdx := partitionedTbl.Meta().FindIndexByName("idx_a")
-	require.NotNil(t, partitionedIdx)
-	require.NotNil(t, partitionedIdx.FullTextInfo)
-	tk.MustExec("alter table pt drop index idx_a")
+	tk.MustContainErrMsg("create table duplicate_col(a text, b text, fulltext index idx(a, a))", "FULLTEXT index contains a duplicate column")
+	tk.MustContainErrMsg("create table bad_multi_type(a text, b int, fulltext index idx(a, b))", "FULLTEXT index only supports string columns")
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
@@ -1813,4 +1898,76 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
+}
+
+// TestCreateFullTextIndexIfNotExistsPrefersDuplicateNote covers the ordering of
+// the two checks a CREATE FULLTEXT INDEX statement can fail. An existing name
+// under IF NOT EXISTS is a note, not an error, and that has to win over any
+// complaint about the definition - as it does for an ordinary index.
+func TestCreateFullTextIndexIfNotExistsPrefersDuplicateNote(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a text, b text)")
+	tk.MustExec("create fulltext index idx_taken on t(a)")
+
+	// A bad column would otherwise be reported first, once the definition is
+	// rewritten into an expression index before the name is settled.
+	tk.MustExec("create fulltext index if not exists idx_taken on t(missing_col)")
+	tk.MustQuery("show warnings").CheckContain("Duplicate key name")
+	// The same for a definition the FULLTEXT rewrite rejects outright.
+	tk.MustExec("create fulltext index if not exists idx_taken on t(a) with parser unknown")
+	tk.MustQuery("show warnings").CheckContain("Duplicate key name")
+
+	// Without IF NOT EXISTS the duplicate is still an error.
+	tk.MustContainErrMsg("create fulltext index idx_taken on t(a)", "Duplicate key name")
+	// And a genuinely new index with a bad definition still reports it.
+	tk.MustContainErrMsg("create fulltext index if not exists idx_new on t(missing_col)", "missing_col")
+}
+
+// TestAlterFullTextIndexVisibilityRejected covers both shapes of FULLTEXT
+// index. Creating either as INVISIBLE is rejected, so ALTER must not be a way
+// around that afterwards.
+func TestAlterFullTextIndexVisibilityRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a text, b text, fulltext index idx_mv(a), fulltext index idx_meta(a, b))")
+
+	tk.MustContainErrMsg("alter table t alter index idx_mv invisible", "set fulltext index invisible")
+	tk.MustContainErrMsg("alter table t alter index idx_meta invisible", "set fulltext index invisible")
+	tk.MustContainErrMsg("create table t2(a text, fulltext index idx(a) invisible)", "FULLTEXT index does not support INVISIBLE")
+}
+
+// TestFullTextIndexAllowsNullColumn covers a NULL in a FULLTEXT-indexed column.
+// The tokenize call must yield SQL NULL rather than a JSON literal null: the
+// array cast that wraps it in the index expression accepts only JSON strings,
+// so a literal null makes every write to such a column fail with "Invalid JSON
+// value for CAST for expression index".
+func TestFullTextIndexAllowsNullColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("create table t (id int primary key, body varchar(255), fulltext index idx(body))")
+
+	tk.MustExec("insert into t values (1, NULL), (2, 'distributed sql')")
+	tk.MustExec("update t set body = NULL where id = 2")
+	tk.MustExec("update t set body = 'relational storage' where id = 1")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select id from t where body is null").Check(testkit.Rows("2"))
+
+	// A NULL document matches nothing, and the rows that do match are found.
+	tk.MustQuery("select id from t where match(body) against('+relational' in boolean mode)").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where match(body) against('+distributed' in boolean mode)").
+		Check(testkit.Rows())
+
+	// Building the index over existing NULLs works too.
+	tk.MustExec("create table backfilled (id int primary key, body varchar(255))")
+	tk.MustExec("insert into backfilled values (1, NULL), (2, 'distributed sql')")
+	tk.MustExec("alter table backfilled add fulltext index idx(body)")
+	tk.MustExec("admin check table backfilled")
+	tk.MustQuery("select id from backfilled where match(body) against('+distributed' in boolean mode)").
+		Check(testkit.Rows("2"))
 }

@@ -412,6 +412,30 @@ func (d *SchemaTracker) createIndex(
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
+	if keyType == ast.IndexKeyTypeFullText {
+		// A FULLTEXT index is not an ordinary index over the named column: a
+		// single-column one is materialised as a multi-valued index over the
+		// tokenized column, and a multi-column one is metadata-only. Building
+		// it as an ordinary index here would leave the tracked schema
+		// disagreeing with what the cluster holds.
+		var rewritten bool
+		indexPartSpecifications, indexOption, rewritten, err = ddl.BuildFullTextIndexSpec(
+			ddl.NewMetaBuildContextWithSctx(ctx), tblInfo, indexPartSpecifications, indexOption)
+		if err != nil {
+			return err
+		}
+		if !rewritten {
+			indexInfo, err := ddl.BuildFullTextIndexInfo(
+				tblInfo, indexName, indexPartSpecifications, indexOption, model.StatePublic)
+			if err != nil {
+				return err
+			}
+			indexInfo.ID = ddl.AllocateIndexID(tblInfo)
+			tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+			return nil
+		}
+	}
+
 	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
@@ -936,8 +960,10 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+			case ast.ConstraintFulltext:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeFullText, pmodel.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey,
-				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
 			default:
 				// Nothing to do now.

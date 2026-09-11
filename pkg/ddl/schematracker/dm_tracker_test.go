@@ -640,3 +640,84 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
 }
+
+// TestFullTextIndexMirrorsExecutor covers the three ways a FULLTEXT index is
+// declared. The tracker must produce the schema executing the statement would,
+// or a consumer such as DM drifts from what the cluster holds: a single-column
+// index is materialised as a multi-valued index over a hidden tokenized column,
+// not as an ordinary index over the named one, and a multi-column index is
+// metadata-only rather than absent.
+func TestFullTextIndexMirrorsExecutor(t *testing.T) {
+	sctx := mock.NewContext()
+	p := parser.New()
+	exec := func(tracker schematracker.SchemaTracker, sql string) error {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		switch s := stmt.(type) {
+		case *ast.CreateTableStmt:
+			return tracker.CreateTable(sctx, s)
+		case *ast.CreateIndexStmt:
+			return tracker.CreateIndex(sctx, s)
+		case *ast.AlterTableStmt:
+			return tracker.AlterTable(context.Background(), sctx, s)
+		}
+		return nil
+	}
+	indexOf := func(tracker schematracker.SchemaTracker, tbl string) (*model.TableInfo, *model.IndexInfo) {
+		info, err := tracker.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tbl))
+		require.NoError(t, err)
+		idx := info.FindIndexByName("idx")
+		require.NotNil(t, idx, tbl)
+		return info, idx
+	}
+
+	// Inline, CREATE INDEX and ALTER TABLE must agree with each other.
+	for _, tc := range []struct{ name, create, add string }{
+		{
+			name:   "create table",
+			create: "create table test.t (id int primary key, body varchar(255), fulltext index idx(body))",
+		},
+		{
+			name:   "create index",
+			create: "create table test.t (id int primary key, body varchar(255))",
+			add:    "create fulltext index idx on test.t(body)",
+		},
+		{
+			name:   "alter table add",
+			create: "create table test.t (id int primary key, body varchar(255))",
+			add:    "alter table test.t add fulltext index idx(body)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := schematracker.NewSchemaTracker(2)
+			tracker.CreateTestDB(nil)
+			require.NoError(t, exec(tracker, tc.create))
+			if tc.add != "" {
+				require.NoError(t, exec(tracker, tc.add))
+			}
+			info, idx := indexOf(tracker, "t")
+
+			require.Equal(t, pmodel.IndexTypeFulltext, idx.Tp)
+			require.True(t, idx.MVIndex)
+			// FullTextInfo must stay nil, or the index would be treated as
+			// holding no KV data at all.
+			require.Nil(t, idx.FullTextInfo)
+			require.Len(t, idx.Columns, 1)
+			hidden := info.Columns[idx.Columns[0].Offset]
+			require.True(t, hidden.Hidden)
+			require.Contains(t, hidden.GeneratedExprString, "fts_tokenize(`body`")
+		})
+	}
+
+	// A multi-column FULLTEXT index is metadata-only, and must be tracked
+	// rather than dropped on the floor.
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	require.NoError(t, exec(tracker, "create table test.m (id int primary key, title varchar(100), body varchar(255))"))
+	require.NoError(t, exec(tracker, "alter table test.m add fulltext index idx(title, body)"))
+	info, idx := indexOf(tracker, "m")
+	require.NotNil(t, idx.FullTextInfo)
+	require.False(t, idx.MVIndex)
+	require.Len(t, idx.Columns, 2)
+	require.Len(t, info.Columns, 3) // no hidden column
+}

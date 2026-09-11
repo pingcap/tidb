@@ -924,6 +924,49 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestAdminCheckPartialMultiValuedIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// The condition references the indexed JSON column itself.
+	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))) where a is not null)")
+	tk.MustExec("insert into t values (0, '[0,1]'), (1, null), (2, '[]'), (3, '[1,2,2]'), (4, null)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx")
+	tk.MustExec("update t set a = null where pk = 0")
+	tk.MustExec("update t set a = '[5]' where pk = 1")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx")
+
+	// The condition references a column outside the index.
+	tk.MustExec("create table t2(pk int primary key, a json, b int, index idx((cast(a as signed array))) where b > 0)")
+	tk.MustExec("insert into t2 values (0, '[0,1]', 0), (1, '[1,2]', 1), (2, null, 1), (3, null, 0), (4, '[]', 1)")
+	tk.MustExec("admin check table t2")
+	tk.MustExec("admin check index t2 idx")
+
+	// A missing entry for a row that does satisfy the condition is still reported.
+	sctx := mock.NewContext()
+	sctx.Store = store
+	ctx := sctx.GetTableCtx()
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	cpIdx := tblInfo.Indices[0].Clone()
+	cpIdx.MVIndex = false
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	require.NoError(t, err)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(ctx, txn, types.MakeDatums(2), kv.IntHandle(1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t2")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+}
+
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 

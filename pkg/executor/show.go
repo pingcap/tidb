@@ -1251,6 +1251,36 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	}
 
 	for i, idxInfo := range publicIndices {
+		// A FULLTEXT index over a single column is stored as a multi-valued
+		// index on a hidden tokenized column. Report it the way it was
+		// declared, so the output stays MySQL-compatible and restorable, and
+		// so it reads the same as the metadata-only multi-column form below.
+		//
+		// Gated on the marker recorded when the FULLTEXT rewrite ran, not on
+		// the shape of the generated expression: anyone can write an
+		// expression index over FTS_TOKENIZE, and describing theirs as
+		// FULLTEXT INDEX would discard the analyzer literals they chose.
+		//
+		// The analyzer settings themselves are not shown, matching MySQL,
+		// where the innodb_ft_* variables are read at build time and likewise
+		// absent here. Restoring onto a differently configured server
+		// therefore tokenizes differently, again as in MySQL.
+		if ftsOrigin, isFTS := expression.FTSTokenizeIndexOriginFromIndex(tableInfo, idxInfo); isFTS {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s(%s) WITH PARSER %s",
+				stringutil.Escape(idxInfo.Name.O, sqlMode),
+				stringutil.Escape(ftsOrigin.ColumnName.O, sqlMode),
+				ftsOrigin.ParserType.SQLName())
+			if idxInfo.Invisible {
+				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			}
+			if idxInfo.Comment != "" {
+				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			}
+			if i != len(publicIndices)-1 {
+				buf.WriteString(",\n")
+			}
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
