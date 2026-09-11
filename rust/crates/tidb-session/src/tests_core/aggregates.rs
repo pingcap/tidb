@@ -6,6 +6,28 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Go LogicalAggregation.PruneColumns retains aggregate ORDER BY dependencies.
+#[test]
+fn group_concat_preserves_order_only_columns_during_pruning() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (v VARCHAR(10), n BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES ('b',2),('a',1),('c',3)")
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT GROUP_CONCAT(v ORDER BY n DESC) FROM t", "c,b,a"),
+        ("SELECT GROUP_CONCAT(v ORDER BY n+1) FROM t", "a,b,c"),
+        ("SELECT GROUP_CONCAT(v ORDER BY n DESC, 1) FROM t", "c,b,a"),
+    ] {
+        let result = session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(row_text(Ok(result)), [[expected]], "{sql}");
+    }
+}
+
 /// `GROUP_CONCAT`, checked against captured TiDB output.
 #[test]
 fn group_concat() {

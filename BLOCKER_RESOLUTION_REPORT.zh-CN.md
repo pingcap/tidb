@@ -3041,6 +3041,31 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 GROUP_CONCAT 保留内部排序列
+
+修复原 `tests_core::aggregates::group_concat` 的 `Can't find column with UniqueID 3 in schema`。`LogicalAggregation::prune_columns_local` 只收集聚合参数和 GROUP BY 列，遗漏聚合内部 ORDER BY 的列，所以 `GROUP_CONCAT(v ORDER BY n)` 的 n 被子节点裁掉，物理列绑定失败。
+
+固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/operator/logicalop/logical_aggregation.go:135` 至循环结束，逐个处理 Args，然后用 `pruneByItems` 返回 OrderByItems 的依赖列。Rust 现在复用已有 `logical::sort::prune_by_items`，更新聚合内部排序项并将引用列加入 self_used_cols；保留了 Go 的重复/常量排序项裁剪行为。
+
+新增 session 回归 `group_concat_preserves_order_only_columns_during_pruning`，数据 v/n 为 b/2、a/1、c/3，验证未投影 n 的 DESC、n+1 表达式 ASC，以及第二排序项的位置引用。修复前失败于 UniqueID 2 缺失，日志 `/tmp/group-concat-prune-red.log`；原用例红日志 `/tmp/group-concat-red.log`。修复后 GROUP_CONCAT 全部7项通过，日志 `/tmp/group-concat-green.log`。
+
+Ready 验证，Rust命令均设置 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib group_concat
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib
+make lint
+git diff --check
+```
+
+planner聚合76 passed；session集成310 passed；lint与diff检查退出0。日志 `/tmp/group-concat-planner.log`、`/tmp/group-concat-integration.log`、`/tmp/group-concat-lint.log`。此修复只补齐真实排序依赖，可能保留之前被错误删除的必要输入列，不额外引入新执行路径。
+
+完整单元两次运行分别为1549 passed / 138 failed / 209 ignored，以及1547 passed / 140 failed / 209 ignored，均退出101，日志 `/tmp/group-concat-session-lib.log`、`/tmp/group-concat-session-lib-repeat.log`。原GROUP_CONCAT在两次中均通过。第一轮相较前基线多出 embedding版本计数失败（13而非11），该项独立重跑通过（`/tmp/group-concat-embedding-recheck.log`）；第二轮还出现circuit breaker全局hook失败。全局状态并发测试波动需要单独诊断，不能用全量总数声称剩余失败固定或全部无回归。本轮未重跑Go binary/RealTiKV，Go依据为固定源码；完整质量目标未完成。
+
+推送前远端新增 `5587605d92`（单chunk并行HashAgg执行优化）。本修复无冲突重放其上，重新运行session `--lib group_concat`：7 passed；`--test all`：310 passed；`make lint`：退出0。日志 `/tmp/group-concat-rebased-green.log`、`/tmp/group-concat-rebased-integration.log`、`/tmp/group-concat-rebased-lint.log`。前述完整单元计数属于重放前，未将其作为远端更新后全量通过的证据。
+
 ## 2026-09-11 DISTINCT 并列排序测试闭环
 
 在 `7ad0528bf5` 上继续验证原 case `select_distinct_may_only_order_by_a_field_it_reports`。错误码已修复后，它仍在 permissive SQL mode 的 `SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)` 断言失败：Rust 返回1/2，固定期望为2/1。原数据为 `(1,10),(1,20),(2,30)`，两个组的 SUM 都为30。

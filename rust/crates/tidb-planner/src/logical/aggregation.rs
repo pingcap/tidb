@@ -341,10 +341,13 @@ impl LogicalAggregation {
         }
 
         let mut self_used_cols: Vec<Column> = Vec::new();
-        for func in &self.agg_funcs {
+        for func in &mut self.agg_funcs {
             for arg in func.args() {
                 self_used_cols.extend(extract_columns(arg));
             }
+            let (items, columns) = super::sort::prune_by_items(&func.order_by_items);
+            func.order_by_items = items;
+            self_used_cols.extend(columns);
         }
 
         if self.agg_funcs.is_empty() || (!all_first_row && all_remain_first_row) {
