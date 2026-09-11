@@ -382,6 +382,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ResetOpts   map[ast.AnalyzeOptionType]struct{}
 	ColChoice   ast.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
