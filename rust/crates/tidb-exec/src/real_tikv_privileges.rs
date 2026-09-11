@@ -26,7 +26,7 @@ use std::time::Duration;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
-use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
+use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
     ClusterPrivileges,
@@ -115,12 +115,32 @@ pub fn load_sysvars_from_cluster<C: StoreWriteClient, L: StoreWriteLoader, P: St
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
+    load_sysvars_from_cluster_with_catalog_cache(opener, timeout, None)
+}
+
+/// The catalog a periodic reader keeps between passes, reused while the
+/// cluster schema version it was loaded at is still current. Go reads
+/// `mysql.global_variables` through the domain's cached infoschema, which
+/// is only replaced when the schema version moves; loading the whole
+/// catalog (every table's JSON) on every reload pass was this port's cost.
+pub type CatalogCache = std::sync::Mutex<Option<std::sync::Arc<ClusterCatalog>>>;
+
+/// [`load_sysvars_from_cluster`] with an optional caller-owned catalog cache.
+pub fn load_sysvars_from_cluster_with_catalog_cache<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    catalog_cache: Option<&CatalogCache>,
+) -> Result<Vec<(String, String)>, SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let sysvars = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        load_sysvars_from_snapshot(&mut snapshot)?
+        load_sysvars_from_snapshot_with_catalog_cache(&mut snapshot, catalog_cache)?
     };
     transaction
         .finish_without_writes()
@@ -155,15 +175,50 @@ pub fn load_startup_variables_from_cluster<
     Ok(variables)
 }
 
+#[cfg(test)]
 fn load_sysvars_from_snapshot<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    load_sysvars_from_snapshot_with_catalog_cache(snapshot, None)
+}
+
+fn load_sysvars_from_snapshot_with_catalog_cache<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog_cache: Option<&CatalogCache>,
+) -> Result<Vec<(String, String)>, SystemTableError> {
+    let catalog = match catalog_cache {
+        Some(cache) => {
+            // Any DDL moves the schema version, so a catalog loaded at the
+            // version this snapshot reads is this snapshot's catalog.
+            let version = crate::cluster_catalog::read_schema_version(snapshot)?;
+            let cached = lock_catalog_cache(cache)
+                .as_ref()
+                .filter(|catalog| version != 0 && catalog.schema_version == version)
+                .cloned();
+            match cached {
+                Some(catalog) => catalog,
+                None => {
+                    let catalog = std::sync::Arc::new(load_cluster_catalog(snapshot)?);
+                    *lock_catalog_cache(cache) = Some(std::sync::Arc::clone(&catalog));
+                    catalog
+                }
+            }
+        }
+        None => std::sync::Arc::new(load_cluster_catalog(snapshot)?),
+    };
     let bootstrap = read_bootstrap_state(snapshot, &catalog)?;
     if !bootstrap.already_bootstrapped() {
         return Ok(Vec::new());
     }
     load_cluster_sysvars(snapshot, &catalog)
+}
+
+fn lock_catalog_cache(
+    cache: &CatalogCache,
+) -> std::sync::MutexGuard<'_, Option<std::sync::Arc<ClusterCatalog>>> {
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

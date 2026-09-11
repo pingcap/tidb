@@ -181,15 +181,22 @@ impl ClusterCatalog {
 /// Go `ListDatabases` then `ListTables` per database. Go filters a database's
 /// hash by field prefix because the same hash also holds the per-table ID
 /// allocators; so does this.
+/// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
+pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
+    match snapshot.get(&key::schema_version_kv_key())? {
+        Some(stored) => value::parse_int_value(&stored)
+            .map_err(|error| ClusterCatalogError::Decode(format!("SchemaVersionKey: {error}"))),
+        // Go's TxStructure.GetInt64 answers 0 for a missing key.
+        None => Ok(0),
+    }
+}
+
+/// Loads the whole cluster catalog (every database and table) at the
+/// snapshot's schema version.
 pub fn load_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
-    let schema_version = match snapshot.get(&key::schema_version_kv_key())? {
-        Some(stored) => value::parse_int_value(&stored)
-            .map_err(|error| ClusterCatalogError::Decode(format!("SchemaVersionKey: {error}")))?,
-        // Go's TxStructure.GetInt64 answers 0 for a missing key.
-        None => 0,
-    };
+    let schema_version = read_schema_version(snapshot)?;
 
     let mut databases = Vec::new();
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {

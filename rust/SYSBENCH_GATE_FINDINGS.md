@@ -546,6 +546,27 @@ Profile-driven findings (perf, dwarf call graphs, conn threads):
     from 10 ms to 1 s while shutdown/drop still wake the stream at once.
     Idle node CPU: ~49% -> ~25% of a core (remaining: stats reloaders and
     the 100 ms server-memory-limit tick, which Go shares).
+13. Three more idle pollers, each Go-aligned: (a) `read_mem_stats` read
+    `/proc/self/status` on every 100 ms memory-limit tick and every
+    arbitrator tick; Go serves those callers from `memUsage`'s 500 ms
+    window, so the RSS read is now cached for 500 ms. (b) the owner-lease
+    keeper and the schema-version watch thread polled a stop flag every
+    10 ms (Go sleeps on channels); both now sleep in 100 ms slices.
+    (c) the periodic sysvar reload (30 s, Go `LoadSysVarCacheLoop`) loaded
+    and JSON-decoded the whole catalog on every pass to find
+    `mysql.global_variables`; Go reads it through the domain's cached
+    infoschema. The reloader now keeps the catalog between passes and
+    reuses it while the cluster schema version is unchanged (any DDL moves
+    the version), reloading only when it moves.
+    Idle node CPU after items 12-13: ~4% of a core (was ~49% before round
+    2). Round-3 A/B against the round-2 head (16 threads, 2 rounds, plus a
+    reversed-order 3-round write_only check with CPU per transaction):
+    point_select +3%, read_only 0%, TPC-C -1%, read_write -3%, write_only
+    -2..-6% in one order and -4/-2/+1% in the other, with paired perf
+    profiles showing no memory-stat function on the connection threads and
+    only inlining/interrupt noise in the symbol diff: hot-path neutral
+    within this box's run-to-run spread; the verified effect is the idle
+    cost.
 
 Round-2 A/B (items 11-12 on top of the pushed round-1 binary; 16 threads,
 alternating binaries, reloaded 10-warehouse TPC-C):

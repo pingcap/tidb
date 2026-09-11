@@ -988,13 +988,19 @@ pub fn acquire_distributed_lock(
     }))
 }
 
+/// Go's session keepalive sleeps on a channel until its next tick; this
+/// port's stop flag has no wake handle, so the keeper sleeps in bounded
+/// slices. 100 ms slices bound the stop latency while keeping an idle keeper
+/// at ten wake-ups a second instead of a hundred.
 fn sleep_until_stopped(stop: &AtomicBool, duration: Duration) -> bool {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
         if stop.load(Ordering::Acquire) {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(
+            Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
     stop.load(Ordering::Acquire)
 }

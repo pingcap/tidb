@@ -1776,13 +1776,15 @@ pub(crate) fn prepare_cluster_sysvar_runtime(
 ) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
     load_cluster_startup_variables(users, &authority.transaction_opener())?;
     let reload_opener = authority.transaction_opener();
+    let catalog_cache = tidb_exec::real_tikv_privileges::CatalogCache::default();
     spawn_cluster_sysvar_reloader_with_read(
         config,
         users,
         Box::new(move || {
-            tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
+            tidb_exec::real_tikv_privileges::load_sysvars_from_cluster_with_catalog_cache(
                 &reload_opener,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                Some(&catalog_cache),
             )
             .map_err(|error| error.to_string())
         }),
