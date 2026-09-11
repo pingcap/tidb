@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv3"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -214,9 +215,11 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			explain:      &core.Explain{Analyze: true, Format: "ru", TargetPlan: targetPlan, RuntimeStatsColl: coll},
 			analyzeExec:  &mockEmptyOperator{BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), targetPlan.ID())},
 		}
-		wantRU := calculateStatementRUResultOnly(statementRURawUnits{
+		wantResult, valid := ruv3.Calculate(ruv3.StmtUnits{
 			CPUWork: 6, WriteStatement: 1, OperatorNum: 1, WriteKeys: 2, WriteBytes: 100,
-		}).TotalRU
+		}, ruv3.DefaultWeights())
+		require.True(t, valid)
+		wantRU := wantResult.TotalRU
 		for range 2 {
 			require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
 			require.NoError(t, explainExec.explain.RenderResult())
