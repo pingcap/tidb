@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -979,37 +978,6 @@ func ApplyKVFilesWithBatchMethod(
 	return nil
 }
 
-func ApplyKVFilesWithSingleMethod(
-	ctx context.Context,
-	files LogIter,
-	applyFunc func(file []*LogDataFileInfo, kvCount int64, size uint64),
-	applyWg *sync.WaitGroup,
-) error {
-	deleteKVFiles := make([]*LogDataFileInfo, 0)
-
-	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
-		if r.Err != nil {
-			return r.Err
-		}
-
-		f := r.Item
-		if f.GetType() == backuppb.FileType_Delete {
-			deleteKVFiles = append(deleteKVFiles, f)
-			continue
-		}
-		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
-	}
-
-	applyWg.Wait()
-	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
-	for _, file := range deleteKVFiles {
-		f := file
-		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
-	}
-
-	return nil
-}
-
 func (rc *LogClient) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
@@ -1022,11 +990,10 @@ func (rc *LogClient) RestoreKVFiles(
 	masterKeys []*encryptionpb.MasterKey,
 ) error {
 	var (
-		err          error
-		fileCount    = 0
-		start        = time.Now()
-		supportBatch = version.CheckPITRSupportBatchKVFiles()
-		skipFile     = 0
+		err       error
+		fileCount = 0
+		start     = time.Now()
+		skipFile  = 0
 	)
 	defer func() {
 		if err == nil {
@@ -1111,17 +1078,13 @@ func (rc *LogClient) RestoreKVFiles(
 				}()
 
 				return rc.logRestoreManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
-					supportBatch, cipherInfo, masterKeys)
+					cipherInfo, masterKeys)
 			})
 		}
 	}
 
 	rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() error {
-		if supportBatch {
-			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
-		} else {
-			err = ApplyKVFilesWithSingleMethod(ectx, logIter, applyFunc, &applyWg)
-		}
+		err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		return errors.Trace(err)
 	})
 

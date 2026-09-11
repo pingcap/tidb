@@ -881,59 +881,6 @@ func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logcl
 	})
 }
 
-func TestApplyKVFilesWithSingelMethod(t *testing.T) {
-	var (
-		totalKVCount int64  = 0
-		totalSize    uint64 = 0
-		logs                = make([]string, 0)
-	)
-	ds := []*backuppb.DataFileInfo{
-		{
-			Path:            "log3",
-			NumberOfEntries: 5,
-			Length:          100,
-			Cf:              consts.WriteCF,
-			Type:            backuppb.FileType_Delete,
-		},
-		{
-			Path:            "log1",
-			NumberOfEntries: 5,
-			Length:          100,
-			Cf:              consts.DefaultCF,
-			Type:            backuppb.FileType_Put,
-		}, {
-			Path:            "log2",
-			NumberOfEntries: 5,
-			Length:          100,
-			Cf:              consts.WriteCF,
-			Type:            backuppb.FileType_Put,
-		},
-	}
-	var applyWg sync.WaitGroup
-	applyFunc := func(
-		files []*logclient.LogDataFileInfo,
-		kvCount int64,
-		size uint64,
-	) {
-		totalKVCount += kvCount
-		totalSize += size
-		for _, f := range files {
-			logs = append(logs, f.GetPath())
-		}
-	}
-
-	logclient.ApplyKVFilesWithSingleMethod(
-		context.TODO(),
-		toLogDataFileInfoIter(iter.FromSlice(ds)),
-		applyFunc,
-		&applyWg,
-	)
-
-	require.Equal(t, totalKVCount, int64(15))
-	require.Equal(t, totalSize, uint64(300))
-	require.Equal(t, logs, []string{"log1", "log2", "log3"})
-}
-
 func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 	var (
 		runCount            = 0
@@ -1341,17 +1288,6 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		2,
 		1500,
-		applyFunc,
-		&applyWg,
-	)
-
-	applyWg.Wait()
-	require.Equal(t, backuppb.FileType_Delete, types[len(types)-1])
-
-	types = make([]backuppb.FileType, 0)
-	logclient.ApplyKVFilesWithSingleMethod(
-		context.TODO(),
-		toLogDataFileInfoIter(iter.FromSlice(ds)),
 		applyFunc,
 		&applyWg,
 	)

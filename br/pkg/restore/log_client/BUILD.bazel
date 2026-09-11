@@ -44,7 +44,6 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/utils/consts",
         "//br/pkg/utils/iter",
-        "//br/pkg/version",
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/infoschema",
