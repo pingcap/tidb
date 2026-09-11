@@ -687,6 +687,13 @@ fn group_by_true_is_the_position_one_reference() {
         rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY TRUE"),
         [["1", "2"], ["2", "1"]]
     );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT k, count(*) FROM gg GROUP BY TRUE ORDER BY k DESC"
+        ),
+        [["2", "1"], ["1", "2"]]
+    );
     // Position 1 is an aggregate here, which cannot be grouped on.
     assert!(session
         .run("SELECT count(*) FROM gg GROUP BY TRUE")

@@ -3041,6 +3041,16 @@ RUSTUP_TOOLCHAIN=1.97 ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-evidence \
 
 真实运行已输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`，schema_version 60；完成所有 access-path SQL 对照，最后因原有 **2 failures / 7 divergent choices** 退出 1。节点日志保存在 `/tmp/access-readiness-evidence/rust-node.log`。启动 blocker 已解除，整体目标仍未完成；剩余失败为 strict-superset pseudo estRows 和 ANALYZE 后 covering index estRows，须继续对照 Go cardinality 实现修复，不能将本次运行记为全套通过。
 
+## 2026-09-11 GROUP BY 布尔位置
+
+修复 `group_by_true_is_the_position_one_reference`：Rust GROUP BY resolver 只识别Expr::Int，将TRUE当常量而不是第一SELECT字段，导致ONLY_FULL_GROUP_BY拒绝合法查询。现在在GROUP BY项入口将Expr::Bool归一为位置1/0，沿用整数位置解析。
+
+固定Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/types/datum.go:599` 将bool存为int64，`pkg/parser/parser.y:8715` 的ByItem规则将int64值转PositionExpr。固定binary独立unistore实测 `SELECT k,count(*) FROM gg GROUP BY TRUE ORDER BY k DESC` 返回2/1、1/2，日志 `/tmp/group-bool-go.out`，fixture `(1,10),(1,20),(2,30)`。新增DESC精确断言；原用例继续检查聚合位置和FALSE被拒绝。Go实例已停止，日志 `/tmp/group-bool-oracle.log`。
+
+原回归先红 `/tmp/group-bool-red.log`；扩展回归红 `/tmp/group-bool-expanded-red.log`；修复后1 passed `/tmp/group-bool-green.log`。Ready验证（Rust环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：`cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib group_by_true_is_the_position_one_reference`；`cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib aggregation_tests`（34 passed）；`cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`（310 passed）；`make lint`及`git diff --check`退出0。日志 `/tmp/group-bool-planner.log`、`/tmp/group-bool-integration.log`、`/tmp/group-bool-lint.log`。
+
+新的Go证据缺口更正：`GROUP BY FALSE`实际返回 `ERROR 1105 (HY000): Unknown column '0' in 'group statement'`（`/tmp/group-bool-go-false.err`），与Go gbyResolver使用普通errors.Errorf一致。另一项位置测试目前要求1054，不能按该期望修改Rust来违背master，本轮未改该测试。GROUP BY聚合位置1056的类型保留及原始文本仍需后续处理。未重跑全量单元/RealTiKV，整体质量目标未完成。
+
 ## 2026-09-11 无 GROUP BY 聚合的单值依赖
 
 修复原 `only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key` 的合法查询拒绝。无GROUP BY校验过去在发现任何非聚合列后直接报8123，遗漏Go的WHERE单值和候选键检查。按固定master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `logical_plan_builder.go:3934` 起逻辑，收集单值列、WHERE/JOIN等值依赖，并复用现有 `check_col_func_depend`。3029检查仍在单值豁免之前，保留Go错误优先级。

@@ -517,6 +517,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut resolved = Vec::with_capacity(group_by.len());
         for item in group_by {
             let mut expr = Self::clause_scratch(&item.expr);
+            // Go ValueExpr stores booleans as int64, and parser ByItem
+            // converts that value to a position before group resolution.
+            if let Expr::Bool(value) = expr {
+                expr = Expr::Int(usize::from(value).to_string());
+            }
             // `gbyResolver.Enter`'s `exprDepth == 1` test: only a TOP-LEVEL
             // integer is a position.
             if let Expr::Int(digits) = &expr {
