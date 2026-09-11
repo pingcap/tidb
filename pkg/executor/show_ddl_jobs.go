@@ -144,6 +144,8 @@ func ddlJobRUEnabled(ctx sessionctx.Context) bool {
 		return false
 	}
 	do := domain.GetDomain(ctx)
+	// RU v3 is based on RU v2 and will supersede it, so use RUVersionV2 here
+	// to determine whether DDL job RU should be displayed.
 	return do != nil && do.GetRUVersion() == rmclient.RUVersionV2
 }
 

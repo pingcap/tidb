@@ -23,22 +23,35 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 const testLease = 5 * time.Second
 
 func TestDDLJobRU(t *testing.T) {
+	expectedMetricRU := func(ru float64) float64 {
+		if kerneltype.IsNextGen() {
+			return ru
+		}
+		return 0
+	}
+
 	t.Run("general job persists active RU unchanged", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
+		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
 
 		var mu sync.Mutex
 		var jobID int64
@@ -64,6 +77,12 @@ func TestDDLJobRU(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
 		require.Equal(t, capturedActiveRU, historyJob.RU)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
 
 	t.Run("reorg job is excluded", func(t *testing.T) {
@@ -156,6 +175,61 @@ func TestDDLJobRU(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
 		require.Equal(t, capturedRUValues[len(capturedRUValues)-1], historyJob.RU)
+	})
+
+	t.Run("history commit retry publishes RU once", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		totalRUBefore := testutil.ToFloat64(metrics.RUV3Total)
+		ddlRUBefore := testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)
+		tikvRUBefore := testutil.ToFloat64(metrics.RUV3ByEngineTiKV)
+
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/session/mockCommitError8942"
+		var armOnce sync.Once
+		var mu sync.Mutex
+		var armErr error
+		var armed bool
+		var jobID int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterFinishDDLJob", func(job *model.Job) {
+			if job.Type != model.ActionCreateTable || job.TableName != "t_ddl_ru_history_retry" || !job.IsSynced() {
+				return
+			}
+			mu.Lock()
+			jobID = job.ID
+			mu.Unlock()
+			armOnce.Do(func() {
+				err := failpoint.Enable(commitFailpoint, `1*return(true)`)
+				mu.Lock()
+				armErr = err
+				armed = err == nil
+				mu.Unlock()
+				if err == nil {
+					t.Cleanup(func() {
+						require.NoError(t, failpoint.Disable(commitFailpoint))
+					})
+				}
+			})
+		})
+
+		tk.MustExec("create table t_ddl_ru_history_retry (a int)")
+
+		mu.Lock()
+		capturedArmErr, capturedArmed, capturedJobID := armErr, armed, jobID
+		mu.Unlock()
+		require.NoError(t, capturedArmErr)
+		require.True(t, capturedArmed)
+		require.NotZero(t, capturedJobID)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		require.Positive(t, historyJob.RU)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3BySQLTypeDDL)-ddlRUBefore, 1e-9)
+		require.InDelta(t, expectedMetricRU(historyJob.RU),
+			testutil.ToFloat64(metrics.RUV3ByEngineTiKV)-tikvRUBefore, 1e-9)
 	})
 }
 

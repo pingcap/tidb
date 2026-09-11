@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -585,6 +586,11 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	err = w.sess.Commit(w.workCtx)
 	if err != nil {
 		return err
+	}
+	if kerneltype.IsNextGen() && job.IsSynced() && job.RU > 0 {
+		metrics.RUV3Total.Add(job.RU)
+		metrics.RUV3BySQLTypeDDL.Add(job.RU)
+		metrics.RUV3ByEngineTiKV.Add(job.RU)
 	}
 	cleanupDDLReorgHandles(job, w.sess)
 	jobCtx.notifyDone()

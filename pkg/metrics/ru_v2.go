@@ -46,10 +46,12 @@ var (
 
 // RUv3 metrics.
 var (
-	RUV3Total     prometheus.Counter
-	RUV3BySQLType *prometheus.CounterVec
-	RUV3ByEngine  *prometheus.CounterVec
-	RUV3Unit      *prometheus.CounterVec
+	RUV3Total        prometheus.Counter
+	RUV3BySQLType    *prometheus.CounterVec
+	RUV3BySQLTypeDDL prometheus.Counter
+	RUV3ByEngine     *prometheus.CounterVec
+	RUV3ByEngineTiKV prometheus.Counter
+	RUV3Unit         *prometheus.CounterVec
 )
 
 // RUV3 unit label constants define the label name and values for RU v3 raw unit metrics.
@@ -306,6 +308,7 @@ func InitRUV3Metrics() {
 			Help:      "Counter of resource unit consumption by SQL type for RU v3.",
 		}, []string{LblSQLType},
 	)
+	RUV3BySQLTypeDDL = RUV3BySQLType.WithLabelValues(LblSQLTypeDDL)
 
 	RUV3ByEngine = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -315,6 +318,7 @@ func InitRUV3Metrics() {
 			Help:      "Counter of resource unit consumption by engine for RU v3.",
 		}, []string{LblEngine},
 	)
+	RUV3ByEngineTiKV = RUV3ByEngine.WithLabelValues(LblEngineTiKV)
 
 	RUV3Unit = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
