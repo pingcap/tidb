@@ -2517,6 +2517,25 @@ impl KvTable {
         decode_context: &RowDecodeContext,
         null_substitute: Option<Datum>,
     ) -> Result<(), KvTableError> {
+        // Go permits virtual generated changes without data reorganization.
+        // Existing rows contain no value for this column; future reads bind
+        // the new expression. Evaluating or casting the old value here can
+        // fail on data that the new expression no longer reads.
+        if self.columns[offset].generated.as_ref().is_some_and(|g| !g.stored)
+            && new_column.generated.as_ref().is_some_and(|g| !g.stored)
+        {
+            self.columns_mut()[offset] = new_column;
+            if let Some(partition) = &mut self.partition {
+                partition.update_dependency_type(
+                    &self.columns[offset].name,
+                    &self.columns[offset].field_type,
+                );
+            }
+            if let Some(position) = new_position.filter(|p| *p != offset) {
+                self.move_column(offset, position);
+            }
+            return Ok(());
+        }
         let target = new_column.field_type.clone();
         let not_null = target.flags() & NOT_NULL_FLAG != 0;
         // Keep the physical id from the record key rather than attempting to

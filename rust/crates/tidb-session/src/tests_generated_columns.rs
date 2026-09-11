@@ -402,20 +402,40 @@ fn a_pruned_scan_still_computes_a_virtual_column() {
     );
 }
 
-/// An `ALTER TABLE` that MODIFIES a generated column is still refused, and
-/// the refusal is loud.
-///
-/// This test used to assert that ADDING one was refused too, and that
-/// assertion was ENCODING A GAP rather than a rule: Go accepts
-/// `ALTER TABLE ... ADD COLUMN ... AS (expr) VIRTUAL`, and so does this tier
-/// now -- see
-/// [`adding_a_virtual_generated_column_by_alter_computes_over_existing_rows`].
+/// Go ddl/column_modify replaces an unindexed virtual expression for both
+/// existing rows and subsequent writes.
 #[test]
-fn modifying_a_generated_column_by_alter_is_refused_loudly() {
+fn modifying_virtual_generated_expression_recomputes_existing_rows() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gen_modify (first_name VARCHAR(10), last_name VARCHAR(10), full_name VARCHAR(255) AS (CONCAT(first_name,' ',last_name)))").unwrap();
+    session
+        .run("INSERT INTO gen_modify (first_name,last_name) VALUES ('Ada','Lovelace')")
+        .unwrap();
+    session.run("ALTER TABLE gen_modify MODIFY COLUMN full_name VARCHAR(255) GENERATED ALWAYS AS (CONCAT(last_name,' ',first_name)) VIRTUAL").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT full_name FROM gen_modify"),
+        [["Lovelace Ada"]]
+    );
+    session
+        .run("INSERT INTO gen_modify (first_name,last_name) VALUES ('Grace','Hopper')")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT full_name FROM gen_modify ORDER BY first_name"
+        ),
+        [["Lovelace Ada"], ["Hopper Grace"]]
+    );
+}
+
+#[test]
+fn modifying_a_generated_column_with_dependents_is_refused() {
     let mut session = chain();
-    assert!(session
-        .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
-        .is_err());
+    assert!(
+        session
+            .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
+            .is_err()
+    );
 }
 
 // A generated column's expression is evaluated under the SQL MODE of the
@@ -611,11 +631,8 @@ fn adding_a_virtual_generated_column_by_alter_computes_over_existing_rows() {
 ///   -> Error|3106|'Changing the STORED status' is not supported for generated columns.
 /// ```
 ///
-/// NOT PORTED, and pinned here so the gap is visible: Go ACCEPTS a MODIFY
-/// that keeps the generated-ness, including one that REPLACES the expression
-/// (`alter table g modify column d int as (a+5) virtual` succeeds and the
-/// rows read back recomputed). This tier refuses it rather than applying the
-/// new type with the OLD expression still attached.
+/// Keeping VIRTUAL status permits an unindexed expression replacement or
+/// integer widening, which the final assertion exercises.
 #[test]
 fn modifying_a_columns_generated_status_is_3106_either_way() {
     let mut session = Session::new();
@@ -640,13 +657,77 @@ fn modifying_a_columns_generated_status_is_3106_either_way() {
         code(&mut session, "ALTER TABLE g MODIFY COLUMN d INT"),
         Some(3106)
     );
-    // The gap Go does not have.
+    session
+        .run("ALTER TABLE g MODIFY COLUMN d BIGINT AS (a+1) VIRTUAL")
+        .unwrap();
+    session.run("INSERT INTO g(a) VALUES(10)").unwrap();
+    assert_eq!(rows(&mut session, "SELECT d FROM g"), [["11"]]);
+}
+
+#[test]
+fn generated_modify_preserves_source_restrictions_and_atomicity() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gm (a INT, b INT AS(a+1) VIRTUAL, c INT AS(a+2) STORED, KEY ib(b))")
+        .unwrap();
+    session.run("INSERT INTO gm(a) VALUES(10)").unwrap();
+    for (sql, expected) in [
+        ("ALTER TABLE gm MODIFY b INT AS(a+3) VIRTUAL", 3106),
+        ("ALTER TABLE gm MODIFY b BIGINT AS(a+1) VIRTUAL", 3106),
+        ("ALTER TABLE gm MODIFY c INT AS(a+3) STORED", 3106),
+        ("ALTER TABLE gm MODIFY b INT AS(a+1) STORED", 3106),
+        ("ALTER TABLE gm MODIFY c INT AS(c+1) STORED", 3107),
+        ("ALTER TABLE gm MODIFY b VARCHAR(10) AS(a+1) VIRTUAL", 8200),
+    ] {
+        assert_eq!(code(&mut session, sql), Some(expected), "{sql}");
+        assert_eq!(rows(&mut session, "SELECT * FROM gm"), [["10", "11", "12"]]);
+    }
+    session
+        .run("ALTER TABLE gm MODIFY b INT AS(a+1) VIRTUAL")
+        .unwrap();
+    session.run("ALTER TABLE gm CHANGE c cnew BIGINT").unwrap();
+    assert_eq!(rows(&mut session, "SELECT cnew FROM gm"), [["12"]]);
+    session.run("UPDATE gm SET cnew=99").unwrap();
+    assert_eq!(rows(&mut session, "SELECT cnew FROM gm"), [["99"]]);
+    session
+        .run("CREATE TABLE ga (a INT PRIMARY KEY AUTO_INCREMENT, b INT AS(1) VIRTUAL)")
+        .unwrap();
     assert_eq!(
-        message(
-            &mut session,
-            "ALTER TABLE g MODIFY COLUMN d BIGINT AS (a+1) VIRTUAL"
-        ),
-        "ALTER TABLE MODIFY COLUMN of a generated column is not supported yet",
-        "Go accepts this and replaces the expression"
+        code(&mut session, "ALTER TABLE ga MODIFY b INT AS(a+1) VIRTUAL"),
+        Some(3109)
     );
+    session
+        .run("SET tidb_enable_auto_increment_in_generated=ON")
+        .unwrap();
+    session
+        .run("ALTER TABLE ga MODIFY b INT AS(a+1) VIRTUAL")
+        .unwrap();
+    session.run("INSERT INTO ga(a) VALUES(5)").unwrap();
+    assert_eq!(rows(&mut session, "SELECT b FROM ga"), [["6"]]);
+}
+
+#[test]
+fn generated_modify_checks_prospective_dependency_order() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gp (a INT,b INT AS(a+1),c INT AS(b+1))")
+        .unwrap();
+    session.run("INSERT INTO gp(a) VALUES(4)").unwrap();
+    for (sql, expected) in [
+        ("ALTER TABLE gp MODIFY c INT AS(c+1)", 3107),
+        ("ALTER TABLE gp MODIFY c INT AS(b+1) FIRST", 3107),
+        ("ALTER TABLE gp MODIFY c INT AS(missing+1)", 1054),
+        ("ALTER TABLE gp MODIFY c INT AS(rand())", 3102),
+    ] {
+        assert_eq!(code(&mut session, sql), Some(expected), "{sql}");
+        assert_eq!(rows(&mut session, "SELECT * FROM gp"), [["4", "5", "6"]]);
+    }
+    session
+        .run("ALTER TABLE gp CHANGE c renamed BIGINT AS(b+3)")
+        .unwrap();
+    assert_eq!(rows(&mut session, "SELECT renamed FROM gp"), [["8"]]);
+    session
+        .run("ALTER TABLE gp MODIFY renamed BIGINT AS(a+10) FIRST")
+        .unwrap();
+    assert_eq!(rows(&mut session, "SELECT * FROM gp"), [["14", "4", "5"]]);
 }

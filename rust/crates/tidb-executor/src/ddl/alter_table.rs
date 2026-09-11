@@ -3187,10 +3187,6 @@ fn modify_column_action(
             }
         }
     }
-    let new_generated_stored = def.options.iter().find_map(|option| match option {
-        tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
-        _ => None,
-    });
     let wants_auto_increment = def
         .options
         .iter()
@@ -3234,34 +3230,6 @@ fn modify_column_action(
             .iter()
             .any(|dependency| dependency.eq_ignore_ascii_case(old_name))
     });
-    // Go `checkModifyGeneratedColumn` (`pkg/ddl/modify_column.go`): a MODIFY
-    // may not turn a generated column into an ordinary one, nor an ordinary
-    // column into a generated one, nor move a column between VIRTUAL and
-    // STORED. All three are ONE error, and Go words it for the STORED case
-    // whichever of them happened -- captured, on a VIRTUAL column both
-    // directions answer `Error|3106|'Changing the STORED status' is not
-    // supported for generated columns.` The wording is Go's; it is ported as
-    // measured rather than repaired.
-    let old_generated_stored = table.columns[offset]
-        .generated
-        .as_ref()
-        .map(|generated| generated.stored);
-    if new_generated_stored != old_generated_stored {
-        return Err(DriverError::UnsupportedOnGeneratedColumn(
-            "Changing the STORED status".to_owned(),
-        ));
-    }
-    // Keeping the generated-ness is what Go ACCEPTS -- including replacing
-    // the expression: captured, `alter table g modify column d int as (a+5)
-    // virtual` succeeds and the rows read back recomputed. Rebuilding the
-    // expression against the modified table is not modelled yet, so the
-    // statement is refused rather than applied with the OLD expression
-    // silently kept under a definition that asked for a new one.
-    if new_generated_stored.is_some() {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE MODIFY COLUMN of a generated column is not supported yet",
-        ));
-    }
     // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
     // `checkModifyColumnWithGeneratedColumnsConstraint` ONCE and then raises
     // it in two different shapes -- the rename arm just below, and the 3106
@@ -3588,12 +3556,6 @@ fn modify_column_action(
     // expression no longer matched the column. Refusing is what Go does; it is
     // not a stand-in for a rewrite Go performs, because Go does not rewrite
     // for MODIFY any more than it does for RENAME.
-    if let Some(dependent) = dependent {
-        return Err(DriverError::UnsupportedOnGeneratedColumn(
-            super::column_dependent_error_text(dependent, old_name),
-        ));
-    }
-
     let preserve_origin_default = table.columns[offset].field_type == field_type;
     let previous_origin_default = table.columns[offset].origin_default.clone();
     let new_position = match position {
@@ -3613,6 +3575,14 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
+    let generated = super::generated_modify::build(
+        table, offset, def, &field_type, new_position, ctx,
+    )?;
+    if let Some(dependent) = dependent {
+        return Err(DriverError::UnsupportedOnGeneratedColumn(
+            super::column_dependent_error_text(dependent, old_name),
+        ));
+    }
     let prepared_default = match default_value {
         Some(default @ crate::column_default::ColumnDefault::Computed(_))
             if preserve_origin_default =>
@@ -3671,9 +3641,7 @@ fn modify_column_action(
             Some(comment) => comment,
             None => table.columns[offset].comment.clone(),
         },
-        // A generated column option is refused above, so a MODIFY never
-        // produces one.
-        generated: None,
+        generated,
         default_value: prepared_default.default,
         origin_default: prepared_default.origin,
     };

@@ -564,6 +564,7 @@ pub struct StmtContextData {
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
     /// with no session behind it (a test, a DDL-time fold) is permissive.
     only_full_group_by: bool,
+    auto_increment_in_generated: bool,
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`
     /// (`@@tidb_enable_new_only_full_group_by_check`, default OFF): the
     /// functional-dependency `ONLY_FULL_GROUP_BY` checker, gating the checks
@@ -941,6 +942,7 @@ impl StmtContext {
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
+            auto_increment_in_generated: false,
             new_only_full_group_by_check: false,
             // Go `DefTiDBRemoveOrderbyInSubquery = true`.
             remove_orderby_in_subquery: true,
@@ -2364,6 +2366,18 @@ impl StmtContext {
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
+    }
+
+    /// Sets Go EnableAutoIncrementInGenerated for DDL validation.
+    #[must_use]
+    pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
+        self.auto_increment_in_generated = enabled;
+        self
+    }
+
+    /// Whether generated expressions may reference AUTO_INCREMENT columns.
+    pub fn auto_increment_in_generated(&self) -> bool {
+        self.auto_increment_in_generated
     }
 
     /// Sets `@@tidb_enable_new_only_full_group_by_check` for this statement.

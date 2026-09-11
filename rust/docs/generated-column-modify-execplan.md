@@ -14,9 +14,10 @@ ALTER TABLE MODIFY/CHANGE must apply the generated-column rules of pinned Go mas
 - [x] (2026-09-11) Replay with temporary strict empty-offset assertion: no chunk panic or empty-offset access; same catalog totals. Remove all diagnostic instrumentation.
 - [x] (2026-09-11) Capture Go master successful expression replacement and old/new row values in /tmp/gen-modify-go.out.
 - [x] (2026-09-11) Add and run red session regression modifying_virtual_generated_expression_recomputes_existing_rows; /tmp/generated-modify-red.log returns unsupported.
-- [ ] Implement Go validation and generated metadata replacement with correct existing-row behavior.
-- [ ] Cover virtual/stored transitions, dependency order and renaming, indexed columns, invalid expressions, and statement atomicity.
-- [ ] Run Ready gates and original catalog replay, inspect exact remaining divergences, then independently commit/push the completed category.
+- [x] (2026-09-11) Implement candidate-schema validation and metadata replacement in ddl/generated_modify.rs; carry the auto-increment session flag; virtual changes avoid reading old values.
+- [x] (2026-09-11) Twenty-five generated-column tests pass, covering virtual/stored transitions, dependency order, rename/reorder, indexed restrictions, invalid expressions, auto-increment switch and failed-DDL row preservation.
+- [x] (2026-09-11) Final priority/partition metadata changes: 25 generated tests, 310 session integrations and make lint pass. Catalog comparison stays 355, matches rise 330 to 332, divergences fall 25 to 23. Untouched baseline and modified tree both have the same four expression-index failures.
+- [ ] Independently commit/push the completed category with exact remaining failure evidence.
 
 ## Surprises & Discoveries
 
@@ -77,7 +78,7 @@ Require Go-identical row values, metadata and errors for positive and negative m
 ## Idempotence and Recovery
 
 
-Use fresh Session objects in tests and dedicated oracle data/ports. Prior Go oracle at 127.0.0.1:4409 has been shut down cleanly. All temporary instrumentation has been removed. Current WIP is one red test in tests_generated_columns.rs; no production change yet. Leave that red regression local until this category is implemented and verified.
+Use fresh Session objects in tests and dedicated oracle data/ports. Go oracle at 127.0.0.1:4409 has been shut down cleanly. All temporary instrumentation has been removed. Implementation includes ddl/generated_modify.rs, ddl/alter_table.rs, KvTable::modify_column_in, StmtContext, session context and tests_generated_columns.rs. The untouched baseline worktree /tmp/tidb-generated-modify-baseline at 4591dc5485 has finished its expression-index comparison; no background baseline process remains.
 
 ## Artifacts and Notes
 
@@ -92,4 +93,4 @@ Reuse GeneratedColumn and existing expression build/validation APIs. Any new hel
 ## Outcomes & Retrospective
 
 
-Diagnosis and red test are complete; generated-column modification is not yet fixed. Current catalog panic is not reproduced under stricter checks, but historical root cause remains unproven. The next action is implementing Go's validation and replacement semantics, not re-running readiness or changing catalog fingerprints.
+Implementation passes 25 generated-column tests and removes exactly two original catalog differences without changing comparison scope or expectations. Go /tmp/generated-modify-oracle-cases.out confirms indexed/stored/self-reference/type-reorg errors 3106/3107/8200, auto-increment default error 3109 and enabled success, and stored-to-ordinary preservation of 12 followed by ordinary update to 99. Final logs: /tmp/generated-modify-verified.log 25 pass, /tmp/generated-modify-final-integration.log 310 pass, /tmp/generated-modify-final-lint.log exit 0. /tmp/catalog-generated-modify-after.log has 23 divergences (still red); final repeat uses /tmp/catalog-generated-modify-final.log. Both /tmp/generated-modify-index-tests.log and untouched /tmp/generated-modify-index-baseline.log have identical 32 pass/4 fail: two same-column action checks and two chunk is_null bitmap panics. These remain independent failures for subsequent fixes; this category does not complete the overall quality goal.

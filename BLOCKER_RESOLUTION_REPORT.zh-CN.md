@@ -3244,6 +3244,22 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 定位到 StreamAgg DECIMAL SUM 快速路径使用原始列 offset；child chunk prune 后列数不足时会在 `chunk.rs:212` 越界。现已在两个快速路径入口验证 `index < chunk.num_cols()`，布局不匹配时回退通用表达式求值，避免 panic 并保持 Go 语义。提交：`rust: guard decimal stream aggregation column access`。`tidb-executor` 聚合相关测试编译完成；已有 prepared plan receipt 测试失败与本改动无关，需继续按 Go planner source of truth 处理。
 
+## 2026-09-11 生成列 MODIFY/CHANGE 实现与原 catalog 差异减少
+
+按 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `checkModifyGeneratedColumn`、`checkIndexOrStored`、`noReorgDataStrict` 实现生成列修改。原来的统一 Unsupported 拒绝已替换为候选 schema 验证：虚拟/存储状态、依赖顺序、重命名/移动、表达式合法性、索引限制、存储表达式限制及类型重组要求。`tidb_enable_auto_increment_in_generated` 经 session snapshot 传入 statement context；默认引用 auto-increment 返回 3109，开启后允许。
+
+VIRTUAL 到 VIRTUAL 的合法修改只更新列元数据和位置，后续读取绑定新表达式，不扫描并转换旧表达式值。STORED 到普通列的合法修改保留物理值，随后可作为普通列写入。新逻辑置于 sibling module `ddl/generated_modify.rs`，没有继续扩大 alter_table 的验证实现。
+
+Go 实测 `/tmp/generated-modify-oracle-cases.out` 验证：索引表达式修改/索引生成列类型修改 3106；存储生成表达式修改 3106；自引用 3107；需重组的数据类型修改 8200；auto-increment 引用默认 3109、开启后成功；STORED→普通列保留 12，更新后为 99。最初红测 `/tmp/generated-modify-red.log` 在 ALTER 返回 Unsupported；新回归验证原有行 Lovelace Ada、新插入行 Hopper Grace。
+
+初轮 Ready 检查：25 项 `tests_generated_columns` 通过，310 项 `--test all` 通过，make lint 退出 0。原始 catalog 回放 `/tmp/catalog-generated-modify-after.log` 保持 355 项比较，匹配从 330 增加为 332，差异从 25 降到 23；消失的两项为 full_name 表达式替换和 STORED c→普通 cnew。未修改 catalog 计数、fingerprint 或 skip；其旧期望 27 仍失败，全 catalog 尚未通过。
+
+表达式索引回归有 32 pass/4 fail。用独立原提交 `4591dc5485` 工作区 `/tmp/tidb-generated-modify-baseline` 重跑后同样 32 pass/4 fail，名称与错误完全一致：`a_column_an_expression_index_reads_cannot_be_renamed`、`grouped_add_columns_applies_its_index_after_the_new_column` 的 operate same column 8200，以及 `admin_check_table_passes_across_every_write`、`an_inline_expression_index_is_maintained_too` 在 `column.rs:262` 的空 bitmap panic。日志 `/tmp/generated-modify-index-tests.log` 与 `/tmp/generated-modify-index-baseline.log`。这些是已取得稳定复现的后续独立失败，不是本修复引入，也不能因本修复通过而忽略。
+
+最后错误优先级和 partition 元数据复核后的日志路径为 `/tmp/generated-modify-verified.log`、`/tmp/generated-modify-final-integration.log`、`/tmp/generated-modify-final-lint.log`。执行命令仍为 `cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_generated_columns`、`cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all`、`make lint`，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`。Go 对照节点已关闭。整体 all-failures 目标仍未完成，不构成完整 Go DDL package 转写完成声明。
+
+最终复验已完成：`/tmp/generated-modify-verified.log` 为 25 pass，`/tmp/generated-modify-final-integration.log` 为 310 pass，`/tmp/generated-modify-final-lint.log` 退出 0；最终原始 catalog `/tmp/catalog-generated-modify-final.log` 仍为 355 compared / 332 matched / 23 diverged。该 gate 的剩余差异和历史计数断言仍使其退出 101，不记为全套通过。
+
 ## 2026-09-11 catalog 原始回放与生成列 ALTER 红测
 
 在 `159d355b5e` 重跑原始 `catalog_reads_match_recorded_tidb_output`，命令前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 RUST_BACKTRACE=1 CATALOG_SHOW_DIVERGENCES=1`，执行 `cargo test --manifest-path rust/Cargo.toml -p difftest-result-tests --test catalog_diff catalog_reads_match_recorded_tidb_output -- --nocapture`。日志 `/tmp/catalog-current-sept11.log`：11 topics，355/406 catalog reads compared，330 matched，25 diverged，3480 statements run for effect；退出 101，因为历史断言仍期望 27 项差异。未修改计数、fingerprint 或 skip 规则。
