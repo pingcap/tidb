@@ -974,10 +974,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         if order_by.len() != 1 {
-            return Err(PlanError::internal(format!(
-                "Window '{}' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
-                window_name(&spec.name)
-            )));
+            return Err(PlanError::window_frame(3587, window_name(&spec.name)));
         }
         let order_type = order_by[0]
             .col
@@ -986,22 +983,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let is_numeric = order_type.is_type_numeric();
         let is_temporal = order_type.is_type_temporal();
         if !is_numeric && !is_temporal {
-            return Err(PlanError::internal(format!(
-                "Window '{}' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
-                window_name(&spec.name)
-            )));
+            return Err(PlanError::window_frame(3587, window_name(&spec.name)));
         }
         if unit.is_some() && !is_temporal {
-            return Err(PlanError::internal(format!(
-                "Window '{}' with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed",
-                window_name(&spec.name)
-            )));
+            return Err(PlanError::window_frame(3589, window_name(&spec.name)));
         }
         if unit.is_none() && !is_numeric {
-            return Err(PlanError::internal(format!(
-                "Window '{}' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed",
-                window_name(&spec.name)
-            )));
+            return Err(PlanError::window_frame(3588, window_name(&spec.name)));
         }
         Ok(())
     }
@@ -1179,10 +1167,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `checkOriginWindowFrameBound` has established `len(orderByItems) ==
         // 1` for an explicit RANGE bound before this runs.
         let Some(item) = order_by.first() else {
-            return Err(PlanError::internal(format!(
-                "Window '{}' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
-                window_name(&spec.name)
-            )));
+            return Err(PlanError::window_frame(3587, window_name(&spec.name)));
         };
         let col = item.col.clone();
         let offset = bound_offset(bound).expect("a non-unbounded, non-current-row bound");

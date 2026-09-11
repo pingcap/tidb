@@ -532,6 +532,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                     3584 => DriverError::WindowFrameStartIllegal,
                     3585 => DriverError::WindowFrameEndIllegal,
                     3586 => DriverError::WindowFrameIllegal,
+                    3587 => DriverError::WindowRangeFrameOrderType,
+                    3588 => DriverError::WindowRangeFrameTemporalType,
+                    3589 => DriverError::WindowRangeFrameNumericType,
                     _ => unreachable!("unsupported frame error code"),
                 }
             } else {

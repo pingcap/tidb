@@ -409,10 +409,22 @@ impl PlanError {
             kind: PlanErrorKind::WindowInvalidWindowFuncUse(name),
         }
     }
-    /// Construct one of Go's frame shape or offset errors (3584-3586).
+    /// Construct one of Go's frame shape, offset, or type errors (3584-3589).
     #[must_use]
     pub fn window_frame(code: u16, window: impl Into<String>) -> Self {
         let window = window.into();
+        let range_reason = match code {
+            3587 => Some("with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type"),
+            3588 => Some("with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed."),
+            3589 => Some("with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed."),
+            _ => None,
+        };
+        if let Some(reason) = range_reason {
+            return Self {
+                message: format!("Window '{window}' {reason}"),
+                kind: PlanErrorKind::WindowFrame { code, window },
+            };
+        }
         let reason = match code {
             3584 => "frame start cannot be UNBOUNDED FOLLOWING.",
             3585 => "frame end cannot be UNBOUNDED PRECEDING.",

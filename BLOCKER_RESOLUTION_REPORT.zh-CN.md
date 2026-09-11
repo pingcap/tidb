@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 RANGE 类型错误与综合窗口回归闭环
+
+在 `5ff5b4a6e3` 独立运行 `window_errors_and_refusals`，`/tmp/range-types-red.log` 退出 101，首个失败为 RANGE 缺少 ORDER BY 的 3587。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go:7271-7282` 先检查 ORDER BY 数量与类型，再检查 INTERVAL 与 temporal/numeric 的匹配；消息见 `pkg/errno/errname.go:878-880`。
+
+Rust 判断顺序已相同，但 Internal 丢失错误码。现复用 WindowFrame 分类保留 3587/3588/3589，命名窗口保留原名称与完整 Go 消息；匿名窗口映射已有 DriverError。新增命名窗口三种类型错误断言，原综合测试不放宽。
+
+Ready 验证（Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_errors_and_refusals
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+cargo test --manifest-path rust/Cargo.toml -p tidb-planner --lib window
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+```
+
+原综合回归 `/tmp/range-types-green.log` 1 passed；完整窗口 suite `/tmp/range-types-suite.log` 39 passed / 8 failed，包含新增命名类型回归通过。`/tmp/range-types-planner.log` 66 passed，`/tmp/range-types-integration.log` 310 passed，`/tmp/range-types-lint.log` 退出 0，diff check 通过。剩余 8 项窗口失败与其他原始质量门禁继续保留，未宣称全量完成。
+
 ## 2026-09-11 不支持窗口特性返回 Go 1235
 
 在 `aea226d8ff` 重跑 `window_errors_and_refusals`，`/tmp/window-unsupported-red.log` 退出 101，首个失败为 GROUP_CONCAT 窗口调用。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/planner/core/logical_plan_builder.go::checkWindowFuncArgs`、`checkOriginWindowFuncs` 明确对 GROUP_CONCAT、DISTINCT、IGNORE NULLS、FROM LAST 返回 ErrNotSupportedYet (1235)。Rust 原先生成无依据的 noop Internal 消息，落入 1105。

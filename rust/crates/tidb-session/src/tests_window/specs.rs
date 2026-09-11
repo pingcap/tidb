@@ -410,6 +410,22 @@ fn unsupported_window_features_return_go_1235() {
 }
 
 #[test]
+fn named_range_type_errors_preserve_go_messages() {
+    let mut session = window_session();
+    for (spec, code, suffix) in [
+        ("RANGE 1 PRECEDING", 3587, "with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type"),
+        ("ORDER BY CAST('2020-01-01' AS DATE) RANGE 1 PRECEDING", 3588, "with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed."),
+        ("ORDER BY v RANGE INTERVAL 1 DAY PRECEDING", 3589, "with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed."),
+    ] {
+        let error = session.run(&format!(
+            "SELECT SUM(v) OVER typed_window FROM t WINDOW typed_window AS ({spec})"
+        )).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, code);
+        assert_eq!(error.message, format!("Window 'typed_window' {suffix}"));
+    }
+}
+
+#[test]
 fn window_errors_and_refusals() {
     let mut session = window_session();
 
