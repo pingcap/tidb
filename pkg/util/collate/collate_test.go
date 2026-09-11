@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -172,6 +173,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &latin1Collator{}, GetCollator("latin1_swedish_ci"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8_general_ci"))
 	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8mb4_unicode_ci"))
@@ -183,6 +185,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))
+	require.IsType(t, &latin1Collator{}, GetCollatorByID(8))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(45))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(33))
 	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(224))
@@ -195,6 +198,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &derivedBinCollator{}, GetCollator("binary"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("latin1_swedish_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_general_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_general_ci"))
 	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_unicode_ci"))
@@ -205,6 +209,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(63))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(46))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(83))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(8))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(45))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(33))
 	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(224))
@@ -218,6 +223,65 @@ func TestGetCollator(t *testing.T) {
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
+}
+
+func TestLatin1SwedishCIClassification(t *testing.T) {
+	require.True(t, IsCICollation("latin1_swedish_ci"))
+	require.Equal(t, "latin1_bin", ConvertAndGetBinCollation("latin1_swedish_ci"))
+}
+
+func TestLatin1SwedishCIOrdering(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	collator := GetCollator("latin1_swedish_ci")
+
+	require.Less(t, collator.Compare("1", "a"), 0)
+	require.Equal(t, 0, collator.Compare("a", "A"))
+	require.Less(t, collator.Compare("A", "y"), 0)
+	require.Equal(t, 0, collator.Compare("y", "ü"))
+	require.Less(t, collator.Compare("z", "å"), 0)
+	require.Less(t, collator.Compare("å", "ä"), 0)
+	require.Equal(t, 0, collator.Compare("ä", "æ"))
+	require.Less(t, collator.Compare("æ", "ö"), 0)
+	require.Less(t, collator.Compare("ö", "~"), 0)
+}
+
+func TestLatin1SwedishCIKey(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	type testCase struct {
+		str string
+		key []byte
+	}
+
+	collator := GetCollator("latin1_swedish_ci")
+
+	// start comparing with empty string which is smallest.
+	prevCase := testCase{"", nil}
+	// the test cases should be sorted in increasing latin1_swedish_ci order
+	cases := []testCase{
+		{">", []byte{0x3E}},
+		{"?", []byte{0x3F}},
+		{"Ā", []byte{0x3F}},
+		{"😀", []byte{0x3F}},
+		{"@", []byte{0x40}},
+		{"€‚ƒ„…†‡ˆ‰Š‹ŒŽ", []byte{0x80, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8E}},
+		{"‘’“”•–—˜™š›œžŸ", []byte{0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9E, 0x9F}},
+		{"÷", []byte{0xF7}},
+		{"ÿ", []byte{0xFF}},
+		{"ÿxx", []byte{0xFF, 0x58, 0x58}},
+	}
+
+	for _, c := range cases {
+		require.Equal(t, c.key, collator.Key(c.str), c.str)
+		keyCmpResult := bytes.Compare(prevCase.key, c.key)
+		strCmpResult := collator.Compare(prevCase.str, c.str)
+		require.LessOrEqual(t, keyCmpResult, 0, c.str)
+		require.Equal(t, keyCmpResult, strCmpResult, c.str)
+		prevCase = c
+	}
 }
 
 type collator interface {
