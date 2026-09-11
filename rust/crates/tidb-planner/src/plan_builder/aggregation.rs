@@ -988,7 +988,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )));
             }
             let mut descriptor = AggFuncDesc::new(self.ctx, &name, built_args, distinct)
-                .map_err(|error| PlanError::internal(format!("{error}")))?;
+                .map_err(PlanError::aggregation)?;
             if descriptor.name() != agg_names::FIRST_ROW {
                 all_aggs_first_row = false;
             }

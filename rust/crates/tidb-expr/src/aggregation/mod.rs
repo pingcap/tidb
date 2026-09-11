@@ -204,11 +204,6 @@
 //! - **`WrapWithCastAsString`'s `CoercibilityExplicit` branch reads the
 //!   expression's FIELD TYPE charset**, not a separate `collationInfo`; see
 //!   [`wrap_cast`].
-//! - **`ConstLevel == ConstStrict` stands in for Go's
-//!   `ConstLevel() != ConstNone`** in `typeInfer4ApproxPercentile`'s constant
-//!   check, and the percentage argument is read from a `Constant` node rather
-//!   than through `EvalInt`'s implicit conversion; see
-//!   [`BaseFuncDesc::type_infer`].
 //!
 //! # Skipped, with reasons
 //!

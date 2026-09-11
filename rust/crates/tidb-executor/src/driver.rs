@@ -472,6 +472,27 @@ pub(super) fn run_physical_set_opr_stmt(
 
 pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
     match error.kind() {
+        tidb_planner::plan_base::PlanErrorKind::Aggregation(aggregate) => {
+            use tidb_expr::aggregation::AggDescError;
+            match aggregate {
+                AggDescError::ApproxPercentileOutOfRange(value) => {
+                    DriverError::PercentageOutOfRange(*value)
+                }
+                AggDescError::ApproxPercentileArgCount => DriverError::ApproxPercentileArgument(
+                    "APPROX_PERCENTILE should take 2 arguments",
+                ),
+                AggDescError::ApproxPercentileNotConstant => DriverError::ApproxPercentileArgument(
+                    "APPROX_PERCENTILE should take a constant expression as percentage argument",
+                ),
+                AggDescError::ApproxPercentileNullPercentage => {
+                    DriverError::ApproxPercentileArgument(
+                        "APPROX_PERCENTILE: Percentage value cannot be NULL",
+                    )
+                }
+                AggDescError::Expr(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
+                other => DriverError::unsupported(other.to_string()),
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::Eval(tidb_expr::EvalError::InvalidGroupFuncUse) => {
             DriverError::InvalidGroupFuncUse
         }

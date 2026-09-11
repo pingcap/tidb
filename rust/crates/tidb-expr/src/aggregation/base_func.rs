@@ -195,7 +195,7 @@ impl BaseFuncDesc {
             names::MAX_COUNT | names::MIN_COUNT => self.type_infer_4_count(),
             // Go `typeInfer4ApproxCountDistinct` delegates verbatim.
             names::APPROX_COUNT_DISTINCT => self.type_infer_4_count(),
-            names::APPROX_PERCENTILE => self.type_infer_4_approx_percentile()?,
+            names::APPROX_PERCENTILE => self.type_infer_4_approx_percentile(ctx)?,
             names::SUM => self.type_infer_4_sum()?,
             names::SUM_INT => self.type_infer_4_sum_int()?,
             names::AVG => self.type_infer_4_avg(ctx)?,
@@ -244,25 +244,31 @@ impl BaseFuncDesc {
 
     /// Go `typeInfer4ApproxPercentile` (`base_func.go:174`).
     ///
-    /// Two narrowings, both named in [`super`]: the constant test is
-    /// `ConstLevel == STRICT` (Go: `!= ConstNone`), and the percentage is
-    /// read off a `Constant` node rather than through `EvalInt`'s implicit
-    /// conversion, so a percentage spelled as a string literal is rejected
-    /// where Go would convert it.
-    fn type_infer_4_approx_percentile(&mut self) -> Result<(), AggDescError> {
+    /// Go's Constant.EvalInt converts strings but reads the stored integer
+    /// field for numeric literals, including the bit representation of REAL.
+    fn type_infer_4_approx_percentile(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         if self.args.len() != 2 {
             return Err(AggDescError::ApproxPercentileArgCount);
         }
-        if self.args[1].const_level() != ConstLevel::STRICT {
+        if self.args[1].const_level() == ConstLevel::NONE {
             return Err(AggDescError::ApproxPercentileNotConstant);
         }
-        let Expression::Constant(percent_const) = &self.args[1] else {
-            return Err(AggDescError::ApproxPercentileNotConstant);
-        };
-        let (percent, is_null) = match &percent_const.value {
+        let percentage = crate::eval_expression_once(&self.args[1], ctx)
+            .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+        let (percent, is_null) = match &percentage {
             Datum::Null => (0, true),
             Datum::Int(v) => (*v, false),
-            Datum::UInt(v) => (i64::try_from(*v).unwrap_or(i64::MAX), false),
+            Datum::UInt(v) => (*v as i64, false),
+            Datum::Real(v) | Datum::Float32(v) => (v.to_bits() as i64, false),
+            Datum::Decimal(_) => (0, false),
+            Datum::String(_) | Datum::Bytes(_) => {
+                crate::cast::report_int_truncation(&percentage, ctx)
+                    .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+                let converted = percentage
+                    .to_i64_in(&ctx.time_zone())
+                    .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
+                (converted.value, false)
+            }
             _ => return Err(AggDescError::ApproxPercentileInvalidArgument),
         };
         if percent <= 0 || percent > 100 || is_null {

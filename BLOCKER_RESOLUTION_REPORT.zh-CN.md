@@ -3769,6 +3769,27 @@ RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432 \
 
 日志以 `the access-path differential passed` 结束，节点日志第 8 行 ready，schema_version=68、stats_loaded=4。此次验证直接覆盖修改后的代码，readiness 未复现；JSON 综合测试后续的百分位错误类型断言仍须独立处理。
 
+## 2026-09-11 APPROX_PERCENTILE 参数校验
+
+基线 `d1d5d68cd5`。原 `json_and_approximate_aggregates` 在百分位 0 的内部错误类型断言失败。规划器把 AggDescError 变成普通字符串，丢失 DriverError 的百分位类型；同时类型推断只接受严格整数常量，实际错误拒绝 Go 接受的字符串 '50'，并未复制 unsigned/decimal/real 的 EvalInt 语义。
+
+Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/base_func.go:typeInfer4ApproxPercentile` 检查 ConstLevel != ConstNone 后调用 EvalInt；`pkg/expression/constant.go:358` 对字符串做转换，其余数值读取整数存储字段。实机脚本 `/tmp/percentile-oracle.sql`，输出 `/tmp/percentile-go.out`：'50'、25+25 均在 1..4 数据集返回 2；50.5 报百分位 0，50e0 报 4632233691727265792，u64::MAX 报 -1，均为 1105/HY000。NULL、参数数量和非恒定表达式错误文本也已记录。
+
+修复使用当前 Columns context 求值，恢复字符串转换、unsigned 重解释和 decimal/real 的存储读取规则；PlanError 保留 AggDescError，executor 按枚举恢复错误，不匹配错误字符串。保留原测试所有断言，另加逐字 MySQL code/state/message 校验和参数上下文重复校验。新增表达式回归修复前失败（`/tmp/percentile-red.log`），修复后通过。ExecPlan 为 `rust/docs/percentile-validation-execplan.md`。
+
+Ready 命令（目录 `/tmp/tidb-hparser-current`，cargo 统一环境 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`）：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib approx_percentile
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib approx_percentile_constant_arguments_preserve_mysql_diagnostics
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib json_and_approximate_aggregates
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+make lint
+git diff --check
+```
+
+表达式 4 项（`/tmp/percentile-expr-final.log`）、MySQL 诊断回归（`/tmp/percentile-wire-green.log`）、session 集成 310 项（`/tmp/percentile-integration.log`）均通过，lint 退出 0（`/tmp/percentile-lint.log`）。综合测试完成所有百分位和窗口结果断言后，在最后的窗口 DISTINCT 错误检查失败（`/tmp/percentile-green.log`）。初步看到测试要求 Cow::Borrowed，而规划器使用 Cow::Owned；但 Go 实机 `/tmp/window-distinct-go.out` 进一步证明原 SQL 在 Go 直接报语法错误 1064，而 Rust 接受解析后报 1235。需要独立修复解析器及错误测试契约，不能只改 Cow 断言。综合测试和全量门禁均未完成。
+
 ## 2026-09-11 新 ONLY_FULL_GROUP_BY 检查器接入与 readiness 复核
 
 readiness 不再是当前 blocker。本轮直接核验 `/tmp/readiness-sept11-confirm-evidence/rust-node.log:8` 的 ready 事件，并重新运行四入口 readiness 回归，全部通过；修复 `1f89c30b65`、`9839a744e0` 已在远端。此前真实 access-path 回放的结论仍为 1 failure / 0 divergent choices，剩余 pseudo estRows 1.25 对 2.50 未在本轮解决。

@@ -528,6 +528,51 @@ fn json_aggregates_wrap_binary_charset_values_as_opaque() {
     ));
 }
 
+#[test]
+fn approx_percentile_constant_arguments_preserve_mysql_diagnostics() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE pct (i INT)").unwrap();
+    session
+        .run("INSERT INTO pct VALUES (1), (2), (3), (4)")
+        .unwrap();
+    for percentage in ["'50'", "25+25"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT APPROX_PERCENTILE(i, {percentage}) FROM pct"
+            ))),
+            [["2"]]
+        );
+    }
+    for (percentage, message) in [
+        ("0", "Percentage value 0 is out of range [1, 100]"),
+        ("101", "Percentage value 101 is out of range [1, 100]"),
+        ("50.5", "Percentage value 0 is out of range [1, 100]"),
+        (
+            "50e0",
+            "Percentage value 4632233691727265792 is out of range [1, 100]",
+        ),
+        (
+            "18446744073709551615",
+            "Percentage value -1 is out of range [1, 100]",
+        ),
+        ("NULL", "APPROX_PERCENTILE: Percentage value cannot be NULL"),
+        (
+            "i",
+            "APPROX_PERCENTILE should take a constant expression as percentage argument",
+        ),
+    ] {
+        let error = session
+            .run(&format!(
+                "SELECT APPROX_PERCENTILE(i, {percentage}) FROM pct"
+            ))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1105, "{percentage}");
+        assert_eq!(error.state, *b"HY000", "{percentage}");
+        assert_eq!(error.message, message, "{percentage}");
+    }
+}
+
 /// `APPROX_COUNT_DISTINCT` past the 65536-distinct-value threshold, where
 /// Go's `BJKST` sketch (`func_count_distinct.go`) starts discarding samples
 /// and extrapolating rather than counting exactly.

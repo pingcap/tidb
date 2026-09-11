@@ -808,6 +808,61 @@ fn approx_percentile_types_follow_the_value_argument() {
 }
 
 #[test]
+fn approx_percentile_reads_constants_like_go_eval_int() {
+    let make = |value, code| {
+        AggFuncDesc::new(
+            &NoColumns,
+            names::APPROX_PERCENTILE,
+            vec![
+                col(0, FieldTypeCode::Long),
+                Expression::Constant(Constant::new(value, FieldType::new(code))),
+            ],
+            false,
+        )
+    };
+    assert!(make(Datum::new_string("50"), FieldTypeCode::VarString).is_ok());
+    assert_eq!(
+        make(Datum::UInt(u64::MAX), FieldTypeCode::LongLong).unwrap_err(),
+        AggDescError::ApproxPercentileOutOfRange(-1)
+    );
+    assert_eq!(
+        make(Datum::Real(50.0), FieldTypeCode::Double).unwrap_err(),
+        AggDescError::ApproxPercentileOutOfRange(50.0_f64.to_bits() as i64)
+    );
+}
+
+#[test]
+fn approx_percentile_rechecks_contextual_constants() {
+    struct Percentage(i64);
+    impl crate::Columns for Percentage {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn param_value(&self, order: usize) -> Result<Datum, crate::EvalError> {
+            assert_eq!(order, 0);
+            Ok(Datum::Int(self.0))
+        }
+    }
+    let mut percentage = Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong));
+    percentage.param_marker = Some(crate::constant::ParamMarker { order: 0 });
+    let args = vec![
+        col(0, FieldTypeCode::Long),
+        Expression::Constant(percentage),
+    ];
+    assert!(AggFuncDesc::new(
+        &Percentage(50),
+        names::APPROX_PERCENTILE,
+        args.clone(),
+        false
+    )
+    .is_ok());
+    assert_eq!(
+        AggFuncDesc::new(&Percentage(101), names::APPROX_PERCENTILE, args, false).unwrap_err(),
+        AggDescError::ApproxPercentileOutOfRange(101)
+    );
+}
+
+#[test]
 fn an_unknown_name_is_refused() {
     assert_eq!(
         AggFuncDesc::new(
