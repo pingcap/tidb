@@ -505,6 +505,61 @@ Profile-driven findings (perf, dwarf call graphs, conn threads):
     neutral (write_only, read_write and tpmC all within run-to-run noise;
     the write path is TiKV fsync-bound at saturation), Rust node CPU per
     write_only transaction 1.741/1.673 ms -> 1.664/1.660 ms.
+11. Cached point plans on composite keys (TPC-C's district/stock/customer/
+    order_line clustered PKs, `FOR UPDATE` reads and point UPDATEs) rebuilt
+    their range on every EXECUTE through the full range detacher
+    (`rebuild_point_ranges` -> `detach_cond_and_build_range_for_index_in`
+    -> `detach_cnf`): 8.2% of connection CPU in TPC-C, mostly
+    `ScalarFunction`/`Vec<Expression>` clones. Go reaches these statements
+    through `TryFastPlan`, whose cached `PointGetPlan` carries
+    `IndexConstants` and rebuilds in `buildRangesForPointGet` by converting
+    one constant per key column (`convertConstant2Datum`); only optimizer-
+    built point gets with `AccessConditions` run the detacher. The plan
+    cache now does the same: when every key column is pinned by exactly one
+    `col = const`, each constant is converted with the ranger's own point
+    conversion (`convertPoint`) and must compare equal afterwards (Go's
+    round-trip check); the single closed range is built directly. NULLs,
+    prefix columns, incompatible collations, lossy conversions and any
+    other shape fall back to the detacher unchanged. The batch shape
+    (`(w, i) IN ((?, ?), ...)`, which the planner expands into one DNF of
+    per-tuple conjunctions; Go `tryWhereIn2BatchPointGet` with
+    `IndexValueParams`) rebuilds one point per DNF item and unions them
+    with the detacher's own `union_ranges` (same consecutive-key merging),
+    so the ranges are the detacher's. An instrumented run showed these two
+    shapes were 99% of the point rebuilds TPC-C performs. TPC-C profile:
+    detacher share of connection CPU 6.7% -> 1.2%, whole cached-range
+    rebuild 8.2% -> 4.2%.
+12. An idle Rust node burned ~40% of a core (Go node: 0%) while another
+    node held an owner key: `tidb_owner::wait_until_first_with_stop` polled
+    the campaign prefix with an etcd range RPC every 20 ms per campaigner
+    (etcd-kv worker 50% of idle samples, owner-campaign 8%). Go campaigns
+    through `concurrency.Election.Campaign` -> `waitDeletes`, which blocks
+    on a watch of the key created just before its own. The Rust campaigner
+    now watches its predecessor key from the range's header revision and
+    re-reads the prefix only when that key is deleted (1 s wake-ups for
+    cancellation); the 20 ms poll remains only as the fallback when a watch
+    cannot be opened. On a 4-core box this idle tax was ~10% of the CPU
+    every benchmark competed with. The other idle poller was the etcd
+    watch loop's `wait_until_cancelled`, which slept 10 ms between checks
+    of a cancellation flag in each of the six watch threads (600 timer
+    wake-ups/s; Go's loop wakes only on `ctx.Done()`); it now backs off
+    from 10 ms to 1 s while shutdown/drop still wake the stream at once.
+    Idle node CPU: ~49% -> ~25% of a core (remaining: stats reloaders and
+    the 100 ms server-memory-limit tick, which Go shares).
+
+Round-2 A/B (items 11-12 on top of the pushed round-1 binary; 16 threads,
+alternating binaries, reloaded 10-warehouse TPC-C):
+| workload             | old tps r1/r2  | new tps r1/r2    | delta   | old avg ms | new avg ms |
+|----------------------|----------------|------------------|---------|------------|------------|
+| oltp_point_select    | 10377 / 10304  | 10315 / 10964    | +2.9%   | 1.54/1.55  | 1.55/1.46  |
+| oltp_read_only       | 442 / 428      | 448 / 468        | +5.3%   | 36.2/37.4  | 35.7/34.1  |
+| oltp_write_only      | 775 / 742      | 824 / 844        | +10.0%  | 20.6/21.5  | 19.4/18.9  |
+| oltp_read_write      | 223 / 222      | 238 / 218        | +2.5%   | 71.6/71.9  | 67.1/73.2  |
+| tpcc10 (tpmC)        | 6109 / 6693    | 6865 / 6511      | +4.5%   | 75.8/69.6  | 65.4/69.6  |
+Go node on the same cluster, same day, 16 threads (before round 2):
+point_select 7111 tps, read_only 341 tps, write_only 671 tps, tpcc10
+6627 tpmC; the Rust node was already ahead on the sysbench mixes and
+3% behind on TPC-C, which round 2 closes.
 
 Rust node CPU per transaction (server process, `/proc` utime+stime, 4
 threads, 15s): point_select 0.248 -> 0.181 ms (-27%), read_only 6.33 -> 4.78

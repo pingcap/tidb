@@ -2053,9 +2053,17 @@ enum WatchEnd {
     Shutdown,
 }
 
+/// Go's watch loop wakes only on `ctx.Done()`. `is_cancelled` is a plain
+/// flag with no wake handle, so it is polled; the interval backs off from
+/// 10 ms to one second so that a long-lived idle watch costs one wake-up per
+/// second instead of a hundred (six watch threads kept an idle node's timer
+/// driver busy). Shutdown and watcher drop still wake the stream at once
+/// through the `shutdown` channel selected alongside this future.
 async fn wait_until_cancelled(is_cancelled: &(impl Fn() -> bool + Send + 'static)) {
+    let mut interval = Duration::from_millis(10);
     while !is_cancelled() {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(interval).await;
+        interval = (interval * 2).min(Duration::from_secs(1));
     }
 }
 

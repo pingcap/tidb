@@ -28,6 +28,9 @@ use tidb_pd_client::{EtcdClient, EtcdKeyValue, EtcdWatcher};
 const KEY_OP_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const KEY_OP_RETRY_INTERVAL: Duration = Duration::from_millis(30);
 const CAMPAIGN_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// How often a campaigner blocked on its predecessor's key wakes to check
+/// for cancellation; the key's deletion wakes it at once.
+const CAMPAIGN_WATCH_TICK: Duration = Duration::from_secs(1);
 const NEW_SESSION_RETRY_COUNT: usize = 3;
 
 /// Go `WaitTimeOnForceOwner`.
@@ -869,6 +872,12 @@ fn wait_until_first_with_timeout(
     )
 }
 
+/// Go `concurrency.Election.Campaign` -> `waitDeletes`: a campaigner that is
+/// not first blocks on a watch of the key created just before its own and
+/// re-reads the prefix only when that key is deleted. Polling the prefix
+/// instead (this port's previous 20 ms loop) cost one etcd range RPC every
+/// 20 ms per campaigner for as long as another node held the owner key, which
+/// kept an idle node at ~40% of a core.
 fn wait_until_first_with_stop(
     context: &Context,
     store: &dyn OwnerStore,
@@ -877,27 +886,53 @@ fn wait_until_first_with_stop(
     stop: &AtomicBool,
     deadline: Option<Instant>,
 ) -> Result<(), String> {
+    let cancelled = || context.is_done() || stop.load(Ordering::Acquire);
     loop {
-        if context.is_done() || stop.load(Ordering::Acquire) {
+        if cancelled() {
             return Err("context canceled".to_owned());
         }
-        let entries = store.get_prefix_metadata(owner_path.as_bytes())?;
+        let (entries, revision) = store.get_prefix_metadata_with_revision(owner_path.as_bytes())?;
         if entries
             .first()
             .is_some_and(|entry| entry.key == campaign_key.as_bytes())
         {
             return Ok(());
         }
-        if !entries
+        let Some(position) = entries
             .iter()
-            .any(|entry| entry.key == campaign_key.as_bytes())
-        {
+            .position(|entry| entry.key == campaign_key.as_bytes())
+        else {
             return Err("campaign key disappeared".to_owned());
-        }
+        };
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err("context deadline exceeded".to_owned());
         }
-        std::thread::sleep(CAMPAIGN_POLL_INTERVAL);
+        // Go `waitDelete(lastKey, resp.Header.Revision)`: the range's header
+        // revision makes the range-then-watch handoff race-free.
+        let predecessor = &entries[position - 1];
+        let Ok(mut watch) = store.watch(&predecessor.key, revision + 1) else {
+            std::thread::sleep(CAMPAIGN_POLL_INTERVAL);
+            continue;
+        };
+        loop {
+            if cancelled() {
+                return Err("context canceled".to_owned());
+            }
+            let tick = deadline.map_or(CAMPAIGN_WATCH_TICK, |deadline| {
+                CAMPAIGN_WATCH_TICK.min(deadline.saturating_duration_since(Instant::now()))
+            });
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Err("context deadline exceeded".to_owned());
+            }
+            match watch.wait_deleted(tick) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(_) => {
+                    std::thread::sleep(CAMPAIGN_POLL_INTERVAL);
+                    break;
+                }
+            }
+        }
     }
 }
 
