@@ -146,6 +146,30 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 	}, time.Minute, time.Second)
 }
 
+func setMemorySnapshotTables(t *testing.T, wrk *worker, destTables ...string) {
+	require.NotEmpty(t, destTables)
+
+	snapshotIdx := -1
+	for i := range wrk.workloadTables {
+		if wrk.workloadTables[i].tableType == snapshotTable {
+			snapshotIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, snapshotIdx, 0)
+
+	memorySnapshot := func(destTable string) repositoryTable {
+		return repositoryTable{
+			"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, destTable, "", "", "",
+		}
+	}
+
+	wrk.workloadTables[snapshotIdx] = memorySnapshot(destTables[0])
+	for _, destTable := range destTables[1:] {
+		wrk.workloadTables = append(wrk.workloadTables, memorySnapshot(destTable))
+	}
+}
+
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
@@ -391,7 +415,9 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	// END_TIME is updated after all snapshot table goroutines finish. BEGIN_TIME
+	// alone is not a safe completion signal for validating mirrored tables.
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' and end_time is not null order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
@@ -423,17 +449,12 @@ func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time
 
 func TestSnapshotTimingWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 
 	// MEMORY_USAGE will contain a single row.  Ideal for testing here.
-	wrk.workloadTables[1] = repositoryTable{
-		"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, "HIST_MEMORY_USAGE2", "", "", "",
-	}
-	wrk.workloadTables = append(wrk.workloadTables, repositoryTable{
-		"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, "HIST_MEMORY_USAGE3", "", "", "",
-	})
+	setMemorySnapshotTables(t, wrk, "HIST_MEMORY_USAGE2", "HIST_MEMORY_USAGE3")
 
 	wrk.changeSnapshotInterval(ctx, "2")
 	now := time.Now()
