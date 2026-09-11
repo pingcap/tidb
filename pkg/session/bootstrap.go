@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -3690,6 +3691,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
