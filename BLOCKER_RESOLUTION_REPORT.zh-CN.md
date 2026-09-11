@@ -1,5 +1,49 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 当前 bcb4acdc5f readiness 再验证
+
+原始启动 blocker 已解除，但本次完整 access-path **退出 1**，不能沿用旧运行的
+全绿结论。真实节点日志 `/tmp/access-readiness-resume-evidence/rust-node.log:8`
+输出 `cluster_session_node_ready`，地址 `127.0.0.1:47600`、schema_version 68、
+stats_loaded 4、stats_pseudo 67；随后完成 ANALYZE 前后对照及双读测量。
+集群由脚本 EXIT trap 清理。
+
+根因仍由源码和回归共同证实：Rust `sql_node.rs:1758` 先绑定 TCP，
+`cluster_session_node/boot.rs:440` 等 bind 初始化返回并注册信号处理后，
+才在第 454 行发布 ready。Go master
+`fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的
+`pkg/server/server.go:518` 初始化 listener，第 542 行设置 health。
+旧 runner 的一次 grep 会在这个正常窗口直接退出，触发清理并杀掉节点。
+旧调用点在端口探测成功、ready 日志为空的最小场景退出 1，输出
+`the Rust node never reported ready`（`/tmp/readiness-resume-old-red.log`）。
+
+已推送的独立修复 `1f89c30b65` 和 `9839a744e0` 保留真实 ready 事件与
+180 秒期限，同时检测进程退出。当前四个生产调用点回归全部通过延迟 ready、
+提前退出和存活但不 ready 三种情况。本轮没有新增生产代码改动。
+
+Ready 验证命令：
+
+```bash
+for name in access-path analyze convergence repeatable-read; do
+  bash rust/scripts/test-access-path-readiness.sh run-realtikv-${name}.sh || exit
+done
+bash -n rust/scripts/cluster-session-readiness.sh rust/scripts/test-access-path-readiness.sh rust/scripts/run-realtikv-{access-path,analyze,convergence,repeatable-read}.sh
+make lint > /tmp/readiness-resume-lint.log 2>&1
+RUSTFLAGS='' RUST_MIN_STACK=33554432 RUSTUP_TOOLCHAIN=1.97 \
+ACCESS_PATH_CLUSTER_VERSION=v9.0.0-beta.2.pre-nightly \
+ACCESS_PATH_TIDB_SERVER=/tmp/tidb-go-master-oracle/bin/tidb-server \
+ACCESS_PATH_KEEP_LOGS=/tmp/access-readiness-resume-evidence \
+bash rust/scripts/run-realtikv-access-path.sh > /tmp/access-readiness-resume.log 2>&1
+```
+
+回归、语法和 lint 均退出 0。完整 differential 为 **1 failure / 0 divergent
+choices**：ANALYZE 前 `SELECT * FROM u WHERE a = 1 AND b = 2` 两侧均选择
+`idx_a(a)`，但 Go estRows 2.00、Rust 10.00，原断言失败（日志第 1821 行）。
+另有 3 个原脚本定义的 estimator notes，未调整容差、断言或分类。
+该失败属于后续估算差异，根因尚未闭环，不能再称为 readiness 或外部证据阻塞。
+此前完整通过仅适用于此前记录的运行；全量质量目标、NOT IN 和其他原始 gates
+仍未完成，本次未重新运行它们。
+
 ## 2026-09-11 EXTRACT 独立签名调度修复
 
 新增实际 session 回归 `extract_uses_datetime_and_signed_duration_units`，旧代码
