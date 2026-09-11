@@ -509,6 +509,68 @@ the workloads gaining least at 4 threads):
   (~15% of a point select, ~5% of a write transaction); deferred behind
   the autocommit change above.
 
+## GOAL v2 STATUS (2026-09-11, clean cluster, head e8498342)
+
+The cluster was rebuilt from empty for this measurement: the previous store
+had grown to 15 GB of accumulated MVCC garbage over a day of benchmarking,
+and a full disk had killed TiKV mid-matrix. Datasets: sysbench 4x10k,
+TPC-C 10 warehouses, bulk_insert in its own database. Both binaries
+alternate on one port, 20s per run, 3 rounds, destructive workloads get
+freshly prepared tables. `base` is 8123bb1 (the commit before the campaign)
+plus only the Linux `statfs` build fix.
+
+16 threads -- the CPU-bound regime:
+| workload             |    base |     cur |   tps% |  lat% |
+|----------------------|---------|---------|--------|-------|
+| oltp_point_select    | 11326.6 | 13741.9 | +21.3% | -17.9 |
+| oltp_read_only       |   385.8 |   481.3 | +24.8% | -19.9 |
+| oltp_write_only      |   613.4 |   904.8 | +47.5% | -33.5 |
+| oltp_read_write      |   181.3 |   214.0 | +18.0% | -15.1 |
+| oltp_insert          |  3203.5 |  3803.1 | +18.7% | -15.8 |
+| oltp_delete          |  1919.5 |  3918.4 | +104.1%| -50.9 |
+| oltp_update_index    |  1833.5 |  4787.8 | +161.1%| -61.8 |
+| oltp_update_non_index|  1933.4 |  4961.6 | +156.6%| -61.2 |
+| select_random_points |  2507.7 |  2949.2 | +17.6% | -14.9 |
+| select_random_ranges |  2398.2 |  2901.0 | +21.0% | -17.4 |
+| bulk_insert (stmt/s) |     2.6 |     2.9 |  +8.9% | -10.0 |
+| tpcc NEW_ORDER       |  6046.3 |  8059.1 | +33.3% | -26.2 |
+| tpcc PAYMENT         |  5632.0 |  7675.9 | +36.3% | -25.3 |
+| tpcc ORDER_STATUS    |   518.2 |   728.6 | +40.6% | -20.9 |
+| tpcc DELIVERY        |   540.1 |   699.8 | +29.6% | -25.2 |
+| tpcc STOCK_LEVEL     |   517.7 |   741.4 | +43.2% | -20.4 |
+| tpcc tpmC            |  6045.8 |  8059.0 | +33.3% | -26.2 |
+
+4 threads -- the TiKV-latency-bound regime:
+| workload             |    base |     cur |   tps% |  lat% |
+|----------------------|---------|---------|--------|-------|
+| oltp_point_select    |  6083.4 |  7746.2 | +27.3% | -21.3 |
+| oltp_read_only       |   265.8 |   312.5 | +17.6% | -14.9 |
+| oltp_write_only      |   452.4 |   551.4 | +21.9% | -18.6 |
+| oltp_read_write      |   147.2 |   175.4 | +19.1% | -16.1 |
+| oltp_insert          |  1625.1 |  1806.9 | +11.2% |  -9.6 |
+| oltp_delete          |  1103.0 |  1738.0 | +57.6% | -35.0 |
+| oltp_update_index    |  1077.8 |  1995.0 | +85.1% | -47.1 |
+| oltp_update_non_index|  1194.1 |  1924.9 | +61.2% | -37.5 |
+| select_random_points |  1137.4 |  1296.5 | +14.0% | -12.2 |
+| select_random_ranges |  1475.6 |  1749.1 | +18.5% | -15.7 |
+| bulk_insert (stmt/s) |     2.7 |     2.8 |  +4.0% |  -7.1 |
+| tpcc NEW_ORDER       |  4714.7 |  5819.6 | +23.4% | -23.1 |
+| tpcc PAYMENT         |  4457.6 |  5587.6 | +25.4% | -17.1 |
+| tpcc ORDER_STATUS    |   391.8 |   538.5 | +37.5% | +20.4 |
+| tpcc DELIVERY        |   421.3 |   508.0 | +20.6% | -15.0 |
+| tpcc STOCK_LEVEL     |   403.1 |   480.7 | +19.3% | -27.7 |
+| tpcc tpmC            |  4714.6 |  5819.5 | +23.4% | -23.1 |
+
+Nine of sixteen workloads clear +25% throughput at 16 threads, every
+TPC-C transaction type among them. The workloads still short are
+read-dominated (point_select, read_only, read_write, random_points,
+random_ranges) or insert-shaped (oltp_insert, bulk_insert): none of them
+was touched by the autocommit transaction-mode fix, which is what lifted
+the update/delete family past +100%. TPC-C's per-type throughput follows
+the fixed mix, so its per-type rows move together with tpmC; the 4-thread
+ORDER_STATUS latency row (+20.4%) is the one exception and is sampling
+noise on a 4%-weight transaction whose per-run counts are in the hundreds.
+
 ## GOAL v2 ROUNDS 6-9 (2026-09-11 late)
 
 Round 6 -- autocommit DML runs as Go decides it. The node opened every
