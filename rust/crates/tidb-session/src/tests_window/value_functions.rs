@@ -369,12 +369,8 @@ fn window_lag_a_lone_enum_operand_reads_as_a_varchar() {
 /// wide, so any width taken from them is wrong; a DATETIME PAIR agrees either
 /// way, which is why the boundary is a MIXED temporal pair.
 ///
-/// This is also where the FUNCTION NAME the inference is given stops being
-/// inert. Go's per-`getFunction` flag tails belong to `IF`/`IFNULL`/
-/// `COALESCE`/`CASE WHEN`; `LEAD`/`LAG` have none there (theirs is
-/// `NewWindowFuncDesc`'s). Handing this call `IF`'s name instead would add
-/// `mysql.BinaryFlag`, and a temporal result is the one that does not already
-/// carry it.
+/// Initial LEAD/LAG inference does not apply IF's binary flag tail, but
+/// WrapWithCastAsTime subsequently sets it on the shared return type.
 ///
 /// Go, via `gorun`, `desc` over a view of this call: `c_date_time|datetime(6)`.
 #[test]
@@ -386,7 +382,9 @@ fn window_lag_a_datetime_result_takes_its_canonical_width() {
     );
     assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Datetime);
     assert_eq!((ft.flen(), ft.decimal()), (26, 6));
-    assert!(!ft.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+    // WrapWithCastAsTime later sets binary on the shared return type;
+    // Go wire metadata reports BINARY even though initial inference does not.
+    assert!(ft.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
 }
 
 /// Every operand NULL: Go zeroes the width and the scale and gives the result
@@ -855,6 +853,11 @@ fn window_lag_lets_a_wrapped_temporal_argument_narrow_the_result() {
     ] {
         let ft = merged_type(&mut session, sql);
         assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Datetime);
+        let lead_type = merged_type(&mut session, &sql.replace("LAG(", "LEAD("));
+        assert_eq!(
+            (lead_type.code(), lead_type.flen(), lead_type.decimal()),
+            (tidb_datatype::FieldTypeCode::Datetime, 23, 3)
+        );
         assert_eq!(
             (ft.flen(), ft.decimal()),
             (23, 3),

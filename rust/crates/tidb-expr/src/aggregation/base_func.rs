@@ -689,7 +689,7 @@ impl BaseFuncDesc {
         if NO_NEED_CAST_AGG_FUNCS.contains(&self.name.as_str()) {
             return Ok(());
         }
-        let ret_tp = self.ret_type.clone();
+        let mut ret_tp = self.ret_type.clone();
         let connection = wrap_cast::connection_charset(ctx);
         for i in 0..self.args.len() {
             // These functions' second argument is a plain non-negative count,
@@ -717,7 +717,18 @@ impl BaseFuncDesc {
                 }
                 EvalType::Decimal => wrap_cast::wrap_with_cast_as_decimal(old)?,
                 EvalType::Datetime | EvalType::Timestamp => {
-                    wrap_cast::wrap_with_cast_as_time(old, ret_tp.clone())?
+                    let source = type_of(&old).code();
+                    let shortcut = source == ret_tp.code()
+                        || (matches!(source, FieldTypeCode::Date | FieldTypeCode::Timestamp)
+                            && ret_tp.code() == FieldTypeCode::Datetime);
+                    let wrapped = wrap_cast::wrap_with_cast_as_time(old, ret_tp.clone())?;
+                    // Go passes a.RetTp by pointer. A real cast updates its
+                    // precision/width; shortcut operands leave it untouched.
+                    if !shortcut {
+                        ret_tp = type_of(&wrapped).clone();
+                        self.ret_type = ret_tp.clone();
+                    }
+                    wrapped
                 }
                 EvalType::Duration => wrap_cast::wrap_with_cast_as_duration(old)?,
                 EvalType::Json => wrap_cast::wrap_with_cast_as_json(old)?,

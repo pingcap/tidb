@@ -1,5 +1,23 @@
 # Rust 集成测试 Blocker Resolution
 
+## 2026-09-11 LEAD/LAG 时间 cast 返回类型写回
+
+在 `78a8b55b61` 独立回归 `window_lag_lets_a_wrapped_temporal_argument_narrow_the_result`，`/tmp/lag-time-red.log` 退出 101：DATETIME(6) 与 TIME(3) 合并后 Rust 保留 26/6，Go 为 23/3。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/base_func.go::WrapCastForAggArgs` 将 RetTp 指针传给 `builtin_cast.go:2817::WrapWithCastAsTime`，实际 cast 会修改精度、宽度和 binary 标志；Rust clone 后丢失了写回。
+
+修复只在实际时间 cast 时写回返回类型，保持同型、DATE/TIMESTAMP 到 DATETIME 的 shortcut 不改精度。原回归验证两种参数顺序及行值保留原六位/三位小数，并增加 LEAD 类型检查。首轮发现旧 canonical-width 测试误断言无 BINARY：固定 Go binary 的真实 MySQL metadata `/tmp/lag-time-go-wire.out` 明确 DATETIME、length=26、decimals=6、Flags=BINARY，因此纠正该断言与注释，未隐藏实际差异。
+
+Ready 验证，Cargo 前缀 `RUSTUP_TOOLCHAIN=1.97 RUSTFLAGS='' RUST_MIN_STACK=33554432`：
+
+```bash
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib window_lag_lets_a_wrapped_temporal_argument_narrow_the_result
+cargo test --manifest-path rust/Cargo.toml -p tidb-expr --lib aggregation::tests
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --test all
+cargo test --manifest-path rust/Cargo.toml -p tidb-session --lib tests_window
+make lint
+```
+
+`/tmp/lag-time-final.log` 原回归通过，`/tmp/lag-time-descriptor.log` 41 passed，`/tmp/lag-time-integration.log` 310 passed，`/tmp/lag-time-lint.log` 退出 0；最终窗口 suite `/tmp/lag-time-final-suite.log` 41 passed / 6 failed。正常 rebase 到远端 `feae1289b0` 后复验：`/tmp/lag-time-merged-suite.log` 同为 41/6，`/tmp/lag-time-merged-integration.log` 310 passed，`/tmp/lag-time-merged-lint.log` 退出 0。Go 临时实例已正常退出。默认值 DECIMAL 格式等其余原始失败继续保留。
+
 ## 2026-09-11 ENUM/SET 窗口返回类型零值构造
 
 在 `006cc6c873` 独立运行 `window_value_functions_rewrite_a_lone_enum_or_set_to_a_char`，`/tmp/window-enum-red.log` 退出 101，scale 为 -1 而非 Go 的 0。固定 Go master `fdfadb96b2cfdc5a7c26b8eb7b2a3da5f3038d85` 的 `pkg/expression/aggregation/base_func.go:384` 使用 NewFieldTypeBuilder().SetType(TypeString).SetFlen(255)，`pkg/types/field_type_builder.go:23` 从零值结构开始。Rust 错用普通 FieldType::new，默认未指定 scale。
