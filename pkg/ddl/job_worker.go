@@ -629,8 +629,8 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) accountJobRU(job *model.Job) error {
-	// Only general DDL jobs calculate RU for now.
-	if w.tp != generalWorker {
+	// Only general DDL jobs on NextGen calculate RU for now.
+	if !kerneltype.IsNextGen() || w.tp != generalWorker {
 		return nil
 	}
 	txn, err := w.sess.Txn()

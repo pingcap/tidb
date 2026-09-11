@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
@@ -93,7 +94,11 @@ func TestAccountJobRU(t *testing.T) {
 
 	job := &model.Job{RU: 7}
 	require.NoError(t, w.accountJobRU(job))
-	require.Equal(t, 7+float64(activeTxn.Size()), job.RU)
+	expectedRU := float64(7)
+	if kerneltype.IsNextGen() {
+		expectedRU += float64(activeTxn.Size())
+	}
+	require.Equal(t, expectedRU, job.RU)
 
 	accountedRU := job.RU
 	w.tp = addIdxWorker

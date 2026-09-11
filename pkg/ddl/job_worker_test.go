@@ -38,6 +38,14 @@ import (
 const testLease = 5 * time.Second
 
 func TestDDLJobRU(t *testing.T) {
+	requireExpectedJobRU := func(t *testing.T, ru float64) {
+		t.Helper()
+		if kerneltype.IsNextGen() {
+			require.Positive(t, ru)
+			return
+		}
+		require.Zero(t, ru)
+	}
 	expectedMetricRU := func(ru float64) float64 {
 		if kerneltype.IsNextGen() {
 			return ru
@@ -72,7 +80,7 @@ func TestDDLJobRU(t *testing.T) {
 		capturedJobID, capturedActiveRU := jobID, activeRU
 		mu.Unlock()
 		require.NotZero(t, capturedJobID)
-		require.Positive(t, capturedActiveRU)
+		requireExpectedJobRU(t, capturedActiveRU)
 		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
@@ -170,7 +178,7 @@ func TestDDLJobRU(t *testing.T) {
 		require.GreaterOrEqual(t, len(capturedJobIDs), 2)
 		require.Equal(t, capturedJobIDs[0], capturedJobIDs[1])
 		require.Equal(t, capturedRUValues[0], capturedRUValues[1])
-		require.Positive(t, capturedRUValues[0])
+		requireExpectedJobRU(t, capturedRUValues[0])
 		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobIDs[0])
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
@@ -223,7 +231,7 @@ func TestDDLJobRU(t *testing.T) {
 		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), capturedJobID)
 		require.NoError(t, err)
 		require.NotNil(t, historyJob)
-		require.Positive(t, historyJob.RU)
+		requireExpectedJobRU(t, historyJob.RU)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
 			testutil.ToFloat64(metrics.RUV3Total)-totalRUBefore, 1e-9)
 		require.InDelta(t, expectedMetricRU(historyJob.RU),
