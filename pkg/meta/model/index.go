@@ -49,17 +49,15 @@ const (
 
 	// GlobalIndexVersion constants define the key format versions for global indexes.
 	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
-	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	// This format can collide when EXCHANGE PARTITION leaves duplicate handles across partitions.
 	// See https://github.com/pingcap/tidb/issues/65289
 	GlobalIndexVersionLegacy uint8 = 0
 	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
-	// for global indexes on non-clustered tables to prevent key collisions
-	// after EXCHANGE PARTITION.
+	// for global indexes to prevent key collisions after EXCHANGE PARTITION.
 	// Applies to non-unique indexes (handle always in key) and unique indexes with nullable
 	// columns (handle in key when any indexed value is NULL, since NULL != NULL).
 	// For unique global indexes where all columns are NOT NULL, version 0 is used since
 	// uniqueness alone prevents collisions.
-	// For clustered tables, common handles already include partition-specific data.
 	// Notice that for V1 the partition id is still in the value part as well,
 	// for decreasing the risk of issues changing the read code path for various index reads.
 	GlobalIndexVersionV1 uint8 = 1
@@ -74,6 +72,11 @@ const (
 // being created during rolling upgrades where old nodes cannot handle V1 format.
 var globalIndexV1Supported atomic.Bool
 
+// clusteredGlobalIndexV1Supported tracks whether all TiDB nodes in the cluster support
+// GlobalIndexVersionV1 key encoding for clustered tables. Clustered-table support has
+// its own gate because it was introduced after V1 support for non-clustered tables.
+var clusteredGlobalIndexV1Supported atomic.Bool
+
 // SetGlobalIndexV1Supported sets whether GlobalIndexVersionV1 is supported
 // by all nodes in the cluster.
 func SetGlobalIndexV1Supported(supported bool) {
@@ -84,6 +87,18 @@ func SetGlobalIndexV1Supported(supported bool) {
 // by all nodes in the cluster.
 func GetGlobalIndexV1Supported() bool {
 	return globalIndexV1Supported.Load()
+}
+
+// SetClusteredGlobalIndexV1Supported sets whether GlobalIndexVersionV1 for clustered
+// tables is supported by all nodes in the cluster.
+func SetClusteredGlobalIndexV1Supported(supported bool) {
+	clusteredGlobalIndexV1Supported.Store(supported)
+}
+
+// GetClusteredGlobalIndexV1Supported returns whether GlobalIndexVersionV1 for
+// clustered tables is supported by all nodes in the cluster.
+func GetClusteredGlobalIndexV1Supported() bool {
+	return clusteredGlobalIndexV1Supported.Load()
 }
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -571,9 +586,10 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 func init() {
 	if kerneltype.IsNextGen() {
 		// For now, we don't need to detect job version and global index v1 support for NextGen
-		// as they are always V2 and support global index v1.
+		// as they are always V2 and support both global index v1 variants.
 		// To keep align with the logic of `JobVersion`, we set it in the init function of model
 		// package. The `JobVersion` is set in the init function of `job.go`.
 		SetGlobalIndexV1Supported(true)
+		SetClusteredGlobalIndexV1Supported(true)
 	}
 }

@@ -105,7 +105,8 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 
-	// Create a non-global index and unique global index and verify they have version 0
+	// Create a local index and a nullable unique global index and verify their
+	// respective versions.
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")
 	tk.MustExec(`CREATE UNIQUE INDEX idx_ab ON tp(a,b) GLOBAL`)
 
@@ -137,7 +138,8 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionV1)
 
-	// Verify that clustered tables get V0 global indexes
+	// Verify that clustered tables get V1 global indexes after the separate
+	// clustered-table capability gate is enabled.
 	tk.MustExec(`CREATE TABLE tpc (
 		a INT,
 		b INT,
@@ -161,8 +163,8 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	}
 	require.NotNil(t, globalIdx, "Global index idx_b not found")
 	require.True(t, globalIdx.Global, "Index should be global")
-	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
-		"Global index should have version %d", model.GlobalIndexVersionLegacy)
+	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionV1)
 }
 
 // TestGlobalIndexVersion1 tests that global indexes are created with version V1.
@@ -268,6 +270,73 @@ func TestGlobalIndexVersionConstants(t *testing.T) {
 	require.Equal(t, uint8(0), model.GlobalIndexVersionLegacy)
 	require.Equal(t, uint8(1), model.GlobalIndexVersionV1)
 	require.Equal(t, uint8(2), model.GlobalIndexVersionV2)
+}
+
+func TestIssue70932ClusteredGlobalIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("SET @@tidb_enable_exchange_partition = 1")
+	tk.MustExec("SET GLOBAL tidb_enable_dist_task = 0")
+	tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = 0")
+	t.Cleanup(func() {
+		tk.MustExec("SET GLOBAL tidb_enable_dist_task = 1")
+		tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = 1")
+	})
+	originClusteredGlobalIdxV1 := model.GetClusteredGlobalIndexV1Supported()
+	t.Cleanup(func() {
+		model.SetClusteredGlobalIndexV1Supported(originClusteredGlobalIdxV1)
+	})
+
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(20) NOT NULL,
+		PRIMARY KEY (a, b) CLUSTERED
+	) PARTITION BY RANGE (b) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t VALUES (1, 1, 'x')")
+	tk.MustExec("CREATE TABLE tx LIKE t")
+	tk.MustExec("ALTER TABLE tx REMOVE PARTITIONING")
+	tk.MustExec("INSERT INTO tx VALUES (1, 1, 'x')")
+	tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx WITHOUT VALIDATION")
+
+	model.SetClusteredGlobalIndexV1Supported(false)
+	tk.MustContainErrMsg("ALTER TABLE t ADD UNIQUE KEY ug(c) GLOBAL", "Duplicate entry")
+
+	model.SetClusteredGlobalIndexV1Supported(true)
+	// A unique index whose columns are all NOT NULL remains legacy even after
+	// the clustered V1 gate opens. Its duplicate check must still use the full
+	// (partition ID, handle) identity.
+	tk.MustContainErrMsg("ALTER TABLE t ADD UNIQUE KEY ug(c) GLOBAL", "Duplicate entry")
+
+	tk.MustExec("ALTER TABLE t ADD INDEX idx_c(c) GLOBAL")
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx_c)").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT COUNT(*) FROM t IGNORE INDEX(idx_c)").Check(testkit.Rows("2"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+
+	tk.MustExec("ALTER TABLE t DROP INDEX idx_c")
+	tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("ALTER TABLE t ADD INDEX idx_c_fast(c) GLOBAL")
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx_c_fast)").Check(testkit.Rows("2"))
+	tk.MustQuery("SELECT COUNT(*) FROM t IGNORE INDEX(idx_c_fast)").Check(testkit.Rows("2"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+
+	tk.MustExec("ALTER TABLE t ADD COLUMN d INT")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE KEY ug_d(d) GLOBAL")
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(ug_d)").Check(testkit.Rows("2"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+
+	dom := domain.GetDomain(tk.Session())
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for _, indexName := range []string{"idx_c_fast", "ug_d"} {
+		idx := tbl.Meta().FindIndexByName(indexName)
+		require.NotNil(t, idx)
+		require.Equal(t, model.GlobalIndexVersionV1, idx.GlobalIndexVersion)
+	}
 }
 
 // TestGlobalIndexTruncateAndDropPartition verifies that TRUNCATE PARTITION and
