@@ -6,6 +6,7 @@ go_library(
         "action.go",
         "arbitrator.go",
         "global_arbitrator.go",
+        "heap_profile.go",
         "meminfo.go",
         "memstats.go",
         "pool.go",
@@ -39,6 +40,7 @@ go_test(
     srcs = [
         "arbitrator_test.go",
         "bench_test.go",
+        "heap_profile_test.go",
         "main_test.go",
         "pool_test.go",
         "tracker_test.go",

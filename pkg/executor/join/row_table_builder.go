@@ -517,6 +517,9 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		totalMemUsage += b.helpers[i].rawDataLen + (b.helpers[i].totalRowNum+b.helpers[i].totalRowNum)*serialization.Uint64Len + b.helpers[i].validRowNum*serialization.IntLen
 	}
 
+	hashJoinCtx.hashTableContext.memoryTracker.AddReversal(totalMemUsage)
+	defer hashJoinCtx.hashTableContext.memoryTracker.AddReversal(-totalMemUsage)
+
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
 
 	for partIdx, seg := range segs {
