@@ -17,7 +17,7 @@ ALTER TABLE MODIFY/CHANGE must apply the generated-column rules of pinned Go mas
 - [x] (2026-09-11) Implement candidate-schema validation and metadata replacement in ddl/generated_modify.rs; carry the auto-increment session flag; virtual changes avoid reading old values.
 - [x] (2026-09-11) Twenty-five generated-column tests pass, covering virtual/stored transitions, dependency order, rename/reorder, indexed restrictions, invalid expressions, auto-increment switch and failed-DDL row preservation.
 - [x] (2026-09-11) Final priority/partition metadata changes: 25 generated tests, 310 session integrations and make lint pass. Catalog comparison stays 355, matches rise 330 to 332, divergences fall 25 to 23. Untouched baseline and modified tree both have the same four expression-index failures.
-- [ ] Independently commit/push the completed category with exact remaining failure evidence.
+- [x] (2026-09-11) Independently committed and pushed as cb76d77b97 to origin/hparser-integration, with remaining catalog and expression-index failure evidence preserved.
 
 ## Surprises & Discoveries
 
