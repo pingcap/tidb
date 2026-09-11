@@ -86,4 +86,18 @@ func TestAdminShowDDLJobsRU(t *testing.T) {
 	require.NotNil(t, job)
 	require.Positive(t, job.RU)
 	require.Equal(t, fmt.Sprintf("RU=%.2f", job.RU), row[12])
+
+	tk.MustExec("alter table t_admin_show_ddl_jobs_ru add column c int, add column d int")
+	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
+	require.Len(t, rows, 3)
+	jobID, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	job, err = ddl.GetHistoryJobByID(tk.Session(), jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Equal(t, fmt.Sprintf("RU=%.2f", job.RU), rows[0][12])
+	for _, subjobRow := range rows[1:] {
+		require.Contains(t, subjobRow[3], "/* subjob */")
+		require.Empty(t, subjobRow[12])
+	}
 }

@@ -165,8 +165,8 @@ func TestAccountJobRU(t *testing.T) {
 
 		require.Equal(t, []ddlJobRUReport{{
 			resourceGroupName: resourcegroup.DefaultResourceGroupName,
-			tikvRUV2:          0,
-			tidbRUV2:          42,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
 			tiflashRUV2:       0,
 		}}, reporter.reports)
 	})

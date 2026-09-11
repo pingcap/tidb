@@ -444,6 +444,11 @@ func JobNeedGC(job *model.Job) bool {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
+	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
+	// earlier steps before moving a cancelled or rolled-back job to history.
+	if job.IsCancelled() || job.IsRollbackDone() {
+		job.RU = 0
+	}
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -606,7 +611,10 @@ func (w *worker) reportJobRUV3Consumption(totalRU float64) {
 	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
 		return
 	}
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, 0, totalRU, 0)
+	// General DDL jobs do not persist the submitter's resource group yet. The
+	// internal DDL worker session therefore reports them to its default group.
+	// DDL RU is derived from transaction KV bytes, so attribute it to TiKV.
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, totalRU, 0, 0)
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
@@ -649,6 +657,8 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// The DDL job-table update happens after this sample, and the history-table
+	// writes happen in the final transaction. These internal writes are excluded.
 	job.RU += float64(txn.Size()) * ddlTxnRUKVBytesWeight
 	return nil
 }

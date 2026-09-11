@@ -271,6 +271,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if inShowStmt {
+		req.AppendString(12, showCommentsFromJob(job, e.showRU))
+	} else {
+		req.AppendString(12, job.Query)
+	}
 	if job.Type == model.ActionMultiSchemaChange {
 		var useDXF, isCloud bool
 		if job.ReorgMeta != nil {
@@ -305,11 +310,6 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendString(12, job.Query)
 			}
 		}
-	}
-	if inShowStmt {
-		req.AppendString(12, showCommentsFromJob(job, e.showRU))
-	} else {
-		req.AppendString(12, job.Query)
 	}
 }
 
